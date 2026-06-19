@@ -1,0 +1,19 @@
+{
+  "name": "@sots/db",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "@sots/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "prisma generate && tsc",
+    "generate": "prisma generate",
+    "push": "prisma db push"
+  }
+}

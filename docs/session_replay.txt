@@ -1,0 +1,649 @@
+﻿Session Replay Specification (SRS)
+1. Purpose
+This document defines the Session Replay capabilities of the Self-Observing Testing System (SOTS).
+The Session Replay System provides the ability to reconstruct, visualize, and analyze observed application behavior from captured telemetry.
+Its purpose is not merely to replay user interactions visually, but to provide behavioral context for:
+* Workflow analysis
+* Quality investigations
+* Failure diagnosis
+* Behavioral graph generation
+* Coverage analysis
+* User journey intelligence
+* Error correlation
+* Regression analysis
+* Quality intelligence
+Session Replay serves as one of the foundational intelligence assets of SOTS and acts as the bridge between raw behavioral events and explainable quality insights.
+2. Scope
+This specification applies to:
+Phase 1
+Behavioral QA Platform
+Phase 2
+Production Intelligence Platform
+Phase 3
+Autonomous Validation Engine
+Session Replay functionality must evolve without architectural redesign and remain compatible with all future behavioral intelligence systems.
+3. Objectives
+SRS-OBJ-001
+Reconstruct observed application behavior.
+SRS-OBJ-002
+Provide replayable timelines.
+SRS-OBJ-003
+Support workflow investigations.
+SRS-OBJ-004
+Accelerate bug diagnosis.
+SRS-OBJ-005
+Support behavioral graph generation.
+SRS-OBJ-006
+Provide contextual failure analysis.
+SRS-OBJ-007
+Support release validation.
+SRS-OBJ-008
+Provide explainable quality intelligence.
+4. Core Concept
+A Session Replay represents a reconstructed timeline of a recorded session.
+User Behavior
+      ↓
+Events Captured
+      ↓
+Session Built
+      ↓
+Timeline Generated
+      ↓
+Replay Created
+      ↓
+Investigation Enabled
+
+
+Session Replay is an interpretation of recorded events.
+It is not a screen recording.
+It is a behavioral reconstruction built from telemetry.
+5. Session Replay Architecture
+Frontend SDK
+Backend SDK
+      │
+      ▼
+Event Stream
+      │
+      ▼
+Session Engine
+      │
+      ▼
+Replay Builder
+      │
+      ▼
+Timeline Generator
+      │
+      ▼
+Replay Asset Store
+      │
+      ▼
+Dashboard Viewer
+
+
+Based on the Session Replay architecture defined within SOTS.
+6. Session Replay Lifecycle
+Stage 1
+Capture Events
+Page Visit
+Button Click
+Form Submit
+API Request
+API Response
+Error
+
+
+Stage 2
+Build Session
+Events
+ ↓
+Chronological Ordering
+ ↓
+Session Reconstruction
+
+
+Stage 3
+Generate Timeline
+Timeline
+ ↓
+Workflow Mapping
+ ↓
+Replay Model
+Stage 4
+Persist Replay Assets
+Replay Metadata
+Replay Timeline
+Replay Snapshots
+
+
+Stage 5
+Replay Session
+User Opens Replay
+ ↓
+Timeline Loads
+ ↓
+Playback Begins
+
+
+7. Session Definition
+Structure
+{
+  "sessionId": "uuid",
+  "applicationId": "uuid",
+  "tenantId": "uuid",
+  "startTime": "",
+  "endTime": "",
+  "eventCount": 0,
+  "durationMs": 0
+}
+
+
+Aligned with session construction requirements.
+8. Recorded Data Specification
+Purpose
+Define everything eligible for capture and replay.
+9. What Is Recorded
+Navigation Activity
+PAGE_VISIT
+ROUTE_CHANGE
+PAGE_EXIT
+
+
+UI Interactions
+BUTTON_CLICK
+LINK_CLICK
+TAB_CHANGE
+DROPDOWN_SELECTION
+COMPONENT_INTERACTION
+
+
+Form Activity
+FORM_VIEWED
+FORM_STARTED
+FORM_FIELD_UPDATED
+FORM_SUBMITTED
+FORM_VALIDATION_FAILED
+FORM_SUBMISSION_SUCCEEDED
+FORM_SUBMISSION_FAILED
+
+
+State Activity
+STATE_ENTERED
+STATE_EXITED
+STATE_TRANSITION
+
+
+Workflow Activity
+WORKFLOW_STARTED
+WORKFLOW_COMPLETED
+WORKFLOW_ABANDONED
+WORKFLOW_FAILED
+
+
+API Activity
+API_REQUEST
+API_RESPONSE
+API_ERROR
+API_TIMEOUT
+
+
+Error Activity
+ERROR_OCCURRED
+CLIENT_ERROR
+SERVER_ERROR
+EXCEPTION_THROWN
+UNHANDLED_EXCEPTION
+
+
+Session Activity
+SESSION_STARTED
+SESSION_ENDED
+SESSION_TIMEOUT
+
+
+Derived from the Event Taxonomy.
+10. What Is Not Recorded
+The replay system shall never record sensitive information.
+Authentication Secrets
+Passwords
+
+
+OTP Codes
+
+
+PIN Codes
+
+
+Security Answers
+
+
+Private Keys
+
+
+Financial Data
+Credit Card Numbers
+
+
+CVV
+
+
+Bank Account Numbers
+
+
+Payment Tokens
+
+
+Authentication Tokens
+JWT Tokens
+
+
+Access Tokens
+
+
+Refresh Tokens
+
+
+API Secrets
+
+
+Sensitive Personal Data
+National ID Numbers
+
+
+Passport Numbers
+
+
+Driver License Numbers
+
+
+Biometric Information
+
+
+Raw File Contents
+Uploaded Documents
+
+
+Images
+
+
+Videos
+
+
+Audio Files
+
+
+Only metadata may be captured.
+11. Privacy Rules
+SRS-PRIV-001
+Privacy controls shall be enforced before data leaves the client.
+SRS-PRIV-002
+Sensitive form fields shall be masked automatically.
+Example:
+Email:
+john@example.com
+
+
+Stored:
+***@example.com
+
+
+SRS-PRIV-003
+Password fields shall never be captured.
+<input type="password" />
+
+
+SRS-PRIV-004
+Sensitive field names shall be excluded.
+Forbidden field names:
+password
+
+
+credit_card
+
+
+cvv
+
+
+token
+
+
+secret
+
+
+private_key
+
+
+access_token
+
+
+Consistent with privacy requirements and event governance rules.
+SRS-PRIV-005
+Organizations shall define custom privacy rules.
+Example:
+{
+  "excludeFields": [
+    "medical_record",
+    "salary",
+    "social_security_number"
+  ]
+}
+
+
+SRS-PRIV-006
+Replay assets shall respect tenant-specific privacy policies.
+SRS-PRIV-007
+Privacy filtering shall occur before storage.
+12. Session Reconstruction Rules
+Sessions shall be reconstructed from event streams.
+Ordering Rule
+Events must be sorted by:
+Timestamp
+      ↓
+Sequence Number
+      ↓
+Arrival Order
+
+
+Supports event ordering requirements.
+Correlation Rule
+Events shall be grouped by:
+Tenant
+ ↓
+Application
+ ↓
+Session
+
+
+Timeline Rule
+Every replay shall be chronological.
+Integrity Rule
+Missing events shall be flagged.
+Example:
+Timeline Integrity:
+97%
+
+
+13. Replay Timeline Model
+Every replay shall generate a timeline.
+Example:
+12:00:00 Session Started
+
+
+12:00:04 Page Visit
+Home
+
+
+12:00:08 Button Click
+Register
+
+
+12:00:15 Form Submitted
+
+
+12:00:18 API Request
+
+
+12:00:19 API Response
+
+
+12:00:20 Workflow Completed
+Registration
+
+
+14. Replay Event Model
+{
+  "eventId": "uuid",
+  "eventType": "BUTTON_CLICK",
+  "timestamp": "",
+  "metadata": {}
+}
+
+
+Based on the canonical event model.
+15. Replay Asset Structure
+{
+  "replayId": "uuid",
+  "sessionId": "uuid",
+  "timeline": [],
+  "workflows": [],
+  "errors": [],
+  "apiActivity": []
+}
+
+
+16. Storage Architecture
+Session replay assets shall be stored separately from telemetry.
+Storage architecture aligns with SOTS storage design.
+17. Replay Storage Format
+Timeline Store
+{
+  "timestamp": "",
+  "eventType": "",
+  "metadata": {}
+}
+
+
+Replay Metadata
+{
+  "replayId": "",
+  "sessionId": "",
+  "applicationId": ""
+}
+
+
+Replay Manifest
+{
+  "version": "1.0",
+  "timelineCount": 500
+}
+
+
+18. Storage Locations
+Object Storage Structure:
+/session-replays/
+
+
+Contains:
+Timelines
+
+
+Replay Models
+
+
+Replay Metadata
+
+
+Replay Snapshots
+
+
+Aligned with storage architecture.
+19. Retention Policy
+Default retention:
+Session Replays:
+90 Days
+
+
+Configurable per tenant.
+Matches platform retention policies.
+20. Replay Viewer Specification
+The dashboard shall provide replay playback.
+Supports dashboard functionality.
+Features
+Play
+▶ Play Replay
+
+
+Pause
+⏸ Pause Replay
+
+
+Seek
+Jump To Event
+
+
+Timeline Navigation
+Previous Event
+
+
+Next Event
+
+
+Speed Control
+1x
+
+
+2x
+
+
+5x
+
+
+10x
+
+
+21. Replay Investigation View
+Every replay shall expose:
+Session Summary
+Duration
+
+
+Event Count
+
+
+Workflow Count
+
+
+Workflow Timeline
+Workflow Start
+
+
+Workflow Completion
+
+
+Workflow Failure
+
+
+Error Timeline
+Error Events
+
+
+Exceptions
+
+
+Failures
+
+
+API Timeline
+Requests
+
+
+Responses
+
+
+Timeouts
+
+
+22. Phase 1 Replay Capabilities
+Supports:
+Demonstration Sessions
+QA Analysis
+Behavioral Graph Generation
+Coverage Analysis
+Missing State Detection
+Endpoint Analysis
+Primary Goal:
+Understand Demonstrated Behavior
+
+
+23. Phase 2 Replay Capabilities
+Additional Support:
+Production Session Replay
+Journey Intelligence
+Error Correlation
+Workflow Health Analysis
+Friction Analysis
+Bottleneck Analysis
+Primary Goal:
+Understand Real User Behavior
+
+
+Supports FR-066 through FR-091.
+24. Phase 3 Replay Capabilities
+Additional Support:
+Regression Investigations
+Generated Test Validation
+Failure Simulation Analysis
+Behavioral Anomaly Investigations
+Quality Intelligence Explanations
+Primary Goal:
+Explain Why Quality Changed
+
+
+Supports FR-092 through FR-122.
+25. Session Replay APIs
+Get Replay
+GET /sessions/{id}/replay
+
+
+Get Timeline
+GET /sessions/{id}/timeline
+
+
+Defined by the Session Replay Engine design.
+26. Replay Integrity Metrics
+Every replay shall report:
+Timeline Completeness
+
+
+Missing Event Count
+
+
+Ordering Accuracy
+
+
+Privacy Compliance Score
+
+
+Replay Accuracy Score
+
+
+27. Replay Governance Rules
+SRS-GOV-001
+Replay data must remain traceable to source events.
+SRS-GOV-002
+Replay assets must preserve session chronology.
+SRS-GOV-003
+Replay assets must respect privacy policies.
+SRS-GOV-004
+Replay assets must maintain tenant isolation.
+SRS-GOV-005
+Replay data must support future behavioral intelligence engines.
+SRS-GOV-006
+Replay generation must be deterministic for identical datasets.
+28. Complete Replay Intelligence Lifecycle
+Capture Events
+       ↓
+Validate Events
+       ↓
+Build Sessions
+       ↓
+Order Events
+       ↓
+Generate Timeline
+       ↓
+Create Replay Model
+       ↓
+Store Replay Assets
+       ↓
+Replay Session
+       ↓
+Analyze Behavior
+       ↓
+Generate Graphs
+       ↓
+Generate Reports
+       ↓
+Correlate Errors
+       ↓
+Assess Quality
+       ↓
+Generate Intelligence

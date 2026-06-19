@@ -1,0 +1,543 @@
+﻿API Specification Document (ASD)
+1. Purpose
+The API Specification Document (ASD) defines all external and internal API contracts for the Self-Observing Testing System (SOTS).
+This document serves as the authoritative reference for:
+* SDK communication
+* Telemetry ingestion
+* Session management
+* Behavioral graph access
+* Coverage analysis
+* Missing state analysis
+* Endpoint intelligence
+* Reporting
+* Production intelligence
+* Error investigation
+* Autonomous validation
+* Dashboard integration
+* Intelligence assistant interactions
+The APIs defined in this document support all capabilities across:
+* Phase 1 — Behavioral QA Platform
+* Phase 2 — Production Intelligence Platform
+* Phase 3 — Autonomous Validation Engine
+The specification is derived from the PRD, FRS, NFRS, System Architecture, Data Flow, Component Design, Event Taxonomy, Behavior Graph, QA Reporting, and Developer Demonstration specifications.
+2. API Design Principles
+API-001 REST First
+All public APIs shall expose REST interfaces.
+API-002 OpenAPI Compliance
+All APIs shall be documented using OpenAPI 3.1.
+API-003 Versioned APIs
+All public APIs shall be versioned.
+Example:
+/v1/events
+/v1/reports
+/v1/quality
+API-004 Tenant Isolation
+Every request shall be scoped to a tenant.
+API-005 Secure by Default
+All APIs require authenticated access except health endpoints.
+API-006 Traceability
+Every request shall support:
+{
+  "requestId": "",
+  "traceId": "",
+  "tenantId": ""
+}
+3. Base URL Structure
+Production
+https://api.sots.io/v1
+
+
+Staging
+https://staging-api.sots.io/v1
+
+
+Local
+http://localhost:8080/v1
+4. Authentication APIs
+POST /auth/login
+Authenticate user.
+Request
+{
+  "email": "user@example.com",
+  "password": "********"
+}
+
+
+Response
+{
+  "accessToken": "",
+  "refreshToken": "",
+  "expiresIn": 3600
+}
+POST /auth/refresh
+Refresh access token.
+POST /auth/logout
+Invalidate session.
+GET /auth/me
+Retrieve authenticated user.
+5. Organization APIs
+GET /organizations
+List organizations.
+POST /organizations
+Create organization.
+Request
+{
+  "name": "Acme Corp",
+  "planType": "PRO"
+}
+GET /organizations/{organizationId}
+Get organization details.
+PATCH /organizations/{organizationId}
+Update organization.
+DELETE /organizations/{organizationId}
+Deactivate organization.
+6. User Management APIs
+Supports user roles defined in FRS.
+GET /users
+List users.
+POST /users
+Invite user.
+GET /users/{userId}
+Get user.
+PATCH /users/{userId}
+Update user.
+DELETE /users/{userId}
+Deactivate user.
+7. API Key Management
+Supports SDK onboarding.
+GET /api-keys
+List keys.
+POST /api-keys
+Generate key.
+Response
+{
+  "apiKey": "sots_xxxxxxxxx"
+}
+DELETE /api-keys/{keyId}
+Revoke key.
+8. Application Management APIs
+Supports application onboarding and Developer Demonstration Mode.
+GET /applications
+List applications.
+POST /applications
+Create application.
+Request
+{
+  "name": "E-Commerce App",
+  "environment": "demo"
+}
+GET /applications/{applicationId}
+Get application.
+PATCH /applications/{applicationId}
+Update application.
+DELETE /applications/{applicationId}
+Archive application.
+9. Telemetry Ingestion APIs
+Core ingestion endpoints defined by architecture and collector services.
+POST /events
+Submit single event.
+Request
+{
+  "eventId": "uuid",
+  "eventType": "BUTTON_CLICK",
+  "sessionId": "uuid",
+  "timestamp": "ISO8601",
+  "metadata": {}
+}
+
+
+Response
+{
+  "accepted": true
+}
+POST /events/batch
+Submit batch events.
+Request
+{
+  "events": []
+}
+
+
+Response
+{
+  "accepted": true,
+  "eventCount": 500
+}
+POST /events/validate
+Validate payload without ingestion.
+GET /events/schema
+Retrieve canonical event schema.
+GET /events/types
+Retrieve supported event types.
+Derived from Event Taxonomy.
+10. Session APIs
+Supports FR-018 through FR-025.
+GET /sessions
+Search sessions.
+Filters
+applicationId
+startDate
+endDate
+sessionType
+GET /sessions/{sessionId}
+Retrieve session.
+GET /sessions/{sessionId}/timeline
+Get event timeline.
+GET /sessions/{sessionId}/events
+Get raw events.
+GET /sessions/{sessionId}/replay
+Retrieve replay model.
+GET /sessions/{sessionId}/summary
+Session summary.
+11. Developer Demonstration APIs
+Supports Developer Demonstration Mode.
+POST /demonstrations/start
+Start recording.
+Request
+{
+  "applicationId": "",
+  "releaseVersion": "2.1.0"
+}
+POST /demonstrations/{id}/stop
+Stop recording.
+GET /demonstrations
+List demonstrations.
+GET /demonstrations/{id}
+Retrieve demonstration.
+POST /demonstrations/{id}/analyze
+Generate QA intelligence.
+GET /demonstrations/{id}/results
+Retrieve generated outputs.
+12. Behavioral Graph APIs
+Supports FR-026 through FR-034.
+GET /applications/{applicationId}/graph
+Retrieve graph.
+GET /applications/{applicationId}/graph/states
+List states.
+GET /applications/{applicationId}/graph/transitions
+List transitions.
+GET /applications/{applicationId}/graph/workflows
+List workflows.
+GET /applications/{applicationId}/graph/metrics
+Graph metrics.
+GET /workflows/{workflowId}
+Workflow details.
+GET /workflows/{workflowId}/paths
+Workflow paths.
+GET /workflows/{workflowId}/states
+Workflow states.
+13. Coverage Analysis APIs
+Supports FR-035 through FR-041.
+GET /coverage
+Coverage overview.
+GET /coverage/workflows
+Workflow coverage.
+GET /coverage/workflows/{workflowId}
+Coverage details.
+GET /coverage/comparison
+Coverage comparison.
+Query
+sessionA
+sessionB
+
+
+14. Missing State APIs
+Supports FR-042 through FR-046.
+GET /missing-states
+List detected missing states.
+GET /missing-states/loading
+Loading states.
+GET /missing-states/error
+Error states.
+GET /missing-states/empty
+Empty states.
+GET /missing-flows
+Missing flows.
+15. Endpoint Intelligence APIs
+Supports FR-047–052 and FR-076–080.
+GET /endpoints
+Endpoint inventory.
+GET /endpoints/health
+Endpoint health.
+GET /endpoints/rankings
+Endpoint rankings.
+GET /endpoints/slow
+Slow endpoints.
+GET /endpoints/errors
+Error-prone endpoints.
+GET /endpoints/recommendations
+Optimization recommendations.
+16. Dashboard APIs
+Supports dashboard functionality.
+GET /dashboard/overview
+Executive dashboard.
+GET /dashboard/workflows
+Workflow dashboard.
+GET /dashboard/sessions
+Session dashboard.
+GET /dashboard/endpoints
+Endpoint dashboard.
+GET /dashboard/quality
+Quality dashboard.
+17. Report APIs
+Supports QRS reporting framework.
+GET /reports
+List reports.
+POST /reports/generate
+Generate report.
+Request
+{
+  "reportType": "FLOW_COVERAGE",
+  "applicationId": ""
+}
+
+
+GET /reports/{reportId}
+Retrieve report.
+GET /reports/{reportId}/download
+Download report.
+Formats
+pdf
+csv
+json
+html
+
+
+DELETE /reports/{reportId}
+Delete report.
+18. Production Monitoring APIs (Phase 2)
+Supports FR-066 through FR-069.
+GET /monitoring/workflow-health
+Workflow health.
+GET /monitoring/live-sessions
+Active sessions.
+GET /monitoring/trends
+Behavior trends.
+GET /monitoring/health-score
+Application health score.
+19. User Journey APIs (Phase 2)
+Supports FR-070 through FR-075.
+GET /journeys
+Journey inventory.
+GET /journeys/common
+Common journeys.
+GET /journeys/abandonment
+Abandoned journeys.
+GET /journeys/friction
+Friction analysis.
+GET /journeys/bottlenecks
+Workflow bottlenecks.
+20. Database Intelligence APIs (Phase 2)
+Supports FR-081 through FR-085.
+GET /database/queries
+Query analysis.
+GET /database/slow-queries
+Slow queries.
+GET /database/indexes
+Index recommendations.
+GET /database/unused-fields
+Unused field analysis.
+GET /database/recommendations
+Optimization recommendations.
+21. Error Correlation APIs (Phase 2)
+Supports FR-086 through FR-091.
+GET /errors
+List errors.
+GET /errors/{errorId}
+Error details.
+GET /errors/{errorId}/investigation
+Full investigation package.
+Contains:
+* Session Replay
+* Workflow Path
+* API Trace
+* Logs
+* Database Activity
+GET /errors/{errorId}/replay
+Replay linked session.
+22. Release Management APIs (Phase 3)
+Supports release comparison and regression analysis.
+POST /releases
+Register release.
+GET /releases
+List releases.
+GET /releases/{releaseId}
+Release details.
+POST /releases/compare
+Compare releases.
+GET /releases/regressions
+Detected regressions.
+23. Automated Test Generation APIs (Phase 3)
+Supports FR-092 through FR-096.
+POST /tests/generate
+Generate tests.
+Request
+{
+  "workflowId": "",
+  "strategy": "FULL"
+}
+
+
+GET /tests/generated
+Generated suites.
+GET /tests/generated/{testSuiteId}
+Generated test suite.
+GET /tests/generated/{testSuiteId}/download
+Export test suite.
+24. Failure Simulation APIs (Phase 3)
+Supports FR-102 through FR-106.
+POST /simulation/network
+Network failure simulation.
+POST /simulation/service
+Service failure simulation.
+POST /simulation/timeout
+Timeout simulation.
+POST /simulation/workflow
+Workflow simulation.
+GET /simulation/results/{simulationId}
+Simulation results.
+25. Optimization Intelligence APIs (Phase 3)
+Supports FR-107 through FR-110.
+GET /optimization/apis
+API recommendations.
+GET /optimization/database
+Database recommendations.
+GET /optimization/workflows
+Workflow recommendations.
+GET /optimization/infrastructure
+Infrastructure recommendations.
+26. Behavioral Anomaly APIs (Phase 3)
+Supports FR-111 through FR-116.
+GET /anomalies
+All anomalies.
+GET /anomalies/workflows
+Workflow anomalies.
+GET /anomalies/errors
+Error spikes.
+GET /anomalies/latency
+Latency anomalies.
+GET /anomalies/drift
+Behavioral drift.
+27. Quality Intelligence APIs (Phase 3)
+Supports FR-117 through FR-122.
+GET /quality/assessment
+Quality assessment.
+GET /quality/risks
+Identified risks.
+GET /quality/recommendations
+Recommendations.
+GET /quality/priorities
+Prioritized issues.
+POST /quality/assistant/query
+Quality intelligence assistant.
+Request
+{
+  "question": "Why did checkout health decline?"
+}
+
+
+28. Notification APIs
+Supports workflow degradation alerts and report notifications.
+GET /notifications
+List notifications.
+PATCH /notifications/{id}/read
+Mark as read.
+POST /webhooks
+Create webhook.
+GET /webhooks
+List webhooks.
+DELETE /webhooks/{id}
+Delete webhook.
+29. Privacy & Retention APIs
+Supports privacy controls and retention management.
+GET /privacy-rules
+List privacy rules.
+POST /privacy-rules
+Create rule.
+PATCH /privacy-rules/{id}
+Update rule.
+GET /retention-policies
+List retention policies.
+PATCH /retention-policies/{id}
+Update retention.
+30. Administrative APIs
+GET /audit-logs
+Security audit logs.
+GET /system/metrics
+Platform metrics.
+GET /system/status
+Platform status.
+GET /health
+Health check.
+Response
+{
+  "status": "UP"
+}
+
+
+31. Standard Response Model
+Success
+{
+  "success": true,
+  "data": {},
+  "meta": {},
+  "requestId": ""
+}
+
+
+Error
+{
+  "success": false,
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "message": "Application not found"
+  },
+  "requestId": ""
+}
+
+
+32. OpenAPI Deliverables
+The implementation shall publish:
+GET /openapi.json
+GET /swagger.json
+GET /docs
+
+
+Documentation UI:
+/swagger
+/redoc
+
+
+33. API Coverage by Phase
+Phase 1
+* Authentication
+* Organizations
+* Users
+* Applications
+* Event Ingestion
+* Sessions
+* Session Replay
+* Developer Demonstration Mode
+* Behavioral Graphs
+* Coverage Analysis
+* Missing States
+* Endpoint Intelligence
+* Reports
+* Dashboard
+Phase 2
+Adds:
+* Production Monitoring
+* User Journey Intelligence
+* Database Intelligence
+* Error Correlation
+* Workflow Health
+* Notifications
+Phase 3
+Adds:
+* Release Validation
+* Test Generation
+* Regression Detection
+* Failure Simulation
+* Optimization Intelligence
+* Behavioral Anomaly Detection
+* Quality Intelligence Assistant

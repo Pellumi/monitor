@@ -1,0 +1,614 @@
+﻿EVENT TAXONOMY DOCUMENT (ETD)
+1. Purpose
+This document defines the official event taxonomy for SOTS.
+The objectives are:
+* Standardize all event definitions
+* Ensure consistency across SDKs
+* Enable reliable behavioral modeling
+* Support workflow generation
+* Support analytics processing
+* Support quality intelligence generation
+* Enable future autonomous validation
+This document is the authoritative source for all event naming and event structures.
+2. Event Taxonomy Principles
+ETP-001 Event-First Architecture
+Every platform capability shall originate from events.
+Supports architecture principles.
+ETP-002 Immutable Events
+Events shall never be modified after ingestion.
+Derived data must be created separately.
+Supports DFD principles.
+ETP-003 Consistent Naming
+All event names shall use:
+UPPER_SNAKE_CASE
+
+
+Examples:
+PAGE_VISIT
+
+
+BUTTON_CLICK
+
+
+API_REQUEST
+
+
+API_RESPONSE
+
+
+ERROR_OCCURRED
+
+
+ETP-004 Single Responsibility
+An event must describe one action only.
+Bad:
+USER_REGISTERED_AND_LOGGED_IN
+
+
+Good:
+USER_REGISTERED
+
+
+USER_LOGGED_IN
+
+
+ETP-005 Traceability
+Every event must be traceable to:
+* Tenant
+* Application
+* Session
+* Timestamp
+* Source
+Supports NFR-DATA requirements.
+3. Event Classification Model
+SYSTEM EVENTS
+│
+├── SESSION EVENTS
+│
+├── NAVIGATION EVENTS
+│
+├── UI EVENTS
+│
+├── FORM EVENTS
+│
+├── STATE EVENTS
+│
+├── API EVENTS
+│
+├── ERROR EVENTS
+│
+├── DATABASE EVENTS
+│
+├── WORKFLOW EVENTS
+│
+├── ANALYTICS EVENTS
+│
+├── QUALITY EVENTS
+│
+└── INTELLIGENCE EVENTS
+
+
+4. Canonical Event Structure
+Every event in SOTS shall inherit from the canonical event model.
+{
+  "eventId": "uuid",
+  "eventType": "PAGE_VISIT",
+  "eventVersion": "1.0",
+  "timestamp": "2026-01-01T12:00:00Z",
+
+
+  "tenantId": "uuid",
+  "organizationId": "uuid",
+  "applicationId": "uuid",
+
+
+  "sessionId": "uuid",
+  "traceId": "uuid",
+
+
+  "source": "frontend-sdk",
+
+
+  "environment": "production",
+
+
+  "metadata": {}
+}
+
+
+5. Required Fields
+Field
+	Required
+	eventId
+	Yes
+	eventType
+	Yes
+	timestamp
+	Yes
+	applicationId
+	Yes
+	tenantId
+	Yes
+	sessionId
+	Yes
+	source
+	Yes
+	metadata
+	Yes
+	Supports event integrity requirements.
+6. Event Naming Standard
+Format
+<NOUN>_<ACTION>
+
+
+PAGE_VISIT
+
+
+FORM_SUBMIT
+
+
+API_REQUEST
+
+
+Rules
+Allowed:
+PAGE_VISIT
+
+
+BUTTON_CLICK
+
+
+ERROR_OCCURRED
+
+
+Not Allowed:
+pageVisit
+
+
+page_visit
+
+
+PageVisit
+
+
+7. Event Categories
+Category A — Session Events
+Purpose:
+Track session lifecycle.
+Required by session recording capabilities.
+SESSION_STARTED
+{
+  "eventType": "SESSION_STARTED",
+  "metadata": {
+    "entryPoint": "/"
+  }
+}
+
+
+SESSION_ENDED
+{
+  "eventType": "SESSION_ENDED",
+  "metadata": {
+    "durationMs": 420000
+  }
+}
+
+
+SESSION_TIMEOUT
+{
+  "eventType": "SESSION_TIMEOUT"
+}
+
+
+Category B — Navigation Events
+Supports FR-002 and FR-003.
+PAGE_VISIT
+{
+  "eventType": "PAGE_VISIT",
+  "metadata": {
+    "url": "/products",
+    "title": "Products"
+  }
+}
+
+
+ROUTE_CHANGE
+{
+  "eventType": "ROUTE_CHANGE",
+  "metadata": {
+    "from": "/home",
+    "to": "/cart"
+  }
+}
+
+
+PAGE_EXIT
+{
+  "eventType": "PAGE_EXIT"
+}
+
+
+Category C — UI Interaction Events
+Supports click and component tracking
+BUTTON_CLICK
+{
+  "eventType": "BUTTON_CLICK",
+  "metadata": {
+    "buttonId": "checkout-btn"
+  }
+}
+
+
+LINK_CLICK
+{
+  "eventType": "LINK_CLICK"
+}
+
+
+COMPONENT_INTERACTION
+{
+  "eventType": "COMPONENT_INTERACTION"
+}
+
+
+DROPDOWN_SELECTION
+{
+  "eventType": "DROPDOWN_SELECTION"
+}
+
+
+TAB_CHANGE
+{
+  "eventType": "TAB_CHANGE"
+}
+
+
+Category D — Form Events
+Supports FR-005 and FR-006.
+FORM_VIEWED
+FORM_STARTED
+FORM_FIELD_UPDATED
+FORM_VALIDATION_FAILED
+FORM_SUBMITTED
+FORM_SUBMISSION_FAILED
+FORM_SUBMISSION_SUCCEEDED
+Example:
+{
+  "eventType": "FORM_SUBMITTED",
+  "metadata": {
+    "formId": "registration-form"
+  }
+}
+
+
+Category E — State Events
+Supports behavioral graph generation.
+STATE_ENTERED
+{
+  "eventType": "STATE_ENTERED",
+  "metadata": {
+    "stateName": "CHECKOUT"
+  }
+}
+
+
+STATE_EXITED
+STATE_TRANSITION
+{
+  "eventType": "STATE_TRANSITION",
+  "metadata": {
+    "fromState": "CART",
+    "toState": "CHECKOUT"
+  }
+}
+
+
+STATE_MISSING
+Generated internally.
+Category F — API Events
+Supports backend telemetry.
+API_REQUEST
+{
+  "eventType": "API_REQUEST",
+  "metadata": {
+    "endpoint": "/api/products",
+    "method": "GET"
+  }
+}
+
+
+API_RESPONSE
+{
+  "eventType": "API_RESPONSE",
+  "metadata": {
+    "statusCode": 200,
+    "durationMs": 120
+  }
+}
+
+
+API_ERROR
+API_TIMEOUT
+API_RETRY
+Category G — Error Events
+Supports failure analysis and error correlation.
+ERROR_OCCURRED
+{
+  "eventType": "ERROR_OCCURRED",
+  "metadata": {
+    "errorType": "ValidationError",
+    "message": "Email already exists"
+  }
+}
+
+
+EXCEPTION_THROWN
+UNHANDLED_EXCEPTION
+CLIENT_ERROR
+SERVER_ERROR
+Category H — Workflow Events
+Supports behavioral graphing and workflow discovery.
+WORKFLOW_STARTED
+WORKFLOW_COMPLETED
+WORKFLOW_ABANDONED
+WORKFLOW_FAILED
+WORKFLOW_REPEATED
+Example:
+{
+  "eventType": "WORKFLOW_COMPLETED",
+  "metadata": {
+    "workflowName": "CHECKOUT"
+  }
+}
+
+
+Category I — Database Events (Phase 2)
+Supports database intelligence.
+DB_QUERY_EXECUTED
+DB_QUERY_SLOW
+DB_INDEX_MISSING
+DB_QUERY_FAILED
+DB_CONNECTION_TIMEOUT
+
+
+Category J — User Journey Events (Phase 2)
+Supports journey intelligence.
+JOURNEY_STARTED
+JOURNEY_COMPLETED
+JOURNEY_ABANDONED
+FRICTION_DETECTED
+BOTTLENECK_DETECTED
+
+
+Category K — Quality Events (Phase 2)
+Generated by analysis engines.
+COVERAGE_CALCULATED
+COVERAGE_DEGRADED
+QUALITY_RISK_IDENTIFIED
+ENDPOINT_HEALTH_CHANGED
+REPORT_GENERATED
+
+
+Category L — Regression Events (Phase 3)
+Supports regression detection.
+BASELINE_CREATED
+RELEASE_COMPARED
+REGRESSION_DETECTED
+WORKFLOW_MISSING
+STATE_DEVIATION_DETECTED
+
+
+Category M — Test Generation Events (Phase 3)
+Supports autonomous validation.
+TEST_GENERATED
+TEST_SUITE_GENERATED
+EDGE_CASE_GENERATED
+NEGATIVE_CASE_GENERATED
+
+
+Category N — Failure Simulation Events (Phase 3)
+FAILURE_SIMULATION_STARTED
+NETWORK_FAILURE_SIMULATED
+SERVICE_FAILURE_SIMULATED
+TIMEOUT_SIMULATED
+RESILIENCE_REPORT_GENERATED
+
+
+Category O — Anomaly Events (Phase 3)
+Supports anomaly detection.
+ANOMALY_DETECTED
+LATENCY_SPIKE_DETECTED
+ABANDONMENT_SPIKE_DETECTED
+ERROR_SPIKE_DETECTED
+BEHAVIORAL_DRIFT_DETECTED
+
+
+
+
+Category P — Intelligence Events (Phase 3)
+Generated by the Quality Intelligence Engine.
+QUALITY_ASSESSMENT_GENERATED
+RECOMMENDATION_CREATED
+RISK_PRIORITIZED
+ROOT_CAUSE_IDENTIFIED
+INSIGHT_GENERATED
+
+
+8. Event Versioning Strategy
+Every event must include:
+{
+  "eventVersion": "1.0"
+}
+
+
+Rules:
+* New fields = Minor version
+* Breaking changes = Major version
+* Deprecated events retained for migration periods
+
+
+9. Event Metadata Standards
+Reserved metadata fields:
+{
+  "metadata": {
+    "workflowId": "",
+    "workflowName": "",
+    "stateName": "",
+    "componentId": "",
+    "endpoint": "",
+    "durationMs": 0,
+    "statusCode": 0
+  }
+}
+
+
+10. Privacy Rules
+Sensitive data shall never be captured.
+Forbidden fields:
+password
+
+
+credit_card
+
+
+cvv
+
+
+token
+
+
+secret
+
+
+private_key
+
+
+access_token
+
+
+Supports privacy requirements.
+
+
+11. Event Retention Classes
+Class
+	Retention
+	Raw Events
+	13 Months
+	Sessions
+	13 Months
+	Replay Assets
+	90 Days
+	Analytics Events
+	24 Months
+	Quality Events
+	Unlimited
+	Aligned with database retention policies.
+
+
+12. Event Lifecycle
+Generated
+     │
+     ▼
+Validated
+     │
+     ▼
+Enriched
+     │
+     ▼
+Kafka
+     │
+     ▼
+Stored
+     │
+     ▼
+Processed
+     │
+     ▼
+Analyzed
+     │
+     ▼
+Intelligence Generated
+
+
+Matches the architecture and data flow design.
+
+
+13. Phase Evolution
+Phase 1
+Core Event Types:
+SESSION_*
+
+
+PAGE_*
+
+
+ROUTE_*
+
+
+BUTTON_*
+
+
+FORM_*
+
+
+STATE_*
+
+
+API_*
+
+
+ERROR_*
+
+
+Supports behavioral QA platform capabilities.
+
+
+Phase 2
+Additional Event Types:
+JOURNEY_*
+
+
+DB_*
+
+
+QUALITY_*
+
+
+WORKFLOW_*
+
+
+Supports production intelligence capabilities.
+
+
+Phase 3
+Additional Event Types:
+REGRESSION_*
+
+
+TEST_*
+
+
+ANOMALY_*
+
+
+INTELLIGENCE_*
+
+
+SIMULATION_*
+
+
+Supports autonomous validation and quality intelligence.
+
+
+14. Governance Rules
+The ETD is a controlled specification.
+Any new event type must:
+1. Have a unique identifier.
+2. Belong to a defined category.
+3. Define a schema.
+4. Define ownership.
+5. Define retention requirements.
+6. Define privacy classification.
+7. Define versioning strategy.
+8. Be approved through architecture review.
+This ensures SOTS maintains a consistent behavioral language across SDKs, collectors, analytics engines, workflow intelligence systems, production monitoring, and future autonomous quality intelligence capabilities.

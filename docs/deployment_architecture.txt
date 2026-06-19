@@ -1,0 +1,708 @@
+﻿Deployment Architecture Specification (DAS)
+1. Purpose
+The Deployment Architecture Specification (DAS) defines how the Self-Observing Testing System (SOTS) is deployed, operated, scaled, secured, upgraded, and maintained across all supported environments.
+This document establishes:
+* Deployment models
+* Infrastructure architecture
+* Cloud architecture
+* Self-hosted architecture
+* Network architecture
+* Multi-tenant architecture
+* Kubernetes architecture
+* Data platform deployment
+* Analytics platform deployment
+* Security architecture
+* Disaster recovery architecture
+* Scalability architecture
+* Environment strategy
+* CI/CD architecture
+* Observability architecture
+* Phase-based deployment evolution
+The objective of this specification is to ensure SOTS can operate reliably from early-stage MVP deployments through large-scale enterprise installations while maintaining architectural consistency across all phases of the product lifecycle.
+2. Scope
+This specification applies to:
+Phase 1 — Behavioral QA Platform
+Deployment of:
+* Frontend SDK Infrastructure
+* Backend SDK Infrastructure
+* Event Collection Platform
+* Session Replay Services
+* Behavioral Graph Services
+* Coverage Analysis Services
+* QA Reporting Services
+* Dashboard Services
+Phase 2 — Production Intelligence Platform
+Additional deployment of:
+* Live Monitoring Services
+* Journey Intelligence Services
+* Database Intelligence Services
+* Error Correlation Services
+* Workflow Health Monitoring Services
+Phase 3 — Autonomous Validation Engine
+Additional deployment of:
+* Test Generation Services
+* Regression Detection Services
+* Failure Simulation Services
+* Optimization Intelligence Services
+* Quality Intelligence Services
+* Intelligence Assistant Services
+3. Deployment Principles
+DAS-001 Cloud Native First
+All platform services shall be containerized.
+DAS-002 Kubernetes Native
+All platform services shall be deployable on Kubernetes.
+DAS-003 Multi-Tenant by Default
+Deployment architecture shall support tenant isolation.
+DAS-004 Horizontal Scalability
+Every major service shall support horizontal scaling.
+DAS-005 Observability by Default
+Every deployed component shall emit:
+* Logs
+* Metrics
+* Traces
+DAS-006 Zero Trust Security
+All service communication shall be authenticated and encrypted.
+DAS-007 Deployment Independence
+Services shall be independently deployable.
+4. Supported Deployment Models
+SOTS supports two primary deployment models.
+5. SaaS Deployment Architecture
+Overview
+SOTS-hosted deployment.
+Customer applications send telemetry to the managed SOTS cloud platform.
+Customer Application
+        │
+        ▼
+Frontend SDK
+Backend SDK
+        │
+        ▼
+Internet
+        │
+        ▼
+SOTS Cloud Platform
+        │
+        ▼
+Dashboard
+
+
+SaaS Characteristics
+Managed By
+SOTS Operations Team
+Infrastructure Ownership
+SOTS
+Upgrades
+Automatic
+Scaling
+Automatic
+Monitoring
+Managed
+Disaster Recovery
+Managed
+Security Patching
+Managed
+6. SaaS High-Level Deployment Architecture
+                    Internet
+                         │
+                         ▼
+                Global Load Balancer
+                         │
+                         ▼
+                    API Gateway
+                         │
+                         ▼
+             Kubernetes Production Cluster
+                         │
+ ┌──────────────────────────────────────────────┐
+ │                                              │
+ │ Collector Services                           │
+ │ Session Services                             │
+ │ Replay Services                              │
+ │ Graph Services                               │
+ │ Analytics Services                           │
+ │ Reporting Services                           │
+ │ Intelligence Services                        │
+ │ Dashboard Services                           │
+ │ Notification Services                        │
+ │ Assistant Services                           │
+ │                                              │
+ └──────────────────────────────────────────────┘
+                         │
+                         ▼
+                 Data Platform Layer
+                         │
+        ┌────────────┬────────────┬───────────┐
+        ▼            ▼            ▼           ▼
+   PostgreSQL   ClickHouse      Neo4j    Object Storage
+
+
+Derived from the system architecture.
+7. Self-Hosted Deployment Architecture
+Overview
+Enterprise deployment within customer infrastructure.
+Customer Application
+        │
+        ▼
+Frontend SDK
+Backend SDK
+        │
+        ▼
+Customer Infrastructure
+        │
+        ▼
+SOTS Platform
+
+
+Self-Hosted Characteristics
+Managed By
+Customer
+Infrastructure Ownership
+Customer
+Data Ownership
+Customer
+Compliance Ownership
+Customer
+Security Ownership
+Customer
+Upgrade Control
+Customer Controlled
+Network Control
+Customer Controlled
+8. Self-Hosted Kubernetes Deployment
+Customer Data Center
+or
+Customer Cloud
+       │
+       ▼
+Load Balancer
+       │
+       ▼
+Ingress Controller
+       │
+       ▼
+Kubernetes Cluster
+       │
+ ┌────────────────────────────────────┐
+ │                                    │
+ │ Collector Services                 │
+ │ Session Services                   │
+ │ Replay Services                    │
+ │ Graph Services                     │
+ │ Analytics Services                 │
+ │ Reporting Services                 │
+ │ Dashboard Services                 │
+ │ Intelligence Services             │
+ │                                    │
+ └────────────────────────────────────┘
+       │
+       ▼
+Customer Data Platform
+
+
+9. Supported Cloud Providers
+Provider
+	Support
+	AWS
+	Yes
+	Azure
+	Yes
+	Google Cloud
+	Yes
+	Oracle Cloud
+	Supported
+	Alibaba Cloud
+	Future
+	Digital Ocean
+	Community
+	Supports cloud portability requirements.
+10. Environment Strategy
+Development
+Developer Workstation
+
+
+Purpose:
+* Local development
+* Unit testing
+* SDK testing
+Integration
+Shared Integration Cluster
+
+
+Purpose:
+* Integration testing
+* Contract testing
+Staging
+Production-like Environment
+
+
+Purpose:
+* UAT
+* Performance validation
+Production
+Live Customer Traffic
+
+
+Purpose:
+* Production workloads
+11. Containerization Architecture
+Every service shall be deployed as a container.
+Example:
+collector-service
+session-service
+graph-service
+coverage-service
+report-service
+dashboard-service
+
+
+Container Standard:
+OCI Compatible
+
+
+Examples:
+Docker
+Containerd
+CRI-O
+
+
+12. Kubernetes Architecture
+Namespace Strategy
+sots-system
+
+
+sots-platform
+
+
+sots-data
+
+
+sots-monitoring
+
+
+tenant-services
+
+
+Workload Types
+Deployments
+Used for:
+* APIs
+* Collectors
+* Dashboard
+StatefulSets
+Used for:
+* PostgreSQL
+* ClickHouse
+* Neo4j
+* Kafka
+Jobs
+Used for:
+* Report generation
+* Graph generation
+* Migration tasks
+CronJobs
+Used for:
+* Cleanup
+* Backups
+* Retention enforcement
+13. Network Architecture
+Internet
+    │
+    ▼
+WAF
+    │
+    ▼
+Load Balancer
+    │
+    ▼
+API Gateway
+    │
+    ▼
+Service Mesh
+    │
+    ▼
+Microservices
+
+
+Internal Communication
+Protocols:
+HTTPS
+gRPC
+Kafka
+
+
+14. API Gateway Deployment
+Responsibilities:
+* Authentication
+* Authorization
+* Rate Limiting
+* Routing
+* Request Logging
+* Tenant Resolution
+Supports ingestion architecture.
+15. Event Streaming Architecture
+Kafka Deployment
+Producer
+    │
+    ▼
+Kafka Cluster
+    │
+    ▼
+Consumer Groups
+
+
+Topics:
+telemetry.events
+
+
+sessions.completed
+
+
+workflow.events
+
+
+quality.events
+
+
+anomaly.events
+
+
+regression.events
+
+
+notification.events
+
+
+Derived from architecture and event taxonomy.
+16. Data Platform Deployment
+PostgreSQL Cluster
+Stores:
+* Organizations
+* Users
+* Applications
+* Reports
+* Configurations
+ClickHouse Cluster
+Stores:
+* Events
+* Sessions
+* Metrics
+* Analytics
+Neo4j Cluster
+Stores:
+* Behavior Graphs
+* Workflow Relationships
+* State Relationships
+Object Storage
+Stores:
+* Session Replays
+* Exports
+* Graph Snapshots
+* Archives
+17. Service Deployment Architecture
+Capture Layer
+Frontend SDK
+Runs inside:
+* Browser
+* React Applications
+* Next.js Applications
+Backend SDK
+Runs inside:
+* Node.js
+* Express
+* NestJS
+* Fastify
+Ingestion Layer
+Services:
+api-gateway
+
+
+event-collector
+
+
+event-validator
+
+
+Processing Layer
+Services:
+session-engine
+
+
+replay-engine
+
+
+graph-engine
+
+
+coverage-engine
+
+
+endpoint-engine
+
+
+Intelligence Layer
+Phase 2:
+journey-engine
+
+
+database-engine
+
+
+error-correlation-engine
+
+
+Phase 3:
+test-generation-engine
+
+
+regression-engine
+
+
+failure-simulation-engine
+
+
+anomaly-engine
+
+
+quality-intelligence-engine
+
+
+18. Multi-Tenant Deployment Strategy
+Platform
+   │
+   ├── Tenant A
+   ├── Tenant B
+   ├── Tenant C
+   └── Tenant N
+
+
+Isolation mechanisms:
+* Tenant-aware routing
+* Row-level security
+* Tenant-scoped storage
+* Tenant-scoped API access
+Supports architecture requirements.
+19. CI/CD Architecture
+Git Repository
+       │
+       ▼
+Build Pipeline
+       │
+       ▼
+Security Scan
+       │
+       ▼
+Unit Tests
+       │
+       ▼
+Integration Tests
+       │
+       ▼
+Container Build
+       │
+       ▼
+Artifact Registry
+       │
+       ▼
+Deployment Pipeline
+       │
+       ▼
+Kubernetes Cluster
+
+
+Deployment Strategies
+Rolling Deployment
+Default strategy.
+Blue-Green Deployment
+Production releases.
+Canary Deployment
+High-risk releases.
+20. Security Deployment Architecture
+Edge Security
+* WAF
+* DDoS Protection
+* Rate Limiting
+Transport Security
+TLS 1.3
+
+
+Secret Management
+Supported:
+HashiCorp Vault
+AWS Secrets Manager
+Azure Key Vault
+GCP Secret Manager
+
+
+Identity Management
+Supports:
+* OAuth 2.0
+* OIDC
+* SAML
+* SSO
+Derived from security architecture.
+21. Observability Deployment Architecture
+Every deployed component shall emit:
+Metrics
+Logs
+Traces
+
+
+Stack:
+OpenTelemetry
+
+
+Prometheus
+
+
+Grafana
+
+
+Loki
+
+
+Derived from architecture requirements.
+22. Backup Architecture
+PostgreSQL
+* Daily backup
+* PITR enabled
+ClickHouse
+* Cluster snapshots
+* Replication
+Neo4j
+* Daily graph snapshots
+Object Storage
+* Versioning enabled
+* Geo-replication enabled
+23. Disaster Recovery Architecture
+Recovery Objectives
+RPO
+≤ 15 minutes
+
+
+RTO
+≤ 1 hour
+
+
+Disaster Recovery Flow
+Failure
+   ↓
+Detection
+   ↓
+Failover
+   ↓
+Recovery
+   ↓
+Validation
+   ↓
+Service Restoration
+
+
+Supports disaster recovery requirements.
+24. Scalability Architecture
+Collector Layer
+Scale via:
+Additional Pods
+
+
+Kafka Layer
+Scale via:
+Partitions
+Consumer Groups
+
+
+Analytics Layer
+Scale via:
+Distributed Workers
+
+
+Storage Layer
+Scale via:
+Replication
+Sharding
+Clustering
+
+
+Derived from scalability strategy.
+25. Phase-Based Deployment Evolution
+Phase 1 — Behavioral QA Platform
+Active Services:
+Frontend SDK
+Backend SDK
+API Gateway
+Event Collector
+Session Engine
+Replay Engine
+Graph Engine
+Coverage Engine
+Endpoint Engine
+Report Engine
+Dashboard
+
+
+Goal:
+Generate QA intelligence from demonstration sessions.
+Phase 2 — Production Intelligence Platform
+Additional Services:
+Workflow Health Monitor
+Journey Intelligence Engine
+Database Intelligence Engine
+Error Correlation Engine
+Notification Service
+
+
+Goal:
+Continuously understand production behavior.
+Phase 3 — Autonomous Validation Engine
+Additional Services:
+Test Generation Engine
+Regression Engine
+Failure Simulation Engine
+Optimization Engine
+Behavioral Anomaly Engine
+Quality Intelligence Engine
+Intelligence Assistant
+
+
+Goal:
+Provide autonomous quality intelligence.
+26. Complete Deployment Stack
+Customer Application
+        │
+        ▼
+React SDK / Node SDK
+        │
+        ▼
+Internet / Private Network
+        │
+        ▼
+WAF
+        │
+        ▼
+Load Balancer
+        │
+        ▼
+API Gateway
+        │
+        ▼
+Kafka Event Platform
+        │
+        ▼
+Processing Layer
+        │
+        ▼
+Analytics Layer
+        │
+        ▼
+Intelligence Layer
+        │
+        ▼
+PostgreSQL
+ClickHouse
+Neo4j
+Object Storage
+        │
+        ▼
+Dashboard
+Reports
+Assistant
+Notifications

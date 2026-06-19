@@ -1,0 +1,502 @@
+﻿Entitlement Specification (ES)
+1. Purpose
+This document defines all plan-based feature access, usage rights, resource limits, governance capabilities, and future intelligence capabilities within SOTS.
+The Entitlement Specification establishes:
+* Feature entitlements
+* Resource entitlements
+* Governance entitlements
+* Intelligence entitlements
+* Plan enforcement rules
+* Upgrade behavior
+* Future entitlement evolution
+This document serves as the authoritative source for all entitlement decisions across the platform.
+2. Entitlement Philosophy
+Entitlements determine what a customer can access.
+Billing determines what a customer pays.
+Usage metering determines what a customer consumes.
+These concepts shall remain independent.
+Example:
+A customer may have access to:
+* Session Replay
+while consuming:
+* 2 GB storage
+and paying for:
+* Local Plan
+The entitlement system must support future platform evolution without redesign.
+3. Entitlement Categories
+SOTS entitlements are grouped into four categories.
+Category A
+Feature Entitlements
+Examples:
+* Demonstration Mode
+* Session Replay
+* Coverage Analysis
+* Missing Flow Detection
+Category B
+Resource Entitlements
+Examples:
+* Applications
+* Users
+* Storage
+* Retention
+Category C
+Governance Entitlements
+Examples:
+* Team Collaboration
+* RBAC
+* Audit Logs
+* SSO
+Category D
+Intelligence Entitlements
+Examples:
+* Production Intelligence
+* Test Generation
+* Quality Intelligence Assistant
+Reserved for future phases.
+4. Plan Matrix
+Available Plans:
+* Free
+* Local (Nigeria Only)
+* Solo
+* Team
+* Business
+* Enterprise
+5. Feature Entitlements
+Feature
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Application Onboarding
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Developer Demonstration Mode
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Session Recording
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Session Replay
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Workflow Discovery
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Behavior Graph Generation
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Coverage Analysis
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Missing Flow Detection
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Missing State Detection
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Endpoint Intelligence
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Dashboard Access
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Report Generation
+	Basic
+	Standard
+	Advanced
+	Advanced
+	Advanced
+	Advanced
+	Report Export
+	JSON
+	JSON/PDF
+	All Formats
+	All Formats
+	All Formats
+	All Formats
+	Historical Reports
+	No
+	30 Days
+	90 Days
+	180 Days
+	365 Days
+	Custom
+	6. Resource Entitlements
+Resource
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Applications
+	1
+	2
+	3
+	10
+	50
+	Custom
+	Users
+	1
+	2
+	3
+	10
+	50
+	Custom
+	Storage
+	1 GB
+	10 GB
+	25 GB
+	100 GB
+	500 GB
+	Custom
+	Data Retention
+	14 Days
+	30 Days
+	90 Days
+	180 Days
+	365 Days
+	Custom
+	Demonstration Sessions
+	10 / Month
+	Unlimited
+	Unlimited
+	Unlimited
+	Unlimited
+	Unlimited
+	7. Governance Entitlements
+Capability
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Team Collaboration
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Shared Dashboards
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	RBAC
+	No
+	No
+	No
+	Basic
+	Advanced
+	Advanced
+	Application Permissions
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Audit Logs
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	API Access
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	SSO
+	No
+	No
+	No
+	No
+	No
+	Yes
+	OIDC
+	No
+	No
+	No
+	No
+	No
+	Yes
+	SAML
+	No
+	No
+	No
+	No
+	No
+	Yes
+	Self Hosting
+	No
+	No
+	No
+	No
+	No
+	Yes
+	8. Support Entitlements
+Support Level
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Community Support
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Email Support
+	No
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Priority Email Support
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Dedicated Success Manager
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Architecture Assistance
+	No
+	No
+	No
+	No
+	No
+	Yes
+	Enterprise SLA
+	No
+	No
+	No
+	No
+	No
+	Yes
+	9. Phase 2 Entitlements
+Reserved for Production Intelligence.
+Additional Features:
+* Workflow Health Monitoring
+* Journey Intelligence
+* Behavioral Trend Analysis
+* Error Correlation
+* Database Intelligence
+Example:
+Feature
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Workflow Health
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Journey Intelligence
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Error Correlation
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Database Intelligence
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	10. Phase 3 Entitlements
+Reserved for Autonomous Validation.
+Additional Features:
+* Test Generation
+* Regression Detection
+* Failure Simulation
+* Quality Intelligence Assistant
+* Behavioral Anomaly Detection
+Example:
+Feature
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Test Generation
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Regression Detection
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Failure Simulation
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Quality Assistant
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	Behavioral Anomalies
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+	11. Entitlement Enforcement Rules
+Entitlements shall be enforced server-side.
+Client-side enforcement is informational only.
+Every protected operation must validate:
+* Organization Plan
+* Subscription Status
+* Resource Limits
+* Feature Entitlements
+before execution.
+12. Entitlement Resolution Order
+When determining access:
+1. Subscription Status
+2. Plan Type
+3. Feature Entitlement
+4. Resource Availability
+5. Tenant Policies
+Access is denied if any validation fails.
+13. Enterprise Overrides
+Enterprise agreements may override:
+* User Limits
+* Application Limits
+* Storage Limits
+* Retention Policies
+* Support Levels
+Overrides shall be contract-driven.
+14. Future Entitlement Evolution
+Phase 1
+Behavioral QA Platform
+Primary Entitlements:
+* Applications
+* Users
+* Storage
+* Behavioral Intelligence
+Phase 2
+Adds:
+* Production Intelligence
+Phase 3
+Adds:
+* Autonomous Intelligence
+15. Success Criteria
+The Entitlement System shall be considered successful when:
+1. Every feature maps to a plan.
+2. Every resource maps to a quota.
+3. Plan upgrades automatically unlock capabilities.
+4. Enterprise overrides remain supported.
+5. Phase 2 capabilities can be added without redesign.
+6. Phase 3 capabilities can be added without redesign.
+7. Billing, usage, and authorization remain synchronized.
+8. Customers clearly understand what they can access.
+
+
+One additional improvement I would make for SOTS specifically:
+Create a dedicated entitlement object in the database rather than deriving permissions directly from the plan.
+{
+ "plan": "TEAM",
+ "features": {
+   "sessionReplay": true,
+   "apiAccess": false,
+   "workflowHealth": false
+ },
+ "limits": {
+   "applications": 10,
+   "users": 10,
+   "storageGb": 100
+ }
+}
+This gives you the ability to run promotions, beta programs, grandfathered plans, enterprise overrides, and feature rollouts without changing billing plans or authorization logic. It becomes extremely valuable once Phase 2 and Phase 3 introduce production intelligence and AI capabilities.

@@ -1,0 +1,5 @@
+[
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/" } },
+  { "eventType": "API_REQUEST", "metadata": { "endpoint": "/api/search?q=shoes", "statusCode": 200, "method": "GET", "durationMs": 30 } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/products?q=shoes" } }
+]

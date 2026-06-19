@@ -1,0 +1,906 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id                   String                     @id @default(uuid())
+  name                 String
+  slug                 String                     @unique
+  createdByUserId      String?
+  createdAt            DateTime                   @default(now())
+
+  memberships          OrganizationMembership[]
+  invitations          OrganizationInvitation[]
+  applications         Application[]
+  intentNormalizations IntentNormalizationEntry[]
+  subscription         Subscription?
+  entitlement          Entitlement?
+}
+
+// =============================================================================
+// PRICING & ENTITLEMENTS (Phase 1.8A)
+// =============================================================================
+
+enum PlanType {
+  FREE
+  LOCAL       // Nigeria-only
+  SOLO
+  TEAM
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  GRACE_PERIOD
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum BillingCurrency {
+  USD
+  NGN
+}
+
+model Plan {
+  id              String   @id @default(uuid())
+  type            PlanType @unique
+  name            String
+  description     String?
+  monthlyPriceUsd Int?     // Price in cents (2900 = $29)
+  monthlyPriceNgn Int?     // Price in kobo (4200000 = ₦42,000)
+  annualPriceUsd  Int?     // Price in cents
+  annualPriceNgn  Int?     // Price in kobo
+  isPublic        Boolean  @default(true)
+  sortOrder       Int      @default(0)
+
+  // Resource limits
+  maxApplications Int
+  maxEnvironmentsPerApp Int @default(1)
+  maxApiKeys      Int @default(1)
+  maxUsers        Int
+  maxStorageGb    Int
+  retentionDays   Int
+  maxDemoSessions Int?     // null = unlimited
+
+  featureFlags  FeatureFlag[]
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FeatureFlag {
+  id      String  @id @default(uuid())
+  planId  String
+  plan    Plan    @relation(fields: [planId], references: [id])
+  feature String  // e.g. "SESSION_REPLAY", "API_ACCESS", "SSO"
+  enabled Boolean @default(false)
+  tier    String? // e.g. "BASIC", "ADVANCED", "ALL_FORMATS"
+
+  createdAt DateTime @default(now())
+
+  @@unique([planId, feature])
+}
+
+model Subscription {
+  id                       String             @id @default(uuid())
+  organizationId           String             @unique
+  organization             Organization       @relation(fields: [organizationId], references: [id])
+  planId                   String
+  plan                     Plan               @relation(fields: [planId], references: [id])
+  status                   SubscriptionStatus @default(ACTIVE)
+  billingInterval          BillingInterval    @default(MONTHLY)
+  billingCurrency          BillingCurrency    @default(USD)
+
+  // Stripe references (Phase 1.8C)
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?
+
+  // Paystack references (Phase 1.8C)
+  paystackCustomerCode     String?
+  paystackSubscriptionCode String?
+
+  // Enterprise overrides (JSON: { maxApplications: 200, ... })
+  enterpriseOverrides Json?
+
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime  @default(now())
+  currentPeriodEnd   DateTime
+  cancelledAt        DateTime?
+  suspendedAt        DateTime?
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  usageRecords UsageRecord[]
+}
+
+model Entitlement {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // Resolved entitlements (denormalized from plan + enterprise overrides)
+  planType PlanType
+  features Json // { sessionReplay: true, apiAccess: false, ... }
+  limits   Json // { applications: 10, users: 10, storageGb: 100, ... }
+  support  Json // { emailSupport: true, prioritySupport: false, ... }
+
+  resolvedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// =============================================================================
+// USAGE TRACKING (Phase 1.8B)
+// =============================================================================
+
+enum UsageMetric {
+  APPLICATIONS
+  USERS
+  STORAGE_GB
+  EVENTS
+  SESSIONS
+  DEMONSTRATIONS
+  REPLAYS
+  REPORTS
+  EXPORTS
+  API_CALLS
+}
+
+model UsageRecord {
+  id             String       @id @default(uuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  organizationId String
+  applicationId  String?
+  environmentId  String?
+  metric         UsageMetric
+  value          Float
+  limit          Float?       // Plan limit (null = unlimited)
+  periodStart    DateTime
+  periodEnd      DateTime
+  recordedAt     DateTime     @default(now())
+
+  @@index([organizationId, metric, periodStart])
+  @@index([organizationId, applicationId, environmentId, metric])
+}
+
+model UsageSnapshot {
+  id             String      @id @default(uuid())
+  organizationId String
+  applicationId  String?
+  environmentId  String?
+  metric         UsageMetric
+  value          Float
+  snapshotDate   DateTime    @default(now())
+
+  @@index([organizationId, snapshotDate])
+  @@index([organizationId, applicationId, environmentId])
+}
+
+// =============================================================================
+// BILLING (Phase 1.8C)
+// =============================================================================
+
+model Invoice {
+  id              String          @id @default(uuid())
+  organizationId  String
+  invoiceNumber   String          @unique
+  planType        PlanType
+  billingInterval BillingInterval
+  currency        BillingCurrency
+  subtotal        Int             // In smallest unit (cents/kobo)
+  tax             Int             @default(0)
+  total           Int
+  status          String          @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  stripeInvoiceId String?
+  paystackRef     String?
+  periodStart     DateTime
+  periodEnd       DateTime
+  paidAt          DateTime?
+  createdAt       DateTime        @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model PaymentEvent {
+  id             String   @id @default(uuid())
+  organizationId String
+  provider       String   // "STRIPE" | "PAYSTACK"
+  eventType      String   // "checkout.completed", "invoice.paid", etc.
+  payload        Json
+  processedAt    DateTime @default(now())
+
+  @@index([organizationId, processedAt])
+}
+
+model ApiKey {
+  id              String      @id @default(uuid())
+  environmentId   String
+  environment     Environment @relation(fields: [environmentId], references: [id])
+  /// SHA-256 hex digest of the raw key — never store plaintext
+  keyHash         String      @unique
+  /// First 8 hex chars prefixed with "sots_" for safe display (e.g. sots_a1b2c3d4)
+  keyPrefix       String
+  label           String?
+  createdAt       DateTime    @default(now())
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  expiresAt       DateTime?   // Explicit expiry for rotation policies
+  createdByUserId String?     // Audit: which user generated this key
+}
+
+model Application {
+  id             String        @id @default(uuid())
+  name           String
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  environments      Environment[]
+  onboardingProgress ApplicationOnboardingProgress?
+
+  sessions          Session[]
+  states            State[]
+  transitions       Transition[]
+  candidateStates   CandidateState[]
+  missingStates     MissingState[]
+  missingFlows      MissingFlow[]
+  coverageSnapshots CoverageSnapshot[]
+  workflows         Workflow[]
+  demonstrations    Demonstration[]
+  profile           ApplicationProfile?
+
+  // FDRS relations (Section 22)
+  behaviorGraphs         BehaviorGraph[]
+  compiledRulesets       CompiledRuleset[]
+  reconciliationReports  ReconciliationReport[]
+  observedSnapshots      ObservedGraphSnapshot[]
+  promotionDecisions     PromotionDecision[]
+  recommendationEvidence RecommendationEvidence[]
+  intentNormalizations   IntentNormalizationEntry[]
+}
+
+model ApplicationProfile {
+  id            String      @id @default(uuid())
+  applicationId String      @unique
+  application   Application @relation(fields: [applicationId], references: [id])
+  profileType   String
+  createdAt     DateTime    @default(now())
+}
+
+model Session {
+  id            String            @id // matches sessionId
+  applicationId String
+  application   Application       @relation(fields: [applicationId], references: [id])
+  environmentId String?
+  environment   Environment?      @relation(fields: [environmentId], references: [id])
+  tenantId      String
+  startTime     DateTime
+  endTime       DateTime
+  events        SessionEvent[]
+  statistics    SessionStatistic?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model SessionEvent {
+  id           String   @id @default(uuid())
+  sessionId    String
+  session      Session  @relation(fields: [sessionId], references: [id])
+  eventType    String
+  eventVersion String
+  source       String
+  timestamp    DateTime
+  metadata     Json
+  createdAt    DateTime @default(now())
+}
+
+model SessionStatistic {
+  id         String  @id @default(uuid())
+  sessionId  String  @unique
+  session    Session @relation(fields: [sessionId], references: [id])
+  eventCount Int
+  errorCount Int
+  durationMs Int
+}
+
+model State {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  name          String
+  category      String?
+  visitCount    Int         @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  transitionsFrom Transition[]       @relation("FromState")
+  transitionsTo   Transition[]       @relation("ToState")
+  observations    StateObservation[]
+}
+
+model Transition {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  fromStateId   String
+  fromState     State       @relation("FromState", fields: [fromStateId], references: [id])
+  toStateId     String
+  toState       State       @relation("ToState", fields: [toStateId], references: [id])
+  action        String?
+  frequency     Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  observations TransitionObservation[]
+}
+
+model StateObservation {
+  id        String   @id @default(uuid())
+  stateId   String
+  state     State    @relation(fields: [stateId], references: [id])
+  sessionId String
+  eventId   String
+  timestamp DateTime
+}
+
+model TransitionObservation {
+  id           String     @id @default(uuid())
+  transitionId String
+  transition   Transition @relation(fields: [transitionId], references: [id])
+  sessionId    String
+  fromEventId  String
+  toEventId    String
+  timestamp    DateTime
+}
+
+model CandidateState {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  stateName     String
+  reason        String
+  approved      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+}
+
+model MissingState {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  stateName     String
+  sourceState   String
+  ruleName      String
+  severity      String?
+  confidence    Float       @default(1.0)
+  reason        String?
+  detectedAt    DateTime    @default(now())
+}
+
+model CoverageSnapshot {
+  id                 String      @id @default(uuid())
+  applicationId      String
+  application        Application @relation(fields: [applicationId], references: [id])
+  environmentId      String?
+  environment        Environment? @relation(fields: [environmentId], references: [id])
+  createdAt          DateTime    @default(now())
+  observedStates     Int
+  candidateStates    Int
+  approvedStates     Int
+  coveragePercent    Float
+  transitionCoverage Float       @default(0)
+  flowCoverage       Float       @default(0)
+}
+
+model MissingFlow {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  sourceFlow    Json
+  suggestedFlow Json
+  reason        String
+  severity      String?
+  confidence    Float       @default(1.0)
+  createdAt     DateTime    @default(now())
+}
+
+model Workflow {
+  id              String      @id @default(uuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id])
+  name            String
+  path            Json
+  stateCount      Int
+  transitionCount Int
+  executionCount  Int         @default(1)
+  createdAt       DateTime    @default(now())
+}
+
+model Demonstration {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id])
+  sessionId     String
+  reportId      String?
+  startedAt     DateTime    @default(now())
+  completedAt   DateTime?
+}
+
+// =============================================================================
+// FDRS — Flow Declaration & Reconciliation System (Section 22)
+// Refactored to Polymorphic Behavior Knowledge Graphs (Phase 1.75)
+// =============================================================================
+
+enum GraphType {
+  DECLARED
+  DEMONSTRATED
+  PRODUCTION
+}
+
+enum GraphSourceType {
+  USER_DECLARATION
+  DEMONSTRATION_SESSION
+  PRODUCTION_OBSERVATION
+  SYSTEM_GENERATED
+}
+
+enum FlowStatus {
+  DRAFT
+  COMPLETE
+}
+
+enum StateCategory {
+  NAVIGATION
+  UI
+  BUSINESS
+  ERROR
+  SYSTEM
+}
+
+enum StateProvenance {
+  USER_AUTHORED
+  SUGGESTED_ACCEPTED
+  DEMONSTRATION_PROMOTED
+  TELEMETRY_OBSERVED
+}
+
+enum NormalizationScope {
+  GLOBAL
+  ORGANIZATION
+  APPLICATION
+}
+
+enum GraphRelationshipType {
+  DECLARES
+  DERIVED_FROM
+  PROMOTED_FROM
+  BASELINE_OF
+  COMPARED_TO
+}
+
+model BehaviorGraph {
+  id            String          @id @default(uuid())
+  applicationId String
+  application   Application     @relation(fields: [applicationId], references: [id])
+  environmentId String?
+  environment   Environment?    @relation(fields: [environmentId], references: [id])
+  isActive      Boolean         @default(true)  // Only one active version per app/env at a time
+  name          String
+  status        FlowStatus      @default(DRAFT)
+  version       Int             @default(1)
+  graphType     GraphType       @default(DECLARED)
+  sourceType    GraphSourceType @default(USER_DECLARATION)
+  declaredById  String?
+  workflowType  String          @default("CUSTOM")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  completedAt   DateTime?
+
+  nodes           BehaviorGraphNode[]
+  edges           BehaviorGraphEdge[]
+  rulesets        CompiledRuleset[]
+  reconciliations ReconciliationReport[]
+  versions        BehaviorGraphVersion[]
+
+  @@index([applicationId, environmentId, isActive])
+}
+
+model BehaviorGraphNode {
+  id                String                  @id @default(uuid())
+  graphId           String
+  graph             BehaviorGraph           @relation(fields: [graphId], references: [id])
+  stateName         String
+  behaviorKey       String?                 // Stable semantic identity
+  category          StateCategory           @default(BUSINESS)
+  provenance        StateProvenance         @default(USER_AUTHORED)
+  declaredById      String?
+  canonicalBehavior String?
+  createdAt         DateTime                @default(now())
+
+  suggestions     DeclaredStateSuggestion[]
+  edgesFrom       BehaviorGraphEdge[]       @relation("FromNode")
+  edgesTo         BehaviorGraphEdge[]       @relation("ToNode")
+}
+
+model BehaviorGraphEdge {
+  id          String          @id @default(uuid())
+  graphId     String
+  graph       BehaviorGraph   @relation(fields: [graphId], references: [id])
+  fromNodeId  String
+  fromNode    BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
+  toNodeId    String
+  toNode      BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
+  action      String?
+  provenance  StateProvenance   @default(USER_AUTHORED)
+  createdAt   DateTime        @default(now())
+}
+
+model DeclaredStateSuggestion {
+  id                 String            @id @default(uuid())
+  parentStateId      String
+  parentState        BehaviorGraphNode @relation(fields: [parentStateId], references: [id])
+  suggestedStateName String
+  category           String
+  sourceTier         String
+  rationale          String
+  confidence         Float
+  status             String            @default("PENDING")
+  patternId          String?
+  createdAt          DateTime          @default(now())
+
+  outcomes SuggestionOutcome[]
+}
+
+model CompiledRuleset {
+  id            String        @id @default(uuid())
+  flowId        String        // Map flowId to BehaviorGraph.id
+  flow          BehaviorGraph @relation(fields: [flowId], references: [id])
+  applicationId String
+  application   Application   @relation(fields: [applicationId], references: [id])
+  version       Int
+  compiledAt    DateTime      @default(now())
+  rules         Json
+  ruleCount     Int
+
+  @@unique([flowId, version])
+}
+
+model ReconciliationReport {
+  id            String        @id @default(uuid())
+  flowId        String        // Map flowId to BehaviorGraph.id
+  flow          BehaviorGraph @relation(fields: [flowId], references: [id])
+  applicationId String
+  application   Application   @relation(fields: [applicationId], references: [id])
+  environmentId String?
+  environment   Environment?  @relation(fields: [environmentId], references: [id])
+
+  confirmedCount        Int
+  trueGapCount          Int
+  undeclaredCount       Int
+  expectedCoverageScore Float
+  trueGaps              Json
+  undeclared            Json
+
+  confirmedTransitions      Int   @default(0)
+  trueGapTransitions        Int   @default(0)
+  undeclaredTransitions     Int   @default(0)
+  transitionCoverageScore   Float @default(0)
+  trueGapTransitionsList    Json  @default("[]")
+  undeclaredTransitionsList Json  @default("[]")
+
+  generatedAt DateTime @default(now())
+}
+
+model BehaviorGraphVersion {
+  id                         String        @id @default(uuid())
+  graphId                    String
+  graph                      BehaviorGraph @relation(fields: [graphId], references: [id])
+  version                    Int
+  snapshot                   Json
+  isBaseline                 Boolean       @default(false)
+  expectedStateCount         Int?
+  expectedTransitionCount    Int?
+  expectedCoverage           Float?
+  expectedTransitionCoverage Float?
+  createdAt                  DateTime      @default(now())
+
+  @@unique([graphId, version])
+}
+
+model GraphRelationship {
+  id               String                @id @default(uuid())
+  sourceGraphId    String
+  targetGraphId    String
+  relationshipType GraphRelationshipType
+  createdAt        DateTime              @default(now())
+}
+
+model PatternLibraryEntry {
+  id                 String  @id @default(uuid())
+  patternId          String  @unique
+  triggerCanonicals  String
+  triggerCategory    String
+  suggestedStateName String
+  category           String
+  confidence         Float
+  rationale          String
+  libraryVersion     String
+  active             Boolean @default(true)
+
+  outcomes           SuggestionOutcome[]
+  patternObservations PatternObservation[]
+}
+
+model IntentNormalizationEntry {
+  id             String             @id @default(uuid())
+  rawName        String
+  canonical      String
+  scope          NormalizationScope @default(GLOBAL)
+  applicationId  String?
+  application    Application?       @relation(fields: [applicationId], references: [id])
+  organizationId String?
+  organization   Organization?      @relation(fields: [organizationId], references: [id])
+  libraryVersion String
+
+  @@unique([scope, rawName, applicationId, organizationId])
+}
+
+model SuggestionOutcome {
+  id              String                  @id @default(uuid())
+  suggestionId    String
+  suggestion      DeclaredStateSuggestion @relation(fields: [suggestionId], references: [id])
+  patternId       String
+  pattern         PatternLibraryEntry     @relation(fields: [patternId], references: [patternId])
+  applicationId   String
+  outcome         String
+  rejectionReason String?
+  recordedAt      DateTime                @default(now())
+}
+
+model ObservedGraphSnapshot {
+  id              String      @id @default(uuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id])
+  environmentId   String?
+  environment     Environment? @relation(fields: [environmentId], references: [id])
+  snapshot        Json
+  stateCount      Int
+  transitionCount Int
+  capturedAt      DateTime    @default(now())
+}
+
+model PromotionDecision {
+  id            String      @id @default(uuid())
+  stateName     String
+  flowId        String
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  accepted      Boolean
+  reason        String?
+  decidedById   String?
+  timestamp     DateTime    @default(now())
+}
+
+model PatternObservation {
+  id             String              @id @default(uuid())
+  patternId      String
+  pattern        PatternLibraryEntry @relation(fields: [patternId], references: [patternId])
+  applicationId  String
+  sourceBehavior String
+  targetBehavior String
+  occurrences    Int                 @default(1)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([applicationId, patternId, sourceBehavior, targetBehavior])
+}
+
+model RecommendationEvidence {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  workflowId    String?
+  evidenceType  String
+  source        String
+  confidence    Float
+  payload       Json
+  createdAt     DateTime    @default(now())
+}
+
+enum EnvironmentType {
+  DEVELOPMENT
+  STAGING
+  PRODUCTION
+}
+
+model Environment {
+  id            String          @id @default(uuid())
+  applicationId String
+  application   Application     @relation(fields: [applicationId], references: [id])
+  name          String          // e.g. "Development", "Staging", "Production"
+  type          EnvironmentType @default(DEVELOPMENT)
+  isDefault     Boolean         @default(false)
+  sdkEnabled    Boolean         @default(true)
+
+  apiKeys              ApiKey[]
+  sessions             Session[]
+  behaviorGraphs       BehaviorGraph[]
+  coverageSnapshots    CoverageSnapshot[]
+  observedSnapshots    ObservedGraphSnapshot[]
+  demonstrations       Demonstration[]
+  reconciliationReports ReconciliationReport[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([applicationId, name])
+}
+
+model ApplicationOnboardingProgress {
+  id                       String      @id @default(uuid())
+  applicationId            String      @unique
+  application              Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  organizationCreated      Boolean     @default(true)
+  applicationCreated       Boolean     @default(true)
+  templateSelected         Boolean     @default(false)
+  expectedFlowsDefined     Boolean     @default(false)
+  installationTestPassed   Boolean     @default(false)
+  sdkConnected             Boolean     @default(false)
+  demonstrationCompleted   Boolean     @default(false)
+  firstReportGenerated     Boolean     @default(false)
+  valueRealized            Boolean     @default(false)
+  valueRealizedReason      String?
+  completedAt              DateTime?
+}
+
+model ActivationEvent {
+  id             String   @id @default(uuid())
+  organizationId String
+  applicationId  String?
+  environmentId  String?
+  eventName      String
+  metadata       Json?
+  occurredAt     DateTime @default(now())
+
+  @@index([organizationId, eventName, occurredAt])
+}
+
+// =============================================================================
+// IDENTITY (Phase 2A)
+// =============================================================================
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum OtpPurpose {
+  SIGNUP      // New user — OTP sent before User exists
+  LOGIN       // Returning user OTP auth
+  INVITE      // Accept org invitation
+}
+
+enum AuditAction {
+  USER_CREATED
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  OTP_SENT
+  OTP_VERIFIED
+  OTP_FAILED
+  SESSION_REFRESHED
+  SESSION_REVOKED
+  LOGOUT
+  MEMBER_INVITED
+  MEMBER_JOINED
+  MEMBER_REMOVED
+  ROLE_CHANGED
+  MFA_ENABLED
+  MFA_DISABLED
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  displayName   String?
+  avatarUrl     String?
+
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      UserSession[]
+  memberships   OrganizationMembership[]
+  auditLogs     AuditLog[]
+}
+
+model OtpCode {
+  id          String     @id @default(uuid())
+  email       String
+  codeHash    String     // sha256(plaintext_code)
+  purpose     OtpPurpose
+  expiresAt   DateTime
+  usedAt      DateTime?
+  ipAddress   String?
+  createdAt   DateTime   @default(now())
+
+  @@index([email, purpose])
+}
+
+model UserSession {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash  String    @unique  // sha256(plaintext_refresh_token)
+  userAgent         String?
+  ipAddress         String?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model OrganizationMembership {
+  id              String       @id @default(uuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role            MemberRole   @default(MEMBER)
+  invitedByUserId String?
+  joinedAt        DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model OrganizationInvitation {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email           String
+  role            MemberRole   @default(MEMBER)
+  tokenHash       String       @unique  // sha256(invitation_token)
+  createdByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model AuditLog {
+  id             String      @id @default(uuid())
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id])
+  organizationId String?
+  action         AuditAction
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime    @default(now())
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([action])
+  @@index([createdAt])
+}
+

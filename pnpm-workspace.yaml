@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/*"
+  - "services/event-collector"
+  - "services/session-engine"
+  - "services/graph-engine"
+  - "services/coverage-engine"

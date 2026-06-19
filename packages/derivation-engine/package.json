@@ -1,0 +1,17 @@
+{
+  "name": "@sots/derivation-engine",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@sots/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "seed": "node -r ts-node/register src/seed.ts"
+  }
+}

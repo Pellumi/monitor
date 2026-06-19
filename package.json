@@ -1,0 +1,21 @@
+{
+  "name": "sots-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --concurrency=20",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "pnpm --filter @sots/e2e-tests run test:e2e"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "ts-node": "^10.9.2",
+    "turbo": "latest",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

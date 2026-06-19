@@ -1,0 +1,559 @@
+﻿COMPONENT DESIGN DOCUMENT (CDD)
+1. Purpose
+This document defines the detailed design of all system components within the Self-Observing Testing System (SOTS).
+The purpose of this document is to:
+* Define service responsibilities
+* Define internal component structures
+* Define service interfaces
+* Define APIs
+* Define event contracts
+* Define storage interactions
+* Define processing workflows
+* Support implementation planning
+* Support service-level testing
+* Support future extensibility
+2. Component Hierarchy
+Capture Layer
+├── Frontend SDK
+├── Backend SDK
+
+
+Ingestion Layer
+├── API Gateway
+├── Event Collector
+├── Event Validator
+
+
+Streaming Layer
+├── Kafka Topics
+├── Event Router
+
+
+Processing Layer
+├── Session Engine
+├── Session Replay Engine
+├── Behavioral Graph Engine
+├── Coverage Analysis Engine
+├── Missing State Engine
+├── Endpoint Intelligence Engine
+├── User Journey Engine
+├── Database Intelligence Engine
+├── Error Correlation Engine
+├── Test Generation Engine
+├── Regression Engine
+├── Failure Simulation Engine
+├── Optimization Engine
+├── Behavioral Anomaly Engine
+├── Quality Intelligence Engine
+
+
+Presentation Layer
+├── Dashboard API
+├── Dashboard UI
+├── Report Engine
+├── Notification Service
+├── Intelligence Assistant
+3. Frontend SDK
+Service ID
+CDD-SDK-FE
+Purpose
+Capture browser-side behavioral telemetry.
+Supports:
+* Page navigation
+* Clicks
+* Forms
+* State transitions
+* UI interactions
+* Errors
+Required by FR-001 through FR-010.
+Responsibilities
+* Create sessions
+* Track user interactions
+* Capture navigation events
+* Capture UI state transitions
+* Apply privacy rules
+* Buffer events
+* Transmit telemetry
+Internal Modules
+Frontend SDK
+│
+├── Session Manager
+├── Navigation Tracker
+├── Click Tracker
+├── Form Tracker
+├── State Observer
+├── Error Tracker
+├── Privacy Filter
+├── Event Queue
+└── Transport Client
+
+
+Public API
+Initialize SDK
+SOTS.init(config)
+
+
+Track Custom Event
+SOTS.track(event)
+
+
+Start Session
+SOTS.startSession()
+
+
+End Session
+SOTS.endSession()
+
+
+________________
+
+
+Output Event Schema
+{
+  "eventId": "uuid",
+  "sessionId": "uuid",
+  "tenantId": "string",
+  "applicationId": "string",
+  "eventType": "click",
+  "timestamp": "ISO8601",
+  "metadata": {}
+}
+4. Backend SDK
+Service ID
+CDD-SDK-BE
+Purpose
+Capture server-side telemetry.
+Required by FR-011 to FR-017.
+Responsibilities
+* Capture API requests
+* Capture responses
+* Capture latency
+* Capture errors
+* Correlate frontend sessions
+Internal Modules
+Backend SDK
+│
+├── Request Interceptor
+├── Response Interceptor
+├── Error Interceptor
+├── Trace Correlator
+└── Event Publisher
+Output Schema
+{
+  "requestId":"uuid",
+  "sessionId":"uuid",
+  "endpoint":"/api/products",
+  "method":"GET",
+  "statusCode":200,
+  "durationMs":120
+}
+5. API Gateway
+Service ID
+CDD-GW-001
+Purpose
+Single ingress point into SOTS.
+Responsibilities
+* Authentication
+* Authorization
+* Rate limiting
+* Routing
+* Request logging
+APIs
+Event Submission
+POST /v1/events
+
+
+Batch Submission
+POST /v1/events/batch
+
+
+Health Check
+GET /health
+6. Event Collector Service
+Service ID
+CDD-COL-001
+Purpose
+Receive telemetry and publish validated events.
+Supports ingestion architecture defined in SAD.
+Responsibilities
+* Receive events
+* Validate payloads
+* Enrich metadata
+* Publish to Kafka
+Internal Modules
+Event Collector
+│
+├── Request Handler
+├── Schema Validator
+├── Enrichment Service
+├── Tenant Resolver
+├── Deduplication Service
+└── Kafka Producer
+APIs
+Receive Event
+POST /events
+
+
+Receive Batch
+POST /events/batch
+Success Response
+{
+  "accepted": true,
+  "eventCount": 1
+}
+7. Session Engine
+Service ID
+CDD-SES-001
+Purpose
+Build chronological sessions from event streams.
+Supports FR-018 through FR-025.
+Responsibilities
+* Session creation
+* Session updates
+* Event ordering
+* Journey reconstruction
+Kafka Inputs
+telemetry.events
+
+
+Kafka Outputs
+sessions.completed
+Internal Modules
+Session Engine
+│
+├── Session Builder
+├── Event Sequencer
+├── Journey Builder
+├── Session Finalizer
+└── Session Store
+8. Session Replay Engine
+Service ID
+CDD-REP-001
+Purpose
+Generate replayable session timelines.
+Responsibilities
+* Reconstruct timeline
+* Build replay model
+* Generate playback assets
+APIs
+GET /sessions/{id}/replay
+
+
+GET /sessions/{id}/timeline
+9. Behavioral Graph Engine
+Service ID
+CDD-BGE-001
+Purpose
+Generate workflow graphs automatically.
+Supports FR-026 through FR-034.
+Responsibilities
+* State extraction
+* Transition discovery
+* Workflow generation
+* Pattern detection
+Internal Modules
+Graph Engine
+│
+├── State Extractor
+├── Transition Analyzer
+├── Workflow Builder
+├── Pattern Miner
+└── Graph Repository
+APIs
+GET /applications/{id}/graph
+
+
+GET /applications/{id}/workflows
+10. Coverage Analysis Engine
+Service ID
+CDD-COV-001
+Purpose
+Measure workflow coverage.
+Supports FR-035 through FR-041.
+Responsibilities
+* Coverage calculation
+* Missing path analysis
+* Coverage comparison
+Outputs
+{
+  "workflow":"checkout",
+  "coverage":72,
+  "observedPaths":18,
+  "missingPaths":7
+}
+11. Missing State Detection Engine
+Service ID
+CDD-MSD-001
+Purpose
+Detect unobserved states.
+Supports FR-042 through FR-046.
+Responsibilities
+* Missing loading states
+* Missing empty states
+* Missing failure states
+* Missing error states
+APIs
+GET /applications/{id}/missing-states
+12. Endpoint Intelligence Engine
+Service ID
+CDD-EPI-001
+Purpose
+Analyze API performance.
+Supports FR-047 through FR-052 and FR-076 through FR-080.
+Responsibilities
+* Response time analysis
+* Error analysis
+* Usage analysis
+* Optimization recommendations
+APIs
+GET /endpoints
+
+
+GET /endpoints/health
+
+
+GET /endpoints/rankings
+13. User Journey Intelligence Engine
+Service ID
+CDD-UJI-001
+Phase
+Phase 2
+Supports FR-070 through FR-075.
+Responsibilities
+* Journey discovery
+* Abandonment analysis
+* Friction analysis
+* Bottleneck analysis
+APIs
+GET /journeys
+
+
+GET /journeys/abandonment
+14. Database Intelligence Engine
+Service ID
+CDD-DBI-001
+Phase
+Phase 2
+Supports FR-081 through FR-085.
+Responsibilities
+* Query analysis
+* Cost analysis
+* Index recommendations
+* Unused field detection
+APIs
+GET /database/queries
+
+
+GET /database/recommendations
+15. Error Correlation Engine
+Service ID
+CDD-ERR-001
+Phase
+Phase 2
+Supports FR-086 through FR-091.
+Responsibilities
+* Correlate failures
+* Build investigation packages
+* Link traces
+* Link sessions
+APIs
+GET /errors
+
+
+GET /errors/{id}
+16. Test Generation Engine
+Service ID
+CDD-TGE-001
+Phase
+Phase 3
+Supports FR-092 through FR-096.
+Responsibilities
+* Generate positive tests
+* Generate negative tests
+* Generate edge cases
+* Generate validation suites
+APIs
+POST /tests/generate
+
+
+GET /tests/generated
+17. Regression Detection Engine
+Service ID
+CDD-RDE-001
+Phase
+Phase 3
+Supports FR-097 through FR-101.
+Responsibilities
+* Baseline comparison
+* Workflow comparison
+* Regression detection
+APIs
+POST /releases/compare
+
+
+GET /releases/regressions
+18. Failure Simulation Engine
+Service ID
+CDD-FSE-001
+Phase
+Phase 3
+Supports FR-102 through FR-106.
+Responsibilities
+* Network simulation
+* Service simulation
+* Timeout simulation
+* Workflow simulation
+APIs
+POST /simulation/network
+
+
+POST /simulation/service
+
+
+POST /simulation/timeout
+19. Optimization Intelligence Engine
+Service ID
+CDD-OPT-001
+Phase
+Phase 3
+Supports FR-107 through FR-110.
+Responsibilities
+* API optimization
+* Database optimization
+* Workflow optimization
+* Infrastructure optimization
+20. Behavioral Anomaly Engine
+Service ID
+CDD-ANM-001
+Phase
+Phase 3
+Supports FR-111 through FR-116.
+Responsibilities
+* Baseline generation
+* Anomaly detection
+* Trend analysis
+APIs
+GET /anomalies
+
+
+GET /anomalies/workflows
+21. Quality Intelligence Engine
+Service ID
+CDD-QI-001
+Phase
+Phase 3
+Supports FR-117 through FR-122.
+Responsibilities
+* Risk identification
+* Root-cause explanation
+* Recommendation generation
+* Prioritization
+APIs
+GET /quality/risks
+
+
+GET /quality/assessment
+
+
+POST /quality/assistant/query
+22. Report Engine
+Service ID
+CDD-RPT-001
+Purpose
+Generate all reports.
+Supports FR-053 through FR-059.
+Responsibilities
+* Coverage reports
+* Endpoint reports
+* Quality reports
+* Export generation
+APIs
+GET /reports
+
+
+POST /reports/generate
+
+
+GET /reports/{id}/export
+23. Dashboard Service
+Service ID
+CDD-DASH-001
+Purpose
+Unified presentation layer.
+Supports FR-060 through FR-065.
+Responsibilities
+* Data aggregation
+* Visualization delivery
+* User preferences
+* Dashboard APIs
+APIs
+GET /dashboard/overview
+
+
+GET /dashboard/workflows
+
+
+GET /dashboard/sessions
+
+
+GET /dashboard/quality
+24. Notification Service
+Service ID
+CDD-NOT-001
+Purpose
+Deliver alerts and insights.
+Responsibilities
+* Workflow degradation alerts
+* Anomaly alerts
+* Report notifications
+* Release regression alerts
+Channels
+* Email
+* Webhooks
+* In-App Notifications
+25. Intelligence Assistant
+Service ID
+CDD-IA-001
+Phase
+Phase 3
+Responsibilities
+* Explain findings
+* Answer quality questions
+* Recommend actions
+* Generate investigation summaries
+API
+POST /assistant/chat
+26. Component Dependency Map
+Frontend SDK
+      │
+Backend SDK
+      │
+      ▼
+Event Collector
+      │
+      ▼
+Kafka
+      │
+      ▼
+Session Engine
+      │
+      ├── Session Replay
+      ├── Behavioral Graph Engine
+      ├── Coverage Engine
+      ├── Missing State Engine
+      ├── Endpoint Intelligence
+      ├── Journey Intelligence
+      ├── Database Intelligence
+      ├── Error Correlation
+      ├── Regression Engine
+      ├── Anomaly Engine
+      └── Quality Intelligence Engine
+                    │
+                    ▼
+              Report Engine
+                    │
+                    ▼
+                Dashboard
+                    │
+                    ▼
+         Intelligence Assistant

@@ -1,0 +1,653 @@
+﻿Privacy & Data Collection Specification (PDCS)
+1. Purpose
+This document defines the Privacy and Data Collection framework for the Self-Observing Testing System (SOTS).
+The Privacy & Data Collection Specification establishes:
+* Data collection principles
+* Data classification standards
+* Data collection policies
+* Collected data definitions
+* Masked data definitions
+* Ignored data definitions
+* Privacy enforcement architecture
+* SDK privacy controls
+* Session replay privacy controls
+* Tenant privacy controls
+* Data retention policies
+* Compliance requirements
+* Phase-based privacy evolution
+The objective of this specification is to ensure that SOTS can generate behavioral intelligence while protecting user privacy, preventing unauthorized collection of sensitive information, and maintaining enterprise trust.
+This specification governs all data collected, processed, stored, analyzed, transmitted, exported, or displayed throughout the platform lifecycle. It applies across SDKs, ingestion systems, analytics engines, behavioral graphs, session replay, reporting systems, production monitoring systems, and autonomous intelligence systems.
+2. Scope
+This specification applies to:
+Phase 1 — Behavioral QA Platform
+Privacy controls for:
+* Frontend SDK
+* Backend SDK
+* Session recording
+* Behavioral graphs
+* Coverage analysis
+* Missing state detection
+* Endpoint analysis
+* QA reporting
+Phase 2 — Production Intelligence Platform
+Additional controls for:
+* Real user monitoring
+* User journey intelligence
+* Error correlation
+* Database intelligence
+* Workflow health monitoring
+Phase 3 — Autonomous Validation Engine
+Additional controls for:
+* Test generation
+* Regression detection
+* Failure simulation
+* Anomaly detection
+* Quality intelligence
+* Intelligence assistant
+3. Privacy Objectives
+PDCS-OBJ-001
+Collect only data required to generate quality intelligence.
+PDCS-OBJ-002
+Prevent accidental collection of sensitive information.
+PDCS-OBJ-003
+Provide privacy-by-default operation.
+PDCS-OBJ-004
+Support enterprise privacy requirements.
+PDCS-OBJ-005
+Enable configurable privacy controls.
+PDCS-OBJ-006
+Support regulatory compliance.
+PDCS-OBJ-007
+Maintain tenant-specific privacy policies.
+PDCS-OBJ-008
+Protect user identity during analytics.
+PDCS-OBJ-009
+Ensure session replay privacy.
+PDCS-OBJ-010
+Support future intelligence capabilities without increasing privacy risk.
+4. Privacy Principles
+PDP-001 Data Minimization
+Only data necessary for behavioral analysis shall be collected.
+PDP-002 Privacy By Default
+Privacy protections shall be enabled automatically.
+Customers must explicitly opt into any expanded collection.
+PDP-003 Sensitive Data Exclusion
+Sensitive information shall never enter the platform whenever possible.
+PDP-004 Tenant Control
+Customers shall control:
+* Retention policies
+* Redaction rules
+* Masking rules
+* Privacy settings
+Supports privacy requirements.
+PDP-005 Explainable Collection
+All collected data types shall be documented and visible.
+PDP-006 Least Visibility
+Users shall only see data required for their role.
+PDP-007 Traceability
+Every collected item shall be traceable to:
+* Collection source
+* Tenant
+* Application
+* Session
+* Retention policy
+5. Data Classification Model
+All data shall belong to one of five classes.
+Classification
+	Description
+	Public Data
+	Non-sensitive behavioral information
+	Operational Data
+	Application telemetry and metrics
+	Internal Data
+	Workflow intelligence and reports
+	Sensitive Data
+	Personal or confidential information
+	Restricted Data
+	Highly sensitive information prohibited from collection
+	
+
+6. Data Collection Categories
+COLLECTED DATA
+      │
+      ├── Behavioral Data
+      ├── Session Data
+      ├── Telemetry Data
+      ├── Workflow Data
+      ├── Analytics Data
+      └── Quality Intelligence Data
+
+
+MASKED DATA
+      │
+      ├── PII
+      ├── User Identifiers
+      ├── Contact Information
+      └── Partial Business Data
+
+
+IGNORED DATA
+      │
+      ├── Credentials
+      ├── Financial Data
+      ├── Secrets
+      └── Security Tokens
+
+
+7. Collected Data Specification
+The following data may be collected by SOTS.
+7.1 Frontend Behavioral Data
+Collected by Frontend SDK.
+Examples:
+* Page visits
+* Route changes
+* Clicks
+* Form interactions
+* Form submissions
+* UI interactions
+* State transitions
+* Error events
+Supports FR-001 through FR-010.
+Example
+{
+  "eventType": "BUTTON_CLICK",
+  "componentId": "checkout-button"
+}
+
+
+7.2 Session Metadata
+Collected:
+{
+  "sessionId": "uuid",
+  "startTime": "timestamp",
+  "endTime": "timestamp",
+  "durationMs": 180000
+}
+
+
+Supports session requirements.
+7.3 Application Metadata
+Collected:
+* Application ID
+* Environment
+* SDK Version
+* Release Version
+* Platform Type
+7.4 Backend Telemetry
+Collected:
+* API endpoint
+* Request method
+* Response status
+* Response duration
+* Error classification
+Supports backend telemetry requirements.
+Example
+{
+  "endpoint": "/api/products",
+  "method": "GET",
+  "statusCode": 200,
+  "durationMs": 120
+}
+
+
+7.5 Workflow Intelligence Data
+Collected or generated:
+* Workflow names
+* State names
+* Transition relationships
+* Completion rates
+* Abandonment rates
+* Coverage scores
+Supports behavior graph and workflow intelligence capabilities.
+7.6 Quality Intelligence Data
+Generated:
+* Quality scores
+* Risk scores
+* Recommendations
+* Regression findings
+* Anomaly findings
+Supports Phase 3 intelligence requirements.
+8. Masked Data Specification
+Masked data may be collected only after masking, hashing, tokenization, or redaction.
+8.1 Email Addresses
+Rule:
+Hash before storage.
+Example:
+john@example.com
+↓
+SHA256_HASH
+
+
+Storage:
+{
+  "userHash": "f82c4d..."
+}
+
+
+Raw email values shall not be stored.
+8.2 User Identifiers
+Examples:
+* Customer IDs
+* Account IDs
+* User IDs
+Rule:
+Hash or pseudonymize before storage.
+8.3 IP Addresses
+Rule:
+Mask by default.
+Example:
+192.168.1.101
+↓
+192.168.xxx.xxx
+
+
+Full IP retention requires explicit tenant opt-in.
+8.4 Names
+Rule:
+Masked before storage.
+Example:
+John Smith
+↓
+USER_HASH_ABC123
+
+
+8.5 Phone Numbers
+Rule:
+Partial masking.
+Example:
+08012345678
+↓
+********678
+
+
+8.6 Physical Addresses
+Rule:
+Redacted before storage.
+Example:
+14 Main Street
+↓
+[REDACTED]
+
+
+8.7 Internal Business Identifiers
+Examples:
+* Order IDs
+* Invoice IDs
+* Subscription IDs
+Rule:
+Configurable hashing.
+8.8 User Generated Text
+Examples:
+* Search queries
+* Notes
+* Comments
+Default Rule:
+Not stored.
+Optional Mode:
+Store redacted version only.
+
+
+9. Ignored Data Specification
+The following data shall never be collected, processed, stored, indexed, analyzed, exported, or displayed.
+Supports privacy requirements and event governance.
+9.1 Authentication Credentials
+Never Collect:
+* Passwords
+* Passphrases
+* PINs
+* Security answers
+Example:
+password
+↓
+NOT CAPTURED
+
+
+9.2 Payment Information
+Never Collect:
+* Credit card numbers
+* Debit card numbers
+* CVV values
+* Card PINs
+* Payment tokens
+Example:
+4111111111111111
+↓
+NOT CAPTURED
+
+
+9.3 Authentication Tokens
+Never Collect:
+* JWTs
+* OAuth tokens
+* Refresh tokens
+* Access tokens
+* Session cookies
+9.4 Secrets
+Never Collect:
+* API secrets
+* Encryption keys
+* Private keys
+* Certificates
+* Credentials
+9.5 Financial Records
+Never Collect:
+* Bank account numbers
+* Routing numbers
+* Account balances
+* Financial credentials
+9.6 Medical Information
+Never Collect:
+* Medical records
+* Diagnoses
+* Prescriptions
+* Treatment information
+9.7 Government Identity Data
+Never Collect:
+* Passport numbers
+* National ID numbers
+* Driver's license numbers
+* Social security numbers
+9.8 Biometric Data
+Never Collect:
+* Fingerprints
+* Facial recognition templates
+* Voiceprints
+* Iris scans
+10. Session Replay Privacy Rules
+Session replay is a high-risk feature and requires special protection.
+Supports replay architecture.
+Allowed
+Capture:
+* Navigation
+* Clicks
+* Workflow progression
+* UI transitions
+Masked
+Capture with masking:
+* Email fields
+* User identifiers
+* Contact information
+Blocked
+Never replay:
+* Password fields
+* Credit card forms
+* Authentication tokens
+* Secret values
+Replay Rendering
+Protected fields shall display:
+********
+
+
+or
+[REDACTED]
+
+
+11. Frontend SDK Privacy Controls
+The Frontend SDK shall contain:
+Frontend SDK
+│
+├── Privacy Filter
+├── Field Classifier
+├── Redaction Engine
+├── Masking Engine
+└── Transmission Module
+
+
+Supports frontend SDK architecture.
+Automatic Detection Rules
+Sensitive field names:
+password
+passwd
+secret
+token
+credit_card
+card_number
+cvv
+pin
+private_key
+
+
+shall automatically be excluded.
+12. Backend SDK Privacy Controls
+Backend SDK shall sanitize:
+* Request payloads
+* Response payloads
+* Headers
+* Query parameters
+Before transmission.
+Sensitive Headers Ignored
+Authorization
+Cookie
+Set-Cookie
+X-API-Key
+Bearer
+
+
+13. Privacy Rule Engine
+Customers may define custom privacy rules.
+Example:
+{
+  "field": "customerEmail",
+  "action": "HASH"
+}
+
+
+Supported Actions:
+* IGNORE
+* MASK
+* HASH
+* TOKENIZE
+* REDACT
+14. Data Retention Policy
+Supports retention requirements.
+Data Type
+	Default Retention
+	Raw Events
+	13 Months
+	Sessions
+	13 Months
+	Session Replay Assets
+	90 Days
+	Analytics Data
+	24 Months
+	Reports
+	5 Years
+	Quality Assessments
+	Unlimited
+	All retention periods shall be tenant configurable.
+15. Data Export Privacy Rules
+Exports shall:
+* Respect masking rules
+* Respect tenant policies
+* Exclude ignored data
+* Log export actions
+Supported formats:
+* PDF
+* CSV
+* JSON
+* HTML
+Supports reporting requirements.
+16. Phase-Based Privacy Evolution
+Phase 1 — Behavioral QA Platform
+Privacy Controls:
+* Event filtering
+* Sensitive field exclusion
+* Session replay masking
+* SDK privacy enforcement
+Goal:
+Safe behavioral capture.
+Phase 2 — Production Intelligence Platform
+Additional Controls:
+* Real-user monitoring protections
+* Journey privacy controls
+* Error-correlation privacy controls
+* Database telemetry sanitization
+Goal:
+Safe production intelligence.
+Phase 3 — Autonomous Validation Engine
+Additional Controls:
+* Intelligence model privacy
+* Generated test sanitization
+* Recommendation privacy validation
+* AI assistant privacy controls
+Goal:
+Safe autonomous quality intelligence.
+17. Privacy Compliance Requirements
+The platform shall support:
+* Customer-defined retention policies
+* Data deletion requests
+* Data export requests
+* Auditability of privacy actions
+* Privacy rule customization
+Supports compliance requirements.
+18. Data Collection Matrix
+Data Type
+	Collect
+	Mask
+	Ignore
+	Page Visits
+	✓
+	
+
+	
+
+	Route Changes
+	✓
+	
+
+	
+
+	Click Events
+	✓
+	
+
+	
+
+	State Transitions
+	✓
+	
+
+	
+
+	API Metadata
+	✓
+	
+
+	
+
+	Workflow Data
+	✓
+	
+
+	
+
+	User Email
+	
+
+	✓
+	
+
+	User Name
+	
+
+	✓
+	
+
+	User ID
+	
+
+	✓
+	
+
+	Phone Number
+	
+
+	✓
+	
+
+	IP Address
+	
+
+	✓
+	
+
+	Address
+	
+
+	✓
+	
+
+	Password
+	
+
+	
+
+	✓
+	Credit Card Number
+	
+
+	
+
+	✓
+	CVV
+	
+
+	
+
+	✓
+	PIN
+	
+
+	
+
+	✓
+	JWT Token
+	
+
+	
+
+	✓
+	Refresh Token
+	
+
+	
+
+	✓
+	API Secret
+	
+
+	
+
+	✓
+	Private Key
+	
+
+	
+
+	✓
+	Medical Data
+	
+
+	
+
+	✓
+	Biometric Data
+	
+
+	
+
+	✓
+	
+
+19. Privacy Acceptance Criteria
+The Privacy & Data Collection Specification shall be considered complete when:
+1. All collected data categories are explicitly defined.
+2. All masked data categories are explicitly defined.
+3. All ignored data categories are explicitly defined.
+4. Sensitive information cannot enter the analytics pipeline.
+5. Session replay respects privacy controls.
+6. SDKs enforce privacy rules before transmission.
+7. Tenant-specific privacy rules are supported.
+8. Data retention policies are enforceable.
+9. Data exports respect privacy controls.
+10. The platform can generate behavioral intelligence, production intelligence, and autonomous quality intelligence without exposing sensitive customer information.

@@ -1,0 +1,750 @@
+﻿SDK Specification Document (SDKS)
+1. Document Overview
+Purpose
+The SOTS SDK enables applications to integrate with the Self-Observing Testing System (SOTS) for behavioral capture, telemetry collection, session replay, workflow discovery, quality intelligence generation, production monitoring, anomaly detection, and autonomous validation.
+The SDK serves as the primary observation layer of the SOTS platform and is responsible for transforming application behavior into structured telemetry that powers:
+* Behavioral Graph Generation
+* Session Replay
+* Workflow Discovery
+* Coverage Analysis
+* Missing State Detection
+* Endpoint Intelligence
+* User Journey Intelligence
+* Error Correlation
+* Regression Detection
+* Automated Test Generation
+* Quality Intelligence
+Scope
+The SDK supports:
+Phase 1
+* Event Tracking
+* Session Tracking
+* Session Replay
+* Workflow Observation
+* State Tracking
+* API Tracking
+* Error Monitoring
+* Behavioral Graph Generation Support
+* Coverage Analysis Support
+* Demonstration Mode
+Phase 2
+* Production Monitoring
+* User Journey Intelligence
+* Database Intelligence Integration
+* Error Correlation
+* Workflow Health Monitoring
+Phase 3
+* Behavioral Baseline Collection
+* Regression Detection Support
+* Test Generation Support
+* Failure Simulation Support
+* Anomaly Detection Support
+* Quality Intelligence Support
+Non-Goals
+The SDK shall not:
+* Execute business logic
+* Render UI
+* Manage application state
+* Store customer application data
+* Modify application behavior
+* Execute automated tests
+* Access databases directly
+* Alter API responses
+2. SDK Architecture
+SDK
+├── Core Module
+├── Configuration Module
+├── Event Module
+├── Session Module
+├── User Module
+├── State Module
+├── Workflow Module
+├── API Tracking Module
+├── Error Module
+├── Replay Module
+├── Privacy Module
+├── Buffer Module
+├── Network Module
+├── Storage Module
+├── Logging Module
+├── Plugin Module
+└── Diagnostics Module
+
+
+Core Module
+Responsibility
+SDK orchestration and lifecycle management.
+Public Interfaces
+initialize()
+shutdown()
+getStatus()
+
+
+Event Module
+Responsibility
+Event generation and submission.
+Public Interfaces
+trackEvent()
+trackCustomEvent()
+
+
+Session Module
+Responsibility
+Session lifecycle management.
+Public Interfaces
+startSession()
+endSession()
+resumeSession()
+pauseSession()
+
+
+State Module
+Responsibility
+Behavioral state observation.
+Public Interfaces
+trackState()
+trackTransition()
+
+
+Workflow Module
+Responsibility
+Workflow observation.
+Public Interfaces
+startWorkflow()
+completeWorkflow()
+failWorkflow()
+
+
+API Tracking Module
+Responsibility
+Backend and frontend API observation.
+Public Interfaces
+trackApi()
+
+
+Error Module
+Responsibility
+Error collection.
+Public Interfaces
+captureException()
+captureError()
+captureMessage()
+
+
+Replay Module
+Responsibility
+Session replay collection.
+Public Interfaces
+startReplay()
+stopReplay()
+
+
+3. Supported Platforms
+Platform
+	Support
+	JavaScript
+	Yes
+	TypeScript
+	Yes
+	React
+	Yes
+	Next.js
+	Yes
+	Node.js
+	Yes
+	Express.js
+	Yes
+	NestJS
+	Yes
+	Fastify
+	Yes
+	Vue
+	Future
+	Angular
+	Future
+	React Native
+	Future
+	Android
+	Future
+	iOS
+	Future
+	4. SDK Initialization Specification
+React SDK
+import { SOTS } from "@sots/react";
+
+
+SOTS.initialize({
+    apiKey: "",
+    applicationId: "",
+    environment: "production"
+});
+
+
+Node SDK
+import { SOTS } from "@sots/node";
+
+
+SOTS.initialize({
+    apiKey: "",
+    applicationId: "",
+    environment: "production"
+});
+
+
+Required Parameters
+Parameter
+	Type
+	apiKey
+	string
+	applicationId
+	string
+	environment
+	string
+	Optional Parameters
+{
+  endpoint?: string;
+  region?: string;
+  debug?: boolean;
+  autoTrack?: boolean;
+  replayEnabled?: boolean;
+  bufferSize?: number;
+  retryCount?: number;
+  sessionTimeout?: number;
+  privacyRules?: PrivacyRule[];
+  plugins?: Plugin[];
+}
+
+
+Validation Rules
+API Key
+* Required
+* Must be active
+* Must belong to application
+Application ID
+* Required
+* Must exist
+Environment
+Allowed:
+demo
+development
+staging
+production
+
+
+Initialization Lifecycle
+Load Config
+    ↓
+Validate Config
+    ↓
+Initialize Storage
+    ↓
+Initialize Session Manager
+    ↓
+Initialize Replay Engine
+    ↓
+Initialize Event Queue
+    ↓
+Start Network Layer
+    ↓
+Ready
+
+
+Initialization Errors
+SDK_INIT_FAILED
+INVALID_API_KEY
+INVALID_APPLICATION
+NETWORK_UNAVAILABLE
+CONFIG_VALIDATION_FAILED
+
+
+5. Core SDK Interfaces
+initialize()
+SOTS.initialize(config)
+
+
+Bootstraps SDK.
+trackEvent()
+SOTS.trackEvent(
+    eventType,
+    metadata
+);
+
+
+Example:
+SOTS.trackEvent(
+    "BUTTON_CLICK",
+    {
+        buttonId: "checkout-btn"
+    }
+);
+
+
+Supports Event Taxonomy events.
+trackState()
+SOTS.trackState(
+    stateName,
+    category
+);
+
+
+Example:
+SOTS.trackState(
+    "CHECKOUT",
+    "BUSINESS"
+);
+
+
+Supports Behavior Graph generation.
+trackTransition()
+SOTS.trackTransition(
+    fromState,
+    toState,
+    action
+);
+
+
+Example:
+SOTS.trackTransition(
+    "CART",
+    "CHECKOUT",
+    "CHECKOUT_CLICK"
+);
+
+
+trackApi()
+SOTS.trackApi({
+    endpoint: "/api/orders",
+    method: "POST",
+    statusCode: 200,
+    durationMs: 150
+});
+
+
+Supports Endpoint Intelligence.
+identifyUser()
+SOTS.identifyUser(
+    userId,
+    traits
+);
+
+
+startSession()
+SOTS.startSession()
+
+
+endSession()
+SOTS.endSession()
+
+
+startWorkflow()
+SOTS.startWorkflow(
+    workflowName
+);
+
+
+completeWorkflow()
+SOTS.completeWorkflow(
+    workflowId
+);
+
+
+failWorkflow()
+SOTS.failWorkflow(
+    workflowId,
+    reason
+);
+
+
+captureException()
+SOTS.captureException(error)
+
+
+captureMessage()
+SOTS.captureMessage(
+    message,
+    severity
+)
+
+
+6. Event Collection Specification
+Supported Event Categories
+Session Events
+SESSION_STARTED
+SESSION_ENDED
+SESSION_TIMEOUT
+
+
+Navigation Events
+PAGE_VISIT
+ROUTE_CHANGE
+PAGE_EXIT
+
+
+UI Events
+BUTTON_CLICK
+LINK_CLICK
+COMPONENT_INTERACTION
+
+
+Form Events
+FORM_STARTED
+FORM_SUBMITTED
+FORM_VALIDATION_FAILED
+
+
+State Events
+STATE_ENTERED
+STATE_EXITED
+STATE_TRANSITION
+
+
+API Events
+API_REQUEST
+API_RESPONSE
+API_ERROR
+
+
+Error Events
+ERROR_OCCURRED
+UNHANDLED_EXCEPTION
+CLIENT_ERROR
+SERVER_ERROR
+
+
+Defined by ETD.
+Canonical Event Schema
+{
+  "eventId": "",
+  "eventType": "",
+  "eventVersion": "1.0",
+  "timestamp": "",
+  "tenantId": "",
+  "applicationId": "",
+  "sessionId": "",
+  "traceId": "",
+  "source": "",
+  "environment": "",
+  "metadata": {}
+}
+
+
+Event Size Limits
+Type
+	Limit
+	Standard Event
+	32 KB
+	Replay Event
+	128 KB
+	Batch Upload
+	5 MB
+	7. Session Replay SDK Specification
+Capture Sources
+React SDK
+* DOM Mutations
+* Route Changes
+* Click Events
+* Scroll Events
+* Keyboard Activity
+* Component Interaction
+Node SDK
+* API Calls
+* Middleware Activity
+* Request Lifecycle
+* Error Events
+Excluded Data
+Never Capture:
+password
+credit_card
+cvv
+token
+access_token
+secret
+private_key
+
+
+Aligned with Event Taxonomy privacy rules.
+Replay Upload Lifecycle
+Capture
+   ↓
+Compress
+   ↓
+Encrypt
+   ↓
+Buffer
+   ↓
+Upload
+
+
+8. Data Collection Rules
+Data
+	Allowed
+	URL
+	Yes
+	Route
+	Yes
+	State Name
+	Yes
+	Workflow Name
+	Yes
+	User ID
+	Configurable
+	API Endpoint
+	Yes
+	Latency
+	Yes
+	Error Type
+	Yes
+	Password
+	No
+	Credit Card
+	No
+	CVV
+	No
+	Secrets
+	No
+	Access Tokens
+	No
+	9. Offline Operation Specification
+Buffer Architecture
+Memory Queue
+      ↓
+Persistent Queue
+      ↓
+Upload Queue
+      ↓
+Collector API
+
+
+Queue Limits
+Queue
+	Limit
+	Memory Queue
+	10,000
+	Persistent Queue
+	100,000
+	Replay Queue
+	5 GB
+	Retry Policy
+Attempt 1 → Immediate
+Attempt 2 → 5 sec
+Attempt 3 → 30 sec
+Attempt 4 → 5 min
+Attempt 5 → 15 min
+
+
+10. Performance Specification
+Aligned with NFR requirements.
+Metric
+	Target
+	SDK Startup
+	< 50ms
+	Event Capture
+	< 5ms
+	Memory Usage
+	< 20MB
+	CPU Usage
+	< 2%
+	Network Overhead
+	< 2%
+	Replay Processing
+	< 10ms
+	11. Security Specification
+API Key Handling
+* Stored encrypted
+* Never logged
+Payload Encryption
+* TLS 1.3
+Storage Encryption
+* AES-256
+Replay Encryption
+* AES-256
+Request Signing
+HMAC-SHA256
+
+
+Tamper Detection
+* SDK integrity validation
+* Signature verification
+12. Plugin Architecture
+Registration
+SOTS.use(plugin);
+
+
+Plugin Lifecycle
+Load
+ ↓
+Validate
+ ↓
+Initialize
+ ↓
+Execute
+ ↓
+Shutdown
+
+
+Plugin Permissions
+EVENT_READ
+EVENT_WRITE
+REPLAY_READ
+SESSION_READ
+NETWORK_ACCESS
+
+
+13. Error Handling Specification
+Error
+	Severity
+	SDK_INIT_FAILED
+	Critical
+	INVALID_API_KEY
+	Critical
+	INVALID_EVENT
+	Medium
+	NETWORK_TIMEOUT
+	Medium
+	QUEUE_OVERFLOW
+	High
+	REPLAY_CAPTURE_FAILED
+	Medium
+	STORAGE_FAILURE
+	High
+	Each SDK error shall include:
+{
+  "code": "",
+  "message": "",
+  "severity": "",
+  "recoverable": true
+}
+
+
+14. Logging Specification
+SOTS.setLogLevel("INFO");
+
+
+Levels:
+TRACE
+DEBUG
+INFO
+WARN
+ERROR
+FATAL
+
+
+15. Configuration Specification
+SOTS.initialize({
+    autoTrack: true,
+    replayEnabled: true,
+    errorTracking: true,
+    stateTracking: true,
+    apiTracking: true,
+    workflowTracking: true,
+    bufferSize: 10000,
+    retryCount: 5,
+    sessionTimeout: 1800000,
+    debug: false
+});
+16. Versioning & Compatibility
+Semantic Versioning
+MAJOR.MINOR.PATCH
+
+
+Examples:
+1.0.0
+1.1.0
+2.0.0
+
+
+Compatibility Rules
+* Minor versions must remain backward compatible.
+* Patch versions must remain fully compatible.
+* Breaking changes require major version increments.
+Deprecation Policy
+Minimum support window:
+12 months
+
+
+17. Testing Requirements
+The SDK must support:
+Unit Tests
+* Event validation
+* State tracking
+* Session tracking
+Integration Tests
+* Collector integration
+* Replay integration
+Performance Tests
+* CPU
+* Memory
+* Throughput
+Security Tests
+* Encryption
+* Secret handling
+Compatibility Tests
+* React
+* Next.js
+* Node.js
+Contract Tests
+* Event schema validation
+* API compatibility
+18. SDK Distribution Specification
+NPM Packages
+@sots/react
+@sots/node
+@sots/core
+
+
+Bundle Formats
+ESM
+CJS
+UMD
+
+
+CDN Distribution
+<script src="https://cdn.sots.io/sdk/latest/sots.min.js"></script>
+
+
+Integrity Verification
+integrity="sha384-..."
+
+
+19. Developer Experience Requirements
+The SDK ecosystem shall provide:
+Documentation
+* Installation Guide
+* Quick Start Guide
+* SDK Reference
+Examples
+* React Example
+* Next.js Example
+* Node.js Example
+* Express Example
+Guides
+* Session Replay Guide
+* Privacy Configuration Guide
+* Demonstration Mode Guide
+* Production Monitoring Guide
+Tooling
+* TypeScript Definitions
+* IDE Autocomplete
+* OpenAPI Examples
+* Migration Guides
+20. Phase Evolution Roadmap
+Phase 1 SDK
+* Event Capture
+* Session Replay
+* Workflow Discovery
+* State Tracking
+* API Tracking
+* Demonstration Mode
+Phase 2 SDK
+Additional:
+* Production Monitoring
+* Journey Intelligence
+* Database Telemetry Integration
+* Error Correlation Support
+Phase 3 SDK
+Additional:
+* Behavioral Baseline Collection
+* Regression Detection Support
+* Failure Simulation Hooks
+* Autonomous Validation Support
+* Quality Intelligence Support

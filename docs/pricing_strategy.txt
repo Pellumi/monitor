@@ -1,0 +1,212 @@
+﻿Pricing Strategy Document (PSD)
+1. Purpose
+This document defines the pricing philosophy, monetization strategy, value metrics, pricing evolution model, and long-term revenue strategy for the Self-Observing Testing System (SOTS).
+The purpose of this document is to ensure that pricing remains aligned with:
+* Product value
+* Customer outcomes
+* Platform evolution
+* Infrastructure costs
+* Market positioning
+This document serves as the authoritative source for all future pricing, packaging, metering, and billing decisions.
+2. Pricing Vision
+The objective of SOTS pricing is not to charge customers for telemetry.
+The objective is to charge customers for confidence in software behavior.
+Customers do not purchase:
+* Events
+* Logs
+* Traces
+* Storage
+Customers purchase:
+* Workflow visibility
+* Coverage visibility
+* Behavioral understanding
+* Quality confidence
+* Release confidence
+Pricing shall reflect perceived customer value rather than implementation details.
+3. Pricing Principles
+PSD-001 Value-Based Pricing
+Pricing shall be aligned with customer outcomes.
+Customers pay for:
+* Applications analyzed
+* Workflows understood
+* Quality visibility gained
+Customers shall not be required to understand internal platform architecture in order to understand pricing.
+PSD-002 Simplicity First
+Pricing must be understandable within minutes.
+Customers should immediately understand:
+* What they are buying
+* What limits exist
+* What causes additional cost
+Complex billing structures shall be avoided unless required by platform economics.
+PSD-003 Transparency
+All pricing units shall be explicitly defined.
+No hidden conversion systems shall exist.
+No opaque credit systems shall exist.
+Every billable unit must be understandable and measurable by customers.
+PSD-004 Pricing Evolves With Product Value
+Pricing models shall evolve as platform capabilities evolve.
+Each major platform phase introduces new customer value and may introduce new pricing dimensions.
+Pricing evolution must remain predictable and logical.
+PSD-005 Cost Alignment
+Pricing must eventually reflect infrastructure consumption.
+However:
+Infrastructure cost shall never become the primary pricing mechanism unless customer value scales directly with that cost.
+4. Market Position
+Traditional Observability Vendors
+Examples:
+* Datadog
+* New Relic
+* Sentry
+* PostHog
+These platforms primarily monetize telemetry volume.
+Customers purchase observability.
+Pricing is commonly based on:
+* Events
+* Sessions
+* Logs
+* Traces
+* Hosts
+SOTS Position
+SOTS is not primarily an observability platform.
+SOTS is a Behavioral Quality Intelligence Platform.
+Customers purchase:
+* Workflow understanding
+* Missing flow detection
+* Missing state detection
+* Coverage analysis
+* Quality visibility
+The primary value is behavioral intelligence rather than telemetry collection.
+5. Pricing Evolution Framework
+SOTS pricing evolves through three eras.
+Era 1 — Behavioral QA Platform (Phase 1)
+Pricing Objective
+Maximize adoption and category creation.
+The goal is to make it easy for developers to experience:
+"Demonstrate your application once and instantly discover missing flows, missing states, and QA coverage gaps."
+Primary Value Drivers
+Customers receive value from:
+* Developer Demonstration Mode
+* Behavioral Graph Generation
+* Workflow Discovery
+* Coverage Reports
+* Missing Flow Reports
+* Missing State Reports
+* Session Replay
+Primary Pricing Metric
+Applications
+Secondary Metrics:
+* Team Members
+* Storage
+* Demonstration Sessions
+Event volume shall not be used as a customer-facing pricing metric.
+Strategic Rationale
+Event volume is not strongly correlated with customer value during Phase 1.
+Two customers may generate dramatically different event volumes while receiving similar quality intelligence.
+Charging based on events would create unnecessary pricing complexity and weaken product positioning.
+Era 2 — Production Intelligence Platform (Phase 2)
+Pricing Objective
+Align pricing with ongoing production monitoring value.
+New Customer Value
+Customers now receive:
+* Production Monitoring
+* Workflow Health Monitoring
+* User Journey Intelligence
+* Behavioral Trend Analysis
+* Continuous Observation
+Pricing Model
+Base Subscription
+* Application Limits
+* Included Event Pool
+* Event Overage Pricing
+Strategic Rationale
+In Phase 2:
+* Infrastructure costs increase
+* Customer value increases with observation volume
+Event volume becomes a meaningful value metric.
+Event-based pricing becomes appropriate because customers are receiving continuous behavioral intelligence from production traffic.
+Era 3 — Autonomous Quality Intelligence Platform (Phase 3)
+Pricing Objective
+Monetize computational intelligence.
+New Customer Value
+Customers receive:
+* Test Generation
+* Regression Detection
+* Failure Simulation
+* Quality Intelligence
+* AI Assistant
+* Autonomous Validation
+Pricing Model
+Base Subscription
+* Event Consumption
+* AI Consumption
+AI Consumption Principles
+AI-assisted functionality shall be billed separately from telemetry.
+Customers shall always understand:
+* What was consumed
+* Why it was consumed
+* How much it cost
+No opaque AI credit systems shall be used.
+Published conversion rules are mandatory.
+6. Initial Launch Pricing Strategy
+Free
+Purpose:
+Product discovery.
+Target:
+* Individual developers
+* Students
+* Open source projects
+Solo
+Purpose:
+Independent developers.
+Target:
+* Freelancers
+* Indie founders
+* Small products
+Team
+Purpose:
+Collaborative software teams.
+Target:
+* Startups
+* Product teams
+* QA teams
+Business
+Purpose:
+Growing organizations.
+Target:
+* Scale-ups
+* Multiple product teams
+Enterprise
+Purpose:
+Large organizations with governance requirements.
+Target:
+* Enterprises
+* Regulated industries
+* Self-hosted deployments
+7. Enterprise Strategy
+Enterprise pricing shall be customized based on:
+* Application volume
+* Deployment model
+* Compliance requirements
+* Support requirements
+* Data retention requirements
+* Self-hosting requirements
+Enterprise agreements may include annual contracts and negotiated pricing.
+8. Success Metrics
+The pricing strategy shall be considered successful when:
+1. Customers understand pricing without sales assistance.
+2. Pricing reflects customer value.
+3. Pricing scales with platform maturity.
+4. Revenue scales with infrastructure costs.
+5. Enterprise expansion remains viable.
+6. Free users can experience core product value.
+7. Upgrades occur naturally as customer maturity increases.
+8. Pricing supports long-term platform sustainability.
+9. Governance Rules
+Any pricing change must:
+1. Preserve pricing transparency.
+2. Preserve customer trust.
+3. Align with platform value.
+4. Avoid hidden billing mechanisms.
+5. Maintain compatibility with existing customer contracts.
+6. Be documented in the Pricing & Packaging Specification.
+This document is the authoritative source for pricing philosophy and pricing evolution across all phases of SOTS.

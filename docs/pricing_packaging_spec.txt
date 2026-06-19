@@ -1,0 +1,349 @@
+﻿Pricing & Packaging Specification (PPS)
+1. Purpose
+This document defines the commercial packaging structure for SOTS.
+The Pricing & Packaging Specification establishes:
+* Subscription plans
+* Included capabilities
+* Plan limits
+* Feature entitlements
+* Commercial upgrade paths
+* Packaging evolution strategy
+This document serves as the authoritative source for all customer-facing plans.
+2. Packaging Philosophy
+SOTS pricing is designed around customer value.
+Customers purchase:
+* Behavioral visibility
+* Workflow understanding
+* Quality confidence
+Customers do not purchase:
+* Events
+* Logs
+* Traces
+* Internal compute
+During Phase 1, packaging shall be based primarily on:
+* Applications
+* Users
+* Storage
+* Retention
+3. Plan Structure
+SOTS provides five commercial plans.
+1. Free
+2. Solo
+3. Team
+4. Business
+5. Enterprise
+Each plan is designed for a distinct customer maturity level.
+4. Free Plan
+Purpose
+Allow developers to experience the complete SOTS workflow.
+Target Audience:
+* Individual developers
+* Students
+* Open-source maintainers
+* Product evaluation users
+Monthly Price
+$0
+Limits
+Applications:
+1
+Users:
+1
+Storage:
+1 GB
+Retention:
+14 Days
+Reports:
+Basic
+Exports:
+JSON Only
+Included Features
+Application Onboarding
+Developer Demonstration Mode
+Session Recording
+Session Replay
+Behavior Graph Generation
+Workflow Discovery
+Coverage Analysis
+Missing State Detection
+Missing Flow Detection
+Endpoint Analysis
+Basic Dashboard
+Excluded Features
+API Access
+Advanced Exports
+Priority Support
+Team Collaboration
+SSO
+Self Hosting
+5. Solo Plan
+Purpose
+Support individual professionals and small products.
+Target Audience:
+* Freelancers
+* Indie Hackers
+* Solo Founders
+Monthly Price
+$29
+Limits
+Applications:
+3
+Users:
+3
+Storage:
+25 GB
+Retention:
+90 Days
+Reports:
+Unlimited
+Exports:
+PDF
+CSV
+JSON
+HTML
+Included Features
+Everything in Free
+Advanced Reporting
+Historical Report Access
+Multiple Environments
+Email Support
+6. Team Plan
+Purpose
+Support collaborative engineering teams.
+Target Audience:
+* Startups
+* QA Teams
+* Product Teams
+Monthly Price
+$99
+Limits
+Applications:
+10
+Users:
+10
+Storage:
+100 GB
+Retention:
+180 Days
+Reports:
+Unlimited
+Exports:
+All Formats
+Included Features
+Everything in Solo
+Team Collaboration
+Shared Dashboards
+Role-Based Access Control
+Application-Level Permissions
+Priority Email Support
+7. Business Plan
+Purpose
+Support organizations operating multiple applications.
+Target Audience:
+* Growth Stage Companies
+* Multi-Team Organizations
+* Scale-Ups
+Monthly Price
+$299
+Limits
+Applications:
+50
+Users:
+50
+Storage:
+500 GB
+Retention:
+365 Days
+Reports:
+Unlimited
+Exports:
+All Formats
+Included Features
+Everything in Team
+API Access
+Audit Logs
+Advanced RBAC
+Priority Processing
+Priority Support
+Dedicated Customer Success
+8. Enterprise Plan
+Purpose
+Support enterprise deployments and regulated environments.
+Target Audience:
+* Large Enterprises
+* Regulated Industries
+* Government
+* Self-Hosted Customers
+Pricing
+Custom
+Annual Contract
+Limits
+Custom
+Included Features
+Everything in Business
+SSO
+SAML
+OIDC
+Custom Retention Policies
+Custom Data Residency
+Self Hosting
+Private Networking
+Enterprise SLA
+Dedicated Support
+Security Reviews
+Custom Integrations
+Architecture Assistance
+9. Feature Entitlement Matrix
+Feature
+	Free
+	Solo
+	Team
+	Business
+	Enterprise
+	Demonstration Mode
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Session Replay
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Behavior Graphs
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Coverage Analysis
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Missing States
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Missing Flows
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Endpoint Intelligence
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Report Exports
+	Limited
+	Yes
+	Yes
+	Yes
+	Yes
+	Team Collaboration
+	No
+	No
+	Yes
+	Yes
+	Yes
+	API Access
+	No
+	No
+	No
+	Yes
+	Yes
+	Audit Logs
+	No
+	No
+	No
+	Yes
+	Yes
+	SSO
+	No
+	No
+	No
+	No
+	Yes
+	Self Hosting
+	No
+	No
+	No
+	No
+	Yes
+	
+
+10. Upgrade Path
+Expected progression:
+Free
+↓
+Solo
+↓
+Team
+↓
+Business
+↓
+Enterprise
+Customers should naturally progress as:
+* Application count increases
+* Team size increases
+* Storage requirements increase
+* Governance requirements increase
+
+
+11. Phase 2 Packaging Evolution
+Phase 2 introduces:
+* Production Monitoring
+* Workflow Health
+* Journey Intelligence
+Additional packaging dimension:
+Included Event Pool
+Example:
+Team Plan
+10 Applications
+10 Users
+5 Million Events Included
+Event Overages Apply
+The application-based model remains primary.
+Event metering becomes secondary.
+12. Phase 3 Packaging Evolution
+Phase 3 introduces:
+* Autonomous Validation
+* Test Generation
+* Failure Simulation
+* Quality Intelligence Assistant
+Additional packaging dimension:
+AI Consumption
+Example:
+Business Plan
+500 Included AI Credits
+Additional Credits Available
+AI consumption shall always remain transparent and separately reported.
+
+
+13. Packaging Governance
+Any change to:
+* Plan pricing
+* Application limits
+* User limits
+* Storage limits
+* Retention limits
+* Included features
+must be approved through formal pricing review.
+Packaging changes must remain consistent with the Pricing Strategy Document.
+
+
+14. Success Criteria
+The Pricing & Packaging Model shall be considered successful when:
+1. Customers can select a plan in under five minutes.
+2. Plan differences are immediately understandable.
+3. Upgrades occur naturally as organizations grow.
+4. Pricing remains aligned with customer value.
+5. Packaging supports all Phase 1 commercial objectives.
+6. Future Phase 2 and Phase 3 monetization can be added without restructuring existing plans.

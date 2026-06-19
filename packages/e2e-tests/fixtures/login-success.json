@@ -1,0 +1,6 @@
+[
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/login" } },
+  { "eventType": "API_REQUEST", "metadata": { "endpoint": "/api/auth", "statusCode": 200, "method": "POST", "durationMs": 50 } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/home" } }
+]

@@ -1,0 +1,613 @@
+﻿Developer Demonstration Mode Specification (DDMS)
+1. Purpose
+This document defines the Developer Demonstration Mode (DDM) for the Self-Observing Testing System (SOTS).
+Developer Demonstration Mode is the primary workflow through which developers introduce an application to SOTS and obtain immediate quality intelligence without requiring production traffic, historical telemetry, or AI training.
+Developer Demonstration Mode is the foundational capability of the Behavioral QA Platform and serves as the entry point for all future intelligence capabilities.
+The purpose of DDM is to transform a developer-recorded application walkthrough into:
+* Behavioral Graphs
+* Workflow Maps
+* Coverage Reports
+* Missing State Reports
+* Missing Flow Reports
+* Endpoint Analysis
+* Quality Assessments
+* Future Test Generation Assets
+This capability represents the primary differentiator of Phase 1 and establishes the behavioral baseline required for all future platform phases.
+2. Scope
+Developer Demonstration Mode applies across all platform phases.
+Phase 1
+Used to generate:
+* Behavioral Graphs
+* Coverage Reports
+* Missing State Reports
+* Endpoint Analysis
+* QA Reports
+Phase 2
+Used to establish baseline workflow models against which production behavior is compared.
+Phase 3
+Used as training data for:
+* Test Generation
+* Regression Detection
+* Failure Simulation
+* Quality Intelligence
+3. Objectives
+DDM-OBJ-001
+Allow developers to demonstrate software behavior once.
+DDM-OBJ-002
+Automatically generate workflow intelligence.
+DDM-OBJ-003
+Eliminate manual workflow documentation.
+DDM-OBJ-004
+Identify quality gaps before production.
+DDM-OBJ-005
+Generate behavioral baselines.
+DDM-OBJ-006
+Accelerate QA planning.
+DDM-OBJ-007
+Provide explainable coverage analysis.
+DDM-OBJ-008
+Generate future autonomous validation assets.
+4. Conceptual Model
+Developer Demonstration Mode follows a simple principle:
+Developer Demonstrates Application
+                ↓
+SOTS Observes Behavior
+                ↓
+SOTS Builds Workflow Model
+                ↓
+SOTS Identifies Coverage
+                ↓
+SOTS Identifies Missing Paths
+                ↓
+SOTS Generates QA Intelligence
+
+
+The developer is not writing tests.
+The developer is teaching the platform how the application behaves.
+5. Developer Demonstration Lifecycle
+Stage 1 — Application Connection
+Developer:
+Create Application
+       ↓
+Install SDK
+       ↓
+Configure SDK Key
+       ↓
+Start Recording
+
+
+Supports SDK integration requirements.
+Stage 2 — Demonstration Session
+Developer performs application workflows.
+Example:
+Register
+ ↓
+Login
+ ↓
+Browse Products
+ ↓
+View Product
+ ↓
+Add To Cart
+ ↓
+Checkout
+
+
+The system captures:
+* Page visits
+* Route changes
+* Button clicks
+* Form submissions
+* State transitions
+* API calls
+* API responses
+* Errors
+Defined by the event taxonomy.
+Stage 3 — Session Processing
+Captured events are converted into:
+Events
+  ↓
+Session
+  ↓
+States
+  ↓
+Transitions
+  ↓
+Workflow
+  ↓
+Behavior Graph
+
+
+Supports behavioral graph generation architecture.
+Stage 4 — Intelligence Generation
+SOTS automatically generates:
+* Workflow Graphs
+* Coverage Reports
+* Missing States
+* Missing Flows
+* Endpoint Analysis
+* QA Reports
+6. Demonstration Session Model
+Definition
+A Demonstration Session is a recorded developer walkthrough used to teach SOTS how the application behaves.
+Session Structure
+{
+  "sessionId": "uuid",
+  "sessionType": "DEMONSTRATION",
+  "applicationId": "uuid",
+  "startedAt": "",
+  "endedAt": "",
+  "eventCount": 0
+}
+
+
+Session Types
+Guided Demonstration
+Developer intentionally demonstrates workflows.
+Example:
+Registration
+Login
+Checkout
+Subscription Purchase
+
+
+Exploratory Demonstration
+Developer freely navigates the application.
+Example:
+Random navigation
+Feature exploration
+Settings exploration
+
+
+Validation Demonstration
+Developer demonstrates behavior after a change.
+Example:
+Release v2.1
+Checkout validation
+
+
+7. DDM Inputs
+Primary Input
+Developer behavior.
+Clicks
+Forms
+Navigation
+State Changes
+API Interactions
+
+
+Secondary Inputs
+Application metadata.
+{
+  "applicationName": "",
+  "environment": "demo"
+}
+
+
+Optional Inputs
+Release Information
+{
+  "releaseVersion": "2.1.0"
+}
+
+
+Workflow Labels
+{
+  "workflow": "Checkout"
+}
+
+
+8. Captured Demonstration Data
+The platform shall record:
+Navigation Events
+PAGE_VISIT
+ROUTE_CHANGE
+PAGE_EXIT
+
+
+UI Events
+BUTTON_CLICK
+LINK_CLICK
+COMPONENT_INTERACTION
+
+
+Form Events
+FORM_STARTED
+FORM_SUBMITTED
+FORM_FAILED
+
+
+State Events
+STATE_ENTERED
+STATE_TRANSITION
+
+
+API Events
+API_REQUEST
+API_RESPONSE
+API_ERROR
+
+
+Error Events
+ERROR_OCCURRED
+SERVER_ERROR
+CLIENT_ERROR
+
+
+As defined in the event taxonomy.
+9. Behavioral Graph Generation
+Purpose
+Generate a visual representation of observed application behavior.
+Supports:
+FR-026 through FR-034.
+Example
+Developer performs:
+Register
+ ↓
+Login
+ ↓
+Browse Products
+ ↓
+Add To Cart
+ ↓
+Checkout
+
+
+Generated Graph:
+ANONYMOUS
+      ↓
+REGISTERED
+      ↓
+AUTHENTICATED
+      ↓
+PRODUCT_BROWSING
+      ↓
+CART_ACTIVE
+      ↓
+CHECKOUT
+
+
+Generated Graph Components
+States
+Observed conditions.
+Actions
+Observed interactions.
+Transitions
+Observed movement.
+Workflows
+Observed business processes.
+10. Workflow Discovery
+The system shall automatically identify:
+Workflow Entry Points
+Examples:
+LANDING_PAGE
+LOGIN_PAGE
+REGISTRATION_PAGE
+
+
+Workflow Exit Points
+Examples:
+CHECKOUT_COMPLETE
+SUBSCRIPTION_ACTIVE
+PROFILE_UPDATED
+
+
+Workflow Boundaries
+Workflow Start
+      ↓
+Workflow End
+
+
+Supports workflow generation requirements.
+11. Coverage Report Generation
+Purpose
+Measure how much of the discovered workflow has been demonstrated.
+Coverage Formula
+Observed Paths
+------------------- × 100
+Expected Paths
+
+
+Example
+Checkout Workflow:
+Observed:
+✓ Add Item
+✓ Checkout
+✓ Payment Success
+
+
+Not Observed:
+✗ Payment Failure
+✗ Empty Cart
+✗ Inventory Failure
+
+
+Result:
+Coverage: 60%
+
+
+Coverage Categories
+Workflow Coverage
+State Coverage
+Transition Coverage
+Endpoint Coverage
+Error Coverage
+
+
+12. Missing Flow Detection
+Purpose
+Identify likely workflow paths that were not demonstrated.
+Supports FR-037 and FR-038.
+Example
+Observed:
+Login
+ ↓
+Dashboard
+
+
+Missing:
+Login Failure
+Password Reset
+Account Locked
+Session Expired
+
+
+Missing Flow Categories
+Error Flows
+Authentication Failure
+Payment Failure
+API Failure
+
+
+Alternative Flows
+Guest Checkout
+Social Login
+Trial Signup
+
+
+Recovery Flows
+Retry Payment
+Retry Login
+Reconnect Session
+
+
+13. Missing State Detection
+Supports FR-042 through FR-046.
+Missing Loading States
+Examples:
+Product Loading
+Checkout Loading
+Search Loading
+
+
+Missing Empty States
+Examples:
+Empty Cart
+No Search Results
+No Notifications
+
+
+Missing Error States
+Examples:
+404
+500
+Validation Error
+Authentication Error
+
+
+Missing Recovery States
+Examples:
+Retry Payment
+Retry Upload
+Retry Submission
+
+
+14. Edge Case Generation Specification
+Purpose
+Automatically infer edge cases from demonstrated behavior.
+This capability becomes progressively more intelligent across phases.
+15. Phase 1 Edge Case Generation
+Rule-Based Generation.
+Observed:
+LOGIN_SUCCESS
+
+
+Generate:
+LOGIN_FAILURE
+
+
+Observed:
+PRODUCT_SEARCH
+Generate:
+EMPTY_SEARCH_RESULT
+
+
+Observed:
+CHECKOUT_SUCCESS
+
+
+Generate:
+PAYMENT_FAILED
+
+
+Observed:
+FORM_SUBMITTED
+
+
+Generate:
+INVALID_FORM_DATA
+
+
+Generation Rules
+Success Path
+      ↓
+Failure Path
+
+
+Populated State
+      ↓
+Empty State
+
+
+Valid Input
+      ↓
+Invalid Input
+
+
+Fast Response
+      ↓
+Timeout
+
+
+16. Phase 2 Edge Case Generation
+Production-Aware Generation.
+Observed:
+95% Success
+5% Failure
+
+
+Generate:
+Rare Failure Path
+
+
+Observed:
+User Abandonment
+
+
+Generate:
+Workflow Interruption Scenario
+
+
+Observed:
+API Slowdowns
+
+
+Generate:
+Latency Edge Cases
+
+
+17. Phase 3 Edge Case Generation
+Behavioral Intelligence Generation.
+Observed Workflow:
+Checkout
+
+
+System Generates:
+Payment Failure
+Gateway Timeout
+Duplicate Submission
+Cart Expiry
+Inventory Change
+Session Timeout
+Network Failure
+Authentication Expiry
+
+
+Supports automated test generation requirements.
+18. Endpoint Analysis Generation
+DDM shall generate:
+Most Used Endpoints
+/api/products
+/api/cart
+/api/orders
+
+
+Slow Endpoints
+/api/search
+
+
+Error-Prone Endpoints
+/api/payment
+
+
+Supports endpoint intelligence requirements.
+19. Demonstration QA Report
+Generated after every demonstration.
+Sections
+Executive Summary
+Application Quality Score
+Coverage Score
+Workflow Count
+
+
+Workflow Coverage
+Checkout: 72%
+Registration: 90%
+Search: 45%
+
+
+Missing Flows
+Payment Failure
+Password Reset
+Session Expiration
+
+
+Missing States
+404
+Loading
+Empty Cart
+
+
+Endpoint Analysis
+Slow APIs
+High Error APIs
+Unused APIs
+
+
+Recommendations
+Add payment failure testing
+
+
+Add empty cart validation
+
+
+Add session timeout handling
+
+
+20. Phase-Based Evolution
+Phase 1
+Outputs:
+* Behavioral Graph
+* Coverage Report
+* Missing States
+* Missing Flows
+* Endpoint Analysis
+* Session Replay
+Primary goal:
+Teach SOTS Application Behavior
+
+
+Phase 2
+Additional Outputs:
+* Workflow Health Baselines
+* Journey Intelligence
+* Production Comparisons
+* Friction Analysis
+Primary goal:
+Compare Demo Behavior
+Against Production Reality
+
+
+Phase 3
+Additional Outputs:
+* Generated Test Suites
+* Regression Baselines
+* Failure Simulations
+* Behavioral Risk Assessments
+* Autonomous Recommendations
+Primary goal:
+Convert Demonstrated Behavior
+Into Autonomous Validation
+
+
+21. Success Criteria
+Developer Demonstration Mode shall be considered successful when a developer can:
+1. Install the SDK.
+2. Demonstrate application workflows once.
+3. Automatically obtain a behavioral graph.
+4. Automatically obtain workflow coverage.
+5. Automatically identify missing states.
+6. Automatically identify missing flows.
+7. Automatically receive QA recommendations.
+8. Establish a baseline for production intelligence.
+9. Generate assets usable by future autonomous validation systems.

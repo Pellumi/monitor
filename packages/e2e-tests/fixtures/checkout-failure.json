@@ -1,0 +1,7 @@
+[
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/products/123" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/cart" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/checkout" } },
+  { "eventType": "API_REQUEST", "metadata": { "endpoint": "/api/payment", "statusCode": 402, "method": "POST", "durationMs": 100 } }
+]

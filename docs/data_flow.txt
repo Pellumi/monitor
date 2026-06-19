@@ -1,0 +1,585 @@
+﻿DATA FLOW DOCUMENT (DFD)
+1. Purpose
+This document defines how information moves throughout the Self-Observing Testing System (SOTS).
+The document describes:
+* Data producers
+* Data consumers
+* Data stores
+* Processing pipelines
+* Data transformations
+* Event lifecycles
+* Inter-service data movement
+* Phase-specific data flows
+The objective is to ensure complete traceability of behavioral information from initial capture through quality intelligence generation.
+2. Data Flow Principles
+DFP-001 Event-Centric Processing
+All platform operations originate from captured events.
+DFP-002 Immutable Event History
+Captured events are never modified after ingestion.
+Transformations produce derived datasets.
+DFP-003 Stream-First Processing
+Behavioral data flows through streaming pipelines before persistence.
+DFP-004 Traceability
+Every derived artifact must be traceable back to source events.
+DFP-005 Session Correlation
+All behavioral data should be associated with sessions whenever possible.
+DFP-006 Tenant Isolation
+Data flows must remain isolated per tenant.
+3. High-Level Data Flow
+User Interaction
+      │
+      ▼
+Frontend SDK
+      │
+      ▼
+Event Collector
+      │
+      ▼
+Kafka Event Stream
+      │
+      ▼
+Session Engine
+      │
+      ▼
+Behavior Processing Engines
+      │
+      ▼
+Storage Layer
+      │
+      ▼
+Dashboard
+      │
+      ▼
+Users
+4. Primary Data Sources
+Source A — Frontend Events
+Produced By:
+Frontend SDK
+Examples:
+* Page views
+* Route transitions
+* Clicks
+* Form interactions
+* Form submissions
+* UI events
+* Errors
+Defined by FR-001 through FR-010.
+Source B — Backend Events
+Produced By:
+Backend SDK
+Examples:
+* API requests
+* API responses
+* Response times
+* Exceptions
+* Endpoint metrics
+Defined by FR-011 through FR-017.
+Source C — Production Monitoring Events
+Produced By:
+Production Monitoring Services
+Examples:
+* Live user sessions
+* Workflow health events
+* Production telemetry
+Defined by FR-066 through FR-069.
+Source D — Database Telemetry
+Produced By:
+Database Intelligence Collectors
+Examples:
+* Query execution metrics
+* Query duration
+* Index utilization
+* Field utilization
+Defined by FR-081 through FR-085.
+5. Canonical Event Flow
+Flow DF-001
+Telemetry Ingestion
+Application
+      │
+      ▼
+Frontend SDK
+Backend SDK
+      │
+      ▼
+API Gateway
+      │
+      ▼
+Event Collector
+      │
+      ▼
+Validation Layer
+      │
+      ▼
+Kafka Topic
+      │
+      ▼
+Storage Pipeline
+Input
+Raw Behavioral Event
+{
+  "eventId":"uuid",
+  "sessionId":"uuid",
+  "timestamp":"2026-01-01T12:00:00Z",
+  "eventType":"click"
+}
+Output
+Validated Event
+{
+  "eventId":"uuid",
+  "tenantId":"tenant-1",
+  "applicationId":"app-1",
+  "sessionId":"uuid",
+  "eventType":"click",
+  "timestamp":"ISO8601",
+  "metadata":{}
+}
+6. Session Construction Flow
+Flow DF-002
+Purpose
+Build user journeys.
+Kafka Events
+      │
+      ▼
+Session Engine
+      │
+      ▼
+Event Ordering
+      │
+      ▼
+Session Reconstruction
+      │
+      ▼
+Session Store
+Inputs
+* Navigation events
+* Click events
+* Form events
+* API events
+Outputs
+Session Record
+{
+  "sessionId":"uuid",
+  "startTime":"timestamp",
+  "endTime":"timestamp",
+  "events":[]
+}
+Consumers
+* Session Replay Engine
+* Behavioral Graph Engine
+* User Journey Engine
+* Error Correlation Engine
+7. Session Replay Data Flow
+Flow DF-003
+Session Store
+      │
+      ▼
+Replay Builder
+      │
+      ▼
+Timeline Generator
+      │
+      ▼
+Replay Asset Store
+      │
+      ▼
+Dashboard
+Outputs
+* Event timeline
+* Replay metadata
+* Playback model
+Supports session playback functionality.
+8. Behavioral Graph Generation Flow
+Flow DF-004
+Purpose
+Generate observed application workflows.
+Sessions
+      │
+      ▼
+State Extractor
+      │
+      ▼
+Transition Analyzer
+      │
+      ▼
+Workflow Builder
+      │
+      ▼
+Behavior Graph Store
+Inputs
+* Session records
+* State transitions
+* User flows
+Outputs
+Anonymous
+      ↓
+Registered
+      ↓
+Logged In
+      ↓
+Cart
+      ↓
+Checkout
+
+
+Supports FR-026 through FR-034.
+9. Coverage Analysis Flow
+Flow DF-005
+Behavior Graph
+      │
+      ▼
+Coverage Engine
+      │
+      ▼
+Coverage Calculator
+      │
+      ▼
+Coverage Report
+Inputs
+* Workflow graph
+* Observed paths
+* Session statistics
+Outputs
+* Coverage %
+* Observed paths
+* Missing paths
+* Critical gaps
+Supports FR-035 through FR-041.
+10. Missing State Detection Flow
+Flow DF-006
+Workflow Graph
+      │
+      ▼
+Missing State Engine
+      │
+      ▼
+State Analysis
+      │
+      ▼
+Missing State Report
+Outputs
+* Missing loading state
+* Missing empty state
+* Missing error state
+* Missing failure path
+Supports FR-042 through FR-046.
+11. Endpoint Intelligence Flow
+Flow DF-007
+Backend Telemetry
+      │
+      ▼
+Endpoint Engine
+      │
+      ▼
+Performance Analysis
+      │
+      ▼
+Endpoint Intelligence Store
+Outputs
+* Slow endpoints
+* Most used endpoints
+* Error-prone endpoints
+* API rankings
+Supports FR-047 through FR-052 and FR-076 through FR-080.
+12. QA Report Generation Flow
+Flow DF-008
+Coverage Data
+Missing States
+Endpoint Analysis
+Observed Failures
+      │
+      ▼
+Report Engine
+      │
+      ▼
+QA Report
+Outputs
+* Coverage summary
+* Missing state summary
+* Endpoint summary
+* Quality summary
+Supports FR-053 through FR-059.
+13. Dashboard Consumption Flow
+Flow DF-009
+Analytics Stores
+      │
+      ▼
+Dashboard API
+      │
+      ▼
+Dashboard UI
+      │
+      ▼
+End User
+Consumers
+* Developers
+* QA Engineers
+* Product Managers
+* Engineering Managers
+Supports FR-060 through FR-065.
+14. Production Monitoring Flow (Phase 2)
+Flow DF-010
+Live Production Traffic
+      │
+      ▼
+Frontend SDK
+Backend SDK
+      │
+      ▼
+Event Collector
+      │
+      ▼
+Kafka
+      │
+      ▼
+Workflow Health Monitor
+      │
+      ▼
+Health Metrics Store
+Outputs
+* Workflow health
+* User activity trends
+* Production behavior
+Supports FR-066 through FR-069.
+15. User Journey Intelligence Flow (Phase 2)
+Flow DF-011
+Production Sessions
+      │
+      ▼
+Journey Engine
+      │
+      ▼
+Journey Analysis
+      │
+      ▼
+Insight Generation
+
+
+Outputs
+* Common journeys
+* Abandoned journeys
+* Friction points
+* Bottlenecks
+Supports FR-070 through FR-075.
+16. Database Intelligence Flow (Phase 2)
+Flow DF-012
+Database Metrics
+      │
+      ▼
+Database Intelligence Engine
+      │
+      ▼
+Query Analysis
+      │
+      ▼
+Optimization Insights
+Outputs
+* Expensive queries
+* Index recommendations
+* Unused fields
+Supports FR-081 through FR-085.
+17. Error Correlation Flow (Phase 2)
+Flow DF-013
+Errors
+Sessions
+API Activity
+Database Activity
+Logs
+      │
+      ▼
+Correlation Engine
+      │
+      ▼
+Investigation Package
+Outputs
+Error
+│
+├── Session Replay
+├── Workflow Path
+├── Trace
+├── Logs
+└── Database Queries
+
+
+Supports FR-086 through FR-091.
+18. Test Generation Flow (Phase 3)
+Flow DF-014
+Observed Workflows
+      │
+      ▼
+Test Generation Engine
+      │
+      ▼
+Scenario Generator
+      │
+      ▼
+Generated Test Suite
+Outputs
+* Positive tests
+* Negative tests
+* Edge cases
+* Validation suites
+Supports FR-092 through FR-096.
+19. Regression Detection Flow (Phase 3)
+Flow DF-015
+Release A Behavior
+Release B Behavior
+      │
+      ▼
+Regression Engine
+      │
+      ▼
+Behavior Comparison
+      │
+      ▼
+Regression Report
+Outputs
+* Missing workflows
+* Unexpected transitions
+* Behavioral deviations
+Supports FR-097 through FR-101.
+20. Failure Simulation Flow (Phase 3)
+Flow DF-016
+Workflow Model
+      │
+      ▼
+Simulation Engine
+      │
+      ▼
+Failure Injection
+      │
+      ▼
+Resilience Assessment
+
+
+Outputs
+* Timeout simulation
+* Service failure simulation
+* Network failure simulation
+Supports FR-102 through FR-106.
+21. Behavioral Anomaly Detection Flow (Phase 3)
+Flow DF-017
+Historical Behavior
+Current Behavior
+      │
+      ▼
+Anomaly Engine
+      │
+      ▼
+Baseline Comparison
+      │
+      ▼
+Anomaly Detection
+
+
+Outputs
+* Abandonment spikes
+* Error spikes
+* Latency increases
+* Workflow anomalies
+Supports FR-111 through FR-116.
+22. Quality Intelligence Flow (Phase 3)
+Flow DF-018
+Behavior Graphs
+Failures
+Regressions
+Anomalies
+Optimization Insights
+      │
+      ▼
+Quality Intelligence Engine
+      │
+      ▼
+Risk Assessment
+      │
+      ▼
+Recommendations
+
+
+Outputs
+* Quality risks
+* Corrective actions
+* Prioritized issues
+* Quality assessments
+Supports FR-117 through FR-122.
+23. Storage Data Flows
+PostgreSQL
+Stores
+Organizations
+Users
+Applications
+Configurations
+Reports Metadata
+ClickHouse
+Stores
+Events
+Sessions
+Metrics
+Behavior Graph Data
+Analytics Data
+Object Storage
+Stores
+Replay Assets
+Exports
+Historical Archives
+Snapshots
+
+
+Defined by the architecture specification.
+24. End-to-End Data Lifecycle
+User Interaction
+      │
+      ▼
+SDK Capture
+      │
+      ▼
+Collector
+      │
+      ▼
+Kafka
+      │
+      ▼
+Session Creation
+      │
+      ▼
+Behavior Modeling
+      │
+      ▼
+Analytics
+      │
+      ▼
+Quality Intelligence
+      │
+      ▼
+Reports
+      │
+      ▼
+Dashboard
+      │
+      ▼
+Engineering Teams
+25. Future Autonomous Intelligence Lifecycle
+Observe Behavior
+        │
+        ▼
+Build Sessions
+        │
+        ▼
+Construct Workflow Graphs
+        │
+        ▼
+Analyze Quality
+        │
+        ▼
+Detect Risks
+        │
+        ▼
+Generate Tests
+        │
+        ▼
+Validate Releases
+        │
+        ▼
+Recommend Improvements
+        │
+        ▼
+Autonomous Quality Intelligence

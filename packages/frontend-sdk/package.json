@@ -1,0 +1,19 @@
+{
+  "name": "@sots/frontend-sdk",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "test": "node --test dist/index.test.js"
+  },
+  "dependencies": {
+    "@sots/shared": "workspace:*",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/uuid": "^9.0.8",
+    "typescript": "^5.0.0"
+  }
+}

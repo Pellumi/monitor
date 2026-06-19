@@ -1,0 +1,800 @@
+﻿Behavior Graph Specification (BGS)
+1. Purpose
+The Behavior Graph Specification (BGS) defines the complete behavioral modeling framework for the Self-Observing Testing System (SOTS).
+This document establishes:
+* Behavioral graph architecture
+* State modeling standards
+* Transition modeling standards
+* Workflow modeling standards
+* Graph construction algorithms
+* Graph storage architecture
+* Graph lifecycle management
+* Graph analytics capabilities
+* Phase-based graph evolution
+* Behavioral intelligence foundations
+The Behavior Graph is the central intelligence model of SOTS and serves as the primary representation of how software behaves in practice. It transforms raw events, sessions, and workflows into a continuously evolving behavioral map of an application.
+2. Scope
+This specification applies to:
+Phase 1 — Behavioral QA Platform
+Behavior graphs generated from:
+* Recorded sessions
+* Demonstration workflows
+* SDK-captured interactions
+Phase 2 — Production Intelligence Platform
+Behavior graphs generated from:
+* Live production users
+* Real-world workflows
+* Continuous monitoring streams
+Phase 3 — Autonomous Validation Engine
+Behavior graphs used for:
+* Test generation
+* Regression detection
+* Failure simulation
+* Behavioral anomaly detection
+* Quality intelligence generation
+The graph model must support all present and future intelligence capabilities without redesign.
+3. Objectives
+The Behavior Graph shall enable SOTS to:
+BG-OBJ-001
+Discover application workflows automatically.
+BG-OBJ-002
+Model actual user behavior.
+BG-OBJ-003
+Identify workflow entry and exit points.
+BG-OBJ-004
+Track workflow evolution over time.
+BG-OBJ-005
+Measure workflow coverage.
+BG-OBJ-006
+Detect workflow degradation.
+BG-OBJ-007
+Detect behavioral anomalies.
+BG-OBJ-008
+Generate test scenarios.
+BG-OBJ-009
+Support release comparison.
+BG-OBJ-010
+Provide explainable quality intelligence.
+4. Core Behavioral Model
+Every behavior graph is composed of four foundational elements:
+State
+  ↓
+Transition
+  ↓
+Action
+  ↓
+Workflow
+
+
+These elements collectively describe the observable behavior of an application.
+5. State Specification
+5.1 Definition
+A State represents a meaningful condition of an application observed by SOTS.
+A state answers:
+"Where is the user or system right now?"
+Examples:
+Anonymous
+
+
+Registered
+
+
+Authenticated
+
+
+HomePage
+
+
+SearchResults
+
+
+ProductViewed
+
+
+CartActive
+
+
+Checkout
+
+
+PaymentSuccess
+
+
+PaymentFailure
+
+
+ProfileUpdated
+5.2 State Categories
+Navigation States
+Represent pages or routes.
+Examples:
+Home
+Products
+Checkout
+Profile
+Settings
+UI States
+Represent interface conditions.
+Examples:
+Loading
+EmptyCart
+NoResults
+ModalOpen
+DropdownExpanded
+Business States
+Represent workflow milestones.
+Examples:
+Authenticated
+SubscriptionActive
+OrderCompleted
+InvoiceGenerated
+Error States
+Represent failures.
+Examples:
+PaymentFailed
+AuthenticationFailed
+ApiTimeout
+ValidationError
+System States
+Represent infrastructure conditions.
+Examples:
+ApiUnavailable
+DatabaseTimeout
+RateLimited
+6. State Identification Rules
+BG-STATE-001
+Every state shall possess a unique identifier.
+Example:
+{
+  "stateId": "state_001",
+  "stateName": "CHECKOUT"
+}
+BG-STATE-002
+State names shall use UPPER_SNAKE_CASE.
+Examples:
+CHECKOUT
+PAYMENT_SUCCESS
+AUTHENTICATED
+BG-STATE-003
+States may originate from:
+* PAGE_VISIT
+* ROUTE_CHANGE
+* STATE_ENTERED
+* WORKFLOW events
+* API outcomes
+* Error events
+Defined by the event taxonomy.
+BG-STATE-004
+States shall be classified as:
+{
+  "category": "BUSINESS"
+}
+
+
+Valid categories:
+* NAVIGATION
+* UI
+* BUSINESS
+* ERROR
+* SYSTEM
+7. Action Specification
+7.1 Definition
+An Action represents an event that causes movement between states.
+Examples:
+LOGIN
+REGISTER
+ADD_TO_CART
+CHECKOUT
+SEARCH
+SUBMIT_FORM
+API_SUCCESS
+API_FAILURE
+7.2 Action Structure
+{
+  "actionId": "act_001",
+  "actionName": "LOGIN",
+  "sourceEvent": "FORM_SUBMITTED"
+}
+7.3 Action Sources
+Actions are derived from:
+* BUTTON_CLICK
+* FORM_SUBMITTED
+* API_REQUEST
+* API_RESPONSE
+* LINK_CLICK
+* COMPONENT_INTERACTION
+As defined by the Event Taxonomy.
+8. Transition Specification
+8.1 Definition
+A Transition represents movement from one state to another.
+Example:
+ANONYMOUS
+     |
+ LOGIN
+     ↓
+AUTHENTICATED
+8.2 Transition Model
+{
+  "transitionId": "trans_001",
+  "fromState": "ANONYMOUS",
+  "action": "LOGIN",
+  "toState": "AUTHENTICATED"
+}
+8.3 Transition Types
+Success Transition
+CART
+ ↓
+CHECKOUT
+Failure Transition
+CHECKOUT
+ ↓
+PAYMENT_FAILED
+Retry Transition
+PAYMENT_FAILED
+ ↓
+RETRY_PAYMENT
+ ↓
+CHECKOUT
+Loop Transition
+SEARCH
+ ↓
+SEARCH_RESULTS
+ ↓
+SEARCH
+Exit Transition
+CHECKOUT
+ ↓
+ORDER_COMPLETE
+9. Workflow Specification
+9.1 Definition
+A Workflow is a connected sequence of states and transitions that accomplishes a business objective.
+Examples:
+Registration
+
+
+Login
+
+
+Checkout
+
+
+Password Reset
+
+
+Subscription Purchase
+9.2 Workflow Structure
+{
+  "workflowId": "wf_001",
+  "workflowName": "CHECKOUT",
+  "entryState": "PRODUCT_VIEW",
+  "exitState": "PAYMENT_SUCCESS"
+}
+9.3 Workflow Components
+A workflow contains:
+* Entry state
+* Exit state
+* States
+* Transitions
+* Actions
+* Success paths
+* Failure paths
+10. Graph Construction Process
+Behavior graphs are built automatically from session data.
+Step 1
+Capture Events
+PAGE_VISIT
+BUTTON_CLICK
+FORM_SUBMITTED
+API_RESPONSE
+STATE_TRANSITION
+Step 2
+Build Sessions
+Session A
+ ├─ Event 1
+ ├─ Event 2
+ ├─ Event 3
+Step 3
+Extract States
+Home
+Products
+Cart
+Checkout
+Step 4
+Detect Transitions
+Home → Products
+Products → Cart
+Cart → Checkout
+Step 5
+Generate Workflow
+Browse
+ ↓
+Cart
+ ↓
+Checkout
+Step 6
+Persist Graph
+Store graph in graph repository.
+11. State Discovery Algorithm
+The State Extractor shall identify states using:
+Route Analysis
+/products
+→ PRODUCTS_PAGE
+
+
+Component Analysis
+CheckoutModal
+→ CHECKOUT_MODAL_OPEN
+
+
+Event Correlation
+FORM_SUBMISSION_SUCCEEDED
+→ REGISTRATION_COMPLETE
+
+
+API Outcome Analysis
+200 Response
+→ PAYMENT_SUCCESS
+
+
+500 Response
+→ PAYMENT_FAILED
+
+
+Error Analysis
+VALIDATION_ERROR
+→ FORM_ERROR
+12. Transition Discovery Algorithm
+Transitions shall be inferred when:
+State A
+→ Action
+→ State B
+
+
+is observed within a valid session sequence.
+Example:
+HOME
+→ CLICK_PRODUCT
+→ PRODUCT_VIEW
+
+
+Transition frequency is incremented each time the transition is observed.
+Supports FR-033.
+13. Graph Storage Model
+Phase 1
+Store graph snapshots.
+{
+  "graphId": "graph_001",
+  "applicationId": "app_001"
+}
+Phase 2
+Store continuously evolving workflow graphs.
+Track:
+* Workflow growth
+* Workflow abandonment
+* Workflow health
+Phase 3
+Store:
+* Historical graph versions
+* Release-specific graphs
+* Behavioral baselines
+* Generated workflow models
+14. Graph Database Model
+Behavior graphs shall be persisted using graph storage.
+Nodes
+Application
+State
+Workflow
+Session
+Release
+
+
+Relationships
+HAS_STATE
+
+
+TRANSITIONS_TO
+
+
+STARTS_AT
+
+
+ENDS_AT
+
+
+VISITED
+
+
+MODIFIED
+15. Graph Metrics
+State Metrics
+Track:
+* Visit count
+* Unique users
+* Session count
+* Time spent
+Transition Metrics
+Track:
+* Frequency
+* Success rate
+* Failure rate
+* Average transition duration
+Workflow Metrics
+Track:
+* Completion rate
+* Abandonment rate
+* Coverage %
+* Error rate
+Supports workflow health objectives.
+16. Phase 1 Graph Capabilities
+Supports:
+Behavioral Graph Generation
+FR-026 – FR-034
+Coverage Analysis
+FR-035 – FR-041
+Missing State Detection
+FR-042 – FR-046
+Session Replay Integration
+FR-018 – FR-025
+17. Phase 2 Graph Capabilities
+Supports:
+User Journey Intelligence
+* Common journeys
+* Abandonment analysis
+* Friction detection
+Workflow Health Monitoring
+* Workflow degradation
+* Workflow evolution
+Error Correlation
+* Session linkage
+* Workflow linkage
+* Root-cause context
+18. Phase 3 Graph Capabilities
+Supports:
+Automated Test Generation
+Generate:
+* Positive paths
+* Negative paths
+* Edge cases
+Regression Detection
+Compare:
+Release A Graph
+vs
+Release B Graph
+
+
+Failure Simulation
+Inject failures into graph paths.
+Behavioral Anomaly Detection
+Detect:
+* Missing transitions
+* New transitions
+* Behavioral drift
+* Workflow degradation
+Autonomous Quality Intelligence
+Use graph evidence to:
+* Identify risks
+* Explain failures
+* Recommend actions
+19. Graph Versioning
+Every graph shall be versioned.
+{
+  "graphVersion": "1.0",
+  "createdAt": "timestamp",
+  "applicationVersion": "v2.3.0"
+}
+
+
+Version snapshots shall support:
+* Historical comparison
+* Release validation
+* Regression analysis
+20. Graph Governance Rules
+BG-GOV-001
+Every state must have a unique identifier.
+BG-GOV-002
+Every transition must identify:
+* Source state
+* Destination state
+* Triggering action
+BG-GOV-003
+Graphs must be reproducible from identical datasets.
+BG-GOV-004
+All graph nodes must remain traceable to source sessions and events.
+BG-GOV-005
+Behavior graphs shall preserve tenant isolation.
+BG-GOV-006
+Graph generation shall support future intelligence modules without schema redesign.
+21. Complete Behavioral Intelligence Lifecycle
+Observe Events
+        ↓
+Build Sessions
+        ↓
+Extract States
+        ↓
+Discover Transitions
+        ↓
+Construct Workflows
+        ↓
+Build Behavior Graph
+        ↓
+Measure Coverage
+        ↓
+Detect Missing States
+        ↓
+Monitor Production
+        ↓
+Detect Regressions
+        ↓
+Generate Tests
+        ↓
+Detect Anomalies
+        ↓
+Assess Quality
+        ↓
+Recommend Actions
+        ↓
+Autonomous Quality Intelligence
+
+
+Behavior Graph Specification — Extension
+Section 22: Declared Intent Graph & Flow Reconciliation
+22.1 Purpose
+Sections 1–21 of this specification define the Observed Behavior Graph: a graph constructed bottom-up from recorded sessions, where every node and edge exists because it was actually witnessed by the platform. This section introduces a second graph type, the Declared Intent Graph, constructed top-down by a QA Engineer or Product Manager during organization/application onboarding, before any telemetry exists.
+The two graphs are reconciled continuously rather than merged. The Declared Intent Graph expresses what the application should do. The Observed Behavior Graph expresses what the application has been seen doing. The gap between them — in both directions — is the new source of quality intelligence defined in this section.
+This capability is named the Flow Declaration & Reconciliation System (FDRS).
+22.2 Relationship to Existing Graph Model
+FDRS does not replace or modify the Observed Behavior Graph defined in Sections 4–14. It introduces a parallel object using the same core primitives (State, Action, Transition, Workflow — Section 4) so that both graphs remain comparable and storable in the same graph database model (Section 14).
+Declared Intent Graph          Observed Behavior Graph
+(human-authored, pre-traffic)  (system-derived, post-traffic)
+        │                              │
+        └──────────────┬───────────────┘
+                        ▼
+              Reconciliation Engine
+                        │
+                        ▼
+              Three-Way Classification
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+  CONFIRMED         TRUE GAP        UNDECLARED
+  (declared AND   (declared AND   (observed AND
+   observed)       not observed)   not declared)
+
+
+A node or transition in the Declared Intent Graph carries a provenance field distinguishing how it entered the graph:
+{
+  "stateId": "state_044",
+  "stateName": "PAYMENT_FAILED",
+  "graphType": "DECLARED",
+  "provenance": "SUGGESTED_ACCEPTED",
+  "declaredBy": "user_id",
+  "confidence": null
+}
+
+
+Valid provenance values:
+* USER_AUTHORED — typed or drawn directly by the QA/PM during declaration.
+* SUGGESTED_ACCEPTED — proposed by the Derivation Engine (22.4) and accepted by the user.
+* SUGGESTED_REJECTED — proposed and explicitly rejected. Retained (not deleted) so the system does not re-suggest it and so rejection patterns can improve future suggestions.
+* DEMONSTRATION_PROMOTED — originated as an Observed-graph node and was later promoted into the Declared graph because a developer confirmed it during demonstration review (see 22.7).
+Nodes in the Observed Behavior Graph keep their existing provenance model unchanged (Section 11, Section 12); FDRS does not alter how the Observed graph is built.
+22.3 Flow Declaration Lifecycle
+Flow declaration occurs during organization/application onboarding, as an extension of the existing onboarding sequence (FRS Module — Application Onboarding; DDMS Stage 1).
+Create Organization
+        ↓
+Create Application
+        ↓
+Generate API Keys
+        ↓
+Declare Intended Flow   ← NEW STAGE
+        ↓
+Install SDK
+        ↓
+Start Demonstration Recording
+
+
+Declaration is optional at the platform level but, if entered, follows this sequence per flow:
+User Adds Node
+   (e.g. "Register")
+        ↓
+Derivation Engine Analyzes Node
+        ↓
+Suggestions Generated
+   (branches, edge states, failure paths)
+        ↓
+User Reviews Suggestions
+        ↓
+   ┌────┴────┐
+   ▼         ▼
+Accept     Reject
+   ↓         ↓
+Added to   Marked
+Declared   SUGGESTED_REJECTED
+Graph
+        ↓
+User Adds Next Node
+        ↓
+   (repeat until user marks flow complete)
+        ↓
+Flow Marked Complete
+        ↓
+Ruleset Compilation (22.6)
+
+
+A declared flow may be marked complete independently per workflow (e.g. "Checkout" can be finalized while "Subscription Management" is still being declared). The application's overall Declared Intent Graph is the union of all completed (and in-progress) declared workflows.
+FDRS-LIFE-001 A flow shall remain in DRAFT status until explicitly marked complete by the declaring user.
+FDRS-LIFE-002 DRAFT flows shall not be used for ruleset compilation or reconciliation reporting, but shall be visible in the dashboard with a draft indicator.
+FDRS-LIFE-003 A completed flow may be reopened for editing at any time (see 22.8). Reopening does not delete reconciliation history.
+22.4 Derivation Engine
+22.4.1 Purpose
+As each node is added to a Declared Intent Graph, the Derivation Engine proposes additional states, transitions, and branch flows the user likely intends but has not explicitly entered — failure paths, edge states, recovery flows, and category-appropriate variants (Section 5.2 categories: Navigation, UI, Business, Error, System).
+22.4.2 Two-Tier Lookup Strategy
+Node Added
+    │
+    ▼
+Tier 1: Internal Pattern Library
+    │
+    ├── Match found, sufficient confidence ──→ Suggest
+    │
+    └── No match / thin coverage
+            │
+            ▼
+    Tier 2: External Search Enrichment
+            │
+            ▼
+    Candidate filtered, normalized, suggested
+
+
+Tier 1 — Internal Pattern Library
+A maintained, versioned library of QA patterns keyed by state category and semantic name, independent of any tenant's data. This is curated content (analogous to the "generic QA packs" referenced in Phase 1.5B: auth, crud, api, errors, permissions, search, upload, empty-states, recovery, loading) rather than a live model. Example entry:
+{
+  "patternId": "pat_login_001",
+  "triggerStateNames": ["LOGIN", "SIGN_IN", "AUTHENTICATE"],
+  "triggerCategory": "BUSINESS",
+  "suggestedBranches": [
+    {"stateName": "LOGIN_FAILURE", "category": "ERROR"},
+    {"stateName": "ACCOUNT_LOCKED", "category": "ERROR"},
+    {"stateName": "PASSWORD_RESET_REQUESTED", "category": "BUSINESS"},
+    {"stateName": "SESSION_TIMEOUT", "category": "SYSTEM"}
+  ],
+  "source": "INTERNAL_LIBRARY",
+  "libraryVersion": "1.4.0"
+}
+
+
+Tier 1.5 — Cross-Tenant Structural Pattern Match
+In addition to the static library, the Derivation Engine may query a structural pattern index built from anonymized graph shapes across all tenants' Declared and Observed graphs. This index stores only state names, categories, and transition topology — never tenant identifiers, application names, or any data that could re-identify a source organization.
+FDRS-PRIV-001 Cross-tenant structural matching shall never reveal, directly or indirectly, which tenant a pattern originated from.
+FDRS-PRIV-002 Cross-tenant structural matching shall operate only on state/category/transition shape data. Metadata, custom field names, business-specific terminology beyond standard category labels, and any payload content are excluded from the structural index.
+FDRS-PRIV-003 A tenant's Declared or Observed graph data shall contribute to the structural index only in aggregate, frequency-weighted form (e.g. "73% of CHECKOUT flows include an OUT_OF_STOCK branch"), never as a retrievable individual record.
+FDRS-PRIV-004 Participation in the cross-tenant structural index is part of standard platform operation, consistent with how the platform already aggregates non-identifying behavioral patterns; tenants requiring full exclusion may request it through organization-level configuration.
+Tier 2 — External Search Enrichment
+Used only when Tier 1 (library + structural index) returns no match or low-confidence results for a novel state name or category combination. External search results are used to enrich the suggestion candidate pool, not surfaced verbatim — results are normalized into the same suggestedBranches structure as Tier 1 before being shown to the user, and any matched content is paraphrased rather than quoted, consistent with platform-wide content handling standards.
+FDRS-DERIVE-001 External search shall be invoked only after internal lookup (Tier 1 / 1.5) is exhausted for a given node. FDRS-DERIVE-002 Suggestions surfaced to the user shall always be labeled with their source tier (Library, Cross-Tenant Pattern, or External Enrichment) so the user can weight their trust accordingly. FDRS-DERIVE-003 The Derivation Engine shall never auto-add a suggested node to the Declared Intent Graph without explicit user acceptance.
+22.4.3 Suggestion Output Model
+{
+  "suggestionId": "sug_881",
+  "parentStateId": "state_012",
+  "suggestedStateName": "PAYMENT_FAILED",
+  "category": "ERROR",
+  "sourceTier": "INTERNAL_LIBRARY",
+  "rationale": "Payment-related success states typically have a corresponding failure branch.",
+  "status": "PENDING"
+}
+
+
+22.5 Reconciliation Engine
+22.5.1 Purpose
+Once telemetry begins flowing (via demonstration sessions or, in later phases, production traffic), the Reconciliation Engine continuously diffs the Declared Intent Graph against the Observed Behavior Graph for the same application.
+Supports a generalization of Coverage Analysis (Section 9 of the Data Flow Document; FR-035 through FR-041) and Missing State Detection (Section 10 of the Data Flow Document; FR-042 through FR-046), but operates against a human-declared baseline rather than the graph's own internal completeness.
+22.5.2 Three-Way Classification
+               Observed?
+                Yes        No
+Declared? Yes  CONFIRMED   TRUE_GAP
+          No   UNDECLARED  (not applicable)
+
+
+CONFIRMED — State/transition exists in both graphs. This is genuine, evidence-backed coverage.
+TRUE_GAP — Declared but never observed. Stronger signal than the existing Missing State/Flow detection, because a human explicitly asserted this should be reachable; it is not an inference from absence.
+UNDECLARED — Observed but not in the Declared Intent Graph. The application is doing something nobody specified. This may indicate: an incomplete declaration, an unintended code path, a legitimate flow the declarer forgot, or risk-worthy emergent behavior.
+FDRS-RECON-001 The Reconciliation Engine shall classify every node and transition in either graph into exactly one of CONFIRMED, TRUE_GAP, or UNDECLARED. FDRS-RECON-002 UNDECLARED classifications shall not be treated as errors by default; they shall be surfaced for human review as a distinct report category (22.5.3), not folded into existing Missing State/Flow reports. FDRS-RECON-003 Reconciliation shall re-run incrementally as new sessions are processed, not only once at flow-completion time.
+22.5.3 Reconciliation Report
+A new report type, extending the QA Report Specification's report classification model (QRS Section 4) as a sibling to Coverage Reports and Missing Flow Reports.
+FLOW RECONCILIATION REPORT
+
+
+Workflow:
+CHECKOUT
+
+
+Declared States:     14
+Observed States:     12
+Confirmed:           11   (declared and seen)
+True Gaps:           3    (declared, never seen)
+Undeclared:          2    (seen, never declared)
+
+
+True Gaps
+PAYMENT_FAILED        (declared by: jane@acme.com)
+SESSION_TIMEOUT        (declared by: jane@acme.com)
+GIFT_CARD_APPLIED      (suggested + accepted, never demonstrated)
+
+
+Undeclared
+PROMO_CODE_REJECTED    (observed 4 times, not in declared flow)
+CART_MERGE_ON_LOGIN    (observed 1 time, not in declared flow)
+
+
+FDRS-RPT-001 The Reconciliation Report shall identify, for every True Gap, whether the originating node was USER_AUTHORED or SUGGESTED_ACCEPTED, to distinguish "the QA team specifically asked for this and it's missing" from "the system suggested it and it turned out to not exist yet." FDRS-RPT-002 The Reconciliation Report shall support the same export formats as other QA reports (QRS Section 24: PDF, CSV, JSON, HTML).
+22.6 Ruleset Compilation
+22.6.1 Purpose
+Once a declared workflow is marked complete (22.3), it compiles into a per-application Ruleset — the artifact that downstream review (demonstration walkthroughs, future production review) is checked against.
+Generic QA Best-Practice Rules
+   (naming conventions, comment standards,
+    universal edge-case patterns)
+              +
+Declared-Flow-Derived Rules
+   (this application's specific expected
+    states, transitions, workflows)
+              +
+Accepted-Suggestion Rules
+   (branches the Derivation Engine proposed
+    and the user kept)
+              =
+        Application Ruleset
+
+
+{
+  "rulesetId": "rs_app_004",
+  "applicationId": "app_004",
+  "version": "1.0",
+  "compiledAt": "timestamp",
+  "sourceFlows": ["wf_checkout", "wf_registration"],
+  "ruleCount": 47
+}
+
+
+FDRS-RULE-001 A Ruleset shall always include the platform's generic QA best-practice rules regardless of whether any flow has been declared. FDRS-RULE-002 A Ruleset shall be recompiled whenever its source Declared flows change (new flow completed, existing flow edited and resaved). FDRS-RULE-003 Rulesets shall be versioned; prior versions shall remain available for historical reconciliation against sessions recorded under that version.
+22.6.2 Ruleset Application
+The compiled Ruleset is consumed by:
+* The Reconciliation Engine (22.5), to know what "declared" means per workflow.
+* The existing Missing State Engine and Coverage Engine, which may use generic-rule entries to flag gaps even for undeclared flows.
+* The demonstration review surface (22.7), to point out gaps live as a developer or QA engineer walks through the application.
+22.7 Interaction with Developer Demonstration Mode
+Sections 22.3–22.6 describe declaration happening before demonstration. In practice, the two are designed to inform each other continuously, not strictly sequentially.
+Declared Intent Graph  ──informs──▶  Demonstration Review
+        ▲                                    │
+        │                                    │
+        └──────── promotion (22.2) ──────────┘
+                  (developer confirms an
+                   observed-but-undeclared
+                   state belongs in the
+                   intended flow)
+
+
+During a demonstration session, if the developer's walkthrough produces an UNDECLARED node (22.5.2), the dashboard may prompt the developer: "This state wasn't in your declared flow — is it expected?" An affirmative response promotes the node into the Declared Intent Graph with provenance: DEMONSTRATION_PROMOTED (22.2) and triggers Ruleset recompilation (22.6.1).
+FDRS-DEMO-001 Demonstration-time promotion of an Observed node into the Declared Intent Graph shall require explicit developer confirmation; it shall never happen automatically. FDRS-DEMO-002 The existing Behavioral Graph Generation pipeline (BGS Sections 10–12) is unaffected by FDRS; demonstration sessions continue to build the Observed Behavior Graph exactly as specified, independent of whether a Declared Intent Graph exists.
+22.8 Manual Editing & Correction
+FDRS-EDIT-001 A Declared Intent Graph shall remain editable by users with appropriate role permissions (Developer, QA Engineer, Product Manager per SEAD Section 7.3) after initial completion. FDRS-EDIT-002 Manual edits to a completed flow shall trigger Ruleset recompilation (22.6.1) and shall be logged with the same audit standard as other security-sensitive configuration changes (SEAD Section 12). FDRS-EDIT-003 The system shall never overwrite a USER_AUTHORED node based on Observed-graph evidence; conflicting evidence is surfaced via the Reconciliation Report (22.5.3) as UNDECLARED, leaving the decision to the human.
+22.9 Governance Rules
+FDRS-GOV-001 Every Declared Intent Graph node must carry a provenance value (22.2). FDRS-GOV-002 Declared and Observed graphs must remain independently queryable; reconciliation is a derived view, not a merged storage model. FDRS-GOV-003 Rejected suggestions (SUGGESTED_REJECTED) must be retained, not deleted, to prevent re-suggestion loops and to support future improvement of the Derivation Engine. FDRS-GOV-004 Cross-tenant structural pattern data must satisfy FDRS-PRIV-001 through FDRS-PRIV-004 at all times, including during platform scaling and future Phase 2/3 enhancements. FDRS-GOV-005 FDRS must remain optional at the application level; an application with no Declared Intent Graph must continue to function exactly as specified in BGS Sections 1–21, with Coverage and Missing State analysis operating purely against the Observed Behavior Graph as today.
+22.10 Scope Note — Relationship to MVP Scope Document
+This capability is intended for Phase 1 / MVP inclusion per product direction. This creates a direct tension with the existing MVP Scope Document (MSD Section 9), which explicitly excludes "AI workflow generation" and "AI recommendations" from Phase 1, citing insufficient data maturity. The Derivation Engine's suggestion behavior — proposing branch states a human did not type — functions similarly to the excluded category even though it is implemented as a curated pattern library plus structural matching rather than a learned model.
+This section does not resolve that tension; it is flagged here for explicit product/business sign-off before implementation, since it changes what MSD Section 1 calls "the authoritative source for Phase 1 feature inclusion and exclusion decisions." If approved, MSD Section 7 should be amended with a new Feature Group for Flow Declaration & Reconciliation, and MSD Section 9's AI Features exclusion should be narrowed to explicitly carve out "curated/structural suggestion, as distinct from learned/generative AI recommendation."
+22.11 Cross-Reference Summary
+Existing Document
+	Required Change
+	FRS
+	New Module (suggest: Module U) covering FR-123 through FR-13x for declaration, derivation, reconciliation, and ruleset compilation
+	DDMS
+	New onboarding stage inserted between Stage 1 (Application Connection) and Stage 2 (Demonstration Session); Section 19 (Demonstration QA Report) gains a Reconciliation subsection
+	QRS
+	New report type: Flow Reconciliation Report, added to Section 4 classification model and Section 28 phase evolution
+	Database Design
+	New PostgreSQL tables: declared_flows, declared_states, declared_transitions, suggestions, rulesets; new Neo4j relationship type DECLARED_HAS_STATE distinct from existing HAS_STATE to keep graph types queryable independently (per FDRS-GOV-002)
+	API Spec
+	New endpoint group: /applications/{id}/declared-flow/*, /applications/{id}/reconciliation, /applications/{id}/ruleset
+	MVP Scope
+	Requires explicit amendment per 22.10 before this can ship in Phase 1 as currently written
+	Security Architecture
+	New RBAC permission: "Declare/Edit Flow"; new audit event types for flow declaration and ruleset recompilation

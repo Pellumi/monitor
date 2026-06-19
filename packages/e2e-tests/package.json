@@ -1,0 +1,13 @@
+{
+  "name": "@sots/e2e-tests",
+  "version": "0.1.0",
+  "scripts": {
+    "test:e2e": "tsx src/index.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "@sots/db": "workspace:*",
+    "@sots/shared": "workspace:*"
+  }
+}

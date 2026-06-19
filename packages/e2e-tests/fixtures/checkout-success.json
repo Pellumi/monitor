@@ -1,0 +1,8 @@
+[
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/products/123" } },
+  { "eventType": "BUTTON_CLICK", "metadata": { "id": "add-to-cart" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/cart" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/checkout" } },
+  { "eventType": "PAGE_VIEW", "metadata": { "url": "/checkout/success" } }
+]

@@ -1,0 +1,366 @@
+﻿Billing & Subscription Specification (BSS)
+1. Purpose
+This document defines how subscriptions, billing, invoicing, payments, renewals, upgrades, downgrades, plan enforcement, taxation, and subscription lifecycle management operate within SOTS.
+The Billing & Subscription Specification establishes:
+* Subscription models
+* Billing rules
+* Payment processing
+* Currency support
+* Invoice generation
+* Subscription lifecycle management
+* Upgrade and downgrade policies
+* Overage billing framework
+* Enterprise billing procedures
+This document is the authoritative source for all commercial billing behavior.
+2. Billing Philosophy
+SOTS bills customers based on value received.
+Phase 1 customers purchase:
+* Applications
+* User seats
+* Storage
+* Quality visibility
+Customers do not purchase:
+* Events
+* Logs
+* Traces
+* Internal platform compute
+Billing shall remain simple, transparent, and predictable.
+No hidden billing mechanisms are permitted.
+To support local adoption in Nigeria, SOTS provides a Nigeria-only Local plan with reduced limits and localized pricing.
+3. Supported Billing Models
+Phase 1
+Subscription Billing
+Based on:
+* Applications
+* Users
+* Storage
+* Retention
+No event billing.
+No AI billing.
+Phase 2
+Subscription Billing
+Plus:
+* Included Event Pool
+* Event Overages
+Phase 3
+Subscription Billing
+Plus:
+* Event Consumption
+* AI Consumption
+4. Subscription Plans
+Free
+Price:
+USD:
+$0
+NGN:
+₦0
+Local (Nigeria Only)
+Availability:
+* Nigeria only
+* NGN billing only
+Price:
+NGN:
+₦20,000/month
+Annual:
+NGN:
+₦200,000/year
+Solo
+Price:
+USD:
+$29/month
+NGN:
+₦42,000/month
+Annual:
+USD:
+$290/year
+NGN:
+₦420,000/year
+Team
+Price:
+USD:
+$99/month
+NGN:
+₦147,000/month
+Annual:
+USD:
+$990/year
+NGN:
+₦1,470,000/year
+Business
+Price:
+USD:
+$299/month
+NGN:
+₦447,000/month
+Annual:
+USD:
+$2,990/year
+NGN:
+₦4,470,000/year
+Enterprise
+Price:
+Custom
+Annual Contract Required
+5. Annual Billing Discount
+Annual subscriptions receive:
+Approximately 2 months free.
+Formula:
+Monthly Price × 10
+Examples:
+Local
+₦20,000 × 10
+₦200,000/year
+Solo
+$29 × 10
+$290/year
+Team
+$99 × 10
+$990/year
+Business
+$299 × 10
+$2,990/year
+6. Plan Entitlements
+Free
+Applications:
+1
+Users:
+1
+Storage:
+1 GB
+Retention:
+14 Days
+Demonstration Sessions:
+10 per Month
+Local (Nigeria Only)
+Applications:
+2
+Users:
+2
+Storage:
+10 GB
+Retention:
+30 Days
+Demonstration Sessions:
+Unlimited
+Solo
+Applications:
+3
+Users:
+3
+Storage:
+25 GB
+Retention:
+90 Days
+Demonstration Sessions:
+Unlimited
+Team
+Applications:
+10
+Users:
+10
+Storage:
+100 GB
+Retention:
+180 Days
+Demonstration Sessions:
+Unlimited
+Business
+Applications:
+50
+Users:
+50
+Storage:
+500 GB
+Retention:
+365 Days
+Demonstration Sessions:
+Unlimited
+Enterprise
+Custom
+7. Supported Payment Currencies
+Primary:
+* USD
+* NGN
+Future:
+* EUR
+* GBP
+* CAD
+* AUD
+Organizations select a billing currency at subscription creation.
+Billing currency becomes the invoice currency.
+The Local plan is restricted to NGN billing only.
+8. Supported Payment Methods
+USD
+Supported:
+* Visa
+* Mastercard
+* American Express
+* Discover
+Processors:
+* Stripe
+NGN
+Supported:
+* Debit Cards
+* Bank Transfer
+* Virtual Accounts
+* USSD
+* Mobile Money
+Processors:
+* Paystack
+* Flutterwave
+9. Subscription Lifecycle
+States:
+TRIAL
+ACTIVE
+PAST_DUE
+GRACE_PERIOD
+SUSPENDED
+CANCELLED
+EXPIRED
+10. Trial Period
+Default Trial:
+14 Days
+Available For:
+* Free
+* Local
+* Solo
+* Team
+* Business
+Restrictions:
+* No multiple concurrent trials
+* One trial per organization
+11. Upgrade Policy
+Upgrades take effect immediately.
+Billing is prorated.
+Example:
+Upgrade:
+Local → Solo
+Remaining Days:
+15
+Customer charged:
+Difference × Remaining Billing Period
+12. Downgrade Policy
+Downgrades become effective at the next renewal.
+Reason:
+Prevent accidental data loss.
+Customer receives warnings if new plan limits are exceeded.
+13. Renewal Policy
+Monthly Plans
+Renew every 30 days.
+Annual Plans
+Renew every 365 days.
+Automatic renewal enabled by default.
+14. Failed Payment Handling
+First Failure:
+Payment Retry
+Second Failure:
+Past Due
+Third Failure:
+Grace Period
+Grace Period Duration:
+14 Days
+After Grace Period:
+Subscription Suspended
+15. Suspension Behavior
+Suspended organizations:
+Allowed:
+* View Existing Reports
+* Export Existing Data
+Blocked:
+* New Demonstrations
+* New Session Recording
+* New Application Creation
+* New Report Generation
+16. Invoice Generation
+Invoices generated for:
+* New Subscription
+* Renewal
+* Upgrade
+* Overage Charges
+* Enterprise Contracts
+Invoice Contents:
+* Organization
+* Plan
+* Billing Period
+* Currency
+* Tax
+* Total
+* Invoice Number
+17. Taxation Framework
+Tax calculation delegated to payment provider.
+Examples:
+Stripe Tax
+Paystack Tax Support
+Flutterwave Tax Support
+Invoices must clearly display:
+* Tax Amount
+* Tax Rate
+* Tax Jurisdiction
+18. Customer Billing Portal
+Organizations shall access:
+* Current Plan
+* Next Renewal Date
+* Usage Summary
+* Payment Method
+* Billing History
+* Download Invoices
+* Upgrade Plan
+* Cancel Subscription
+19. Phase 2 Event Billing Framework
+Not Active During MVP.
+Future Support:
+Included Event Pool
+Example:
+Team
+5,000,000 Included Events
+Overage:
+$5 per Additional Million Events
+NGN Equivalent:
+Automatically Converted
+Demonstration Events Excluded.
+Only Production Events Count.
+20. Phase 3 AI Billing Framework
+Not Active During MVP.
+AI Consumption Units
+Examples:
+Regression Analysis:
+4 AI Units
+Generated Test Suite:
+2 AI Units
+Quality Assessment:
+1 AI Unit
+All AI usage must display:
+* Units Consumed
+* Cost
+* Reason
+No opaque credit systems permitted.
+21. Enterprise Billing
+Enterprise Customers Support:
+* Annual Contracts
+* Purchase Orders
+* Bank Wire Payments
+* Custom Pricing
+* Multi-Year Agreements
+* Self-Hosted Licensing
+Enterprise invoices may be Net 30.
+22. Subscription Governance
+Billing changes must:
+* Preserve transparency
+* Preserve customer trust
+* Remain aligned with PSD
+* Remain aligned with PPS
+* Be auditable
+* Be documented
+No hidden fees are permitted.
+No undocumented overages are permitted.
+23. Success Criteria
+The Billing System shall be considered successful when:
+1. Customers understand billing immediately.
+2. Upgrades are frictionless.
+3. Billing remains predictable.
+4. Phase 1 remains application-based.
+5. Phase 2 event billing can be introduced without redesign.
+6. Phase 3 AI billing can be introduced without redesign.
+7. Enterprise billing is supported.
+8. USD and NGN customers can subscribe seamlessly.
+9. Nigerian startups and individual developers can access an affordable entry-level paid plan through the Local plan.

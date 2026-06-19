@@ -1,0 +1,627 @@
+﻿DATABASE DESIGN DOCUMENT (DDD)
+1. Purpose
+This document defines the complete database architecture for SOTS.
+The document includes:
+* Database technologies
+* Data ownership
+* Schema design
+* Entity relationships
+* Indexing strategy
+* Partitioning strategy
+* Retention strategy
+* Scalability strategy
+* Multi-tenancy strategy
+2. Database Architecture Overview
+SOTS uses a polyglot persistence architecture.
+┌────────────────────────────┐
+│ PostgreSQL                │
+│ Operational Data          │
+└─────────────┬──────────────┘
+              │
+              ▼
+┌────────────────────────────┐
+│ ClickHouse                │
+│ Telemetry & Analytics     │
+└─────────────┬──────────────┘
+              │
+              ▼
+┌────────────────────────────┐
+│ Neo4j                     │
+│ Behavioral Graphs         │
+└─────────────┬──────────────┘
+              │
+              ▼
+┌────────────────────────────┐
+│ Object Storage            │
+│ Replays & Exports         │
+└────────────────────────────┘
+3. Database Responsibilities
+Database
+	Purpose
+	PostgreSQL
+	Operational platform data
+	ClickHouse
+	Event telemetry & analytics
+	Neo4j
+	Workflow graphs & state relationships
+	Object Storage
+	Replay assets & report exports
+	4. PostgreSQL Database
+Purpose
+Stores transactional and operational data.
+Examples:
+* Organizations
+* Users
+* Applications
+* Configurations
+* Reports
+* Notifications
+* Releases
+* Quality Assessments
+5. PostgreSQL ERD
+Organization
+    │
+    ├── Users
+    │
+    ├── Applications
+    │       │
+    │       ├── Releases
+    │       ├── Reports
+    │       ├── Alerts
+    │       └── Configurations
+    │
+    └── API Keys
+
+
+6. Organizations Table
+organizations
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	name
+	VARCHAR(255)
+	slug
+	VARCHAR(255)
+	plan_type
+	VARCHAR(50)
+	status
+	VARCHAR(50)
+	created_at
+	TIMESTAMP
+	updated_at
+	TIMESTAMP
+	Indexes
+UNIQUE(slug)
+
+
+INDEX(status)
+
+
+INDEX(created_at)
+
+
+7. Users Table
+users
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	organization_id
+	BIGINT FK
+	email
+	VARCHAR
+	first_name
+	VARCHAR
+	last_name
+	VARCHAR
+	role
+	VARCHAR
+	status
+	VARCHAR
+	created_at
+	TIMESTAMP
+	Relationships
+Organization
+      1
+      │
+      │
+      N
+Users
+Indexes
+UNIQUE(email)
+
+
+INDEX(organization_id)
+
+
+INDEX(role)
+8. Applications Table
+applications
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	organization_id
+	BIGINT FK
+	name
+	VARCHAR
+	environment
+	VARCHAR
+	sdk_key
+	VARCHAR
+	status
+	VARCHAR
+	Relationships
+Organization
+      1
+      │
+      N
+Application
+9. Releases Table
+Phase 3
+Supports regression analysis.
+releases
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	application_id
+	BIGINT FK
+	version
+	VARCHAR
+	release_date
+	TIMESTAMP
+	metadata
+	JSONB
+	10. Reports Table
+Supports QA reporting.
+reports
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	application_id
+	BIGINT FK
+	report_type
+	VARCHAR
+	report_status
+	VARCHAR
+	storage_path
+	TEXT
+	generated_at
+	TIMESTAMP
+	
+
+11. Alerts Table
+alerts
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	application_id
+	BIGINT FK
+	alert_type
+	VARCHAR
+	severity
+	VARCHAR
+	status
+	VARCHAR
+	created_at
+	TIMESTAMP
+	12. API Keys Table
+api_keys
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	organization_id
+	BIGINT FK
+	key_hash
+	TEXT
+	expires_at
+	TIMESTAMP
+	13. Dashboard Preferences Table
+dashboard_preferences
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	user_id
+	BIGINT FK
+	preferences
+	JSONB
+	14. Quality Assessments Table
+Phase 3
+quality_assessments
+
+
+Column
+	Type
+	id
+	BIGSERIAL PK
+	application_id
+	BIGINT FK
+	score
+	DECIMAL
+	confidence
+	DECIMAL
+	summary
+	JSONB
+	created_at
+	TIMESTAMP
+	15. ClickHouse Database
+Purpose
+Stores large-scale telemetry.
+Supports:
+* Event ingestion
+* Session analytics
+* Endpoint analytics
+* Journey analytics
+* Anomaly detection
+Required because the platform targets millions of events daily.
+16. ClickHouse ERD
+Events
+   │
+   ├── Sessions
+   │
+   ├── Metrics
+   │
+   ├── Endpoint Metrics
+   │
+   ├── Journey Metrics
+   │
+   └── Anomaly Metrics
+17. Events Table
+Core telemetry table.
+events
+
+
+Column
+	Type
+	event_id
+	UUID
+	tenant_id
+	UUID
+	application_id
+	UUID
+	session_id
+	UUID
+	event_type
+	String
+	timestamp
+	DateTime
+	metadata
+	JSON
+	Partition Strategy
+PARTITION BY toYYYYMM(timestamp)
+Primary Key
+(application_id,timestamp,event_id)
+Indexes
+event_type
+
+
+session_id
+
+
+timestamp
+18. Sessions Table
+sessions
+
+
+Column
+	Type
+	session_id
+	UUID
+	application_id
+	UUID
+	start_time
+	DateTime
+	end_time
+	DateTime
+	event_count
+	UInt64
+	duration_ms
+	UInt64
+	Indexes
+application_id
+
+
+start_time
+
+
+duration_ms
+19. Endpoint Metrics Table
+Supports FR-047 to FR-052 and FR-076 to FR-080.
+endpoint_metrics
+
+
+Column
+	Type
+	endpoint
+	String
+	method
+	String
+	avg_latency
+	Float64
+	error_rate
+	Float64
+	request_count
+	UInt64
+	timestamp
+	DateTime
+	20. Journey Metrics Table
+Phase 2
+journey_metrics
+
+
+Column
+	Type
+	journey_id
+	UUID
+	workflow_name
+	String
+	completion_rate
+	Float64
+	abandonment_rate
+	Float64
+	timestamp
+	DateTime
+	21. Error Metrics Table
+error_metrics
+
+
+Column
+	Type
+	error_id
+	UUID
+	workflow_id
+	UUID
+	endpoint
+	String
+	error_type
+	String
+	timestamp
+	DateTime
+	22. Anomaly Metrics Table
+Phase 3
+anomaly_metrics
+
+
+Column
+	Type
+	anomaly_id
+	UUID
+	anomaly_type
+	String
+	severity
+	String
+	score
+	Float64
+	detected_at
+	DateTime
+	23. Neo4j Database
+Purpose
+Store behavioral graphs.
+Supports:
+* Workflow discovery
+* State relationships
+* Transition analysis
+* Test generation
+* Regression detection
+Required by Behavioral Graph Engine.
+24. Neo4j Graph Model
+Nodes
+Application
+State
+Workflow
+Session
+Release
+Relationships
+(Application)-[:HAS_STATE]->(State)
+
+
+(State)-[:TRANSITIONS_TO]->(State)
+
+
+(Workflow)-[:STARTS_AT]->(State)
+
+
+(Workflow)-[:ENDS_AT]->(State)
+
+
+(Session)-[:VISITED]->(State)
+
+
+(Release)-[:MODIFIED]->(Workflow)
+
+
+________________
+
+
+25. Graph Visualization
+Anonymous
+      │
+      ▼
+Registered
+      │
+      ▼
+Logged In
+      │
+      ▼
+Cart
+      │
+      ▼
+Checkout
+26. Neo4j Indexes
+CREATE INDEX state_name
+
+
+CREATE INDEX workflow_name
+
+
+CREATE INDEX application_id
+
+
+CREATE INDEX session_id
+27. Object Storage Design
+Stores large binary assets.
+Replay Assets
+/session-replays/
+
+
+Contains:
+* Timelines
+* Playback assets
+* Screenshots
+Reports
+/reports/
+
+
+Contains:
+* PDF exports
+* CSV exports
+* Quality reports
+Snapshots
+/graphs/
+
+
+Contains:
+* Workflow snapshots
+* Historical graph versions
+28. Multi-Tenant Strategy
+Every database contains:
+tenant_id
+organization_id
+
+
+where applicable.
+Isolation:
+Tenant A
+    │
+    ├── Events
+    ├── Sessions
+    └── Reports
+
+
+Tenant B
+    │
+    ├── Events
+    ├── Sessions
+    └── Reports
+
+
+Supports NFR multi-tenancy requirements.
+29. Retention Strategy
+Events
+Default:
+13 Months
+Session Replays
+Default:
+90 Days
+Reports
+Default:
+5 Years
+Quality Assessments
+Default:
+Unlimited
+
+
+Configurable per tenant.
+30. Database Scaling Strategy
+PostgreSQL
+Scale Using:
+* Read replicas
+* Partitioning
+* Connection pooling
+ClickHouse
+Scale Using:
+* Sharding
+* Replication
+* Distributed tables
+Neo4j
+Scale Using:
+* Clustered graph nodes
+* Read replicas
+Object Storage
+Scale Using:
+* Infinite object storage model
+31. Phase Evolution
+Phase 1
+Active Databases:
+PostgreSQL
+ClickHouse
+Object Storage
+
+
+Stores:
+* Applications
+* Users
+* Events
+* Sessions
+* Reports
+* Replay Assets
+Phase 2
+Additional Data:
+Journey Metrics
+Database Metrics
+Error Correlation Data
+Phase 3
+Additional Data:
+Neo4j Graph Store
+
+
+Quality Assessments
+
+
+Regression Baselines
+
+
+Generated Tests
+
+
+Anomaly Models
+
+
+Optimization Recommendations
+32. Complete Data Relationship Model
+Organization
+    │
+    ├── Users
+    │
+    ├── Applications
+    │       │
+    │       ├── Releases
+    │       ├── Reports
+    │       ├── Alerts
+    │       ├── Quality Assessments
+    │       │
+    │       ▼
+    │    Events
+    │       │
+    │       ▼
+    │    Sessions
+    │       │
+    │       ▼
+    │    Workflows
+    │       │
+    │       ▼
+    │   State Graphs
+    │
+    └── API Keys

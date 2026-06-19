@@ -1,0 +1,303 @@
+﻿Usage Metering Specification (UMS)
+1. Purpose
+This document defines how usage is measured, tracked, enforced, reported, and monetized across the SOTS platform.
+The Usage Metering Specification establishes:
+* Usage metrics
+* Billable units
+* Non-billable units
+* Quota enforcement rules
+* Overage framework
+* Future pricing evolution
+* Usage reporting standards
+* Billing data requirements
+The UMS serves as the authoritative source for all platform metering decisions.
+2. Metering Philosophy
+SOTS measures significantly more than it bills.
+The platform captures:
+* Events
+* Sessions
+* Demonstrations
+* Workflow graphs
+* Reports
+* Replay assets
+* Storage consumption
+These measurements support:
+* Product analytics
+* Capacity planning
+* Abuse prevention
+* Future pricing evolution
+Measurement does not imply billing.
+During Phase 1, only a subset of measured resources are customer-facing billing metrics.
+3. Metering Evolution Framework
+Phase 1
+Behavioral QA Platform
+Customer-facing metrics:
+* Applications
+* Users
+* Storage
+* Retention
+Internal-only metrics:
+* Events
+* Sessions
+* Demonstrations
+* Replays
+* Workflows
+* Reports
+Event volume shall not be used as a customer-facing billing metric.
+Phase 2
+Production Intelligence Platform
+Additional billable metric:
+* Production Events
+Pricing model:
+Base Subscription
++
+Included Event Pool
++
+Event Overage
+Phase 3
+Autonomous Quality Intelligence Platform
+Additional billable metric:
+* AI Consumption
+Pricing model:
+Base Subscription
++
+Event Consumption
++
+AI Consumption
+4. Billable Metrics (Phase 1)
+Applications
+Definition
+A unique onboarded application registered within an organization.
+Source:
+Application Management Service
+Examples:
+* Web App
+* Mobile App
+* Admin Portal
+* API Platform
+Measurement Unit:
+Application
+Example:
+Acme Corp
+* Storefront
+* Admin Portal
+* Mobile App
+Usage = 3 Applications
+Users
+Definition
+An active user with access to an organization.
+Includes:
+* Admins
+* Developers
+* QA Engineers
+* Product Managers
+Measurement Unit:
+User Seat
+Calculation:
+Highest active seat count during billing period.
+Storage
+Definition
+Total stored customer assets.
+Includes:
+* Events
+* Sessions
+* Replay Assets
+* Reports
+* Graph Snapshots
+* Exports
+Measurement Unit:
+Gigabytes (GB)
+Calculated Daily.
+Billing uses monthly peak usage.
+Retention
+Definition
+Maximum duration customer data is preserved.
+Retention is controlled by plan entitlement rather than consumption.
+Measurement Unit:
+Days
+Examples:
+* 14 Days
+* 90 Days
+* 180 Days
+* 365 Days
+5. Measured But Non-Billable Metrics
+These metrics are collected but do not impact Phase 1 billing.
+Events
+Definition
+Canonical telemetry events captured by SDKs.
+Examples:
+* PAGE_VISIT
+* BUTTON_CLICK
+* FORM_SUBMITTED
+* API_REQUEST
+* API_RESPONSE
+Purpose:
+* Capacity Planning
+* Abuse Detection
+* Future Event Pricing
+Customer Cost Impact:
+None (Phase 1)
+Demonstration Sessions
+Definition
+Recorded Developer Demonstration Mode sessions.
+Examples:
+* Guided Demonstration
+* Exploratory Demonstration
+* Validation Demonstration
+Purpose:
+* Product Analytics
+* Capacity Forecasting
+Customer Cost Impact:
+None on paid plans.
+Free Plan may impose limits.
+Sessions
+Definition
+Completed reconstructed behavioral sessions.
+Purpose:
+* Operational visibility
+* Storage forecasting
+Customer Cost Impact:
+None
+Session Replays
+Definition
+Generated replay assets associated with recorded sessions.
+Purpose:
+* Storage planning
+* Replay infrastructure sizing
+Customer Cost Impact:
+Indirect via storage limits only.
+Behavioral Graphs
+Definition
+Generated workflow intelligence models.
+Measured:
+* States
+* Transitions
+* Workflows
+Purpose:
+* Intelligence generation metrics
+* Future platform analytics
+Customer Cost Impact:
+None
+Reports
+Definition
+Generated QA reports.
+Examples:
+* Coverage Reports
+* Missing Flow Reports
+* Endpoint Reports
+Purpose:
+* Platform analytics
+* Capacity forecasting
+Customer Cost Impact:
+None
+6. Phase 1 Quota Enforcement
+Quota enforcement shall occur at the organization level.
+Hard Limits:
+* Applications
+* Users
+* Storage
+Soft Limits:
+* Reports
+* Sessions
+* Demonstrations
+* Events
+Example:
+Storage exceeds plan limit:
+Status:
+READ_ONLY_WARNING
+Grace Period:
+14 Days
+After Grace Period:
+Upgrade Required
+7. Usage Collection Architecture
+Usage shall be collected from authoritative sources.
+Applications:
+Application Service
+Users:
+Identity Service
+Storage:
+Storage Accounting Service
+Events:
+Event Collector
+Sessions:
+Session Engine
+Replay Assets:
+Replay Service
+Reports:
+Report Engine
+Usage data shall be aggregated daily.
+8. Customer Usage Visibility
+Every organization shall receive a usage dashboard.
+Visible Metrics:
+Applications Used
+Applications Allowed
+Users Used
+Users Allowed
+Storage Used
+Storage Allowed
+Retention Policy
+Historical Usage Trend
+The dashboard must clearly indicate:
+Current Usage
+Remaining Capacity
+Upgrade Recommendations
+9. Overage Policy
+Phase 1
+No automatic overage billing.
+When limits are exceeded:
+* Warning Notifications
+* Grace Period
+* Upgrade Prompt
+Reason:
+Maintain pricing simplicity.
+10. Phase 2 Event Metering
+Phase 2 introduces production monitoring.
+New Billable Metric:
+Production Events
+Definition:
+Any validated event ingested from production environments.
+Examples:
+* PAGE_VISIT
+* API_REQUEST
+* STATE_TRANSITION
+* ERROR_OCCURRED
+Demonstration Events remain excluded.
+Included Event Pools
+Example:
+Team Plan
+Included:
+5,000,000 Events
+Overage:
+$5 per Additional 1,000,000 Events
+11. Phase 3 AI Metering
+AI-assisted capabilities consume AI units.
+Examples:
+* Test Generation
+* Regression Analysis
+* Quality Assessments
+* Intelligence Assistant Queries
+AI usage must remain transparent.
+Opaque credit systems are prohibited.
+Every AI operation shall display:
+* Usage Consumed
+* Cost Impact
+* Billing Category
+12. Usage Governance
+All metered units must:
+* Be measurable
+* Be auditable
+* Be reproducible
+* Be tenant scoped
+* Be visible to customers
+No hidden billable metrics are permitted.
+No undocumented billing dimensions are permitted.
+13. Success Criteria
+The Usage Metering System shall be considered successful when:
+1. Customers understand usage limits immediately.
+2. Phase 1 billing remains simple.
+3. Platform usage is fully observable internally.
+4. Future event pricing can be introduced without redesign.
+5. Future AI pricing can be introduced without redesign.
+6. All billable metrics are transparent.
+7. Usage disputes can be resolved through auditable records.
+8. Metering remains aligned with customer value.

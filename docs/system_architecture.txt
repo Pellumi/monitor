@@ -1,0 +1,513 @@
+﻿SYSTEM ARCHITECTURE DOCUMENT (SAD)
+1. Introduction
+1.1 Purpose
+This System Architecture Document defines the architecture of the Self-Observing Testing System (SOTS).
+The document describes:
+* Architectural principles
+* System structure
+* Major subsystems
+* Component interactions
+* Data flow
+* Storage architecture
+* Deployment architecture
+* Security architecture
+* Scalability architecture
+* Evolution roadmap across all product phases
+The purpose of this document is to provide a blueprint for implementation and future system growth.
+2. Architectural Vision
+SOTS is designed as a distributed behavioral intelligence platform that continuously:
+Observe Applications
+↓
+Capture Behavioral Data
+↓
+Process Telemetry
+↓
+Construct Behavioral Models
+↓
+Analyze Quality
+↓
+Generate Insights
+↓
+Support Autonomous Validation
+The architecture must support progressive evolution from:
+Phase 1:
+Behavioral QA Platform
+to
+Phase 2:
+Production Intelligence Platform
+to
+Phase 3:
+Autonomous Quality Intelligence Platform
+without requiring architectural redesign.
+3. Architectural Principles
+AP-001 Event-Driven Architecture
+All platform operations shall be driven by behavioral events.
+AP-002 Cloud-Native Design
+All services shall be independently deployable.
+AP-003 Scalability First
+Every major component shall support horizontal scaling.
+AP-004 Multi-Tenant Architecture
+Customer environments shall be logically isolated.
+AP-005 Observability by Default
+Every platform component shall generate telemetry.
+AP-006 Privacy by Design
+Privacy controls shall be enforced throughout the data lifecycle.
+AP-007 Extensibility
+New analytics modules shall be attachable without redesign.
+AP-008 AI-Ready Foundation
+Architectural decisions shall support future intelligence capabilities.
+4. High-Level Architecture
+┌───────────────────────┐
+│ Customer Application  │
+└──────────┬────────────┘
+           │
+           ▼
+┌───────────────────────┐
+│ Frontend SDK          │
+│ Backend SDK           │
+└──────────┬────────────┘
+           │
+           ▼
+┌───────────────────────┐
+│ Event Collector Layer │
+└──────────┬────────────┘
+           │
+           ▼
+┌───────────────────────┐
+│ Kafka Event Bus       │
+└──────────┬────────────┘
+           │
+           ▼
+┌────────────────────────────────────┐
+│ Processing & Analytics Layer       │
+├────────────────────────────────────┤
+│ Session Engine                     │
+│ Behavioral Graph Engine            │
+│ Coverage Engine                    │
+│ Endpoint Analysis Engine           │
+│ Journey Intelligence Engine        │
+│ Error Correlation Engine           │
+│ Autonomous QA Engine               │
+└──────────┬─────────────────────────┘
+           │
+           ▼
+┌───────────────────────┐
+│ Storage Layer         │
+└──────────┬────────────┘
+           │
+           ▼
+┌───────────────────────┐
+│ Dashboard Platform    │
+└───────────────────────┘
+5. Core Architectural Layers
+Layer 1 — Capture Layer
+Responsible for observing applications.
+Components:
+* Frontend SDK
+* Backend SDK
+Responsibilities:
+* Behavioral capture
+* Session creation
+* Event normalization
+* Context enrichment
+* Privacy filtering
+Layer 2 — Ingestion Layer
+Responsible for receiving telemetry.
+Components:
+* API Gateway
+* Event Collector Service
+* Validation Service
+Responsibilities:
+* Event reception
+* Event validation
+* Authentication
+* Rate limiting
+* Tenant routing
+Layer 3 — Streaming Layer
+Responsible for event transportation.
+Components:
+* Apache Kafka
+* Kafka Topics
+* Consumer Groups
+Responsibilities:
+* Event buffering
+* Event distribution
+* Fault tolerance
+* Replay capability
+Layer 4 — Processing Layer
+Responsible for converting telemetry into intelligence.
+Components:
+* Session Engine
+* Workflow Engine
+* Graph Engine
+* Analytics Engine
+* Intelligence Engine
+Layer 5 — Storage Layer
+Responsible for long-term persistence.
+Components:
+* PostgreSQL
+* ClickHouse
+* Object Storage
+Layer 6 — Presentation Layer
+Responsible for user interaction.
+Components:
+* Dashboard
+* Reports
+* Visualization Services
+* Intelligence Assistant
+6. Frontend SDK Architecture
+Purpose:
+Capture behavioral activity from client applications.
+Captured Events
+* Page Views
+* Route Changes
+* Clicks
+* Form Interactions
+* Form Submissions
+* UI Events
+* State Transitions
+* Error Events
+Internal Modules
+Frontend SDK
+│
+├── Event Capture Module
+├── Session Tracker
+├── State Observer
+├── Privacy Filter
+├── Event Buffer
+└── Event Transport Module
+
+
+Responsibilities
+* Generate session identifiers
+* Collect telemetry
+* Apply privacy masking
+* Buffer events
+* Transmit asynchronously
+7. Backend SDK Architecture
+Purpose:
+Capture server-side application behavior.
+Captured Data
+* API Requests
+* API Responses
+* Latency
+* Exceptions
+* Endpoint Metadata
+Internal Modules
+Backend SDK
+│
+├── Request Interceptor
+├── Response Interceptor
+├── Error Interceptor
+├── Trace Correlator
+└── Telemetry Transport
+
+
+Responsibilities
+* Endpoint monitoring
+* Error tracking
+* Session correlation
+* Request tracing
+8. Event Collector Architecture
+Purpose:
+Receive and validate all telemetry.
+Components
+Collector Service
+│
+├── Authentication Layer
+├── Validation Layer
+├── Enrichment Layer
+├── Routing Layer
+└── Kafka Publisher
+
+
+Responsibilities
+* Validate schema
+* Apply tenant routing
+* Reject malformed events
+* Publish to Kafka
+9. Session Replay Engine Architecture
+Purpose:
+Reconstruct application usage.
+Components
+Session Replay Engine
+│
+├── Session Builder
+├── Event Sequencer
+├── Timeline Generator
+├── Replay Renderer
+└── Playback API
+
+
+Responsibilities
+* Session reconstruction
+* Timeline generation
+* Event playback
+* Journey visualization
+10. Behavioral Graph Engine
+Purpose:
+Automatically build workflow models.
+Inputs
+* Sessions
+* Events
+* State transitions
+Outputs
+* Workflow graphs
+* Transition frequencies
+* Entry points
+* Exit points
+Internal Components
+Behavioral Graph Engine
+│
+├── State Extractor
+├── Transition Analyzer
+├── Graph Builder
+├── Pattern Detector
+└── Graph Repository
+11. Coverage Analysis Engine
+Purpose:
+Evaluate workflow completeness.
+Responsibilities
+* Coverage calculations
+* Missing flow detection
+* Missing state detection
+* Coverage reporting
+Output Examples
+Coverage %
+Observed Paths
+Missing Paths
+Critical Gaps
+12. Endpoint Intelligence Engine
+Purpose:
+Analyze backend performance.
+Metrics
+* Response Time
+* Error Rate
+* Request Volume
+* Endpoint Health
+Outputs
+* Slow Endpoint Reports
+* API Rankings
+* Optimization Suggestions
+13. User Journey Intelligence Engine (Phase 2)
+Purpose:
+Understand real user behavior.
+Capabilities
+* Journey Mapping
+* Friction Detection
+* Abandonment Analysis
+* Workflow Bottleneck Analysis
+Inputs
+* Production Sessions
+* Workflow Graphs
+Outputs
+* Journey Insights
+* User Flow Reports
+14. Error Correlation Engine (Phase 2)
+Purpose:
+Provide contextual debugging.
+Correlates
+* Session
+* Workflow
+* API Activity
+* Database Activity
+* Errors
+Investigation Package
+Error
+│
+├── Session Replay
+├── Workflow Path
+├── API Trace
+├── Logs
+└── Database Activity
+15. Autonomous QA Engine (Phase 3)
+Purpose:
+Generate quality intelligence automatically.
+Components
+Autonomous QA Engine
+│
+├── Test Generation Engine
+├── Regression Engine
+├── Failure Simulation Engine
+├── Recommendation Engine
+└── Intelligence Assistant
+
+
+Responsibilities
+* Generate test scenarios
+* Detect regressions
+* Simulate failures
+* Recommend improvements
+16. Storage Architecture
+PostgreSQL
+Stores:
+* Organizations
+* Users
+* Applications
+* Configuration
+* Reports Metadata
+ClickHouse
+Stores:
+* Events
+* Sessions
+* Metrics
+* Analytics Data
+Reason:
+Optimized for large-scale analytics workloads.
+Object Storage
+Stores:
+* Session Replay Assets
+* Graph Snapshots
+* Report Exports
+* Historical Archives
+17. Dashboard Architecture
+Technology:
+Next.js
+Modules:
+Dashboard
+│
+├── Workflow Health
+├── Session Replay
+├── Behavioral Graphs
+├── Coverage Reports
+├── Endpoint Intelligence
+├── Journey Intelligence
+├── Error Correlation
+├── Release Validation
+└── Intelligence Assistant
+18. Security Architecture
+Authentication
+* OAuth 2.0
+* OIDC
+* SSO Integration
+Authorization
+RBAC Roles:
+* Developer
+* QA Engineer
+* Product Manager
+* Engineering Manager
+* Organization Admin
+Data Protection
+* TLS 1.3
+* AES-256 Encryption
+* Secret Management
+* Audit Logging
+19. Multi-Tenant Architecture
+Tenant Isolation Model:
+Platform
+│
+├── Tenant A
+├── Tenant B
+├── Tenant C
+└── Tenant N
+
+
+Isolation:
+* Logical separation
+* Row-level security
+* Tenant-aware routing
+* Tenant-specific retention policies
+20. Deployment Architecture
+Internet
+    │
+    ▼
+Load Balancer
+    │
+    ▼
+API Gateway
+    │
+    ▼
+Kubernetes Cluster
+    │
+    ├── Collector Services
+    ├── Analytics Services
+    ├── Graph Services
+    ├── QA Services
+    ├── Dashboard Services
+    └── Background Workers
+
+
+Supporting Services:
+* Kafka
+* PostgreSQL
+* ClickHouse
+* Redis
+* Object Storage
+21. Scalability Strategy
+Horizontal Scaling Targets:
+Collector Layer
+Scale by:
+* Additional collector instances
+Kafka Layer
+Scale by:
+* Topic partitioning
+Analytics Layer
+Scale by:
+* Consumer groups
+* Distributed workers
+Storage Layer
+Scale by:
+* ClickHouse clustering
+* Database replication
+22. Observability Architecture
+Every component shall emit:
+* Logs
+* Metrics
+* Traces
+Stack:
+* OpenTelemetry
+* Prometheus
+* Grafana
+* Loki
+Monitored Metrics:
+* Event Throughput
+* Queue Lag
+* Processing Latency
+* Error Rate
+* Session Processing Time
+23. Phase-Based Architectural Evolution
+Phase 1 — Behavioral QA Platform
+Components Active:
+* Frontend SDK
+* Backend SDK
+* Event Collector
+* Session Replay
+* Behavioral Graph Engine
+* Coverage Engine
+* Endpoint Analysis Engine
+* Dashboard
+Goal:
+Generate QA intelligence from recorded demo sessions.
+Phase 2 — Production Intelligence Platform
+Additional Components:
+* Live Monitoring
+* Journey Intelligence
+* Database Intelligence
+* Error Correlation
+Goal:
+Understand production behavior and workflow health.
+Phase 3 — Autonomous Validation Engine
+Additional Components:
+* Test Generation Engine
+* Regression Engine
+* Failure Simulation Engine
+* Optimization Intelligence Engine
+* Quality Intelligence Assistant
+Goal:
+Transform behavioral intelligence into autonomous quality validation.
+24. Future Architecture Vision
+Observe
+    ↓
+Capture
+    ↓
+Model
+    ↓
+Understand
+    ↓
+Predict
+    ↓
+Recommend
+    ↓
+Validate
+    ↓
+Autonomously Improve
