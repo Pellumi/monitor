@@ -76,11 +76,13 @@ async function emitActivationEvent(organizationId: string, eventName: string) {
 }
 
 // Cookie Options
+const cookieDomain = process.env.AUTH_COOKIE_DOMAIN || process.env.COOKIE_DOMAIN;
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax' as const,
   path: '/',
+  ...(cookieDomain ? { domain: cookieDomain } : {}),
 };
 
 // Express Middlewares

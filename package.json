@@ -3,7 +3,13 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --concurrency=20",
+    "build:app": "pnpm --filter dashboard build",
+    "build:docs": "pnpm --filter @sots/docs build",
+    "build:marketing": "pnpm --filter @sots/marketing build",
+    "dev": "turbo run dev --concurrency=50",
+    "dev:app": "pnpm --filter dashboard dev",
+    "dev:docs": "pnpm --filter @sots/docs dev",
+    "dev:marketing": "pnpm --filter @sots/marketing dev",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:e2e": "pnpm --filter @sots/e2e-tests run test:e2e"
