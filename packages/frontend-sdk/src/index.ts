@@ -134,6 +134,13 @@ class SotsFrontendSDK {
     }
   }
 
+  async verifyInstallation(): Promise<void> {
+    this.trackEvent('SOTS_ONBOARDING_TEST', {
+      source: 'manual_verification',
+    });
+    await this.flush();
+  }
+
   trackBusinessEvent(config: { type: string, payload?: Record<string, any> }) {
     this.trackEvent('BUSINESS_EVENT', {
       businessEventType: config.type,

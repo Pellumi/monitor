@@ -53,6 +53,12 @@ export class SOTSBackend {
     await this.sendEvent(eventType, sessionId, metadata);
   }
 
+  async verifyInstallation(sessionId?: string): Promise<void> {
+    await this.trackEvent('SOTS_ONBOARDING_TEST', {
+      source: 'manual_verification',
+    }, sessionId);
+  }
+
   startWorkflow(workflowName: string, sessionId?: string): string {
     const id = this.workflowTracker.start(workflowName);
     this.sendEvent('WORKFLOW_STARTED', sessionId, {

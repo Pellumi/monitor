@@ -116,6 +116,16 @@ test('SOTS Backend SDK Tests', async (t) => {
     assert.doesNotThrow(() => SotsEventSchema.parse(fetchCalls[0].body));
   });
 
+  await t.test('verifyInstallation sends onboarding test events', async () => {
+    fetchCalls = [];
+    await SOTS.verifyInstallation();
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.strictEqual(fetchCalls[0].body.eventType, 'SOTS_ONBOARDING_TEST');
+    assert.strictEqual(fetchCalls[0].body.metadata.source, 'manual_verification');
+    assert.doesNotThrow(() => SotsEventSchema.parse(fetchCalls[0].body));
+  });
+
   await t.test('trackState method works', async () => {
     fetchCalls = [];
     await trackState({

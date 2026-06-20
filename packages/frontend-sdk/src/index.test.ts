@@ -146,5 +146,30 @@ test('SOTS Frontend SDK Tests', async (t) => {
     assert.strictEqual(fetchCalls[0].headers['x-sots-environment-id'], 'env-auth');
   });
 
+  await t.test('verifyInstallation sends onboarding test event immediately', async () => {
+    SOTS.teardown();
+    fetchCalls = [];
+
+    SOTS.initialize({
+      endpoint: 'http://gateway',
+      tenantId: 'tenant-auth',
+      applicationId: 'app-auth',
+      apiKey: 'sots_test_key',
+      environmentId: 'env-auth',
+      autoTrackClicks: false,
+      autoTrackForms: false,
+      autoTrackRoutes: false,
+      errorTracking: false,
+    });
+
+    fetchCalls = [];
+    await SOTS.verifyInstallation();
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
+    assert.ok(Array.isArray(fetchCalls[0].body));
+    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'SOTS_ONBOARDING_TEST'));
+  });
+
   SOTS.teardown();
 });

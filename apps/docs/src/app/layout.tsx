@@ -1,13 +1,11 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import Link from 'next/link';
+import { Header } from '@/components/header';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.domain-name.com';
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.domain-name.com';
-const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -31,23 +29,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
-        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
-          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 lg:px-10">
-            <Link href="/" className="text-lg font-semibold tracking-tight text-slate-950">SOTS Docs</Link>
-            <nav className="hidden items-center gap-7 text-sm font-medium text-slate-600 md:flex">
-              <Link href="/getting-started">Guides</Link>
-              <Link href="/api-reference">API Reference</Link>
-              <Link href="/sdk/frontend">SDKs</Link>
-              <a href={marketingUrl}>Marketing</a>
-            </nav>
-            <a href={`${appUrl}/auth/login`} className="rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white">
-              Open App
-            </a>
+    <html lang="en" className="dark">
+      <body className={`${inter.className} min-h-screen bg-neutral-950 text-neutral-100 antialiased`}>
+        <div className="relative flex flex-col min-h-screen">
+          <Header />
+          <div className="flex-1">
+            {children}
           </div>
-        </header>
-        {children}
+        </div>
       </body>
     </html>
   );
