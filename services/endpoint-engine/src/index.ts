@@ -1,9 +1,10 @@
 import express, { Request, Response } from 'express';
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { PrismaClient } from '@sots/db';
+import { MemberRole, PrismaClient } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature, SotsEvent, Topics, Services } from '@sots/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 
 // ─────────────────────────────────────────────────────────────
 // ClickHouse setup
@@ -17,6 +18,7 @@ const ch: ClickHouseClient = createClient({
 });
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS endpoint_metrics (
@@ -113,7 +115,7 @@ app.get('/endpoints/:applicationId/analysis', async (req: Request, res: Response
   try {
     const application = await prisma.application.findUnique({
       where: { id: applicationId },
-      select: { organizationId: true },
+      select: { name: true, organizationId: true },
     });
     if (!application) return res.status(404).json({ error: 'Application not found' });
     if (application.organizationId) {
@@ -196,6 +198,25 @@ app.get('/endpoints/:applicationId/analysis', async (req: Request, res: Response
       .sort((a, b) => b.errorRate - a.errorRate)
       .slice(0, 10);
 
+    if (req.query.notifyEmail === 'true' && application.organizationId && slowest[0] && slowest[0].avgMs > 1000) {
+      void emailService.sendToOrganizationMembers({
+        templateKey: 'endpoint-slow',
+        organizationId: application.organizationId,
+        applicationId,
+        eventType: 'ENDPOINT_SLOW',
+        severity: slowest[0].avgMs > 2000 ? 'HIGH' : 'MEDIUM',
+        variables: {
+          applicationName: application.name,
+          endpoint: `${slowest[0].method} ${slowest[0].endpoint}`,
+          avgMs: slowest[0].avgMs,
+          p95Ms: slowest[0].p95Ms,
+          dashboardUrl: appUrl(`/endpoints?applicationId=${applicationId}`),
+        },
+        idempotencyKey: buildIdempotencyKey(['endpoint-slow', applicationId, slowest[0].method, slowest[0].endpoint, new Date().toISOString().slice(0, 10)]),
+        roles: [MemberRole.OWNER, MemberRole.ADMIN],
+      }).catch((err) => console.error('[Email] endpoint-slow failed', err));
+    }
+
     res.json({
       applicationId,
       generatedAt: new Date().toISOString(),
@@ -217,6 +238,7 @@ app.get('/endpoints/:applicationId/analysis', async (req: Request, res: Response
 // ─────────────────────────────────────────────────────────────
 
 async function start(): Promise<void> {
+  await emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
   await ensureTable();
 
   // Start Kafka consumer

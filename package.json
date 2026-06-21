@@ -6,7 +6,7 @@
     "build:app": "pnpm --filter dashboard build",
     "build:docs": "pnpm --filter @sots/docs build",
     "build:marketing": "pnpm --filter @sots/marketing build",
-    "dev": "turbo run dev --concurrency=50",
+    "dev": "node scripts/dev.js",
     "dev:app": "pnpm --filter dashboard dev",
     "dev:docs": "pnpm --filter @sots/docs dev",
     "dev:marketing": "pnpm --filter @sots/marketing dev",

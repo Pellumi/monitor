@@ -3,10 +3,12 @@ import { PrismaClient } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature, FeatureTier, Services } from '@sots/shared';
 import { getRuleSet } from '@sots/rules';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 import PDFDocument from 'pdfkit';
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
 // Enable CORS for dashboard queries
@@ -509,6 +511,29 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `sots-report-${applicationId}-${dateStr}`;
 
+    if (req.query.notifyEmail === 'true') {
+      const userId = req.headers['x-sots-user-id'] as string | undefined;
+      if (userId && application.organizationId) {
+        void prisma.user.findUnique({ where: { id: userId } }).then((user) => {
+          if (!user) return;
+          return emailService.sendTransactional({
+            templateKey: 'report-export-ready',
+            to: user.email,
+            userId,
+            organizationId: application.organizationId,
+            applicationId,
+            eventType: 'REPORT_EXPORT_READY',
+            variables: {
+              applicationName: application.name,
+              format: format.toUpperCase(),
+              reportUrl: appUrl(`/reports?applicationId=${applicationId}`),
+            },
+            idempotencyKey: buildIdempotencyKey(['report-export-ready', applicationId, format, userId, dateStr]),
+          });
+        }).catch((err) => console.error('[Email] report-export-ready failed', err));
+      }
+    }
+
     if (format === 'json') {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
       res.setHeader('Content-Type', 'application/json');
@@ -824,6 +849,8 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = Services.REPORT_ENGINE || 3004;
 

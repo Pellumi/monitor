@@ -1,12 +1,14 @@
 import express, { Request, Response } from 'express';
-import { PrismaClient } from '@sots/db';
+import { MemberRole, PrismaClient } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature, Services } from '@sots/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 import crypto from 'crypto';
 
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
 // 1. Start Demonstration
@@ -99,6 +101,20 @@ app.post('/demonstrations/stop', async (req: Request, res: Response) => {
           metadata: { sessionId: demo.sessionId }
         }
       });
+
+      void emailService.sendToOrganizationMembers({
+        templateKey: 'demo-completed-processing',
+        organizationId: orgId,
+        applicationId: demo.applicationId,
+        eventType: 'DEMO_COMPLETED_PROCESSING',
+        variables: {
+          applicationName: demo.application.name,
+          sessionId: demo.sessionId,
+          dashboardUrl: appUrl(`/reports?applicationId=${demo.applicationId}`),
+        },
+        idempotencyKey: buildIdempotencyKey(['demo-completed-processing', demo.id]),
+        roles: [MemberRole.OWNER, MemberRole.ADMIN],
+      }).catch((err) => console.error('[Email] demo-completed-processing failed', err));
     }
 
     res.json({ success: true, completedAt: demo.completedAt });
@@ -116,7 +132,10 @@ app.post('/demonstrations/analyze', async (req: Request, res: Response) => {
   }
 
   try {
-    const demo = await prisma.demonstration.findUnique({ where: { id } });
+    const demo = await prisma.demonstration.findUnique({
+      where: { id },
+      include: { application: true },
+    });
     if (!demo) {
       return res.status(404).json({ error: 'Demonstration not found' });
     }
@@ -143,9 +162,52 @@ app.post('/demonstrations/analyze', async (req: Request, res: Response) => {
       data: { reportId: coverageReport.snapshotId }
     });
 
+    const orgId = (req.headers['x-sots-org-id'] as string) || demo.application.organizationId;
+    if (orgId) {
+      void emailService.sendToOrganizationMembers({
+        templateKey: 'demo-report-ready',
+        organizationId: orgId,
+        applicationId: demo.applicationId,
+        eventType: 'DEMO_REPORT_READY',
+        variables: {
+          applicationName: demo.application.name,
+          environmentName: demo.environmentId || 'Default',
+          coverageScore: coverageReport.metrics?.stateCoverage || '0%',
+          missingFlowCount: coverageReport.metrics?.missingFlows || 0,
+          reportUrl: appUrl(`/reports?applicationId=${demo.applicationId}`),
+          dashboardUrl: appUrl(`/reports?applicationId=${demo.applicationId}`),
+        },
+        idempotencyKey: buildIdempotencyKey(['demo-report-ready', demo.id, coverageReport.snapshotId]),
+        roles: [MemberRole.OWNER, MemberRole.ADMIN],
+      }).catch((err) => console.error('[Email] demo-report-ready failed', err));
+    }
+
     res.json({ success: true, snapshotId: coverageReport.snapshotId });
   } catch (error) {
     console.error('[DemonstrationAPI] Error analyzing demo', error);
+    if (req.body?.id) {
+      void prisma.demonstration.findUnique({
+        where: { id: req.body.id },
+        include: { application: true },
+      }).then((demo) => {
+        const orgId = (req.headers['x-sots-org-id'] as string) || demo?.application.organizationId;
+        if (!demo || !orgId) return;
+        return emailService.sendToOrganizationMembers({
+          templateKey: 'demo-analysis-failed',
+          organizationId: orgId,
+          applicationId: demo.applicationId,
+          eventType: 'DEMO_ANALYSIS_FAILED',
+          severity: 'HIGH',
+          variables: {
+            applicationName: demo.application.name,
+            sessionId: demo.sessionId,
+            dashboardUrl: appUrl(`/reports?applicationId=${demo.applicationId}`),
+          },
+          idempotencyKey: buildIdempotencyKey(['demo-analysis-failed', demo.id]),
+          roles: [MemberRole.OWNER, MemberRole.ADMIN],
+        });
+      }).catch((err) => console.error('[Email] demo-analysis-failed failed', err));
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -174,6 +236,8 @@ app.get('/demonstrations/:id/results', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = Services.DEMONSTRATION_API || 3005;
 

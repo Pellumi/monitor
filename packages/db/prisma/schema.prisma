@@ -20,6 +20,8 @@ model Organization {
   intentNormalizations IntentNormalizationEntry[]
   subscription         Subscription?
   entitlement          Entitlement?
+  notificationPreferences NotificationPreference[]
+  notificationEvents      NotificationEvent[]
 }
 
 // =============================================================================
@@ -834,6 +836,8 @@ model User {
   sessions      UserSession[]
   memberships   OrganizationMembership[]
   auditLogs     AuditLog[]
+  notificationPreferences NotificationPreference[]
+  emailDeliveries EmailDelivery[]
 }
 
 model OtpCode {
@@ -908,4 +912,141 @@ model AuditLog {
   @@index([organizationId])
   @@index([action])
   @@index([createdAt])
+}
+
+// =============================================================================
+// NOTIFICATIONS & EMAIL (MVP)
+// =============================================================================
+
+enum EmailCategory {
+  SECURITY
+  ACCOUNT
+  ONBOARDING
+  REPORTS
+  ALERTS
+  BILLING
+  TEAM
+  DIGEST
+  PRODUCT_EDUCATION
+  COMPLIANCE
+}
+
+enum NotificationFrequency {
+  IMMEDIATE
+  DAILY_DIGEST
+  WEEKLY_DIGEST
+  NEVER
+}
+
+enum NotificationEventStatus {
+  CREATED
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  FAILED
+  SKIPPED
+  SUPPRESSED
+}
+
+enum EmailProvider {
+  RESEND
+  CONSOLE
+}
+
+model EmailTemplate {
+  id                String        @id @default(uuid())
+  key               String        @unique
+  category          EmailCategory
+  subject           String
+  preheader         String
+  htmlPath          String
+  textPath          String
+  requiredVariables String[]
+  defaultFrom       String
+  version           Int           @default(1)
+  isActive          Boolean       @default(true)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+model NotificationPreference {
+  id             String                @id @default(uuid())
+  userId         String
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category       EmailCategory
+  emailEnabled   Boolean               @default(true)
+  inAppEnabled   Boolean               @default(true)
+  webhookEnabled Boolean               @default(false)
+  frequency      NotificationFrequency @default(IMMEDIATE)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([userId, organizationId, category])
+  @@index([organizationId, category])
+}
+
+model NotificationEvent {
+  id             String                  @id @default(uuid())
+  organizationId String?
+  organization   Organization?           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId  String?
+  eventType      String
+  severity       String                  @default("INFO")
+  payload        Json
+  status         NotificationEventStatus @default(CREATED)
+  createdAt      DateTime                @default(now())
+  deliveries     EmailDelivery[]
+
+  @@index([organizationId, eventType, createdAt])
+  @@index([applicationId, eventType, createdAt])
+}
+
+model EmailDelivery {
+  id                  String              @id @default(uuid())
+  notificationEventId String?
+  notificationEvent   NotificationEvent?  @relation(fields: [notificationEventId], references: [id], onDelete: SetNull)
+  userId              String?
+  user                User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  toEmail             String
+  templateKey         String
+  provider            EmailProvider       @default(RESEND)
+  providerMessageId   String?
+  idempotencyKey      String?             @unique
+  status              EmailDeliveryStatus @default(QUEUED)
+  error               String?
+  sentAt              DateTime?
+  deliveredAt         DateTime?
+  openedAt            DateTime?
+  clickedAt           DateTime?
+  bouncedAt           DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([toEmail, createdAt])
+  @@index([providerMessageId])
+  @@index([notificationEventId])
+}
+
+model EmailSuppression {
+  id        String         @id @default(uuid())
+  email     String
+  reason    String
+  category  EmailCategory?
+  createdAt DateTime       @default(now())
+
+  @@unique([email, category])
+  @@index([email])
 }

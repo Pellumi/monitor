@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import {
   BillingCurrency,
   BillingInterval,
+  MemberRole,
   PaymentEvent,
   Plan,
   PlanType,
@@ -10,10 +11,12 @@ import {
 } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Services } from '@sots/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 
 app.use(express.json({ limit: '2mb' }));
 
@@ -304,6 +307,25 @@ app.post('/billing/webhooks/:provider', async (req: Request, res: Response) => {
           data: { status: 'FAILED' },
         });
       }
+
+      const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+      if (org) {
+        void emailService.sendToOrganizationMembers({
+          templateKey: 'billing-payment-failed',
+          organizationId,
+          eventType: 'BILLING_PAYMENT_FAILED',
+          severity: 'HIGH',
+          variables: {
+            organizationName: org.name,
+            provider,
+            eventType,
+            invoiceId: data.invoiceId || '',
+            billingUrl: appUrl('/settings/profile'),
+          },
+          idempotencyKey: buildIdempotencyKey(['billing-payment-failed', organizationId, data.invoiceId || eventType]),
+          roles: [MemberRole.OWNER, MemberRole.ADMIN],
+        }).catch((err) => console.error('[Email] billing-payment-failed failed', err));
+      }
     }
 
     if (eventType === 'customer.subscription.deleted' || eventType === 'subscription.cancelled') {
@@ -341,6 +363,8 @@ app.post('/billing/organizations/:orgId/subscription/cancel', async (req: Reques
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = Services.BILLING_API;
 app.listen(PORT, () => {

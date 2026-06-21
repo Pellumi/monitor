@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sots/db": "workspace:*",
+    "@sots/email": "workspace:*",
     "@sots/entitlement-checker": "workspace:*",
     "@sots/rules": "workspace:*",
     "@sots/shared": "workspace:*",

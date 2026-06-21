@@ -1,5 +1,30 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "KAFKA_BROKERS",
+    "CLICKHOUSE_HOST",
+    "CLICKHOUSE_DATABASE",
+    "CLICKHOUSE_USER",
+    "CLICKHOUSE_PASSWORD",
+    "JWT_SECRET",
+    "NODE_ENV",
+    "RESEND_API_KEY",
+    "RESEND_WEBHOOK_SECRET",
+    "EMAIL_SEND_DISABLED",
+    "EMAIL_FROM_HELLO",
+    "EMAIL_FROM_SECURITY",
+    "EMAIL_FROM_REPORTS",
+    "EMAIL_FROM_ALERTS",
+    "EMAIL_FROM_BILLING",
+    "EMAIL_FROM_SUPPORT",
+    "NEXT_PUBLIC_SITE_URL",
+    "NEXT_PUBLIC_MARKETING_URL",
+    "NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_DOCS_URL",
+    "NEXT_PUBLIC_API_GATEWAY_URL",
+    "API_GATEWAY_INTERNAL_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

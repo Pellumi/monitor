@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sots/db": "workspace:*",
+    "@sots/email": "workspace:*",
     "@sots/shared": "workspace:*",
     "@sots/entitlement-checker": "workspace:*",
     "cookie-parser": "^1.4.6",

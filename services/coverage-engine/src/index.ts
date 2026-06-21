@@ -1,9 +1,11 @@
 import express, { Request, Response } from 'express';
-import { PrismaClient } from '@sots/db';
+import { MemberRole, PrismaClient } from '@sots/db';
 import { getRuleSet, reconstructRuleSet, ApplicationRuleSet } from '@sots/rules';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 
 const app = express();
 const prisma = new PrismaClient();
+const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
 // Helper: Calculate Observed Flows using DFS
@@ -67,6 +69,14 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
   }
 
   try {
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      select: { id: true, name: true, organizationId: true },
+    });
+    if (!application) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
     const profile = await prisma.applicationProfile.findUnique({ where: { applicationId } });
     
     // Check if CompiledRuleset exists for this application
@@ -262,6 +272,11 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     const flowDenominator = observedFlowCount + missingFlowCount;
     const flowCoveragePercent = flowDenominator === 0 ? 0 : (observedFlowCount / flowDenominator) * 100;
 
+    const previousSnapshot = await prisma.coverageSnapshot.findFirst({
+      where: { applicationId, environmentId: targetEnvId || undefined },
+      orderBy: { createdAt: 'desc' },
+    });
+
     // 5. Store Snapshot
     const snapshot = await prisma.coverageSnapshot.create({
       data: {
@@ -300,6 +315,44 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
       snapshotId: snapshot.id
     };
 
+    if (application.organizationId) {
+      const dashboardUrl = appUrl(`/reports?applicationId=${applicationId}`);
+      if (previousSnapshot && previousSnapshot.coveragePercent - stateCoveragePercent >= 10) {
+        void emailService.sendToOrganizationMembers({
+          templateKey: 'coverage-degraded',
+          organizationId: application.organizationId,
+          applicationId,
+          eventType: 'COVERAGE_DEGRADED',
+          severity: stateCoveragePercent < 50 ? 'HIGH' : 'MEDIUM',
+          variables: {
+            applicationName: application.name,
+            previousCoverageScore: previousSnapshot.coveragePercent.toFixed(1),
+            coverageScore: stateCoveragePercent.toFixed(1),
+            dashboardUrl,
+          },
+          idempotencyKey: buildIdempotencyKey(['coverage-degraded', snapshot.id]),
+          roles: [MemberRole.OWNER, MemberRole.ADMIN],
+        }).catch((err) => console.error('[Email] coverage-degraded failed', err));
+      }
+
+      if (newMissingFlows.length > 0) {
+        void emailService.sendToOrganizationMembers({
+          templateKey: 'missing-critical-flow',
+          organizationId: application.organizationId,
+          applicationId,
+          eventType: 'MISSING_CRITICAL_FLOW',
+          severity: 'HIGH',
+          variables: {
+            applicationName: application.name,
+            missingFlowCount: newMissingFlows.length,
+            dashboardUrl: appUrl(`/missing-flows?applicationId=${applicationId}`),
+          },
+          idempotencyKey: buildIdempotencyKey(['missing-critical-flow', snapshot.id]),
+          roles: [MemberRole.OWNER, MemberRole.ADMIN],
+        }).catch((err) => console.error('[Email] missing-critical-flow failed', err));
+      }
+    }
+
     res.status(200).json(report);
 
   } catch (error) {
@@ -307,6 +360,8 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = process.env.PORT || 3003;
 

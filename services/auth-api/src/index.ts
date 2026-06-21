@@ -6,10 +6,12 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { PrismaClient, OtpPurpose, AuditAction, MemberRole, SubscriptionStatus } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 
 const PORT = process.env.PORT || 3013;
 const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
@@ -130,6 +132,16 @@ const COOKIE_OPTS = {
 };
 
 async function issueAuthSession(req: Request, res: Response, user: any, isNewUser = false) {
+  const userAgent = req.headers['user-agent'] || null;
+  const ipAddress = req.ip || null;
+  const seenDevice = await prisma.userSession.findFirst({
+    where: {
+      userId: user.id,
+      userAgent,
+      ipAddress,
+    },
+  });
+
   await prisma.user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
@@ -145,11 +157,28 @@ async function issueAuthSession(req: Request, res: Response, user: any, isNewUse
     data: {
       userId: user.id,
       refreshTokenHash: refreshHash,
-      userAgent: req.headers['user-agent'] || null,
-      ipAddress: req.ip || null,
+      userAgent,
+      ipAddress,
       expiresAt: refreshExpires,
     },
   });
+
+  if (!isNewUser && !seenDevice) {
+    void emailService.sendTransactional({
+      templateKey: 'security-new-device',
+      to: user.email,
+      userId: user.id,
+      organizationId: user.memberships?.[0]?.organizationId || null,
+      eventType: 'SECURITY_NEW_DEVICE',
+      severity: 'HIGH',
+      variables: {
+        ipAddress: ipAddress || 'Unknown IP',
+        userAgent: userAgent || 'Unknown browser',
+        securityUrl: appUrl('/settings/profile'),
+      },
+      idempotencyKey: buildIdempotencyKey(['security-new-device', user.id, ipAddress, userAgent]),
+    }).catch((err) => console.error('[Email] security-new-device failed', err));
+  }
 
   res.cookie('access_token', accessToken, { ...COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
   res.cookie('refresh_token', rawRefresh, { ...COOKIE_OPTS, maxAge: 30 * 24 * 60 * 60 * 1000 });
@@ -277,7 +306,7 @@ app.post('/auth/send-otp', otpEmailLimiter, otpIpLimiter, async (req: Request, r
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Create OTP record in database
-    await prisma.otpCode.create({
+    const otpRecord = await prisma.otpCode.create({
       data: {
         email: cleanEmail,
         codeHash,
@@ -289,6 +318,20 @@ app.post('/auth/send-otp', otpEmailLimiter, otpIpLimiter, async (req: Request, r
 
     // Write audit log
     await writeAuditLog(null, null, AuditAction.OTP_SENT, req, { email: cleanEmail, purpose });
+
+    void emailService.sendTransactional({
+      templateKey: 'auth-otp',
+      to: cleanEmail,
+      eventType: 'AUTH_OTP_SENT',
+      severity: 'HIGH',
+      variables: {
+        code,
+        purpose,
+        expiresInMinutes: 10,
+        appUrl: appUrl('/auth/login'),
+      },
+      idempotencyKey: buildIdempotencyKey(['auth-otp', otpRecord.id]),
+    }).catch((err) => console.error('[Email] auth-otp failed', err));
 
     // Developer fallback logic for local development if no mailer configured
     console.log(`\n==================================================\n[OTP FLOW - LOCAL DEV] Sent OTP: ${code} to email: ${cleanEmail}\n==================================================\n`);
@@ -384,6 +427,35 @@ app.post('/auth/verify-otp', verifyLimiter, async (req: Request, res: Response) 
       await entitlementChecker.resolveEntitlement(firstOrg);
       await emitActivationEvent(firstOrg, 'ORG_CREATED');
       await writeAuditLog(user.id, firstOrg, AuditAction.USER_CREATED, req);
+
+      const org = await prisma.organization.findUnique({ where: { id: firstOrg } });
+      void emailService.sendTransactional({
+        templateKey: 'auth-welcome',
+        to: user.email,
+        userId: user.id,
+        organizationId: firstOrg,
+        eventType: 'AUTH_WELCOME',
+        variables: {
+          userName: user.displayName || user.email.split('@')[0],
+          dashboardUrl: appUrl('/onboarding'),
+        },
+        idempotencyKey: buildIdempotencyKey(['auth-welcome', user.id]),
+      }).catch((err) => console.error('[Email] auth-welcome failed', err));
+
+      if (org) {
+        void emailService.sendTransactional({
+          templateKey: 'org-created',
+          to: user.email,
+          userId: user.id,
+          organizationId: firstOrg,
+          eventType: 'ORG_CREATED',
+          variables: {
+            organizationName: org.name,
+            dashboardUrl: appUrl('/onboarding'),
+          },
+          idempotencyKey: buildIdempotencyKey(['org-created', firstOrg, user.id]),
+        }).catch((err) => console.error('[Email] org-created failed', err));
+      }
     }
 
     res.json({ user: await issueAuthSession(req, res, user, isNewUser) });
@@ -706,6 +778,8 @@ app.patch('/auth/preferred-auth-mode', verifyAuth, async (req: AuthenticatedRequ
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Preferred authentication update failed' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 app.listen(PORT, () => {
   console.log(`[AuthAPI] Service running on port ${PORT}`);

@@ -223,7 +223,7 @@ function NavigationList() {
     <nav className="flex-1 space-y-1 px-4 py-2">
       {navigation.map((item) => {
         const isActive = pathname === item.href;
-        const linkHref = appId ? `${item.href === '/' ? '' : item.href}?appId=${appId}` : item.href;
+        const linkHref = appId ? `${item.href}?appId=${appId}` : item.href;
         return (
           <Link
             key={item.name}

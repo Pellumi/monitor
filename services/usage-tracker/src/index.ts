@@ -1,9 +1,11 @@
 import express, { Request, Response } from 'express';
-import { PrismaClient, UsageMetric } from '@sots/db';
+import { MemberRole, PrismaClient, UsageMetric } from '@sots/db';
 import { Services } from '@sots/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 
 const app = express();
 const prisma = new PrismaClient();
+const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
 // CORS
@@ -21,6 +23,48 @@ app.get('/health', (_req, res) => {
 });
 
 // Run aggregation
+async function sendUsageLimitWarning(params: {
+  organizationId: string;
+  organizationName: string;
+  metric: UsageMetric;
+  value: number;
+  limit: number | null;
+  applicationId?: string | null;
+  environmentId?: string | null;
+  periodEnd: Date;
+}) {
+  if (!params.limit || params.limit <= 0) return;
+  const percent = Math.round((params.value / params.limit) * 100);
+  const threshold = percent >= 100 ? 100 : percent >= 90 ? 90 : percent >= 80 ? 80 : null;
+  if (!threshold) return;
+
+  void emailService.sendToOrganizationMembers({
+    templateKey: 'usage-limit-warning',
+    organizationId: params.organizationId,
+    applicationId: params.applicationId ?? null,
+    eventType: 'USAGE_LIMIT_WARNING',
+    severity: threshold >= 100 ? 'HIGH' : 'MEDIUM',
+    variables: {
+      organizationName: params.organizationName,
+      metric: params.metric,
+      value: params.value,
+      limit: params.limit,
+      percentUsed: percent,
+      usageUrl: appUrl('/settings/profile'),
+    },
+    idempotencyKey: buildIdempotencyKey([
+      'usage-limit-warning',
+      params.organizationId,
+      params.applicationId,
+      params.environmentId,
+      params.metric,
+      threshold,
+      params.periodEnd.toISOString().slice(0, 10),
+    ]),
+    roles: [MemberRole.OWNER, MemberRole.ADMIN],
+  }).catch((err) => console.error('[Email] usage-limit-warning failed', err));
+}
+
 async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Date) {
   const subscription = await prisma.subscription.findUnique({
     where: { organizationId: orgId },
@@ -29,6 +73,8 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
   if (!subscription) return;
 
   const plan = subscription.plan;
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { name: true } });
+  const organizationName = org?.name || 'Organization';
 
   // 1. Applications usage
   const appCount = await prisma.application.count({ where: { organizationId: orgId } });
@@ -51,6 +97,14 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
       value: appCount,
       snapshotDate: endDate
     }
+  });
+  await sendUsageLimitWarning({
+    organizationId: orgId,
+    organizationName,
+    metric: UsageMetric.APPLICATIONS,
+    value: appCount,
+    limit: plan.maxApplications,
+    periodEnd: endDate,
   });
 
   // Load all applications for organization
@@ -89,6 +143,16 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
           value: apiKeyCount,
           snapshotDate: endDate
         }
+      });
+      await sendUsageLimitWarning({
+        organizationId: orgId,
+        organizationName,
+        applicationId: app.id,
+        environmentId: env.id,
+        metric: UsageMetric.USERS,
+        value: apiKeyCount,
+        limit: plan.maxApiKeys,
+        periodEnd: endDate,
       });
 
       // 3. Sessions usage (created within the period)
@@ -194,6 +258,16 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
           snapshotDate: endDate
         }
       });
+      await sendUsageLimitWarning({
+        organizationId: orgId,
+        organizationName,
+        applicationId: app.id,
+        environmentId: env.id,
+        metric: UsageMetric.DEMONSTRATIONS,
+        value: demoCount,
+        limit: plan.maxDemoSessions,
+        periodEnd: endDate,
+      });
     }
   }
 }
@@ -276,6 +350,8 @@ app.get('/usage/organization/:orgId', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = Services.USAGE_TRACKER || 3008;
 app.listen(PORT, () => {

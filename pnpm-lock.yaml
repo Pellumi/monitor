@@ -231,6 +231,16 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/email:
+    dependencies:
+      '@sots/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   packages/entitlement-checker:
     dependencies:
       '@sots/db':
@@ -309,6 +319,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -358,6 +371,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -386,6 +402,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/rules':
         specifier: workspace:*
         version: link:../../packages/rules
@@ -414,6 +433,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -445,6 +467,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -563,6 +588,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -597,6 +625,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
@@ -662,6 +693,9 @@ importers:
       '@sots/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sots/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@sots/shared':
         specifier: workspace:*
         version: link:../../packages/shared

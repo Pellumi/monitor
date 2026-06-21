@@ -1,7 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { PrismaClient, EnvironmentType, MemberRole } from '@sots/db';
+import { EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient } from '@sots/db';
 import { Services } from '@sots/shared';
 import { EntitlementChecker } from '@sots/entitlement-checker';
+import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@sots/email';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
@@ -222,6 +223,7 @@ async function verifyApiKeyOwnership(req: AuthenticatedRequest, res: Response, n
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
 // Enable CORS for dashboard queries
@@ -246,6 +248,10 @@ function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: string 
   return { rawKey, keyHash, keyPrefix };
 }
 
+function sha256(text: string): string {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
 async function emitActivationEvent(
   organizationId: string,
   applicationId: string | null,
@@ -267,6 +273,13 @@ async function emitActivationEvent(
   } catch (err) {
     console.error(`[ActivationEvent] Failed to log ${eventName}`, err);
   }
+}
+
+async function getUserEmail(userId: string): Promise<{ email: string; displayName: string | null } | null> {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, displayName: true },
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -313,6 +326,22 @@ app.post('/organizations', verifyJwt, async (req: AuthenticatedRequest, res: Res
     
     // Emit ORG_CREATED activation event
     await emitActivationEvent(org.id, null, null, 'ORG_CREATED');
+
+    const user = await getUserEmail(userId);
+    if (user) {
+      void emailService.sendTransactional({
+        templateKey: 'org-created',
+        to: user.email,
+        userId,
+        organizationId: org.id,
+        eventType: 'ORG_CREATED',
+        variables: {
+          organizationName: org.name,
+          dashboardUrl: appUrl('/onboarding'),
+        },
+        idempotencyKey: buildIdempotencyKey(['org-created', org.id, userId]),
+      }).catch((err) => console.error('[Email] org-created failed', err));
+    }
 
     res.status(201).json(org);
   } catch (err) {
@@ -392,6 +421,196 @@ app.get('/organizations/:orgId/activation-events', verifyJwt, verifyOrgMembershi
     res.json(events);
   } catch (err) {
     console.error('[Onboarding] Get activation events error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /organizations/:orgId/notification-preferences - current user's email preferences */
+app.get('/organizations/:orgId/notification-preferences', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const userId = req.user!.id;
+
+  try {
+    const existing = await prisma.notificationPreference.findMany({
+      where: { organizationId: orgId, userId },
+      orderBy: { category: 'asc' },
+    });
+
+    const byCategory = new Map(existing.map((preference) => [preference.category, preference]));
+    res.json(Object.values(EmailCategory).map((category) => byCategory.get(category) ?? {
+      id: null,
+      userId,
+      organizationId: orgId,
+      category,
+      emailEnabled: true,
+      inAppEnabled: true,
+      webhookEnabled: false,
+      frequency: category === EmailCategory.DIGEST ? NotificationFrequency.WEEKLY_DIGEST : NotificationFrequency.IMMEDIATE,
+    }));
+  } catch (err) {
+    console.error('[Onboarding] Get notification preferences error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** PUT /organizations/:orgId/notification-preferences/:category - update current user's preference */
+app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId, category } = req.params;
+  const userId = req.user!.id;
+  const normalizedCategory = category.toUpperCase();
+  if (!Object.values(EmailCategory).includes(normalizedCategory as EmailCategory)) {
+    return res.status(400).json({ error: 'INVALID_CATEGORY', categories: Object.values(EmailCategory) });
+  }
+
+  const frequency = req.body.frequency ?? NotificationFrequency.IMMEDIATE;
+  if (!Object.values(NotificationFrequency).includes(frequency)) {
+    return res.status(400).json({ error: 'INVALID_FREQUENCY', frequencies: Object.values(NotificationFrequency) });
+  }
+
+  const criticalCategories: EmailCategory[] = [EmailCategory.SECURITY, EmailCategory.BILLING, EmailCategory.COMPLIANCE];
+  const critical = criticalCategories.includes(normalizedCategory as EmailCategory);
+  const emailEnabled = critical ? true : req.body.emailEnabled !== false;
+
+  try {
+    const preference = await prisma.notificationPreference.upsert({
+      where: {
+        userId_organizationId_category: {
+          userId,
+          organizationId: orgId,
+          category: normalizedCategory as EmailCategory,
+        },
+      },
+      update: {
+        emailEnabled,
+        inAppEnabled: req.body.inAppEnabled !== false,
+        webhookEnabled: req.body.webhookEnabled === true,
+        frequency,
+      },
+      create: {
+        userId,
+        organizationId: orgId,
+        category: normalizedCategory as EmailCategory,
+        emailEnabled,
+        inAppEnabled: req.body.inAppEnabled !== false,
+        webhookEnabled: req.body.webhookEnabled === true,
+        frequency,
+      },
+    });
+
+    res.json(preference);
+  } catch (err) {
+    console.error('[Onboarding] Update notification preference error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** POST /organizations/:orgId/invitations - invite a team member and email the invite */
+app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const { email, role } = req.body;
+  const userId = req.user!.id;
+
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Invitee email is required' });
+  }
+  const inviteRole = role && Object.values(MemberRole).includes(role) ? role as MemberRole : MemberRole.MEMBER;
+  if (inviteRole === MemberRole.OWNER) {
+    return res.status(400).json({ error: 'INVALID_ROLE', message: 'Use ownership transfer for OWNER role.' });
+  }
+
+  try {
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const invitation = await prisma.organizationInvitation.create({
+      data: {
+        organizationId: orgId,
+        email: cleanEmail,
+        role: inviteRole,
+        tokenHash: sha256(token),
+        createdByUserId: userId,
+        expiresAt,
+      },
+    });
+
+    void emailService.sendTransactional({
+      templateKey: 'team-invite',
+      to: cleanEmail,
+      organizationId: orgId,
+      eventType: 'TEAM_INVITE_SENT',
+      variables: {
+        organizationName: org.name,
+        role: inviteRole,
+        invitedBy: req.user!.email,
+        expiresAt: expiresAt.toISOString(),
+        inviteUrl: appUrl(`/auth/login?invite=${token}`),
+      },
+      idempotencyKey: buildIdempotencyKey(['team-invite', invitation.id]),
+    }).catch((err) => console.error('[Email] team-invite failed', err));
+
+    res.status(201).json({
+      id: invitation.id,
+      organizationId: invitation.organizationId,
+      email: invitation.email,
+      role: invitation.role,
+      expiresAt: invitation.expiresAt,
+      createdAt: invitation.createdAt,
+    });
+  } catch (err) {
+    console.error('[Onboarding] Create invitation error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** POST /organizations/invitations/accept - accept an invite for the signed-in user */
+app.post('/organizations/invitations/accept', verifyJwt, async (req: AuthenticatedRequest, res: Response) => {
+  const { token } = req.body;
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'TOKEN_REQUIRED', message: 'Invitation token is required' });
+  }
+
+  try {
+    const tokenHash = sha256(token);
+    const invitation = await prisma.organizationInvitation.findUnique({
+      where: { tokenHash },
+      include: { organization: true },
+    });
+    if (!invitation || invitation.acceptedAt || invitation.expiresAt < new Date()) {
+      return res.status(400).json({ error: 'INVITE_INVALID', message: 'Invite is invalid, expired, or already accepted' });
+    }
+    if (invitation.email.toLowerCase() !== req.user!.email.toLowerCase()) {
+      return res.status(403).json({ error: 'INVITE_EMAIL_MISMATCH', message: 'Sign in with the invited email address.' });
+    }
+
+    const membership = await prisma.$transaction(async (tx) => {
+      const result = await tx.organizationMembership.upsert({
+        where: {
+          userId_organizationId: {
+            userId: req.user!.id,
+            organizationId: invitation.organizationId,
+          },
+        },
+        update: { role: invitation.role },
+        create: {
+          userId: req.user!.id,
+          organizationId: invitation.organizationId,
+          role: invitation.role,
+          invitedByUserId: invitation.createdByUserId,
+        },
+      });
+      await tx.organizationInvitation.update({
+        where: { id: invitation.id },
+        data: { acceptedAt: new Date() },
+      });
+      return result;
+    });
+
+    res.json({ membership, organization: invitation.organization });
+  } catch (err) {
+    console.error('[Onboarding] Accept invitation error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -490,6 +709,25 @@ app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, a
 
     // Emit APP_CREATED activation event
     await emitActivationEvent(orgId, application.id, devEnv.id, 'APP_CREATED');
+
+    const user = await getUserEmail(req.user!.id);
+    if (user) {
+      void emailService.sendTransactional({
+        templateKey: 'app-created',
+        to: user.email,
+        userId: req.user!.id,
+        organizationId: orgId,
+        applicationId: application.id,
+        eventType: 'APP_CREATED',
+        variables: {
+          applicationName: application.name,
+          organizationName: org.name,
+          environmentName: devEnv.name,
+          dashboardUrl: appUrl(`/declare?applicationId=${application.id}&environmentId=${devEnv.id}`),
+        },
+        idempotencyKey: buildIdempotencyKey(['app-created', application.id, req.user!.id]),
+      }).catch((err) => console.error('[Email] app-created failed', err));
+    }
 
     res.status(201).json(application);
   } catch (err) {
@@ -656,6 +894,43 @@ app.post('/environments/:envId/api-keys', verifyJwt, verifyEnvOwnership, async (
         createdByUserId: userId,
       },
     });
+
+    const user = await getUserEmail(userId);
+    if (user) {
+      const dashboardUrl = appUrl(`/declare?applicationId=${env.application.id}&environmentId=${env.id}`);
+      void emailService.sendTransactional({
+        templateKey: 'api-key-created',
+        to: user.email,
+        userId,
+        organizationId: orgId,
+        applicationId: env.application.id,
+        eventType: 'API_KEY_CREATED',
+        severity: 'HIGH',
+        variables: {
+          applicationName: env.application.name,
+          environmentName: env.name,
+          keyPrefix: apiKey.keyPrefix,
+          dashboardUrl,
+        },
+        idempotencyKey: buildIdempotencyKey(['api-key-created', apiKey.id, userId]),
+      }).catch((err) => console.error('[Email] api-key-created failed', err));
+
+      void emailService.sendTransactional({
+        templateKey: 'sdk-install-guide',
+        to: user.email,
+        userId,
+        organizationId: orgId,
+        applicationId: env.application.id,
+        eventType: 'SDK_INSTALL_GUIDE',
+        variables: {
+          applicationName: env.application.name,
+          environmentName: env.name,
+          dashboardUrl,
+          docsUrl: docsUrl('/quickstart'),
+        },
+        idempotencyKey: buildIdempotencyKey(['sdk-install-guide', apiKey.id, userId]),
+      }).catch((err) => console.error('[Email] sdk-install-guide failed', err));
+    }
 
     res.status(201).json({
       id: apiKey.id,
@@ -979,6 +1254,18 @@ app.get('/applications/:appId/environments/:envId/sdk-readiness', async (req: Re
 
         if (!progress.sdkConnected) {
           await emitActivationEvent(orgId, appId, envId, 'SDK_CONNECTED');
+          void emailService.sendToOrganizationMembers({
+            templateKey: 'sdk-first-event',
+            organizationId: orgId,
+            applicationId: appId,
+            eventType: 'SDK_FIRST_EVENT',
+            variables: {
+              applicationName: (await prisma.application.findUnique({ where: { id: appId }, select: { name: true } }))?.name || 'Application',
+              dashboardUrl: appUrl(`/declare?applicationId=${appId}&environmentId=${envId}`),
+            },
+            idempotencyKey: buildIdempotencyKey(['sdk-first-event', appId, envId]),
+            roles: [MemberRole.OWNER, MemberRole.ADMIN],
+          }).catch((err) => console.error('[Email] sdk-first-event failed', err));
         }
         if (!progress.installationTestPassed) {
           await emitActivationEvent(orgId, appId, envId, 'INSTALL_TEST_PASSED');
@@ -1218,9 +1505,29 @@ app.post('/internal/validate-key', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/notifications/email/webhooks/resend', async (req: Request, res: Response) => {
+  const expectedSecret = process.env.RESEND_WEBHOOK_SECRET;
+  if (expectedSecret) {
+    const actual = req.headers.authorization?.replace('Bearer ', '') || req.headers['x-resend-webhook-secret'];
+    if (actual !== expectedSecret) {
+      return res.status(401).json({ error: 'Invalid webhook secret' });
+    }
+  }
+
+  try {
+    await emailService.applyResendWebhook(req.body);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('[Onboarding] Resend webhook failed', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // Start
 // ─────────────────────────────────────────────────────────────
+
+void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
 const PORT = Services.ONBOARDING_API;
 
