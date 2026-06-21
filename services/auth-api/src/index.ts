@@ -19,6 +19,50 @@ export function sha256(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
+type PreferredAuthMode = 'OTP' | 'PASSWORD';
+
+const preferredAuthModes = new Set<PreferredAuthMode>(['OTP', 'PASSWORD']);
+
+function normalizePreferredAuthMode(value: unknown): PreferredAuthMode | null {
+  return typeof value === 'string' && preferredAuthModes.has(value as PreferredAuthMode)
+    ? value as PreferredAuthMode
+    : null;
+}
+
+function validatePassword(password: unknown): string | null {
+  if (typeof password !== 'string') return 'Password is required';
+  if (password.length < 8) return 'Password must be at least 8 characters long';
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'Password must include at least one letter and one number';
+  }
+  return null;
+}
+
+function scryptAsync(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey as Buffer);
+    });
+  });
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = await scryptAsync(password, salt);
+  return `scrypt:${salt}:${hash.toString('hex')}`;
+}
+
+async function verifyPassword(password: string, storedHash: string | null): Promise<boolean> {
+  if (!storedHash) return false;
+  const [scheme, salt, expected] = storedHash.split(':');
+  if (scheme !== 'scrypt' || !salt || !expected) return false;
+
+  const actual = await scryptAsync(password, salt);
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
+}
+
 function generateSlug(name: string): string {
   return name
     .toLowerCase()
@@ -84,6 +128,42 @@ const COOKIE_OPTS = {
   path: '/',
   ...(cookieDomain ? { domain: cookieDomain } : {}),
 };
+
+async function issueAuthSession(req: Request, res: Response, user: any, isNewUser = false) {
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+  await writeAuditLog(user.id, user.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_SUCCESS, req);
+
+  const accessToken = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: '15m' });
+  const rawRefresh = crypto.randomBytes(64).toString('hex');
+  const refreshHash = sha256(rawRefresh);
+  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+  await prisma.userSession.create({
+    data: {
+      userId: user.id,
+      refreshTokenHash: refreshHash,
+      userAgent: req.headers['user-agent'] || null,
+      ipAddress: req.ip || null,
+      expiresAt: refreshExpires,
+    },
+  });
+
+  res.cookie('access_token', accessToken, { ...COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
+  res.cookie('refresh_token', rawRefresh, { ...COOKIE_OPTS, maxAge: 30 * 24 * 60 * 60 * 1000 });
+
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    preferredAuthMode: user.preferredAuthMode,
+    hasPassword: Boolean(user.passwordHash),
+    isNew: isNewUser,
+  };
+}
 
 // Express Middlewares
 app.use(express.json());
@@ -168,7 +248,11 @@ app.post('/auth/identify', async (req: Request, res: Response) => {
 
   try {
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-    res.json({ exists: !!user });
+    res.json({
+      exists: !!user,
+      preferredAuthMode: user?.preferredAuthMode || 'OTP',
+      hasPassword: Boolean(user?.passwordHash),
+    });
   } catch (err) {
     console.error('[Identify] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Identify check failed' });
@@ -302,45 +386,38 @@ app.post('/auth/verify-otp', verifyLimiter, async (req: Request, res: Response) 
       await writeAuditLog(user.id, firstOrg, AuditAction.USER_CREATED, req);
     }
 
-    // Log success login
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-    await writeAuditLog(user.id, user.memberships[0]?.organizationId || null, AuditAction.LOGIN_SUCCESS, req);
-
-    // Issue tokens
-    const accessToken = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: '15m' });
-
-    const rawRefresh = crypto.randomBytes(64).toString('hex');
-    const refreshHash = sha256(rawRefresh);
-    const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-
-    await prisma.userSession.create({
-      data: {
-        userId: user.id,
-        refreshTokenHash: refreshHash,
-        userAgent: req.headers['user-agent'] || null,
-        ipAddress: req.ip || null,
-        expiresAt: refreshExpires,
-      },
-    });
-
-    res.cookie('access_token', accessToken, { ...COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
-    res.cookie('refresh_token', rawRefresh, { ...COOKIE_OPTS, maxAge: 30 * 24 * 60 * 60 * 1000 });
-
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl,
-        isNew: isNewUser,
-      },
-    });
+    res.json({ user: await issueAuthSession(req, res, user, isNewUser) });
   } catch (err) {
     console.error('[Verify OTP] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Verification failed' });
+  }
+});
+
+// Password login
+app.post('/auth/login-password', verifyLimiter, async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+    return res.status(400).json({ error: 'FIELDS_REQUIRED', message: 'Email and password are required' });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { memberships: true },
+    });
+
+    const isValid = user ? await verifyPassword(password, user.passwordHash) : false;
+    if (!user || !isValid) {
+      await writeAuditLog(user?.id || null, user?.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_FAILED, req, { email: cleanEmail, method: 'PASSWORD' });
+      return res.status(400).json({ error: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
+    }
+
+    res.json({ user: await issueAuthSession(req, res, user, false) });
+  } catch (err) {
+    console.error('[Password Login] Error', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'Password login failed' });
   }
 });
 
@@ -460,6 +537,8 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
         email: user.email,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
+        preferredAuthMode: user.preferredAuthMode,
+        hasPassword: Boolean(user.passwordHash),
       },
       memberships: user.memberships.map(m => ({
         id: m.id,
@@ -502,10 +581,129 @@ app.patch('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Respons
       email: updated.email,
       displayName: updated.displayName,
       avatarUrl: updated.avatarUrl,
+      preferredAuthMode: updated.preferredAuthMode,
+      hasPassword: Boolean(updated.passwordHash),
     });
   } catch (err) {
     console.error('[Patch Me] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Profile update failed' });
+  }
+});
+
+// Set or change password and optionally switch preferred auth mode.
+app.post('/auth/password', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+
+  const { currentPassword, newPassword, preferredAuthMode } = req.body;
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) {
+    return res.status(400).json({ error: 'INVALID_PASSWORD', message: passwordError });
+  }
+
+  const requestedAuthMode = normalizePreferredAuthMode(preferredAuthMode);
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { memberships: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User record not found' });
+    }
+
+    const hadPassword = Boolean(user.passwordHash);
+    if (hadPassword) {
+      const currentPasswordValid = await verifyPassword(currentPassword, user.passwordHash);
+      if (!currentPasswordValid) {
+        return res.status(400).json({ error: 'CURRENT_PASSWORD_INVALID', message: 'Current password is incorrect' });
+      }
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    const nextAuthMode = requestedAuthMode || user.preferredAuthMode;
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        passwordUpdatedAt: new Date(),
+        preferredAuthMode: nextAuthMode,
+      },
+    });
+
+    await writeAuditLog(
+      user.id,
+      user.memberships[0]?.organizationId || null,
+      hadPassword ? AuditAction.PASSWORD_CHANGED : AuditAction.PASSWORD_SET,
+      req,
+      { preferredAuthMode: nextAuthMode },
+    );
+
+    if (nextAuthMode !== user.preferredAuthMode) {
+      await writeAuditLog(user.id, user.memberships[0]?.organizationId || null, AuditAction.PREFERRED_AUTH_CHANGED, req, {
+        from: user.preferredAuthMode,
+        to: nextAuthMode,
+      });
+    }
+
+    res.json({
+      id: updated.id,
+      email: updated.email,
+      preferredAuthMode: updated.preferredAuthMode,
+      hasPassword: Boolean(updated.passwordHash),
+      passwordUpdatedAt: updated.passwordUpdatedAt,
+    });
+  } catch (err) {
+    console.error('[Password Set] Error', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'Password update failed' });
+  }
+});
+
+// Change preferred first-factor authentication mode.
+app.patch('/auth/preferred-auth-mode', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+
+  const preferredAuthMode = normalizePreferredAuthMode(req.body.preferredAuthMode);
+  if (!preferredAuthMode) {
+    return res.status(400).json({ error: 'INVALID_AUTH_MODE', message: 'preferredAuthMode must be OTP or PASSWORD' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { memberships: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User record not found' });
+    }
+
+    if (preferredAuthMode === 'PASSWORD' && !user.passwordHash) {
+      return res.status(400).json({
+        error: 'PASSWORD_REQUIRED',
+        message: 'Set a password before switching your preferred authentication mode to email and password.',
+      });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { preferredAuthMode },
+    });
+
+    if (preferredAuthMode !== user.preferredAuthMode) {
+      await writeAuditLog(user.id, user.memberships[0]?.organizationId || null, AuditAction.PREFERRED_AUTH_CHANGED, req, {
+        from: user.preferredAuthMode,
+        to: preferredAuthMode,
+      });
+    }
+
+    res.json({
+      preferredAuthMode: updated.preferredAuthMode,
+      hasPassword: Boolean(updated.passwordHash),
+    });
+  } catch (err) {
+    console.error('[Preferred Auth Mode] Error', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'Preferred authentication update failed' });
   }
 });
 

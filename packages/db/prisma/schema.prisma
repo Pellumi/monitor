@@ -813,6 +813,9 @@ enum AuditAction {
   ROLE_CHANGED
   MFA_ENABLED
   MFA_DISABLED
+  PASSWORD_SET
+  PASSWORD_CHANGED
+  PREFERRED_AUTH_CHANGED
 }
 
 model User {
@@ -820,6 +823,9 @@ model User {
   email         String    @unique
   displayName   String?
   avatarUrl     String?
+  passwordHash  String?
+  preferredAuthMode String @default("OTP")
+  passwordUpdatedAt DateTime?
 
   lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
@@ -903,4 +909,3 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
 }
-
