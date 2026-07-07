@@ -3,6 +3,70 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+// ─── Error humaniser ────────────────────────────────────────────────────────
+type ErrorKind = 'network' | 'auth' | 'generic';
+
+function humanizeError(raw: string): { title: string; detail: string; kind: ErrorKind } {
+  const msg = raw.toLowerCase();
+
+  // Browser network errors when the server is completely unreachable
+  if (
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('load failed') ||
+    msg.includes('network request failed') ||
+    msg.includes('err_connection_refused') ||
+    msg.includes('fetch error')
+  ) {
+    return {
+      title: 'Unable to reach the server',
+      detail: 'The SOTS backend appears to be offline or unreachable. Check your internet connection or contact your administrator if the problem persists.',
+      kind: 'network',
+    };
+  }
+
+  if (msg.includes('invalid') || msg.includes('incorrect') || msg.includes('wrong') || msg.includes('mismatch')) {
+    return {
+      title: 'Incorrect credentials',
+      detail: raw,
+      kind: 'auth',
+    };
+  }
+
+  if (msg.includes('expired') || msg.includes('code')) {
+    return {
+      title: 'Code issue',
+      detail: raw,
+      kind: 'auth',
+    };
+  }
+
+  return { title: 'Something went wrong', detail: raw, kind: 'generic' };
+}
+
+// ─── Icons (inline SVG to avoid extra imports) ───────────────────────────────
+function IconWifi({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="2" y1="2" x2="22" y2="22" />
+      <path d="M8.5 16.5A5 5 0 0 1 12 15" />
+      <path d="M5 12.5A9 9 0 0 1 12 10" />
+      <path d="M2 9A13 13 0 0 1 12 5" />
+      <circle cx="12" cy="20" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function IconAlertTriangle({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -240,6 +304,9 @@ export default function LoginPage() {
     return `${mins}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Resolve friendly error info
+  const errorInfo = error ? humanizeError(error) : null;
+
   return (
     <div className="w-full max-w-md p-8 bg-neutral-900/80 border border-neutral-800 rounded-2xl shadow-2xl backdrop-blur-xl animate-fade-in">
       <div className="text-center mb-8">
@@ -247,13 +314,67 @@ export default function LoginPage() {
           SOTS
         </h1>
         <p className="text-sm text-neutral-400 mt-2">
-          State Observation & Tracking System
+          State Observation &amp; Tracking System
         </p>
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-950/40 border border-red-900/50 rounded-xl text-red-400 text-sm animate-shake">
-          {error}
+      {/* ── Error banner ──────────────────────────────────────────────────── */}
+      {errorInfo && (
+        <div
+          role="alert"
+          className={`mb-6 rounded-xl border p-4 text-sm animate-fade-in ${
+            errorInfo.kind === 'network'
+              ? 'border-amber-800/60 bg-amber-950/30 text-amber-300'
+              : 'border-red-900/50 bg-red-950/30 text-red-300'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            {/* Icon */}
+            <div className={`mt-0.5 shrink-0 ${errorInfo.kind === 'network' ? 'text-amber-400' : 'text-red-400'}`}>
+              {errorInfo.kind === 'network'
+                ? <IconWifi className="h-5 w-5" />
+                : <IconAlertTriangle className="h-5 w-5" />
+              }
+            </div>
+
+            {/* Text */}
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold leading-snug">{errorInfo.title}</p>
+              <p className={`mt-1 text-xs leading-relaxed ${errorInfo.kind === 'network' ? 'text-amber-400/80' : 'text-red-400/80'}`}>
+                {errorInfo.detail}
+              </p>
+
+              {/* Retry button for network errors */}
+              {errorInfo.kind === 'network' && step === 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setError(null);
+                    void handleIdentify({ preventDefault: () => {} } as React.FormEvent);
+                  }}
+                  disabled={isLoading || !email}
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-2 transition disabled:opacity-40"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                  Try again
+                </button>
+              )}
+            </div>
+
+            {/* Dismiss */}
+            <button
+              onClick={() => setError(null)}
+              className={`shrink-0 rounded-md p-0.5 transition hover:bg-white/10 ${errorInfo.kind === 'network' ? 'text-amber-500' : 'text-red-500'}`}
+              aria-label="Dismiss error"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 

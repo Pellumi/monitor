@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -67,7 +67,16 @@ interface ReplayData {
   endTime: string;
   durationMs: number;
   eventCount: number;
+  isComplete: boolean;
   workflowPath: string[];
+  stateTransitions: Array<{
+    eventType: string;
+    offset: number;
+    timestamp: string;
+    fromState: string | null;
+    toState: string | null;
+    action: string | null;
+  }>;
   timeline: Array<{
     offset: number;
     eventType: string;
@@ -93,6 +102,97 @@ function ReplayViewerContent() {
   const sessionId    = params.id;
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+
+  // ─── Playback state ──────────────────────────────────────────────────────────
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);   // 0.5x, 1x, 2x, 4x
+  const eventListRef = useRef<HTMLDivElement>(null);
+  const playbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const SPEED_OPTIONS = [0.5, 1, 2, 4];
+
+  const goToEvent = useCallback((idx: number | null) => {
+    setSelectedIdx(idx);
+  }, []);
+
+  const goNext = useCallback(() => {
+    if (!data) return;
+    setSelectedIdx(prev => {
+      const next = (prev === null ? 0 : prev + 1);
+      return next < data.timeline.length ? next : prev;
+    });
+  }, [data]);
+
+  const goPrev = useCallback(() => {
+    setSelectedIdx(prev => {
+      if (prev === null || prev <= 0) return 0;
+      return prev - 1;
+    });
+  }, []);
+
+  // Auto-advance playback
+  useEffect(() => {
+    if (!isPlaying || !data) return;
+    if (selectedIdx !== null && selectedIdx >= data.timeline.length - 1) {
+      setIsPlaying(false);
+      return;
+    }
+    const currentIdx = selectedIdx ?? -1;
+    const nextIdx = currentIdx + 1;
+    if (nextIdx >= data.timeline.length) {
+      setIsPlaying(false);
+      return;
+    }
+    // Calculate delay based on actual time gap between events
+    const currentOffset = currentIdx >= 0 ? data.timeline[currentIdx].offset : 0;
+    const nextOffset = data.timeline[nextIdx].offset;
+    const gap = Math.max(50, (nextOffset - currentOffset) / playbackSpeed);
+    const clampedGap = Math.min(gap, 3000 / playbackSpeed); // Cap max wait
+
+    playbackTimerRef.current = setTimeout(() => {
+      setSelectedIdx(nextIdx);
+    }, clampedGap);
+
+    return () => {
+      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+    };
+  }, [isPlaying, selectedIdx, playbackSpeed, data]);
+
+  // Auto-scroll event list to selected event
+  useEffect(() => {
+    if (selectedIdx === null || !eventListRef.current) return;
+    const el = eventListRef.current.children[selectedIdx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selectedIdx]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ignore if user is typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          setIsPlaying(p => !p);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          setIsPlaying(false);
+          goNext();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          setIsPlaying(false);
+          goPrev();
+          break;
+        case '1': setPlaybackSpeed(0.5); break;
+        case '2': setPlaybackSpeed(1); break;
+        case '3': setPlaybackSpeed(2); break;
+        case '4': setPlaybackSpeed(4); break;
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [goNext, goPrev]);
 
   const { data, isLoading, error } = useQuery<ReplayData>({
     queryKey: ['session-replay', sessionId],
@@ -128,6 +228,13 @@ function ReplayViewerContent() {
           </div>
           <p className="mt-1 text-sm text-neutral-400">
             {data.eventCount} events · {Math.round(data.durationMs / 1000)}s duration
+            <span className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+              data.isComplete
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+            }`}>
+              {data.isComplete ? 'Complete' : 'In Progress'}
+            </span>
           </p>
         </div>
         {data.workflowPath.length > 0 && (
@@ -150,11 +257,18 @@ function ReplayViewerContent() {
       <div className="flex-shrink-0 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
         <p className="mb-2 text-xs text-neutral-500 uppercase tracking-wider">Event Timeline</p>
         <div className="relative h-6 rounded bg-neutral-900 overflow-hidden">
+          {/* Progress indicator line */}
+          {selectedIdx !== null && (
+            <div
+              className="absolute top-0 h-full w-0.5 bg-red-500 z-10 transition-all duration-150"
+              style={{ left: `${(data.timeline[selectedIdx].offset / totalMs) * 100}%` }}
+            />
+          )}
           {data.timeline.map((ev, i) => (
             <button
               key={i}
               title={`${ev.eventType} @ ${formatOffset(ev.offset)}`}
-              onClick={() => setSelectedIdx(i)}
+              onClick={() => { setIsPlaying(false); goToEvent(i); }}
               style={{ left: `${(ev.offset / totalMs) * 100}%` }}
               className={`absolute top-1 h-4 w-1.5 rounded-full transition-all hover:scale-150 ${
                 EVENT_COLOR[ev.eventType] ?? 'bg-neutral-400'
@@ -168,6 +282,93 @@ function ReplayViewerContent() {
         </div>
       </div>
 
+      {/* Playback controls */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-4 rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          {/* Prev */}
+          <button
+            onClick={() => { setIsPlaying(false); goPrev(); }}
+            disabled={selectedIdx === null || selectedIdx <= 0}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Previous event (←)"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          {/* Play / Pause */}
+          <button
+            onClick={() => setIsPlaying(p => !p)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+          >
+            {isPlaying ? (
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="4" width="4" height="16" rx="1" />
+                <rect x="14" y="4" width="4" height="16" rx="1" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
+          {/* Next */}
+          <button
+            onClick={() => { setIsPlaying(false); goNext(); }}
+            disabled={selectedIdx !== null && selectedIdx >= data.timeline.length - 1}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Next event (→)"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Time display */}
+        <div className="font-mono text-xs text-neutral-400">
+          <span className="text-white">
+            {selectedIdx !== null ? formatOffset(data.timeline[selectedIdx].offset) : '+0:00'}
+          </span>
+          <span className="text-neutral-600 mx-1">/</span>
+          <span>{formatOffset(data.durationMs)}</span>
+          {selectedIdx !== null && (
+            <span className="text-neutral-600 ml-2">
+              Event {selectedIdx + 1} of {data.timeline.length}
+            </span>
+          )}
+        </div>
+
+        {/* Speed selector */}
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-neutral-600 mr-1">Speed</span>
+          {SPEED_OPTIONS.map(speed => (
+            <button
+              key={speed}
+              onClick={() => setPlaybackSpeed(speed)}
+              className={`rounded px-2 py-1 text-xs font-bold transition-colors ${
+                playbackSpeed === speed
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-800'
+              }`}
+            >
+              {speed}x
+            </button>
+          ))}
+        </div>
+
+        {/* Keyboard hints */}
+        <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-600">
+          <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">Space</kbd>
+          <span>play</span>
+          <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">← →</kbd>
+          <span>step</span>
+          <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">1-4</kbd>
+          <span>speed</span>
+        </div>
+      </div>
+
       {/* Main body — 3-pane layout */}
       <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
 
@@ -176,7 +377,7 @@ function ReplayViewerContent() {
           <div className="border-b border-neutral-800 px-4 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
             Events
           </div>
-          <div className="flex-1 overflow-y-auto divide-y divide-neutral-800">
+          <div ref={eventListRef} className="flex-1 overflow-y-auto divide-y divide-neutral-800">
             {data.timeline.map((ev, i) => (
               <button
                 key={i}
@@ -220,11 +421,39 @@ function ReplayViewerContent() {
           </div>
         </div>
 
-        {/* Right column — API calls + errors */}
+        {/* Right column — State Transitions + API calls + errors */}
         <div className="w-72 flex-shrink-0 flex flex-col gap-4 overflow-hidden">
 
+          {/* State Transitions (Gap 5) */}
+          {data.stateTransitions && data.stateTransitions.length > 0 && (
+            <div className="flex flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900" style={{ maxHeight: '35%' }}>
+              <div className="border-b border-neutral-800 px-4 py-2 text-xs font-medium uppercase tracking-wider text-indigo-400">
+                State Transitions ({data.stateTransitions.length})
+              </div>
+              <div className="flex-1 overflow-y-auto divide-y divide-neutral-800">
+                {data.stateTransitions.map((st, i) => (
+                  <div key={i} className="px-4 py-2">
+                    <div className="flex items-center gap-1.5">
+                      {st.fromState && (
+                        <>
+                          <span className="font-mono text-xs text-neutral-300 truncate">{st.fromState}</span>
+                          <span className="text-neutral-600 text-xs">→</span>
+                        </>
+                      )}
+                      <span className="font-mono text-xs text-teal-400 truncate">{st.toState ?? st.eventType}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-neutral-600">
+                      <span>{formatOffset(st.offset)}</span>
+                      {st.action && <span className="text-neutral-500">· {st.action}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* API calls */}
-          <div className="flex flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900" style={{ maxHeight: '55%' }}>
+          <div className="flex flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900" style={{ maxHeight: '35%' }}>
             <div className="border-b border-neutral-800 px-4 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
               API Calls ({data.apiCalls.length})
             </div>

@@ -1,11 +1,17 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('coverage-engine');
+
 import express, { Request, Response } from 'express';
 import { MemberRole, PrismaClient } from '@sots/db';
 import { getRuleSet, reconstructRuleSet, ApplicationRuleSet } from '@sots/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { EntitlementChecker } from '@sots/entitlement-checker';
+import { Feature } from '@sots/shared';
 
 const app = express();
 const prisma = new PrismaClient();
 const emailService = new NotificationEmailService(prisma);
+const entitlementChecker = new EntitlementChecker(prisma);
 app.use(express.json());
 
 // Helper: Calculate Observed Flows using DFS
@@ -77,8 +83,26 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Application not found' });
     }
 
+    // ── Entitlement gate: COVERAGE_ANALYSIS ──────────────────────
+    if (application.organizationId) {
+      let allowed = true;
+      try {
+        allowed = await entitlementChecker.canAccess(application.organizationId, Feature.COVERAGE_ANALYSIS);
+      } catch (err) {
+        console.error('[CoverageEngine] Entitlement check failed — defaulting to allow', err);
+      }
+      if (!allowed) {
+        return res.status(403).json({
+          error: 'FEATURE_NOT_ENTITLED',
+          feature: Feature.COVERAGE_ANALYSIS,
+          message: 'Your current plan does not include Coverage Analysis. Please upgrade to continue.',
+        });
+      }
+    }
+
+
     const profile = await prisma.applicationProfile.findUnique({ where: { applicationId } });
-    
+
     // Check if CompiledRuleset exists for this application
     const latestRuleset = await prisma.compiledRuleset.findFirst({
       where: { applicationId },

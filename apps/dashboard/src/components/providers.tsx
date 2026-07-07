@@ -11,6 +11,7 @@ export interface User {
   avatarUrl: string | null;
   preferredAuthMode: 'OTP' | 'PASSWORD';
   hasPassword: boolean;
+  isSystemAdmin?: boolean;
 }
 
 export interface Organization {

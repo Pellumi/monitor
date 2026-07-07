@@ -1,12 +1,18 @@
 {
   "name": "@sots/e2e-tests",
   "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "test:e2e": "tsx src/index.ts"
+    "test:e2e": "tsx src/index.ts",
+    "test:integration": "vitest run src/integration.test.ts",
+    "test:isolation": "vitest run src/isolation.test.ts",
+    "test:billing": "vitest run src/billing.e2e.test.ts",
+    "test": "vitest run"
   },
   "devDependencies": {
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
+    "vitest": "^4.1.9",
     "@sots/db": "workspace:*",
     "@sots/shared": "workspace:*"
   }

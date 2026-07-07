@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
@@ -39,6 +40,8 @@ interface ReportData {
 function ReportsContent() {
   const searchParams = useSearchParams();
   const appId = searchParams.get('appId') ?? 'app-test-checkout-success.json';
+  const [exportingFormat, setExportingFormat] = React.useState<string | null>(null);
+  const [exportError, setExportError] = React.useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<ReportData>({
     queryKey: ['latest-report', appId],
@@ -53,7 +56,43 @@ function ReportsContent() {
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data)     return null;
 
-  const exportUrl = (format: string) => `${REPORT_ENGINE}/reports/${appId}/export?format=${format}`;
+  async function handleExport(format: string) {
+    setExportingFormat(format);
+    setExportError(null);
+    try {
+      const res = await fetch(`${REPORT_ENGINE}/reports/${appId}/export?format=${format}`);
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Export failed');
+        throw new Error(errText);
+      }
+      const contentType = res.headers.get('content-type') ?? '';
+      // New storage response: JSON with presigned URL
+      if (contentType.includes('application/json')) {
+        const { url, filename } = await res.json() as { url: string; expiresAt: string; filename: string };
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        // Legacy fallback: blob stream
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objUrl;
+        link.download = `sots-report-${appId}.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(objUrl);
+      }
+    } catch (err: any) {
+      setExportError(err?.message ?? 'Export failed');
+    } finally {
+      setExportingFormat(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -66,21 +105,28 @@ function ReportsContent() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {exportError && (
+            <span className="self-center text-xs text-red-400 mr-2">{exportError}</span>
+          )}
           {[
-            { label: 'Export PDF', format: 'pdf', color: 'bg-neutral-800 text-white hover:bg-neutral-700' },
-            { label: 'Export HTML', format: 'html', color: 'bg-neutral-800 text-white hover:bg-neutral-700' },
-            { label: 'Export CSV', format: 'csv', color: 'bg-neutral-800 text-white hover:bg-neutral-700' },
-            { label: 'Export JSON', format: 'json', color: 'bg-neutral-800 text-white hover:bg-neutral-700' },
+            { label: 'PDF', format: 'pdf' },
+            { label: 'HTML', format: 'html' },
+            { label: 'CSV', format: 'csv' },
+            { label: 'JSON', format: 'json' },
           ].map((btn) => (
-            <a
+            <button
               key={btn.format}
-              href={exportUrl(btn.format)}
-              download
-              className={`flex items-center space-x-1.5 rounded-lg border border-neutral-800 px-4 py-2 text-xs font-semibold transition-colors ${btn.color}`}
+              id={`export-${btn.format}-btn`}
+              onClick={() => void handleExport(btn.format)}
+              disabled={!!exportingFormat}
+              className="flex items-center space-x-1.5 rounded-lg border border-neutral-800 bg-neutral-800 hover:bg-neutral-700 px-4 py-2 text-xs font-semibold text-white transition-colors disabled:opacity-50"
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>{btn.label}</span>
-            </a>
+              {exportingFormat === btn.format
+                ? <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin inline-block" />
+                : <Download className="h-3.5 w-3.5" />
+              }
+              <span>Export {btn.label}</span>
+            </button>
           ))}
         </div>
       </div>

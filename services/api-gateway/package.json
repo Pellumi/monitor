@@ -12,9 +12,12 @@
     "@fastify/http-proxy": "^9.4.0",
     "@fastify/rate-limit": "^9.1.0",
     "@sots/shared": "workspace:*",
-    "fastify": "^4.26.0"
+    "@sots/telemetry": "workspace:*",
+    "fastify": "^4.26.0",
+    "jsonwebtoken": "^9.0.0"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.0",
     "@types/node": "^20.0.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.0.0"

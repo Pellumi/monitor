@@ -1,0 +1,145 @@
+# ──────────────────────────────────────────────────────────────
+# SOTS Platform — Prometheus Alert Rules
+# ──────────────────────────────────────────────────────────────
+
+groups:
+  - name: sots_service_health
+    interval: 30s
+    rules:
+      # ── Service availability ─────────────────────────────────
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been unreachable for more than 1 minute."
+
+      - alert: BackgroundWorkerStalled
+        expr: absent(up{job="background-workers"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Background workers service is not reporting"
+          description: "The background-workers scrape target has been absent for 2 minutes. Job scheduling may have stopped."
+
+      # ── HTTP error rates ─────────────────────────────────────
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_request_errors_total[5m])) by (job)
+            /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} error rate is {{ $value | humanizePercentage }} (threshold: 5%) over the last 5 minutes."
+
+      - alert: HighClientErrorRate
+        expr: |
+          (
+            sum(rate(http_request_errors_total{status=~"4.."}[5m])) by (job)
+            /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) > 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 4xx error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} client error rate is {{ $value | humanizePercentage }} (threshold: 15%) over the last 10 minutes."
+
+      # ── Latency ──────────────────────────────────────────────
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency on {{ $labels.job }}"
+          description: "{{ $labels.job }} p99 latency is {{ $value }}s (threshold: 2s)."
+
+      - alert: HighP95Latency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P95 latency on {{ $labels.job }}"
+          description: "{{ $labels.job }} p95 latency is {{ $value }}s (threshold: 1s)."
+
+  - name: sots_event_pipeline
+    interval: 60s
+    rules:
+      # ── Event collector backpressure ─────────────────────────
+      - alert: EventCollectorBackpressure
+        expr: sots_event_queue_depth > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event collector queue depth is high"
+          description: "Event queue depth is {{ $value }} (threshold: 10,000). Events may be backing up."
+
+      - alert: EventIngestionStalled
+        expr: rate(sots_events_ingested_total[5m]) == 0 and up{job="event-collector"} == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event ingestion has stalled"
+          description: "The event collector is up but has ingested zero events in 10 minutes."
+
+  - name: sots_ai_workers
+    interval: 60s
+    rules:
+      # ── AI draft processing ──────────────────────────────────
+      - alert: AiDraftQueueBacklog
+        expr: sots_ai_draft_queue_pending > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI draft queue backlog growing"
+          description: "{{ $value }} AI draft jobs are pending (threshold: 50)."
+
+      - alert: AiDraftHighFailureRate
+        expr: |
+          (
+            sum(rate(sots_ai_draft_jobs_failed_total[30m]))
+            /
+            sum(rate(sots_ai_draft_jobs_total[30m]))
+          ) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI draft jobs have high failure rate"
+          description: "AI draft failure rate is {{ $value | humanizePercentage }} (threshold: 20%)."
+
+  - name: sots_infrastructure
+    interval: 60s
+    rules:
+      # ── Resource usage (when node-exporter is available) ─────
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 90%)."
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining (threshold: 15%)."

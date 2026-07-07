@@ -1,3 +1,6 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('auth-api');
+
 import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -148,7 +151,16 @@ async function issueAuthSession(req: Request, res: Response, user: any, isNewUse
   });
   await writeAuditLog(user.id, user.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_SUCCESS, req);
 
-  const accessToken = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: '15m' });
+  const adminRecord = await prisma.systemAdmin.findFirst({
+    where: {
+      userId: user.id,
+      revokedAt: null,
+    },
+    select: { id: true },
+  });
+  const isSystemAdmin = adminRecord !== null;
+
+  const accessToken = jwt.sign({ sub: user.id, email: user.email, isSystemAdmin }, JWT_SECRET, { expiresIn: '15m' });
   const rawRefresh = crypto.randomBytes(64).toString('hex');
   const refreshHash = sha256(rawRefresh);
   const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -191,6 +203,7 @@ async function issueAuthSession(req: Request, res: Response, user: any, isNewUse
     preferredAuthMode: user.preferredAuthMode,
     hasPassword: Boolean(user.passwordHash),
     isNew: isNewUser,
+    isSystemAdmin,
   };
 }
 
@@ -525,7 +538,16 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
     await writeAuditLog(session.userId, null, AuditAction.SESSION_REFRESHED, req);
 
     // Issue new tokens
-    const accessToken = jwt.sign({ sub: session.userId, email: session.user.email }, JWT_SECRET, { expiresIn: '15m' });
+    const adminRecord = await prisma.systemAdmin.findFirst({
+      where: {
+        userId: session.userId,
+        revokedAt: null,
+      },
+      select: { id: true },
+    });
+    const isSystemAdmin = adminRecord !== null;
+
+    const accessToken = jwt.sign({ sub: session.userId, email: session.user.email, isSystemAdmin }, JWT_SECRET, { expiresIn: '15m' });
 
     const newRawRefresh = crypto.randomBytes(64).toString('hex');
     const newRefreshHash = sha256(newRawRefresh);
@@ -603,6 +625,15 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
       return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User record not found' });
     }
 
+    const adminRecord = await prisma.systemAdmin.findFirst({
+      where: {
+        userId: user.id,
+        revokedAt: null,
+      },
+      select: { id: true },
+    });
+    const isSystemAdmin = adminRecord !== null;
+
     res.json({
       user: {
         id: user.id,
@@ -611,6 +642,7 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
         avatarUrl: user.avatarUrl,
         preferredAuthMode: user.preferredAuthMode,
         hasPassword: Boolean(user.passwordHash),
+        isSystemAdmin,
       },
       memberships: user.memberships.map(m => ({
         id: m.id,
@@ -776,6 +808,88 @@ app.patch('/auth/preferred-auth-mode', verifyAuth, async (req: AuthenticatedRequ
   } catch (err) {
     console.error('[Preferred Auth Mode] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Preferred authentication update failed' });
+  }
+});
+
+// Local bootstrap endpoint to promote any registered user to a system administrator
+app.post('/auth/bootstrap-admin', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Email address is required' });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+
+  try {
+    let user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { memberships: true },
+    });
+
+    if (!user) {
+      // If they don't exist yet, we create a user.
+      // Auto-provision an organization as well, matching the behavior in verify-otp signup
+      const baseOrgName = `${cleanEmail.split('@')[0]} Org`;
+      const orgSlug = await getUniqueOrgSlug(baseOrgName);
+
+      user = await prisma.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
+          data: { email: cleanEmail },
+        });
+
+        const newOrg = await tx.organization.create({
+          data: {
+            name: baseOrgName,
+            slug: orgSlug,
+            createdByUserId: newUser.id,
+          },
+        });
+
+        await tx.organizationMembership.create({
+          data: {
+            userId: newUser.id,
+            organizationId: newOrg.id,
+            role: MemberRole.OWNER,
+          },
+        });
+
+        return tx.user.findUniqueOrThrow({
+          where: { id: newUser.id },
+          include: { memberships: true },
+        });
+      });
+
+      const firstOrg = user.memberships[0].organizationId;
+      await entitlementChecker.resolveEntitlement(firstOrg);
+      await emitActivationEvent(firstOrg, 'ORG_CREATED');
+      await writeAuditLog(user.id, firstOrg, AuditAction.USER_CREATED, req);
+    }
+
+    await prisma.systemAdmin.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        scope: 'FULL',
+      },
+      update: {
+        revokedAt: null,
+      },
+    });
+
+    await writeAuditLog(user.id, user.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_SUCCESS, req, { notes: 'Bootstrapped as system admin' });
+
+    res.json({
+      success: true,
+      message: `User ${email} has been successfully registered (if needed) and promoted to System Admin.`,
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+      }
+    });
+  } catch (err) {
+    console.error('[Bootstrap Admin] Error', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to bootstrap admin user' });
   }
 });
 

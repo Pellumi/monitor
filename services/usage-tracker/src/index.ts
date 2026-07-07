@@ -1,3 +1,6 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('usage-tracker');
+
 import express, { Request, Response } from 'express';
 import { MemberRole, PrismaClient, UsageMetric } from '@sots/db';
 import { Services } from '@sots/shared';

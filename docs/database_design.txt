@@ -1,4 +1,4 @@
-﻿DATABASE DESIGN DOCUMENT (DDD)
+DATABASE DESIGN DOCUMENT (DDD)
 1. Purpose
 This document defines the complete database architecture for SOTS.
 The document includes:
@@ -28,6 +28,7 @@ SOTS uses a polyglot persistence architecture.
 ┌────────────────────────────┐
 │ Neo4j                     │
 │ Behavioral Graphs         │
+│ ⚠️  PHASE 3 ONLY          │
 └─────────────┬──────────────┘
               │
               ▼
@@ -43,7 +44,7 @@ Database
 	ClickHouse
 	Event telemetry & analytics
 	Neo4j
-	Workflow graphs & state relationships
+	Workflow graphs & state relationships (Phase 3 — not active in Phase 1/2. See ADR-001.)
 	Object Storage
 	Replay assets & report exports
 	4. PostgreSQL Database
@@ -417,7 +418,10 @@ Column
 	detected_at
 	DateTime
 	23. Neo4j Database
-Purpose
+⚠️  PHASE 3 ONLY — Not implemented in Phase 1 or Phase 2.
+All behavioral graph data is stored in PostgreSQL via Prisma (BehaviorGraph, BehaviorGraphNode,
+BehaviorGraphEdge, BehaviorGraphVersion tables). See docs/graph-storage-decision.md (ADR-001).
+Purpose (Phase 3)
 Store behavioral graphs.
 Supports:
 * Workflow discovery
@@ -426,7 +430,7 @@ Supports:
 * Test generation
 * Regression detection
 Required by Behavioral Graph Engine.
-24. Neo4j Graph Model
+24. Neo4j Graph Model (Phase 3)
 Nodes
 Application
 State
@@ -455,7 +459,7 @@ Relationships
 ________________
 
 
-25. Graph Visualization
+25. Graph Visualization (Phase 3 — illustrative)
 Anonymous
       │
       ▼
@@ -469,7 +473,7 @@ Cart
       │
       ▼
 Checkout
-26. Neo4j Indexes
+26. Neo4j Indexes (Phase 3)
 CREATE INDEX state_name
 
 
@@ -555,7 +559,7 @@ Scale Using:
 * Sharding
 * Replication
 * Distributed tables
-Neo4j
+Neo4j (Phase 3 only)
 Scale Using:
 * Clustered graph nodes
 * Read replicas

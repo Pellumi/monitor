@@ -137,13 +137,13 @@ export const docs: DocPage[] = [
       {
         title: 'Step 1 — Install SDK',
         body: 'Add SOTS to your project dependencies.',
-        code: 'npm install @sots/react',
+        code: 'npm install @sots/frontend-sdk',
         language: 'bash'
       },
       {
         title: 'Step 2 — Initialize SDK',
         body: 'Initialize SOTS at the entry point of your application:',
-        code: 'import { SOTS } from "@sots/react";\n\nSOTS.initialize({\n  apiKey: "YOUR_API_KEY",\n  applicationId: "YOUR_APP_ID",\n  environment: "development"\n});',
+        code: 'import { SOTS } from "@sots/frontend-sdk";\n\nSOTS.initialize({\n  apiKey: "YOUR_API_KEY",\n  applicationId: "YOUR_APP_ID",\n  environment: "development"\n});',
         language: 'typescript'
       },
       {

@@ -12,7 +12,9 @@
     "@sots/db": "workspace:*",
     "@sots/email": "workspace:*",
     "@sots/shared": "workspace:*",
+    "@sots/telemetry": "workspace:*",
     "@sots/rules": "workspace:*",
+    "@sots/entitlement-checker": "workspace:*",
     "express": "^4.18.2"
   },
   "devDependencies": {

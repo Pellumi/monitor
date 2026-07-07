@@ -1,10 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --border: #e5e5e5;
-  --muted-foreground: #737373;
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --border: #262626;
+  --muted-foreground: #a3a3a3;
+}
+
+/* Fallback: also honor prefers-color-scheme for non-class scenarios */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    --background: #ffffff;
+    --foreground: #171717;
+    --border: #e5e5e5;
+    --muted-foreground: #737373;
+  }
 }
 
 @theme inline {
@@ -14,22 +24,22 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --border: #262626;
-    --muted-foreground: #a3a3a3;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ReactFlow Controls Premium Dark Mode Theme */
+/* ═══════════════════════════════════════════════════
+   ReactFlow — Comprehensive Dark Mode Theme
+   ═══════════════════════════════════════════════════ */
+
+/* Container / pane background */
+.react-flow {
+  background: #0a0a0a !important;
+}
+
+/* Controls panel */
 .react-flow__controls {
   background: #0a0a0a !important;
   border: 1px solid #262626 !important;
@@ -66,6 +76,59 @@ body {
   fill: currentColor !important;
   width: 12px !important;
   height: 12px !important;
+}
+
+/* Node handles (connection dots) */
+.react-flow__handle {
+  background: #404040 !important;
+  border: 1px solid #525252 !important;
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.react-flow__handle:hover {
+  background: #3b82f6 !important;
+  border-color: #60a5fa !important;
+}
+
+/* Edge labels */
+.react-flow__edge-text {
+  fill: #737373 !important;
+}
+
+.react-flow__edge-textbg {
+  fill: #0a0a0a !important;
+}
+
+/* Attribution badge */
+.react-flow__attribution {
+  background: rgba(10, 10, 10, 0.7) !important;
+}
+
+.react-flow__attribution a {
+  color: #525252 !important;
+}
+
+/* Panel / Minimap */
+.react-flow__panel {
+  background: transparent !important;
+}
+
+.react-flow__minimap {
+  background: #0a0a0a !important;
+  border: 1px solid #262626 !important;
+  border-radius: 8px !important;
+}
+
+/* Selection box */
+.react-flow__selection {
+  background: rgba(59, 130, 246, 0.08) !important;
+  border: 1px solid rgba(59, 130, 246, 0.4) !important;
+}
+
+/* Node selection ring */
+.react-flow__node.selected {
+  box-shadow: 0 0 0 2px #3b82f6 !important;
 }
 
 /* Custom Scrollbar */

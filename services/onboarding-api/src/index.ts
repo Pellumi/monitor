@@ -1,8 +1,14 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('onboarding-api');
+
 import express, { Request, Response, NextFunction } from 'express';
-import { EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient } from '@sots/db';
-import { Services } from '@sots/shared';
+import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient } from '@sots/db';
+import { Feature, Services } from '@sots/shared';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@sots/email';
+import { generateAiFlowDraft } from '@sots/ai';
+import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@sots/rules';
+import { writeAuditLog, extractAuditContext } from '@sots/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
@@ -94,6 +100,21 @@ async function verifyOrgMembership(req: AuthenticatedRequest, res: Response, nex
     console.error('[verifyOrgMembership] Error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+}
+
+async function getOrgMembership(userId: string, organizationId: string) {
+  return prisma.organizationMembership.findUnique({
+    where: {
+      userId_organizationId: {
+        userId,
+        organizationId,
+      },
+    },
+  });
+}
+
+function isOrgManager(role: MemberRole | null | undefined) {
+  return role === MemberRole.OWNER || role === MemberRole.ADMIN;
 }
 
 // Application ownership verification middleware
@@ -513,16 +534,66 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
   if (!email || typeof email !== 'string') {
     return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Invitee email is required' });
   }
+
+  const cleanEmail = email.toLowerCase().trim();
+  if (!cleanEmail) {
+    return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Invitee email is required' });
+  }
+
   const inviteRole = role && Object.values(MemberRole).includes(role) ? role as MemberRole : MemberRole.MEMBER;
   if (inviteRole === MemberRole.OWNER) {
     return res.status(400).json({ error: 'INVALID_ROLE', message: 'Use ownership transfer for OWNER role.' });
   }
 
   try {
-    const org = await prisma.organization.findUnique({ where: { id: orgId } });
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    const [org, actorMembership] = await Promise.all([
+      prisma.organization.findUnique({ where: { id: orgId } }),
+      getOrgMembership(userId, orgId),
+    ]);
 
-    const cleanEmail = email.toLowerCase().trim();
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may invite members.' });
+    }
+
+    const [hasTeamAccess, entitlement] = await Promise.all([
+      entitlementChecker.canAccess(orgId, Feature.TEAM_COLLABORATION),
+      entitlementChecker.getEntitlement(orgId),
+    ]);
+    if (!hasTeamAccess) {
+      return res.status(403).json({ error: 'TEAM_COLLABORATION_REQUIRED', message: 'Upgrade to a Team plan before inviting members.' });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email: cleanEmail }, select: { id: true } });
+    if (existingUser) {
+      const existingMembership = await prisma.organizationMembership.findUnique({
+        where: { userId_organizationId: { userId: existingUser.id, organizationId: orgId } },
+      });
+      if (existingMembership) {
+        return res.status(409).json({ error: 'ALREADY_MEMBER', message: 'That user is already a member of this organization.' });
+      }
+    }
+
+    const now = new Date();
+    const existingInvitation = await prisma.organizationInvitation.findFirst({
+      where: { organizationId: orgId, email: cleanEmail, acceptedAt: null, expiresAt: { gt: now } },
+    });
+    if (existingInvitation) {
+      return res.status(409).json({ error: 'INVITATION_EXISTS', message: 'A pending invitation already exists for this email.' });
+    }
+
+    const [currentMembers, pendingInvitations] = await Promise.all([
+      prisma.organizationMembership.count({ where: { organizationId: orgId } }),
+      prisma.organizationInvitation.count({ where: { organizationId: orgId, acceptedAt: null, expiresAt: { gt: now } } }),
+    ]);
+    const userLimit = Number(entitlement.limits?.users ?? 1);
+    if (Number.isFinite(userLimit) && currentMembers + pendingInvitations >= userLimit) {
+      return res.status(409).json({
+        error: 'USER_LIMIT_REACHED',
+        message: `This plan allows ${userLimit} organization member${userLimit === 1 ? '' : 's'}. Upgrade before inviting more people.`,
+      });
+    }
+
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const invitation = await prisma.organizationInvitation.create({
@@ -534,6 +605,16 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
         createdByUserId: userId,
         expiresAt,
       },
+    });
+
+    const { ipAddress, userAgent } = extractAuditContext(req);
+    void writeAuditLog(prisma, {
+      action: AuditAction.MEMBER_INVITED,
+      userId,
+      organizationId: orgId,
+      ipAddress,
+      userAgent,
+      metadata: { invitationId: invitation.id, email: cleanEmail, role: inviteRole },
     });
 
     void emailService.sendTransactional({
@@ -556,6 +637,8 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
       organizationId: invitation.organizationId,
       email: invitation.email,
       role: invitation.role,
+      status: 'PENDING',
+      createdByUserId: invitation.createdByUserId,
       expiresAt: invitation.expiresAt,
       createdAt: invitation.createdAt,
     });
@@ -564,7 +647,6 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 /** POST /organizations/invitations/accept - accept an invite for the signed-in user */
 app.post('/organizations/invitations/accept', verifyJwt, async (req: AuthenticatedRequest, res: Response) => {
   const { token } = req.body;
@@ -606,6 +688,16 @@ app.post('/organizations/invitations/accept', verifyJwt, async (req: Authenticat
         data: { acceptedAt: new Date() },
       });
       return result;
+    });
+
+    const { ipAddress, userAgent } = extractAuditContext(req);
+    void writeAuditLog(prisma, {
+      action: AuditAction.MEMBER_JOINED,
+      userId: req.user!.id,
+      organizationId: invitation.organizationId,
+      ipAddress,
+      userAgent,
+      metadata: { invitationId: invitation.id, role: invitation.role },
     });
 
     res.json({ membership, organization: invitation.organization });
@@ -932,6 +1024,18 @@ app.post('/environments/:envId/api-keys', verifyJwt, verifyEnvOwnership, async (
       }).catch((err) => console.error('[Email] sdk-install-guide failed', err));
     }
 
+    // Audit: API key created
+    const { ipAddress, userAgent } = extractAuditContext(req);
+    await writeAuditLog(prisma, {
+      action: AuditAction.API_KEY_CREATED,
+      userId,
+      organizationId: orgId,
+      applicationId: env.application.id,
+      metadata: { apiKeyId: apiKey.id, keyPrefix: apiKey.keyPrefix, environmentId: envId, label: apiKey.label },
+      ipAddress,
+      userAgent,
+    });
+
     res.status(201).json({
       id: apiKey.id,
       keyPrefix: apiKey.keyPrefix,
@@ -994,6 +1098,17 @@ app.delete('/api-keys/:id', verifyJwt, verifyApiKeyOwnership, async (req: Authen
       where: { id: req.params.id },
       data: { revokedAt: new Date() },
     });
+
+    // Audit: API key revoked
+    const { ipAddress, userAgent } = extractAuditContext(req);
+    await writeAuditLog(prisma, {
+      action: AuditAction.API_KEY_REVOKED,
+      userId: req.user?.id ?? null,
+      metadata: { apiKeyId: key.id, keyPrefix: key.keyPrefix, environmentId: key.environmentId },
+      ipAddress,
+      userAgent,
+    });
+
     res.json({ success: true });
   } catch (err) {
     console.error('[Onboarding] Revoke API key error', err);
@@ -1007,16 +1122,32 @@ app.delete('/api-keys/:id', verifyJwt, verifyApiKeyOwnership, async (req: Authen
 
 app.post('/applications/:appId/profile', async (req: Request, res: Response) => {
   const { appId } = req.params;
-  const { profileType } = req.body; // ECOMMERCE, LMS, or CUSTOM
+  const { profileType, description, selectedDomainKey, templateId } = req.body;
 
   if (!profileType) {
     return res.status(400).json({ error: '`profileType` is required' });
   }
 
   try {
+    const requestedProfileType = String(profileType).toUpperCase();
+    const selectedTemplateKey = String(selectedDomainKey || templateId || '').toUpperCase();
+    const isPromptRuleBased = requestedProfileType === 'PROMPT' || requestedProfileType === 'PROMPT_RULE_BASED';
+    const isPromptAiExperimental = requestedProfileType === 'PROMPT_AI_EXPERIMENTAL';
+    const isDefaultTemplate = requestedProfileType === 'DEFAULT_TEMPLATE';
+    const isCustomBlank = requestedProfileType === 'CUSTOM' || requestedProfileType === 'CUSTOM_BLANK';
+
+    const template = isPromptRuleBased || isPromptAiExperimental
+      ? inferDomainTemplate(String(description ?? ''))
+      : isDefaultTemplate
+        ? getDomainTemplate(selectedTemplateKey || 'GENERIC_CRUD')
+        : isCustomBlank
+          ? getDomainTemplate('CUSTOM')
+          : getDomainTemplate(requestedProfileType);
+    const normalizedProfileType = template.id;
+
     const app = await prisma.application.findUnique({
       where: { id: appId },
-      include: { organization: true }
+      include: { organization: { include: { entitlement: true } } }
     });
     if (!app) return res.status(404).json({ error: 'Application not found' });
     const orgId = app.organizationId;
@@ -1025,8 +1156,8 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
     // Upsert Profile
     await prisma.applicationProfile.upsert({
       where: { applicationId: appId },
-      update: { profileType: profileType.toUpperCase() },
-      create: { applicationId: appId, profileType: profileType.toUpperCase() },
+      update: { profileType: normalizedProfileType },
+      create: { applicationId: appId, profileType: normalizedProfileType },
     });
 
     const devEnv = await prisma.environment.findFirst({
@@ -1034,66 +1165,300 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
     });
     const envId = devEnv?.id || null;
 
-    let templateSelected = false;
+    let templateSelected = true;
     let expectedFlowsDefined = false;
+    let graphId: string | null = null;
 
-    if (profileType === 'ECOMMERCE' || profileType === 'LMS') {
-      templateSelected = true;
-      expectedFlowsDefined = true;
+    if (isPromptAiExperimental) {
+      if (process.env.AI_FEATURES_ENABLED !== 'true' || process.env.AI_FLOW_GENERATION_ENABLED !== 'true') {
+        return res.status(403).json({ error: 'AI_FEATURE_DISABLED' });
+      }
+      const features = app.organization?.entitlement?.features;
+      const hasOrgEntitlement = features && typeof features === 'object'
+        ? (features as Record<string, unknown>).experimentalAiFlowGeneration === true
+        : false;
+      if (!hasOrgEntitlement && process.env.AI_ALLOW_WITHOUT_ORG_ENTITLEMENT !== 'true') {
+        return res.status(403).json({ error: 'AI_ORG_ENTITLEMENT_REQUIRED' });
+      }
 
-      if (devEnv) {
-        // Deactivate previous graphs
-        await prisma.behaviorGraph.updateMany({
-          where: { applicationId: appId, environmentId: devEnv.id, graphType: 'DECLARED' },
-          data: { isActive: false }
+      const inference = await inferDomain({
+        description: String(description ?? ''),
+        selectedDomainKey: selectedTemplateKey || undefined,
+        organizationId: orgId,
+        applicationId: appId,
+        prisma,
+      });
+      const rulesets = await getActiveRulesets({
+        organizationId: orgId,
+        applicationId: appId,
+        domainKey: inference.domainKey,
+        prisma,
+      });
+
+      // Privacy: sanitize the description before storing or sending to AI
+      const { sanitizeAiInputFull } = await import('@sots/ai').then((m) => ({ sanitizeAiInputFull: m.sanitizeAiInputFull })).catch(() => ({ sanitizeAiInputFull: (s: string) => ({ sanitizedText: s, redactions: [], riskLevel: 'LOW' as const, promptInjectionRisk: false, injectionPatterns: [], originalHash: '' }) }));
+      const sanitized = sanitizeAiInputFull(String(description ?? ''));
+
+      const startedAt = Date.now();
+
+      // Phase 7: AI failure must NEVER block onboarding
+      let result: Awaited<ReturnType<typeof generateAiFlowDraft>> | null = null;
+      let aiStatus: 'CREATED' | 'FAILED_NON_BLOCKING' | 'SKIPPED' = 'SKIPPED';
+      let aiErrorMessage: string | null = null;
+
+      try {
+        result = await generateAiFlowDraft({
+          productDescription: sanitized.sanitizedText,
+          domainKey: inference.domainKey,
+          rulesets,
+        });
+        aiStatus = 'CREATED';
+      } catch (aiErr) {
+        aiStatus = 'FAILED_NON_BLOCKING';
+        aiErrorMessage = aiErr instanceof Error ? aiErr.message : 'AI provider unavailable';
+        console.warn('[Onboarding] AI flow draft failed (non-blocking):', {
+          appId,
+          orgId,
+          error: aiErrorMessage,
         });
 
-        // Create new BehaviorGraph version
-        const graph = await prisma.behaviorGraph.create({
-          data: {
-            applicationId: appId,
-            environmentId: devEnv.id,
-            name: `Declared Graph (${profileType})`,
-            graphType: 'DECLARED',
-            sourceType: 'USER_DECLARATION',
-            isActive: true,
-            version: 1,
-          }
-        });
-
-        const states = profileType === 'ECOMMERCE'
-          ? ['Anonymous', 'Browse Products', 'View Product', 'Add To Cart', 'Checkout', 'Payment Success']
-          : ['Anonymous', 'View Courses', 'Select Course', 'Enroll', 'Start Lesson', 'Complete Lesson'];
-
-        // Create nodes
-        const createdNodes: Record<string, any> = {};
-        for (const name of states) {
-          const node = await prisma.behaviorGraphNode.create({
+        // Log the failure for observability
+        try {
+          await prisma.aIInvocationLog.create({
             data: {
-              graphId: graph.id,
-              stateName: name,
-              category: name === 'Anonymous' ? 'NAVIGATION' : 'BUSINESS',
-              provenance: 'USER_AUTHORED',
-            }
+              organizationId: orgId,
+              applicationId: appId,
+              feature: 'FLOW_GENERATION',
+              provider: 'unknown',
+              model: 'unknown',
+              promptHash: crypto.createHash('sha256').update(sanitized.sanitizedText).digest('hex'),
+              status: 'FAILED',
+              errorMessage: aiErrorMessage,
+              latencyMs: Date.now() - startedAt,
+            },
           });
-          createdNodes[name] = node;
-        }
-
-        // Create edges
-        for (let i = 0; i < states.length - 1; i++) {
-          const fromNode = createdNodes[states[i]];
-          const toNode = createdNodes[states[i + 1]];
-          await prisma.behaviorGraphEdge.create({
-            data: {
-              graphId: graph.id,
-              fromNodeId: fromNode.id,
-              toNodeId: toNode.id,
-              action: `Go to ${states[i + 1]}`,
-              provenance: 'USER_AUTHORED',
-            }
-          });
+        } catch (_logErr) {
+          console.error('[Onboarding] Failed to log AI invocation failure', _logErr);
         }
       }
+
+      // Build the response — onboarding succeeds regardless of AI outcome
+      if (result) {
+        try {
+          const invocation = await prisma.aIInvocationLog.create({
+            data: {
+              organizationId: orgId,
+              applicationId: appId,
+              feature: 'FLOW_GENERATION',
+              provider: result.provider,
+              model: result.model,
+              promptHash: result.promptHash,
+              inputSummaryJson: {
+                domainKey: inference.domainKey,
+                descriptionLength: sanitized.sanitizedText.length,
+                selectedDomainKey: selectedTemplateKey || null,
+                riskLevel: sanitized.riskLevel,
+                redactionCount: sanitized.redactions.length,
+              },
+              outputSummaryJson: {
+                workflowCount: result.draft.workflows.length,
+                suggestionCount: result.draft.suggestions.length,
+                confidence: result.draft.confidence,
+              },
+              status: result.validation.valid ? 'SUCCESS' : 'VALIDATION_FAILED',
+              latencyMs: Date.now() - startedAt,
+            },
+          });
+
+          const draft = await prisma.aIFlowDraft.create({
+            data: {
+              organizationId: orgId,
+              applicationId: appId,
+              environmentId: envId,
+              source: 'ONBOARDING_PROMPT',
+              status: 'PENDING_REVIEW',
+              // Privacy: store only the redacted description
+              productDescription: sanitized.sanitizedText,
+              inferredDomainKey: inference.domainKey,
+              rulesetVersionIds: rulesets.flatMap((ruleset) => ruleset.rulesetVersionId ? [ruleset.rulesetVersionId] : []),
+              promptHash: result.promptHash,
+              provider: result.provider,
+              model: result.model,
+              aiInvocationId: invocation.id,
+              draftJson: result.draft as any,
+              validationJson: result.validation as any,
+              confidence: result.draft.confidence,
+            },
+          });
+
+          await prisma.applicationOnboardingProgress.upsert({
+            where: { applicationId: appId },
+            update: { templateSelected, expectedFlowsDefined },
+            create: { applicationId: appId, templateSelected, expectedFlowsDefined }
+          });
+          await emitActivationEvent(orgId, appId, envId, 'AI_FLOW_DRAFT_CREATED', {
+            profileType: inference.domainKey,
+            draftId: draft.id,
+            workflowCount: result.draft.workflows.length,
+          });
+
+          return res.json({
+            success: true,
+            mode: 'PROMPT_AI_EXPERIMENTAL',
+            profileType: inference.domainKey,
+            templateSelected,
+            expectedFlowsDefined,
+            draftId: draft.id,
+            confidence: draft.confidence,
+            workflows: result.draft.workflows,
+            assumptions: result.draft.assumptions,
+            validation: result.validation,
+            aiStatus,
+          });
+        } catch (persistErr) {
+          console.error('[Onboarding] Failed to persist AI draft (non-blocking)', persistErr);
+        }
+      }
+
+      // AI failed or persistence failed — return a successful onboarding response
+      // without the AI draft, so the user can continue manually
+      await prisma.applicationOnboardingProgress.upsert({
+        where: { applicationId: appId },
+        update: { templateSelected },
+        create: { applicationId: appId, templateSelected }
+      });
+
+      return res.json({
+        success: true,
+        mode: 'PROMPT_AI_EXPERIMENTAL',
+        profileType: inference.domainKey,
+        templateSelected,
+        expectedFlowsDefined: false,
+        aiStatus,
+        aiUnavailable: aiStatus === 'FAILED_NON_BLOCKING',
+        message: aiStatus === 'FAILED_NON_BLOCKING'
+          ? 'AI draft generation is temporarily unavailable. You can continue setup manually.'
+          : undefined,
+      });
+    }
+
+    if (devEnv && template.states.length > 0) {
+      // Deactivate previous graphs.
+      await prisma.behaviorGraph.updateMany({
+        where: { applicationId: appId, environmentId: devEnv.id, graphType: 'DECLARED' },
+        data: { isActive: false }
+      });
+
+      const latestGraph = await prisma.behaviorGraph.findFirst({
+        where: { applicationId: appId, environmentId: devEnv.id, graphType: 'DECLARED' },
+        orderBy: { version: 'desc' },
+      });
+
+      const graph = await prisma.behaviorGraph.create({
+        data: {
+          applicationId: appId,
+          environmentId: devEnv.id,
+          name: `${template.name} Expected Flow`,
+          workflowType: template.workflowType,
+          graphType: 'DECLARED',
+          sourceType: 'USER_DECLARATION',
+          isActive: true,
+          version: (latestGraph?.version ?? 0) + 1,
+        }
+      });
+      graphId = graph.id;
+
+      const createdNodes: Record<string, any> = {};
+      for (const state of template.states) {
+        const node = await prisma.behaviorGraphNode.create({
+          data: {
+            graphId: graph.id,
+            stateName: state.name,
+            behaviorKey: state.name,
+            canonicalBehavior: state.name,
+            category: state.category,
+            provenance: 'USER_AUTHORED',
+          }
+        });
+        createdNodes[state.name] = node;
+      }
+
+      for (const transition of template.transitions) {
+        const fromNode = createdNodes[transition.from];
+        const toNode = createdNodes[transition.to];
+        if (!fromNode || !toNode) continue;
+
+        await prisma.behaviorGraphEdge.create({
+          data: {
+            graphId: graph.id,
+            fromNodeId: fromNode.id,
+            toNodeId: toNode.id,
+            action: transition.action ?? null,
+            provenance: 'USER_AUTHORED',
+          }
+        });
+      }
+
+      for (const edgeCase of template.edgeCases) {
+        const parentNode = createdNodes[edgeCase.trigger];
+        if (!parentNode) continue;
+
+        await prisma.declaredStateSuggestion.create({
+          data: {
+            parentStateId: parentNode.id,
+            suggestedStateName: edgeCase.name,
+            category: edgeCase.category,
+            sourceTier: 'TEMPLATE',
+            rationale: edgeCase.reason,
+            confidence: edgeCase.confidence,
+            patternId: `${template.id.toLowerCase()}-${edgeCase.name.toLowerCase().replace(/_/g, '-')}`,
+            status: 'SUGGESTED',
+          },
+        });
+      }
+
+      const compiledRules = [];
+      for (const state of template.states) {
+        compiledRules.push({
+          ruleId: `r_state_${crypto.randomUUID()}`,
+          type: 'EXPECTED_STATE',
+          stateName: state.name,
+          source: 'USER_AUTHORED',
+          confidence: 1.0,
+        });
+      }
+      for (const transition of template.transitions) {
+        compiledRules.push({
+          ruleId: `r_trans_${crypto.randomUUID()}`,
+          type: 'EXPECTED_TRANSITION',
+          fromState: transition.from,
+          toState: transition.to,
+          action: transition.action ?? undefined,
+          source: 'USER_AUTHORED',
+        });
+      }
+
+      await prisma.compiledRuleset.upsert({
+        where: {
+          flowId_version: {
+            flowId: graph.id,
+            version: graph.version,
+          },
+        },
+        update: {
+          rules: compiledRules as any,
+          ruleCount: compiledRules.length,
+          compiledAt: new Date(),
+        },
+        create: {
+          flowId: graph.id,
+          applicationId: appId,
+          version: graph.version,
+          rules: compiledRules as any,
+          ruleCount: compiledRules.length,
+          compiledAt: new Date(),
+        },
+      });
     }
 
     // Update progress
@@ -1110,14 +1475,32 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
       }
     });
 
-    const eventName = templateSelected ? 'TEMPLATE_SELECTED' : 'BLANK_CANVAS_SELECTED';
-    await emitActivationEvent(orgId, appId, envId, eventName, { profileType });
+    const eventName = template.states.length > 0 ? 'TEMPLATE_SELECTED' : 'BLANK_CANVAS_SELECTED';
+    await emitActivationEvent(orgId, appId, envId, eventName, {
+      profileType: normalizedProfileType,
+      requestedProfileType,
+      descriptionProvided: Boolean(description),
+    });
 
-    if (templateSelected) {
-      await emitActivationEvent(orgId, appId, envId, 'FLOW_SAVED', { profileType, source: 'template' });
+    if (template.states.length > 0) {
+      await emitActivationEvent(orgId, appId, envId, 'FLOW_DRAFTED', {
+        profileType: normalizedProfileType,
+        source: requestedProfileType === 'PROMPT' ? 'prompt' : 'template',
+        stateCount: template.states.length,
+        edgeCaseSuggestionCount: template.edgeCases.length,
+      });
     }
 
-    res.json({ success: true, profileType, templateSelected, expectedFlowsDefined });
+    res.json({
+      success: true,
+      profileType: normalizedProfileType,
+      templateSelected,
+      expectedFlowsDefined,
+      seededStates: template.states.length,
+      seededTransitions: template.transitions.length,
+      seededSuggestions: template.edgeCases.length,
+      graphId,
+    });
   } catch (err) {
     console.error('[Onboarding] Profile selection error', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1524,8 +1907,549 @@ app.post('/notifications/email/webhooks/resend', async (req: Request, res: Respo
 });
 
 // ─────────────────────────────────────────────────────────────
+// Organization audit log endpoint
+app.get('/organizations/:orgId/audit-logs', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const page = Math.max(1, parseInt(req.query.page as string ?? '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string ?? '25', 10)));
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const action = typeof req.query.action === 'string' ? req.query.action.trim() : '';
+
+  if (action && !Object.values(AuditAction).includes(action as AuditAction)) {
+    return res.status(400).json({ error: 'INVALID_ACTION', message: 'Unsupported audit action filter.' });
+  }
+
+  try {
+    const hasAuditAccess = await entitlementChecker.canAccess(orgId, Feature.AUDIT_LOGS);
+    if (!hasAuditAccess) {
+      return res.status(403).json({ error: 'AUDIT_LOGS_REQUIRED', message: 'Audit logs are available on Business and Enterprise plans.' });
+    }
+
+    const where: any = {
+      organizationId: orgId,
+      ...(action ? { action: action as AuditAction } : {}),
+    };
+
+    if (q) {
+      const matchingActions = Object.values(AuditAction).filter((value) => value.toLowerCase().includes(q.toLowerCase()));
+      where.OR = [
+        { userId: { contains: q, mode: 'insensitive' } },
+        { user: { is: { email: { contains: q, mode: 'insensitive' } } } },
+        { user: { is: { displayName: { contains: q, mode: 'insensitive' } } } },
+        ...matchingActions.map((value) => ({ action: value })),
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        include: { user: { select: { email: true, displayName: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+
+    res.json({ data, total, page, limit });
+  } catch (err) {
+    console.error('[OnboardingAPI] Organization audit logs error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// System Admin Endpoints (Sprint 3 — isSystemAdmin JWT claim)
+// ─────────────────────────────────────────────────────────────
+
+async function verifySystemAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
+  }
+  try {
+    const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET) as any;
+    if (!decoded.isSystemAdmin) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'System admin access required.' });
+    }
+    req.user = { id: decoded.sub, email: decoded.email };
+    next();
+  } catch {
+    res.status(401).json({ error: 'TOKEN_INVALID' });
+  }
+}
+
+/** GET /admin/audit-logs — paginated audit log with action + search filter */
+app.get('/admin/audit-logs', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const page  = Math.max(1, parseInt(req.query.page as string ?? '1', 10));
+  const limit = Math.min(100, parseInt(req.query.limit as string ?? '25', 10));
+  const q      = req.query.q as string | undefined;
+  const action = req.query.action as string | undefined;
+
+  try {
+    const where: any = {
+      ...(action ? { action } : {}),
+      ...(q ? {
+        OR: [
+          { userId: { contains: q } },
+          { organizationId: { contains: q } },
+          { action: { contains: q } },
+        ],
+      } : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        include: { user: { select: { email: true, displayName: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+
+    res.json({ data, total, page, limit });
+  } catch (err) {
+    console.error('[Admin] Audit logs error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /admin/ai-usage — summary across all orgs */
+app.get('/admin/ai-usage', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const days = Math.min(365, parseInt(req.query.days as string ?? '30', 10));
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  try {
+    const aggregates = await prisma.aIUsageDailyAggregate.findMany({
+      where: { date: { gte: since } },
+      orderBy: { date: 'desc' },
+    });
+
+    const totals = aggregates.reduce((acc, r) => ({
+      totalCalls: acc.totalCalls + r.totalCalls,
+      totalInputTokens: acc.totalInputTokens + r.totalInputTokens,
+      totalOutputTokens: acc.totalOutputTokens + r.totalOutputTokens,
+      totalCostUsd: acc.totalCostUsd + Number(r.totalCostUsd),
+    }), { totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCostUsd: 0 });
+
+    // Group by provider
+    const byProvider: Record<string, any> = {};
+    for (const r of aggregates) {
+      if (!byProvider[r.provider]) {
+        byProvider[r.provider] = { provider: r.provider, calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+      }
+      byProvider[r.provider].calls += r.totalCalls;
+      byProvider[r.provider].inputTokens += r.totalInputTokens;
+      byProvider[r.provider].outputTokens += r.totalOutputTokens;
+      byProvider[r.provider].estimatedCostUsd += Number(r.totalCostUsd);
+    }
+
+    res.json({
+      ...totals,
+      avgCallsPerDay: days > 0 ? totals.totalCalls / days : 0,
+      byProvider: Object.values(byProvider),
+    });
+  } catch (err) {
+    console.error('[Admin] AI usage error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /admin/ai-usage/daily */
+app.get('/admin/ai-usage/daily', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const days = Math.min(365, parseInt(req.query.days as string ?? '30', 10));
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  try {
+    const data = await prisma.aIUsageDailyAggregate.findMany({
+      where: { date: { gte: since } },
+      orderBy: { date: 'desc' },
+      take: 500,
+    });
+
+    res.json({
+      data: data.map((r) => ({
+        date: r.date.toISOString().slice(0, 10),
+        provider: r.provider,
+        modelId: r.model,
+        calls: r.totalCalls,
+        inputTokens: r.totalInputTokens,
+        outputTokens: r.totalOutputTokens,
+        estimatedCostUsd: Number(r.totalCostUsd),
+      })),
+    });
+  } catch (err) {
+    console.error('[Admin] AI usage daily error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /admin/rulesets — list DomainRulesetVersions (DRAFT/ACTIVE) across all domains */
+app.get('/admin/rulesets', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const status = req.query.status as string | undefined;
+  const limit  = Math.min(100, parseInt(req.query.limit as string ?? '30', 10));
+
+  try {
+    const data = await prisma.domainRulesetVersion.findMany({
+      where: status ? { status: status as any } : undefined,
+      include: { ruleset: { select: { name: true, key: true, applicationId: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    res.json({
+      data: data.map((r) => ({
+        id: r.id,
+        applicationId: r.ruleset.applicationId,
+        applicationName: r.ruleset.name,
+        version: r.version,
+        status: r.status,
+        compiledAt: r.createdAt,
+        rules: [],
+        ruleCount: (r as any)._count?.patterns ?? 0,
+        profileType: r.ruleset.key,
+      })),
+    });
+  } catch (err) {
+    console.error('[Admin] Rulesets list error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** POST /admin/rulesets/:id/promote — promote DomainRulesetVersion from DRAFT to PUBLISHED */
+app.post('/admin/rulesets/:id/promote', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    const version = await prisma.domainRulesetVersion.findUnique({
+      where: { id },
+      include: { ruleset: true },
+    });
+    if (!version) return res.status(404).json({ error: 'RULESET_NOT_FOUND' });
+    if (version.status !== 'DRAFT') return res.status(409).json({ error: 'NOT_DRAFT', message: 'Only DRAFT rulesets can be promoted.' });
+
+    const updated = await prisma.domainRulesetVersion.update({
+      where: { id },
+      data: { status: 'ACTIVE' as const, promotedBy: actorId, promotedAt: new Date() },
+    });
+
+    void writeAuditLog(prisma, {
+      action: AuditAction.RULESET_VERSION_PROMOTED,
+      userId: actorId,
+      applicationId: version.ruleset.applicationId || undefined,
+      metadata: { rulesetVersionId: id, version: version.version, rulesetId: version.rulesetId },
+    });
+
+    res.json({ id: updated.id, status: updated.status });
+  } catch (err) {
+    console.error('[Admin] Ruleset promote error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /admin/rule-candidates — paginated list */
+app.get('/admin/rule-candidates', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const limit  = Math.min(100, parseInt(req.query.limit as string ?? '20', 10));
+  const cursor = req.query.cursor as string | undefined;
+  const status = req.query.status as string | undefined;
+
+  try {
+    const where: any = status ? { status } : undefined;
+    const data = await prisma.ruleCandidate.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+
+    const hasMore = data.length > limit;
+    const page = hasMore ? data.slice(0, limit) : data;
+
+    res.json({
+      data: page.map((c) => ({
+        id: c.id,
+        applicationId: c.applicationId,
+        ruleName: `${c.source} candidate`,
+        ruleType: c.source,
+        confidence: c.confidence,
+        status: c.status,
+        proposedRule: c.candidateJson,
+        createdAt: c.createdAt,
+      })),
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    });
+  } catch (err) {
+    console.error('[Admin] Rule candidates list error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** POST /admin/rule-candidates/:id/approve */
+app.post('/admin/rule-candidates/:id/approve', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    const candidate = await prisma.ruleCandidate.findUnique({ where: { id } });
+    if (!candidate) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const updated = await prisma.ruleCandidate.update({
+      where: { id },
+      data: { status: 'APPROVED', reviewedAt: new Date(), reviewedBy: actorId },
+    });
+
+    void writeAuditLog(prisma, {
+      action: AuditAction.AI_SUGGESTION_ACCEPTED,
+      userId: actorId,
+      applicationId: candidate.applicationId || undefined,
+      metadata: { ruleCandidateId: id, source: candidate.source },
+    });
+
+    res.json({ id: updated.id, status: updated.status });
+  } catch (err) {
+    console.error('[Admin] Approve rule candidate error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** POST /admin/rule-candidates/:id/reject */
+app.post('/admin/rule-candidates/:id/reject', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    const candidate = await prisma.ruleCandidate.findUnique({ where: { id } });
+    if (!candidate) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const updated = await prisma.ruleCandidate.update({
+      where: { id },
+      data: { status: 'REJECTED', reviewedAt: new Date(), reviewedBy: actorId },
+    });
+
+    res.json({ id: updated.id, status: updated.status });
+  } catch (err) {
+    console.error('[Admin] Reject rule candidate error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Member Management (Sprint 3 — Role-gated)
+// ─────────────────────────────────────────────────────────────
+
+/** GET /organizations/:orgId/members — list members, optionally filtered by role */
+app.get('/organizations/:orgId/members', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const roleFilter = req.query.role as string | undefined;
+
+  try {
+    const memberships = await prisma.organizationMembership.findMany({
+      where: {
+        organizationId: orgId,
+        ...(roleFilter ? { role: roleFilter as MemberRole } : {}),
+      },
+      include: { user: { select: { id: true, email: true, displayName: true, avatarUrl: true } } },
+      orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
+    });
+
+    res.json(memberships.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      role: m.role,
+      createdAt: m.joinedAt,
+      user: m.user,
+    })));
+  } catch (err) {
+    console.error('[OnboardingAPI] List members error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** PUT /organizations/:orgId/members/:userId/role — change a member's role (OWNER only) */
+app.put('/organizations/:orgId/members/:userId/role', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId, userId: targetUserId } = req.params;
+  const { role } = req.body as { role: string };
+  const actorId = req.user!.id;
+
+  if (!Object.values(MemberRole).includes(role as MemberRole)) {
+    return res.status(400).json({ error: 'INVALID_ROLE', message: `Role must be one of: ${Object.values(MemberRole).join(', ')}` });
+  }
+
+  try {
+    // Only OWNERs may change roles
+    const actorMembership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId: orgId } },
+    });
+    if (actorMembership?.role !== MemberRole.OWNER) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners may change member roles.' });
+    }
+
+    const targetMembership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId: orgId } },
+    });
+    if (!targetMembership) {
+      return res.status(404).json({ error: 'MEMBER_NOT_FOUND', message: 'User is not a member of this organization.' });
+    }
+
+    // Guard: cannot demote the last OWNER
+    if (targetMembership.role === MemberRole.OWNER && role !== MemberRole.OWNER) {
+      const ownerCount = await prisma.organizationMembership.count({
+        where: { organizationId: orgId, role: MemberRole.OWNER },
+      });
+      if (ownerCount <= 1) {
+        return res.status(409).json({ error: 'LAST_OWNER', message: 'Cannot demote the last Owner. Assign another Owner first.' });
+      }
+    }
+
+    const updated = await prisma.organizationMembership.update({
+      where: { userId_organizationId: { userId: targetUserId, organizationId: orgId } },
+      data: { role: role as MemberRole },
+      include: { user: { select: { id: true, email: true, displayName: true } } },
+    });
+
+    void writeAuditLog(prisma, {
+      action: AuditAction.ROLE_CHANGED,
+      userId: actorId,
+      organizationId: orgId,
+      metadata: { targetUserId, from: targetMembership.role, to: role },
+    });
+
+    res.json({ id: updated.id, userId: updated.userId, role: updated.role, user: updated.user });
+  } catch (err) {
+    console.error('[OnboardingAPI] Change member role error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** DELETE /organizations/:orgId/members/:userId — remove a member (OWNER only) */
+app.delete('/organizations/:orgId/members/:userId', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId, userId: targetUserId } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    // Only OWNERs may remove members
+    const actorMembership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId: orgId } },
+    });
+    if (actorMembership?.role !== MemberRole.OWNER) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners may remove members.' });
+    }
+
+    const targetMembership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId: orgId } },
+    });
+    if (!targetMembership) {
+      return res.status(404).json({ error: 'MEMBER_NOT_FOUND', message: 'User is not a member of this organization.' });
+    }
+
+    // Guard: cannot remove the last OWNER
+    if (targetMembership.role === MemberRole.OWNER) {
+      const ownerCount = await prisma.organizationMembership.count({
+        where: { organizationId: orgId, role: MemberRole.OWNER },
+      });
+      if (ownerCount <= 1) {
+        return res.status(409).json({ error: 'LAST_OWNER', message: 'Cannot remove the last Owner.' });
+      }
+    }
+
+    await prisma.organizationMembership.delete({
+      where: { userId_organizationId: { userId: targetUserId, organizationId: orgId } },
+    });
+
+    void writeAuditLog(prisma, {
+      action: AuditAction.MEMBER_REMOVED,
+      userId: actorId,
+      organizationId: orgId,
+      metadata: { targetUserId, removedRole: targetMembership.role },
+    });
+
+    res.json({ success: true, userId: targetUserId });
+  } catch (err) {
+    console.error('[OnboardingAPI] Remove member error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// Gap 7: Pending Invitations
+// GET    /organizations/:orgId/invitations/pending
+// DELETE /organizations/:orgId/invitations/:invitationId
+// ─────────────────────────────────────────────────────────────
+
+app.get('/organizations/:orgId/invitations/pending', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    const actorMembership = await getOrgMembership(actorId, orgId);
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may view pending invitations.' });
+    }
+
+    const invitations = await prisma.organizationInvitation.findMany({
+      where: { organizationId: orgId, acceptedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        expiresAt: true,
+        createdAt: true,
+        createdByUserId: true,
+      },
+    });
+
+    const creatorIds = [...new Set(invitations.map((invitation) => invitation.createdByUserId))];
+    const creators = await prisma.user.findMany({
+      where: { id: { in: creatorIds } },
+      select: { id: true, email: true, displayName: true },
+    });
+    const creatorsById = new Map(creators.map((creator) => [creator.id, creator]));
+
+    res.json({
+      success: true,
+      data: invitations.map((invitation) => ({
+        ...invitation,
+        status: 'PENDING',
+        invitedBy: creatorsById.get(invitation.createdByUserId) ?? null,
+      })),
+    });
+  } catch (err) {
+    console.error('[OnboardingAPI] Pending invitations error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/organizations/:orgId/invitations/:invitationId', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId, invitationId } = req.params;
+  const actorId = req.user!.id;
+
+  try {
+    const actorMembership = await getOrgMembership(actorId, orgId);
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may rescind invitations.' });
+    }
+
+    const invitation = await prisma.organizationInvitation.findFirst({
+      where: { id: invitationId, organizationId: orgId, acceptedAt: null },
+    });
+    if (!invitation) {
+      return res.status(404).json({ error: 'INVITATION_NOT_FOUND', message: 'Pending invitation not found.' });
+    }
+
+    await prisma.organizationInvitation.delete({ where: { id: invitation.id } });
+    res.json({ success: true, invitationId });
+  } catch (err) {
+    console.error('[OnboardingAPI] Rescind invitation error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // Start
 // ─────────────────────────────────────────────────────────────
+
+
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 

@@ -9,6 +9,7 @@
     "lint": "eslint \"src/**/*.ts*\""
   },
   "dependencies": {
+    "prom-client": "^15.1.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

@@ -1,3 +1,6 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('endpoint-engine');
+
 import express, { Request, Response } from 'express';
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, EachMessagePayload } from 'kafkajs';

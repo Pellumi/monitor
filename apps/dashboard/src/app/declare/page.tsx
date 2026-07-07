@@ -27,10 +27,25 @@ import {
   Sparkles,
   CheckCircle2,
   RefreshCw,
+  Pencil,
+  FlaskConical,
 } from 'lucide-react';
 
 const FDRS_API = '/api-gateway';
 const ONBOARDING_API = '/api-gateway';
+
+/** Unified badge for AI/Experimental features. */
+function ExperimentalBadge({ text, className }: { text?: string; className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border border-amber-900/60 bg-amber-950/30 px-2.5 py-1 text-xs font-semibold text-amber-200 animate-[pulse_3s_ease-in-out_infinite] ${className ?? ''}`}
+    >
+      <FlaskConical className="h-3 w-3" />
+      <Sparkles className="h-3 w-3" />
+      {text ?? 'Experimental'}
+    </span>
+  );
+}
 
 interface DeclaredStateSuggestion {
   id: string;

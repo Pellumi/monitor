@@ -5,7 +5,8 @@
   "types": "dist/index.d.ts",
   "dependencies": {
     "@prisma/client": "^5.20.0",
-    "@sots/shared": "workspace:*"
+    "@sots/shared": "workspace:*",
+    "@sots/rules": "workspace:*"
   },
   "devDependencies": {
     "prisma": "^5.20.0",
@@ -14,6 +15,8 @@
   "scripts": {
     "build": "prisma generate && tsc",
     "generate": "prisma generate",
-    "push": "prisma db push"
+    "push": "prisma db push",
+    "seed:rulesets": "ts-node prisma/seeds/rulesets.ts",
+    "seed:admin": "ts-node prisma/seeds/system-admin.ts"
   }
 }

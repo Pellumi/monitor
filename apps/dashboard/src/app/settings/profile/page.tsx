@@ -3,13 +3,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
+  ChevronDown,
+  Clock,
   X,
   Eye,
   EyeOff,
   CreditCard,
   FileText,
+  Loader2,
+  Mail,
+  Search,
   ShieldCheck,
   SlidersHorizontal,
+  UserMinus,
+  UserPlus,
   UserRound,
   UsersRound,
 } from 'lucide-react';
@@ -21,7 +28,42 @@ type BillingCurrency = 'USD' | 'NGN';
 type CheckoutProvider = 'MOCK' | 'STRIPE' | 'PAYSTACK';
 type AuthMode = 'OTP' | 'PASSWORD';
 type MfaProvider = 'AUTHENTICATOR_APP' | 'GOOGLE_AUTHENTICATOR' | 'MICROSOFT_AUTHENTICATOR' | 'AUTHY';
+type MemberRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
 
+interface TeamMember {
+  id: string;
+  userId: string;
+  role: MemberRole;
+  createdAt: string;
+  user: {
+    id: string;
+    email: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+  };
+}
+
+interface PendingInvitation {
+  id: string;
+  email: string;
+  role: MemberRole;
+  status: string;
+  expiresAt: string | null;
+  createdAt: string;
+  invitedBy: { id: string; email: string; displayName: string | null } | null;
+}
+
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  userId: string | null;
+  organizationId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  user?: { email: string; displayName: string | null } | null;
+}
 interface Plan {
   id: string;
   type: string;
@@ -104,6 +146,58 @@ const authModeLabels: Record<AuthMode, string> = {
   PASSWORD: 'Email and password',
 };
 
+const roleLabels: Record<MemberRole, string> = {
+  OWNER: 'Owner',
+  ADMIN: 'Admin',
+  MEMBER: 'Member',
+  VIEWER: 'Viewer',
+};
+
+const roleBadgeClasses: Record<MemberRole, string> = {
+  OWNER: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  ADMIN: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
+  MEMBER: 'border-neutral-700 bg-neutral-800 text-neutral-300',
+  VIEWER: 'border-neutral-800 bg-neutral-900 text-neutral-500',
+};
+
+const memberRoles: MemberRole[] = ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER'];
+
+const auditActionOptions = [
+  'LOGIN_SUCCESS',
+  'LOGIN_FAILED',
+  'OTP_SENT',
+  'OTP_VERIFIED',
+  'LOGOUT',
+  'MEMBER_INVITED',
+  'MEMBER_JOINED',
+  'MEMBER_REMOVED',
+  'ROLE_CHANGED',
+  'PASSWORD_SET',
+  'PASSWORD_CHANGED',
+  'PREFERRED_AUTH_CHANGED',
+  'API_KEY_CREATED',
+  'API_KEY_REVOKED',
+  'SUBSCRIPTION_ACTIVATED',
+  'SUBSCRIPTION_CANCELLED',
+  'PLAN_CHANGED',
+  'INVOICE_PAID',
+  'REPORT_GENERATED',
+  'REPORT_EXPORTED',
+];
+
+function auditBadgeClass(action: string) {
+  if (action.includes('FAILED') || action.includes('REMOVED') || action.includes('REVOKED') || action.includes('CANCELLED')) {
+    return 'bg-red-500/10 text-red-300 border-red-500/20';
+  }
+  if (action.includes('CHANGED') || action.includes('INVITED') || action.includes('PLAN')) {
+    return 'bg-amber-500/10 text-amber-300 border-amber-500/20';
+  }
+  if (action.includes('LOGIN') || action.includes('VERIFIED') || action.includes('CREATED') || action.includes('JOINED')) {
+    return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20';
+  }
+  return 'bg-neutral-800 text-neutral-300 border-neutral-700';
+}
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
@@ -114,11 +208,21 @@ async function readJson<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
-  const data = await readJson<any>(res);
+  const data = await readJson<unknown>(res);
   if (!res.ok) {
-    throw new Error(data?.message || data?.error || 'Request failed');
+    const body = data && typeof data === 'object' ? data as { message?: unknown; error?: unknown } : null;
+    const message = typeof body?.message === 'string'
+      ? body.message
+      : typeof body?.error === 'string'
+        ? body.error
+        : 'Request failed';
+    throw new Error(message);
   }
   return data as T;
 }
@@ -278,7 +382,7 @@ export default function ProfileSettingsPage() {
   const [copiedKey, setCopiedKey] = useState(false);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('MONTHLY');
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>('USD');
-  const [checkoutProvider, setCheckoutProvider] = useState<CheckoutProvider>('MOCK');
+  const [checkoutProvider, setCheckoutProvider] = useState<CheckoutProvider>('STRIPE');
   const [inviteEmail, setInviteEmail] = useState('');
   const [notifyReports, setNotifyReports] = useState(true);
   const [notifyBilling, setNotifyBilling] = useState(true);
@@ -289,12 +393,31 @@ export default function ProfileSettingsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [isLoadingBilling, setIsLoadingBilling] = useState(false);
-
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
+  const [inviteRole, setInviteRole] = useState<MemberRole>('MEMBER');
+  const [isLoadingTeam, setIsLoadingTeam] = useState(false);
+  const [isInviting, setIsInviting] = useState(false);
+  const [changingRoleUserId, setChangingRoleUserId] = useState<string | null>(null);
+  const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [confirmRemoveUserId, setConfirmRemoveUserId] = useState<string | null>(null);
+  const [rescindingInvitationId, setRescindingInvitationId] = useState<string | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditActionFilter, setAuditActionFilter] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
   const selectedMembership = memberships.find((membership) => membership.organization.id === selectedOrgId);
   const currentPlanType = subscription?.plan?.type || selectedOrg?.subscription?.planType || entitlement?.planType || 'FREE';
   const canManageTeam = enabledFeature(entitlement, 'TEAM_COLLABORATION');
   const canViewAuditLogs = enabledFeature(entitlement, 'AUDIT_LOGS');
-
+  const isOrgOwner = selectedMembership?.role === 'OWNER';
+  const isOrgManager = isOrgOwner || selectedMembership?.role === 'ADMIN';
+  const owners = teamMembers.filter((member) => member.role === 'OWNER');
+  const auditLimit = 25;
+  const auditTotalPages = Math.max(1, Math.ceil(auditTotal / auditLimit));
   const profileDisplayName = useMemo(() => {
     return [otherNames.trim(), surname.trim()].filter(Boolean).join(' ').trim();
   }, [otherNames, surname]);
@@ -320,61 +443,131 @@ export default function ProfileSettingsPage() {
       setInvoices(nextInvoices);
       setEntitlement(nextEntitlement);
       if (nextSubscription?.billingInterval) setBillingInterval(nextSubscription.billingInterval);
-      if (nextSubscription?.billingCurrency) setBillingCurrency(nextSubscription.billingCurrency);
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Failed to load billing settings.' });
+      if (nextSubscription?.billingCurrency) {
+        setBillingCurrency(nextSubscription.billingCurrency);
+        setCheckoutProvider(nextSubscription.billingCurrency === 'NGN' ? 'PAYSTACK' : 'STRIPE');
+      }
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to load billing settings.') });
     } finally {
       setIsLoadingBilling(false);
     }
   }, [selectedOrgId]);
 
+  const loadTeamData = useCallback(async () => {
+    if (!selectedOrgId || !canManageTeam) {
+      setTeamMembers([]);
+      setPendingInvitations([]);
+      return;
+    }
+
+    setIsLoadingTeam(true);
+    try {
+      const [memberData, invitationData] = await Promise.all([
+        requestJson<TeamMember[]>(`/api-gateway/organizations/${selectedOrgId}/members`),
+        isOrgManager
+          ? requestJson<{ success: boolean; data: PendingInvitation[] }>(`/api-gateway/organizations/${selectedOrgId}/invitations/pending`)
+          : Promise.resolve({ success: true, data: [] as PendingInvitation[] }),
+      ]);
+      setTeamMembers(memberData);
+      setPendingInvitations(invitationData.data || []);
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to load team members.') });
+    } finally {
+      setIsLoadingTeam(false);
+    }
+  }, [canManageTeam, isOrgManager, selectedOrgId]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!selectedOrgId || !canViewAuditLogs) {
+      setAuditLogs([]);
+      setAuditTotal(0);
+      return;
+    }
+
+    setIsLoadingAuditLogs(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(auditLimit),
+        page: String(auditPage),
+      });
+      if (auditSearch.trim()) params.set('q', auditSearch.trim());
+      if (auditActionFilter) params.set('action', auditActionFilter);
+
+      const data = await requestJson<{ data: AuditLogEntry[]; total: number; page: number; limit: number }>(
+        `/api-gateway/organizations/${selectedOrgId}/audit-logs?${params}`,
+      );
+      setAuditLogs(data.data || []);
+      setAuditTotal(data.total || 0);
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to load audit logs.') });
+    } finally {
+      setIsLoadingAuditLogs(false);
+    }
+  }, [auditActionFilter, auditPage, auditSearch, canViewAuditLogs, selectedOrgId]);
+
   useEffect(() => {
-    const names = splitDisplayName(user?.displayName);
-    setOtherNames(names.otherNames);
-    setSurname(names.surname);
+    const timer = window.setTimeout(() => {
+      const names = splitDisplayName(user?.displayName);
+      setOtherNames(names.otherNames);
+      setSurname(names.surname);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [user?.displayName]);
 
   useEffect(() => {
-    if (user?.preferredAuthMode) {
-      setAuthMode(user.preferredAuthMode);
-    }
+    if (!user?.preferredAuthMode) return;
+    const timer = window.setTimeout(() => setAuthMode(user.preferredAuthMode), 0);
+    return () => window.clearTimeout(timer);
   }, [user?.preferredAuthMode]);
 
   useEffect(() => {
     if (!user?.id) return;
-    try {
-      const saved = localStorage.getItem(`sots_settings_${user.id}`);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as {
-        jobTitle?: string;
-        phone?: string;
-        mfaEnabled?: boolean;
-        mfaProvider?: MfaProvider;
-        notifyReports?: boolean;
-        notifyBilling?: boolean;
-        notifySecurity?: boolean;
-        compactMode?: boolean;
-      };
-      setJobTitle(parsed.jobTitle || '');
-      setPhone(parsed.phone || '');
-      setMfaEnabled(Boolean(parsed.mfaEnabled));
-      setMfaProvider(parsed.mfaProvider || 'AUTHENTICATOR_APP');
-      setNotifyReports(parsed.notifyReports ?? true);
-      setNotifyBilling(parsed.notifyBilling ?? true);
-      setNotifySecurity(parsed.notifySecurity ?? true);
-      setCompactMode(Boolean(parsed.compactMode));
-    } catch {
-      localStorage.removeItem(`sots_settings_${user.id}`);
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = localStorage.getItem(`sots_settings_${user.id}`);
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as {
+          jobTitle?: string;
+          phone?: string;
+          mfaEnabled?: boolean;
+          mfaProvider?: MfaProvider;
+          notifyReports?: boolean;
+          notifyBilling?: boolean;
+          notifySecurity?: boolean;
+          compactMode?: boolean;
+        };
+        setJobTitle(parsed.jobTitle || '');
+        setPhone(parsed.phone || '');
+        setMfaEnabled(Boolean(parsed.mfaEnabled));
+        setMfaProvider(parsed.mfaProvider || 'AUTHENTICATOR_APP');
+        setNotifyReports(parsed.notifyReports ?? true);
+        setNotifyBilling(parsed.notifyBilling ?? true);
+        setNotifySecurity(parsed.notifySecurity ?? true);
+        setCompactMode(Boolean(parsed.compactMode));
+      } catch {
+        localStorage.removeItem(`sots_settings_${user.id}`);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [user?.id]);
 
   useEffect(() => {
-    void loadBillingData();
+    const timer = window.setTimeout(() => { void loadBillingData(); }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadBillingData]);
 
   useEffect(() => {
-    setCheckoutProvider(billingCurrency === 'NGN' ? 'PAYSTACK' : 'STRIPE');
-  }, [billingCurrency]);
+    if (activeTab !== 'team') return;
+    const timer = window.setTimeout(() => { void loadTeamData(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, loadTeamData]);
+
+  useEffect(() => {
+    if (activeTab !== 'audit') return;
+    const timer = window.setTimeout(() => { void loadAuditLogs(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, loadAuditLogs]);
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -405,8 +598,8 @@ export default function ProfileSettingsPage() {
 
       await refetch();
       setAlert({ type: 'success', message: 'Profile details saved.' });
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Failed to update profile.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to update profile.') });
     } finally {
       setIsSavingProfile(false);
     }
@@ -444,8 +637,8 @@ export default function ProfileSettingsPage() {
           ? 'Password saved and email/password sign-in is now your preferred mode.'
           : 'Password saved.',
       });
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Password update failed.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Password update failed.') });
     } finally {
       setIsSavingSecurity(false);
     }
@@ -470,11 +663,94 @@ export default function ProfileSettingsPage() {
       });
       await refetch();
       setAlert({ type: 'success', message: `Preferred sign-in mode updated to ${authModeLabels[authMode]}.` });
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Preferred authentication update failed.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Preferred authentication update failed.') });
     } finally {
       setIsSavingSecurity(false);
     }
+  }
+
+  async function handleInviteMember(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedOrgId || !inviteEmail.trim()) return;
+    setIsInviting(true);
+    setAlert(null);
+    try {
+      const email = inviteEmail.trim();
+      await requestJson(`/api-gateway/organizations/${selectedOrgId}/invitations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, role: inviteRole }),
+      });
+      setInviteEmail('');
+      setInviteRole('MEMBER');
+      await Promise.all([loadTeamData(), loadAuditLogs()]);
+      setAlert({ type: 'success', message: `Invitation sent to ${email}.` });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to send invitation.') });
+    } finally {
+      setIsInviting(false);
+    }
+  }
+
+  async function handleRoleChange(userId: string, role: MemberRole) {
+    if (!selectedOrgId) return;
+    setChangingRoleUserId(userId);
+    setAlert(null);
+    try {
+      await requestJson(`/api-gateway/organizations/${selectedOrgId}/members/${userId}/role`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      await Promise.all([loadTeamData(), loadAuditLogs(), refetch()]);
+      setAlert({ type: 'success', message: `Role updated to ${roleLabels[role]}.` });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to update role.') });
+    } finally {
+      setChangingRoleUserId(null);
+    }
+  }
+
+  async function handleRemoveMember(userId: string) {
+    if (!selectedOrgId) return;
+    setRemovingUserId(userId);
+    setConfirmRemoveUserId(null);
+    setAlert(null);
+    try {
+      await requestJson(`/api-gateway/organizations/${selectedOrgId}/members/${userId}`, { method: 'DELETE' });
+      await Promise.all([loadTeamData(), loadAuditLogs(), refetch()]);
+      setAlert({ type: 'success', message: 'Member removed.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to remove member.') });
+    } finally {
+      setRemovingUserId(null);
+    }
+  }
+
+  async function handleRescindInvitation(invitationId: string) {
+    if (!selectedOrgId) return;
+    setRescindingInvitationId(invitationId);
+    setAlert(null);
+    try {
+      await requestJson(`/api-gateway/organizations/${selectedOrgId}/invitations/${invitationId}`, { method: 'DELETE' });
+      await loadTeamData();
+      setAlert({ type: 'success', message: 'Invitation rescinded.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Failed to rescind invitation.') });
+    } finally {
+      setRescindingInvitationId(null);
+    }
+  }
+
+  function handleAuditSearchChange(value: string) {
+    setAuditSearch(value);
+    setAuditPage(1);
+  }
+
+  function handleAuditActionFilterChange(value: string) {
+    setAuditActionFilter(value);
+    setAuditPage(1);
   }
 
   function handleSavePreferences() {
@@ -578,10 +854,10 @@ export default function ProfileSettingsPage() {
             : `${plan.name} checkout was created. Complete payment in the provider portal when it is configured.`,
       });
       if (checkout.checkoutUrl && checkout.status !== 'completed') {
-        window.location.href = checkout.checkoutUrl;
+        window.location.assign(checkout.checkoutUrl);
       }
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Checkout failed.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Checkout failed.') });
     } finally {
       setIsCheckingOut(false);
     }
@@ -597,8 +873,8 @@ export default function ProfileSettingsPage() {
       });
       await Promise.all([loadBillingData(), refetch()]);
       setAlert({ type: 'success', message: 'Subscription cancelled. Entitlements were recalculated.' });
-    } catch (err: any) {
-      setAlert({ type: 'error', message: err.message || 'Could not cancel subscription.' });
+    } catch (err) {
+      setAlert({ type: 'error', message: getErrorMessage(err, 'Could not cancel subscription.') });
     } finally {
       setIsCancelling(false);
     }
@@ -965,49 +1241,198 @@ export default function ProfileSettingsPage() {
           ) : null}
 
           {activeTab === 'team' ? (
-            <Card className="space-y-6">
-              <SectionHeader
-                title="Team Management"
-                description="Invite or remove organization members when the active plan includes team collaboration."
-              />
-              <div className="rounded-lg border border-neutral-800">
-                {memberships.map((membership) => (
-                  <div key={membership.id} className="flex items-center justify-between border-b border-neutral-800 px-4 py-3 last:border-b-0">
-                    <div>
-                      <div className="text-sm font-semibold text-white">{membership.organization.name}</div>
-                      <div className="text-xs text-neutral-500">
-                        {membership.organization.id === selectedOrgId ? user.email : 'Current user membership'}
-                      </div>
-                    </div>
-                    <span className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-semibold text-neutral-300">
-                      {membership.role}
-                    </span>
+            <div className="space-y-6">
+              <Card className="space-y-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <SectionHeader
+                    title="Team Management"
+                    description="Invite teammates, review access, and remove organization members."
+                  />
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-3 text-sm">
+                    <div className="font-semibold text-white">{teamMembers.length || memberships.length} members</div>
+                    <div className="text-xs uppercase tracking-wider text-neutral-500">{selectedMembership?.role || 'MEMBER'}</div>
                   </div>
-                ))}
-              </div>
-              <div className="grid gap-4 md:grid-cols-[1fr_auto]">
-                <TextInput
-                  label="Invite Email"
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
-                  placeholder="teammate@company.com"
-                  disabled={!canManageTeam}
-                />
-                <div className="flex items-end">
-                  <PrimaryButton type="button" disabled>
-                    Invite Member
-                  </PrimaryButton>
                 </div>
-              </div>
-              <div className={cn('rounded-lg border p-4 text-sm', canManageTeam ? 'border-indigo-900/50 bg-indigo-950/30 text-indigo-200' : 'border-amber-900/50 bg-amber-950/30 text-amber-200')}>
-                {canManageTeam
-                  ? 'Your plan allows team collaboration. The database has memberships and invitations, but invite/remove endpoints are not exposed yet.'
-                  : 'Team collaboration starts on the Team plan. Upgrade before inviting organization members.'}
-              </div>
-            </Card>
-          ) : null}
 
+                {!canManageTeam ? (
+                  <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
+                    Team collaboration starts on the Team plan. Upgrade before inviting organization members.
+                  </div>
+                ) : null}
+
+                {canManageTeam && !isOrgManager ? (
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
+                    Owners and Admins can invite teammates. Owners can change roles and remove members.
+                  </div>
+                ) : null}
+
+                {canManageTeam && isOrgManager ? (
+                  <form onSubmit={handleInviteMember} className="grid gap-4 md:grid-cols-[1fr_160px_auto]">
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute left-3 top-[39px] h-4 w-4 text-neutral-500" />
+                      <TextInput
+                        label="Invite Email"
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(event) => setInviteEmail(event.target.value)}
+                        placeholder="teammate@company.com"
+                        className="pl-9"
+                      />
+                    </div>
+                    <SelectInput label="Role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as MemberRole)}>
+                      {memberRoles.filter((role) => role !== 'OWNER').map((role) => (
+                        <option key={role} value={role}>{roleLabels[role]}</option>
+                      ))}
+                    </SelectInput>
+                    <div className="flex items-end">
+                      <PrimaryButton type="submit" disabled={isInviting || !inviteEmail.trim()} className="w-full whitespace-nowrap">
+                        {isInviting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
+                        Send Invite
+                      </PrimaryButton>
+                    </div>
+                  </form>
+                ) : null}
+              </Card>
+
+              <Card className="overflow-hidden p-0">
+                <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <UsersRound className="h-4 w-4 text-indigo-400" />
+                    <span className="text-sm font-semibold text-white">Members</span>
+                  </div>
+                  {isLoadingTeam ? <Loader2 className="h-4 w-4 animate-spin text-neutral-500" /> : null}
+                </div>
+
+                {!canManageTeam ? (
+                  <div className="px-5 py-8 text-center text-sm text-neutral-500">Upgrade to load organization members here.</div>
+                ) : teamMembers.length === 0 && !isLoadingTeam ? (
+                  <div className="px-5 py-8 text-center text-sm text-neutral-500">No members found.</div>
+                ) : (
+                  <ul className="divide-y divide-neutral-800">
+                    {teamMembers.map((member) => {
+                      const initial = (member.user.displayName?.[0] || member.user.email[0] || '?').toUpperCase();
+                      const isCurrentUser = member.userId === user.id;
+                      const isSoleOwner = member.role === 'OWNER' && owners.length === 1;
+                      const canModify = isOrgOwner && !isCurrentUser && !isSoleOwner;
+
+                      return (
+                        <li key={member.id} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center">
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+                              {initial}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-sm font-semibold text-white">{member.user.displayName || member.user.email.split('@')[0]}</span>
+                                {isCurrentUser ? <span className="rounded border border-indigo-900/60 bg-indigo-950 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">You</span> : null}
+                                <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider', roleBadgeClasses[member.role])}>
+                                  {roleLabels[member.role]}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 truncate text-xs text-neutral-500">{member.user.email}</p>
+                            </div>
+                          </div>
+
+                          {canModify ? (
+                            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                              <div className="relative">
+                                <select
+                                  value={member.role}
+                                  disabled={changingRoleUserId === member.userId}
+                                  onChange={(event) => void handleRoleChange(member.userId, event.target.value as MemberRole)}
+                                  className="appearance-none rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-3 pr-8 text-xs text-neutral-200 outline-none transition focus:border-indigo-500 disabled:opacity-50"
+                                >
+                                  {memberRoles.map((role) => (
+                                    <option key={role} value={role}>{roleLabels[role]}</option>
+                                  ))}
+                                </select>
+                                {changingRoleUserId === member.userId ? (
+                                  <Loader2 className="absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 animate-spin text-indigo-400" />
+                                ) : (
+                                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
+                                )}
+                              </div>
+
+                              {confirmRemoveUserId === member.userId ? (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-red-300">Remove?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleRemoveMember(member.userId)}
+                                    disabled={removingUserId === member.userId}
+                                    className="rounded bg-red-600 px-2 py-1 font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+                                  >
+                                    {removingUserId === member.userId ? '...' : 'Yes'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmRemoveUserId(null)}
+                                    className="rounded border border-neutral-700 px-2 py-1 text-neutral-400 transition hover:text-white"
+                                  >
+                                    No
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRemoveUserId(member.userId)}
+                                  className="rounded-lg border border-transparent p-2 text-neutral-500 transition hover:border-red-900/50 hover:bg-red-950/30 hover:text-red-300"
+                                  aria-label={`Remove ${member.user.email}`}
+                                >
+                                  <UserMinus className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </Card>
+
+              {canManageTeam && pendingInvitations.length > 0 ? (
+                <Card className="overflow-hidden p-0">
+                  <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4">
+                    <Clock className="h-4 w-4 text-amber-400" />
+                    <span className="text-sm font-semibold text-white">Pending Invitations ({pendingInvitations.length})</span>
+                  </div>
+                  <ul className="divide-y divide-neutral-800">
+                    {pendingInvitations.map((invitation) => (
+                      <li key={invitation.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-white">{invitation.email}</p>
+                          <p className="mt-0.5 text-xs text-neutral-500">
+                            {roleLabels[invitation.role]} invite
+                            {invitation.invitedBy ? ` from ${invitation.invitedBy.displayName || invitation.invitedBy.email}` : ''}
+                            {invitation.expiresAt ? ` - expires ${formatDate(invitation.expiresAt)}` : ''}
+                          </p>
+                        </div>
+                        {isOrgManager ? (
+                          <SecondaryButton
+                            type="button"
+                            onClick={() => void handleRescindInvitation(invitation.id)}
+                            disabled={rescindingInvitationId === invitation.id}
+                            className="px-3 py-2 text-xs text-red-300 hover:bg-red-950/30"
+                          >
+                            {rescindingInvitationId === invitation.id ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <X className="mr-2 h-3 w-3" />}
+                            Rescind
+                          </SecondaryButton>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              ) : null}
+
+              {canManageTeam && !isOrgOwner ? (
+                <p className="flex items-center gap-2 text-xs text-neutral-500">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Only Owners can change roles or remove members.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           {activeTab === 'preferences' ? (
             <Card className="space-y-6">
               <SectionHeader
@@ -1079,7 +1504,11 @@ export default function ProfileSettingsPage() {
                     <option value="MONTHLY">Monthly</option>
                     <option value="ANNUAL">Annual</option>
                   </SelectInput>
-                  <SelectInput label="Currency" value={billingCurrency} onChange={(event) => setBillingCurrency(event.target.value as BillingCurrency)}>
+                  <SelectInput label="Currency" value={billingCurrency} onChange={(event) => {
+                      const nextCurrency = event.target.value as BillingCurrency;
+                      setBillingCurrency(nextCurrency);
+                      setCheckoutProvider(nextCurrency === 'NGN' ? 'PAYSTACK' : 'STRIPE');
+                    }}>
                     <option value="USD">USD</option>
                     <option value="NGN">NGN</option>
                   </SelectInput>
@@ -1183,28 +1612,116 @@ export default function ProfileSettingsPage() {
 
           {activeTab === 'audit' ? (
             <Card className="space-y-5">
-              <SectionHeader
-                title="Audit Logs"
-                description="Review important interactions such as logins, organization creation, MFA changes, team membership, and billing activity."
-              />
-              <div className={cn('rounded-lg border p-4 text-sm', canViewAuditLogs ? 'border-indigo-900/50 bg-indigo-950/30 text-indigo-200' : 'border-amber-900/50 bg-amber-950/30 text-amber-200')}>
-                {canViewAuditLogs
-                  ? 'Audit logging is enabled for this plan, and auth events are being written. A read endpoint for audit log review is still needed.'
-                  : 'Audit logs are available on Business and Enterprise plans.'}
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <SectionHeader
+                  title="Audit Logs"
+                  description="Review organization-scoped authentication, team, billing, API key, report, and governance events."
+                />
+                <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-3 text-sm">
+                  <div className="font-semibold text-white">{auditTotal.toLocaleString()} events</div>
+                  <div className="text-xs uppercase tracking-wider text-neutral-500">Organization scope</div>
+                </div>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {[
-                  ['Login events', 'LOGIN_SUCCESS, OTP_SENT, OTP_VERIFIED, LOGOUT'],
-                  ['Team events', 'MEMBER_INVITED, MEMBER_JOINED, MEMBER_REMOVED, ROLE_CHANGED'],
-                  ['Security events', 'MFA_ENABLED, MFA_DISABLED, SESSION_REFRESHED'],
-                  ['Billing events', 'Checkout and invoice events are available in billing history.'],
-                ].map(([title, body]) => (
-                  <div key={title} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
-                    <div className="font-semibold text-white">{title}</div>
-                    <div className="mt-1 text-xs text-neutral-500">{body}</div>
+
+              {!canViewAuditLogs ? (
+                <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
+                  Audit logs are available on Business and Enterprise plans.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-3 md:flex-row">
+                    <label className="relative flex-1">
+                      <span className="sr-only">Search audit logs</span>
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                      <input
+                        type="text"
+                        value={auditSearch}
+                        onChange={(event) => handleAuditSearchChange(event.target.value)}
+                        placeholder="Search user or action"
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2.5 pl-9 pr-3 text-sm text-neutral-100 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </label>
+                    <select
+                      value={auditActionFilter}
+                      onChange={(event) => handleAuditActionFilterChange(event.target.value)}
+                      className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="">All actions</option>
+                      {auditActionOptions.map((action) => (
+                        <option key={action} value={action}>{action.replace(/_/g, ' ')}</option>
+                      ))}
+                    </select>
                   </div>
-                ))}
-              </div>
+
+                  <div className="overflow-hidden rounded-lg border border-neutral-800">
+                    <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-950 px-4 py-3">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Events</span>
+                      {isLoadingAuditLogs ? <Loader2 className="h-4 w-4 animate-spin text-neutral-500" /> : null}
+                    </div>
+
+                    {auditLogs.length === 0 && !isLoadingAuditLogs ? (
+                      <div className="px-4 py-8 text-center text-sm text-neutral-500">No audit log entries match this view.</div>
+                    ) : (
+                      <ul className="divide-y divide-neutral-800">
+                        {auditLogs.map((log) => (
+                          <li key={log.id}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedAuditId(expandedAuditId === log.id ? null : log.id)}
+                              className="w-full px-4 py-4 text-left transition hover:bg-neutral-800/30"
+                            >
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', auditBadgeClass(log.action))}>
+                                  {log.action.replace(/_/g, ' ')}
+                                </span>
+                                <span className="min-w-0 truncate text-xs font-mono text-neutral-400">
+                                  {log.user?.email || log.userId || 'system'}
+                                </span>
+                                <span className="ml-auto text-xs text-neutral-600">{new Date(log.createdAt).toLocaleString()}</span>
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-neutral-600">
+                                {log.ipAddress ? <span>IP: {log.ipAddress}</span> : null}
+                                {log.userAgent ? <span className="max-w-full truncate">{log.userAgent}</span> : null}
+                              </div>
+                            </button>
+                            {expandedAuditId === log.id ? (
+                              <div className="px-4 pb-4">
+                                <pre className="max-h-48 overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-[11px] text-neutral-400">
+                                  {JSON.stringify(log.metadata || {}, null, 2)}
+                                </pre>
+                              </div>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {auditTotalPages > 1 ? (
+                      <div className="flex items-center justify-between border-t border-neutral-800 px-4 py-3">
+                        <span className="text-xs text-neutral-500">Page {auditPage} of {auditTotalPages}</span>
+                        <div className="flex gap-2">
+                          <SecondaryButton
+                            type="button"
+                            onClick={() => setAuditPage((page) => Math.max(1, page - 1))}
+                            disabled={auditPage === 1 || isLoadingAuditLogs}
+                            className="px-3 py-1.5 text-xs"
+                          >
+                            Previous
+                          </SecondaryButton>
+                          <SecondaryButton
+                            type="button"
+                            onClick={() => setAuditPage((page) => Math.min(auditTotalPages, page + 1))}
+                            disabled={auditPage >= auditTotalPages || isLoadingAuditLogs}
+                            className="px-3 py-1.5 text-xs"
+                          >
+                            Next
+                          </SecondaryButton>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              )}
             </Card>
           ) : null}
         </div>

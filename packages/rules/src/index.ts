@@ -3,6 +3,10 @@ import { lmsRules } from './lms';
 import { ApplicationRuleSet } from './types';
 
 export * from './types';
+export * from './templates';
+export * from './dynamic';
+export * from './cache';
+export * from './schema';
 
 export const ruleSets: Record<string, ApplicationRuleSet> = {
   ECOMMERCE: ecommerceRules,
@@ -13,14 +17,51 @@ export function getRuleSet(profileType: string): ApplicationRuleSet | null {
   return ruleSets[profileType.toUpperCase()] || null;
 }
 
-export function reconstructRuleSet(compiledRules: any[], profileType: string): ApplicationRuleSet {
+export function reconstructRuleSet(compiledRules: any, profileType: string): ApplicationRuleSet {
   const baseRuleSet = getRuleSet(profileType) || { stateExtractors: [], missingStates: [], missingFlows: [] };
 
   const stateExtractors = [...baseRuleSet.stateExtractors];
   const missingStates = [...baseRuleSet.missingStates];
   const missingFlows = [...baseRuleSet.missingFlows];
 
-  for (const rule of compiledRules) {
+  if (!compiledRules) {
+    return {
+      stateExtractors,
+      missingStates,
+      missingFlows,
+    };
+  }
+
+  let rulesArray: any[] = [];
+  if (Array.isArray(compiledRules)) {
+    rulesArray = compiledRules;
+  } else if (typeof compiledRules === 'object') {
+    const rulesets = (compiledRules as any).rulesets;
+    if (Array.isArray(rulesets)) {
+      for (const ruleset of rulesets) {
+        if (Array.isArray(ruleset.rulePatterns)) {
+          for (const pattern of ruleset.rulePatterns) {
+            if (pattern.patternType === 'STATE_EXPECTATION' && pattern.matcher?.stateName) {
+              rulesArray.push({
+                type: 'EXPECTED_STATE',
+                stateName: pattern.matcher.stateName,
+                confidence: pattern.confidence,
+              });
+            } else if (pattern.patternType === 'TRANSITION_EXPECTATION' && pattern.matcher?.fromState && pattern.matcher?.toState) {
+              rulesArray.push({
+                type: 'EXPECTED_TRANSITION',
+                fromState: pattern.matcher.fromState,
+                toState: pattern.matcher.toState,
+                confidence: pattern.confidence,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const rule of rulesArray) {
     if (rule.type === 'EXPECTED_STATE' && rule.stateName) {
       const exists = stateExtractors.some(
         (e) => e.type === 'event' && e.eventType === rule.stateName

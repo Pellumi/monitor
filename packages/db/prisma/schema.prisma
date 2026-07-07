@@ -8,20 +8,426 @@ generator client {
 }
 
 model Organization {
-  id                   String                     @id @default(uuid())
-  name                 String
-  slug                 String                     @unique
-  createdByUserId      String?
-  createdAt            DateTime                   @default(now())
+  id                        String                     @id @default(uuid())
+  name                      String
+  slug                      String                     @unique
+  createdByUserId           String?
+  createdAt                 DateTime                   @default(now())
 
-  memberships          OrganizationMembership[]
-  invitations          OrganizationInvitation[]
-  applications         Application[]
-  intentNormalizations IntentNormalizationEntry[]
-  subscription         Subscription?
-  entitlement          Entitlement?
-  notificationPreferences NotificationPreference[]
-  notificationEvents      NotificationEvent[]
+  // ─── Gap 4: Cross-tenant pattern matching ───────────────────────────────
+  // Opted IN by default — org contributes anonymized state patterns to the
+  // shared cross-tenant index. Org admins can disable this in settings.
+  allowCrossTenantPatterns  Boolean                    @default(true)
+
+  // ─── Gap 5: MFA enforcement ─────────────────────────────────────────────
+  // When true, OWNER/ADMIN members must have TOTP enabled to access the dashboard.
+  mfaRequiredForAdmins      Boolean                    @default(false)
+
+  memberships               OrganizationMembership[]
+  invitations               OrganizationInvitation[]
+  applications              Application[]
+  intentNormalizations      IntentNormalizationEntry[]
+  subscription              Subscription?
+  entitlement               Entitlement?
+  notificationPreferences   NotificationPreference[]
+  notificationEvents        NotificationEvent[]
+  oidcProvider              OIDCProvider?
+}
+
+enum RulesetScope {
+  GLOBAL
+  ORGANIZATION
+  APPLICATION
+}
+
+enum RulesetStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum RulesetVersionStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum RulePatternType {
+  DOMAIN_INFERENCE
+  STATE_EXPECTATION
+  TRANSITION_EXPECTATION
+  MISSING_STATE
+  MISSING_FLOW
+  EDGE_CASE
+  VALIDATION_CONSTRAINT
+  RECOVERY_FLOW
+}
+
+enum RuleTriggerType {
+  KEYWORD
+  ROUTE_PATTERN
+  API_PATTERN
+  EVENT_TYPE
+  STATE_NAME
+  COMPONENT_NAME
+  WORKFLOW_NAME
+}
+
+enum RuleSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum RuleSource {
+  SYSTEM
+  ADMIN
+  USER_FEEDBACK
+  AI_CANDIDATE
+  OBSERVED_BEHAVIOR
+}
+
+enum AIFlowDraftSource {
+  ONBOARDING_PROMPT
+  FLOW_BUILDER
+  ADMIN_TEST
+}
+
+enum AIFlowDraftStatus {
+  PENDING_REVIEW
+  ACCEPTED
+  PARTIALLY_ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum SuggestionType {
+  PREREQUISITE
+  IN_STATE_VALIDATION
+  POST_REQUISITE
+  ERROR_PATH
+  EMPTY_STATE
+  LOADING_STATE
+  RECOVERY_PATH
+  SECURITY_STATE
+  BUSINESS_RULE
+}
+
+enum SuggestionSource {
+  RULE_ENGINE
+  AI
+  HYBRID
+}
+
+enum RuleFeedbackType {
+  ACCEPTED
+  REJECTED
+  EDITED
+  DISMISSED
+  PROMOTED
+}
+
+enum RuleCandidateSource {
+  AI
+  USER_FEEDBACK
+  OBSERVED_FLOW_VARIATION
+  ADMIN_CREATED
+}
+
+enum RuleCandidateStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  PROMOTED
+  MERGED
+}
+
+enum AIFeature {
+  FLOW_GENERATION
+  FLOW_SUGGESTION
+  DOMAIN_INFERENCE
+  OUTPUT_REPAIR
+}
+
+enum AIInvocationStatus {
+  SUCCESS
+  FAILED
+  VALIDATION_FAILED
+  TIMEOUT
+  RATE_LIMITED
+  DEGRADED
+  FALLBACK_USED
+  BLOCKED_BY_POLICY
+}
+
+model Domain {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(true)
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rulesets    DomainRuleset[]
+}
+
+model DomainRuleset {
+  id             String        @id @default(uuid())
+  domainId       String
+  key            String
+  name           String
+  description    String?
+  scope          RulesetScope  @default(GLOBAL)
+  status         RulesetStatus @default(ACTIVE)
+  priority       Int           @default(100)
+
+  organizationId String?
+  applicationId  String?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  domain         Domain @relation(fields: [domainId], references: [id])
+  versions       DomainRulesetVersion[]
+
+  @@unique([domainId, key, organizationId, applicationId])
+  @@index([domainId, status])
+  @@index([organizationId])
+  @@index([applicationId])
+}
+
+model DomainRulesetVersion {
+  id          String               @id @default(uuid())
+  rulesetId   String
+  version     Int
+  status      RulesetVersionStatus @default(DRAFT)
+  changelog   String?
+  metadata    Json?
+
+  createdBy   String?
+  promotedBy  String?
+  promotedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  ruleset       DomainRuleset @relation(fields: [rulesetId], references: [id])
+  patterns      RulePattern[]
+  flowTemplates FlowTemplate[]
+
+  @@unique([rulesetId, version])
+  @@index([rulesetId, status])
+}
+
+model RulePattern {
+  id               String          @id @default(uuid())
+  rulesetVersionId String
+  key              String
+  name             String
+  description      String?
+  patternType      RulePatternType
+  severity         RuleSeverity    @default(INFO)
+  matcherJson      Json
+  outputJson       Json
+  confidenceBase   Float           @default(0.7)
+  source           RuleSource      @default(SYSTEM)
+  isActive         Boolean         @default(true)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  rulesetVersion   DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
+  triggers         RuleTrigger[]
+
+  @@index([rulesetVersionId, patternType])
+  @@index([source])
+}
+
+model RuleTrigger {
+  id            String          @id @default(uuid())
+  rulePatternId String
+  triggerType   RuleTriggerType
+  value         String
+  weight        Float           @default(1.0)
+  createdAt     DateTime        @default(now())
+
+  rulePattern   RulePattern @relation(fields: [rulePatternId], references: [id])
+
+  @@index([triggerType, value])
+  @@index([rulePatternId])
+}
+
+model FlowTemplate {
+  id                 String  @id @default(uuid())
+  rulesetVersionId   String
+  key                String
+  name               String
+  description        String?
+  workflowType       String
+  statesJson         Json
+  transitionsJson    Json
+  edgeCasesJson      Json
+  requiredEventsJson Json?
+  metadata           Json?
+  confidenceBase     Float   @default(0.75)
+  isActive           Boolean @default(true)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  rulesetVersion     DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
+
+  @@index([rulesetVersionId])
+  @@index([workflowType])
+}
+
+model AIFlowDraft {
+  id                      String            @id @default(uuid())
+  organizationId          String
+  applicationId           String
+  environmentId           String?
+  source                  AIFlowDraftSource
+  status                  AIFlowDraftStatus @default(PENDING_REVIEW)
+  /// Stores only the sanitized/redacted description — never raw user input
+  productDescription      String?
+  /// SHA-256 of the original raw description for audit deduplication (raw text never stored)
+  productDescriptionHash  String?
+  inferredDomainKey       String?
+  rulesetVersionIds       String[]          @default([])
+  promptHash              String
+  provider                String
+  model                   String
+  aiInvocationId          String?
+  draftJson               Json
+  validationJson          Json?
+  confidence              Float             @default(0.0)
+  createdBy               String?
+  reviewedBy              String?
+  reviewedAt              DateTime?
+  rejectionReason         String?
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([organizationId, applicationId])
+  @@index([status])
+  @@index([inferredDomainKey])
+}
+
+// =============================================================================
+// AI FLOW DRAFT ASYNC JOB QUEUE (Gap 8 — non-blocking async generation)
+// =============================================================================
+
+enum AIFlowDraftJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model AIFlowDraftJob {
+  id                  String               @id @default(uuid())
+  organizationId      String
+  applicationId       String
+  environmentId       String?
+  source              AIFlowDraftSource
+  /// Already-sanitized description; raw text is never stored
+  productDescription  String
+  domainKey           String
+  rulesetVersionIds   String[]             @default([])
+  status              AIFlowDraftJobStatus @default(QUEUED)
+  /// Populated when status = COMPLETED
+  draftId             String?
+  errorMessage        String?
+  attempts            Int                  @default(0)
+  maxAttempts         Int                  @default(3)
+  scheduledAt         DateTime             @default(now())
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([organizationId, applicationId])
+}
+
+model RuleFeedback {
+  id              String           @id @default(uuid())
+  organizationId  String
+  applicationId   String?
+  rulePatternId   String?
+  suggestionId    String?
+  aiFlowDraftId   String?
+  feedbackType    RuleFeedbackType
+  beforeJson      Json?
+  afterJson       Json?
+  comment         String?
+  createdBy       String?
+  createdAt       DateTime         @default(now())
+
+  @@index([organizationId, applicationId])
+  @@index([rulePatternId])
+  @@index([suggestionId])
+  @@index([aiFlowDraftId])
+}
+
+model RuleCandidate {
+  id                     String              @id @default(uuid())
+  domainId               String?
+  organizationId         String?
+  applicationId          String?
+  source                 RuleCandidateSource
+  status                 RuleCandidateStatus @default(PENDING_REVIEW)
+  candidateJson          Json
+  evidenceJson           Json?
+  confidence             Float               @default(0.0)
+  promotedRulePatternId  String?
+  reviewedBy             String?
+  reviewedAt             DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([domainId])
+  @@index([status])
+  @@index([source])
+}
+
+model AIInvocationLog {
+  id                String             @id @default(uuid())
+  organizationId    String
+  applicationId     String?
+  userId            String?
+  feature           AIFeature
+  provider          String
+  model             String
+  promptHash        String
+  promptVersion     String?
+  inputSummaryJson  Json?
+  outputSummaryJson Json?
+  status            AIInvocationStatus
+  errorCode         String?
+  errorMessage      String?
+  errorMessageSafe  String?
+  inputTokens       Int?
+  outputTokens      Int?
+  totalTokens       Int?
+  latencyMs         Int?
+  costEstimate      Decimal?
+  repaired          Boolean @default(false)
+  fallbackUsed      Boolean @default(false)
+  createdBy         String?
+  createdAt         DateTime           @default(now())
+
+  @@index([organizationId, applicationId])
+  @@index([feature])
+  @@index([provider, model])
+  @@index([status])
 }
 
 // =============================================================================
@@ -198,35 +604,52 @@ model UsageSnapshot {
 // =============================================================================
 
 model Invoice {
-  id              String          @id @default(uuid())
-  organizationId  String
-  invoiceNumber   String          @unique
-  planType        PlanType
-  billingInterval BillingInterval
-  currency        BillingCurrency
-  subtotal        Int             // In smallest unit (cents/kobo)
-  tax             Int             @default(0)
-  total           Int
-  status          String          @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
-  stripeInvoiceId String?
-  paystackRef     String?
-  periodStart     DateTime
-  periodEnd       DateTime
-  paidAt          DateTime?
-  createdAt       DateTime        @default(now())
+  id                     String          @id @default(uuid())
+  organizationId         String
+  invoiceNumber          String          @unique
+  planType               PlanType
+  billingInterval        BillingInterval
+  currency               BillingCurrency
+  subtotal               Int             // In smallest unit (cents/kobo)
+  tax                    Int             @default(0)
+  total                  Int
+  status                 String          @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  provider               String?
+  providerReference      String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  stripeInvoiceId        String?
+  paystackRef            String?
+  periodStart            DateTime
+  periodEnd              DateTime
+  paidAt                 DateTime?
+  createdAt              DateTime        @default(now())
+  paymentEvents          PaymentEvent[]
 
   @@index([organizationId, createdAt])
+  @@index([provider, providerSubscriptionId])
+  @@unique([provider, providerReference])
 }
 
 model PaymentEvent {
-  id             String   @id @default(uuid())
-  organizationId String
-  provider       String   // "STRIPE" | "PAYSTACK"
-  eventType      String   // "checkout.completed", "invoice.paid", etc.
-  payload        Json
-  processedAt    DateTime @default(now())
+  id               String   @id @default(uuid())
+  organizationId   String
+  provider         String   // "STRIPE" | "PAYSTACK"
+  eventType        String   // "checkout.completed", "invoice.paid", etc.
+  providerEventId  String?
+  providerReference String?
+  invoiceId        String?
+  invoice          Invoice? @relation(fields: [invoiceId], references: [id])
+  payload          Json
+  processingStatus String   @default("PROCESSED")
+  processingError  String?
+  receivedAt       DateTime @default(now())
+  processedAt      DateTime?
 
   @@index([organizationId, processedAt])
+  @@index([invoiceId])
+  @@index([provider, providerReference])
+  @@unique([provider, providerEventId])
 }
 
 model ApiKey {
@@ -553,19 +976,42 @@ model BehaviorGraphEdge {
 }
 
 model DeclaredStateSuggestion {
-  id                 String            @id @default(uuid())
-  parentStateId      String
-  parentState        BehaviorGraphNode @relation(fields: [parentStateId], references: [id])
-  suggestedStateName String
-  category           String
-  sourceTier         String
-  rationale          String
-  confidence         Float
-  status             String            @default("PENDING")
-  patternId          String?
-  createdAt          DateTime          @default(now())
+  id                       String             @id @default(uuid())
+  parentStateId            String?
+  parentState              BehaviorGraphNode? @relation(fields: [parentStateId], references: [id])
+  organizationId           String?
+  applicationId            String?
+  flowId                   String?
+  suggestionType           SuggestionType?
+  title                    String?
+  description              String?
+  suggestedStateName       String
+  category                 String
+  severity                 RuleSeverity       @default(INFO)
+  sourceTier               String
+  rationale                String
+  suggestedStatesJson      Json?
+  suggestedTransitionsJson Json?
+  evidenceJson             Json?
+  source                   SuggestionSource   @default(RULE_ENGINE)
+  confidence               Float
+  status                   String             @default("PENDING")
+  patternId                String?
+  rulesetVersionIds        String[]           @default([])
+  rulePatternIds           String[]           @default([])
+  aiInvocationId           String?
+  acceptedBy               String?
+  acceptedAt               DateTime?
+  rejectedBy               String?
+  rejectedAt               DateTime?
+  createdAt                DateTime           @default(now())
 
   outcomes SuggestionOutcome[]
+
+  @@index([organizationId, applicationId])
+  @@index([flowId])
+  @@index([status])
+  @@index([suggestionType])
 }
 
 model CompiledRuleset {
@@ -800,6 +1246,7 @@ enum OtpPurpose {
 }
 
 enum AuditAction {
+  // ─── Identity & Auth ─────────────────────────────
   USER_CREATED
   LOGIN_SUCCESS
   LOGIN_FAILED
@@ -815,29 +1262,88 @@ enum AuditAction {
   ROLE_CHANGED
   MFA_ENABLED
   MFA_DISABLED
+  MFA_VERIFIED
+  MFA_CHALLENGE_FAILED
+  MFA_BACKUP_CODE_USED
+  SSO_LOGIN_SUCCESS
+  SSO_PROVIDER_CONFIGURED
+  SSO_PROVIDER_REMOVED
   PASSWORD_SET
   PASSWORD_CHANGED
   PREFERRED_AUTH_CHANGED
+
+  // ─── Ruleset Governance ───────────────────────────
+  RULESET_VERSION_CREATED
+  RULESET_VERSION_PROMOTED
+  RULESET_VERSION_ARCHIVED
+  RULE_CANDIDATE_APPROVED
+  RULE_CANDIDATE_REJECTED
+  RULE_PATTERN_CREATED
+  RULE_PATTERN_UPDATED
+
+  // ─── AI & Flow ────────────────────────────────────
+  AI_DRAFT_CREATED
+  AI_DRAFT_ACCEPTED
+  AI_DRAFT_PARTIALLY_ACCEPTED
+  AI_DRAFT_REJECTED
+  AI_SUGGESTION_ACCEPTED
+  AI_SUGGESTION_REJECTED
+  FLOW_CREATED
+  FLOW_UPDATED
+  FLOW_DELETED
+  FLOW_COMPLETED
+
+  // ─── API Keys ─────────────────────────────────────
+  API_KEY_CREATED
+  API_KEY_REVOKED
+  API_KEY_ROTATED
+
+  // ─── Billing ──────────────────────────────────────
+  SUBSCRIPTION_ACTIVATED
+  SUBSCRIPTION_CANCELLED
+  SUBSCRIPTION_PAST_DUE
+  PLAN_CHANGED
+  INVOICE_PAID
+  INVOICE_FAILED
+
+  // ─── Reports & Exports ────────────────────────────
+  REPORT_GENERATED
+  REPORT_EXPORTED
+
+  // ─── Feature Flags ────────────────────────────────
+  ORG_FEATURE_FLAG_CHANGED
+
+  // ─── Admin RBAC ───────────────────────────────────
+  SYSTEM_ADMIN_GRANTED
+  SYSTEM_ADMIN_REVOKED
 }
 
 model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  displayName   String?
-  avatarUrl     String?
-  passwordHash  String?
-  preferredAuthMode String @default("OTP")
+  id                String    @id @default(uuid())
+  email             String    @unique
+  displayName       String?
+  avatarUrl         String?
+  passwordHash      String?
+  preferredAuthMode String    @default("OTP")
   passwordUpdatedAt DateTime?
 
-  lastLoginAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  // ─── Gap 5: TOTP / MFA ──────────────────────────────────────────────────
+  // totpSecret is stored AES-256 encrypted using MFA_ENCRYPTION_KEY.
+  totpEnabled       Boolean   @default(false)
+  totpSecret        String?   // AES-256-GCM encrypted — never store plaintext
+  totpEnabledAt     DateTime?
+  totpBackupCodes   String[]  @default([]) // bcrypt-hashed 8-char backup codes
 
-  sessions      UserSession[]
-  memberships   OrganizationMembership[]
-  auditLogs     AuditLog[]
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sessions                UserSession[]
+  memberships             OrganizationMembership[]
+  auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
-  emailDeliveries EmailDelivery[]
+  emailDeliveries         EmailDelivery[]
+  digestPreference        NotificationDigestPreference?
 }
 
 model OtpCode {
@@ -1049,4 +1555,190 @@ model EmailSuppression {
 
   @@unique([email, category])
   @@index([email])
+}
+
+// =============================================================================
+// FEATURE FLAGS (Organization-level)
+// =============================================================================
+
+model OrganizationFeatureFlag {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  enabled        Boolean  @default(false)
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+// =============================================================================
+// AI USAGE AGGREGATES (Phase 1 — Metrics Persistence)
+// =============================================================================
+
+model AIUsageDailyAggregate {
+  id              String    @id @default(uuid())
+  organizationId  String?   // null = platform-wide aggregate
+  applicationId   String?
+  date            DateTime  // Truncated to UTC midnight (day boundary)
+  feature         AIFeature
+  provider        String
+  model           String
+
+  totalCalls      Int       @default(0)
+  successCalls    Int       @default(0)
+  failedCalls     Int       @default(0)
+  repairedCalls   Int       @default(0)
+  fallbackCalls   Int       @default(0)
+  timeoutCalls    Int       @default(0)
+
+  totalInputTokens  Int     @default(0)
+  totalOutputTokens Int     @default(0)
+  totalTokens       Int     @default(0)
+  totalCostUsd      Decimal @default(0) @db.Decimal(14, 6)
+
+  avgLatencyMs    Int       @default(0)
+  p95LatencyMs    Int       @default(0)
+  maxLatencyMs    Int       @default(0)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([date, feature, provider, model, organizationId, applicationId])
+  @@index([date, feature])
+  @@index([organizationId, date])
+  @@index([provider, model, date])
+}
+
+// =============================================================================
+// SYSTEM ADMIN (DB-backed RBAC — replaces SYSTEM_ADMIN_USER_IDS env var)
+// =============================================================================
+
+enum SystemAdminScope {
+  FULL            // All admin capabilities
+  RULESETS_ONLY   // Can only manage rulesets and rule candidates
+  READ_ONLY       // Can only read admin data (audit logs, AI usage)
+}
+
+model SystemAdmin {
+  id             String           @id @default(uuid())
+  userId         String           @unique
+  scope          SystemAdminScope @default(FULL)
+  grantedBy      String?          // userId of granter (null = seeded)
+  grantedAt      DateTime         @default(now())
+  revokedAt      DateTime?        // null = still active
+  notes          String?          // Reason for grant
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([revokedAt])
+}
+
+// =============================================================================
+// GAP 4 — CROSS-TENANT PATTERN INDEX
+// Anonymized, aggregated state patterns contributed by opted-in organizations.
+// =============================================================================
+
+model CrossTenantPatternIndex {
+  id                String   @id @default(cuid())
+  patternKey        String   // canonical state name, e.g. "CHECKOUT_FAILURE"
+  domain            String   // "ecommerce", "lms", "generic"
+  /// Anonymized example — contains only { stateName, category, transitionCount }
+  /// Never stores organizationId or applicationId.
+  anonymizedExample Json
+  occurrenceCount   Int      @default(1)
+  /// 0.0–1.0: computed as min(occurrenceCount / 50, 1.0)
+  confidenceScore   Float
+  /// Array of { suggestedStateName, category, rationale } branch-state suggestions
+  suggestedBranches Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([patternKey, domain])
+  @@index([domain])
+  @@index([confidenceScore])
+}
+
+// =============================================================================
+// GAP 5 — MFA CHALLENGE TOKEN
+// Short-lived (5 min) challenge issued after first-factor verification when
+// the user has TOTP enabled. Replaced by full session tokens on /auth/mfa/verify.
+// =============================================================================
+
+model MfaChallengeToken {
+  id          String   @id @default(uuid())
+  userId      String
+  tokenHash   String   @unique // sha256(raw_challenge_token)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  attempts    Int      @default(0)
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+// =============================================================================
+// GAP 6 — SSO / OIDC PROVIDER
+// One OIDC provider config per organization. The clientSecret field is
+// AES-256-GCM encrypted using OIDC_CLIENT_SECRET_KEY env var.
+// =============================================================================
+
+model OIDCProvider {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  displayName    String       // Shown on the login button, e.g. "Acme Corp SSO"
+  issuerUrl      String       // OIDC discovery base, e.g. https://login.microsoftonline.com/{tenant}/v2.0
+  clientId       String
+  /// AES-256-GCM encrypted client secret — never store plaintext
+  clientSecret   String
+  scopes         String[]     @default(["openid", "email", "profile"])
+  isActive       Boolean      @default(true)
+  /// Email domains that must use this SSO provider, e.g. ["acme.com", "acme.co.uk"]
+  allowedDomains String[]     @default([])
+
+  /// Optional: preset name for UI hints. One of: "microsoft", "okta", "google", "custom"
+  providerPreset String?      @default("custom")
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([allowedDomains])
+}
+
+// =============================================================================
+// GAP 7 — NOTIFICATION DIGEST PREFERENCES
+// Per-user digest configuration for batch email workers.
+// A separate model from NotificationPreference (which is per org/category).
+// =============================================================================
+
+enum DigestFrequency {
+  DAILY
+  WEEKLY
+  NEVER
+}
+
+model NotificationDigestPreference {
+  id                  String           @id @default(uuid())
+  userId              String           @unique
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  weeklyReport        Boolean          @default(true)
+  coverageAlerts      Boolean          @default(true)
+  // Only relevant for SystemAdmin users
+  ruleCandidateAlerts Boolean          @default(false)
+
+  digestFrequency     DigestFrequency  @default(WEEKLY)
+  lastWeeklyReportAt  DateTime?
+  lastCoverageAlertAt DateTime?
+
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 }

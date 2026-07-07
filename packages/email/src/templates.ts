@@ -18,6 +18,7 @@ export type EmailTemplateKey =
   | 'missing-critical-flow'
   | 'endpoint-slow'
   | 'billing-payment-failed'
+  | 'billing-receipt'
   | 'usage-limit-warning'
   | 'security-new-device'
   | 'privacy-rule-updated';
@@ -221,6 +222,17 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     requiredVariables: ['organizationName', 'billingUrl'],
     defaultFrom: 'billing',
     purpose: 'A subscription payment failed or moved past due.',
+    primaryCtaLabel: 'Open billing',
+    primaryUrlVariable: 'billingUrl',
+  },
+  {
+    key: 'billing-receipt',
+    category: EmailCategory.BILLING,
+    subject: 'Your SOTS receipt — {{invoiceNumber}}',
+    preheader: 'Payment confirmed. Your PDF receipt is attached.',
+    requiredVariables: ['organizationName', 'planName', 'amountPaid', 'invoiceNumber', 'billingUrl'],
+    defaultFrom: 'billing',
+    purpose: 'Payment receipt delivered after a successful subscription activation.',
     primaryCtaLabel: 'Open billing',
     primaryUrlVariable: 'billingUrl',
   },

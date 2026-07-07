@@ -3,10 +3,12 @@
   "globalPassThroughEnv": [
     "DATABASE_URL",
     "KAFKA_BROKERS",
+    "KAFKA_ENABLED",
     "CLICKHOUSE_HOST",
     "CLICKHOUSE_DATABASE",
     "CLICKHOUSE_USER",
     "CLICKHOUSE_PASSWORD",
+    "CLICKHOUSE_ENABLED",
     "JWT_SECRET",
     "NODE_ENV",
     "RESEND_API_KEY",
@@ -23,7 +25,30 @@
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_DOCS_URL",
     "NEXT_PUBLIC_API_GATEWAY_URL",
-    "API_GATEWAY_INTERNAL_URL"
+    "API_GATEWAY_INTERNAL_URL",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "PAYSTACK_SECRET_KEY",
+    "PAYSTACK_WEBHOOK_SECRET",
+    "AI_PROVIDER",
+    "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "SYSTEM_ADMIN_BOOTSTRAP_EMAIL",
+    "API_GATEWAY_URL",
+    "EVENT_COLLECTOR_URL",
+    "ONBOARDING_API_URL",
+    "REPORT_ENGINE_URL",
+    "DEMONSTRATION_API_URL",
+    "COVERAGE_ENGINE_URL",
+    "BILLING_API_URL",
+    "TEST_ORG_A_ID",
+    "TEST_ORG_A_TOKEN",
+    "TEST_ORG_B_ID",
+    "TEST_ORG_B_TOKEN",
+    "TEST_REVOKED_ORG_ID",
+    "STRIPE_TEST_PRICE_ID",
+    "PAYSTACK_TEST_PLAN_CODE",
+    "REDIS_URL"
   ],
   "tasks": {
     "build": {
@@ -35,7 +60,36 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "inputs": ["src/**/*.tsx", "src/**/*.ts", "test/**/*.ts", "test/**/*.tsx"]
+      "inputs": ["src/**/*.tsx", "src/**/*.ts", "test/**/*.ts", "test/**/*.tsx"],
+      "outputs": ["coverage/**"]
+    },
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*.ts", "fixtures/**/*.json"],
+      "outputs": [],
+      "cache": false
+    },
+    "test:integration": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*.ts"],
+      "outputs": [],
+      "cache": false
+    },
+    "test:isolation": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*.ts"],
+      "outputs": [],
+      "cache": false
+    },
+    "test:billing": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**/*.ts"],
+      "outputs": [],
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**/*.ts", "src/**/*.tsx", "tsconfig.json"]
     },
     "dev": {
       "cache": false,

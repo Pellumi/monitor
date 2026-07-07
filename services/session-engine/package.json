@@ -10,7 +10,10 @@
   "dependencies": {
     "@prisma/client": "^7.8.0",
     "@sots/shared": "workspace:*",
+    "@sots/telemetry": "workspace:*",
     "@sots/db": "workspace:*",
+    "@sots/entitlement-checker": "workspace:*",
+    "@sots/storage": "workspace:*",
     "kafkajs": "^2.2.4"
   },
   "devDependencies": {

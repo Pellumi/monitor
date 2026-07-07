@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, createContext, useContext } from 'react';
 import {
   Activity,
   GitGraph,
@@ -19,35 +19,131 @@ import {
   GitCompare,
   FileText,
   ShieldAlert,
-  X
+  X,
+  Settings,
+  Users,
+  CreditCard,
+  User,
+  Shield,
+  Brain,
+  Code2,
+  ListChecks,
+  TrendingUp,
+  Lock,
+  Globe,
 } from 'lucide-react';
 import { useSession, Membership, Organization } from './providers';
 import { twMerge } from 'tailwind-merge';
+
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
 
 interface Application {
   id: string;
   name: string;
 }
 
-const navigation = [
+interface Environment {
+  id: string;
+  name: string;
+  type: string;
+  isDefault?: boolean;
+}
+
+interface Entitlement {
+  planType: string;
+  features: Record<string, boolean | string>;
+  limits: Record<string, number>;
+}
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  requiredFeature?: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Entitlement context — shared between AppSelector & NavigationList
+// ─────────────────────────────────────────────────────────────
+
+const EntitlementContext = createContext<{
+  entitlement: Entitlement | null;
+  selectedEnvId: string | null;
+}>({ entitlement: null, selectedEnvId: null });
+
+function useEntitlement() {
+  return useContext(EntitlementContext);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Navigation config with feature gates
+// ─────────────────────────────────────────────────────────────
+
+const navigation: NavItem[] = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
-  { name: 'Behavioral Graph', href: '/graph', icon: GitGraph },
-  { name: 'Flow Declaration', href: '/declare', icon: ClipboardList },
-  { name: 'Reconciliation', href: '/reconciliation', icon: GitCompare },
-  { name: 'Workflows', href: '/workflows', icon: Activity },
-  { name: 'Missing States', href: '/missing-states', icon: AlertCircle },
-  { name: 'Missing Flows', href: '/missing-flows', icon: AlertTriangle },
-  { name: 'Sessions', href: '/sessions', icon: PlaySquare },
-  { name: 'Endpoint Analysis', href: '/endpoints', icon: Zap },
-  { name: 'Reports', href: '/reports', icon: FileText },
+  { name: 'Behavioral Graph', href: '/graph', icon: GitGraph, requiredFeature: 'BEHAVIOR_GRAPH' },
+  { name: 'Flow Declaration', href: '/declare', icon: ClipboardList, requiredFeature: 'BEHAVIOR_GRAPH' },
+  { name: 'Reconciliation', href: '/reconciliation', icon: GitCompare, requiredFeature: 'COVERAGE_ANALYSIS' },
+  { name: 'Graph Drift', href: '/graph-drift', icon: TrendingUp, requiredFeature: 'COVERAGE_ANALYSIS' },
+  { name: 'Workflows', href: '/workflows', icon: Activity, requiredFeature: 'WORKFLOW_DISCOVERY' },
+  { name: 'Missing States', href: '/missing-states', icon: AlertCircle, requiredFeature: 'MISSING_STATE_DETECTION' },
+  { name: 'Missing Flows', href: '/missing-flows', icon: AlertTriangle, requiredFeature: 'MISSING_FLOW_DETECTION' },
+  { name: 'Sessions', href: '/sessions', icon: PlaySquare, requiredFeature: 'SESSION_REPLAY' },
+  { name: 'Endpoint Analysis', href: '/endpoints', icon: Zap, requiredFeature: 'ENDPOINT_INTELLIGENCE' },
+  { name: 'Reports', href: '/reports', icon: FileText, requiredFeature: 'REPORT_GENERATION' },
 ];
 
-function AppSelector() {
+interface SettingsNavItem extends NavItem {
+  hasAppId?: boolean;
+}
+
+const settingsNavigation: SettingsNavItem[] = [
+  { name: 'Profile', href: '/settings/profile', icon: User },
+  { name: 'Security & MFA', href: '/settings/security', icon: Shield, requiredFeature: 'SSO' },
+  { name: 'Billing', href: '/settings/billing', icon: CreditCard },
+  { name: 'Members', href: '/settings/members', icon: Users, requiredFeature: 'TEAM_COLLABORATION' },
+  { name: 'API Keys', href: '/settings/api-keys', icon: Code2, requiredFeature: 'API_ACCESS' },
+];
+
+const adminNavigation: NavItem[] = [
+  { name: 'Rulesets', href: '/admin/rulesets', icon: Code2 },
+  { name: 'Audit Logs', href: '/admin/audit-logs', icon: Shield, requiredFeature: 'AUDIT_LOGS' },
+  { name: 'AI Usage', href: '/admin/ai-usage', icon: Brain },
+  { name: 'Rule Candidates', href: '/admin/rule-candidates', icon: ListChecks },
+  { name: 'Job Monitor', href: '/admin/jobs', icon: Activity },
+];
+
+// ─────────────────────────────────────────────────────────────
+// Helper: check if a feature is enabled on the entitlement
+// ─────────────────────────────────────────────────────────────
+
+function isFeatureEnabled(entitlement: Entitlement | null, feature?: string): boolean {
+  if (!feature) return true; // No gate = always visible
+  if (!entitlement?.features) return true; // No entitlement loaded yet = assume enabled (loading state)
+  const value = entitlement.features[feature];
+  if (value === undefined) return true; // Feature not in map = assume enabled
+  return value === true || (typeof value === 'string' && value !== 'false');
+}
+
+// ─────────────────────────────────────────────────────────────
+// AppSelector (Org + App + Environment)
+// ─────────────────────────────────────────────────────────────
+
+function AppSelector({
+  onEntitlementLoaded,
+  onEnvSelected,
+}: {
+  onEntitlementLoaded: (e: Entitlement | null) => void;
+  onEnvSelected: (envId: string | null) => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { selectedOrg, selectedOrgId, setSelectedOrgId, memberships } = useSession();
   const currentAppId = searchParams.get('appId');
+  const currentEnvId = searchParams.get('envId');
   const [isOpen, setIsOpen] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com';
@@ -63,7 +159,7 @@ function AppSelector() {
     enabled: !!selectedOrgId,
   });
 
-  const { data: entitlement } = useQuery({
+  const { data: entitlement } = useQuery<Entitlement>({
     queryKey: ['sidebar-entitlement', selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return null;
@@ -76,6 +172,33 @@ function AppSelector() {
 
   const selectedApp = apps?.find((a) => a.id === currentAppId) ?? apps?.[0];
 
+  // Fetch environments for the selected app
+  const { data: environments } = useQuery<Environment[]>({
+    queryKey: ['sidebar-envs', selectedApp?.id],
+    queryFn: async () => {
+      if (!selectedApp?.id) return [];
+      const res = await fetch(`/api-gateway/applications/${selectedApp.id}/environments`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedApp?.id,
+  });
+
+  const hasMultipleEnvs = isFeatureEnabled(entitlement ?? null, 'MULTIPLE_ENVIRONMENTS');
+  const selectedEnv = environments?.find((e) => e.id === currentEnvId)
+    ?? environments?.find((e) => e.isDefault)
+    ?? environments?.[0];
+
+  // Propagate entitlement and env selection up
+  useEffect(() => {
+    onEntitlementLoaded(entitlement ?? null);
+  }, [entitlement, onEntitlementLoaded]);
+
+  useEffect(() => {
+    onEnvSelected(selectedEnv?.id ?? null);
+  }, [selectedEnv?.id, onEnvSelected]);
+
+  // Auto-select first app if none selected
   useEffect(() => {
     if (apps && apps.length > 0 && (!currentAppId || !apps.some(a => a.id === currentAppId))) {
       const params = new URLSearchParams(searchParams.toString());
@@ -84,11 +207,27 @@ function AppSelector() {
     }
   }, [apps, currentAppId, pathname, router, searchParams]);
 
+  // Auto-select default environment
+  useEffect(() => {
+    if (environments && environments.length > 0 && selectedEnv && !currentEnvId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('envId', selectedEnv.id);
+      router.replace(`${pathname}?${params.toString()}`);
+    }
+  }, [environments, selectedEnv, currentEnvId, pathname, router, searchParams]);
+
   function handleSelect(appId: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set('appId', appId);
+    params.delete('envId'); // Reset env when switching apps
     router.push(`${pathname}?${params.toString()}`);
     setIsOpen(false);
+  }
+
+  function handleEnvSelect(envId: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('envId', envId);
+    router.push(`${pathname}?${params.toString()}`);
   }
 
   return (
@@ -102,6 +241,7 @@ function AppSelector() {
               setSelectedOrgId(e.target.value);
               const params = new URLSearchParams(searchParams.toString());
               params.delete('appId');
+              params.delete('envId');
               router.push(`${pathname}?${params.toString()}`);
             }}
             className="w-full bg-neutral-950 text-neutral-400 border border-neutral-800 rounded-lg py-1 px-2 text-xs font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
@@ -175,6 +315,30 @@ function AppSelector() {
         </div>
       )}
 
+      {/* Environment Selector — global, shown only when plan has MULTIPLE_ENVIRONMENTS or when envs > 1 */}
+      {environments && environments.length > 0 && (
+        <div className="flex items-center gap-1">
+          <Globe className="h-3 w-3 text-neutral-600 flex-shrink-0" />
+          {hasMultipleEnvs && environments.length > 1 ? (
+            <select
+              value={selectedEnv?.id || ''}
+              onChange={(e) => handleEnvSelect(e.target.value)}
+              className="flex-1 bg-neutral-950 text-neutral-500 border border-neutral-800/50 rounded-md py-1 px-2 text-[10px] font-medium focus:outline-none focus:border-indigo-500/50 transition-colors"
+            >
+              {environments.map((env) => (
+                <option key={env.id} value={env.id}>
+                  {env.name} ({env.type})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[10px] text-neutral-600 font-medium truncate">
+              {selectedEnv?.name ?? 'Default'}
+            </span>
+          )}
+        </div>
+      )}
+
       {showLimitModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl space-y-6">
@@ -185,9 +349,6 @@ function AppSelector() {
               <X className="h-4 w-4" />
             </button>
             <div className="flex flex-col items-center text-center space-y-3">
-              {/* <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
-                <ShieldAlert className="h-6 w-6" />
-              </div> */}
               <h3 className="text-xl font-bold text-white font-sans">Application Limit Reached</h3>
               <p className="text-xs text-neutral-400 leading-relaxed font-sans">
                 You have reached the maximum number of applications allowed on your plan ({entitlement?.limits?.applications ?? 1} application). Please upgrade your plan to onboard more applications.
@@ -214,41 +375,102 @@ function AppSelector() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// NavigationList — with entitlement gating
+// ─────────────────────────────────────────────────────────────
+
 function NavigationList() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const appId = searchParams.get('appId');
+  const envId = searchParams.get('envId');
+  const { user, memberships } = useSession();
+  const { entitlement } = useEntitlement();
+
+  const isSystemAdmin = (user as any)?.isSystemAdmin === true;
+
+  function buildHref(href: string, hasAppId = true) {
+    const params = new URLSearchParams();
+    if (hasAppId && appId) params.set('appId', appId);
+    if (hasAppId && envId) params.set('envId', envId);
+    return params.toString() ? `${href}?${params.toString()}` : href;
+  }
+
+  const renderNavItem = (
+    item: NavItem,
+    hasAppId = true,
+  ) => {
+    const enabled = isFeatureEnabled(entitlement, item.requiredFeature);
+    const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+
+    if (!enabled) {
+      // Locked item — visible but greyed out with lock icon
+      return (
+        <button
+          key={item.name}
+          onClick={() => router.push('/settings/billing?upgrade=1')}
+          className="group flex items-center justify-between rounded-md px-3 py-2 text-xs font-medium transition-all text-neutral-600 hover:bg-neutral-800/50 hover:text-neutral-500 w-full text-left cursor-pointer"
+          title={`Upgrade your plan to access ${item.name}`}
+        >
+          <div className="flex items-center">
+            <item.icon className="mr-3 h-4 w-4 flex-shrink-0 text-neutral-700" />
+            {item.name}
+          </div>
+          <Lock className="h-3 w-3 text-neutral-700 group-hover:text-amber-600/60" />
+        </button>
+      );
+    }
+
+    const fullHref = buildHref(item.href, hasAppId);
+    return (
+      <Link
+        key={item.name}
+        href={fullHref}
+        className={twMerge(
+          isActive
+            ? 'bg-neutral-800 text-white font-semibold'
+            : 'text-neutral-400 hover:bg-neutral-800 hover:text-white',
+          'group flex items-center rounded-md px-3 py-2 text-xs font-medium transition-all'
+        )}
+      >
+        <item.icon
+          className={twMerge(
+            isActive ? 'text-white' : 'text-neutral-500 group-hover:text-white',
+            'mr-3 h-4 w-4 flex-shrink-0 transition-colors'
+          )}
+          aria-hidden="true"
+        />
+        {item.name}
+      </Link>
+    );
+  };
 
   return (
-    <nav className="flex-1 space-y-1 px-4 py-2">
-      {navigation.map((item) => {
-        const isActive = pathname === item.href;
-        const linkHref = appId ? `${item.href}?appId=${appId}` : item.href;
-        return (
-          <Link
-            key={item.name}
-            href={linkHref}
-            className={twMerge(
-              isActive
-                ? 'bg-neutral-800 text-white font-semibold'
-                : 'text-neutral-400 hover:bg-neutral-800 hover:text-white',
-              'group flex items-center rounded-md px-3 py-2 text-xs font-medium transition-all'
-            )}
-          >
-            <item.icon
-              className={twMerge(
-                isActive ? 'text-white' : 'text-neutral-500 group-hover:text-white',
-                'mr-3 h-4 w-4 flex-shrink-0 transition-colors'
-              )}
-              aria-hidden="true"
-            />
-            {item.name}
-          </Link>
-        );
-      })}
+    <nav className="flex-1 space-y-1 px-4 py-2 overflow-y-auto">
+      {/* ── Observability ─── */}
+      {navigation.map((item) => renderNavItem(item, true))}
+
+      {/* ── Settings ─── */}
+      <div className="pt-4">
+        <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Settings</p>
+        {settingsNavigation.map((item) => renderNavItem(item, false))}
+      </div>
+
+      {/* ── Admin (System Admin only) ─── */}
+      {isSystemAdmin && (
+        <div className="pt-4">
+          <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600">Admin</p>
+          {adminNavigation.map((item) => renderNavItem(item, false))}
+        </div>
+      )}
     </nav>
   );
 }
+
+// ─────────────────────────────────────────────────────────────
+// UserProfile (unchanged)
+// ─────────────────────────────────────────────────────────────
 
 function UserProfile() {
   const { user } = useSession();
@@ -302,25 +524,37 @@ function UserProfile() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Sidebar (root)
+// ─────────────────────────────────────────────────────────────
+
 export function Sidebar() {
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
+
   return (
-    <div className="flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-900">
-      <div className="flex h-16 items-center justify-between border-b border-neutral-800 px-6 mb-4 flex-shrink-0">
-        <Link href="/" className="flex items-center space-x-2">
-          <Building2 className="h-5 w-5 text-blue-400" />
-          <h1 className="text-lg font-bold tracking-tight text-white">SOTS Platform</h1>
-        </Link>
+    <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
+      <div className="flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-900">
+        <div className="flex h-16 items-center justify-between border-b border-neutral-800 px-6 mb-4 flex-shrink-0">
+          <Link href="/" className="flex items-center space-x-2">
+            <Building2 className="h-5 w-5 text-blue-400" />
+            <h1 className="text-lg font-bold tracking-tight text-white">SOTS Platform</h1>
+          </Link>
+        </div>
+
+        <Suspense fallback={<div className="h-10 px-4 mb-4 text-xs text-neutral-500 animate-pulse">Loading selector...</div>}>
+          <AppSelector
+            onEntitlementLoaded={setEntitlement}
+            onEnvSelected={setSelectedEnvId}
+          />
+        </Suspense>
+
+        <Suspense fallback={<div className="px-4 text-xs text-neutral-500 animate-pulse">Loading menu...</div>}>
+          <NavigationList />
+        </Suspense>
+
+        <UserProfile />
       </div>
-
-      <Suspense fallback={<div className="h-10 px-4 mb-4 text-xs text-neutral-500 animate-pulse">Loading selector...</div>}>
-        <AppSelector />
-      </Suspense>
-
-      <Suspense fallback={<div className="px-4 text-xs text-neutral-500 animate-pulse">Loading menu...</div>}>
-        <NavigationList />
-      </Suspense>
-
-      <UserProfile />
-    </div>
+    </EntitlementContext.Provider>
   );
 }

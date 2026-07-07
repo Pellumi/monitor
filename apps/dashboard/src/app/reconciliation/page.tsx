@@ -129,9 +129,37 @@ function ReconciliationContent() {
     );
   }
 
-  const triggerExport = (format: string) => {
-    window.location.href = `${FDRS_API}/applications/${appId}/reconciliation/export?format=${format}`;
+  const triggerExport = async (format: string) => {
+    try {
+      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation/export?format=${format}`);
+      if (!res.ok) throw new Error('Export failed');
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json') && res.headers.get('content-disposition') === null) {
+        // Presigned URL response
+        const { url, filename } = await res.json() as { url: string; filename: string };
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        // Direct stream
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objUrl;
+        link.download = `reconciliation-${appId}.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(objUrl);
+      }
+    } catch (err) {
+      console.error('[Reconciliation] Export error', err);
+    }
   };
+
 
   return (
     <div className="space-y-6">

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sots/shared": "workspace:*",
+    "@sots/telemetry": "workspace:*",
     "@sots/db": "workspace:*",
     "@sots/rules": "workspace:*",
     "kafkajs": "^2.2.4"

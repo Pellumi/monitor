@@ -13,6 +13,8 @@
     "@sots/entitlement-checker": "workspace:*",
     "@sots/rules": "workspace:*",
     "@sots/shared": "workspace:*",
+    "@sots/telemetry": "workspace:*",
+    "@sots/storage": "workspace:*",
     "@types/pdfkit": "^0.17.6",
     "express": "^4.18.2",
     "pdfkit": "^0.19.1"

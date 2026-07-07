@@ -1,8 +1,12 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('api-gateway');
+
 import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import httpProxy from '@fastify/http-proxy';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import { Services } from '@sots/shared';
 
 // ─────────────────────────────────────────────────────────────
@@ -162,6 +166,304 @@ async function main() {
     upstreams: Object.keys(UPSTREAM),
   }));
 
+  // ─────────────────────────────────────────────────────────────
+  // OpenAPI 3.1 Spec (Gap 2)
+  // GET /openapi.json  → machine-readable spec
+  // GET /docs          → Swagger UI HTML
+  // ─────────────────────────────────────────────────────────────
+
+  const OPENAPI_SPEC = {
+    openapi: '3.1.0',
+    info: {
+      title: 'SOTS Platform API',
+      version: '1.0.0',
+      description:
+        'SOTS (State of the System) behavioral QA platform. Includes SDK telemetry ingestion, report generation, session replay, flow declaration, reconciliation, billing, and organization management.',
+    },
+    servers: [{ url: process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000', description: 'API Gateway' }],
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'API Key (sots_...)' },
+        cookieAuth: { type: 'apiKey', in: 'cookie', name: 'access_token', description: 'Dashboard JWT cookie' },
+      },
+    },
+    paths: {
+      '/health': {
+        get: { summary: 'Health check', tags: ['System'], security: [], responses: { '200': { description: 'Healthy' } } },
+      },
+      '/v1/events': {
+        post: {
+          summary: 'Ingest SDK telemetry events',
+          tags: ['SDK Telemetry'],
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['sessionId', 'applicationId', 'events'],
+                  properties: {
+                    sessionId: { type: 'string' },
+                    applicationId: { type: 'string' },
+                    tenantId: { type: 'string' },
+                    events: { type: 'array', items: { type: 'object' } },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Events accepted' }, '401': { description: 'Invalid API key' } },
+        },
+      },
+      '/reports/{applicationId}/latest': {
+        get: {
+          summary: 'Get the latest report for an application',
+          tags: ['Reports'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'applicationId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Report data' }, '404': { description: 'No report found' } },
+        },
+      },
+      '/reports/{applicationId}/export': {
+        get: {
+          summary: 'Export a report as PDF, CSV, HTML, or JSON',
+          tags: ['Reports'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'applicationId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'format', in: 'query', schema: { type: 'string', enum: ['pdf', 'csv', 'html', 'json'], default: 'pdf' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Presigned download URL and expiry',
+              content: { 'application/json': { schema: { type: 'object', properties: { url: { type: 'string' }, expiresAt: { type: 'string' }, filename: { type: 'string' } } } } },
+            },
+          },
+        },
+      },
+      '/sessions/{sessionId}/replay': {
+        get: {
+          summary: 'Fetch session replay data',
+          tags: ['Sessions'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'sessionId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Replay payload with events, timeline, and state transitions' } },
+        },
+      },
+      '/applications/{appId}/declared-flow': {
+        get: {
+          summary: 'List declared flows (behavior graphs) for an application',
+          tags: ['Flow Declaration'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'appId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Array of declared flows' } },
+        },
+      },
+      '/applications/{appId}/reconciliation/run': {
+        post: {
+          summary: 'Run behavioral reconciliation for an application',
+          tags: ['Reconciliation'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'appId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Reconciliation reports generated' } },
+        },
+      },
+      '/applications/{appId}/reconciliation/export': {
+        get: {
+          summary: 'Export reconciliation report as CSV or JSON',
+          tags: ['Reconciliation'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'appId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'format', in: 'query', schema: { type: 'string', enum: ['csv', 'json'], default: 'json' } },
+            { name: 'flowId', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Downloaded file' } },
+        },
+      },
+      '/organizations/{orgId}/entitlement': {
+        get: {
+          summary: 'Get resolved feature entitlements for an organization',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Entitlement object with planType, features, limits' } },
+        },
+      },
+      '/organizations/{orgId}/members': {
+        get: {
+          summary: 'List organization members',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Array of TeamMember objects' } },
+        },
+      },
+      '/organizations/{orgId}/members/{userId}': {
+        delete: {
+          summary: 'Remove an organization member',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'orgId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'userId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Member removed' }, '403': { description: 'Owner role required' } },
+        },
+      },
+      '/organizations/{orgId}/invitations': {
+        post: {
+          summary: 'Invite a new organization member',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', required: ['email'], properties: { email: { type: 'string', format: 'email' }, role: { type: 'string', enum: ['ADMIN', 'MEMBER', 'VIEWER'] } } },
+              },
+            },
+          },
+          responses: { '201': { description: 'Invitation created and email queued' } },
+        },
+      },
+      '/organizations/{orgId}/invitations/pending': {
+        get: {
+          summary: 'List pending organization invitations',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Pending invitations' } },
+        },
+      },
+      '/organizations/{orgId}/invitations/{invitationId}': {
+        delete: {
+          summary: 'Rescind a pending organization invitation',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'orgId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'invitationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Invitation rescinded' } },
+        },
+      },
+      '/organizations/{orgId}/audit-logs': {
+        get: {
+          summary: 'List organization audit log entries',
+          tags: ['Organizations'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'orgId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', default: 25 } },
+            { name: 'q', in: 'query', schema: { type: 'string' } },
+            { name: 'action', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Paginated audit log entries' }, '403': { description: 'Audit Logs entitlement required' } },
+        },
+      },
+      '/organizations/{orgId}/api-keys': {
+        get: {
+          summary: 'List API keys for all environments in an organization',
+          tags: ['API Keys'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Array of API key records (never includes the raw key)' } },
+        },
+        post: {
+          summary: 'Create a new API key for an environment',
+          tags: ['API Keys'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'orgId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['environmentId'],
+                  properties: { environmentId: { type: 'string' }, label: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Key created. Returns { keyPrefix, rawKey } — raw key shown once only.' },
+          },
+        },
+      },
+      '/v1/applications/{appId}/flows/ai-drafts': {
+        post: {
+          summary: 'Queue an async AI flow draft generation job',
+          tags: ['AI Flow'],
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: 'appId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', required: ['productDescription'], properties: { productDescription: { type: 'string' }, selectedDomainKey: { type: 'string' } } },
+              },
+            },
+          },
+          responses: { '202': { description: 'Job queued. Returns { jobId, status: "QUEUED" }' } },
+        },
+      },
+      '/v1/applications/{appId}/flows/ai-drafts/jobs/{jobId}': {
+        get: {
+          summary: 'Poll AI draft job status',
+          tags: ['AI Flow'],
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'appId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'jobId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Job status. draftId is populated when COMPLETED.' } },
+        },
+      },
+      '/billing/plans': {
+        get: { summary: 'List available pricing plans', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Plan array' } } },
+      },
+      '/billing/checkout': {
+        post: { summary: 'Initiate Stripe or Paystack checkout', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Checkout redirect URL' } } },
+      },
+    },
+  } as const;
+
+  fastify.get('/openapi.json', { config: { public: true } }, async (_req, reply) => {
+    return reply.header('content-type', 'application/json').send(OPENAPI_SPEC);
+  });
+
+  // Swagger UI (served inline — no external plugin dependency)
+  fastify.get('/docs', { config: { public: true } }, async (_req, reply) => {
+    return reply.type('text/html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SOTS Platform API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body style="margin:0">
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: '/openapi.json',
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: 'BaseLayout',
+      deepLinking: true,
+      supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+    });
+  </script>
+</body>
+</html>`);
+  });
+
   function forwardToUpstream(upstreamBase: string) {
     return async function forward(request: FastifyRequest, reply: FastifyReply) {
       const upstreamUrl = `${upstreamBase}${request.url}`;
@@ -230,6 +532,10 @@ async function main() {
   const forwardToFdrs = forwardToUpstream(UPSTREAM.FDRS_API);
   const forwardToReportEngine = forwardToUpstream(UPSTREAM.REPORT_ENGINE);
 
+  fastify.all('/v1/rules/*', forwardToFdrs);
+  fastify.all('/v1/admin/rules/*', forwardToFdrs);
+  fastify.all('/v1/applications/:id/flows/*', forwardToFdrs);
+  fastify.all('/v1/applications/:id/declared-flows/*', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow/*', forwardToFdrs);
   fastify.all('/applications/:id/reconciliation', forwardToFdrs);
@@ -318,6 +624,65 @@ async function main() {
     prefix: '/usage',
     rewritePrefix: '/usage',
     http2: false,
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Admin Routes (JWT + system-admin required)
+  // ─────────────────────────────────────────────────────────────
+  // These routes proxy to onboarding-api, which does its own auth.
+  // The gateway adds a system-admin prevalidation hook.
+
+  const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+
+  async function requireSystemAdmin(request: FastifyRequest, reply: FastifyReply) {
+    const authHeader = request.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Authentication required.' });
+    }
+    const token = authHeader.slice(7).trim();
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (!decoded.isSystemAdmin) {
+        return reply.code(403).send({ error: 'FORBIDDEN', message: 'System admin access required.' });
+      }
+    } catch {
+      return reply.code(401).send({ error: 'TOKEN_INVALID', message: 'Invalid or expired token.' });
+    }
+  }
+
+  // Admin: forward to onboarding-api which proxies member management
+  const forwardToOnboarding = forwardToUpstream(UPSTREAM.ONBOARDING_API);
+
+  fastify.get('/admin/ai-usage', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.get('/admin/ai-usage/daily', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.get('/admin/audit-logs', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.get('/admin/rulesets', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.post('/admin/rulesets/:id/promote', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.get('/admin/rule-candidates', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.post('/admin/rule-candidates/:id/approve', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
+  fastify.post('/admin/rule-candidates/:id/reject', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
   });
 
   // ─────────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ export interface ReconciliationReportResult {
 /**
  * Runs reconciliation for all completed flows of an application.
  */
-export async function runReconciliation(applicationId: string, environmentId?: string): Promise<ReconciliationReportResult[]> {
+export async function runReconciliation(applicationId: string, environmentId?: string, expectedGraphId?: string): Promise<ReconciliationReportResult[]> {
   let targetEnvId = environmentId;
   if (!targetEnvId) {
     const devEnv = await prisma.environment.findFirst({
@@ -32,13 +32,22 @@ export async function runReconciliation(applicationId: string, environmentId?: s
     targetEnvId = devEnv?.id;
   }
 
+  const completedFlowWhere: any = {
+    applicationId,
+    isActive: true,
+    graphType: 'DECLARED',
+  };
+  if (expectedGraphId) {
+    completedFlowWhere.id = expectedGraphId;
+  } else if (targetEnvId) {
+    completedFlowWhere.OR = [
+      { environmentId: targetEnvId },
+      { environmentId: null },
+    ];
+  }
+
   const completedFlows = await prisma.behaviorGraph.findMany({
-    where: { 
-      applicationId, 
-      environmentId: targetEnvId || undefined,
-      isActive: true,
-      graphType: 'DECLARED'
-    },
+    where: completedFlowWhere,
     include: {
       nodes: true,
       edges: {

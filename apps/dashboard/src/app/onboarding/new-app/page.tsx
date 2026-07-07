@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AppWindow, ArrowRight, ShoppingCart, GraduationCap, Settings, ShieldAlert } from 'lucide-react';
+import { AppWindow, ArrowRight, ShieldAlert } from 'lucide-react';
 
 const ONBOARDING_API = '/api-gateway';
 
@@ -24,7 +24,6 @@ function NewAppContent() {
   const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com';
 
   const [appName, setAppName] = useState('');
-  const [profileType, setProfileType] = useState('ECOMMERCE');
 
   const { data: entitlement, isLoading: isEntitlementLoading } = useQuery({
     queryKey: ['entitlement', orgId],
@@ -47,7 +46,7 @@ function NewAppContent() {
   });
 
   const createAppMutation = useMutation({
-    mutationFn: async (data: { name: string; profileType: string }) => {
+    mutationFn: async (data: { name: string }) => {
       const res = await fetch(`${ONBOARDING_API}/organizations/${orgId}/applications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -64,20 +63,11 @@ function NewAppContent() {
         throw new Error(errMsg);
       }
       const app = await res.json() as Application;
-
-      // Call profile endpoint to preload template if applicable
-      const profileRes = await fetch(`${ONBOARDING_API}/applications/${app.id}/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileType: data.profileType }),
-      });
-      if (!profileRes.ok) throw new Error('Failed to seed template profile');
-
       return app;
     },
     onSuccess: (data) => {
       router.push(
-        `/onboarding/api-keys?orgId=${orgId}&appId=${data.id}&appName=${encodeURIComponent(data.name)}`
+        `/onboarding/declare?appId=${data.id}`
       );
     },
   });
@@ -88,7 +78,6 @@ function NewAppContent() {
     if (appName.trim()) {
       createAppMutation.mutate({
         name: appName.trim(),
-        profileType,
       });
     }
   }
@@ -157,7 +146,7 @@ function NewAppContent() {
           </div>
           <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Register Application</h2>
           <p className="mt-2 text-sm text-neutral-400">
-            Create an application configuration for <span className="font-semibold text-neutral-300">{orgName}</span>
+            Create an application configuration for <span className="font-semibold text-neutral-300">{orgName}</span>. You will define its expected behavior next.
           </p>
         </div>
 
@@ -181,53 +170,6 @@ function NewAppContent() {
               placeholder="e.g. Production E-commerce Store"
               className="mt-1 block w-full rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-2 text-sm text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-neutral-300 mb-2">
-              Behavior Profile / Template
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                {
-                  id: 'ECOMMERCE',
-                  name: 'E-commerce',
-                  desc: 'Cart, Checkout, Catalog flows',
-                  icon: ShoppingCart,
-                },
-                {
-                  id: 'LMS',
-                  name: 'Education/LMS',
-                  desc: 'Course, Quiz, Lesson flows',
-                  icon: GraduationCap,
-                },
-                {
-                  id: 'CUSTOM',
-                  name: 'Custom / API',
-                  desc: 'Define custom user paths',
-                  icon: Settings,
-                },
-              ].map((t) => {
-                const SelectedIcon = t.icon;
-                const isSelected = profileType === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setProfileType(t.id)}
-                    className={`flex flex-col items-center justify-between rounded-xl border p-4 text-center transition-all ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-500/5 text-white'
-                        : 'border-neutral-800 bg-neutral-950/30 hover:bg-neutral-950/70 text-neutral-400 hover:text-neutral-300'
-                    }`}
-                  >
-                    <SelectedIcon className={`h-6 w-6 mb-2 ${isSelected ? 'text-blue-400' : 'text-neutral-500'}`} />
-                    <span className="font-semibold text-xs mb-1">{t.name}</span>
-                    <span className="text-[10px] text-neutral-500 leading-tight">{t.desc}</span>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           <div className="flex space-x-3 pt-2">

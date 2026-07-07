@@ -1,4 +1,4 @@
-﻿Security Architecture Document (SEAD)
+Security Architecture Document (SEAD)
 1. Purpose
 This document defines the complete Security Architecture for the Self-Observing Testing System (SOTS).
 The Security Architecture establishes:
@@ -274,7 +274,7 @@ Sensitive data shall be encrypted at rest using AES-256.
 Applies to:
 * PostgreSQL
 * ClickHouse
-* Neo4j
+* Neo4j (Phase 3 only — PostgreSQL used in Phase 1/2)
 * Object Storage
 * Backups
 Supports security requirements.
@@ -336,7 +336,7 @@ Enforce:
 * Tenant partitions
 * Tenant filtering
 * Tenant-specific retention
-Neo4j
+Neo4j (Phase 3 — not active in Phase 1/2; see ADR-001)
 Enforce:
 * Tenant graph boundaries
 * Tenant graph ownership

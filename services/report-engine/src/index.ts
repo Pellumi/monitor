@@ -1,3 +1,6 @@
+import { initTracing } from '@sots/telemetry';
+initTracing('report-engine');
+
 import express, { Request, Response } from 'express';
 import { PrismaClient } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
@@ -5,6 +8,9 @@ import { Feature, FeatureTier, Services } from '@sots/shared';
 import { getRuleSet } from '@sots/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 import PDFDocument from 'pdfkit';
+import { createStorageClient } from '@sots/storage';
+
+const storage = createStorageClient();
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
@@ -124,11 +130,25 @@ app.get('/reports/:applicationId/latest', async (req: Request, res: Response) =>
         applicationId,
         environmentId: targetEnvId || undefined
       },
+      include: { flow: true },
       orderBy: { generatedAt: 'desc' }
     });
     const expectedCoverageScore = reconciliationReports.length === 0
       ? null
       : reconciliationReports.reduce((sum, report) => sum + report.expectedCoverageScore, 0) / reconciliationReports.length;
+
+    const expectedGraphs = await prisma.behaviorGraph.findMany({
+      where: {
+        applicationId,
+        environmentId: targetEnvId || undefined,
+        graphType: 'DECLARED',
+        status: 'COMPLETE',
+      },
+      include: {
+        nodes: true,
+        edges: true,
+      },
+    });
 
     const workflows = await prisma.workflow.findMany({
       where: { applicationId },
@@ -156,6 +176,21 @@ app.get('/reports/:applicationId/latest', async (req: Request, res: Response) =>
         flowCoverage: latestSnapshot ? latestSnapshot.flowCoverage : 0,
         expectedCoverage: expectedCoverageScore === null ? null : expectedCoverageScore * 100
       },
+      expectedBehavior: {
+        workflowCount: expectedGraphs.length,
+        stateCount: expectedGraphs.reduce((sum, graph) => sum + graph.nodes.length, 0),
+        transitionCount: expectedGraphs.reduce((sum, graph) => sum + graph.edges.length, 0),
+      },
+      reconciliation: reconciliationReports.map((report) => ({
+        flowId: report.flowId,
+        flowName: report.flow.name,
+        expectedCoverage: report.expectedCoverageScore * 100,
+        transitionCoverage: report.transitionCoverageScore * 100,
+        missingStates: report.trueGaps,
+        missingTransitions: report.trueGapTransitionsList,
+        unexpectedStates: report.undeclared,
+        unexpectedTransitions: report.undeclaredTransitionsList,
+      })),
       workflows: workflows.map(w => ({
         name: w.name,
         path: w.path,
@@ -302,7 +337,14 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
     if (!replayAccess.allowed) return;
 
     const startMs = session.startTime.getTime();
-    const durationMs = session.endTime.getTime() - startMs;
+
+    // Gap 5 fix: Use first/last event timestamps for accurate durationMs
+    const firstEventTs = session.events.length > 0 ? session.events[0].timestamp.getTime() : startMs;
+    const lastEventTs  = session.events.length > 0 ? session.events[session.events.length - 1].timestamp.getTime() : startMs;
+    const durationMs   = lastEventTs - firstEventTs;
+
+    // Gap 5: isComplete — true if session has been finalized (statistics exist)
+    const isComplete = session.statistics !== null;
 
     // Reconstruct workflow path using the application rule set
     let workflowPath: string[] = [];
@@ -376,6 +418,25 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
         offset:  e.offset,
       }));
 
+    // Gap 5: Extract state transitions from relevant event types
+    const STATE_TRANSITION_EVENTS = new Set([
+      'STATE_ENTERED', 'STATE_TRANSITION', 'WORKFLOW_STARTED',
+      'WORKFLOW_COMPLETED', 'WORKFLOW_FAILED',
+    ]);
+    const stateTransitions = timeline
+      .filter((e) => STATE_TRANSITION_EVENTS.has(e.eventType))
+      .map((e) => {
+        const meta = e.metadata as Record<string, any>;
+        return {
+          eventType: e.eventType,
+          offset:    e.offset,
+          timestamp: e.timestamp,
+          fromState: meta.fromState ?? meta.from ?? null,
+          toState:   meta.toState ?? meta.to ?? meta.state ?? meta.name ?? null,
+          action:    meta.action ?? null,
+        };
+      });
+
     res.json({
       sessionId,
       applicationId: session.applicationId,
@@ -383,7 +444,9 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
       endTime:       session.endTime,
       durationMs,
       eventCount:    session.events.length,
+      isComplete,
       workflowPath,
+      stateTransitions,
       timeline,
       apiCalls,
       errors,
@@ -458,11 +521,25 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
         applicationId,
         environmentId: targetEnvId || undefined
       },
+      include: { flow: true },
       orderBy: { generatedAt: 'desc' }
     });
     const expectedCoverageScore = reconciliationReports.length === 0
       ? null
       : reconciliationReports.reduce((sum, report) => sum + report.expectedCoverageScore, 0) / reconciliationReports.length;
+
+    const expectedGraphs = await prisma.behaviorGraph.findMany({
+      where: {
+        applicationId,
+        environmentId: targetEnvId || undefined,
+        graphType: 'DECLARED',
+        status: 'COMPLETE',
+      },
+      include: {
+        nodes: true,
+        edges: true,
+      },
+    });
 
     const workflows = await prisma.workflow.findMany({
       where: { applicationId },
@@ -502,6 +579,20 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
         flow: latestSnapshot ? latestSnapshot.flowCoverage : 0,
         expected: expectedCoverageScore === null ? null : expectedCoverageScore * 100,
       },
+      expectedBehavior: {
+        workflowCount: expectedGraphs.length,
+        stateCount: expectedGraphs.reduce((sum, graph) => sum + graph.nodes.length, 0),
+        transitionCount: expectedGraphs.reduce((sum, graph) => sum + graph.edges.length, 0),
+      },
+      reconciliation: reconciliationReports.map((report) => ({
+        flowName: report.flow.name,
+        expectedCoverage: report.expectedCoverageScore * 100,
+        transitionCoverage: report.transitionCoverageScore * 100,
+        missingStates: report.trueGaps,
+        missingTransitions: report.trueGapTransitionsList,
+        unexpectedStates: report.undeclared,
+        unexpectedTransitions: report.undeclaredTransitionsList,
+      })),
       workflows: workflows.map(w => ({ name: w.name, path: w.path, count: w.executionCount })),
       missingStates: missingStates.map(m => ({ name: m.stateName, confidence: m.confidence, reason: m.reason })),
       missingFlows: missingFlows.map(f => ({ path: f.suggestedFlow as string[], confidence: f.confidence, reason: f.reason })),
@@ -535,9 +626,18 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     }
 
     if (format === 'json') {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
-      res.setHeader('Content-Type', 'application/json');
-      return res.send(JSON.stringify(reportData, null, 2));
+      const content = Buffer.from(JSON.stringify(reportData, null, 2), 'utf-8');
+      try {
+        const { url, expiresAt } = await storage.uploadAndPresign(
+          `reports/${applicationId}/${filename}.json`, content, 'application/json', 3600
+        );
+        return res.json({ url, expiresAt, filename: `${filename}.json` });
+      } catch (storageErr) {
+        console.warn('[ReportEngine] Storage unavailable, streaming directly', storageErr);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
+        res.setHeader('Content-Type', 'application/json');
+        return res.send(content);
+      }
     }
 
     if (format === 'csv') {
@@ -551,6 +651,12 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       csv += `Coverage,State Coverage,${reportData.coverage.state.toFixed(1)}%,\n`;
       csv += `Coverage,Transition Coverage,${reportData.coverage.transition.toFixed(1)}%,\n`;
       csv += `Coverage,Flow Coverage,${reportData.coverage.flow.toFixed(1)}%,\n`;
+      csv += `Expected Behavior,Workflows,${reportData.expectedBehavior.workflowCount},Declared complete expected workflows\n`;
+      csv += `Expected Behavior,States,${reportData.expectedBehavior.stateCount},Declared expected states\n`;
+      csv += `Expected Behavior,Transitions,${reportData.expectedBehavior.transitionCount},Declared expected transitions\n`;
+      for (const rec of reportData.reconciliation) {
+        csv += `Reconciliation,"${rec.flowName}",${rec.expectedCoverage.toFixed(1)}%,"Missing states: ${Array.isArray(rec.missingStates) ? rec.missingStates.length : 0}; unexpected states: ${Array.isArray(rec.unexpectedStates) ? rec.unexpectedStates.length : 0}"\n`;
+      }
 
       // Workflows
       for (const w of reportData.workflows) {
@@ -570,7 +676,16 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
         csv += `Endpoint,"${ep.method} ${ep.endpoint}",${ep.requestCount},"Avg: ${ep.avgMs}ms, P95: ${ep.p95Ms}ms, Error: ${(ep.errorRate*100).toFixed(1)}%"\n`;
       }
 
-      return res.send(csv);
+      try {
+        const { url, expiresAt } = await storage.uploadAndPresign(
+          `reports/${applicationId}/${filename}.csv`, Buffer.from(csv, 'utf-8'), 'text/csv', 3600
+        );
+        return res.json({ url, expiresAt, filename: `${filename}.csv` });
+      } catch {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+        res.setHeader('Content-Type', 'text/csv');
+        return res.send(csv);
+      }
     }
 
     if (format === 'html') {
@@ -612,6 +727,40 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
           <div class="rounded-xl border border-neutral-800 bg-neutral-900/50 p-6 backdrop-blur-xl">
             <h3 class="text-sm font-medium text-neutral-400">Flow Coverage</h3>
             <p className="mt-2 text-4xl font-bold text-white">${reportData.coverage.flow.toFixed(1)}%</p>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-neutral-800 bg-neutral-900/50 p-6">
+          <h3 class="text-lg font-semibold text-white mb-4">Expected vs Observed Summary</h3>
+          <div class="grid grid-cols-3 gap-4 text-sm">
+            <div class="rounded-lg bg-neutral-950 border border-neutral-850 p-4">
+              <p class="text-neutral-500">Expected Workflows</p>
+              <p class="mt-1 text-2xl font-bold text-white">${reportData.expectedBehavior.workflowCount}</p>
+            </div>
+            <div class="rounded-lg bg-neutral-950 border border-neutral-850 p-4">
+              <p class="text-neutral-500">Expected States</p>
+              <p class="mt-1 text-2xl font-bold text-white">${reportData.expectedBehavior.stateCount}</p>
+            </div>
+            <div class="rounded-lg bg-neutral-950 border border-neutral-850 p-4">
+              <p class="text-neutral-500">Expected Transitions</p>
+              <p class="mt-1 text-2xl font-bold text-white">${reportData.expectedBehavior.transitionCount}</p>
+            </div>
+          </div>
+          <div class="mt-5 space-y-3">
+            ${reportData.reconciliation.map(rec => `
+              <div class="rounded-lg bg-neutral-950 border border-neutral-850 p-4 text-sm">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold text-neutral-200">${rec.flowName}</span>
+                  <span class="text-blue-400 font-mono">${rec.expectedCoverage.toFixed(1)}% expected coverage</span>
+                </div>
+                <p class="mt-2 text-xs text-neutral-500">
+                  Missing states: ${Array.isArray(rec.missingStates) ? rec.missingStates.length : 0} ·
+                  Missing transitions: ${Array.isArray(rec.missingTransitions) ? rec.missingTransitions.length : 0} ·
+                  Unexpected states: ${Array.isArray(rec.unexpectedStates) ? rec.unexpectedStates.length : 0}
+                </p>
+              </div>
+            `).join('')}
+            ${reportData.reconciliation.length === 0 ? '<p class="text-neutral-500 text-sm">No expected-vs-observed reconciliation has been generated yet.</p>' : ''}
           </div>
         </div>
 
@@ -692,15 +841,22 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       </body>
       </html>
       `;
-      return res.send(html);
+      try {
+        const { url, expiresAt } = await storage.uploadAndPresign(
+          `reports/${applicationId}/${filename}.html`, Buffer.from(html, 'utf-8'), 'text/html', 3600
+        );
+        return res.json({ url, expiresAt, filename: `${filename}.html` });
+      } catch {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.html"`);
+        res.setHeader('Content-Type', 'text/html');
+        return res.send(html);
+      }
     }
 
     if (format === 'pdf') {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
-      res.setHeader('Content-Type', 'application/pdf');
-
       const doc = new PDFDocument({ margin: 50, bufferPages: true });
-      doc.pipe(res);
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
       // --- PAGE 1: Cover Page ---
       doc.rect(0, 0, doc.page.width, doc.page.height).fill('#09090b');
@@ -840,7 +996,21 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       }
 
       doc.end();
-      return;
+
+      // Wait for PDF to be fully buffered
+      await new Promise<void>((resolve) => doc.on('end', resolve));
+      const pdfBuffer = Buffer.concat(chunks);
+
+      try {
+        const { url, expiresAt } = await storage.uploadAndPresign(
+          `reports/${applicationId}/${filename}.pdf`, pdfBuffer, 'application/pdf', 3600
+        );
+        return res.json({ url, expiresAt, filename: `${filename}.pdf` });
+      } catch {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        return res.send(pdfBuffer);
+      }
     }
 
     res.status(400).json({ error: 'Unsupported format. Use html, csv, pdf, or json.' });
