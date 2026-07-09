@@ -59,6 +59,8 @@ export default function AdminAiUsagePage() {
   const [days, setDays] = useState(30);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -76,6 +78,25 @@ export default function AdminAiUsagePage() {
       setIsLoading(false);
     }
   }, [days]);
+
+  const runBackfill = async () => {
+    setIsBackfilling(true);
+    setBackfillMessage(null);
+    try {
+      const res = await fetch(`/api-gateway/admin/ai-usage/backfill?days=${days}`, {
+        method: 'POST',
+      });
+      if (res.status === 403) throw new Error('ADMIN_REQUIRED');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      setBackfillMessage(`Metrics aggregated successfully: read ${data.logsRead} logs and created/updated ${data.groupsWritten} daily aggregate records.`);
+      await load();
+    } catch (err: any) {
+      setBackfillMessage(`Backfill failed: ${err.message === 'ADMIN_REQUIRED' ? 'System admin access required.' : (err.message || 'Unknown error')}`);
+    } finally {
+      setIsBackfilling(false);
+    }
+  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -100,6 +121,18 @@ export default function AdminAiUsagePage() {
               <option key={d} value={d}>Last {d} days</option>
             ))}
           </select>
+          <button
+            onClick={runBackfill}
+            disabled={isBackfilling || isLoading}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-800 bg-indigo-950/40 text-indigo-300 px-3 py-2 text-xs font-medium hover:bg-indigo-900/40 disabled:opacity-50 transition"
+          >
+            {isBackfilling ? (
+              <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
+            ) : (
+              <BarChart3 className="h-3 w-3 text-indigo-400" />
+            )}
+            {isBackfilling ? 'Aggregating...' : 'Sync Metrics'}
+          </button>
           {isLoading && <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />}
         </div>
       </div>
@@ -108,6 +141,13 @@ export default function AdminAiUsagePage() {
         <div className="flex items-center gap-3 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {backfillMessage && (
+        <div className="flex items-center gap-3 rounded-lg border border-indigo-900/60 bg-indigo-950/40 px-4 py-3 text-sm text-indigo-300">
+          <BarChart3 className="h-4 w-4 shrink-0 text-indigo-400" />
+          {backfillMessage}
         </div>
       )}
 

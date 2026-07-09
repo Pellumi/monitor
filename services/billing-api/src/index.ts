@@ -1,7 +1,8 @@
 import { initTracing } from '@sots/telemetry';
 initTracing('billing-api');
 
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import {
   AuditAction,
   BillingCurrency,
@@ -25,6 +26,7 @@ const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
+const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 
 // Capture raw body for webhook signature verification BEFORE json parsing
 // The rawBody buffer is attached to req so the webhook handler can verify HMAC
@@ -60,6 +62,85 @@ app.use((req, res, next) => {
 
 type Provider = 'STRIPE' | 'PAYSTACK' | 'MOCK';
 
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+  };
+}
+
+function tokenFromRequest(req: Request): string | null {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) return auth.slice(7).trim();
+
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return null;
+  const cookies = Object.fromEntries(
+    cookieHeader.split(';').map((cookie) => {
+      const parts = cookie.trim().split('=');
+      return [parts[0], decodeURIComponent(parts.slice(1).join('='))];
+    }),
+  );
+  return cookies.access_token ?? null;
+}
+
+async function verifyJwt(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const token = tokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'No access token provided' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { sub: string; email: string };
+    req.user = { id: decoded.sub, email: decoded.email };
+    next();
+  } catch {
+    return res.status(401).json({ error: 'TOKEN_EXPIRED_OR_INVALID', message: 'Invalid or expired access token' });
+  }
+}
+
+function requestOrganizationId(req: Request): string | null {
+  const headerOrgId = req.headers['x-sots-org-id'];
+  const orgId = req.params.orgId
+    ?? req.body?.organizationId
+    ?? (Array.isArray(headerOrgId) ? headerOrgId[0] : headerOrgId);
+  return typeof orgId === 'string' && orgId.trim() ? orgId : null;
+}
+
+function requireBillingRole(allowedRoles: MemberRole[]) {
+  return async function requireBillingRoleMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    const orgId = requestOrganizationId(req);
+    if (!orgId) {
+      return res.status(400).json({ error: 'organizationId is required' });
+    }
+    if (!req.user?.id) {
+      return res.status(401).json({ error: 'UNAUTHORIZED' });
+    }
+
+    try {
+      const membership = await prisma.organizationMembership.findUnique({
+        where: { userId_organizationId: { userId: req.user.id, organizationId: orgId } },
+      });
+      if (!membership) {
+        return res.status(403).json({ error: 'FORBIDDEN', message: 'You are not a member of this organization' });
+      }
+      if (!allowedRoles.includes(membership.role)) {
+        return res.status(403).json({
+          error: 'FORBIDDEN',
+          message: `Billing management requires one of: ${allowedRoles.join(', ')}`,
+        });
+      }
+      next();
+    } catch (err) {
+      console.error('[BillingAPI] Billing authorization failed', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+}
+
+const requireBillingViewer = requireBillingRole([MemberRole.OWNER, MemberRole.ADMIN]);
+const requireBillingManager = requireBillingRole([MemberRole.OWNER, MemberRole.ADMIN]);
+
 function assertEnumValue<T extends Record<string, string>>(source: T, value: unknown): T[keyof T] | null {
   return typeof value === 'string' && Object.values(source).includes(value) ? value as T[keyof T] : null;
 }
@@ -86,6 +167,36 @@ function priceFor(plan: Plan, interval: BillingInterval, currency: BillingCurren
     : plan.monthlyPriceUsd ?? 0;
 }
 
+function envKey(...parts: string[]): string {
+  return parts.map((part) => part.replace(/[^a-z0-9]/gi, '_').toUpperCase()).join('_');
+}
+
+function configuredProviderCode(provider: 'STRIPE' | 'PAYSTACK', planType: PlanType, interval: BillingInterval, currency: BillingCurrency): string | null {
+  const candidates = provider === 'STRIPE'
+    ? [
+        envKey('STRIPE_PRICE_ID', planType, interval, currency),
+        envKey('STRIPE_PRICE_ID', planType, interval),
+        envKey('STRIPE_PRICE_ID', planType),
+      ]
+    : [
+        envKey('PAYSTACK_PLAN_CODE', planType, interval, currency),
+        envKey('PAYSTACK_PLAN_CODE', planType, interval),
+        envKey('PAYSTACK_PLAN_CODE', planType),
+      ];
+
+  for (const key of candidates) {
+    const value = process.env[key];
+    if (value?.trim()) return value.trim();
+  }
+  return null;
+}
+
+function checkoutProviderCode(req: Request, provider: 'STRIPE' | 'PAYSTACK', planType: PlanType, interval: BillingInterval, currency: BillingCurrency): string | null {
+  const bodyCode = provider === 'STRIPE' ? req.body.priceId : req.body.planCode;
+  return typeof bodyCode === 'string' && bodyCode.trim()
+    ? bodyCode.trim()
+    : configuredProviderCode(provider, planType, interval, currency);
+}
 function invoiceNumber(): string {
   return `SOTS-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
 }
@@ -495,7 +606,7 @@ app.get('/billing/plans', async (_req: Request, res: Response) => {
   }
 });
 
-app.get('/billing/organizations/:orgId/subscription', async (req: Request, res: Response) => {
+app.get('/billing/organizations/:orgId/subscription', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
   const { orgId } = req.params;
 
   try {
@@ -519,7 +630,7 @@ app.get('/billing/organizations/:orgId/subscription', async (req: Request, res: 
   }
 });
 
-app.get('/billing/organizations/:orgId/invoices', async (req: Request, res: Response) => {
+app.get('/billing/organizations/:orgId/invoices', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
   const { orgId } = req.params;
 
   try {
@@ -534,7 +645,7 @@ app.get('/billing/organizations/:orgId/invoices', async (req: Request, res: Resp
   }
 });
 
-app.post('/billing/checkout', async (req: Request, res: Response) => {
+app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
   const organizationId = req.body.organizationId || req.headers['x-sots-org-id'];
   const planType = assertEnumValue(PlanType, req.body.planType);
   const interval = assertEnumValue(BillingInterval, req.body.billingInterval) ?? BillingInterval.MONTHLY;
@@ -549,6 +660,9 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
   }
   if (!['STRIPE', 'PAYSTACK', 'MOCK'].includes(provider)) {
     return res.status(400).json({ error: 'provider must be STRIPE, PAYSTACK, or MOCK' });
+  }
+  if (provider === 'MOCK' && process.env.NODE_ENV === 'production') {
+    return res.status(400).json({ error: 'MOCK provider is disabled in production' });
   }
 
   try {
@@ -601,6 +715,17 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
 
     // ── STRIPE: real hosted checkout ────────────────────────────────────────
     if (provider === 'STRIPE') {
+      if (currency !== BillingCurrency.USD) {
+        return res.status(400).json({ error: 'Stripe checkout currently supports USD plans only' });
+      }
+      const priceId = checkoutProviderCode(req, 'STRIPE', planType, interval, currency);
+      if (!priceId) {
+        return res.status(400).json({
+          error: `Stripe price is not configured for ${planType}/${interval}/${currency}`,
+          message: `Set ${envKey('STRIPE_PRICE_ID', planType, interval, currency)} or pass priceId for controlled test checkout.`,
+        });
+      }
+
       const org = await prisma.organization.findUnique({ where: { id: organizationId } });
       const customerEmail = req.body.email || (org as any)?.billingEmail || (org as any)?.email || '';
       const existing = await prisma.subscription.findUnique({
@@ -610,7 +735,7 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
 
       const { checkoutUrl, sessionId, customerId } = await createCheckoutSession({
         planStripeProductId: (plan as any).stripeProductId ?? '',
-        planStripePriceId: (plan as any).stripePriceId ?? (plan as any).stripePriceIdMonthly ?? '',
+        planStripePriceId: priceId,
         interval,
         currency,
         organizationId,
@@ -648,10 +773,14 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
 
     // ── PAYSTACK: initialize transaction ───────────────────────────────────
     if (provider === 'PAYSTACK') {
+      if (currency !== BillingCurrency.NGN) {
+        return res.status(400).json({ error: 'Paystack checkout currently supports NGN plans only' });
+      }
       const org = await prisma.organization.findUnique({ where: { id: organizationId } });
       const email = req.body.email || (org as any)?.billingEmail || (org as any)?.email || '';
       // Paystack works in lowest denomination (kobo for NGN, cents for USD)
-      const amountMinor = Math.round(total * 100);
+      const amountMinor = Math.round(total);
+      const planCode = checkoutProviderCode(req, 'PAYSTACK', planType, interval, currency) ?? undefined;
 
       const { authorizationUrl, reference } = await initializeTransaction({
         email,
@@ -659,6 +788,7 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
         currency: currency === BillingCurrency.NGN ? 'NGN' : 'USD',
         reference: `sots-${invoice.id}-${Date.now()}`,
         organizationId,
+        planCode,
         metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency },
       });
 
@@ -689,11 +819,40 @@ app.post('/billing/checkout', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/billing/mock-checkout/:invoiceId', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  const { invoiceId } = req.params;
+  try {
+    const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+    if (!invoice) return res.status(404).send('Invoice not found');
+
+    const redirectUrl = appUrl(`/settings/billing?success=1&invoiceId=${invoiceId}`);
+    res.redirect(redirectUrl);
+  } catch (err) {
+    console.error('[BillingAPI] Mock checkout redirect failed', err);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
 app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
   const provider = req.params.provider.toUpperCase() as Provider;
 
   if (!['STRIPE', 'PAYSTACK', 'MOCK'].includes(provider)) {
     return res.status(400).json({ error: 'Unsupported provider' });
+  }
+
+  if (provider === 'MOCK' && process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  if (provider === 'MOCK' && process.env.BILLING_MOCK_WEBHOOK_SECRET) {
+    const actual = req.headers.authorization?.replace('Bearer ', '') || req.headers['x-billing-mock-webhook-secret'];
+    if (actual !== process.env.BILLING_MOCK_WEBHOOK_SECRET) {
+      return res.status(401).json({ error: 'Invalid mock webhook secret' });
+    }
   }
 
   if (provider === 'STRIPE') {
@@ -793,7 +952,7 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
             organizationEmail: (org as any).billingEmail || (org as any).email || '',
             planName: `${plan.name} - ${interval === BillingInterval.ANNUAL ? 'Annual' : 'Monthly'}`,
             currency: paidInvoice.currency,
-            amountPaid: Number(paidInvoice.total),
+            amountPaid: Number(paidInvoice.total) / 100,
             billingPeriodStart: paidInvoice.periodStart?.toISOString() ?? new Date().toISOString(),
             billingPeriodEnd: paidInvoice.periodEnd?.toISOString() ?? new Date().toISOString(),
             provider,
@@ -872,7 +1031,7 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-app.post('/billing/organizations/:orgId/subscription/cancel', async (req: Request, res: Response) => {
+app.post('/billing/organizations/:orgId/subscription/cancel', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
   const { orgId } = req.params;
 
   try {

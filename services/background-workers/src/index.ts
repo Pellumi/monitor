@@ -1,7 +1,7 @@
 import { initTracing } from '@sots/telemetry';
 initTracing('background-workers');
 
-import { PrismaClient } from '@sots/db';
+import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@sots/db';
 import { generateAiFlowDraft, resolveAiProvider, sanitizeAiInputFull } from '@sots/ai';
 import { runRuleCandidatePromoter } from './rule-candidate-promoter';
 import {
@@ -217,118 +217,29 @@ export async function runRulesetCacheWarmer(): Promise<void> {
 export async function runAiMetricsAggregator(): Promise<void> {
   try {
     const now = new Date();
-    // Aggregate today's logs (UTC day boundary)
-    const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dayStart = utcDayStart(now);
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    const logs = await prisma.aIInvocationLog.findMany({
-      where: { createdAt: { gte: dayStart, lt: dayEnd } },
+    const result = await aggregateAiUsageDaily({
+      prisma,
+      startDate: dayStart,
+      endDate: dayEnd,
     });
 
-    if (logs.length === 0) {
+    if (result.logsRead === 0) {
       console.log('[ai-metrics-aggregator] No logs to aggregate for today');
       return;
     }
 
-    // Group by (organizationId | applicationId | feature | provider | model)
-    type GroupKey = string;
-    const groups = new Map<GroupKey, typeof logs>();
-    for (const log of logs) {
-      const key = [
-        log.organizationId ?? '__platform__',
-        log.applicationId ?? '__none__',
-        log.feature,
-        log.provider,
-        log.model,
-      ].join('|');
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(log);
-    }
-
-    let written = 0;
-    for (const [key, items] of groups) {
-      const [orgIdRaw, appIdRaw, feature, provider, model] = key.split('|');
-      const organizationId = orgIdRaw === '__platform__' ? null : orgIdRaw;
-      const applicationId = appIdRaw === '__none__' ? null : appIdRaw;
-
-      const latencies = items
-        .map((i) => i.latencyMs ?? 0)
-        .filter((l) => l > 0)
-        .sort((a, b) => a - b);
-
-      const p95Index = latencies.length > 0 ? Math.floor(latencies.length * 0.95) : 0;
-      const totalCostUsd = items.reduce((s, i) => s + Number(i.costEstimate ?? 0), 0);
-
-      // Use a unique key per day+group for upsert
-      // We overwrite (not increment) so multiple runs produce the correct daily total
-      await (prisma as any).aIUsageDailyAggregate.upsert({
-        where: {
-          date_feature_provider_model_organizationId_applicationId: {
-            date: dayStart,
-            feature: feature as any,
-            provider,
-            model,
-            organizationId,
-            applicationId,
-          },
-        },
-        create: {
-          organizationId,
-          applicationId,
-          date: dayStart,
-          feature: feature as any,
-          provider,
-          model,
-          totalCalls: items.length,
-          successCalls: items.filter((i) => i.status === 'SUCCESS').length,
-          failedCalls: items.filter((i) => i.status === 'FAILED').length,
-          repairedCalls: items.filter((i) => i.repaired).length,
-          fallbackCalls: items.filter((i) => i.fallbackUsed).length,
-          timeoutCalls: items.filter((i) => i.status === 'TIMEOUT').length,
-          totalInputTokens: items.reduce((s, i) => s + (i.inputTokens ?? 0), 0),
-          totalOutputTokens: items.reduce((s, i) => s + (i.outputTokens ?? 0), 0),
-          totalTokens: items.reduce((s, i) => s + (i.totalTokens ?? 0), 0),
-          totalCostUsd,
-          avgLatencyMs: latencies.length > 0
-            ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
-            : 0,
-          p95LatencyMs: latencies.length > 0 ? latencies[p95Index] ?? 0 : 0,
-          maxLatencyMs: latencies.length > 0 ? latencies[latencies.length - 1] ?? 0 : 0,
-        },
-        update: {
-          // Full recompute on each hourly run so totals stay accurate
-          totalCalls: items.length,
-          successCalls: items.filter((i) => i.status === 'SUCCESS').length,
-          failedCalls: items.filter((i) => i.status === 'FAILED').length,
-          repairedCalls: items.filter((i) => i.repaired).length,
-          fallbackCalls: items.filter((i) => i.fallbackUsed).length,
-          timeoutCalls: items.filter((i) => i.status === 'TIMEOUT').length,
-          totalInputTokens: items.reduce((s, i) => s + (i.inputTokens ?? 0), 0),
-          totalOutputTokens: items.reduce((s, i) => s + (i.outputTokens ?? 0), 0),
-          totalTokens: items.reduce((s, i) => s + (i.totalTokens ?? 0), 0),
-          totalCostUsd,
-          avgLatencyMs: latencies.length > 0
-            ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
-            : 0,
-          p95LatencyMs: latencies.length > 0 ? latencies[p95Index] ?? 0 : 0,
-          maxLatencyMs: latencies.length > 0 ? latencies[latencies.length - 1] ?? 0 : 0,
-          updatedAt: new Date(),
-        },
-      });
-      written++;
-    }
-
     console.log(
-      `[ai-metrics-aggregator] Aggregated ${logs.length} logs into ${written} daily aggregate rows for ${dayStart.toISOString().slice(0, 10)}`,
+      `[ai-metrics-aggregator] Aggregated ${result.logsRead} logs into ${result.groupsWritten} daily aggregate rows for ${dayStart.toISOString().slice(0, 10)}`,
     );
   } catch (err) {
     console.error('[ai-invocation-metrics-aggregator] Error', err);
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Job definitions — name, handler, and schedule
-// ─────────────────────────────────────────────────────────────
+// Job definitions - name, handler, and schedule
 
 interface JobDefinition {
   name: string;

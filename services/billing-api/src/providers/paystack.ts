@@ -1,14 +1,27 @@
 import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
 
-const paystackHttp: AxiosInstance = axios.create({
-  baseURL: 'https://api.paystack.co',
-  headers: {
-    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-    'Content-Type': 'application/json',
-  },
-  timeout: 15_000,
-});
+let _paystackHttp: AxiosInstance | null = null;
+function getPaystackHttp(): AxiosInstance {
+  if (!_paystackHttp) {
+    const key = process.env.PAYSTACK_SECRET_KEY;
+    if (!key) {
+      throw new Error(
+        '[BillingAPI] PAYSTACK_SECRET_KEY is not set. ' +
+        'Configure it in .env to use Paystack, or use provider=MOCK for local development.'
+      );
+    }
+    _paystackHttp = axios.create({
+      baseURL: 'https://api.paystack.co',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15_000,
+    });
+  }
+  return _paystackHttp;
+}
 
 export interface PaystackInitParams {
   email: string;
@@ -66,7 +79,7 @@ export async function initializeTransaction(
     payload['plan'] = params.planCode;
   }
 
-  const { data } = await paystackHttp.post('/transaction/initialize', payload);
+  const { data } = await getPaystackHttp().post('/transaction/initialize', payload);
   if (!data.status) {
     throw new Error(`Paystack initialization failed: ${data.message}`);
   }
@@ -83,7 +96,7 @@ export async function initializeTransaction(
  * Call this after the customer is redirected back or in a webhook handler.
  */
 export async function verifyTransaction(reference: string): Promise<PaystackVerifyResult> {
-  const { data } = await paystackHttp.get(`/transaction/verify/${encodeURIComponent(reference)}`);
+  const { data } = await getPaystackHttp().get(`/transaction/verify/${encodeURIComponent(reference)}`);
   if (!data.status) {
     throw new Error(`Paystack verification failed: ${data.message}`);
   }
@@ -129,7 +142,7 @@ export function verifyPaystackWebhook(rawBody: Buffer, signature: string): boole
  * Lists Paystack subscription details for a given customer.
  */
 export async function getSubscription(subscriptionCode: string): Promise<Record<string, unknown>> {
-  const { data } = await paystackHttp.get(`/subscription/${encodeURIComponent(subscriptionCode)}`);
+  const { data } = await getPaystackHttp().get(`/subscription/${encodeURIComponent(subscriptionCode)}`);
   if (!data.status) {
     throw new Error(`Paystack getSubscription failed: ${data.message}`);
   }

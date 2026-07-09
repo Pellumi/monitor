@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, Suspense } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   TrendingUp,
   TrendingDown,
@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Info,
 } from "lucide-react";
+import { useSession } from "@/components/providers";
 
 const FDRS_API = "/api-gateway";
 
@@ -48,6 +49,115 @@ interface DeclaredFlow {
   name: string;
   workflowType: string;
   version: number;
+}
+
+interface Application {
+  id: string;
+  name: string;
+}
+
+interface ApiEnvelope<T> {
+  success?: boolean;
+  data?: T;
+}
+
+type DiffState = string | { stateName?: string | null; name?: string | null };
+
+type DiffTransition = {
+  fromState?: string | { stateName?: string | null; name?: string | null } | null;
+  toState?: string | { stateName?: string | null; name?: string | null } | null;
+  fromStateName?: string | null;
+  toStateName?: string | null;
+  from?: string | null;
+  to?: string | null;
+  action?: string | null;
+  fromNode?: { stateName?: string | null; name?: string | null } | null;
+  toNode?: { stateName?: string | null; name?: string | null } | null;
+};
+
+interface FdrsDiffPayload {
+  addedStates?: DiffState[];
+  removedStates?: DiffState[];
+  addedTransitions?: DiffTransition[];
+  removedTransitions?: DiffTransition[];
+  addedNodes?: DiffState[];
+  removedNodes?: DiffState[];
+  addedEdges?: DiffTransition[];
+  removedEdges?: DiffTransition[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function unwrapData<T>(payload: unknown): T {
+  if (isRecord(payload) && "data" in payload) {
+    return payload.data as T;
+  }
+  return payload as T;
+}
+
+function getErrorMessage(payload: unknown, fallback: string) {
+  if (isRecord(payload)) {
+    const message = payload.message ?? payload.error;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  let payload: unknown = null;
+  try {
+    payload = await res.json();
+  } catch {
+    payload = null;
+  }
+  if (!res.ok) {
+    throw new Error(getErrorMessage(payload, `Request failed with status ${res.status}`));
+  }
+  return unwrapData<T>(payload);
+}
+
+function stateLabel(state: DiffState): string {
+  if (typeof state === "string") return state;
+  return state.stateName ?? state.name ?? "Unknown state";
+}
+
+function endpointLabel(value: DiffTransition["fromState"] | DiffTransition["toState"] | undefined): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  return value.stateName ?? value.name ?? null;
+}
+
+function normalizeTransition(transition: DiffTransition) {
+  return {
+    fromState:
+      transition.fromStateName ??
+      endpointLabel(transition.fromState) ??
+      transition.fromNode?.stateName ??
+      transition.fromNode?.name ??
+      transition.from ??
+      "Unknown",
+    toState:
+      transition.toStateName ??
+      endpointLabel(transition.toState) ??
+      transition.toNode?.stateName ??
+      transition.toNode?.name ??
+      transition.to ??
+      "Unknown",
+    action: transition.action ?? undefined,
+  };
+}
+
+function normalizeDiff(payload: ApiEnvelope<FdrsDiffPayload> | FdrsDiffPayload): GraphDiff {
+  const data = unwrapData<FdrsDiffPayload>(payload);
+  return {
+    addedStates: (data.addedStates ?? data.addedNodes ?? []).map(stateLabel),
+    removedStates: (data.removedStates ?? data.removedNodes ?? []).map(stateLabel),
+    addedTransitions: (data.addedTransitions ?? data.addedEdges ?? []).map(normalizeTransition),
+    removedTransitions: (data.removedTransitions ?? data.removedEdges ?? []).map(normalizeTransition),
+  };
 }
 
 function DriftAlertBadge({ score, prevScore }: { score: number | null; prevScore: number | null }) {
@@ -176,65 +286,107 @@ function SimpleLineChart({ data }: { data: CoverageHistory[] }) {
 }
 
 function GraphDriftContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const appId = searchParams.get("appId") ?? "acadai-local";
+  const { selectedOrgId } = useSession();
+  const appIdFromUrl = searchParams.get("appId");
 
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [fromVersionId, setFromVersionId] = useState<string>("");
   const [toVersionId, setToVersionId] = useState<string>("");
   const [showDiff, setShowDiff] = useState(false);
 
-  // Load declared flows for the app
-  const { data: flows, isLoading: isFlowsLoading } = useQuery<DeclaredFlow[]>({
+  const { data: apps = [], isLoading: isAppsLoading, error: appsError } = useQuery<Application[]>({
+    queryKey: ["graph-drift-apps", selectedOrgId],
+    queryFn: async () => {
+      if (!selectedOrgId) return [];
+      return requestJson<Application[]>(`${FDRS_API}/organizations/${selectedOrgId}/applications`);
+    },
+    enabled: !!selectedOrgId,
+  });
+
+  const activeApp = useMemo(
+    () => apps.find((app) => app.id === appIdFromUrl) ?? apps[0] ?? null,
+    [apps, appIdFromUrl],
+  );
+  const appId = appIdFromUrl ?? activeApp?.id ?? "";
+
+  useEffect(() => {
+    if (!appIdFromUrl && activeApp?.id) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("appId", activeApp.id);
+      router.replace(`/graph-drift?${params.toString()}`);
+    }
+  }, [activeApp?.id, appIdFromUrl, router, searchParams]);
+
+  const { data: flows = [], isLoading: isFlowsLoading, error: flowsError } = useQuery<DeclaredFlow[]>({
     queryKey: ["declared-flows-drift", appId],
-    queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow`);
-      if (!res.ok) throw new Error("Failed to fetch flows");
-      return res.json();
-    },
+    queryFn: async () => requestJson<DeclaredFlow[]>(`${FDRS_API}/applications/${appId}/declared-flow`),
     enabled: !!appId,
-    onSuccess: (data: any) => {
-      if (data?.length > 0 && !selectedFlowId) setSelectedFlowId(data[0].id);
-    },
-  } as any);
+  });
 
-  // Load coverage history for selected flow
-  const { data: coverageHistory, isLoading: isHistoryLoading } = useQuery<CoverageHistory[]>({
+  useEffect(() => {
+    if (!flows.length) {
+      setSelectedFlowId("");
+      setFromVersionId("");
+      setToVersionId("");
+      setShowDiff(false);
+      return;
+    }
+    if (!flows.some((flow) => flow.id === selectedFlowId)) {
+      setSelectedFlowId(flows[0].id);
+      setFromVersionId("");
+      setToVersionId("");
+      setShowDiff(false);
+    }
+  }, [flows, selectedFlowId]);
+
+  const { data: coverageHistory = [], isLoading: isHistoryLoading, error: historyError } = useQuery<CoverageHistory[]>({
     queryKey: ["coverage-history", appId, selectedFlowId],
-    queryFn: async () => {
-      const res = await fetch(
-        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/coverage-history`,
-      );
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!selectedFlowId,
+    queryFn: async () => requestJson<CoverageHistory[]>(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/coverage-history`),
+    enabled: !!appId && !!selectedFlowId,
   });
 
-  // Load graph versions
-  const { data: versions } = useQuery<GraphVersion[]>({
-    queryKey: ["graph-versions-drift", selectedFlowId],
-    queryFn: async () => {
-      const res = await fetch(
-        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/versions`,
-      );
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!selectedFlowId,
+  const { data: versions = [], isLoading: isVersionsLoading, error: versionsError } = useQuery<GraphVersion[]>({
+    queryKey: ["graph-versions-drift", appId, selectedFlowId],
+    queryFn: async () => requestJson<GraphVersion[]>(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/versions`),
+    enabled: !!appId && !!selectedFlowId,
   });
 
-  // Load diff when requested
-  const { data: diff, isLoading: isDiffLoading, refetch: refetchDiff } = useQuery<GraphDiff>({
-    queryKey: ["graph-diff", selectedFlowId, fromVersionId, toVersionId],
+  const sortedVersions = useMemo(
+    () => [...versions].sort((a, b) => a.version - b.version),
+    [versions],
+  );
+
+  useEffect(() => {
+    if (sortedVersions.length < 2) {
+      setFromVersionId("");
+      setToVersionId("");
+      setShowDiff(false);
+      return;
+    }
+
+    const hasFrom = sortedVersions.some((version) => version.id === fromVersionId);
+    const hasTo = sortedVersions.some((version) => version.id === toVersionId);
+    if (!hasFrom) setFromVersionId(sortedVersions[0].id);
+    if (!hasTo) setToVersionId(sortedVersions[sortedVersions.length - 1].id);
+  }, [fromVersionId, sortedVersions, toVersionId]);
+
+  const {
+    data: diff,
+    isFetching: isDiffLoading,
+    error: diffError,
+    refetch: refetchDiff,
+  } = useQuery<GraphDiff>({
+    queryKey: ["graph-diff", appId, selectedFlowId, fromVersionId, toVersionId],
     queryFn: async () => {
-      const res = await fetch(
-        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/versions/diff?from=${fromVersionId}&to=${toVersionId}`,
+      const params = new URLSearchParams({ from: fromVersionId, to: toVersionId });
+      const payload = await requestJson<ApiEnvelope<FdrsDiffPayload> | FdrsDiffPayload>(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/versions/diff?${params.toString()}`,
       );
-      if (!res.ok) throw new Error("Failed to fetch diff");
-      return res.json();
+      return normalizeDiff(payload);
     },
-    enabled: false, // manually triggered
+    enabled: false,
   });
 
   // Detect coverage regressions
@@ -260,30 +412,59 @@ function GraphDriftContent() {
   }, [coverageHistory]);
 
   function handleCompare() {
-    if (!fromVersionId || !toVersionId) return;
+    if (!fromVersionId || !toVersionId || fromVersionId === toVersionId) return;
     setShowDiff(true);
-    refetchDiff();
+    void refetchDiff();
   }
 
-  const selectedFlow = flows?.find((f) => f.id === selectedFlowId);
+  const selectedFlow = flows.find((f) => f.id === selectedFlowId);
+  const selectedAppName = apps.find((app) => app.id === appId)?.name ?? activeApp?.name ?? "Selected application";
+  const loadError = appsError ?? flowsError ?? historyError ?? versionsError;
+
+  if (!selectedOrgId) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-8 text-sm text-neutral-400">
+          No organization is selected.
+        </div>
+      </div>
+    );
+  }
+
+  if (isAppsLoading) {
+    return (
+      <div className="p-6 flex items-center gap-2 text-neutral-500 text-sm">
+        <RefreshCw className="h-4 w-4 animate-spin" />
+        Loading applications...
+      </div>
+    );
+  }
+
+  if (!appId) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-8 text-sm text-neutral-400">
+          No applications are available for this organization.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <TrendingUp className="h-6 w-6 text-indigo-400" />
             Graph Drift
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Track behavioral graph coverage over time and compare versions to identify drift.
+            {selectedAppName} behavioral graph coverage over time and version comparisons.
           </p>
         </div>
 
-        {/* Flow Selector */}
         <div className="flex items-center gap-3">
-          <label className="text-xs text-neutral-400 font-medium">Flow</label>
+          <label className="text-xs text-neutral-400 font-medium" htmlFor="flow-selector">Flow</label>
           <select
             id="flow-selector"
             value={selectedFlowId}
@@ -293,10 +474,12 @@ function GraphDriftContent() {
               setFromVersionId("");
               setToVersionId("");
             }}
-            className="bg-neutral-900 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+            disabled={isFlowsLoading || flows.length === 0}
+            className="bg-neutral-900 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
           >
-            {isFlowsLoading && <option>Loading…</option>}
-            {flows?.map((f) => (
+            {isFlowsLoading && <option>Loading...</option>}
+            {!isFlowsLoading && flows.length === 0 && <option>No declared flows</option>}
+            {flows.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
               </option>
@@ -305,7 +488,16 @@ function GraphDriftContent() {
         </div>
       </div>
 
-      {/* Drift Alert Banner */}
+      {loadError instanceof Error && (
+        <div className="border border-red-900/40 bg-red-950/20 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-300">Graph drift data failed to load</p>
+            <p className="mt-1 text-xs text-red-400/80">{loadError.message}</p>
+          </div>
+        </div>
+      )}
+
       {driftAlerts.length > 0 && (
         <div className="border border-amber-900/40 bg-amber-950/20 rounded-xl p-4 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
@@ -332,7 +524,7 @@ function GraphDriftContent() {
               <div>
                 <h2 className="text-sm font-semibold text-white">Coverage Trend</h2>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Expected state coverage across all graph versions
+                  {selectedFlow ? `${selectedFlow.name} expected state coverage` : "Expected state coverage"}
                 </p>
               </div>
               {isHistoryLoading && (
@@ -358,17 +550,21 @@ function GraphDriftContent() {
               Version Comparison
             </h2>
 
-            <div className="flex items-center gap-3 mb-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end mb-4">
               <div className="flex-1">
-                <label className="text-xs text-neutral-500 mb-1 block">From version</label>
+                <label className="text-xs text-neutral-500 mb-1 block" htmlFor="from-version-selector">From version</label>
                 <select
                   id="from-version-selector"
                   value={fromVersionId}
-                  onChange={(e) => setFromVersionId(e.target.value)}
-                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+                  onChange={(e) => {
+                    setFromVersionId(e.target.value);
+                    setShowDiff(false);
+                  }}
+                  disabled={sortedVersions.length < 2 || isVersionsLoading}
+                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                 >
-                  <option value="">Select version…</option>
-                  {versions?.map((v) => (
+                  <option value="">Select version...</option>
+                  {sortedVersions.map((v) => (
                     <option key={v.id} value={v.id}>
                       v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
                       {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
@@ -377,18 +573,22 @@ function GraphDriftContent() {
                 </select>
               </div>
 
-              <ArrowRight className="h-4 w-4 text-neutral-600 flex-shrink-0 mt-5" />
+              <ArrowRight className="hidden h-4 w-4 text-neutral-600 flex-shrink-0 mb-2 lg:block" />
 
               <div className="flex-1">
-                <label className="text-xs text-neutral-500 mb-1 block">To version</label>
+                <label className="text-xs text-neutral-500 mb-1 block" htmlFor="to-version-selector">To version</label>
                 <select
                   id="to-version-selector"
                   value={toVersionId}
-                  onChange={(e) => setToVersionId(e.target.value)}
-                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+                  onChange={(e) => {
+                    setToVersionId(e.target.value);
+                    setShowDiff(false);
+                  }}
+                  disabled={sortedVersions.length < 2 || isVersionsLoading}
+                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                 >
-                  <option value="">Select version…</option>
-                  {versions?.map((v) => (
+                  <option value="">Select version...</option>
+                  {sortedVersions.map((v) => (
                     <option key={v.id} value={v.id}>
                       v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
                       {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
@@ -400,8 +600,8 @@ function GraphDriftContent() {
               <button
                 id="compare-versions-btn"
                 onClick={handleCompare}
-                disabled={!fromVersionId || !toVersionId || isDiffLoading}
-                className="flex items-center gap-2 mt-5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+                disabled={!fromVersionId || !toVersionId || fromVersionId === toVersionId || isDiffLoading}
+                className="flex items-center justify-center gap-2 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
               >
                 {isDiffLoading ? (
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -411,6 +611,13 @@ function GraphDriftContent() {
                 Compare
               </button>
             </div>
+
+            {showDiff && diffError instanceof Error && (
+              <div className="flex items-center gap-2 text-xs text-red-400 border border-red-900/40 bg-red-950/20 rounded-lg px-4 py-3 mb-4">
+                <AlertTriangle className="h-4 w-4" />
+                {diffError.message}
+              </div>
+            )}
 
             {showDiff && diff && (
               <div className="space-y-4">

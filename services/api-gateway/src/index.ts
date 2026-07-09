@@ -661,6 +661,10 @@ async function main() {
     return forwardToOnboarding({ ...request, url: request.url } as any, reply);
   });
 
+  fastify.post('/admin/ai-usage/backfill', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+  });
+
   fastify.get('/admin/audit-logs', { preHandler: requireSystemAdmin }, async (request, reply) => {
     return forwardToOnboarding({ ...request, url: request.url } as any, reply);
   });

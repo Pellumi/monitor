@@ -103,6 +103,15 @@ function ReplayViewerContent() {
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
+  const { data, isLoading, error } = useQuery<ReplayData>({
+    queryKey: ['session-replay', sessionId],
+    queryFn: async () => {
+      const res = await fetch(`${REPORT_ENGINE}/sessions/${sessionId}/replay`);
+      if (!res.ok) throw new Error('Failed to fetch replay');
+      return res.json();
+    },
+  });
+
   // ─── Playback state ──────────────────────────────────────────────────────────
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);   // 0.5x, 1x, 2x, 4x
@@ -194,14 +203,7 @@ function ReplayViewerContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [goNext, goPrev]);
 
-  const { data, isLoading, error } = useQuery<ReplayData>({
-    queryKey: ['session-replay', sessionId],
-    queryFn: async () => {
-      const res = await fetch(`${REPORT_ENGINE}/sessions/${sessionId}/replay`);
-      if (!res.ok) throw new Error('Failed to fetch replay');
-      return res.json();
-    },
-  });
+
 
   if (isLoading) return (
     <div className="flex h-full items-center justify-center text-neutral-400 animate-pulse">

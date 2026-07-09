@@ -4,7 +4,7 @@
  * Verifies the full checkout → webhook → subscription activation → receipt lifecycle
  * using the billing-api and onboarding-api services.
  *
- * Run with: pnpm --filter @sots/e2e-tests test:e2e
+ * Run with: pnpm --filter @sots/e2e-tests test:billing
  *
  * Prerequisites:
  *   - BILLING_API_URL pointing to running billing-api
@@ -16,8 +16,8 @@
 import { describe, it, expect } from 'vitest';
 import crypto from 'crypto';
 
-const BILLING    = process.env.BILLING_API_URL    ?? 'http://localhost:3007';
-const ONBOARDING = process.env.ONBOARDING_API_URL ?? 'http://localhost:3002';
+const BILLING    = process.env.BILLING_API_URL    ?? 'http://localhost:3009';
+const ONBOARDING = process.env.ONBOARDING_API_URL ?? 'http://localhost:3006';
 const TIMEOUT_MS = 20_000;
 
 const ORG_A_ID    = process.env.TEST_ORG_A_ID    ?? '';
@@ -83,111 +83,201 @@ describe('Billing API — Health', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Checkout session creation
+// Checkout session validation (auth & parameters)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Billing API — Checkout session', () => {
-  it('requires authentication (401 without token)', async () => {
+describe('Billing API — Checkout validation', () => {
+  it('requires authentication (401/403 without token)', async () => {
     const r = await post(`${BILLING}/billing/checkout`, {
-      organizationId: ORG_A_ID,
-      planId: 'starter',
+      organizationId: ORG_A_ID || 'dummy-org',
+      planType: 'SOLO',
       provider: 'stripe',
       successUrl: 'https://app.sots.io/billing/success',
       cancelUrl: 'https://app.sots.io/billing/cancel',
     });
     expect([401, 403]).toContain(r.status);
   }, TIMEOUT_MS);
-
-  it('returns a valid checkout URL for Stripe (with auth)', async () => {
-    if (!ORG_A_ID || !ORG_A_TOKEN) return; // skip if no test credentials
-
-    const priceId = process.env.STRIPE_TEST_PRICE_ID;
-    if (!priceId) return; // skip if no Stripe test price
-
-    const r = await post(
-      `${BILLING}/billing/checkout`,
-      {
-        organizationId: ORG_A_ID,
-        planId: 'starter',
-        priceId,
-        provider: 'stripe',
-        successUrl: 'https://app.sots.io/billing/success?session_id={CHECKOUT_SESSION_ID}',
-        cancelUrl: 'https://app.sots.io/billing/cancel',
-      },
-      { Authorization: `Bearer ${ORG_A_TOKEN}` },
-    );
-
-    expect(r.status).toBe(200);
-    expect(r.body).toHaveProperty('url');
-    expect(r.body.url).toMatch(/^https:\/\//);
-  }, TIMEOUT_MS);
-
-  it('returns a valid authorization URL for Paystack (with auth)', async () => {
-    if (!ORG_A_ID || !ORG_A_TOKEN) return;
-
-    const paystackPlan = process.env.PAYSTACK_TEST_PLAN_CODE;
-    if (!paystackPlan) return;
-
-    const r = await post(
-      `${BILLING}/billing/checkout`,
-      {
-        organizationId: ORG_A_ID,
-        planId: 'starter',
-        planCode: paystackPlan,
-        provider: 'paystack',
-        email: `test+${Date.now()}@sots.io`,
-        successUrl: 'https://app.sots.io/billing/success',
-        cancelUrl: 'https://app.sots.io/billing/cancel',
-      },
-      { Authorization: `Bearer ${ORG_A_TOKEN}` },
-    );
-
-    expect(r.status).toBe(200);
-    expect(r.body).toHaveProperty('authorizationUrl');
-    expect(r.body.authorizationUrl).toMatch(/^https:\/\//);
-  }, TIMEOUT_MS);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Webhook idempotency
+// MOCK Checkout & Activation Flow (runs locally out of the box)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Billing API — Webhook idempotency', () => {
-  it('processes a Stripe webhook event once (idempotency guard)', async () => {
-    if (!ORG_A_ID) return;
+describe('Billing API — MOCK provider E2E checkout activation flow', () => {
+  const hasOrg = !!(ORG_A_ID && ORG_A_TOKEN);
 
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? '';
-    if (!webhookSecret) return; // can only test with real secret
+  describe.skipIf(!hasOrg)('MOCK provider flow (requires TEST_ORG_A_ID & TEST_ORG_A_TOKEN)', () => {
+    let mockInvoiceId: string | null = null;
+    let mockCheckoutUrl: string | null = null;
 
-    const payload = makeStripeWebhookBody({ status: 'active' });
-    const body    = JSON.stringify(payload);
-    const ts      = Math.floor(Date.now() / 1000);
-    const sig     = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(`${ts}.${body}`)
-      .digest('hex');
+    it('creates a mock checkout and returns 201 with completed status', async () => {
+      const r = await post(
+        `${BILLING}/billing/checkout`,
+        {
+          organizationId: ORG_A_ID,
+          planType: 'SOLO',
+          provider: 'MOCK',
+          billingInterval: 'MONTHLY',
+          billingCurrency: 'USD',
+          successUrl: 'https://app.sots.io/billing/success',
+          cancelUrl: 'https://app.sots.io/billing/cancel',
+        },
+        { Authorization: `Bearer ${ORG_A_TOKEN}` },
+      );
+      expect(r.status).toBe(201);
+      expect(r.body).toHaveProperty('checkoutId');
+      expect(r.body).toHaveProperty('invoiceId');
+      expect(r.body).toHaveProperty('url');
+      expect(r.body.status).toBe('completed');
+      
+      mockInvoiceId = r.body.invoiceId;
+      mockCheckoutUrl = r.body.url;
+    }, TIMEOUT_MS);
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'stripe-signature': `t=${ts},v1=${sig}`,
-    };
+    it('GET mock-checkout URL redirects to success URL with invoiceId', async () => {
+      expect(mockCheckoutUrl).toBeTruthy();
+      const res = await fetch(mockCheckoutUrl!, { redirect: 'manual' });
+      expect(res.status).toBe(302);
+      const loc = res.headers.get('location');
+      expect(loc).toContain('/settings/billing?success=1');
+      expect(loc).toContain(`invoiceId=${mockInvoiceId}`);
+    }, TIMEOUT_MS);
 
-    // First call — should process
-    const r1 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
-      method: 'POST',
-      headers,
-      body,
-    });
-    expect([200, 202]).toContain(r1.status);
+    it('updates organization subscription status to ACTIVE (SOLO plan)', async () => {
+      const r = await get(
+        `${BILLING}/billing/organizations/${ORG_A_ID}/subscription`,
+        ORG_A_TOKEN,
+      );
+      expect(r.status).toBe(200);
+      expect(r.body.status).toBe('ACTIVE');
+      expect(r.body.plan.type).toBe('SOLO');
+    }, TIMEOUT_MS);
 
-    // Second call with same event ID — should be idempotent (not error)
-    const r2 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
-      method: 'POST',
-      headers,
-      body,
-    });
-    expect([200, 202, 409]).toContain(r2.status); // 409 = already processed is OK
-  }, TIMEOUT_MS);
+    it('verifies that the associated invoice is marked PAID', async () => {
+      const r = await get(
+        `${BILLING}/billing/organizations/${ORG_A_ID}/invoices`,
+        ORG_A_TOKEN,
+      );
+      expect(r.status).toBe(200);
+      expect(r.body.length).toBeGreaterThan(0);
+      const inv = r.body.find((i: any) => i.id === mockInvoiceId);
+      expect(inv).toBeDefined();
+      expect(inv.status).toBe('PAID');
+    }, TIMEOUT_MS);
+
+    it('cancels the active subscription via cancel route', async () => {
+      const r = await post(
+        `${BILLING}/billing/organizations/${ORG_A_ID}/subscription/cancel`,
+        {},
+        { Authorization: `Bearer ${ORG_A_TOKEN}` },
+      );
+      expect(r.status).toBe(200);
+      expect(r.body.status).toBe('CANCELLED');
+    }, TIMEOUT_MS);
+
+    it('confirms organization subscription status is CANCELLED', async () => {
+      const r = await get(
+        `${BILLING}/billing/organizations/${ORG_A_ID}/subscription`,
+        ORG_A_TOKEN,
+      );
+      expect(r.status).toBe(200);
+      expect(r.body.status).toBe('CANCELLED');
+    }, TIMEOUT_MS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real provider checkouts (Requires external pricing credentials)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Billing API — Real provider checkout session creation', () => {
+  const hasOrg = !!(ORG_A_ID && ORG_A_TOKEN);
+  const priceId = process.env.STRIPE_TEST_PRICE_ID;
+  const paystackPlan = process.env.PAYSTACK_TEST_PLAN_CODE;
+
+  describe.skipIf(!hasOrg)('Stripe checkout (requires TEST_ORG_A_ID & TEST_ORG_A_TOKEN)', () => {
+    it.skipIf(!priceId)('returns a valid checkout URL for Stripe (requires STRIPE_TEST_PRICE_ID)', async () => {
+      const r = await post(
+        `${BILLING}/billing/checkout`,
+        {
+          organizationId: ORG_A_ID,
+          planType: 'SOLO',
+          priceId,
+          provider: 'stripe',
+          successUrl: 'https://app.sots.io/billing/success?session_id={CHECKOUT_SESSION_ID}',
+          cancelUrl: 'https://app.sots.io/billing/cancel',
+        },
+        { Authorization: `Bearer ${ORG_A_TOKEN}` },
+      );
+
+      expect(r.status).toBe(201);
+      expect(r.body).toHaveProperty('url');
+      expect(r.body.url).toMatch(/^https:\/\//);
+    }, TIMEOUT_MS);
+  });
+
+  describe.skipIf(!hasOrg)('Paystack checkout (requires TEST_ORG_A_ID & TEST_ORG_A_TOKEN)', () => {
+    it.skipIf(!paystackPlan)('returns a valid authorization URL for Paystack (requires PAYSTACK_TEST_PLAN_CODE)', async () => {
+      const r = await post(
+        `${BILLING}/billing/checkout`,
+        {
+          organizationId: ORG_A_ID,
+          planType: 'SOLO',
+          planCode: paystackPlan,
+          provider: 'paystack',
+          email: `test+${Date.now()}@sots.io`,
+          successUrl: 'https://app.sots.io/billing/success',
+          cancelUrl: 'https://app.sots.io/billing/cancel',
+        },
+        { Authorization: `Bearer ${ORG_A_TOKEN}` },
+      );
+
+      expect(r.status).toBe(201);
+      expect(r.body).toHaveProperty('authorizationUrl');
+      expect(r.body.authorizationUrl).toMatch(/^https:\/\//);
+    }, TIMEOUT_MS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhook signature & idempotency validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Billing API — Webhook security & idempotency tests', () => {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? '';
+
+  describe.skipIf(!webhookSecret)('Stripe webhook processing (requires STRIPE_WEBHOOK_SECRET)', () => {
+    it('processes a Stripe webhook event once (idempotency guard)', async () => {
+      const payload = makeStripeWebhookBody({ status: 'active' });
+      const body    = JSON.stringify(payload);
+      const ts      = Math.floor(Date.now() / 1000);
+      const sig     = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(`${ts}.${body}`)
+        .digest('hex');
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'stripe-signature': `t=${ts},v1=${sig}`,
+      };
+
+      // First call — should process
+      const r1 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
+        method: 'POST',
+        headers,
+        body,
+      });
+      expect([200, 202]).toContain(r1.status);
+
+      // Second call with same event ID — should be idempotent (not error)
+      const r2 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
+        method: 'POST',
+        headers,
+        body,
+      });
+      expect([200, 202, 409]).toContain(r2.status);
+    }, TIMEOUT_MS);
+  });
 
   it('rejects a Stripe webhook with invalid signature (400/401)', async () => {
     const body = JSON.stringify(makeStripeWebhookBody());
@@ -199,7 +289,6 @@ describe('Billing API — Webhook idempotency', () => {
       },
       body,
     });
-    // HMAC mismatch → 400 Bad Request
     expect([400, 401]).toContain(res.status);
   }, TIMEOUT_MS);
 
@@ -214,26 +303,5 @@ describe('Billing API — Webhook idempotency', () => {
       body: payload,
     });
     expect([400, 401]).toContain(res.status);
-  }, TIMEOUT_MS);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Subscription state after activation
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('Billing — Subscription state', () => {
-  it('organization subscription is returned from onboarding-api', async () => {
-    if (!ORG_A_ID || !ORG_A_TOKEN) return;
-
-    const r = await get(
-      `${ONBOARDING}/organizations/${ORG_A_ID}/subscription`,
-      ORG_A_TOKEN,
-    );
-    // 200 with subscription data, or 404 if org has no subscription yet
-    expect([200, 404]).toContain(r.status);
-    if (r.status === 200) {
-      expect(r.body).toHaveProperty('status');
-      expect(r.body).toHaveProperty('planId');
-    }
   }, TIMEOUT_MS);
 });

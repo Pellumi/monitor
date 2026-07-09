@@ -2,7 +2,7 @@ import { initTracing } from '@sots/telemetry';
 initTracing('fdrs-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction } from '@sots/db';
+import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature, Services } from '@sots/shared';
 import { normalizeIntent, getSuggestions } from '@sots/derivation-engine';
@@ -39,6 +39,23 @@ export interface AuthenticatedRequest extends Request {
 
 const app = express();
 const prisma = new PrismaClient();
+const aiUsageAggregationRuns = new Map<string, Promise<void>>();
+
+async function ensureAiUsageAggregated(startDate: Date, endDate: Date, organizationId?: string): Promise<void> {
+  const key = [startDate.toISOString(), endDate.toISOString(), organizationId ?? 'all'].join('|');
+  const existing = aiUsageAggregationRuns.get(key);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const run = aggregateAiUsageDaily({ prisma, startDate, endDate, organizationId })
+    .then(() => undefined)
+    .finally(() => aiUsageAggregationRuns.delete(key));
+  aiUsageAggregationRuns.set(key, run);
+  await run;
+}
+
 const entitlementChecker = new EntitlementChecker(prisma);
 const requireSystemAdmin = makeRequireSystemAdmin(prisma);
 app.use(express.json());
@@ -1001,11 +1018,55 @@ app.get('/applications/:id/declared-flow/:flowId', async (req: Request, res: Res
 // 1b. Graph Drift — Version History, Coverage History, Version Diff
 // ─────────────────────────────────────────────────────────────
 
+async function getDeclaredFlowForDrift(applicationId: string, flowId: string) {
+  return prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId, graphType: GraphType.DECLARED },
+    select: { id: true },
+  });
+}
+
+function snapshotArray(snapshot: unknown, primaryKey: 'states' | 'transitions', fallbackKey: 'nodes' | 'edges'): any[] {
+  if (!snapshot || typeof snapshot !== 'object') return [];
+  const record = snapshot as Record<string, unknown>;
+  const primary = record[primaryKey];
+  if (Array.isArray(primary)) return primary;
+  const fallback = record[fallbackKey];
+  return Array.isArray(fallback) ? fallback : [];
+}
+
+function stateNameForDiff(state: any): string {
+  return state?.stateName ?? state?.name ?? 'Unknown state';
+}
+
+function endpointNameForDiff(value: any): string | null {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  return value.stateName ?? value.name ?? null;
+}
+
+function transitionEndpointForDiff(transition: any, side: 'from' | 'to'): string {
+  if (side === 'from') {
+    return transition.fromStateName
+      ?? endpointNameForDiff(transition.fromState)
+      ?? endpointNameForDiff(transition.fromNode)
+      ?? transition.from
+      ?? '';
+  }
+  return transition.toStateName
+    ?? endpointNameForDiff(transition.toState)
+    ?? endpointNameForDiff(transition.toNode)
+    ?? transition.to
+    ?? '';
+}
+
 /** GET /applications/:id/declared-flow/:flowId/versions - List all versions of a behavior graph */
 app.get('/applications/:id/declared-flow/:flowId/versions', async (req: Request, res: Response) => {
-  const { flowId } = req.params;
+  const { id: applicationId, flowId } = req.params;
 
   try {
+    const flow = await getDeclaredFlowForDrift(applicationId, flowId);
+    if (!flow) return res.status(404).json({ error: 'Flow not found' });
+
     const versions = await prisma.behaviorGraphVersion.findMany({
       where: { graphId: flowId },
       orderBy: { version: 'asc' },
@@ -1027,9 +1088,12 @@ app.get('/applications/:id/declared-flow/:flowId/versions', async (req: Request,
 
 /** GET /applications/:id/declared-flow/:flowId/coverage-history - Coverage trend over versions */
 app.get('/applications/:id/declared-flow/:flowId/coverage-history', async (req: Request, res: Response) => {
-  const { flowId } = req.params;
+  const { id: applicationId, flowId } = req.params;
 
   try {
+    const flow = await getDeclaredFlowForDrift(applicationId, flowId);
+    if (!flow) return res.status(404).json({ error: 'Flow not found' });
+
     const versions = await prisma.behaviorGraphVersion.findMany({
       where: { graphId: flowId },
       orderBy: { version: 'asc' },
@@ -1051,47 +1115,54 @@ app.get('/applications/:id/declared-flow/:flowId/coverage-history', async (req: 
 
 /** GET /applications/:id/declared-flow/:flowId/versions/diff?from=X&to=Y - Deep structural diff */
 app.get('/applications/:id/declared-flow/:flowId/versions/diff', async (req: Request, res: Response) => {
-  const fromId = req.query.from as string | undefined;
-  const toId = req.query.to as string | undefined;
+  const { id: applicationId, flowId } = req.params;
+  const fromRef = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const toRef = typeof req.query.to === 'string' ? req.query.to : undefined;
 
-  if (!fromId || !toId) {
-    return res.status(400).json({ error: 'Both "from" and "to" query params are required (version IDs).' });
+  if (!fromRef || !toRef || fromRef === toRef) {
+    return res.status(400).json({ error: 'Both "from" and "to" query params are required and must be distinct.' });
   }
 
   try {
+    const flow = await getDeclaredFlowForDrift(applicationId, flowId);
+    if (!flow) return res.status(404).json({ error: 'Flow not found' });
+
+    async function resolveVersion(ref: string) {
+      const versionNumber = Number.parseInt(ref, 10);
+      if (/^\d+$/.test(ref) && Number.isFinite(versionNumber)) {
+        return prisma.behaviorGraphVersion.findUnique({
+          where: { graphId_version: { graphId: flowId, version: versionNumber } },
+        });
+      }
+      return prisma.behaviorGraphVersion.findFirst({ where: { id: ref, graphId: flowId } });
+    }
+
     const [fromVersion, toVersion] = await Promise.all([
-      prisma.behaviorGraphVersion.findUnique({ where: { id: fromId } }),
-      prisma.behaviorGraphVersion.findUnique({ where: { id: toId } }),
+      resolveVersion(fromRef),
+      resolveVersion(toRef),
     ]);
 
     if (!fromVersion || !toVersion) {
-      return res.status(404).json({ error: 'One or both version IDs not found' });
+      return res.status(404).json({ error: 'One or both graph versions were not found for this flow' });
     }
 
-    // Parse snapshot JSON — each snapshot stores { states: [...], transitions: [...] }
-    const fromSnap = (fromVersion.snapshot ?? {}) as Record<string, any>;
-    const toSnap = (toVersion.snapshot ?? {}) as Record<string, any>;
+    const fromStates = snapshotArray(fromVersion.snapshot, 'states', 'nodes');
+    const toStates = snapshotArray(toVersion.snapshot, 'states', 'nodes');
+    const fromTransitions = snapshotArray(fromVersion.snapshot, 'transitions', 'edges');
+    const toTransitions = snapshotArray(toVersion.snapshot, 'transitions', 'edges');
 
-    const fromStates: any[] = fromSnap.states ?? fromSnap.nodes ?? [];
-    const toStates: any[] = toSnap.states ?? toSnap.nodes ?? [];
-    const fromTransitions: any[] = fromSnap.transitions ?? fromSnap.edges ?? [];
-    const toTransitions: any[] = toSnap.transitions ?? toSnap.edges ?? [];
-
-    // Build state maps by stateName for comparison
-    const fromStateMap = new Map(fromStates.map((s) => [s.stateName ?? s.name, s]));
-    const toStateMap = new Map(toStates.map((s) => [s.stateName ?? s.name, s]));
+    const fromStateMap = new Map(fromStates.map((state) => [stateNameForDiff(state), state]));
+    const toStateMap = new Map(toStates.map((state) => [stateNameForDiff(state), state]));
 
     const addedStates: string[] = [];
     const removedStates: string[] = [];
     const modifiedStates: Array<{ stateName: string; changes: Record<string, { from: unknown; to: unknown }> }> = [];
 
-    // Detect added and modified states
     for (const [name, toState] of toStateMap) {
       const fromState = fromStateMap.get(name);
       if (!fromState) {
         addedStates.push(name);
       } else {
-        // Deep metadata comparison
         const changes: Record<string, { from: unknown; to: unknown }> = {};
         const metaKeys = ['category', 'provenance', 'behaviorKey', 'canonicalBehavior'];
         for (const key of metaKeys) {
@@ -1107,44 +1178,42 @@ app.get('/applications/:id/declared-flow/:flowId/versions/diff', async (req: Req
       }
     }
 
-    // Detect removed states
     for (const [name] of fromStateMap) {
       if (!toStateMap.has(name)) {
         removedStates.push(name);
       }
     }
 
-    // Build transition key for comparison
-    function transitionKey(t: any): string {
-      const from = t.fromStateName ?? t.fromState ?? t.from ?? '';
-      const to = t.toStateName ?? t.toState ?? t.to ?? '';
-      const action = t.action ?? '';
+    function transitionKey(transition: any): string {
+      const from = transitionEndpointForDiff(transition, 'from');
+      const to = transitionEndpointForDiff(transition, 'to');
+      const action = transition.action ?? '';
       return `${from}::${to}::${action}`;
     }
 
-    function transitionSummary(t: any): { fromState: string; toState: string; action?: string } {
+    function transitionSummary(transition: any): { fromState: string; toState: string; action?: string } {
       return {
-        fromState: t.fromStateName ?? t.fromState ?? t.from ?? '',
-        toState: t.toStateName ?? t.toState ?? t.to ?? '',
-        action: t.action || undefined,
+        fromState: transitionEndpointForDiff(transition, 'from') || 'Unknown',
+        toState: transitionEndpointForDiff(transition, 'to') || 'Unknown',
+        action: transition.action || undefined,
       };
     }
 
-    const fromTransKeys = new Map(fromTransitions.map((t) => [transitionKey(t), t]));
-    const toTransKeys = new Map(toTransitions.map((t) => [transitionKey(t), t]));
+    const fromTransKeys = new Map(fromTransitions.map((transition) => [transitionKey(transition), transition]));
+    const toTransKeys = new Map(toTransitions.map((transition) => [transitionKey(transition), transition]));
 
     const addedTransitions: Array<{ fromState: string; toState: string; action?: string }> = [];
     const removedTransitions: Array<{ fromState: string; toState: string; action?: string }> = [];
 
-    for (const [key, t] of toTransKeys) {
+    for (const [key, transition] of toTransKeys) {
       if (!fromTransKeys.has(key)) {
-        addedTransitions.push(transitionSummary(t));
+        addedTransitions.push(transitionSummary(transition));
       }
     }
 
-    for (const [key, t] of fromTransKeys) {
+    for (const [key, transition] of fromTransKeys) {
       if (!toTransKeys.has(key)) {
-        removedTransitions.push(transitionSummary(t));
+        removedTransitions.push(transitionSummary(transition));
       }
     }
 
@@ -2123,14 +2192,20 @@ app.post(
 // ─────────────────────────────────────────────────────────────
 // Admin: AI Usage Aggregates
 // All endpoints require system admin (DB-backed)
-// ─────────────────────────────────────────────────────────────
+// Admin: AI Usage Aggregates
+// All endpoints require system admin (DB-backed). Reads refresh aggregates from source logs first.
 
 app.get('/v1/admin/ai-usage', verifyJwt, requireSystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { organizationId, days = '30' } = req.query as Record<string, string>;
-    const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000);
+    const { organizationId } = req.query as Record<string, string>;
+    const { days, startDate, endDate } = aiUsageDateRangeForDays((req.query as Record<string, string>).days);
 
-    const where: any = { date: { gte: since } };
+    // Only aggregate today's logs dynamically to ensure real-time accuracy and prevent loading the entire history.
+    const todayStart = utcDayStart(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    await ensureAiUsageAggregated(todayStart, todayEnd, organizationId);
+
+    const where: any = { date: { gte: startDate, lt: endDate } };
     if (organizationId) where.organizationId = organizationId;
 
     const aggregates = await (prisma as any).aIUsageDailyAggregate.findMany({ where });
@@ -2152,7 +2227,7 @@ app.get('/v1/admin/ai-usage', verifyJwt, requireSystemAdmin, async (req: Authent
       ? Math.round((summary.successCalls / summary.totalCalls) * 10000) / 100
       : 0;
 
-    res.json({ success: true, data: { summary: { ...summary, successRate }, periodDays: Number(days) } });
+    res.json({ success: true, data: { summary: { ...summary, successRate }, periodDays: days } });
   } catch (err) {
     console.error('[FDRS] Admin AI usage error', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2161,10 +2236,15 @@ app.get('/v1/admin/ai-usage', verifyJwt, requireSystemAdmin, async (req: Authent
 
 app.get('/v1/admin/ai-usage/daily', verifyJwt, requireSystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { organizationId, days = '30', feature, provider } = req.query as Record<string, string>;
-    const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000);
+    const { organizationId, feature, provider } = req.query as Record<string, string>;
+    const { startDate, endDate } = aiUsageDateRangeForDays((req.query as Record<string, string>).days);
 
-    const where: any = { date: { gte: since } };
+    // Only aggregate today's logs dynamically to ensure real-time accuracy and prevent loading the entire history.
+    const todayStart = utcDayStart(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    await ensureAiUsageAggregated(todayStart, todayEnd, organizationId);
+
+    const where: any = { date: { gte: startDate, lt: endDate } };
     if (organizationId) where.organizationId = organizationId;
     if (feature) where.feature = feature;
     if (provider) where.provider = provider;
@@ -2183,12 +2263,16 @@ app.get('/v1/admin/ai-usage/daily', verifyJwt, requireSystemAdmin, async (req: A
 
 app.get('/v1/admin/ai-usage/providers', verifyJwt, requireSystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { days = '30' } = req.query as Record<string, string>;
-    const since = new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000);
+    const { startDate, endDate } = aiUsageDateRangeForDays((req.query as Record<string, string>).days);
+
+    // Only aggregate today's logs dynamically to ensure real-time accuracy and prevent loading the entire history.
+    const todayStart = utcDayStart(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    await ensureAiUsageAggregated(todayStart, todayEnd);
 
     const rows = await (prisma as any).aIUsageDailyAggregate.groupBy({
       by: ['provider', 'model'],
-      where: { date: { gte: since } },
+      where: { date: { gte: startDate, lt: endDate } },
       _sum: { totalCalls: true, successCalls: true, failedCalls: true, totalCostUsd: true, totalTokens: true },
       _avg: { avgLatencyMs: true },
     });
@@ -2200,6 +2284,16 @@ app.get('/v1/admin/ai-usage/providers', verifyJwt, requireSystemAdmin, async (re
   }
 });
 
+app.post('/v1/admin/ai-usage/backfill', verifyJwt, requireSystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const days = Math.min(90, parseInt((req.query as Record<string, string>).days ?? '30', 10));
+    const result = await backfillAiUsageDaily({ prisma, days });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[FDRS] Admin AI usage backfill error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // ─────────────────────────────────────────────────────────────
 // Admin: Rule Candidates
 // ─────────────────────────────────────────────────────────────

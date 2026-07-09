@@ -2,7 +2,7 @@ import { initTracing } from '@sots/telemetry';
 initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient } from '@sots/db';
+import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
 import { Feature, Services } from '@sots/shared';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@sots/email';
@@ -243,6 +243,23 @@ async function verifyApiKeyOwnership(req: AuthenticatedRequest, res: Response, n
 
 const app = express();
 const prisma = new PrismaClient();
+const aiUsageAggregationRuns = new Map<string, Promise<void>>();
+
+async function ensureAiUsageAggregated(startDate: Date, endDate: Date, organizationId?: string): Promise<void> {
+  const key = [startDate.toISOString(), endDate.toISOString(), organizationId ?? 'all'].join('|');
+  const existing = aiUsageAggregationRuns.get(key);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const run = aggregateAiUsageDaily({ prisma, startDate, endDate, organizationId })
+    .then(() => undefined)
+    .finally(() => aiUsageAggregationRuns.delete(key));
+  aiUsageAggregationRuns.set(key, run);
+  await run;
+}
+
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
@@ -2014,14 +2031,18 @@ app.get('/admin/audit-logs', verifySystemAdmin, async (req: AuthenticatedRequest
   }
 });
 
-/** GET /admin/ai-usage — summary across all orgs */
+/** GET /admin/ai-usage - summary across all orgs */
 app.get('/admin/ai-usage', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const days = Math.min(365, parseInt(req.query.days as string ?? '30', 10));
-  const since = new Date(Date.now() - days * 86_400_000);
+  const { days, startDate, endDate } = aiUsageDateRangeForDays(req.query.days);
 
   try {
+    // Only aggregate today's logs dynamically to ensure real-time accuracy and prevent loading the entire history.
+    const todayStart = utcDayStart(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    await ensureAiUsageAggregated(todayStart, todayEnd);
+
     const aggregates = await prisma.aIUsageDailyAggregate.findMany({
-      where: { date: { gte: since } },
+      where: { date: { gte: startDate, lt: endDate } },
       orderBy: { date: 'desc' },
     });
 
@@ -2032,7 +2053,6 @@ app.get('/admin/ai-usage', verifySystemAdmin, async (req: AuthenticatedRequest, 
       totalCostUsd: acc.totalCostUsd + Number(r.totalCostUsd),
     }), { totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCostUsd: 0 });
 
-    // Group by provider
     const byProvider: Record<string, any> = {};
     for (const r of aggregates) {
       if (!byProvider[r.provider]) {
@@ -2057,12 +2077,16 @@ app.get('/admin/ai-usage', verifySystemAdmin, async (req: AuthenticatedRequest, 
 
 /** GET /admin/ai-usage/daily */
 app.get('/admin/ai-usage/daily', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const days = Math.min(365, parseInt(req.query.days as string ?? '30', 10));
-  const since = new Date(Date.now() - days * 86_400_000);
+  const { startDate, endDate } = aiUsageDateRangeForDays(req.query.days);
 
   try {
+    // Only aggregate today's logs dynamically to ensure real-time accuracy and prevent loading the entire history.
+    const todayStart = utcDayStart(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    await ensureAiUsageAggregated(todayStart, todayEnd);
+
     const data = await prisma.aIUsageDailyAggregate.findMany({
-      where: { date: { gte: since } },
+      where: { date: { gte: startDate, lt: endDate } },
       orderBy: { date: 'desc' },
       take: 500,
     });
@@ -2084,6 +2108,17 @@ app.get('/admin/ai-usage/daily', verifySystemAdmin, async (req: AuthenticatedReq
   }
 });
 
+/** POST /admin/ai-usage/backfill */
+app.post('/admin/ai-usage/backfill', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const days = Math.min(90, parseInt(req.query.days as string ?? '30', 10));
+  try {
+    const result = await backfillAiUsageDaily({ prisma, days });
+    res.json(result);
+  } catch (err) {
+    console.error('[Admin] AI usage backfill error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 /** GET /admin/rulesets — list DomainRulesetVersions (DRAFT/ACTIVE) across all domains */
 app.get('/admin/rulesets', verifySystemAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const status = req.query.status as string | undefined;
