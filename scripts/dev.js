@@ -26,8 +26,8 @@ if (fs.existsSync(envPath)) {
 }
 
 const isWindows = process.platform === 'win32';
-const cmd = isWindows ? 'npx.cmd' : 'npx';
-const args = ['turbo', 'run', 'dev', '--concurrency=50', '--env-mode=loose'];
+const cmd = isWindows ? 'pnpm.cmd' : 'pnpm';
+const args = ['exec', 'turbo', 'run', 'dev', '--concurrency=50', '--env-mode=loose'];
 
 console.log('[DevLauncher] Starting Turborepo dev server...');
 const child = spawn(cmd, args, { stdio: 'inherit', shell: true });
