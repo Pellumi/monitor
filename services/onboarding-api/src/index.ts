@@ -2488,7 +2488,7 @@ app.delete('/organizations/:orgId/invitations/:invitationId', verifyJwt, verifyO
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
-const PORT = Services.ONBOARDING_API;
+const PORT = Number(process.env.PORT || Services.ONBOARDING_API);
 
 app.listen(PORT, () => {
   console.log(`[OnboardingAPI] Running on port ${PORT}`);

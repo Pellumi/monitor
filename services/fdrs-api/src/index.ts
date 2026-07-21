@@ -2863,7 +2863,7 @@ app.get('/v1/admin/audit-logs', verifyJwt, requireSystemAdmin, async (req: Authe
 // ─────────────────────────────────────────────────────────────
 // Start Server
 // ─────────────────────────────────────────────────────────────
-const PORT = Services.FDRS_API;
+const PORT = Number(process.env.PORT || Services.FDRS_API);
 
 app.listen(PORT, () => {
   console.log(`[FDRSAPI] Running on port ${PORT}`);

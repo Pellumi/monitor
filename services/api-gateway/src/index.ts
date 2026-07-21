@@ -13,20 +13,20 @@ import { Services } from '@sots/shared';
 // Configuration
 // ─────────────────────────────────────────────────────────────
 
-const PORT = Services.API_GATEWAY;
+const PORT = Number(process.env.PORT || Services.API_GATEWAY);
 
 const UPSTREAM = {
-  EVENT_COLLECTOR:   `http://localhost:${Services.EVENT_COLLECTOR}`,
-  GRAPH_ENGINE:      `http://localhost:${Services.GRAPH_ENGINE}`,
-  COVERAGE_ENGINE:   `http://localhost:${Services.COVERAGE_ENGINE}`,
-  REPORT_ENGINE:     `http://localhost:${Services.REPORT_ENGINE}`,
-  DEMONSTRATION_API: `http://localhost:${Services.DEMONSTRATION_API}`,
-  ONBOARDING_API:    `http://localhost:${Services.ONBOARDING_API}`,
-  ENDPOINT_ENGINE:   `http://localhost:${Services.ENDPOINT_ENGINE}`,
-  FDRS_API:          `http://localhost:${Services.FDRS_API}`,
-  BILLING_API:       `http://localhost:${Services.BILLING_API}`,
-  USAGE_TRACKER:     `http://localhost:${Services.USAGE_TRACKER}`,
-  AUTH_API:          `http://localhost:${Services.AUTH_API}`,
+  EVENT_COLLECTOR:   process.env.EVENT_COLLECTOR_URL || `http://localhost:${Services.EVENT_COLLECTOR}`,
+  GRAPH_ENGINE:      process.env.GRAPH_ENGINE_URL || `http://localhost:${Services.GRAPH_ENGINE}`,
+  COVERAGE_ENGINE:   process.env.COVERAGE_ENGINE_URL || `http://localhost:${Services.COVERAGE_ENGINE}`,
+  REPORT_ENGINE:     process.env.REPORT_ENGINE_URL || `http://localhost:${Services.REPORT_ENGINE}`,
+  DEMONSTRATION_API: process.env.DEMONSTRATION_API_URL || `http://localhost:${Services.DEMONSTRATION_API}`,
+  ONBOARDING_API:    process.env.ONBOARDING_API_URL || `http://localhost:${Services.ONBOARDING_API}`,
+  ENDPOINT_ENGINE:   process.env.ENDPOINT_ENGINE_URL || `http://localhost:${Services.ENDPOINT_ENGINE}`,
+  FDRS_API:          process.env.FDRS_API_URL || `http://localhost:${Services.FDRS_API}`,
+  BILLING_API:       process.env.BILLING_API_URL || `http://localhost:${Services.BILLING_API}`,
+  USAGE_TRACKER:     process.env.USAGE_TRACKER_URL || `http://localhost:${Services.USAGE_TRACKER}`,
+  AUTH_API:          process.env.AUTH_API_URL || `http://localhost:${Services.AUTH_API}`,
 };
 
 const ONBOARDING_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-key`;
