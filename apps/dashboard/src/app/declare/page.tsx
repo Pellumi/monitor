@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
 import { useState, useMemo, Suspense, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -22,30 +23,15 @@ import {
   Info,
   Copy,
   Terminal,
-  ShieldCheck,
   Play,
   Sparkles,
   CheckCircle2,
   RefreshCw,
   Pencil,
-  FlaskConical,
 } from 'lucide-react';
 
 const FDRS_API = '/api-gateway';
 const ONBOARDING_API = '/api-gateway';
-
-/** Unified badge for AI/Experimental features. */
-function ExperimentalBadge({ text, className }: { text?: string; className?: string }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border border-amber-900/60 bg-amber-950/30 px-2.5 py-1 text-xs font-semibold text-amber-200 animate-[pulse_3s_ease-in-out_infinite] ${className ?? ''}`}
-    >
-      <FlaskConical className="h-3 w-3" />
-      <Sparkles className="h-3 w-3" />
-      {text ?? 'Experimental'}
-    </span>
-  );
-}
 
 interface DeclaredStateSuggestion {
   id: string;
@@ -55,7 +41,16 @@ interface DeclaredStateSuggestion {
   sourceTier: string;
   rationale: string;
   confidence: number;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  title?: string;
+  description?: string;
+  suggestionType?: string;
+  severity?: string;
+  source?: 'RULE_ENGINE' | 'AI' | 'HYBRID';
+  suggestedStatesJson?: Array<{ name: string; category: string }>;
+  suggestedTransitionsJson?: Array<{ from: string; to: string; action?: string }>;
+  graphVersion?: number;
+  graphHash?: string;
+  status: 'PENDING' | 'EDITED' | 'ACCEPTED' | 'REJECTED' | 'DISMISSED' | 'SUPERSEDED';
   patternId?: string;
 }
 
@@ -86,6 +81,17 @@ interface DeclaredFlow {
   workflowType: string;
   states: DeclaredState[];
   transitions: DeclaredTransition[];
+  graphHash: string;
+}
+
+interface FlowSuggestionsResponse {
+  success: boolean;
+  data: {
+    graphVersion: number;
+    graphHash: string;
+    suggestions: DeclaredStateSuggestion[];
+    meta?: { ruleCount: number; aiCount: number; aiAttempted: boolean; fallbackUsed: boolean; stale: boolean; latencyMs: number };
+  };
 }
 
 interface ReconciliationReport {
@@ -149,6 +155,10 @@ function DeclareContent() {
   const [feedbackRating, setFeedbackRating] = useState(5);
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [highlightedNodeIds, setHighlightedNodeIds] = useState<string[]>([]);
+  const suggestionAbortRef = useRef<AbortController | null>(null);
+  const suggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─────────────────────────────────────────────────────────────
   // Onboarding / Environment Queries
@@ -291,7 +301,7 @@ function DeclareContent() {
   // ─────────────────────────────────────────────────────────────
 
   // List flows
-  const { data: flows, isLoading: isFlowsLoading } = useQuery<DeclaredFlow[]>({
+  const { data: flows } = useQuery<DeclaredFlow[]>({
     queryKey: ['declared-flows', appId],
     queryFn: async () => {
       const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow`);
@@ -301,7 +311,7 @@ function DeclareContent() {
   });
 
   // Get selected flow details
-  const { data: activeFlow, isLoading: isActiveFlowLoading } = useQuery<DeclaredFlow>({
+  const { data: activeFlow, refetch: refetchActiveFlow } = useQuery<DeclaredFlow>({
     queryKey: ['declared-flow-details', selectedFlowId],
     queryFn: async () => {
       if (!selectedFlowId) return null as any;
@@ -311,6 +321,62 @@ function DeclareContent() {
     },
     enabled: !!selectedFlowId,
   });
+
+  const { data: suggestionResponse, isFetching: isSuggestionsLoading } = useQuery<FlowSuggestionsResponse>({
+    queryKey: ['flow-suggestions', appId, selectedFlowId],
+    queryFn: async () => {
+      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions`);
+      if (!res.ok) throw new Error('Failed to fetch flow suggestions');
+      return res.json();
+    },
+    enabled: !!selectedFlowId,
+  });
+
+  const generateSuggestions = useCallback(async (
+    flow: DeclaredFlow,
+    trigger: 'STATE_ADDED' | 'TRANSITION_ADDED' | 'SUGGESTION_ACCEPTED' | 'MANUAL_REFRESH',
+    includeAi: boolean,
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${flow.id}/suggestions/generate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+      body: JSON.stringify({ graphVersion: flow.version, graphHash: flow.graphHash, trigger, includeAi }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.message ?? payload.error ?? 'Failed to generate suggestions');
+    if (payload.data.graphVersion !== flow.version || payload.data.graphHash !== flow.graphHash) return;
+    queryClient.setQueryData(['flow-suggestions', appId, flow.id], payload);
+    setSuggestionError(null);
+  }, [appId, queryClient]);
+
+  const refreshAfterGraphMutation = useCallback(async (
+    trigger: 'STATE_ADDED' | 'TRANSITION_ADDED' | 'SUGGESTION_ACCEPTED',
+  ) => {
+    if (trigger !== 'SUGGESTION_ACCEPTED') setHighlightedNodeIds([]);
+    suggestionAbortRef.current?.abort();
+    if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+    const refreshed = await refetchActiveFlow();
+    const flow = refreshed.data;
+    if (!flow) return;
+    try {
+      await generateSuggestions(flow, trigger, false);
+      const controller = new AbortController();
+      suggestionAbortRef.current = controller;
+      suggestionTimerRef.current = setTimeout(() => {
+        void generateSuggestions(flow, trigger, true, controller.signal).catch((error) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          setSuggestionError(error instanceof Error ? error.message : 'AI enrichment failed');
+        });
+      }, 500);
+    } catch (error) {
+      setSuggestionError(error instanceof Error ? error.message : 'Suggestion refresh failed');
+    }
+  }, [generateSuggestions, refetchActiveFlow]);
+
+  useEffect(() => () => {
+    suggestionAbortRef.current?.abort();
+    if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+  }, []);
 
   // Get reconciliation reports
   const { data: recReports, refetch: refetchReconciliation } = useQuery<ReconciliationReport[]>({
@@ -358,9 +424,10 @@ function DeclareContent() {
       if (!res.ok) throw new Error('Failed to add state');
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
       setStateName('');
+      await refreshAfterGraphMutation('STATE_ADDED');
     },
   });
 
@@ -374,30 +441,35 @@ function DeclareContent() {
       if (!res.ok) throw new Error('Failed to add transition');
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
       setFromStateId('');
       setToStateId('');
       setTransAction('');
+      await refreshAfterGraphMutation('TRANSITION_ADDED');
     },
   });
 
   const acceptSuggestionMutation = useMutation({
     mutationFn: async (sugId: string) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/suggestions/${sugId}/accept`, {
+      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/accept`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to accept suggestion');
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (data) => {
+      const createdIds = data?.data?.createdNodes?.map((node: { id: string }) => node.id) ?? [];
+      setHighlightedNodeIds(createdIds);
       queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
+      queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] });
+      await refreshAfterGraphMutation('SUGGESTION_ACCEPTED');
     },
   });
 
   const rejectSuggestionMutation = useMutation({
     mutationFn: async (data: { sugId: string; reason?: string }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/suggestions/${data.sugId}/reject`, {
+      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rejectionReason: data.reason }),
@@ -407,9 +479,30 @@ function DeclareContent() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
+      queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] });
       setRejectingSugId(null);
       setRejectionReason('');
     },
+  });
+
+  const dismissSuggestionMutation = useMutation({
+    mutationFn: async (sugId: string) => {
+      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/dismiss`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to dismiss suggestion');
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] }),
+  });
+
+  const editSuggestionMutation = useMutation({
+    mutationFn: async (data: { sugId: string; suggestedStateName: string }) => {
+      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ suggestedStateName: data.suggestedStateName }),
+      });
+      if (!res.ok) throw new Error('Failed to edit suggestion');
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] }),
   });
 
   const completeFlowMutation = useMutation({
@@ -529,13 +622,13 @@ function DeclareContent() {
               style: {
                 background: '#0a0a0a',
                 color: s.category === 'ERROR' ? '#f87171' : '#e5e5e5',
-                border: s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
+                border: highlightedNodeIds.includes(s.id) ? '2px solid #10b981' : s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
                 borderRadius: '8px',
                 padding: '10px 15px',
                 fontSize: '11px',
                 fontWeight: '600',
                 fontFamily: 'monospace',
-                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                boxShadow: highlightedNodeIds.includes(s.id) ? '0 0 18px rgba(16,185,129,.35)' : '0 4px 6px -1px rgb(0 0 0 / 0.1)',
               },
             });
           }
@@ -550,7 +643,8 @@ function DeclareContent() {
               style: {
                 ...n.style,
                 color: s.category === 'ERROR' ? '#f87171' : '#e5e5e5',
-                border: s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
+                border: highlightedNodeIds.includes(s.id) ? '2px solid #10b981' : s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
+                boxShadow: highlightedNodeIds.includes(s.id) ? '0 0 18px rgba(16,185,129,.35)' : n.style?.boxShadow,
               },
             };
           }
@@ -558,7 +652,7 @@ function DeclareContent() {
         });
       });
     }
-  }, [activeFlow]);
+  }, [activeFlow, highlightedNodeIds]);
 
   // Auto-select active flow on load
   useEffect(() => {
@@ -605,21 +699,11 @@ function DeclareContent() {
     }
   }, [appId, activeEnv, onboardingProgress]);
 
-  // Aggregate pending suggestions from all states in the flow
   const pendingSuggestions = useMemo(() => {
-    if (!activeFlow) return [];
-    const sugs: DeclaredStateSuggestion[] = [];
-    for (const state of activeFlow.states) {
-      if (state.suggestions) {
-        for (const sug of state.suggestions) {
-          if (sug.status === 'PENDING') {
-            sugs.push(sug);
-          }
-        }
-      }
-    }
-    return sugs.sort((a, b) => b.confidence - a.confidence);
-  }, [activeFlow]);
+    return (suggestionResponse?.data.suggestions ?? [])
+      .filter((suggestion) => suggestion.status === 'PENDING' || suggestion.status === 'EDITED')
+      .toSorted((a, b) => b.confidence - a.confidence);
+  }, [suggestionResponse]);
 
   // If onboarding is active, render the onboarding wizard stages
   if (onboardingProgress && !onboardingProgress.completedAt) {
@@ -1047,7 +1131,7 @@ function DeclareContent() {
         <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 flex items-start space-x-3 text-blue-400">
           <Info className="h-5 w-5 flex-shrink-0 mt-0.5" />
           <div className="text-sm">
-            <span className="font-semibold">Step 2: Define expected workflows.</span> We've preloaded a standard flow graph. Feel free to drag states around to clean up the layout, add edges, or create states. Click <span className="font-semibold">Mark Complete & Compile</span> at the top right when you are ready to configure the SDK.
+            <span className="font-semibold">Step 2: Define expected workflows.</span> We&apos;ve preloaded a standard flow graph. Feel free to drag states around to clean up the layout, add edges, or create states. Click <span className="font-semibold">Mark Complete & Compile</span> at the top right when you are ready to configure the SDK.
           </div>
         </div>
       )}
@@ -1350,10 +1434,27 @@ function DeclareContent() {
           {/* Suggestions List (Derivation Engine output) */}
           {activeFlow && activeFlow.status === 'DRAFT' && (
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-5 flex flex-col h-[380px] min-h-0">
-              <h2 className="text-sm font-bold text-white flex items-center space-x-2 border-b border-neutral-800 pb-3 flex-shrink-0">
-                <Activity className="h-4 w-4 text-blue-400" />
-                <span>Derivation Suggestions ({pendingSuggestions.length})</span>
-              </h2>
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3 flex-shrink-0">
+                <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <Activity className="h-4 w-4 text-blue-400" />
+                  <span>Flow Suggestions ({pendingSuggestions.length})</span>
+                </h2>
+                <button
+                  type="button"
+                  aria-label="Refresh flow suggestions"
+                  disabled={isSuggestionsLoading || !activeFlow}
+                  onClick={() => activeFlow && generateSuggestions(activeFlow, 'MANUAL_REFRESH', true).catch((error) => setSuggestionError(error.message))}
+                  className="rounded p-1 text-blue-400 hover:bg-blue-950 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSuggestionsLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {suggestionError && (
+                <div role="alert" className="mt-2 rounded border border-red-900 bg-red-950/30 p-2 text-[10px] text-red-300">
+                  {suggestionError}
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto mt-3 space-y-3 pr-1">
                 {pendingSuggestions.length > 0 ? (
@@ -1364,13 +1465,13 @@ function DeclareContent() {
                     >
                       <div className="flex items-start justify-between">
                         <div>
-                          <span className="text-xs font-bold text-white font-mono">{sug.suggestedStateName}</span>
+                          <span className="text-xs font-bold text-white">{sug.title ?? sug.suggestedStateName}</span>
                           <div className="flex items-center space-x-1.5 mt-0.5">
                             <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 px-1.5 py-0.25 rounded font-semibold">
-                              {sug.category}
+                              {sug.suggestionType ?? sug.category}
                             </span>
                             <span className="text-[9px] text-neutral-500">
-                              via {sug.patternId}
+                              {sug.source === 'AI' ? 'Experimental AI' : sug.source === 'HYBRID' ? 'AI-assisted' : 'Rule-based'}
                             </span>
                           </div>
                         </div>
@@ -1393,13 +1494,32 @@ function DeclareContent() {
                         {sug.rationale}
                       </p>
 
+                      {(sug.suggestedStatesJson?.length || sug.suggestedTransitionsJson?.length) ? (
+                        <div className="text-[10px] text-neutral-500 font-mono">
+                          {sug.suggestedStatesJson?.map((state) => state.name).join(', ')}
+                          {sug.suggestedTransitionsJson?.map((transition) => ` ${transition.from} → ${transition.to}`).join(', ')}
+                        </div>
+                      ) : null}
+
                       <div className="flex space-x-2 pt-1">
                         <button
                           onClick={() => acceptSuggestionMutation.mutate(sug.id)}
+                          disabled={acceptSuggestionMutation.isPending}
                           className="flex-1 flex items-center justify-center space-x-1.5 rounded-lg bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-900/50 py-1 text-xs font-semibold transition-all"
                         >
                           <Check className="h-3 w-3" />
                           <span>Accept</span>
+                        </button>
+                        <button
+                          aria-label={`Edit ${sug.title ?? sug.suggestedStateName}`}
+                          disabled={editSuggestionMutation.isPending}
+                          onClick={() => {
+                            const name = window.prompt('Suggested state name', sug.suggestedStateName);
+                            if (name?.trim()) editSuggestionMutation.mutate({ sugId: sug.id, suggestedStateName: name.trim() });
+                          }}
+                          className="rounded-lg border border-neutral-700 px-2 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                        >
+                          <Pencil className="h-3 w-3" />
                         </button>
                         <button
                           onClick={() => setRejectingSugId(sug.id)}
@@ -1407,6 +1527,14 @@ function DeclareContent() {
                         >
                           <X className="h-3 w-3" />
                           <span>Reject</span>
+                        </button>
+                        <button
+                          aria-label={`Dismiss ${sug.title ?? sug.suggestedStateName}`}
+                          disabled={dismissSuggestionMutation.isPending}
+                          onClick={() => dismissSuggestionMutation.mutate(sug.id)}
+                          className="rounded-lg border border-neutral-700 px-2 text-neutral-400 hover:bg-neutral-800 disabled:opacity-50"
+                        >
+                          <ChevronRight className="h-3 w-3" />
                         </button>
                       </div>
                     </div>

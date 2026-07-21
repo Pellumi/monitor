@@ -1,6 +1,6 @@
 import { ZodType, ZodError } from 'zod';
 import { FlowDraftSchema } from '../schemas';
-import { AIProvider, GenerateFlowInput } from './base';
+import { AIProvider, GenerateFlowInput, GenerateStructuredInput, StructuredGenerationResult } from './base';
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -178,6 +178,58 @@ export class JsonHttpProvider implements AIProvider {
   async generateFlowDraft(input: GenerateFlowInput): Promise<ReturnType<typeof FlowDraftSchema.parse>> {
     const result = await this.generateFlowDraftWithMeta(input);
     return result.draft;
+  }
+
+  async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<StructuredGenerationResult<T>> {
+    if (isCircuitOpen(this.name)) throw new Error(`CIRCUIT_OPEN:${this.name}`);
+    const timeoutMs = input.timeoutMs ?? this.timeoutMs;
+    let lastError: unknown;
+    let invalidText = '';
+
+    for (const delay of [0, 500, 1500]) {
+      if (delay) await sleep(jitter(delay));
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      input.signal?.addEventListener('abort', abort, { once: true });
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        invalidText = await this.callStructuredPrompt(input.prompt, controller.signal);
+        const data = input.schema.parse(extractJson(invalidText));
+        recordSuccess(this.name);
+        return { data, rawText: invalidText, repaired: false };
+      } catch (error) {
+        lastError = error;
+        if (input.repairPrompt && invalidText && !(error instanceof FetchError)) {
+          try {
+            const details = error instanceof Error ? error.message : String(error);
+            const repairedText = await this.callStructuredPrompt(input.repairPrompt(invalidText, details), controller.signal);
+            const data = input.schema.parse(extractJson(repairedText));
+            recordSuccess(this.name);
+            return { data, rawText: repairedText, repaired: true };
+          } catch (repairError) {
+            lastError = repairError;
+          }
+        }
+        recordFailure(this.name);
+        if (!(error instanceof FetchError) || !RETRYABLE_STATUS_CODES.has(error.status)) break;
+      } finally {
+        clearTimeout(timeout);
+        input.signal?.removeEventListener('abort', abort);
+      }
+    }
+    throw lastError ?? new Error(`${this.name} structured generation failed`);
+  }
+
+  private async callStructuredPrompt(prompt: string, signal: AbortSignal): Promise<string> {
+    const res = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' } }),
+      signal,
+    });
+    if (!res.ok) throw new FetchError(`${this.name} provider failed with ${res.status}`, res.status);
+    const payload = await res.json() as any;
+    return payload?.choices?.[0]?.message?.content ?? payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? payload?.text ?? JSON.stringify(payload);
   }
 
   /**

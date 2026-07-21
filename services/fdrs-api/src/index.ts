@@ -2,7 +2,7 @@ import { initTracing } from '@sots/telemetry';
 initTracing('fdrs-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
+import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction, SuggestionType, SuggestionSource, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature, Services } from '@sots/shared';
 import { normalizeIntent, getSuggestions } from '@sots/derivation-engine';
@@ -168,6 +168,59 @@ function isEnabledFlag(name: string): boolean {
 
 function hashJson(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function graphRevisionHash(graph: { nodes: any[]; edges: any[] }): string {
+  return hashJson({
+    states: graph.nodes.map((node) => ({ name: node.stateName, category: node.category })).sort((a, b) => a.name.localeCompare(b.name)),
+    transitions: graph.edges.map((edge) => ({
+      from: edge.fromNode?.stateName ?? edge.fromNodeId,
+      to: edge.toNode?.stateName ?? edge.toNodeId,
+      action: edge.action ?? '',
+    })).sort((a, b) => `${a.from}:${a.to}:${a.action}`.localeCompare(`${b.from}:${b.to}:${b.action}`)),
+  });
+}
+
+function normalizedSuggestionType(type: string): SuggestionType {
+  const map: Record<string, SuggestionType> = {
+    PREREQUISITE: SuggestionType.PREREQUISITE,
+    PREREQUISITE_STATE: SuggestionType.PREREQUISITE,
+    VALIDATION_CONSTRAINT: SuggestionType.IN_STATE_VALIDATION,
+    POSTREQUISITE_FLOW: SuggestionType.POST_REQUISITE,
+    MISSING_FAILURE_PATH: SuggestionType.ERROR_PATH,
+    ERROR_PATH: SuggestionType.ERROR_PATH,
+    MISSING_RECOVERY_PATH: SuggestionType.RECOVERY_PATH,
+    MISSING_EMPTY_STATE: SuggestionType.EMPTY_STATE,
+    MISSING_LOADING_STATE: SuggestionType.LOADING_STATE,
+    BUSINESS_RULE: SuggestionType.BUSINESS_RULE,
+  };
+  return map[type] ?? SuggestionType.BUSINESS_RULE;
+}
+
+function suggestionPatch(item: any): { states: Array<{ name: string; category: string }>; transitions: Array<{ from: string; to: string; action?: string }> } {
+  const states = Array.isArray(item.suggestedStates)
+    ? item.suggestedStates
+    : item.suggestedState ? [{ name: item.suggestedState, category: item.severity === 'HIGH' ? 'ERROR' : 'BUSINESS' }] : [];
+  const transitions = Array.isArray(item.suggestedTransitions) ? item.suggestedTransitions : [];
+  if (transitions.length === 0 && typeof item.suggestedTransition === 'string') {
+    const match = item.suggestedTransition.match(/^(.+?)->(.+?)(?:\[(.+)\])?$/);
+    if (match) transitions.push({ from: match[1], to: match[2], action: match[3] });
+  }
+  return {
+    states: states.map((state: any) => ({ name: normalizeKeyForSuggestion(state.name), category: normalizeStateCategory(state.category) })),
+    transitions: transitions.map((transition: any) => ({
+      from: normalizeKeyForSuggestion(transition.from), to: normalizeKeyForSuggestion(transition.to),
+      action: transition.action ? normalizeKeyForSuggestion(transition.action) : undefined,
+    })),
+  };
+}
+
+function normalizeKeyForSuggestion(value: unknown): string {
+  return String(value ?? '').trim().replace(/([a-z])([A-Z])/g, '$1_$2').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+}
+
+function semanticSuggestionKey(type: string, patch: ReturnType<typeof suggestionPatch>, focus?: string): string {
+  return hashJson({ type, states: patch.states, transitions: patch.transitions, focus: focus ?? '' });
 }
 
 async function getApplicationContext(applicationId: string) {
@@ -838,76 +891,113 @@ app.post('/v1/applications/:appId/flows/ai-drafts/:draftId/reject', async (req: 
   }
 });
 
-app.post('/v1/applications/:appId/declared-flows/:flowId/ai-suggestions', async (req: Request, res: Response) => {
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   const { appId, flowId } = req.params;
-  const access = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
-  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const trigger = String(req.body.trigger ?? 'MANUAL_REFRESH');
+  const allowedTriggers = new Set(['STATE_ADDED', 'TRANSITION_ADDED', 'SUGGESTION_ACCEPTED', 'MANUAL_REFRESH']);
+  if (!allowedTriggers.has(trigger)) return res.status(400).json({ error: 'INVALID_TRIGGER' });
+  const appContext = await getApplicationContext(appId);
+  if (!appContext) return res.status(404).json({ error: 'Application not found' });
 
   try {
-    const flow = await prisma.behaviorGraph.findUnique({
-      where: { id: flowId },
+    const graph = await prisma.behaviorGraph.findFirst({
+      where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED },
       include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
     });
-    if (!flow || flow.applicationId !== appId) return res.status(404).json({ error: 'Behavior graph not found' });
-    const appRecord = access.appRecord!;
-    const organizationId = appRecord.organizationId;
-    if (!organizationId) return res.status(400).json({ error: 'Application has no organization' });
-
-    const profile = await prisma.applicationProfile.findUnique({ where: { applicationId: appId } });
-    const domainKey = profile?.profileType || flow.workflowType || 'GENERIC_CRUD';
-    const rulesets = await getActiveRulesets({ domainKey, organizationId, applicationId: appId, prisma });
-    const suggestions = await suggestFlowGaps({
-      domainKey,
-      currentGraph: {
-        states: flow.nodes.map((node) => ({ key: node.behaviorKey || node.stateName, name: node.stateName, category: node.category })),
-        transitions: flow.edges.map((edge) => ({
-          from: edge.fromNode.behaviorKey || edge.fromNode.stateName,
-          to: edge.toNode.behaviorKey || edge.toNode.stateName,
-          action: edge.action || undefined,
-        })),
-      },
-      rulesets,
-    });
-
-        const parentState = req.body.focusStateKey
-      ? flow.nodes.find((node) => node.stateName === String(req.body.focusStateKey).toUpperCase())
-      : flow.nodes[0] || null;
-
-    const created = [];
-    for (const suggestion of suggestions) {
-      const suggestedName = suggestion.suggestedStates[0]?.name || suggestion.title;
-      const dbSuggestion = await prisma.declaredStateSuggestion.create({
-        data: {
-          parentStateId: parentState?.id || null,
-          organizationId,
-          applicationId: appId,
-          flowId,
-          suggestionType: suggestion.type,
-          title: suggestion.title,
-          description: suggestion.rationale,
-          suggestedStateName: suggestedName,
-          category: suggestion.suggestedStates[0]?.category || 'BUSINESS',
-          severity: suggestion.severity as any,
-          sourceTier: 'HYBRID',
-          rationale: suggestion.rationale,
-          suggestedStatesJson: suggestion.suggestedStates as any,
-          suggestedTransitionsJson: suggestion.suggestedTransitions as any,
-          source: 'HYBRID',
-          confidence: suggestion.confidence,
-          status: 'PENDING',
-          rulesetVersionIds: suggestion.rulesetVersionIds,
-          rulePatternIds: suggestion.rulePatternIds,
-          patternId: suggestion.rulePatternIds[0] || null,
-        },
-      });
-      created.push(dbSuggestion);
+    if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+    const graphHash = graphRevisionHash(graph);
+    if ((req.body.graphVersion !== undefined && Number(req.body.graphVersion) !== graph.version) ||
+        (req.body.graphHash && req.body.graphHash !== graphHash)) {
+      return res.status(409).json({ error: 'GRAPH_REVISION_STALE', graphVersion: graph.version, graphHash });
     }
 
-    res.status(201).json({ success: true, data: { suggestions: created } });
+    await prisma.declaredStateSuggestion.updateMany({
+      where: { flowId, status: { in: ['PENDING', 'EDITED', 'SUGGESTED'] }, NOT: { graphHash } },
+      data: { status: 'SUPERSEDED' },
+    });
+
+    const profile = await prisma.applicationProfile.findUnique({ where: { applicationId: appId } });
+    const domainKey = profile?.profileType || graph.workflowType || 'GENERIC_CRUD';
+    const organizationId = appContext.organizationId ?? undefined;
+    if (!organizationId) return res.status(400).json({ error: 'Application has no organization' });
+    const rulesets = await getActiveRulesets({ domainKey, organizationId, applicationId: appId, prisma });
+    const states = graph.nodes.map((node) => ({ key: node.behaviorKey || node.stateName, name: node.stateName, category: node.category }));
+    const transitions = graph.edges.map((edge) => ({ from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action || undefined }));
+    const ruleSuggestions = await suggestFlowGaps({ domainKey, currentGraph: { states, transitions }, rulesets });
+    const ruleItems = ruleSuggestions.map((suggestion) => ({
+      type: suggestion.type, title: suggestion.title, description: suggestion.rationale, rationale: suggestion.rationale,
+      confidence: suggestion.confidence, severity: suggestion.severity,
+      targetNodeId: suggestion.suggestedTransitions[0]?.from ?? suggestion.suggestedStates[0]?.name,
+      evidence: suggestion.rulePatternIds ?? [], suggestedState: suggestion.suggestedStates[0]?.name,
+      suggestedTransition: suggestion.suggestedTransitions[0]
+        ? `${suggestion.suggestedTransitions[0].from}->${suggestion.suggestedTransitions[0].to}[${suggestion.suggestedTransitions[0].action ?? ''}]`
+        : undefined,
+    }));
+    const aiAccess = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
+    const includeAi = req.body.includeAi !== false && aiAccess.allowed;
+    const result = await generateFlowSuggestions({
+      applicationId: appId, organizationId, applicationDomain: domainKey,
+      declaredFlows: [{ flowId, name: graph.name, states, transitions }], existingRuleSuggestions: ruleItems,
+      userDefinedGoals: Array.isArray(req.body.userDefinedGoals) ? req.body.userDefinedGoals : undefined,
+      graphVersion: graph.version, graphHash, latestMutation: trigger,
+    }, { enableAi: includeAi });
+
+    let aiInvocationId: string | undefined;
+    if (result.aiCalled) {
+      const invocation = await prisma.aIInvocationLog.create({ data: {
+        organizationId, applicationId: appId, feature: 'FLOW_SUGGESTIONS', provider: result.provider ?? 'unknown',
+        model: result.model ?? 'unknown', promptHash: result.promptHash ?? '', status: result.fallbackUsed ? 'FALLBACK_USED' : 'SUCCESS',
+        fallbackUsed: result.fallbackUsed, repaired: result.aiRepaired, latencyMs: result.latencyMs,
+      } as any });
+      aiInvocationId = invocation.id;
+    }
+
+    const existingStateNames = new Set(states.map((state) => normalizeKeyForSuggestion(state.name)));
+    const persisted = [];
+    for (const item of result.suggestions) {
+      const patch = suggestionPatch(item);
+      if (patch.states.length === 0 || patch.states.every((state) => existingStateNames.has(state.name))) continue;
+      const knownNames = new Set([...existingStateNames, ...patch.states.map((state) => state.name)]);
+      if (patch.transitions.some((transition) => !knownNames.has(transition.from) || !knownNames.has(transition.to))) continue;
+      const dedupeKey = semanticSuggestionKey(item.type, patch, item.targetNodeId);
+      const record = await prisma.declaredStateSuggestion.upsert({
+        where: { flowId_graphHash_dedupeKey: { flowId, graphHash, dedupeKey } }, update: {},
+        create: {
+          parentStateId: graph.nodes.find((node) => node.stateName === normalizeKeyForSuggestion(item.targetNodeId))?.id ?? null,
+          organizationId, applicationId: appId, flowId, suggestionType: normalizedSuggestionType(item.type),
+          title: item.title, description: item.description, suggestedStateName: patch.states[0].name,
+          category: patch.states[0].category, severity: item.severity as any,
+          sourceTier: item.sources.join('+'), rationale: item.rationale,
+          suggestedStatesJson: patch.states as any, suggestedTransitionsJson: patch.transitions as any,
+          evidenceJson: item.evidence as any,
+          source: item.sources.includes('AI_ASSISTED') && item.sources.includes('RULE_BASED')
+            ? SuggestionSource.HYBRID
+            : item.sources.includes('AI_ASSISTED') ? SuggestionSource.AI : SuggestionSource.RULE_ENGINE,
+          confidence: item.confidence, status: 'PENDING', graphVersion: graph.version, graphHash, dedupeKey,
+          generationTrigger: trigger, aiInvocationId,
+        },
+      });
+      persisted.push(record);
+    }
+    const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+    res.status(201).json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions, meta: {
+      ruleCount: ruleItems.length, aiCount: suggestions.filter((item) => item.source !== SuggestionSource.RULE_ENGINE).length,
+      aiAttempted: result.aiCalled, fallbackUsed: result.fallbackUsed, stale: false, latencyMs: Date.now() - startedAt,
+    } } });
   } catch (err) {
-    console.error('[FDRS] Generate AI suggestions error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[FDRS] Generate flow suggestions error:', err);
+    res.status(500).json({ error: 'FLOW_SUGGESTION_GENERATION_FAILED', message: 'Suggestions could not be refreshed. Rule suggestions remain available.' });
   }
+});
+
+app.get('/v1/applications/:appId/declared-flows/:flowId/suggestions', async (req: Request, res: Response) => {
+  const { appId, flowId } = req.params;
+  const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId: appId }, include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } } });
+  if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+  const graphHash = graphRevisionHash(graph);
+  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+  res.json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions } });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -997,6 +1087,7 @@ app.get('/applications/:id/declared-flow/:flowId', async (req: Request, res: Res
     // Map fields for dashboard backward compatibility
     const responseData = {
       ...flow,
+      graphHash: graphRevisionHash(flow),
       states: flow.nodes,
       transitions: flow.edges.map((e: any) => ({
         ...e,
@@ -1286,13 +1377,16 @@ app.post('/applications/:id/declared-flow/:flowId/states', async (req: Request, 
           rationale: sug.rationale,
           confidence: sug.confidence,
           patternId: sug.patternId,
-          status: 'SUGGESTED',
+          status: 'PENDING',
+          applicationId,
+          flowId,
         },
       });
       suggestions.push(dbSug);
     }
 
-    res.status(201).json({ state: node, suggestions });
+    const updatedGraph = await prisma.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+    res.status(201).json({ state: node, suggestions, graphVersion: updatedGraph.version });
   } catch (err) {
     console.error('[FDRS] Add state node error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1332,7 +1426,8 @@ app.post('/applications/:id/declared-flow/:flowId/transitions', async (req: Requ
       toState: edge.toNode
     };
 
-    res.status(201).json(formattedEdge);
+    const updatedGraph = await prisma.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+    res.status(201).json({ ...formattedEdge, graphVersion: updatedGraph.version });
   } catch (err) {
     console.error('[FDRS] Add edge error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1654,6 +1749,121 @@ app.post('/applications/:id/declared-flow/:flowId/suggestions/:sid/dismiss', asy
   } catch (err) {
     console.error('[FDRS] Dismiss suggestion error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestionId', async (req: Request, res: Response) => {
+  const { appId, flowId, suggestionId } = req.params;
+  const suggestion = await prisma.declaredStateSuggestion.findFirst({ where: { id: suggestionId, applicationId: appId, flowId } });
+  if (!suggestion) return res.status(404).json({ error: 'Suggestion not found' });
+  if (!SUGGESTION_STATUS_PENDING.has(suggestion.status)) return res.status(409).json({ error: 'SUGGESTION_NOT_ACTIONABLE' });
+  const suggestedStateName = req.body.suggestedStateName ? normalizeKeyForSuggestion(req.body.suggestedStateName) : suggestion.suggestedStateName;
+  const oldStates = Array.isArray(suggestion.suggestedStatesJson) ? suggestion.suggestedStatesJson as Array<{ name: string; category?: string }> : [];
+  const oldName = suggestion.suggestedStateName;
+  const states = oldStates.length ? oldStates.map((state, index) => index === 0 ? { ...state, name: suggestedStateName } : state) : [{ name: suggestedStateName, category: suggestion.category }];
+  const transitions = Array.isArray(suggestion.suggestedTransitionsJson)
+    ? (suggestion.suggestedTransitionsJson as Array<{ from: string; to: string; action?: string }>).map((transition) => ({
+        ...transition, from: transition.from === oldName ? suggestedStateName : transition.from, to: transition.to === oldName ? suggestedStateName : transition.to,
+      }))
+    : [];
+  const updated = await prisma.declaredStateSuggestion.update({ where: { id: suggestionId }, data: {
+    suggestedStateName, suggestedStatesJson: states as any, suggestedTransitionsJson: transitions as any, status: 'EDITED',
+  } });
+  if (suggestion.organizationId) await prisma.ruleFeedback.create({ data: {
+    organizationId: suggestion.organizationId, applicationId: appId, suggestionId, feedbackType: 'EDITED',
+    beforeJson: suggestion as any, afterJson: updated as any, createdBy: (req as AuthenticatedRequest).user?.id ?? null,
+  } });
+  res.json({ success: true, data: updated });
+});
+
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestionId/accept', async (req: Request, res: Response) => {
+  const { appId, flowId, suggestionId } = req.params;
+  try {
+    const suggestion = await prisma.declaredStateSuggestion.findFirst({ where: { id: suggestionId, applicationId: appId, flowId } });
+    if (!suggestion) return res.status(404).json({ error: 'Suggestion not found' });
+    if (suggestion.status === 'ACCEPTED') return res.json({ success: true, data: { suggestion, idempotent: true } });
+    if (!SUGGESTION_STATUS_PENDING.has(suggestion.status)) return res.status(409).json({ error: 'SUGGESTION_NOT_ACTIONABLE' });
+
+    const graph = await prisma.behaviorGraph.findFirst({
+      where: { id: flowId, applicationId: appId },
+      include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+    });
+    if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+    const currentHash = graphRevisionHash(graph);
+    if ((suggestion.graphVersion != null && suggestion.graphVersion !== graph.version) || (suggestion.graphHash && suggestion.graphHash !== currentHash)) {
+      return res.status(409).json({ error: 'SUGGESTION_STALE', graphVersion: graph.version, graphHash: currentHash });
+    }
+
+    const patch = suggestionPatch({
+      suggestedStates: suggestion.suggestedStatesJson,
+      suggestedTransitions: suggestion.suggestedTransitionsJson,
+      suggestedState: suggestion.suggestedStateName,
+      severity: suggestion.severity,
+    });
+    const prospectiveStates = new Map<string, { name: string; category: string }>(
+      graph.nodes.map((node) => [normalizeKeyForSuggestion(node.stateName), { name: node.stateName, category: node.category }]),
+    );
+    patch.states.forEach((state) => prospectiveStates.set(state.name, state));
+    const prospectiveTransitions = [
+      ...graph.edges.map((edge) => ({ from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action ?? undefined })),
+      ...patch.transitions,
+    ];
+    const validation = validateGeneratedGraph({ workflows: [{ key: graph.workflowType, name: graph.name, states: [...prospectiveStates.values()], transitions: prospectiveTransitions }] });
+    if (!validation.valid) return res.status(422).json({ error: 'INVALID_SUGGESTION_PATCH', details: validation.errors });
+
+    const normalizedBehaviors = new Map<string, string>();
+    for (const state of patch.states) normalizedBehaviors.set(state.name, await normalizeIntent(state.name, appId));
+    const result = await prisma.$transaction(async (tx) => {
+      const currentNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
+      const nodesByName = new Map(currentNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
+      const createdNodes = [];
+      for (const state of patch.states) {
+        if (nodesByName.has(state.name)) continue;
+        const node = await tx.behaviorGraphNode.create({ data: {
+          graphId: flowId, stateName: state.name, behaviorKey: normalizedBehaviors.get(state.name),
+          canonicalBehavior: normalizedBehaviors.get(state.name), category: normalizeStateCategory(state.category),
+          provenance: StateProvenance.SUGGESTED_ACCEPTED,
+        } });
+        nodesByName.set(state.name, node); createdNodes.push(node);
+      }
+      const currentEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId: flowId } });
+      const edgeKeys = new Set(currentEdges.map((edge) => `${edge.fromNodeId}:${edge.toNodeId}:${edge.action ?? ''}`));
+      const createdEdges = [];
+      for (const transition of patch.transitions) {
+        const from = nodesByName.get(transition.from); const to = nodesByName.get(transition.to);
+        if (!from || !to) throw new Error('INVALID_SUGGESTION_PATCH_ENDPOINT');
+        const edgeKey = `${from.id}:${to.id}:${transition.action ?? ''}`;
+        if (edgeKeys.has(edgeKey)) continue;
+        createdEdges.push(await tx.behaviorGraphEdge.create({ data: {
+          graphId: flowId, fromNodeId: from.id, toNodeId: to.id, action: transition.action ?? null,
+          provenance: StateProvenance.SUGGESTED_ACCEPTED,
+        } }));
+        edgeKeys.add(edgeKey);
+      }
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+      const snapshot = {
+        states: [...nodesByName.values()].map((node) => ({ name: node.stateName, category: node.category })),
+        transitions: prospectiveTransitions,
+      };
+      await tx.behaviorGraphVersion.create({ data: {
+        graphId: flowId, version: updatedGraph.version, snapshot: snapshot as any,
+        expectedStateCount: snapshot.states.length, expectedTransitionCount: snapshot.transitions.length,
+      } });
+      const updatedSuggestion = await tx.declaredStateSuggestion.update({ where: { id: suggestionId }, data: {
+        status: 'ACCEPTED', acceptedAt: new Date(), acceptedBy: (req as AuthenticatedRequest).user?.id ?? null,
+      } });
+      if (suggestion.organizationId) await tx.ruleFeedback.create({ data: {
+        organizationId: suggestion.organizationId, applicationId: appId, suggestionId,
+        feedbackType: 'ACCEPTED', beforeJson: suggestion as any,
+        afterJson: { createdNodeIds: createdNodes.map((node) => node.id), createdEdgeIds: createdEdges.map((edge) => edge.id) } as any,
+        createdBy: (req as AuthenticatedRequest).user?.id ?? null,
+      } });
+      return { suggestion: updatedSuggestion, graphVersion: updatedGraph.version, createdNodes, createdEdges };
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[FDRS] Atomic suggestion acceptance failed:', err);
+    res.status(500).json({ error: 'SUGGESTION_ACCEPTANCE_FAILED' });
   }
 });
 

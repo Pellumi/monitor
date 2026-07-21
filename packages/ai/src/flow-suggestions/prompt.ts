@@ -14,6 +14,9 @@ export function buildFlowSuggestionsPrompt(input: {
   observedGraphSummary?: string;
   existingRuleSuggestions: RuleBasedSuggestionItem[];
   userDefinedGoals?: string[];
+  graphVersion?: number;
+  graphHash?: string;
+  latestMutation?: string;
 }): string {
   const flowSummaries = input.declaredFlows.map((flow) => {
     const states = flow.states.map((s) => `${s.name}(${s.category})`).join(', ');
@@ -67,6 +70,8 @@ export function buildFlowSuggestionsPrompt(input: {
     '}',
     '',
     `APPLICATION DOMAIN: ${input.applicationDomain}`,
+    `GRAPH REVISION: ${input.graphVersion ?? 'unknown'} (${input.graphHash ?? 'unknown'})`,
+    `LATEST MUTATION: ${input.latestMutation ?? 'manual analysis'}`,
     `USER GOALS: ${goals}`,
     '',
     'DECLARED FLOWS:',
@@ -83,6 +88,8 @@ export function buildFlowSuggestionsPrompt(input: {
     '- Do NOT include any user credentials, tokens, personal data, or raw form values.',
     '- Mark AI-only suggestions with confidence ≤ 0.75.',
     '- Prioritize HIGH severity gaps first.',
+    '- Consider alternate outcomes, validation failures, system failures, actor/authorization variants, recovery paths, and downstream flows.',
+    '- Return an empty suggestions array when there is no distinct, useful gap.',
   ].join('\n');
 }
 

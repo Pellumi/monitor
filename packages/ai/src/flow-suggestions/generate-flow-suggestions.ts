@@ -10,7 +10,6 @@ import {
 import { extractJson } from '../providers/json-http-provider';
 import { resolveAiProvider } from '../index';
 import { AIProvider } from '../providers/base';
-import { JsonHttpProvider } from '../providers/json-http-provider';
 
 // ─────────────────────────────────────────────────────────────
 // Main entry point: generateFlowSuggestions
@@ -61,6 +60,9 @@ export async function generateFlowSuggestions(
     observedGraphSummary: input.observedGraphSummary,
     existingRuleSuggestions: input.existingRuleSuggestions,
     userDefinedGoals: input.userDefinedGoals,
+    graphVersion: input.graphVersion,
+    graphHash: input.graphHash,
+    latestMutation: input.latestMutation,
   });
 
   const promptHash = crypto.createHash('sha256').update(prompt).digest('hex');
@@ -76,48 +78,15 @@ export async function generateFlowSuggestions(
     aiCalled = true;
 
     // Call provider with timeout
-    const timeoutMs = options?.timeoutMs ?? 15_000;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const generated = await provider.generateStructured({
+      prompt,
+      schema: AIFlowSuggestionResponseSchema,
+      timeoutMs: options?.timeoutMs ?? 15_000,
+      repairPrompt: buildFlowSuggestionsRepairPrompt,
+    });
+    aiSuggestions = generated.data.suggestions.map((suggestion) => ({ ...suggestion, evidence: suggestion.evidence ?? [] }));
+    aiRepaired = generated.repaired;
 
-    let rawText: string;
-
-    try {
-      const requestBody = {
-        model: provider.model,
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-      };
-
-      // Access internals via provider instance cast
-      const httpProvider = provider instanceof JsonHttpProvider ? provider : null;
-      if (!httpProvider) {
-        // MockProvider or similar — ask it to generate a flow draft and ignore (suggestions not supported)
-        throw new Error('PROVIDER_NOT_SUPPORTED_FOR_SUGGESTIONS');
-      }
-
-      // Make the HTTP call directly (reuse the same endpoint/auth as the main provider)
-      const res = await (httpProvider as any)['callSuggestionsEndpoint']?.(prompt, controller.signal) as Response | undefined;
-
-      if (res) {
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error(`Provider HTTP ${res.status}`);
-        const payload = await res.json() as any;
-        rawText = payload?.choices?.[0]?.message?.content ?? payload?.text ?? JSON.stringify(payload);
-      } else {
-        // No direct suggestions endpoint — use the internal fetch method pattern
-        clearTimeout(timeout);
-        throw new Error('PROVIDER_NOT_SUPPORTED_FOR_SUGGESTIONS');
-      }
-    } catch (providerErr) {
-      clearTimeout(timeout);
-      throw providerErr;
-    }
-
-    // Parse + validate
-    const { suggestions: parsed, repaired } = await parseWithRepair(rawText, provider);
-    aiSuggestions = parsed;
-    aiRepaired = repaired;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const isUnsupported = msg.includes('NOT_SUPPORTED_FOR_SUGGESTIONS');

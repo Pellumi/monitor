@@ -102,6 +102,8 @@ export function mergeSuggestions(params: {
       sources: ['RULE_BASED'],
       label: 'Rule-based',
       targetNodeId: rs.targetNodeId,
+      suggestedState: rs.suggestedState,
+      suggestedTransition: rs.suggestedTransition,
       ruleConfidence: rs.confidence,
       evidenceStrength,
     });

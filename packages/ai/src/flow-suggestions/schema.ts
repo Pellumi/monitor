@@ -104,6 +104,8 @@ export interface RuleBasedSuggestionItem {
   targetNodeId?: string;
   patternId?: string;
   evidence?: string[];
+  suggestedState?: string;
+  suggestedTransition?: string;
 }
 
 export interface FlowSuggestionsInput {
@@ -118,6 +120,9 @@ export interface FlowSuggestionsInput {
   existingRuleSuggestions: RuleBasedSuggestionItem[];
   /** Optional domain-specific goals */
   userDefinedGoals?: string[];
+  graphVersion?: number;
+  graphHash?: string;
+  latestMutation?: string;
 }
 
 export interface FlowSuggestionsResult {

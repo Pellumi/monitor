@@ -1000,6 +1000,10 @@ model DeclaredStateSuggestion {
   rulesetVersionIds        String[]           @default([])
   rulePatternIds           String[]           @default([])
   aiInvocationId           String?
+  graphVersion             Int?
+  graphHash                String?
+  dedupeKey                String?
+  generationTrigger        String?
   acceptedBy               String?
   acceptedAt               DateTime?
   rejectedBy               String?
@@ -1012,6 +1016,8 @@ model DeclaredStateSuggestion {
   @@index([flowId])
   @@index([status])
   @@index([suggestionType])
+  @@index([flowId, graphHash, status])
+  @@unique([flowId, graphHash, dedupeKey])
 }
 
 model CompiledRuleset {
