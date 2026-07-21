@@ -111,48 +111,84 @@ function applyVariables(template: string, variables: TemplateVariables): string 
 }
 
 function publicVariables(variables: TemplateVariables): Array<[string, unknown]> {
-  const sensitiveNames = new Set(['rawKey', 'token', 'apiKey', 'password', 'secret']);
+  const sensitiveNames = new Set(['rawkey', 'token', 'apikey', 'password', 'secret']);
   return Object.entries(variables).filter(([key, value]) => {
     if (value === undefined || value === null || value === '') return false;
-    return !sensitiveNames.has(key);
+    return !sensitiveNames.has(key.toLowerCase());
   });
 }
 
-function renderHtml(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
-  const ctaUrl = template.primaryUrlVariable ? variables[template.primaryUrlVariable] : undefined;
-  const facts = publicVariables(variables)
-    .filter(([key]) => key !== template.primaryUrlVariable)
-    .map(([key, value]) => `
-      <tr>
-        <td style="padding:8px 12px;color:#71717a;border-bottom:1px solid #e4e4e7;">${escapeHtml(key)}</td>
-        <td style="padding:8px 12px;color:#18181b;border-bottom:1px solid #e4e4e7;">${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}</td>
-      </tr>
-    `)
+export function validateTemplateVariables(template: BuiltinEmailTemplate, variables: TemplateVariables): void {
+  const missing = template.requiredVariables.filter((key) => {
+    const value = variables[key];
+    return value === undefined || value === null || value === '';
+  });
+  if (missing.length > 0) {
+    throw new Error(`Missing required variables for ${template.key}: ${missing.join(', ')}`);
+  }
+}
+
+function humanizeKey(key: string): string {
+  return key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toUpperCase();
+}
+
+function isUrlVariable(key: string): boolean {
+  return /url$/i.test(key);
+}
+
+function renderFactRows(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
+  return publicVariables(variables)
+    .filter(([key]) => !isUrlVariable(key) && key !== template.emphasisVariable)
+    .map(([key, value]) => `<tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #262626;color:#8e9192;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;">${escapeHtml(humanizeKey(key))}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #262626;color:#ffffff;text-align:right;font:13px 'JetBrains Mono','Courier New',monospace;">${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}</td>
+    </tr>`)
     .join('');
+}
+
+export function renderTemplateHtml(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
+  validateTemplateVariables(template, variables);
+  const ctaUrl = template.primaryUrlVariable ? variables[template.primaryUrlVariable] : undefined;
+  const secondaryUrl = template.secondaryUrlVariable ? variables[template.secondaryUrlVariable] : undefined;
+  const facts = renderFactRows(template, variables);
+  const emphasis = template.emphasisVariable ? variables[template.emphasisVariable] : undefined;
+  const headline = applyVariables(template.headline || template.subject, variables);
 
   const cta = typeof ctaUrl === 'string' && ctaUrl
-    ? `<p style="margin:28px 0;"><a href="${escapeHtml(ctaUrl)}" style="background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">${escapeHtml(template.primaryCtaLabel)}</a></p>`
+    ? `<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#ffffff;color:#000000;text-decoration:none;padding:14px 20px;border-radius:4px;font:600 13px Poppins,Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.primaryCtaLabel)}</a>`
+    : '';
+  const secondaryCta = typeof secondaryUrl === 'string' && secondaryUrl
+    ? `<a href="${escapeHtml(secondaryUrl)}" style="display:inline-block;color:#ffffff;text-decoration:none;padding:13px 19px;border:1px solid #444748;border-radius:4px;font:500 13px Poppins,Arial,sans-serif;letter-spacing:.06em;text-transform:uppercase;">${escapeHtml(template.secondaryCtaLabel || 'Learn more')}</a>`
     : '';
 
   return `<!doctype html>
-<html>
-  <body style="margin:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#18181b;">
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"></head>
+  <body style="margin:0;background:#000000;font-family:Poppins,Arial,Helvetica,sans-serif;color:#e2e2e2;">
     <div style="display:none;max-height:0;overflow:hidden;">${escapeHtml(template.preheader)}</div>
-    <main style="max-width:640px;margin:0 auto;padding:32px 16px;">
-      <section style="background:#ffffff;border:1px solid #e4e4e7;border-radius:10px;padding:28px;">
-        <p style="margin:0 0 20px;color:#2563eb;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;">Tellann ${escapeHtml(template.category)}</p>
-        <h1 style="font-size:24px;line-height:1.25;margin:0 0 12px;">${escapeHtml(applyVariables(template.subject, variables))}</h1>
-        <p style="font-size:16px;line-height:1.6;margin:0 0 18px;color:#3f3f46;">${escapeHtml(template.purpose)}</p>
-        ${facts ? `<table style="width:100%;border-collapse:collapse;margin:18px 0;background:#fafafa;border:1px solid #e4e4e7;">${facts}</table>` : ''}
-        ${cta}
-        <p style="font-size:13px;line-height:1.5;color:#71717a;margin:24px 0 0;">You received this because of activity in Tellann. Critical security, billing, and compliance emails cannot be disabled.</p>
+    <main style="max-width:600px;margin:0 auto;padding:40px 16px;">
+      <section style="background:#131313;border:1px solid #262626;border-radius:4px;padding:24px;">
+        <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 40px;"><tr>
+          <td style="color:#ffffff;font-size:22px;font-weight:800;letter-spacing:-.04em;">TELLANN</td>
+          <td style="text-align:right;"><span style="display:inline-block;border:1px solid #444748;color:#8e9192;padding:5px 7px;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.designLabel || `${template.category} // Notification`)}</span></td>
+        </tr></table>
+        <h1 style="font-size:30px;line-height:1.2;margin:0 0 16px;color:#ffffff;font-weight:600;letter-spacing:-.01em;">${escapeHtml(headline)}</h1>
+        <p style="font-size:16px;line-height:1.6;margin:0 0 24px;color:#c4c7c8;">${escapeHtml(template.purpose)}</p>
+        ${emphasis !== undefined && emphasis !== null && emphasis !== '' ? `<div style="background:#000000;border:1px solid #262626;padding:28px 16px;margin:0 0 24px;text-align:center;color:#ffffff;font:500 28px 'JetBrains Mono','Courier New',monospace;letter-spacing:${template.key === 'auth-otp' ? '.22em' : '.02em'};overflow-wrap:anywhere;">${escapeHtml(emphasis)}</div>` : ''}
+        ${facts ? `<table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 24px;background:#000000;border:1px solid #262626;">${facts}</table>` : ''}
+        ${(cta || secondaryCta) ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:32px 0 0;">${cta}${secondaryCta}</div>` : ''}
+        <div style="border-top:1px solid #262626;margin-top:40px;padding-top:20px;color:#8e9192;font-size:12px;line-height:1.6;">
+          ${variables.organizationName ? `${escapeHtml(variables.organizationName)}${variables.applicationName ? ' &middot; ' : ''}` : ''}${variables.applicationName ? escapeHtml(variables.applicationName) : ''}
+          <br>You received this because of activity in Tellann. <a href="${escapeHtml(appUrl('/settings/profile'))}" style="color:#c4c7c8;">Notification preferences</a><br>Tellann, Lagos, Nigeria
+        </div>
       </section>
     </main>
   </body>
 </html>`;
 }
 
-function renderText(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
+export function renderTemplateText(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
+  validateTemplateVariables(template, variables);
   const lines = [
     applyVariables(template.subject, variables),
     '',
@@ -264,8 +300,8 @@ export class NotificationEmailService {
     }
 
     const subject = applyVariables(template.subject, variables);
-    const html = renderHtml(template, variables);
-    const text = renderText(template, variables);
+    const html = renderTemplateHtml(template, variables);
+    const text = renderTemplateText(template, variables);
     const apiKey = env('RESEND_API_KEY');
     const disabled = env('EMAIL_SEND_DISABLED') === 'true';
 

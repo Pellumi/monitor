@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Tellann Email Lifecycle Preview</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-bright": "#393939",
+                        "surface": "#131313",
+                        "on-primary-fixed-variant": "#454747",
+                        "error": "#ffb4ab",
+                        "inverse-surface": "#e2e2e2",
+                        "surface-container": "#1f1f1f",
+                        "primary-container": "#e2e2e2",
+                        "on-secondary": "#303030",
+                        "tertiary": "#ffffff",
+                        "on-secondary-fixed-variant": "#474746",
+                        "on-primary": "#2f3131",
+                        "on-error-container": "#ffdad6",
+                        "surface-tint": "#c6c6c7",
+                        "surface-container-lowest": "#0e0e0e",
+                        "surface-container-high": "#2a2a2a",
+                        "outline": "#8e9192",
+                        "inverse-primary": "#5d5f5f",
+                        "on-tertiary-fixed": "#1b1c1c",
+                        "error-container": "#93000a",
+                        "tertiary-fixed-dim": "#c7c6c6",
+                        "on-primary-fixed": "#1a1c1c",
+                        "surface-variant": "#353535",
+                        "primary": "#ffffff",
+                        "on-background": "#e2e2e2",
+                        "on-surface": "#e2e2e2",
+                        "primary-fixed-dim": "#c6c6c7",
+                        "on-error": "#690005",
+                        "on-tertiary-container": "#646464",
+                        "outline-variant": "#444748",
+                        "background": "#131313",
+                        "secondary-fixed": "#e4e2e1",
+                        "secondary-container": "#474746",
+                        "tertiary-fixed": "#e3e2e2",
+                        "primary-fixed": "#e2e2e2",
+                        "inverse-on-surface": "#303030",
+                        "on-secondary-fixed": "#1b1c1c",
+                        "on-tertiary": "#303031",
+                        "surface-container-highest": "#353535",
+                        "secondary-fixed-dim": "#c8c6c5",
+                        "tertiary-container": "#e3e2e2",
+                        "on-primary-container": "#636565",
+                        "surface-container-low": "#1b1b1b",
+                        "on-tertiary-fixed-variant": "#464747",
+                        "on-surface-variant": "#c4c7c8",
+                        "secondary": "#c8c6c5",
+                        "surface-dim": "#131313",
+                        "on-secondary-container": "#b7b5b4"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "md": "24px",
+                        "sm": "16px",
+                        "margin-mobile": "16px",
+                        "lg": "40px",
+                        "xs": "8px",
+                        "base": "4px",
+                        "margin-desktop": "40px",
+                        "xl": "64px"
+                    },
+                    "fontFamily": {
+                        "headline-xl": ["Poppins"],
+                        "data-sm": ["JetBrains Mono"],
+                        "body-md": ["Poppins"],
+                        "nav-link": ["Poppins"],
+                        "body-lg": ["Poppins"],
+                        "headline-md": ["Poppins"],
+                        "headline-lg": ["Poppins"],
+                        "button": ["Poppins"],
+                        "body-sm": ["Poppins"],
+                        "data-md": ["JetBrains Mono"],
+                        "data-lg": ["JetBrains Mono"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body {
+            background-color: #000000;
+            color: #e2e2e2;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            border: 1px solid rgba(117, 117, 117, 0.2);
+            background-color: #131313;
+        }
+        .technical-block {
+            background-color: #000000;
+            border: 1px solid #262626;
+            padding: 16px;
+        }
+    </style>
+</head>
+<body class="p-lg">
+<!-- Top Navigation Anchor (As per Shared Components) -->
+<nav class="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-xl border-b border-outline-variant/20 flex justify-between items-center px-margin-desktop py-unit-md max-w-container-max mx-auto h-16">
+<div class="font-headline-md text-headline-md font-bold text-white tracking-tighter">Tellann</div>
+<div class="hidden md:flex gap-md">
+<span class="font-body-md text-body-md text-cyan-glow border-b-2 border-white pb-1">Lifecycle Emails</span>
+</div>
+</nav>
+<main class="mt-xl grid grid-cols-1 gap-xl">
+<!-- 1. AUTH-OTP -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Auth // Verification</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Verify your identity</h1>
+<p class="font-body-md text-on-surface-variant">Your single-use authorization code is ready. Use this to finalize your secure login sequence.</p>
+<div class="technical-block flex justify-center py-xl">
+<span class="font-data-lg text-[40px] tracking-[0.25em] text-white">842 195</span>
+</div>
+<p class="font-body-sm text-outline italic">This code expires in 10 minutes. If you did not request this, please secure your account immediately.</p>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm hover:bg-white/90 transition-all">Verify Now</button>
+</div>
+</section>
+<!-- 2. AUTH-WELCOME -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Auth // Welcome</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Sequence Initiated</h1>
+<p class="font-body-md text-on-surface-variant">Your identity has been verified. You now have full access to the Tellann data orchestration suite.</p>
+<div class="h-40 bg-surface-container border border-outline-variant/10 overflow-hidden">
+<div class="w-full h-full" data-alt="A clinical high-contrast technical illustration of data streams merging into a central node, featuring minimalist monochrome geometric shapes and sharp white lines against a deep charcoal background, conveying a sense of digital infrastructure and authority." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuB1P83spcDI2ZU4OTKzYpXRPAtz191IuyRdKQGYHJLCgaiwUEwkSyR5RxWmFMDyjNRwDQoILsA4dp_mdGc_EqZA4rLye7U_ydxrhwbGLJCZ7PdAgwudobz8Pd6CrsGoS0V4_5y2yHPsj8rIiiXjmZo_BtlLfJl9-aeRLMWiIiugPQqkzpQKc0McR3ffmFyKD9QvjM_Jd630Ehjikm0mKWvB04gmItncJE4IPFopLbh0MALshIH9SXprZmKkyrkHMR4SYL0DeLGBXGyk')"></div>
+</div>
+<p class="font-body-md text-on-surface-variant">Start by integrating the Tellann SDK into your environment to begin capturing real-time telemetry.</p>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">View SDK Setup</button>
+<button class="border border-outline-variant text-white font-button px-md py-xs uppercase tracking-widest text-sm">Documentation</button>
+</div>
+</section>
+<!-- 3. TEAM-INVITE -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Org // Invitation</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Join Infrastructure Node</h1>
+<p class="font-body-md text-on-surface-variant"><strong class="text-white">Alex Chen</strong> has invited you to join the <span class="font-data-md text-white">"Quantum-Core-Alpha"</span> organization.</p>
+<div class="technical-block">
+<div class="flex items-center gap-xs text-outline text-xs mb-base">
+<span class="material-symbols-outlined text-[14px]">info</span>
+                        ROLE: ADMIN_ACCESS_GRANTS
+                    </div>
+<div class="text-white font-body-md">Permissions: View Logs, Manage API Keys, Deploy Monitors</div>
+</div>
+</div>
+<div class="mt-xl">
+<button class="w-full bg-white text-black font-button py-sm uppercase tracking-widest text-sm font-bold">Accept Invitation</button>
+</div>
+</section>
+<!-- 4. ORG-CREATED -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Org // Success</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">New Workspace Registered</h1>
+<p class="font-body-md text-on-surface-variant">The organization <span class="font-data-md text-white">Tellann_Global_Ops</span> has been provisioned on our high-availability cluster.</p>
+<div class="grid grid-cols-2 gap-sm">
+<div class="technical-block">
+<div class="text-[10px] text-outline uppercase font-data-sm">Location</div>
+<div class="text-white font-data-md">US-EAST-1</div>
+</div>
+<div class="technical-block">
+<div class="text-[10px] text-outline uppercase font-data-sm">Status</div>
+<div class="text-white font-data-md">OPERATIONAL</div>
+</div>
+</div>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">Open Dashboard</button>
+</div>
+</section>
+<!-- 5. APP-CREATED -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">App // Confirmation</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Application Provisioned</h1>
+<p class="font-body-md text-on-surface-variant">Your application <span class="font-data-md text-white">"Vector-Service-v4"</span> is now live in your workspace. You can now generate production keys.</p>
+<div class="technical-block border-l-4 border-l-white">
+<p class="font-data-sm text-on-surface-variant">APP_ID: tel_app_9x28km4_prod</p>
+</div>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">Get API Keys</button>
+</div>
+</section>
+<!-- 6. API-KEY-CREATED -->
+<section class="email-container p-md border-error/20">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-error px-base border border-error/30 uppercase">Security // Alert</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">New API Key Generated</h1>
+<p class="font-body-md text-on-surface-variant">A new API Key was generated for <span class="text-white">"Vector-Service-v4"</span> today at 14:32 UTC. For your security, the full secret was only displayed once.</p>
+<div class="technical-block">
+<p class="font-data-sm text-outline">KEY_PREFIX: tl_live_...</p>
+<p class="font-data-sm text-outline">ORIGIN: 192.168.1.1 (London, UK)</p>
+</div>
+<p class="text-xs text-error/80 mt-md">If you did not perform this action, revoke the key immediately from your security settings.</p>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">Manage Keys</button>
+</div>
+</section>
+<!-- 7. SDK-INSTALL-GUIDE -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Dev // SDK Guide</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Connect the Dots</h1>
+<p class="font-body-md text-on-surface-variant">Integrate Tellann into your application logic with our lightweight, performant SDK.</p>
+<div class="technical-block">
+<div class="flex justify-between mb-xs">
+<span class="text-[10px] text-outline font-data-sm">NPM PACKAGE</span>
+</div>
+<code class="text-white font-data-md block">npm install @tellann/sdk-node --save</code>
+</div>
+<p class="font-body-sm text-on-surface-variant">Once installed, initialize with your secret key and begin emitting events.</p>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">Full SDK Reference</button>
+</div>
+</section>
+<!-- 8. SDK-FIRST-EVENT -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-white px-base bg-white/10 uppercase">System // Pulse</span>
+</div>
+<div class="space-y-sm text-center py-md">
+<div class="inline-block p-sm rounded-full border border-white/20 mb-md">
+<span class="material-symbols-outlined text-[48px] text-white">sensors</span>
+</div>
+<h1 class="font-headline-lg font-bold text-white">First Signal Received</h1>
+<p class="font-body-md text-on-surface-variant max-w-sm mx-auto">Connectivity confirmed. We've successfully processed the first event from your SDK integration.</p>
+<div class="technical-block mt-lg text-left inline-block w-full">
+<p class="font-data-sm text-white">EVENT_ID: ev_01H9Z...</p>
+<p class="font-data-sm text-outline">PAYLOAD_SIZE: 1.2kb</p>
+</div>
+</div>
+<div class="mt-lg">
+<button class="w-full bg-white text-black font-button py-sm uppercase tracking-widest text-sm font-bold">View Live Stream</button>
+</div>
+</section>
+<!-- 9. DEMO-START-REMINDER -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Dev // Reminder</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Complete the Cycle</h1>
+<p class="font-body-md text-on-surface-variant">We've noticed you have the SDK installed, but your first automated analysis demo hasn't been triggered yet.</p>
+<div class="h-1 bg-surface-container w-full relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-white w-2/3"></div>
+</div>
+<div class="flex justify-between text-[10px] text-outline font-data-sm">
+<span>SDK INSTALLED</span>
+<span class="text-white">DEMO PENDING</span>
+</div>
+</div>
+<div class="mt-xl">
+<button class="w-full bg-white text-black font-button py-sm uppercase tracking-widest text-sm font-bold">Run Demo Analysis</button>
+</div>
+</section>
+<!-- 10. DEMO-COMPLETED -->
+<section class="email-container p-md">
+<div class="flex justify-between items-center mb-lg">
+<span class="font-headline-md font-extrabold tracking-tighter">TELLANN</span>
+<span class="font-data-sm text-outline px-base border border-outline/30 uppercase">Analysis // Ready</span>
+</div>
+<div class="space-y-sm">
+<h1 class="font-headline-lg font-bold text-white">Analysis Processing Complete</h1>
+<p class="font-body-md text-on-surface-variant">The automated telemetry scan has finished. We've identified 12 optimization patterns in your stream.</p>
+<div class="technical-block">
+<div class="flex items-center gap-sm">
+<div class="w-12 h-12 bg-white/5 flex items-center justify-center border border-outline/20">
+<span class="material-symbols-outlined text-white">analytics</span>
+</div>
+<div>
+<div class="text-white font-body-md">Optimization Report #442</div>
+<div class="text-outline font-data-sm">PDF // 4.5MB // Generated 2m ago</div>
+</div>
+</div>
+</div>
+</div>
+<div class="mt-xl flex gap-md">
+<button class="bg-white text-black font-button px-md py-xs uppercase tracking-widest text-sm">Download Results</button>
+<button class="border border-outline-variant text-white font-button px-md py-xs uppercase tracking-widest text-sm">Dashboard</button>
+</div>
+</section>
+<!-- Global Footer (As per Shared Components) -->
+<footer class="w-full py-unit-xl border-t border-outline-variant/10 bg-surface-dark mt-xl">
+<div class="grid grid-cols-1 md:grid-cols-4 gap-gutter px-margin-desktop max-w-container-max mx-auto">
+<div class="col-span-1 md:col-span-1">
+<div class="font-headline-md text-headline-md font-bold text-white tracking-tighter">Tellann</div>
+<p class="mt-sm text-on-surface-variant font-body-sm">© 2024 Tellann. The Missing Path.</p>
+</div>
+<div class="flex flex-col gap-xs">
+<span class="text-white font-bold text-xs uppercase tracking-widest">Platform</span>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Product</a>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Pricing</a>
+</div>
+<div class="flex flex-col gap-xs">
+<span class="text-white font-bold text-xs uppercase tracking-widest">Resources</span>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Docs</a>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Security</a>
+</div>
+<div class="flex flex-col gap-xs">
+<span class="text-white font-bold text-xs uppercase tracking-widest">Legal</span>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Privacy Policy</a>
+<a class="text-on-surface-variant hover:text-white font-body-sm transition-colors" href="#">Terms of Service</a>
+</div>
+</div>
+</footer>
+</main>
+<script>
+        // Micro-interactions for the preview page
+        document.querySelectorAll('button').forEach(button => {
+            button.addEventListener('mousedown', () => {
+                button.style.transform = 'scale(0.98)';
+            });
+            button.addEventListener('mouseup', () => {
+                button.style.transform = 'scale(1)';
+            });
+            button.addEventListener('mouseleave', () => {
+                button.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body></html>

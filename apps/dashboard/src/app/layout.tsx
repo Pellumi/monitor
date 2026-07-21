@@ -7,7 +7,7 @@ import AppLayout from '@/components/app-layout';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'SOTS Dashboard',
+  title: 'Tellann Dashboard',
   description: 'Behavioral QA Platform',
 };
 

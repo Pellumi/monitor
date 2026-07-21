@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tellann email previews</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #000; color: #e2e2e2; font-family: Arial, sans-serif; }
+    header { padding: 18px 24px; border-bottom: 1px solid #262626; }
+    header h1 { margin: 0 0 6px; font-size: 20px; }
+    header p { margin: 0; color: #8e9192; font-size: 13px; }
+    main { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: calc(100vh - 78px); }
+    nav { overflow: auto; padding: 12px; border-right: 1px solid #262626; }
+    nav a { display: block; padding: 11px 12px; margin-bottom: 6px; border: 1px solid #262626; color: #fff; text-decoration: none; }
+    nav a:hover { background: #1f1f1f; border-color: #757575; }
+    nav strong, nav span { display: block; }
+    nav strong { font-size: 13px; }
+    nav span { margin-top: 4px; color: #8e9192; font: 10px monospace; }
+    iframe { width: 100%; height: 100%; border: 0; background: #000; }
+    @media (max-width: 720px) { main { grid-template-columns: 1fr; height: auto; } nav { max-height: 240px; border-right: 0; border-bottom: 1px solid #262626; } iframe { height: 760px; } }
+  </style>
+</head>
+<body>
+  <header><h1>Tellann email previews</h1><p>21 templates rendered from the production email package</p></header>
+  <main><nav><a href="auth-otp.html" target="preview"><strong>auth-otp</strong><span>SECURITY</span></a><a href="auth-welcome.html" target="preview"><strong>auth-welcome</strong><span>ONBOARDING</span></a><a href="team-invite.html" target="preview"><strong>team-invite</strong><span>TEAM</span></a><a href="org-created.html" target="preview"><strong>org-created</strong><span>ONBOARDING</span></a><a href="app-created.html" target="preview"><strong>app-created</strong><span>ONBOARDING</span></a><a href="api-key-created.html" target="preview"><strong>api-key-created</strong><span>TEAM</span></a><a href="sdk-install-guide.html" target="preview"><strong>sdk-install-guide</strong><span>ONBOARDING</span></a><a href="sdk-first-event.html" target="preview"><strong>sdk-first-event</strong><span>ONBOARDING</span></a><a href="demo-start-reminder.html" target="preview"><strong>demo-start-reminder</strong><span>ONBOARDING</span></a><a href="demo-completed-processing.html" target="preview"><strong>demo-completed-processing</strong><span>REPORTS</span></a><a href="demo-report-ready.html" target="preview"><strong>demo-report-ready</strong><span>REPORTS</span></a><a href="report-export-ready.html" target="preview"><strong>report-export-ready</strong><span>REPORTS</span></a><a href="demo-analysis-failed.html" target="preview"><strong>demo-analysis-failed</strong><span>ALERTS</span></a><a href="coverage-degraded.html" target="preview"><strong>coverage-degraded</strong><span>ALERTS</span></a><a href="missing-critical-flow.html" target="preview"><strong>missing-critical-flow</strong><span>ALERTS</span></a><a href="endpoint-slow.html" target="preview"><strong>endpoint-slow</strong><span>ALERTS</span></a><a href="billing-payment-failed.html" target="preview"><strong>billing-payment-failed</strong><span>BILLING</span></a><a href="billing-receipt.html" target="preview"><strong>billing-receipt</strong><span>BILLING</span></a><a href="usage-limit-warning.html" target="preview"><strong>usage-limit-warning</strong><span>BILLING</span></a><a href="security-new-device.html" target="preview"><strong>security-new-device</strong><span>SECURITY</span></a><a href="privacy-rule-updated.html" target="preview"><strong>privacy-rule-updated</strong><span>COMPLIANCE</span></a></nav><iframe name="preview" src="auth-otp.html" title="Email preview"></iframe></main>
+</body>
+</html>

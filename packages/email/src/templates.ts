@@ -33,6 +33,11 @@ export interface BuiltinEmailTemplate {
   purpose: string;
   primaryCtaLabel: string;
   primaryUrlVariable?: string;
+  designLabel?: string;
+  headline?: string;
+  secondaryCtaLabel?: string;
+  secondaryUrlVariable?: string;
+  emphasisVariable?: string;
 }
 
 export type SenderKey = 'hello' | 'security' | 'reports' | 'alerts' | 'billing' | 'support';
@@ -41,13 +46,16 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
   {
     key: 'auth-otp',
     category: EmailCategory.SECURITY,
-    subject: 'Your Tellann verification code is {{code}}',
+    subject: 'Your Tellann verification code',
     preheader: 'Use this one-time code to continue signing in.',
     requiredVariables: ['code', 'expiresInMinutes'],
     defaultFrom: 'security',
     purpose: 'Verify that this email address belongs to you.',
     primaryCtaLabel: 'Open Tellann',
     primaryUrlVariable: 'appUrl',
+    designLabel: 'Auth // Verification',
+    headline: 'Verify your identity',
+    emphasisVariable: 'code',
   },
   {
     key: 'auth-welcome',
@@ -59,6 +67,10 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Your Tellann account is verified and ready for setup.',
     primaryCtaLabel: 'Open dashboard',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'Auth // Welcome',
+    headline: 'Sequence initiated',
+    secondaryCtaLabel: 'Documentation',
+    secondaryUrlVariable: 'docsUrl',
   },
   {
     key: 'team-invite',
@@ -70,6 +82,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'A teammate invited you to collaborate in Tellann.',
     primaryCtaLabel: 'Accept invite',
     primaryUrlVariable: 'inviteUrl',
+    designLabel: 'Org // Invitation',
+    headline: 'Join infrastructure node',
+    emphasisVariable: 'role',
   },
   {
     key: 'org-created',
@@ -81,6 +96,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Your organization workspace has been created.',
     primaryCtaLabel: 'Open workspace',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'Org // Success',
+    headline: 'New workspace registered',
+    emphasisVariable: 'organizationName',
   },
   {
     key: 'app-created',
@@ -92,6 +110,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Your application is registered and ready for SDK setup.',
     primaryCtaLabel: 'Configure SDK',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'App // Confirmation',
+    headline: 'Application provisioned',
+    emphasisVariable: 'applicationName',
   },
   {
     key: 'api-key-created',
@@ -103,6 +124,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'A new API key was created for SDK ingestion.',
     primaryCtaLabel: 'Review API keys',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'Security // Alert',
+    headline: 'New API key generated',
+    emphasisVariable: 'keyPrefix',
   },
   {
     key: 'sdk-install-guide',
@@ -114,6 +138,11 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Install the SDK so Tellann can receive the first telemetry event.',
     primaryCtaLabel: 'Open SDK guide',
     primaryUrlVariable: 'docsUrl',
+    designLabel: 'Dev // SDK Guide',
+    headline: 'Connect the dots',
+    secondaryCtaLabel: 'Open application',
+    secondaryUrlVariable: 'dashboardUrl',
+    emphasisVariable: 'applicationName',
   },
   {
     key: 'sdk-first-event',
@@ -125,6 +154,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Your SDK installation is sending telemetry successfully.',
     primaryCtaLabel: 'Start demonstration',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'System // Pulse',
+    headline: 'First signal received',
+    emphasisVariable: 'applicationName',
   },
   {
     key: 'demo-start-reminder',
@@ -136,6 +168,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Move from connected telemetry to the first demonstrated workflow.',
     primaryCtaLabel: 'Start demo',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'Dev // Reminder',
+    headline: 'Complete the cycle',
+    emphasisVariable: 'applicationName',
   },
   {
     key: 'demo-completed-processing',
@@ -147,6 +182,9 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Your demonstration was captured and queued for analysis.',
     primaryCtaLabel: 'Open dashboard',
     primaryUrlVariable: 'dashboardUrl',
+    designLabel: 'Analysis // Processing',
+    headline: 'Analysis sequence initiated',
+    emphasisVariable: 'sessionId',
   },
   {
     key: 'demo-report-ready',
