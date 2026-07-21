@@ -42,12 +42,12 @@ export async function captureErrorEvent(
     const eventSize = Buffer.byteLength(eventJson, 'utf8');
     if (eventSize > MAX_EVENT_SIZE_BYTES) {
       console.error(
-        `[SOTS Backend] Error event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
+        `[Tellann Backend] Error event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
       );
       return;
     }
   } catch (err) {
-    console.error('[SOTS Backend] Failed to compute size of error event, discarding', err);
+    console.error('[Tellann Backend] Failed to compute size of error event, discarding', err);
     return;
   }
 

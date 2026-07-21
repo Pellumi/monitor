@@ -20,7 +20,7 @@ function humanizeError(raw: string): { title: string; detail: string; kind: Erro
   ) {
     return {
       title: 'Unable to reach the server',
-      detail: 'The SOTS backend appears to be offline or unreachable. Check your internet connection or contact your administrator if the problem persists.',
+      detail: 'The Tellann backend appears to be offline or unreachable. Check your internet connection or contact your administrator if the problem persists.',
       kind: 'network',
     };
   }
@@ -311,7 +311,7 @@ export default function LoginPage() {
     <div className="w-full max-w-md p-8 bg-neutral-900/80 border border-neutral-800 rounded-2xl shadow-2xl backdrop-blur-xl animate-fade-in">
       <div className="text-center mb-8">
         <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-indigo-400 to-blue-400">
-          SOTS
+          Tellann
         </h1>
         <p className="text-sm text-neutral-400 mt-2">
           State Observation &amp; Tracking System

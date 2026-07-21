@@ -27,7 +27,7 @@ function OnboardingDeclareContent() {
           </div>
           <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Declare Intended Flows</h2>
           <p className="mt-2 text-sm text-neutral-400">
-            Tell SOTS what your application is supposed to do — before you run it.
+            Describe what your application is supposed to do to Tellann — before you run it.
           </p>
         </div>
 

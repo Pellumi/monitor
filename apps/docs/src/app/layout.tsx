@@ -10,19 +10,19 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.domain-name.co
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'SOTS Documentation',
-    template: '%s | SOTS Docs',
+    default: 'Tellann Documentation',
+    template: '%s | Tellann Docs',
   },
   description:
-    'Complete SOTS documentation for QA teams, developers, project managers, administrators, SDK integration, reconciliation, reports, billing, and security.',
+    'Complete Tellann documentation for QA teams, developers, project managers, administrators, SDK integration, reconciliation, reports, billing, and security.',
   alternates: {
     canonical: '/',
   },
   openGraph: {
-    title: 'SOTS Documentation',
-    description: 'Guides and API reference for reviewing software behavior with SOTS.',
+    title: 'Tellann Documentation',
+    description: 'Guides and API reference for reviewing software behavior with Tellann.',
     url: siteUrl,
-    siteName: 'SOTS Docs',
+    siteName: 'Tellann Docs',
     type: 'website',
   },
 };

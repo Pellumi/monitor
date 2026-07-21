@@ -791,7 +791,7 @@ function DeclareContent() {
             <div className="md:col-span-2 space-y-6">
               <div>
                 <h2 className="text-2xl font-black text-white">SDK Installation</h2>
-                <p className="text-xs text-neutral-400 mt-1">Connect your code to the SOTS gateway.</p>
+                <p className="text-xs text-neutral-400 mt-1">Connect your code to the Tellann gateway.</p>
               </div>
 
               {/* API Key Loader */}
@@ -838,7 +838,7 @@ function DeclareContent() {
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider text-neutral-400">Connection Checklist</h3>
                 <div className="space-y-3">
                   {[
-                    { stage: 1, label: 'Initialize SDK in code', desc: 'SOTS SDK package added & configured.' },
+                    { stage: 1, label: 'Initialize SDK in code', desc: 'Tellann SDK package added & configured.' },
                     { stage: 2, label: 'Establish session connection', desc: 'At least one telemetry session observed.' },
                     { stage: 3, label: 'Onboarding test event pass', desc: 'SOTS_ONBOARDING_TEST event successfully received.' },
                   ].map((s) => {
@@ -932,7 +932,7 @@ function DeclareContent() {
               </div>
               <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Demonstrate Workflows</h2>
               <p className="mt-2 text-sm text-neutral-400 max-w-md mx-auto">
-                Now start your app and interact with it. Go through at least <span className="font-semibold text-white">{required} states</span> so SOTS can build its observed behavioral model.
+                Now start your app and interact with it. Go through at least <span className="font-semibold text-white">{required} states</span> so Tellann can build its observed behavioral model.
               </p>
             </div>
 
@@ -1056,7 +1056,7 @@ function DeclareContent() {
                 
                 {/* Insights alert */}
                 <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/50 p-3 rounded-lg border border-neutral-800">
-                  ⚡ **SOTS Insight**: The system detected that your app behaves differently than your expectations. Click **Complete Onboarding** below to check the full behavioral diff tree and promote unexpected states!
+                  ⚡ **Tellann Insight**: The system detected that your app behaves differently than your expectations. Click **Complete Onboarding** below to check the full behavioral diff tree and promote unexpected states!
                 </div>
               </div>
             )}

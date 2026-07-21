@@ -69,7 +69,7 @@ export async function initializeTransaction(
     callback_url:
       params.callbackUrl ??
       process.env.PAYSTACK_SUCCESS_URL ??
-      'https://app.sots.io/settings/billing?success=1',
+      'https://app.tellann.co/settings/billing?success=1',
     metadata: {
       organizationId: params.organizationId,
       ...(params.metadata ?? {}),

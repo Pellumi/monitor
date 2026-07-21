@@ -70,11 +70,11 @@ export async function createCheckoutSession(
     success_url:
       params.successUrl ??
       process.env.STRIPE_SUCCESS_URL ??
-      'https://app.sots.io/settings/billing?success=1',
+      'https://app.tellann.co/settings/billing?success=1',
     cancel_url:
       params.cancelUrl ??
       process.env.STRIPE_CANCEL_URL ??
-      'https://app.sots.io/settings/billing?cancelled=1',
+      'https://app.tellann.co/settings/billing?cancelled=1',
     subscription_data: {
       metadata: {
         organizationId: params.organizationId,

@@ -198,7 +198,7 @@ function checkoutProviderCode(req: Request, provider: 'STRIPE' | 'PAYSTACK', pla
     : configuredProviderCode(provider, planType, interval, currency);
 }
 function invoiceNumber(): string {
-  return `SOTS-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
+  return `TELLANN-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
 }
 
 type PaymentEventProcessingStatus = 'PROCESSING' | 'PROCESSED' | 'FAILED';

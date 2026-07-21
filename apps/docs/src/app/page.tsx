@@ -6,7 +6,7 @@ export default function DocsHome() {
   const cards = [
     {
       title: 'Getting Started',
-      description: 'Learn SOTS basics and set up your organization and environment.',
+      description: 'Learn Tellann basics and set up your organization and environment.',
       href: '/getting-started',
       icon: BookOpen,
     },
@@ -53,7 +53,7 @@ export default function DocsHome() {
           {/* Hero Banner */}
           <div>
             <h1 className="text-4xl sm:text-5xl font-extrabold text-foreground tracking-tight mb-4">
-              Welcome to <span className="text-blue-400">SOTS</span> Docs
+              Welcome to <span className="text-blue-400">Tellann</span> Docs
             </h1>
             <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-2xl">
               Understand, model, and validate your software behavior. Learn how to declare behavior graphs,

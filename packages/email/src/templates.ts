@@ -266,7 +266,7 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
   {
     key: 'billing-receipt',
     category: EmailCategory.BILLING,
-    subject: 'Your SOTS receipt — {{invoiceNumber}}',
+    subject: 'Your Tellann receipt — {{invoiceNumber}}',
     preheader: 'Payment confirmed. Your PDF receipt is attached.',
     requiredVariables: ['organizationName', 'planName', 'amountPaid', 'invoiceNumber', 'billingUrl'],
     defaultFrom: 'billing',

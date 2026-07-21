@@ -81,7 +81,7 @@ function ReportsContent() {
         const objUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = objUrl;
-        link.download = `sots-report-${appId}.${format}`;
+        link.download = `tellann-report-${appId}.${format}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

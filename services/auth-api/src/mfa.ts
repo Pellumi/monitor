@@ -24,7 +24,7 @@ const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 const BACKUP_CODE_COUNT     = 8;
 const CHALLENGE_TTL_MS      = 5 * 60 * 1000;  // 5 minutes
 const MAX_CHALLENGE_ATTEMPTS = 5;
-const TOTP_ISSUER           = 'SOTS Platform';
+const TOTP_ISSUER           = 'Tellann';
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
 

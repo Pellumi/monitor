@@ -34,7 +34,7 @@ export const CATEGORY_ORDER = [
   '🔒 SECURITY & PRIVACY',
   '💳 BILLING & PLANS',
   '🏗 ARCHITECTURE',
-  '🆚 WHY SOTS?',
+  '🆚 WHY TELLANN?',
   '🛠 TROUBLESHOOTING',
   '🎓 TUTORIALS',
 ];
@@ -42,14 +42,14 @@ export const CATEGORY_ORDER = [
 export const docs: DocPage[] = [
   // 🚀 GET STARTED
   {
-    slug: 'what-is-sots',
-    title: 'What is SOTS?',
-    description: 'SOTS is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it.',
+    slug: 'what-is-tellann',
+    title: 'What is Tellann?',
+    description: 'Tellann is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it.',
     category: '🚀 GET STARTED',
     sections: [
       {
         title: 'Introduction',
-        body: 'SOTS is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it. Instead of relying only on test suites, logs, metrics, or analytics, SOTS builds a behavioral model of your application from real interactions. Install the SDK, demonstrate your application once, and SOTS automatically generates:',
+        body: 'Tellann is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it. Instead of relying only on test suites, logs, metrics, or analytics, Tellann builds a behavioral model of your application from real interactions. Install the SDK, demonstrate your application once, and Tellann automatically generates:',
         bullets: [
           'Behavioral Graphs',
           'Workflow Maps',
@@ -61,12 +61,12 @@ export const docs: DocPage[] = [
         ]
       },
       {
-        title: 'Traditional QA vs SOTS',
-        body: 'Traditional testing tracks assertions. SOTS tracks behavioral reality. Under the traditional approach, you write tests first, manually document workflows, find bugs after they occur, and analyze logs and metrics. With SOTS, you demonstrate behavior first, automatically discover workflows, identify coverage gaps early, and analyze application behavior.'
+        title: 'Traditional QA vs Tellann',
+        body: 'Traditional testing tracks assertions. Tellann tracks behavioral reality. Under the traditional approach, you write tests first, manually document workflows, find bugs after they occur, and analyze logs and metrics. With Tellann, you demonstrate behavior first, automatically discover workflows, identify coverage gaps early, and analyze application behavior.'
       },
       {
-        title: 'What SOTS Produces',
-        body: 'SOTS automatically parses telemetry to construct several core assets:',
+        title: 'What Tellann Produces',
+        body: 'Tellann automatically parses telemetry to construct several core assets:',
         bullets: [
           'Behavioral Graph: Visual representation of application behavior (ANONYMOUS -> REGISTERED -> AUTHENTICATED -> CHECKOUT)',
           'Coverage Analysis: Shows what was demonstrated and what was missed',
@@ -78,8 +78,8 @@ export const docs: DocPage[] = [
   },
   {
     slug: 'why-exists',
-    title: 'Why SOTS Exists',
-    description: 'Traditional testing tracks assertions. SOTS tracks behavioral reality.',
+    title: 'Why Tellann Exists',
+    description: 'Traditional testing tracks assertions. Tellann tracks behavioral reality.',
     category: '🚀 GET STARTED',
     sections: [
       {
@@ -87,8 +87,8 @@ export const docs: DocPage[] = [
         body: 'Modern software teams have plenty of tools: Logs, Metrics, Traces, Analytics, Session Replays, and Test Suites. Yet teams still struggle to answer simple questions: What workflows exist in this application? What parts of the application have been demonstrated? Which error paths have never been tested? What happens if payment fails? What behavior is missing?'
       },
       {
-        title: 'Existing Tools vs SOTS',
-        body: 'Existing tools like Datadog answer if the infrastructure is healthy. Sentry answers what broke. PostHog tracks how users are behaving. Replay records what happened. SOTS answers: What behavior exists? What behavior is missing? Which workflows lack coverage? Which states have never been observed? How confident should we be in this release?'
+        title: 'Existing Tools vs Tellann',
+        body: 'Existing tools like Datadog answer if the infrastructure is healthy. Sentry answers what broke. PostHog tracks how users are behaving. Replay records what happened. Tellann answers: What behavior exists? What behavior is missing? Which workflows lack coverage? Which states have never been observed? How confident should we be in this release?'
       },
       {
         title: 'The Core Idea',
@@ -102,12 +102,12 @@ export const docs: DocPage[] = [
   {
     slug: 'getting-started',
     title: 'Getting Started',
-    description: 'SOTS can be integrated into any application using the Frontend SDK, Backend SDK, or both.',
+    description: 'Tellann can be integrated into any application using the Frontend SDK, Backend SDK, or both.',
     category: '🚀 GET STARTED',
     sections: [
       {
         title: 'Before You Begin',
-        body: 'SOTS can be integrated into any application using the Frontend SDK, Backend SDK, or both. You\'ll need: A SOTS account, an organization, an application, an environment, and an API key.'
+        body: 'Tellann can be integrated into any application using the Frontend SDK, Backend SDK, or both. You\'ll need: A Tellann account, an organization, an application, an environment, and an API key.'
       },
       {
         title: 'Integration Flow',
@@ -124,25 +124,25 @@ export const docs: DocPage[] = [
       },
       {
         title: 'Supported Platforms',
-        body: 'SOTS supports modern frontend and backend stacks. Frontend: React, Next.js, JavaScript, TypeScript. Backend: Node.js, Express, NestJS, Fastify.'
+        body: 'Tellann supports modern frontend and backend stacks. Frontend: React, Next.js, JavaScript, TypeScript. Backend: Node.js, Express, NestJS, Fastify.'
       }
     ]
   },
   {
     slug: 'quick-start',
     title: 'Quick Start (5 Minutes)',
-    description: 'Get SOTS running locally and send your first onboarding event in 5 minutes.',
+    description: 'Get Tellann running locally and send your first onboarding event in 5 minutes.',
     category: '🚀 GET STARTED',
     sections: [
       {
         title: 'Step 1 — Install SDK',
-        body: 'Add SOTS to your project dependencies.',
+        body: 'Add Tellann to your project dependencies.',
         code: 'npm install @sots/frontend-sdk',
         language: 'bash'
       },
       {
         title: 'Step 2 — Initialize SDK',
-        body: 'Initialize SOTS at the entry point of your application:',
+        body: 'Initialize Tellann at the entry point of your application:',
         code: 'import { SOTS } from "@sots/frontend-sdk";\n\nSOTS.initialize({\n  apiKey: "YOUR_API_KEY",\n  applicationId: "YOUR_APP_ID",\n  environment: "development"\n});',
         language: 'typescript'
       },
@@ -154,7 +154,7 @@ export const docs: DocPage[] = [
       },
       {
         title: 'Step 4 — Start Demonstration',
-        body: 'Inside the SOTS Dashboard: navigate to Applications, select your application, and click "Start Demonstration".'
+        body: 'Inside the Tellann Dashboard: navigate to Applications, select your application, and click "Start Demonstration".'
       },
       {
         title: 'Step 5 — Demonstrate Behavior',
@@ -162,18 +162,18 @@ export const docs: DocPage[] = [
       },
       {
         title: 'Step 6 — Stop Recording',
-        body: 'Inside SOTS, click "Stop Demonstration" to complete your session.'
+        body: 'Inside Tellann, click "Stop Demonstration" to complete your session.'
       },
       {
         title: 'Step 7 — View Results',
-        body: 'SOTS automatically processes the demonstration and generates your Behavioral Graph, Coverage Report, Missing States, Missing Flows, and Session Replay.'
+        body: 'Tellann automatically processes the demonstration and generates your Behavioral Graph, Coverage Report, Missing States, Missing Flows, and Session Replay.'
       }
     ]
   },
   {
     slug: 'concepts',
     title: 'Core Concepts',
-    description: 'Master the mental model behind SOTS behavior mapping.',
+    description: 'Master the mental model behind Tellann behavior mapping.',
     category: '🚀 GET STARTED',
     sections: [
       {
@@ -197,12 +197,12 @@ export const docs: DocPage[] = [
   {
     slug: 'first-demonstration',
     title: 'Your First Demonstration Session',
-    description: 'Teach SOTS how your application behaves through manual walkthroughs.',
+    description: 'Teach Tellann how your application behaves through manual walkthroughs.',
     category: '🚀 GET STARTED',
     sections: [
       {
         title: 'Teaching the System',
-        body: 'A demonstration session teaches SOTS how your application behaves. You are not testing. You are teaching.'
+        body: 'A demonstration session teaches Tellann how your application behaves. You are not testing. You are teaching.'
       },
       {
         title: 'Good vs Better vs Best Demonstrations',
@@ -250,7 +250,7 @@ export const docs: DocPage[] = [
   {
     slug: 'concepts/demonstration-mode',
     title: 'Developer Demonstration Mode',
-    description: 'Enable real-time tracking of human walkthroughs to teach SOTS expected paths.',
+    description: 'Enable real-time tracking of human walkthroughs to teach Tellann expected paths.',
     category: '📚 CONCEPTS',
     sections: [
       {
@@ -267,7 +267,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Directed Acyclic Graphs (DAG)',
-        body: 'SOTS models behavior as a DAG, representing screens or states as nodes, and user interactions or backend processes as directed edges.',
+        body: 'Tellann models behavior as a DAG, representing screens or states as nodes, and user interactions or backend processes as directed edges.',
       },
     ],
   },
@@ -327,7 +327,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Detecting Dead Nodes',
-        body: 'If a screen is modeled in the expected behavior graph but SOTS telemetry never records it, it is classified as a missing state.',
+        body: 'If a screen is modeled in the expected behavior graph but Tellann telemetry never records it, it is classified as a missing state.',
       },
     ],
   },
@@ -372,12 +372,12 @@ export const docs: DocPage[] = [
   {
     slug: 'guides/developer',
     title: 'Developer Guide',
-    description: 'Step-by-step instructions for engineers integrating SOTS SDKs.',
+    description: 'Step-by-step instructions for engineers integrating Tellann SDKs.',
     category: '👥 GUIDES',
     sections: [
       {
         title: 'Developer Responsibilities',
-        body: 'As a developer, your primary role is instrumenting SOTS in frontend apps and API gateways.',
+        body: 'As a developer, your primary role is instrumenting Tellann in frontend apps and API gateways.',
         bullets: [
           'Configure environment variables.',
           'Install standard NPM/Node tracking libraries.',
@@ -394,7 +394,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'QA Flow Verification',
-        body: 'QA teams use SOTS to map test scripts into behavioral graphs and review gaps before signing off on releases.',
+        body: 'QA teams use Tellann to map test scripts into behavioral graphs and review gaps before signing off on releases.',
       },
     ],
   },
@@ -427,12 +427,12 @@ export const docs: DocPage[] = [
   {
     slug: 'demo-mode/introduction',
     title: 'Introduction to Demo Mode',
-    description: 'Get introduced to the SOTS Demonstration engine.',
+    description: 'Get introduced to the Tellann Demonstration engine.',
     category: '🎬 DEMONSTRATION MODE',
     sections: [
       {
         title: 'Teach by demonstration',
-        body: 'Demonstration Mode is the easiest way to model behavior. Instead of writing code, you navigate your application, and SOTS constructs the behavior graph nodes.',
+        body: 'Demonstration Mode is the easiest way to model behavior. Instead of writing code, you navigate your application, and Tellann constructs the behavior graph nodes.',
       },
     ],
   },
@@ -444,7 +444,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Recording steps',
-        body: 'Open your staging environment, click "Record Demo" in the SOTS browser panel, execute the flow, and click "Submit Trace".',
+        body: 'Open your staging environment, click "Record Demo" in the Tellann browser panel, execute the flow, and click "Submit Trace".',
       },
     ],
   },
@@ -480,19 +480,19 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Demonstration verification',
-        body: 'Submit a validation trace to check if SOTS flags any deviations from the established behavior model.',
+        body: 'Submit a validation trace to check if Tellann flags any deviations from the established behavior model.',
       },
     ],
   },
   {
     slug: 'demo-mode/learning-behavior',
-    title: 'How SOTS Learns Behavior',
-    description: 'Understand the machine learning models behind SOTS behavior capture.',
+    title: 'How Tellann Learns Behavior',
+    description: 'Understand the machine learning models behind Tellann behavior capture.',
     category: '🎬 DEMONSTRATION MODE',
     sections: [
       {
         title: 'Pattern mapping',
-        body: 'SOTS aggregates multiple demonstration traces, filters noise, and maps common states and interaction sequences into canonical behavior graphs.',
+        body: 'Tellann aggregates multiple demonstration traces, filters noise, and maps common states and interaction sequences into canonical behavior graphs.',
       },
     ],
   },
@@ -518,7 +518,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Analyzing the Graph',
-        body: 'The SOTS dashboard visualizes states as circles, transitions as arrows, and overlays error rates and execution frequency.',
+        body: 'The Tellann dashboard visualizes states as circles, transitions as arrows, and overlays error rates and execution frequency.',
       },
     ],
   },
@@ -542,7 +542,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Identifying quality risk',
-        body: 'SOTS highlights missing states and transitions in orange/red in the behavior graph, helping you immediately find untested functionality.',
+        body: 'Tellann highlights missing states and transitions in orange/red in the behavior graph, helping you immediately find untested functionality.',
       },
     ],
   },
@@ -563,12 +563,12 @@ export const docs: DocPage[] = [
   {
     slug: 'reconciliation/overview',
     title: 'Overview of Reconciliation',
-    description: 'Learn how SOTS automatically highlights testing gaps.',
+    description: 'Learn how Tellann automatically highlights testing gaps.',
     category: '🔄 RECONCILIATION',
     sections: [
       {
         title: 'Reconciling flows',
-        body: 'The reconciliation process is SOTS\'s main quality check. It reads the expected behavior graph and overlays observed telemetry to find missing states.',
+        body: 'The reconciliation process is Tellann\'s main quality check. It reads the expected behavior graph and overlays observed telemetry to find missing states.',
       },
     ],
   },
@@ -616,7 +616,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Finding Gaps',
-        body: 'By computing the topological delta between the expected graph and the observed graph, SOTS immediately exposes missing steps and untested branches.',
+        body: 'By computing the topological delta between the expected graph and the observed graph, Tellann immediately exposes missing steps and untested branches.',
       },
     ],
   },
@@ -640,7 +640,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Ship with confidence',
-        body: 'SOTS generates a Release Confidence Score based on API error rates, coverage percentages, and critical workflow integrity checks.',
+        body: 'Tellann generates a Release Confidence Score based on API error rates, coverage percentages, and critical workflow integrity checks.',
       },
     ],
   },
@@ -654,7 +654,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Contextual replay',
-        body: 'SOTS Session Replay reconstructs user timelines from captured telemetry instead of capturing video. It connects events, API payloads, and errors chronologically.',
+        body: 'Tellann Session Replay reconstructs user timelines from captured telemetry instead of capturing video. It connects events, API payloads, and errors chronologically.',
       },
     ],
   },
@@ -678,7 +678,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Trace and diagnose',
-        body: 'When a user session fails, SOTS maps the frontend error back to the backend API exception, displaying both side-by-side in the replay viewer.',
+        body: 'When a user session fails, Tellann maps the frontend error back to the backend API exception, displaying both side-by-side in the replay viewer.',
       },
     ],
   },
@@ -751,12 +751,12 @@ export const docs: DocPage[] = [
   {
     slug: 'sdk-reference/event-reference',
     title: 'Event Reference',
-    description: 'Full taxonomy catalog of SOTS behavioral events.',
+    description: 'Full taxonomy catalog of Tellann behavioral events.',
     category: '🧩 SDK REFERENCE',
     sections: [
       {
         title: 'Supported Event Types',
-        body: 'SOTS parses and indexes the following telemetry events:',
+        body: 'Tellann parses and indexes the following telemetry events:',
         bullets: [
           'PAGE_VISIT: Fired on screen navigation.',
           'BUTTON_CLICK: Capture click actions.',
@@ -772,7 +772,7 @@ export const docs: DocPage[] = [
   {
     slug: 'api-reference/authentication',
     title: 'Authentication',
-    description: 'API key authentication format for interacting with the SOTS Gateway.',
+    description: 'API key authentication format for interacting with the Tellann Gateway.',
     category: '🔌 API REFERENCE',
     sections: [
       {
@@ -783,7 +783,7 @@ export const docs: DocPage[] = [
       },
       {
         title: 'Gateway Endpoint Details',
-        body: 'Use the base SOTS API Gateway URL for all REST requests.',
+        body: 'Use the base Tellann API Gateway URL for all REST requests.',
         endpoint: {
           method: 'GET',
           path: '/health',
@@ -889,7 +889,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Submit Demo Trace',
-        body: 'Submit a new demonstration trace to train SOTS behavior graphs.',
+        body: 'Submit a new demonstration trace to train Tellann behavior graphs.',
         endpoint: {
           method: 'POST',
           path: '/demonstrations',
@@ -963,7 +963,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Tenant Isolation',
-        body: 'SOTS enforces complete data isolation between organizations. Telemetry, behavior graphs, and sessions are partitioned strictly at the database layer.',
+        body: 'Tellann enforces complete data isolation between organizations. Telemetry, behavior graphs, and sessions are partitioned strictly at the database layer.',
       },
     ],
   },
@@ -998,7 +998,7 @@ export const docs: DocPage[] = [
     category: '🏢 ADMINISTRATION',
     sections: [
       {
-        title: 'Collaborating on SOTS',
+        title: 'Collaborating on Tellann',
         body: 'Invite team members to share reports, view session replays, and review quality graphs.',
       },
     ],
@@ -1035,7 +1035,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Telemetry purging',
-        body: 'Define how long SOTS retains raw event data and timeline models (default is 90 days).',
+        body: 'Define how long Tellann retains raw event data and timeline models (default is 90 days).',
       },
     ],
   },
@@ -1044,11 +1044,11 @@ export const docs: DocPage[] = [
   {
     slug: 'security-privacy/security',
     title: 'Security Architecture',
-    description: 'How SOTS secures data, cookies, subdomains, and auth sessions.',
+    description: 'How Tellann secures data, cookies, subdomains, and auth sessions.',
     category: '🔒 SECURITY & PRIVACY',
     sections: [
       {
-        title: 'SOTS Security Boundary',
+        title: 'Tellann Security Boundary',
         body: 'All authenticated dashboard operations live on `app.domain-name.com`. Sessions are managed via secure, HttpOnly, SameSite cookies. Public marketing and documentation sites run on separate subdomains with no cookie sharing.',
       },
     ],
@@ -1061,7 +1061,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'PII Scrubbing and Masking',
-        body: 'Specify privacy rule templates to mask user input fields before the SDK sends telemetry. SOTS automatically screens values matching credit card numbers, passwords, and tokens.',
+        body: 'Specify privacy rule templates to mask user input fields before the SDK sends telemetry. Tellann automatically screens values matching credit card numbers, passwords, and tokens.',
       },
     ],
   },
@@ -1070,11 +1070,11 @@ export const docs: DocPage[] = [
   {
     slug: 'billing/pricing-overview',
     title: 'Pricing Overview',
-    description: 'Review SOTS subscription pricing models.',
+    description: 'Review Tellann subscription pricing models.',
     category: '💳 BILLING & PLANS',
     sections: [
       {
-        title: 'SOTS Pricing',
+        title: 'Tellann Pricing',
         body: 'Pricing scales based on ingest volumes, session counts, and access to premium features like Session Replay and Endpoint Intelligence.',
       },
     ],
@@ -1099,7 +1099,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Enforcing limits',
-        body: 'Upstream services verify subscription flags during runtime. If a plan is suspended or over its quota limits, SOTS blocks reporting API endpoints or hides Session Replay timelines.',
+        body: 'Upstream services verify subscription flags during runtime. If a plan is suspended or over its quota limits, Tellann blocks reporting API endpoints or hides Session Replay timelines.',
       },
     ],
   },
@@ -1144,12 +1144,12 @@ export const docs: DocPage[] = [
   {
     slug: 'architecture/system-architecture',
     title: 'System Architecture',
-    description: 'Deep dive into the microservice pipeline that drives SOTS.',
+    description: 'Deep dive into the microservice pipeline that drives Tellann.',
     category: '🏗 ARCHITECTURE',
     sections: [
       {
-        title: 'SOTS Infrastructure Flow',
-        body: 'The SOTS system is built with a decoupled event ingestion architecture:',
+        title: 'Tellann Infrastructure Flow',
+        body: 'The Tellann system is built with a decoupled event ingestion architecture:',
         bullets: [
           'API Gateway: Manages rate-limiting and verifies Bearer API keys.',
           'Event Collector: Accepts events and pushes them to a Kafka broker.',
@@ -1186,7 +1186,7 @@ export const docs: DocPage[] = [
   {
     slug: 'architecture/coverage-engine',
     title: 'Coverage Engine',
-    description: 'How SOTS processes reconciliation delta algorithms.',
+    description: 'How Tellann processes reconciliation delta algorithms.',
     category: '🏗 ARCHITECTURE',
     sections: [
       {
@@ -1203,26 +1203,26 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Chronological replay builder',
-        body: 'Instead of recording video, SOTS reads chronological events and builds a timeline playback layout, mapping user navigation, clicks, and REST requests.',
+        body: 'Instead of recording video, Tellann reads chronological events and builds a timeline playback layout, mapping user navigation, clicks, and REST requests.',
       },
     ],
   },
   {
     slug: 'architecture/deployment-models',
     title: 'Deployment Models',
-    description: 'SaaS vs Hybrid SOTS deployment models.',
+    description: 'SaaS vs Hybrid Tellann deployment models.',
     category: '🏗 ARCHITECTURE',
     sections: [
       {
-        title: 'Hosting SOTS',
-        body: 'SOTS can be used as a fully-hosted SaaS platform, or deployed in a hybrid model where the telemetry storage (Clickhouse) remains in the client\'s cloud.',
+        title: 'Hosting Tellann',
+        body: 'Tellann can be used as a fully-hosted SaaS platform, or deployed in a hybrid model where the telemetry storage (Clickhouse) remains in the client\'s cloud.',
       },
     ],
   },
   {
     slug: 'architecture/self-hosted',
     title: 'Self-Hosted Deployment',
-    description: 'Run the entire SOTS stack inside your infrastructure.',
+    description: 'Run the entire Tellann stack inside your infrastructure.',
     category: '🏗 ARCHITECTURE',
     sections: [
       {
@@ -1232,72 +1232,72 @@ export const docs: DocPage[] = [
     ],
   },
 
-  // 🆚 WHY SOTS?
+  // 🆚 WHY TELLANN?
   {
-    slug: 'why-sots/why-sots',
-    title: 'Why SOTS?',
+    slug: 'why-tellann/why-tellann',
+    title: 'Why Tellann?',
     description: 'Understand the distinct advantages of Behavioral Quality Intelligence.',
-    category: '🆚 WHY SOTS?',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
-        title: 'The SOTS Difference',
-        body: 'SOTS bridges the gap between manual testing, automated tests, and real-world behavior, ensuring what you build aligns with what you declared.',
+        title: 'The Tellann Difference',
+        body: 'Tellann bridges the gap between manual testing, automated tests, and real-world behavior, ensuring what you build aligns with what you declared.',
       },
     ],
   },
   {
-    slug: 'why-sots/vs-datadog',
-    title: 'SOTS vs Datadog',
-    description: 'Compare SOTS behavioral modeling with Datadog RUM.',
-    category: '🆚 WHY SOTS?',
+    slug: 'why-tellann/vs-datadog',
+    title: 'Tellann vs Datadog',
+    description: 'Compare Tellann behavioral modeling with Datadog RUM.',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
         title: 'RUM vs Behavioral Reconciliation',
-        body: 'While Datadog captures performance metrics and RUM click maps, SOTS reconciles executions against explicit state graphs to detect untested feature paths and logical gaps.',
+        body: 'While Datadog captures performance metrics and RUM click maps, Tellann reconciles executions against explicit state graphs to detect untested feature paths and logical gaps.',
       },
     ],
   },
   {
-    slug: 'why-sots/vs-sentry',
-    title: 'SOTS vs Sentry',
-    description: 'Compare SOTS error tracking with Sentry.',
-    category: '🆚 WHY SOTS?',
+    slug: 'why-tellann/vs-sentry',
+    title: 'Tellann vs Sentry',
+    description: 'Compare Tellann error tracking with Sentry.',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
         title: 'Error context vs Behavior context',
-        body: 'Sentry tracks stack traces. SOTS tracks behavioral context, showing where errors occurred inside a larger state transition diagram.',
+        body: 'Sentry tracks stack traces. Tellann tracks behavioral context, showing where errors occurred inside a larger state transition diagram.',
       },
     ],
   },
   {
-    slug: 'why-sots/vs-posthog',
-    title: 'SOTS vs PostHog',
-    description: 'Compare SOTS with PostHog product analytics.',
-    category: '🆚 WHY SOTS?',
+    slug: 'why-tellann/vs-posthog',
+    title: 'Tellann vs PostHog',
+    description: 'Compare Tellann with PostHog product analytics.',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
         title: 'Product Funnels vs Quality Assurance',
-        body: 'PostHog maps conversion rates. SOTS maps structural behavior compliance, pointing out logical code branch bugs rather than just user dropoffs.',
+        body: 'PostHog maps conversion rates. Tellann maps structural behavior compliance, pointing out logical code branch bugs rather than just user dropoffs.',
       },
     ],
   },
   {
-    slug: 'why-sots/vs-replay-io',
-    title: 'SOTS vs Replay.io',
-    description: 'Compare SOTS with time-travel debuggers.',
-    category: '🆚 WHY SOTS?',
+    slug: 'why-tellann/vs-replay-io',
+    title: 'Tellann vs Replay.io',
+    description: 'Compare Tellann with time-travel debuggers.',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
         title: 'Replay.io vs Telemetry Reconstruction',
-        body: 'Replay.io records low-level browser execution. SOTS reconstructs behavioral timelines, which scales cleanly to multi-session backend correlation.',
+        body: 'Replay.io records low-level browser execution. Tellann reconstructs behavioral timelines, which scales cleanly to multi-session backend correlation.',
       },
     ],
   },
   {
-    slug: 'why-sots/behavioral-quality',
+    slug: 'why-tellann/behavioral-quality',
     title: 'Behavioral Quality Intelligence',
-    description: 'The core category SOTS creates.',
-    category: '🆚 WHY SOTS?',
+    description: 'The core category Tellann creates.',
+    category: '🆚 WHY TELLANN?',
     sections: [
       {
         title: 'Quality Intelligence',
@@ -1332,7 +1332,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Trace errors',
-        body: 'Ensure you completed the demo flow completely. SOTS expects a transition path starting from an onboarding state.',
+        body: 'Ensure you completed the demo flow completely. Tellann expects a transition path starting from an onboarding state.',
       },
     ],
   },
@@ -1387,7 +1387,7 @@ export const docs: DocPage[] = [
   {
     slug: 'troubleshooting/faq',
     title: 'FAQ',
-    description: 'Frequently Asked Questions about SOTS.',
+    description: 'Frequently Asked Questions about Tellann.',
     category: '🛠 TROUBLESHOOTING',
     sections: [
       {
@@ -1406,7 +1406,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'E-commerce tutorial',
-        body: 'Learn to track product detail pages, checkout processes, inventory status, and payment callbacks using SOTS state telemetry.',
+        body: 'Learn to track product detail pages, checkout processes, inventory status, and payment callbacks using Tellann state telemetry.',
       },
     ],
   },
@@ -1466,7 +1466,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Creating expected graphs',
-        body: 'Learn to compile a schema file declaring states and transition maps, and upload it directly using SOTS APIs.',
+        body: 'Learn to compile a schema file declaring states and transition maps, and upload it directly using Tellann APIs.',
       },
     ],
   },

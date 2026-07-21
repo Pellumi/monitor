@@ -3,16 +3,16 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Security',
-  description: 'How SOTS separates tenants, protects API keys, scopes authentication, and records sensitive actions.',
+  description: 'How Tellann separates tenants, protects API keys, scopes authentication, and records sensitive actions.',
 };
 
 export default function SecurityPage() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-16">
-      <Link href="/" className="text-sm font-semibold text-blue-700">Back to SOTS</Link>
+      <Link href="/" className="text-sm font-semibold text-blue-700">Back to Tellann</Link>
       <h1 className="mt-10 text-5xl font-semibold tracking-tight text-slate-950">Security and operating boundaries</h1>
       <p className="mt-5 text-lg leading-8 text-slate-600">
-        SOTS keeps the public marketing site, authenticated application, and documentation system separate. Product access is isolated on the app subdomain, with API keys scoped to organizations, applications, and environments.
+        Tellann keeps the public marketing site, authenticated application, and documentation system separate. Product access is isolated on the app subdomain, with API keys scoped to organizations, applications, and environments.
       </p>
       <div className="mt-10 grid gap-4">
         {[

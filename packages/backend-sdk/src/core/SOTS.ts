@@ -19,7 +19,7 @@ export class SOTSBackend {
 
   initialize(config: SotsBackendConfig) {
     this.config = config;
-    console.log('[SOTS Backend] Initialized');
+    console.log('[Tellann Backend] Initialized');
   }
 
   getConfig(): SotsBackendConfig | null {
@@ -127,7 +127,7 @@ export class SOTSBackend {
       const eventSize = Buffer.byteLength(eventJson, 'utf8');
       if (eventSize > 32 * 1024) {
         console.error(
-          `[SOTS Backend] Event of type "${eventType}" discarded. Size (${eventSize} bytes) exceeds limit of 32 KB.`
+          `[Tellann Backend] Event of type "${eventType}" discarded. Size (${eventSize} bytes) exceeds limit of 32 KB.`
         );
         return;
       }

@@ -44,12 +44,12 @@ export async function trackApiEvent(
     const eventSize = Buffer.byteLength(eventJson, 'utf8');
     if (eventSize > MAX_EVENT_SIZE_BYTES) {
       console.error(
-        `[SOTS Backend] API request event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
+        `[Tellann Backend] API request event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
       );
       return;
     }
   } catch (err) {
-    console.error('[SOTS Backend] Failed to compute size of API event, discarding', err);
+    console.error('[Tellann Backend] Failed to compute size of API event, discarding', err);
     return;
   }
 

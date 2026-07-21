@@ -772,7 +772,7 @@ export default function ProfileSettingsPage() {
   }
 
   const handleCopyKey = () => {
-    void navigator.clipboard.writeText('SOTS-MFA-J3K9-X27Y-Q8W1');
+    void navigator.clipboard.writeText('TELLANN-MFA-J3K9-X27Y-Q8W1');
     setCopiedKey(true);
     setTimeout(() => setCopiedKey(false), 2000);
   };
@@ -894,7 +894,7 @@ export default function ProfileSettingsPage() {
         <div>
           <h1 className="text-3xl font-bold text-white">System Settings</h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Manage identity, security, team access, preferences, billing, and governance for SOTS.
+            Manage identity, security, team access, preferences, billing, and governance for Tellann.
           </p>
         </div>
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-300">
@@ -1185,7 +1185,7 @@ export default function ProfileSettingsPage() {
                           </span>
                           <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
                             <code className="rounded bg-neutral-900 border border-neutral-800 px-2.5 py-1 text-xs font-mono text-indigo-400 select-all">
-                              SOTS-MFA-J3K9-X27Y-Q8W1
+                              TELLANN-MFA-J3K9-X27Y-Q8W1
                             </code>
                             <button
                               type="button"
@@ -1437,7 +1437,7 @@ export default function ProfileSettingsPage() {
             <Card className="space-y-6">
               <SectionHeader
                 title="Notifications & Preferences"
-                description="Choose which operational messages SOTS should prioritize for this account."
+                description="Choose which operational messages Tellann should prioritize for this account."
               />
               <div className="grid gap-3 md:grid-cols-2">
                 {[

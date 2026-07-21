@@ -6,7 +6,7 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://domain-name.com';
 
 const loop = [
   ['Declare', 'Model the states, transitions, and critical journeys your product is expected to support.'],
-  ['Observe', 'Install the SDKs and let SOTS capture frontend sessions, backend APIs, errors, and workflows.'],
+  ['Observe', 'Install the SDKs and let Tellann capture frontend sessions, backend APIs, errors, and workflows.'],
   ['Reconcile', 'Compare declared behavior with observed behavior to separate confirmed paths from true gaps.'],
   ['Report', 'Export coverage, missing states, missing flows, endpoint findings, and release evidence.'],
 ];
@@ -31,7 +31,7 @@ export default function MarketingHome() {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
-    name: 'SOTS',
+    name: 'Tellann',
     applicationCategory: 'DeveloperApplication',
     operatingSystem: 'Web',
     url: siteUrl,
@@ -57,7 +57,7 @@ export default function MarketingHome() {
             Self-observing QA intelligence for modern software teams
           </h1>
           <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-600">
-            SOTS watches how your application behaves during real QA runs, reconciles that behavior against expected flows, and turns the gaps into release-ready evidence.
+            Tellann watches how your application behaves during real QA runs, reconciles that behavior against expected flows, and turns the gaps into release-ready evidence.
           </p>
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
             <Link href={`${appUrl}/auth/login`} className="rounded-md bg-blue-600 px-5 py-3 text-center text-sm font-semibold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
@@ -81,7 +81,7 @@ export default function MarketingHome() {
           <div className="max-w-2xl">
             <h2 className="text-3xl font-semibold tracking-tight text-slate-950">The review loop</h2>
             <p className="mt-4 text-base leading-7 text-slate-600">
-              SOTS connects product expectations to observed behavior so QA, development, and delivery teams can discuss the same evidence.
+              Tellann connects product expectations to observed behavior so QA, development, and delivery teams can discuss the same evidence.
             </p>
           </div>
           <div className="mt-12 grid gap-4 md:grid-cols-4">
@@ -140,7 +140,7 @@ export default function MarketingHome() {
             </p>
           </div>
           <Link href={`${appUrl}/auth/login`} className="mt-6 inline-flex rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 md:mt-0">
-            Open SOTS
+            Open Tellann
           </Link>
         </div>
       </section>
@@ -153,7 +153,7 @@ function Header() {
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 lg:px-10">
-        <Link href="/" className="text-lg font-semibold tracking-tight text-slate-950">SOTS</Link>
+        <Link href="/" className="text-lg font-semibold tracking-tight text-slate-950">Tellann</Link>
         <nav className="hidden items-center gap-8 text-sm font-medium text-slate-600 md:flex">
           <a href="#product">Product</a>
           <Link href="/pricing">Pricing</Link>
@@ -225,7 +225,7 @@ function Footer() {
   return (
     <footer className="border-t border-slate-200">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between lg:px-10">
-        <div>(c) {new Date().getFullYear()} SOTS. Domain name pending.</div>
+        <div>(c) {new Date().getFullYear()} Tellann. Domain name pending.</div>
         <div className="flex gap-5">
           <Link href="/privacy">Privacy</Link>
           <Link href="/terms">Terms</Link>

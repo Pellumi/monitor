@@ -46,7 +46,7 @@ export function Header() {
         <Link href="/" className="flex items-center gap-2">
           <Building2 className="h-5 w-5 text-blue-400" />
           <span className="text-sm font-bold tracking-tight text-foreground">
-            SOTS <span className="text-muted-foreground/60 font-normal">Platform</span>
+            Tellann <span className="text-muted-foreground/60 font-normal">Platform</span>
           </span>
           <span className="px-1.5 py-0.5 rounded bg-muted border border-border text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">
             Docs

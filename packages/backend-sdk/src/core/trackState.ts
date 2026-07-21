@@ -38,12 +38,12 @@ export async function trackStateEvent(
     const eventSize = Buffer.byteLength(eventJson, 'utf8');
     if (eventSize > MAX_EVENT_SIZE_BYTES) {
       console.error(
-        `[SOTS Backend] State event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
+        `[Tellann Backend] State event discarded. Size (${eventSize} bytes) exceeds limit of ${MAX_EVENT_SIZE_BYTES} bytes.`
       );
       return;
     }
   } catch (err) {
-    console.error('[SOTS Backend] Failed to compute size of state event, discarding', err);
+    console.error('[Tellann Backend] Failed to compute size of state event, discarding', err);
     return;
   }
 

@@ -538,7 +538,7 @@ export function Sidebar() {
         <div className="flex h-16 items-center justify-between border-b border-neutral-800 px-6 mb-4 flex-shrink-0">
           <Link href="/" className="flex items-center space-x-2">
             <Building2 className="h-5 w-5 text-blue-400" />
-            <h1 className="text-lg font-bold tracking-tight text-white">SOTS Platform</h1>
+            <h1 className="text-lg font-bold tracking-tight text-white">Tellann Platform</h1>
           </Link>
         </div>
 

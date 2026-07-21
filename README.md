@@ -1,14 +1,14 @@
-# Self-Observing Testing System (SOTS)
+# Tellann
 
-SOTS is a software quality intelligence platform that continuously observes application behavior, automatically discovers workflows, measures coverage, identifies missing states/flows, and generates QA reports.
+Tellann is a software quality intelligence platform that continuously observes application behavior, automatically discovers workflows, measures coverage, identifies missing states/flows, and generates QA reports.
 
-Demonstrate your application once (via manual walkthrough or automation), and SOTS maps your system's behavioral topology, highlighting what was missed.
+Demonstrate your application once (via manual walkthrough or automation), and Tellann maps your system's behavioral topology, highlighting what was missed.
 
 ---
 
 ## 1. System Architecture Overview
 
-SOTS is designed as a modular microservices platform communicating via HTTP APIs, Kafka events, and relational/time-series databases.
+Tellann is designed as a modular microservices platform communicating via HTTP APIs, Kafka events, and relational/time-series databases.
 
 ```text
                                   ┌────────────────────────┐
@@ -76,7 +76,7 @@ SOTS is designed as a modular microservices platform communicating via HTTP APIs
 
 ## 2. Infrastructure Setup & Installation
 
-SOTS requires **Node.js (>= 18)** and **pnpm (>= 9)**.
+Tellann requires **Node.js (>= 18)** and **pnpm (>= 9)**.
 
 ### Step 1: Start Infrastructure Containers
 
@@ -145,7 +145,7 @@ npx pnpm --filter @sots/e2e-tests run test:e2e
 
 ## 4. SDK Integration Reference
 
-SOTS supports unified tracking across client and server environments. Both SDKs point to the **API Gateway** (`http://localhost:3000`) and require your API key in the `Authorization: Bearer <key>` header (automatically handled by the initialization config).
+Tellann supports unified tracking across client and server environments. Both SDKs point to the **API Gateway** (`http://localhost:3000`) and require your API key in the `Authorization: Bearer <key>` header (automatically handled by the initialization config).
 
 ### A. Frontend SDK (`@sots/frontend-sdk`)
 

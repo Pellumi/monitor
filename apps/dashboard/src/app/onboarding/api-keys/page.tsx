@@ -98,7 +98,7 @@ verifySotsInstall().catch(console.error);`;
         {!apiKey ? (
           <div className="flex flex-col items-center justify-center py-8 space-y-4">
             <p className="text-center text-sm text-neutral-400 max-w-md">
-              To connect your application to SOTS, you need an API key. This key will authorize telemetry events sent from the SDK.
+              To connect your application to Tellann, you need an API key. This key will authorize telemetry events sent from the SDK.
             </p>
             <button
               onClick={() => generateKeyMutation.mutate()}

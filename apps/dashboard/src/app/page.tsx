@@ -33,7 +33,7 @@ function OverviewContent() {
           S
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-white mb-2">Welcome to SOTS Platform</h1>
+          <h1 className="text-2xl font-bold text-white mb-2">Welcome to Tellann Platform</h1>
           <p className="text-neutral-400 text-sm">
             To start tracking expected states, transitions, and observing behavioral gaps, you need to configure your first application.
           </p>

@@ -5,7 +5,7 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.domain-name.com';
 
 export const metadata: Metadata = {
   title: 'Pricing',
-  description: 'SOTS pricing plans for QA teams, developers, and engineering organizations.',
+  description: 'Tellann pricing plans for QA teams, developers, and engineering organizations.',
 };
 
 const plans = [
@@ -17,7 +17,7 @@ const plans = [
 export default function PricingPage() {
   return (
     <main className="mx-auto max-w-6xl px-6 py-16">
-      <Link href="/" className="text-sm font-semibold text-blue-700">Back to SOTS</Link>
+      <Link href="/" className="text-sm font-semibold text-blue-700">Back to Tellann</Link>
       <h1 className="mt-10 text-5xl font-semibold tracking-tight text-slate-950">Pricing that follows product maturity</h1>
       <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">
         Start with behavioral visibility, then expand into team reporting, governance, retention, and enterprise controls as the system becomes part of release readiness.

@@ -53,7 +53,7 @@ class SotsFrontendSDK {
     });
 
     if (this.config.debug) {
-      console.log('[SOTS] Initialized and auto-tracking started', this.config);
+      console.log('[Tellann] Initialized and auto-tracking started', this.config);
     }
   }
 
@@ -86,7 +86,7 @@ class SotsFrontendSDK {
   trackEvent(eventType: EventType, metadata: Record<string, any> = {}) {
     if (!this.config || !this.sessionId) {
       if (this.config?.debug) {
-        console.warn('[SOTS] SDK not initialized or session not started');
+        console.warn('[Tellann] SDK not initialized or session not started');
       }
       return;
     }
@@ -116,12 +116,12 @@ class SotsFrontendSDK {
       const limit = eventType.includes('REPLAY') ? MAX_REPLAY_SIZE_BYTES : MAX_EVENT_SIZE_BYTES;
       if (eventSize > limit) {
         console.error(
-          `[SOTS] Event of type "${eventType}" discarded. Size (${eventSize} bytes) exceeds limit of ${limit} bytes.`
+          `[Tellann] Event of type "${eventType}" discarded. Size (${eventSize} bytes) exceeds limit of ${limit} bytes.`
         );
         return;
       }
     } catch (err) {
-      console.error('[SOTS] Failed to compute size of event, discarding', err);
+      console.error('[Tellann] Failed to compute size of event, discarding', err);
       return;
     }
 
@@ -247,7 +247,7 @@ class SotsFrontendSDK {
 
       if (payloadSize > 5 * 1024 * 1024) {
         console.error(
-          `[SOTS] Batch payload size of ${payloadSize} bytes exceeds the 5 MB limit. Dropping batch.`
+          `[Tellann] Batch payload size of ${payloadSize} bytes exceeds the 5 MB limit. Dropping batch.`
         );
         return;
       }
@@ -280,7 +280,7 @@ class SotsFrontendSDK {
       }
     } catch (error) {
       if (this.config.debug) {
-        console.error('[SOTS] Failed to flush events', error);
+        console.error('[Tellann] Failed to flush events', error);
       }
       // Re-add to buffer on failure
       this.eventBuffer = [...eventsToSend, ...this.eventBuffer];

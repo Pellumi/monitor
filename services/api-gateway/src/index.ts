@@ -175,10 +175,10 @@ async function main() {
   const OPENAPI_SPEC = {
     openapi: '3.1.0',
     info: {
-      title: 'SOTS Platform API',
+      title: 'Tellann Platform API',
       version: '1.0.0',
       description:
-        'SOTS (State of the System) behavioral QA platform. Includes SDK telemetry ingestion, report generation, session replay, flow declaration, reconciliation, billing, and organization management.',
+        'Tellann behavioral QA platform. Includes SDK telemetry ingestion, report generation, session replay, flow declaration, reconciliation, billing, and organization management.',
     },
     servers: [{ url: process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000', description: 'API Gateway' }],
     components: {
@@ -444,7 +444,7 @@ async function main() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SOTS Platform API Docs</title>
+  <title>Tellann Platform API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
 </head>
 <body style="margin:0">

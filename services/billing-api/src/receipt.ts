@@ -38,7 +38,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
       .fontSize(24)
       .font('Helvetica-Bold')
       .fillColor('#111827')
-      .text('SOTS', 50, 50)
+      .text('Tellann', 50, 50)
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#6B7280')
@@ -167,13 +167,13 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
       .font('Helvetica')
       .fillColor('#9CA3AF')
       .text(
-        'Thank you for your business. For support, contact support@sots.io',
+        'Thank you for your business. For support, contact support@tellann.co',
         50,
         700,
         { align: 'center', width: 495 },
       )
       .text(
-        'SOTS · Receipt generated automatically · Not a tax invoice',
+        'Tellann · Receipt generated automatically · Not a tax invoice',
         50,
         715,
         { align: 'center', width: 495 },
