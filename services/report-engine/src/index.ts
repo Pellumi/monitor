@@ -1022,7 +1022,7 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
-const PORT = Services.REPORT_ENGINE || 3004;
+const PORT = Number(process.env.PORT || Services.REPORT_ENGINE);
 
 app.listen(PORT, () => {
   console.log(`Report Engine running on port ${PORT}`);
