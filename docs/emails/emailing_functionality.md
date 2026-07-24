@@ -239,7 +239,7 @@ These should be clean, direct, and boring. Billing emails are not a place for po
 | Storage retention warning | Replay/report storage near limit | Admin               | Prompt cleanup/upgrade       | `billing-storage-warning.html`    |
 | Upgrade recommendation    | User hits plan constraint        | Admin/billing owner | Natural expansion            | `billing-upgrade-suggestion.html` |
 
-Your packaging spec has Free, Solo, Team, Business, and Enterprise plans, with limits around applications, users, storage, retention, reports, exports, team collaboration, API access, audit logs, SSO, and self-hosting.  Those limits should drive usage-warning and upgrade emails.
+Your packaging spec has Free, Local, Solo, Team, Business, and Enterprise plans, with limits around applications, users, storage, retention, reports, exports, team collaboration, API access, audit logs, SSO, and self-hosting. Local is Nigeria-only and NGN-only. Those limits should drive usage-warning and upgrade emails.
 
 ---
 

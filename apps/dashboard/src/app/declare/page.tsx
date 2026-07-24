@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
 import { useState, useMemo, Suspense, useEffect, useCallback, useRef } from 'react';
@@ -168,7 +169,7 @@ function DeclareContent() {
   const { data: onboardingProgress, refetch: refetchProgress } = useQuery<any>({
     queryKey: ['onboarding-progress', appId],
     queryFn: async () => {
-      const res = await fetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`);
       if (res.status === 404) return null;
       if (!res.ok) throw new Error('Failed to fetch onboarding progress');
       return res.json();
@@ -180,7 +181,7 @@ function DeclareContent() {
   const { data: environments } = useQuery<any[]>({
     queryKey: ['environments', appId],
     queryFn: async () => {
-      const res = await fetch(`${ONBOARDING_API}/applications/${appId}/environments`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments`);
       if (!res.ok) throw new Error('Failed to fetch environments');
       return res.json();
     },
@@ -194,7 +195,7 @@ function DeclareContent() {
 
     setIsCheckingSdkReadiness(true);
     try {
-      const res = await fetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/sdk-readiness`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/sdk-readiness`);
       if (!res.ok) throw new Error('Failed to verify SDK readiness');
 
       const data = await res.json();
@@ -217,7 +218,7 @@ function DeclareContent() {
 
   const selectProfileMutation = useMutation({
     mutationFn: async (profileType: string) => {
-      const res = await fetch(`${ONBOARDING_API}/applications/${appId}/profile`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileType }),
@@ -233,7 +234,7 @@ function DeclareContent() {
 
   const patchProgressMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -249,7 +250,7 @@ function DeclareContent() {
   const generateKeyMutation = useMutation({
     mutationFn: async () => {
       if (!activeEnv) throw new Error('No environment initialized');
-      const res = await fetch(`${ONBOARDING_API}/environments/${activeEnv.id}/api-keys`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/environments/${activeEnv.id}/api-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: 'Onboarding API Key' }),
@@ -269,7 +270,7 @@ function DeclareContent() {
       if (!activeEnv) throw new Error('No environment initialized');
       
       // 1. Mark demo completed and first report generated
-      await fetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
+      await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,7 +280,7 @@ function DeclareContent() {
       });
 
       // 2. Trigger reconciliation
-      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation/run`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ environmentId: activeEnv.id })
@@ -287,7 +288,7 @@ function DeclareContent() {
       if (!res.ok) throw new Error('Reconciliation trigger failed');
 
       // 3. Force auto-value realization check
-      await fetch(`${ONBOARDING_API}/internal/applications/${appId}/reconcile-value`, { method: 'POST' });
+      await authenticatedFetch(`${ONBOARDING_API}/internal/applications/${appId}/reconcile-value`, { method: 'POST' });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['onboarding-progress', appId] });
@@ -304,7 +305,7 @@ function DeclareContent() {
   const { data: flows } = useQuery<DeclaredFlow[]>({
     queryKey: ['declared-flows', appId],
     queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow`);
       if (!res.ok) throw new Error('Failed to fetch declared flows');
       return res.json();
     },
@@ -315,7 +316,7 @@ function DeclareContent() {
     queryKey: ['declared-flow-details', selectedFlowId],
     queryFn: async () => {
       if (!selectedFlowId) return null as any;
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}`);
       if (!res.ok) throw new Error('Failed to fetch flow details');
       return res.json();
     },
@@ -325,7 +326,7 @@ function DeclareContent() {
   const { data: suggestionResponse, isFetching: isSuggestionsLoading } = useQuery<FlowSuggestionsResponse>({
     queryKey: ['flow-suggestions', appId, selectedFlowId],
     queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions`);
+      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions`);
       if (!res.ok) throw new Error('Failed to fetch flow suggestions');
       return res.json();
     },
@@ -338,7 +339,7 @@ function DeclareContent() {
     includeAi: boolean,
     signal?: AbortSignal,
   ) => {
-    const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${flow.id}/suggestions/generate`, {
+    const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${flow.id}/suggestions/generate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
       body: JSON.stringify({ graphVersion: flow.version, graphHash: flow.graphHash, trigger, includeAi }),
     });
@@ -382,7 +383,7 @@ function DeclareContent() {
   const { data: recReports, refetch: refetchReconciliation } = useQuery<ReconciliationReport[]>({
     queryKey: ['reconciliation-reports', appId],
     queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation`);
       if (!res.ok) throw new Error('Failed to fetch reconciliation reports');
       return res.json();
     },
@@ -399,7 +400,7 @@ function DeclareContent() {
 
   const createFlowMutation = useMutation({
     mutationFn: async (data: { name: string; workflowType: string }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -416,7 +417,7 @@ function DeclareContent() {
 
   const addStateMutation = useMutation({
     mutationFn: async (data: { stateName: string; category: string; provenance: string }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/states`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/states`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -433,7 +434,7 @@ function DeclareContent() {
 
   const addTransitionMutation = useMutation({
     mutationFn: async (data: { fromStateId: string; toStateId: string; action?: string; provenance: string }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/transitions`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/transitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -452,7 +453,7 @@ function DeclareContent() {
 
   const acceptSuggestionMutation = useMutation({
     mutationFn: async (sugId: string) => {
-      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/accept`, {
+      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/accept`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to accept suggestion');
@@ -469,7 +470,7 @@ function DeclareContent() {
 
   const rejectSuggestionMutation = useMutation({
     mutationFn: async (data: { sugId: string; reason?: string }) => {
-      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}/reject`, {
+      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rejectionReason: data.reason }),
@@ -487,7 +488,7 @@ function DeclareContent() {
 
   const dismissSuggestionMutation = useMutation({
     mutationFn: async (sugId: string) => {
-      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/dismiss`, { method: 'POST' });
+      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/dismiss`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to dismiss suggestion');
       return res.json();
     },
@@ -496,7 +497,7 @@ function DeclareContent() {
 
   const editSuggestionMutation = useMutation({
     mutationFn: async (data: { sugId: string; suggestedStateName: string }) => {
-      const res = await fetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}`, {
+      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ suggestedStateName: data.suggestedStateName }),
       });
       if (!res.ok) throw new Error('Failed to edit suggestion');
@@ -507,7 +508,7 @@ function DeclareContent() {
 
   const completeFlowMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/complete`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/complete`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to complete flow');
@@ -525,7 +526,7 @@ function DeclareContent() {
 
   const reopenFlowMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/reopen`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/reopen`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to reopen flow');
@@ -539,7 +540,7 @@ function DeclareContent() {
 
   const promoteStateMutation = useMutation({
     mutationFn: async (data: { stateName: string; accepted: boolean; reason?: string }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/promote`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/promote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -686,7 +687,7 @@ function DeclareContent() {
     if (onboardingProgress.sdkConnected && !onboardingProgress.demonstrationCompleted) {
       const interval = setInterval(async () => {
         try {
-          const res = await fetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/demo-status`);
+          const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/demo-status`);
           if (res.ok) {
             const data = await res.json();
             setDemoStatus(data);

@@ -30,6 +30,13 @@ const UPSTREAM = {
 };
 
 const ONBOARDING_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-key`;
+const PROGRAMMATIC_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-programmatic-token`;
+const isProduction = process.env.NODE_ENV === 'production';
+const API_RATE_LIMIT_MAX = Number(process.env.API_GATEWAY_API_RATE_LIMIT_MAX || 100);
+const DASHBOARD_RATE_LIMIT_MAX = Number(
+  process.env.API_GATEWAY_DASHBOARD_RATE_LIMIT_MAX || (isProduction ? 1_000 : 10_000),
+);
+const RATE_LIMIT_WINDOW = process.env.API_GATEWAY_RATE_LIMIT_WINDOW || '15 minutes';
 
 // Routes that bypass API key authentication
 const PUBLIC_PREFIXES = ['/health', '/auth'];
@@ -99,6 +106,29 @@ async function resolveApiKey(
   }
 }
 
+function requiredProgrammaticScope(url: string, method: string): string | null {
+  if (url.startsWith('/reports') && url.includes('/export')) return 'reports:export';
+  if (url.startsWith('/reports')) return 'reports:read';
+  if (url.startsWith('/graph') || url.includes('declared-flow')) return 'graphs:read';
+  if (url.startsWith('/coverage') || url.includes('reconciliation')) return 'coverage:read';
+  if (url.startsWith('/applications') && method === 'GET') return 'applications:read';
+  return null;
+}
+
+async function resolveProgrammaticToken(rawToken: string): Promise<{ organizationId: string; scopes: string[] } | null> {
+  const keyHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  try {
+    const response = await fetch(PROGRAMMATIC_VALIDATE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyHash }),
+    });
+    return response.ok ? await response.json() as { organizationId: string; scopes: string[] } : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Build and Start Fastify
 // ─────────────────────────────────────────────────────────────
@@ -111,10 +141,18 @@ async function main() {
 
   // Rate limiting — keyed on API key prefix header (injected after auth) or IP
   await fastify.register(rateLimit, {
-    max: 100,
-    timeWindow: '15 minutes',
-    keyGenerator: (req) =>
-      (req.headers['x-sots-org-id'] as string) ?? req.ip,
+    max: (req) =>
+      req.headers.authorization?.startsWith('Bearer ')
+        ? API_RATE_LIMIT_MAX
+        : DASHBOARD_RATE_LIMIT_MAX,
+    timeWindow: RATE_LIMIT_WINDOW,
+    keyGenerator: (req) => {
+      const authorization = req.headers.authorization;
+      if (authorization?.startsWith('Bearer ')) {
+        return `api:${crypto.createHash('sha256').update(authorization).digest('hex')}`;
+      }
+      return `dashboard:${req.ip}`;
+    },
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -137,6 +175,18 @@ async function main() {
     const rawKey = authHeader.slice(7).trim();
     if (!rawKey) {
       return reply.code(401).send({ error: 'Empty API key' });
+    }
+
+    if (rawKey.startsWith('sots_pat_')) {
+      const token = await resolveProgrammaticToken(rawKey);
+      if (!token) return reply.code(401).send({ error: 'Invalid, revoked, or unentitled programmatic token' });
+      const requiredScope = requiredProgrammaticScope(url, request.method);
+      if (!requiredScope || !token.scopes.includes(requiredScope)) {
+        return reply.code(403).send({ error: 'PROGRAMMATIC_SCOPE_REQUIRED', requiredScope });
+      }
+      request.headers['x-sots-org-id'] = token.organizationId;
+      request.headers['x-sots-auth-mode'] = 'PROGRAMMATIC_TOKEN';
+      return;
     }
 
     const keyEntry = await resolveApiKey(rawKey);

@@ -1,4 +1,5 @@
 "use client";
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -60,7 +61,7 @@ function MFAContent() {
   } = useQuery<{ totpEnabled: boolean; backupCodesRemaining: number }>({
     queryKey: ["mfa-status"],
     queryFn: async () => {
-      const res = await fetch(`${AUTH_API}/mfa/status`);
+      const res = await authenticatedFetch(`${AUTH_API}/mfa/status`);
       if (!res.ok) throw new Error("Failed to load MFA status");
       return res.json();
     },
@@ -69,7 +70,7 @@ function MFAContent() {
   // Step 1: Begin TOTP setup — fetch secret + URI
   const setupMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${AUTH_API}/mfa/setup`, { method: "POST" });
+      const res = await authenticatedFetch(`${AUTH_API}/mfa/setup`, { method: "POST" });
       if (!res.ok) throw new Error("Failed to start MFA setup");
       return res.json() as Promise<{ secret: string; uri: string }>;
     },
@@ -85,7 +86,7 @@ function MFAContent() {
   // Step 2: Verify TOTP and get backup codes
   const verifyMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${AUTH_API}/mfa/enable`, {
+      const res = await authenticatedFetch(`${AUTH_API}/mfa/enable`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ secret: secretBase32, token }),
@@ -108,7 +109,7 @@ function MFAContent() {
   // Disable MFA
   const disableMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${AUTH_API}/mfa/disable`, {
+      const res = await authenticatedFetch(`${AUTH_API}/mfa/disable`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: disableToken }),
@@ -190,7 +191,7 @@ function MFAContent() {
             id="setup-mfa-btn"
             onClick={() => setupMutation.mutate()}
             disabled={setupMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-neutral-200 disabled:opacity-50 text-black text-sm font-semibold rounded-md transition-colors cursor-pointer"
           >
             {setupMutation.isPending ? (
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -205,7 +206,7 @@ function MFAContent() {
           <button
             id="disable-mfa-btn"
             onClick={() => setShowDisable(!showDisable)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-neutral-700 hover:bg-neutral-800 text-neutral-400 hover:text-white text-xs font-medium rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-[#262626] hover:bg-neutral-800 text-neutral-400 hover:text-white text-xs font-medium rounded-md transition-colors cursor-pointer"
           >
             <ShieldOff className="h-3.5 w-3.5" />
             Disable
@@ -215,10 +216,10 @@ function MFAContent() {
 
       {/* Disable confirmation */}
       {showDisable && isEnabled && (
-        <div className="border border-red-900/30 bg-red-950/10 rounded-xl p-4 space-y-3">
+        <div className="border border-red-900/30 bg-red-950/10 rounded-md p-4 space-y-3">
           <p className="text-sm font-semibold text-red-300">Disable Two-Factor Authentication</p>
           <p className="text-xs text-neutral-400">
-            Enter your current TOTP code to confirm. This will remove all MFA protection from your account.
+            Disabling MFA makes your account less secure. You will only need your password to log in.
           </p>
           <input
             id="disable-totp-input"
@@ -253,9 +254,9 @@ function MFAContent() {
       {step === "setup" && (
         <div className="space-y-5">
           {/* Step 1: Scan QR code */}
-          <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-5 space-y-4">
+          <div className="border border-[#262626] bg-[#131313] rounded-md p-5 space-y-4">
             <div className="flex items-center gap-2">
-              <QrCode className="h-4 w-4 text-indigo-400" />
+              <QrCode className="h-4 w-4 text-white" />
               <h3 className="text-sm font-semibold text-white">Step 1 — Scan QR Code</h3>
             </div>
             <p className="text-xs text-neutral-400">
@@ -264,7 +265,7 @@ function MFAContent() {
 
             {/* QR code via Google Charts API (works offline via otpauth URI too) */}
             <div className="flex flex-col items-center gap-3">
-              <div className="bg-white p-3 rounded-xl inline-block">
+              <div className="bg-white p-3 rounded-md inline-block">
                 <img
                   src={`https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=${encodeURIComponent(otpauthUri)}`}
                   alt="TOTP QR Code"
@@ -275,7 +276,7 @@ function MFAContent() {
               </div>
               <div className="text-center">
                 <p className="text-xs text-neutral-500 mb-1">Or enter the key manually:</p>
-                <code className="text-sm font-mono text-indigo-300 bg-neutral-800 px-3 py-1.5 rounded-lg tracking-widest block">
+                <code className="text-sm font-mono text-white bg-black border border-[#262626] px-3 py-1.5 rounded-md tracking-widest block">
                   {secretBase32}
                 </code>
                 <div className="mt-1.5 flex justify-center">
@@ -286,9 +287,9 @@ function MFAContent() {
           </div>
 
           {/* Step 2: Verify */}
-          <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-5 space-y-4">
+          <div className="border border-[#262626] bg-[#131313] rounded-md p-5 space-y-4">
             <div className="flex items-center gap-2">
-              <Key className="h-4 w-4 text-indigo-400" />
+              <Key className="h-4 w-4 text-white" />
               <h3 className="text-sm font-semibold text-white">Step 2 — Enter Verification Code</h3>
             </div>
             <p className="text-xs text-neutral-400">
@@ -303,11 +304,11 @@ function MFAContent() {
               value={token}
               onChange={(e) => setToken(e.target.value.replace(/\D/g, ""))}
               placeholder="000000"
-              className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-xl text-white font-mono tracking-[0.5em] text-center focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full bg-[#000000] border border-[#262626] rounded-md px-4 py-3 text-xl text-white font-mono tracking-[0.5em] text-center focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors"
             />
 
             {error && (
-              <div className="flex items-center gap-2 text-xs text-red-400 bg-red-950/20 border border-red-900/30 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-red-400 bg-red-950/20 border border-red-900/30 rounded-md px-3 py-2">
                 <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
                 {error}
               </div>
@@ -316,7 +317,7 @@ function MFAContent() {
             <div className="flex gap-3">
               <button
                 onClick={() => { setStep("idle"); setError(""); }}
-                className="flex-1 border border-neutral-700 text-neutral-400 hover:bg-neutral-800 py-2.5 text-sm font-semibold rounded-lg transition-colors"
+                className="flex-1 border border-[#262626] text-neutral-400 hover:bg-neutral-800 hover:text-white py-2.5 text-sm font-semibold rounded-md transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -324,7 +325,7 @@ function MFAContent() {
                 id="confirm-enable-mfa-btn"
                 onClick={() => verifyMutation.mutate()}
                 disabled={token.length < 6 || verifyMutation.isPending}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2.5 text-sm font-semibold rounded-lg transition-colors"
+                className="flex-1 bg-white hover:bg-neutral-200 disabled:opacity-50 text-black py-2.5 text-sm font-semibold rounded-md transition-colors cursor-pointer"
               >
                 {verifyMutation.isPending ? "Verifying…" : "Enable MFA"}
               </button>

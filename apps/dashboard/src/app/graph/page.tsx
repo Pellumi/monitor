@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useQuery } from '@tanstack/react-query';
 import { ReactFlow, Background, Controls, Node, Edge } from '@xyflow/react';
@@ -11,7 +12,7 @@ import { Suspense } from 'react';
 const REPORT_ENGINE = '/api-gateway';
 
 async function fetchGraph(appId: string) {
-  const res = await fetch(`${REPORT_ENGINE}/applications/${appId}/graph`);
+  const res = await authenticatedFetch(`${REPORT_ENGINE}/applications/${appId}/graph`);
   if (!res.ok) throw new Error('Failed to fetch graph');
   return res.json();
 }

@@ -74,6 +74,12 @@ export async function seedPlans() {
         },
       });
     }
+    await prisma.featureFlag.deleteMany({
+      where: {
+        planId: dbPlan.id,
+        feature: { notIn: planDef.features.map((feature) => feature.feature) },
+      },
+    });
   }
 
   console.log('Seeding plans and feature flags completed successfully.');

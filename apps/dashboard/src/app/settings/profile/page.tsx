@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -213,7 +214,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   const data = await readJson<unknown>(res);
   if (!res.ok) {
     const body = data && typeof data === 'object' ? data as { message?: unknown; error?: unknown } : null;
@@ -260,7 +261,7 @@ function enabledFeature(entitlement: Entitlement | null, feature: string) {
 
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <section className={cn('rounded-lg border border-neutral-800 bg-neutral-900 p-5', className)}>
+    <section className={cn('rounded-md border border-[#262626] bg-[#131313] p-5', className)}>
       {children}
     </section>
   );
@@ -269,8 +270,8 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
 function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <p className="mt-1 text-sm text-neutral-400">{description}</p>
+      <h2 className="text-base font-semibold text-white">{title}</h2>
+      <p className="mt-1 text-xs text-neutral-400">{description}</p>
     </div>
   );
 }
@@ -284,13 +285,13 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement> & { label:
 
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-400">{label}</span>
+      <span className="mb-2 block text-xs font-mono font-medium uppercase tracking-wider text-[#8e9192]">{label}</span>
       <div className="relative">
         <input
           {...inputProps}
           type={inputType}
           className={cn(
-            'w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:text-neutral-500',
+            'w-full rounded-md border border-[#262626] bg-[#000000] px-3.5 py-2.5 text-xs text-white placeholder-neutral-600 outline-none transition focus:border-white focus:ring-1 focus:ring-white disabled:cursor-not-allowed disabled:text-neutral-500',
             isPasswordType && 'pr-10',
             className,
           )}
@@ -299,14 +300,14 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement> & { label:
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 transition focus:outline-none"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white transition focus:outline-none cursor-pointer"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         ) : null}
       </div>
-      {help ? <span className="mt-1 block text-[11px] text-neutral-500">{help}</span> : null}
+      {help ? <span className="mt-1 block text-[11px] text-neutral-500 font-mono">{help}</span> : null}
     </label>
   );
 }
@@ -315,11 +316,11 @@ function SelectInput(props: React.SelectHTMLAttributes<HTMLSelectElement> & { la
   const { label, children, className, ...selectProps } = props;
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-400">{label}</span>
+      <span className="mb-2 block text-xs font-mono font-medium uppercase tracking-wider text-[#8e9192]">{label}</span>
       <select
         {...selectProps}
         className={cn(
-          'w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:text-neutral-500',
+          'w-full rounded-md border border-[#262626] bg-[#000000] px-3.5 py-2.5 text-xs text-white outline-none transition focus:border-white focus:ring-1 focus:ring-white disabled:cursor-not-allowed disabled:text-neutral-500',
           className,
         )}
       >
@@ -335,7 +336,7 @@ function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
     <button
       {...buttonProps}
       className={cn(
-        'inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center rounded-md bg-white px-4 py-2.5 text-xs font-semibold text-black transition hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer',
         className,
       )}
     >
@@ -433,7 +434,7 @@ export default function ProfileSettingsPage() {
     setIsLoadingBilling(true);
     try {
       const [nextPlans, nextSubscription, nextInvoices, nextEntitlement] = await Promise.all([
-        requestJson<Plan[]>('/api-gateway/billing/plans'),
+        requestJson<Plan[]>(`/api-gateway/billing/plans?organizationId=${encodeURIComponent(selectedOrgId)}`),
         requestJson<Subscription | null>(`/api-gateway/billing/organizations/${selectedOrgId}/subscription`),
         requestJson<Invoice[]>(`/api-gateway/billing/organizations/${selectedOrgId}/invoices`),
         requestJson<Entitlement>(`/api-gateway/organizations/${selectedOrgId}/entitlement`),
@@ -930,29 +931,7 @@ export default function ProfileSettingsPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <nav className="h-fit rounded-lg border border-neutral-800 bg-neutral-900 p-2">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition',
-                  activeTab === tab.id
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-white',
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="space-y-6">
+      <div className="space-y-6">
           {activeTab === 'profile' ? (
             <Card>
               <form onSubmit={handleSaveProfile} className="space-y-6">
@@ -1724,7 +1703,6 @@ export default function ProfileSettingsPage() {
               )}
             </Card>
           ) : null}
-        </div>
       </div>
     </div>
   );

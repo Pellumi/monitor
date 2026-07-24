@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState, useMemo, Suspense } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -61,7 +62,7 @@ function ReconciliationContent() {
   const { data: flows, isLoading: isFlowsLoading } = useQuery<DeclaredFlow[]>({
     queryKey: ['reconciliation-flows', appId],
     queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow`);
       if (!res.ok) throw new Error('Failed to fetch declared flows');
       const data: DeclaredFlow[] = await res.json();
       return data.filter((f) => f.status === 'COMPLETE');
@@ -72,7 +73,7 @@ function ReconciliationContent() {
   const { data: reports, isLoading: isReportsLoading, refetch: refetchReports } = useQuery<ReconciliationReport[]>({
     queryKey: ['reconciliation-reports-detail', appId],
     queryFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation`);
       if (!res.ok) throw new Error('Failed to fetch reconciliation reports');
       return res.json();
     },
@@ -95,7 +96,7 @@ function ReconciliationContent() {
 
   const runReconciliationMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation/run`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation/run`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to run reconciliation');
@@ -108,7 +109,7 @@ function ReconciliationContent() {
 
   const promoteStateMutation = useMutation({
     mutationFn: async (data: { stateName: string; accepted: boolean }) => {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/declared-flow/${activeTabFlowId}/promote`, {
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${activeTabFlowId}/promote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -131,7 +132,7 @@ function ReconciliationContent() {
 
   const triggerExport = async (format: string) => {
     try {
-      const res = await fetch(`${FDRS_API}/applications/${appId}/reconciliation/export?format=${format}`);
+      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation/export?format=${format}`);
       if (!res.ok) throw new Error('Export failed');
       const contentType = res.headers.get('content-type') ?? '';
       if (contentType.includes('application/json') && res.headers.get('content-disposition') === null) {

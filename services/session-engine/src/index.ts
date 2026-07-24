@@ -239,7 +239,25 @@ async function emitCompletedSession(sessionId: string) {
   try {
     const replayKey = buildReplayKey(sessionId);
     const replayBuffer = Buffer.from(JSON.stringify(sessionData), 'utf-8');
+    const application = await prisma.application.findUnique({
+      where: { id: sessionData.applicationId },
+      select: { organizationId: true },
+    });
+    if (application?.organizationId) {
+      const quota = await entitlementChecker.canReserveStorage(application.organizationId, BigInt(replayBuffer.byteLength));
+      if (!quota.allowed) {
+        console.warn(`[SessionEngine] Replay storage quota reached for organization ${application.organizationId}`);
+        throw new Error('QUOTA_EXCEEDED: replay storage limit reached');
+      }
+    }
     await storage.uploadAndPresign(replayKey, replayBuffer, 'application/json', 86400);
+    if (application?.organizationId) {
+      await prisma.storageLedgerEntry.upsert({
+        where: { objectKey: replayKey },
+        create: { organizationId: application.organizationId, objectKey: replayKey, ownerType: 'SESSION', ownerId: sessionId, category: 'SESSION_REPLAY', bytes: BigInt(replayBuffer.byteLength) },
+        update: { bytes: BigInt(replayBuffer.byteLength), reservedBytes: 0n, deletedAt: null },
+      });
+    }
     console.log(`[SessionEngine] Uploaded replay to storage: ${replayKey}`);
   } catch (storageErr) {
     console.warn(`[SessionEngine] Failed to upload replay for ${sessionId} to storage — non-fatal`, storageErr);

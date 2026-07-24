@@ -33,6 +33,14 @@ export interface PlanDefinition {
   hasTrial:      boolean;        // Free = no trial, paid = 14-day trial
   trialDays:     number;
   ngnOnly?:      boolean;        // Local plan is NGN-only
+  rank:           number;
+  audience:       string[];
+  highlights:     string[];
+  exportFormats:  Array<'JSON' | 'PDF' | 'CSV' | 'HTML'>;
+  eligibleCountries: string[] | null;
+  supportedCurrencies: Array<'USD' | 'NGN'>;
+  supportedProviders: Array<'STRIPE' | 'PAYSTACK'>;
+  contactSales:   boolean;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -113,6 +121,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: false,
     trialDays: 0,
+    rank: 0,
+    audience: ['Individual developers', 'Students', 'Open-source maintainers', 'Product evaluation users'],
+    highlights: ['Complete demonstration workflow', 'Session replay', 'Coverage and missing-flow analysis', 'Basic reports'],
+    exportFormats: ['JSON'],
+    eligibleCountries: null,
+    supportedCurrencies: ['USD', 'NGN'],
+    supportedProviders: [],
+    contactSales: false,
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -169,6 +185,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: true,
     trialDays: 14,
+    rank: 1,
+    audience: ['Nigerian developers', 'Nigerian startups', 'Small local products'],
+    highlights: ['Everything in Free', 'Standard reporting', '30-day report history', 'Email support'],
+    exportFormats: ['JSON', 'PDF'],
+    eligibleCountries: ['NG'],
+    supportedCurrencies: ['NGN'],
+    supportedProviders: ['PAYSTACK'],
+    contactSales: false,
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -224,6 +248,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: true,
     trialDays: 14,
+    rank: 2,
+    audience: ['Freelancers', 'Indie founders', 'Small products'],
+    highlights: ['Everything in Free', 'Advanced reporting', 'Historical reports', 'Multiple environments'],
+    exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
+    eligibleCountries: null,
+    supportedCurrencies: ['USD', 'NGN'],
+    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    contactSales: false,
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -279,6 +311,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: true,
     trialDays: 14,
+    rank: 3,
+    audience: ['Startups', 'QA teams', 'Product teams'],
+    highlights: ['Everything in Solo', 'Team collaboration', 'Shared dashboards', 'Basic RBAC'],
+    exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
+    eligibleCountries: null,
+    supportedCurrencies: ['USD', 'NGN'],
+    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    contactSales: false,
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -334,6 +374,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: true,
     trialDays: 14,
+    rank: 4,
+    audience: ['Scale-ups', 'Multiple product teams', 'Governed organizations'],
+    highlights: ['Everything in Team', 'Programmatic API access', 'Audit logs', 'Priority processing'],
+    exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
+    eligibleCountries: null,
+    supportedCurrencies: ['USD', 'NGN'],
+    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    contactSales: false,
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -389,6 +437,14 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     hasTrial: false,
     trialDays: 0,
+    rank: 5,
+    audience: ['Large enterprises', 'Regulated industries', 'Self-hosted deployments'],
+    highlights: ['Everything in Business', 'Enterprise identity', 'Negotiated residency and retention', 'Dedicated support'],
+    exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
+    eligibleCountries: null,
+    supportedCurrencies: ['USD', 'NGN'],
+    supportedProviders: [],
+    contactSales: true,
   },
 };
 

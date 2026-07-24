@@ -304,10 +304,6 @@ export async function runRuleCandidateAdminDigest(): Promise<void> {
     // Get all active system admins
     const sysAdmins = await prisma.systemAdmin.findMany({
       where: { revokedAt: null },
-      include: {
-        // SystemAdmin.userId → User
-        // Using a raw findMany since there's no direct User relation on SystemAdmin in the schema
-      },
     });
 
     const userIds = sysAdmins.map((a: any) => a.userId);

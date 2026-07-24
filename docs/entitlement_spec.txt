@@ -433,7 +433,7 @@ Feature
 	No
 	Yes
 	Yes
-	11. Entitlement Enforcement Rules
+11. Entitlement Enforcement Rules
 Entitlements shall be enforced server-side.
 Client-side enforcement is informational only.
 Every protected operation must validate:
@@ -450,6 +450,10 @@ When determining access:
 4. Resource Availability
 5. Tenant Policies
 Access is denied if any validation fails.
+Resource quotas warn organization administrators at 80% utilization and block new quota-consuming operations at 100%. Existing data remains readable and exportable, and customers retain billing, deletion, and upgrade access.
+The Users quota counts active organization members plus unexpired invitations.
+Demonstration Sessions are counted per organization and subscription billing period.
+API Access means scoped programmatic access to management, reporting, graph, coverage, and export APIs. SDK ingestion credentials are separate and remain available on every plan within the plan's credential limit.
 13. Enterprise Overrides
 Enterprise agreements may override:
 * User Limits

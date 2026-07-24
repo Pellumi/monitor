@@ -1,10 +1,12 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { FileText, Download, CheckCircle, AlertTriangle, HelpCircle } from 'lucide-react';
+import { useSession } from '@/components/providers';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -39,6 +41,7 @@ interface ReportData {
 
 function ReportsContent() {
   const searchParams = useSearchParams();
+  const { selectedOrgId } = useSession();
   const appId = searchParams.get('appId') ?? 'app-test-checkout-success.json';
   const [exportingFormat, setExportingFormat] = React.useState<string | null>(null);
   const [exportError, setExportError] = React.useState<string | null>(null);
@@ -46,11 +49,30 @@ function ReportsContent() {
   const { data, isLoading, error } = useQuery<ReportData>({
     queryKey: ['latest-report', appId],
     queryFn: async () => {
-      const res = await fetch(`${REPORT_ENGINE}/reports/${appId}/latest`);
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/latest`);
       if (!res.ok) throw new Error('Failed to fetch report');
       return res.json();
     },
   });
+
+  const { data: entitlement } = useQuery<{
+    features: Record<string, boolean | string>;
+  }>({
+    queryKey: ['report-entitlement', selectedOrgId],
+    queryFn: async () => {
+      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/entitlement`);
+      if (!res.ok) throw new Error('Failed to fetch report entitlement');
+      return res.json();
+    },
+    enabled: !!selectedOrgId,
+  });
+
+  const exportTier = entitlement?.features?.REPORT_EXPORT;
+  const allowedFormats = exportTier === 'ALL_FORMATS'
+    ? ['pdf', 'html', 'csv', 'json']
+    : exportTier === 'JSON_PDF'
+      ? ['pdf', 'json']
+      : ['json'];
 
   if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading report…</div>;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
@@ -60,7 +82,7 @@ function ReportsContent() {
     setExportingFormat(format);
     setExportError(null);
     try {
-      const res = await fetch(`${REPORT_ENGINE}/reports/${appId}/export?format=${format}`);
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/export?format=${format}`);
       if (!res.ok) {
         const errText = await res.text().catch(() => 'Export failed');
         throw new Error(errText);
@@ -113,7 +135,7 @@ function ReportsContent() {
             { label: 'HTML', format: 'html' },
             { label: 'CSV', format: 'csv' },
             { label: 'JSON', format: 'json' },
-          ].map((btn) => (
+          ].filter((btn) => allowedFormats.includes(btn.format)).map((btn) => (
             <button
               key={btn.format}
               id={`export-${btn.format}-btn`}

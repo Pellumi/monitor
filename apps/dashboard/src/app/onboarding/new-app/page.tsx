@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -28,7 +29,7 @@ function NewAppContent() {
   const { data: entitlement, isLoading: isEntitlementLoading } = useQuery({
     queryKey: ['entitlement', orgId],
     queryFn: async () => {
-      const res = await fetch(`${ONBOARDING_API}/organizations/${orgId}/entitlement`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/entitlement`);
       if (!res.ok) throw new Error('Failed to load entitlement');
       return res.json();
     },
@@ -38,7 +39,7 @@ function NewAppContent() {
   const { data: apps, isLoading: isAppsLoading } = useQuery<Application[]>({
     queryKey: ['apps', orgId],
     queryFn: async () => {
-      const res = await fetch(`${ONBOARDING_API}/organizations/${orgId}/applications`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/applications`);
       if (!res.ok) throw new Error('Failed to load applications');
       return res.json();
     },
@@ -47,7 +48,7 @@ function NewAppContent() {
 
   const createAppMutation = useMutation({
     mutationFn: async (data: { name: string }) => {
-      const res = await fetch(`${ONBOARDING_API}/organizations/${orgId}/applications`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/applications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: data.name }),

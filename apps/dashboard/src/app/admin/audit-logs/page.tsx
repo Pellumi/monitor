@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Shield, Loader2, AlertTriangle, Search, Filter, Download } from 'lucide-react';
@@ -30,7 +31,7 @@ const ACTION_BADGE: Record<string, string> = {
 };
 
 async function requestJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await authenticatedFetch(url);
   if (res.status === 403) throw new Error('ADMIN_REQUIRED');
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;

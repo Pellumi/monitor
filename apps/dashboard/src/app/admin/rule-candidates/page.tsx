@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardList, CheckCircle, XCircle, Loader2, AlertTriangle, ChevronRight, Eye } from 'lucide-react';
@@ -19,7 +20,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   if (res.status === 403) throw new Error('ADMIN_REQUIRED');
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;

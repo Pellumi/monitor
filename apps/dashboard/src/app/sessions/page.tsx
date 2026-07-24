@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -35,7 +36,7 @@ function SessionsContent() {
     queryKey: ['sessions', appId, page],
     queryFn: async () => {
       const url = `${REPORT_ENGINE}/applications/${appId}/sessions?page=${page}&limit=20`;
-      const res = await fetch(url);
+      const res = await authenticatedFetch(url);
       if (!res.ok) throw new Error('Failed to fetch sessions');
       return res.json() as Promise<{
         sessions: Array<{

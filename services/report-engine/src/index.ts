@@ -14,6 +14,24 @@ const storage = createStorageClient();
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+
+async function uploadMeteredReport(applicationId: string, key: string, buffer: Buffer, contentType: string) {
+  const application = await prisma.application.findUnique({ where: { id: applicationId }, select: { organizationId: true } });
+  if (!application?.organizationId) return storage.uploadAndPresign(key, buffer, contentType, 3600);
+  const quota = await entitlementChecker.canReserveStorage(application.organizationId, BigInt(buffer.byteLength));
+  if (!quota.allowed) {
+    const error = new Error(`Storage quota exceeded (${quota.current.toFixed(2)} GB of ${quota.limit} GB).`);
+    (error as any).code = 'QUOTA_EXCEEDED';
+    throw error;
+  }
+  const output = await storage.uploadAndPresign(key, buffer, contentType, 3600);
+  await prisma.storageLedgerEntry.upsert({
+    where: { objectKey: key },
+    create: { organizationId: application.organizationId, objectKey: key, ownerType: 'APPLICATION', ownerId: applicationId, category: 'REPORT_EXPORT', bytes: BigInt(buffer.byteLength) },
+    update: { bytes: BigInt(buffer.byteLength), reservedBytes: 0n, deletedAt: null },
+  });
+  return output;
+}
 const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
 
@@ -628,8 +646,8 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     if (format === 'json') {
       const content = Buffer.from(JSON.stringify(reportData, null, 2), 'utf-8');
       try {
-        const { url, expiresAt } = await storage.uploadAndPresign(
-          `reports/${applicationId}/${filename}.json`, content, 'application/json', 3600
+        const { url, expiresAt } = await uploadMeteredReport(
+          applicationId, `reports/${applicationId}/${filename}.json`, content, 'application/json'
         );
         return res.json({ url, expiresAt, filename: `${filename}.json` });
       } catch (storageErr) {
@@ -677,8 +695,8 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       }
 
       try {
-        const { url, expiresAt } = await storage.uploadAndPresign(
-          `reports/${applicationId}/${filename}.csv`, Buffer.from(csv, 'utf-8'), 'text/csv', 3600
+        const { url, expiresAt } = await uploadMeteredReport(
+          applicationId, `reports/${applicationId}/${filename}.csv`, Buffer.from(csv, 'utf-8'), 'text/csv'
         );
         return res.json({ url, expiresAt, filename: `${filename}.csv` });
       } catch {
@@ -842,8 +860,8 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       </html>
       `;
       try {
-        const { url, expiresAt } = await storage.uploadAndPresign(
-          `reports/${applicationId}/${filename}.html`, Buffer.from(html, 'utf-8'), 'text/html', 3600
+        const { url, expiresAt } = await uploadMeteredReport(
+          applicationId, `reports/${applicationId}/${filename}.html`, Buffer.from(html, 'utf-8'), 'text/html'
         );
         return res.json({ url, expiresAt, filename: `${filename}.html` });
       } catch {
@@ -1002,8 +1020,8 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
       const pdfBuffer = Buffer.concat(chunks);
 
       try {
-        const { url, expiresAt } = await storage.uploadAndPresign(
-          `reports/${applicationId}/${filename}.pdf`, pdfBuffer, 'application/pdf', 3600
+        const { url, expiresAt } = await uploadMeteredReport(
+          applicationId, `reports/${applicationId}/${filename}.pdf`, pdfBuffer, 'application/pdf'
         );
         return res.json({ url, expiresAt, filename: `${filename}.pdf` });
       } catch {

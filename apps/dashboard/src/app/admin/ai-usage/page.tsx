@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSession } from '@/components/providers';
@@ -34,7 +35,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 async function requestJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await authenticatedFetch(url);
   if (res.status === 403) throw new Error('ADMIN_REQUIRED');
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
@@ -83,7 +84,7 @@ export default function AdminAiUsagePage() {
     setIsBackfilling(true);
     setBackfillMessage(null);
     try {
-      const res = await fetch(`/api-gateway/admin/ai-usage/backfill?days=${days}`, {
+      const res = await authenticatedFetch(`/api-gateway/admin/ai-usage/backfill?days=${days}`, {
         method: 'POST',
       });
       if (res.status === 403) throw new Error('ADMIN_REQUIRED');

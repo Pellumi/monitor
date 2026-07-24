@@ -573,9 +573,9 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
       return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may invite members.' });
     }
 
-    const [hasTeamAccess, entitlement] = await Promise.all([
+    const [hasTeamAccess, memberQuota] = await Promise.all([
       entitlementChecker.canAccess(orgId, Feature.TEAM_COLLABORATION),
-      entitlementChecker.getEntitlement(orgId),
+      entitlementChecker.canInviteMember(orgId),
     ]);
     if (!hasTeamAccess) {
       return res.status(403).json({ error: 'TEAM_COLLABORATION_REQUIRED', message: 'Upgrade to a Team plan before inviting members.' });
@@ -599,15 +599,15 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
       return res.status(409).json({ error: 'INVITATION_EXISTS', message: 'A pending invitation already exists for this email.' });
     }
 
-    const [currentMembers, pendingInvitations] = await Promise.all([
-      prisma.organizationMembership.count({ where: { organizationId: orgId } }),
-      prisma.organizationInvitation.count({ where: { organizationId: orgId, acceptedAt: null, expiresAt: { gt: now } } }),
-    ]);
-    const userLimit = Number(entitlement.limits?.users ?? 1);
-    if (Number.isFinite(userLimit) && currentMembers + pendingInvitations >= userLimit) {
+    if (!memberQuota.allowed) {
       return res.status(409).json({
-        error: 'USER_LIMIT_REACHED',
-        message: `This plan allows ${userLimit} organization member${userLimit === 1 ? '' : 's'}. Upgrade before inviting more people.`,
+        error: 'QUOTA_EXCEEDED',
+        metric: memberQuota.metric,
+        current: memberQuota.current,
+        limit: memberQuota.limit,
+        plan: memberQuota.planType,
+        upgradeUrl: '/settings/billing',
+        message: `This plan allows ${memberQuota.limit} organization member${memberQuota.limit === 1 ? '' : 's'}. Upgrade before inviting more people.`,
       });
     }
 
@@ -1905,6 +1905,19 @@ app.post('/internal/validate-key', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/internal/validate-programmatic-token', async (req: Request, res: Response) => {
+  const keyHash = typeof req.body.keyHash === 'string' ? req.body.keyHash : '';
+  if (!keyHash) return res.status(400).json({ error: 'keyHash is required' });
+  const token = await prisma.programmaticAccessToken.findUnique({ where: { tokenHash: keyHash } });
+  if (!token || token.revokedAt || token.expiresAt && token.expiresAt <= new Date()) {
+    return res.status(401).json({ error: 'Invalid or revoked programmatic token' });
+  }
+  const allowed = await entitlementChecker.canAccess(token.organizationId, Feature.API_ACCESS);
+  if (!allowed) return res.status(403).json({ error: 'API_ACCESS entitlement required' });
+  await prisma.programmaticAccessToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
+  res.json({ organizationId: token.organizationId, scopes: token.scopes, tokenId: token.id });
+});
+
 app.post('/notifications/email/webhooks/resend', async (req: Request, res: Response) => {
   const expectedSecret = process.env.RESEND_WEBHOOK_SECRET;
   if (expectedSecret) {
@@ -1973,6 +1986,90 @@ app.get('/organizations/:orgId/audit-logs', verifyJwt, verifyOrgMembership, asyn
     console.error('[OnboardingAPI] Organization audit logs error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+const PROGRAMMATIC_TOKEN_SCOPES = new Set(['applications:read', 'reports:read', 'reports:export', 'graphs:read', 'coverage:read']);
+
+app.get('/organizations/:orgId/programmatic-tokens', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const allowed = await entitlementChecker.canAccess(req.params.orgId, Feature.API_ACCESS);
+  if (!allowed) {
+    return res.status(403).json({
+      error: 'FEATURE_NOT_ENTITLED',
+      feature: Feature.API_ACCESS,
+      currentPlan: (await entitlementChecker.getEntitlement(req.params.orgId)).planType,
+      minimumPlan: 'BUSINESS',
+      upgradeUrl: '/settings/billing',
+    });
+  }
+  const tokens = await prisma.programmaticAccessToken.findMany({
+    where: { organizationId: req.params.orgId },
+    select: { id: true, tokenPrefix: true, label: true, scopes: true, expiresAt: true, revokedAt: true, lastUsedAt: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(tokens);
+});
+
+app.post('/organizations/:orgId/programmatic-tokens', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const orgId = req.params.orgId;
+  const [allowed, membership] = await Promise.all([
+    entitlementChecker.canAccess(orgId, Feature.API_ACCESS),
+    getOrgMembership(req.user!.id, orgId),
+  ]);
+  if (!allowed) {
+    return res.status(403).json({
+      error: 'FEATURE_NOT_ENTITLED',
+      feature: Feature.API_ACCESS,
+      currentPlan: (await entitlementChecker.getEntitlement(orgId)).planType,
+      minimumPlan: 'BUSINESS',
+      upgradeUrl: '/settings/billing',
+    });
+  }
+  if (!isOrgManager(membership?.role)) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may create programmatic tokens.' });
+  }
+  const scopes = Array.isArray(req.body.scopes) ? req.body.scopes.map(String) : [];
+  if (scopes.length === 0 || scopes.some((scope: string) => !PROGRAMMATIC_TOKEN_SCOPES.has(scope))) {
+    return res.status(400).json({ error: 'INVALID_SCOPES', allowedScopes: [...PROGRAMMATIC_TOKEN_SCOPES] });
+  }
+  const rawToken = `sots_pat_${crypto.randomBytes(32).toString('base64url')}`;
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const token = await prisma.programmaticAccessToken.create({
+    data: {
+      organizationId: orgId,
+      createdByUserId: req.user!.id,
+      tokenHash,
+      tokenPrefix: rawToken.slice(0, 17),
+      label: req.body.label || null,
+      scopes,
+      expiresAt: req.body.expiresAt ? new Date(req.body.expiresAt) : null,
+    },
+  });
+  void writeAuditLog(prisma, {
+    action: AuditAction.PROGRAMMATIC_TOKEN_CREATED,
+    userId: req.user!.id,
+    organizationId: orgId,
+    metadata: { tokenId: token.id, scopes },
+  });
+  res.status(201).json({ id: token.id, rawToken, tokenPrefix: token.tokenPrefix, scopes: token.scopes, expiresAt: token.expiresAt });
+});
+
+app.delete('/organizations/:orgId/programmatic-tokens/:tokenId', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const membership = await getOrgMembership(req.user!.id, req.params.orgId);
+  if (!isOrgManager(membership?.role)) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may revoke programmatic tokens.' });
+  }
+  const token = await prisma.programmaticAccessToken.findFirst({
+    where: { id: req.params.tokenId, organizationId: req.params.orgId },
+  });
+  if (!token) return res.status(404).json({ error: 'TOKEN_NOT_FOUND' });
+  await prisma.programmaticAccessToken.update({ where: { id: token.id }, data: { revokedAt: new Date() } });
+  void writeAuditLog(prisma, {
+    action: AuditAction.PROGRAMMATIC_TOKEN_REVOKED,
+    userId: req.user!.id,
+    organizationId: req.params.orgId,
+    metadata: { tokenId: token.id },
+  });
+  res.json({ success: true });
 });
 // System Admin Endpoints (Sprint 3 — isSystemAdmin JWT claim)
 // ─────────────────────────────────────────────────────────────

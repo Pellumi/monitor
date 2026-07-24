@@ -9,7 +9,15 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { PrismaClient, OtpPurpose, AuditAction, MemberRole, SubscriptionStatus } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
+import { Feature } from '@sots/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import {
+  createOIDCProvider,
+  deleteOIDCProvider,
+  findOIDCProviderByEmailDomain,
+  getOIDCProviderForOrg,
+  updateOIDCProvider,
+} from './oidc';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -279,6 +287,63 @@ async function verifyAuth(req: AuthenticatedRequest, res: Response, next: NextFu
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', service: 'auth-api' });
+});
+
+async function requireEnterpriseIdentityManager(req: AuthenticatedRequest, res: Response): Promise<boolean> {
+  const orgId = req.params.orgId;
+  const membership = await prisma.organizationMembership.findUnique({
+    where: { userId_organizationId: { userId: req.user!.id, organizationId: orgId } },
+  });
+  if (!membership || (membership.role !== MemberRole.OWNER && membership.role !== MemberRole.ADMIN)) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Only organization Owners and Admins may configure SSO.' });
+    return false;
+  }
+  const allowed = await entitlementChecker.canAccess(orgId, Feature.OIDC);
+  if (!allowed) {
+    const entitlement = await entitlementChecker.getEntitlement(orgId);
+    res.status(403).json({
+      error: 'FEATURE_NOT_ENTITLED',
+      feature: Feature.OIDC,
+      currentPlan: entitlement.planType,
+      minimumPlan: 'ENTERPRISE',
+      upgradeUrl: '/settings/billing',
+    });
+    return false;
+  }
+  return true;
+}
+
+app.post('/auth/oidc/identify', async (req: Request, res: Response) => {
+  const email = String(req.body.email ?? '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'EMAIL_REQUIRED' });
+  const provider = await findOIDCProviderByEmailDomain(email);
+  res.json(provider ? { available: true, provider: { displayName: provider.displayName, providerPreset: provider.providerPreset } } : { available: false });
+});
+
+app.get('/auth/organizations/:orgId/oidc-provider', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!await requireEnterpriseIdentityManager(req, res)) return;
+  res.json(await getOIDCProviderForOrg(req.params.orgId));
+});
+
+app.post('/auth/organizations/:orgId/oidc-provider', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!await requireEnterpriseIdentityManager(req, res)) return;
+  const provider = await createOIDCProvider(req.params.orgId, req.body);
+  await writeAuditLog(req.user!.id, req.params.orgId, AuditAction.SSO_PROVIDER_CONFIGURED, req, { providerId: provider.id });
+  res.status(201).json(provider);
+});
+
+app.patch('/auth/organizations/:orgId/oidc-provider', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!await requireEnterpriseIdentityManager(req, res)) return;
+  await updateOIDCProvider(req.params.orgId, req.body);
+  await writeAuditLog(req.user!.id, req.params.orgId, AuditAction.SSO_PROVIDER_CONFIGURED, req);
+  res.json(await getOIDCProviderForOrg(req.params.orgId));
+});
+
+app.delete('/auth/organizations/:orgId/oidc-provider', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!await requireEnterpriseIdentityManager(req, res)) return;
+  await deleteOIDCProvider(req.params.orgId);
+  await writeAuditLog(req.user!.id, req.params.orgId, AuditAction.SSO_PROVIDER_REMOVED, req);
+  res.json({ success: true });
 });
 
 // Identify user check

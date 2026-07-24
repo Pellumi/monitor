@@ -26,12 +26,13 @@ During Phase 1, packaging shall be based primarily on:
 * Storage
 * Retention
 3. Plan Structure
-SOTS provides five commercial plans.
+SOTS provides six commercial plans.
 1. Free
-2. Solo
-3. Team
-4. Business
-5. Enterprise
+2. Local (Nigeria Only)
+3. Solo
+4. Team
+5. Business
+6. Enterprise
 Each plan is designed for a distinct customer maturity level.
 4. Free Plan
 Purpose
@@ -75,7 +76,46 @@ Priority Support
 Team Collaboration
 SSO
 Self Hosting
-5. Solo Plan
+5. Local Plan (Nigeria Only)
+Purpose
+Provide an affordable paid entry point for Nigerian developers and startups.
+Availability
+Nigeria only
+NGN billing only
+Monthly Price
+₦20,000
+Annual Price
+₦200,000
+Limits
+Applications:
+2
+Users:
+2
+Storage:
+10 GB
+Retention:
+30 Days
+Demonstration Sessions:
+Unlimited
+Reports:
+Standard
+Exports:
+JSON
+PDF
+Included Features
+Everything in Free
+30-Day Historical Report Access
+Email Support
+Excluded Features
+Advanced Reporting
+Multiple Environments
+Team Collaboration
+API Access
+Audit Logs
+SSO
+Self Hosting
+Eligibility is determined by the organization's ISO billing country. Local checkout requires country NG, currency NGN, and an NGN-capable processor.
+6. Solo Plan
 Purpose
 Support individual professionals and small products.
 Target Audience:
@@ -106,7 +146,7 @@ Advanced Reporting
 Historical Report Access
 Multiple Environments
 Email Support
-6. Team Plan
+7. Team Plan
 Purpose
 Support collaborative engineering teams.
 Target Audience:
@@ -135,7 +175,7 @@ Shared Dashboards
 Role-Based Access Control
 Application-Level Permissions
 Priority Email Support
-7. Business Plan
+8. Business Plan
 Purpose
 Support organizations operating multiple applications.
 Target Audience:
@@ -165,7 +205,7 @@ Advanced RBAC
 Priority Processing
 Priority Support
 Dedicated Customer Success
-8. Enterprise Plan
+9. Enterprise Plan
 Purpose
 Support enterprise deployments and regulated environments.
 Target Audience:
@@ -192,96 +232,29 @@ Dedicated Support
 Security Reviews
 Custom Integrations
 Architecture Assistance
-9. Feature Entitlement Matrix
-Feature
-	Free
-	Solo
-	Team
-	Business
-	Enterprise
-	Demonstration Mode
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Session Replay
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Behavior Graphs
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Coverage Analysis
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Missing States
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Missing Flows
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Endpoint Intelligence
-	Yes
-	Yes
-	Yes
-	Yes
-	Yes
-	Report Exports
-	Limited
-	Yes
-	Yes
-	Yes
-	Yes
-	Team Collaboration
-	No
-	No
-	Yes
-	Yes
-	Yes
-	API Access
-	No
-	No
-	No
-	Yes
-	Yes
-	Audit Logs
-	No
-	No
-	No
-	Yes
-	Yes
-	SSO
-	No
-	No
-	No
-	No
-	Yes
-	Self Hosting
-	No
-	No
-	No
-	No
-	Yes
-	
+10. Feature Entitlement Matrix
+Feature | Free | Local | Solo | Team | Business | Enterprise
+Demonstration Mode | Yes | Yes | Yes | Yes | Yes | Yes
+Session Replay | Yes | Yes | Yes | Yes | Yes | Yes
+Behavior Graphs | Yes | Yes | Yes | Yes | Yes | Yes
+Coverage Analysis | Yes | Yes | Yes | Yes | Yes | Yes
+Missing States | Yes | Yes | Yes | Yes | Yes | Yes
+Missing Flows | Yes | Yes | Yes | Yes | Yes | Yes
+Endpoint Intelligence | Yes | Yes | Yes | Yes | Yes | Yes
+Report Exports | JSON | JSON/PDF | All | All | All | All
+Team Collaboration | No | No | No | Yes | Yes | Yes
+API Access | No | No | No | No | Yes | Yes
+Audit Logs | No | No | No | No | Yes | Yes
+SSO/OIDC/SAML | No | No | No | No | No | Contracted
+Self Hosting | No | No | No | No | No | Contracted
 
-10. Upgrade Path
+API Access means scoped programmatic access to management, reporting, graph, coverage, and export APIs. SDK ingestion credentials are available on every plan within the applicable credential limit.
+
+11. Upgrade Path
 Expected progression:
 Free
+↓
+Local
 ↓
 Solo
 ↓
@@ -297,7 +270,7 @@ Customers should naturally progress as:
 * Governance requirements increase
 
 
-11. Phase 2 Packaging Evolution
+12. Phase 2 Packaging Evolution
 Phase 2 introduces:
 * Production Monitoring
 * Workflow Health
@@ -312,7 +285,7 @@ Team Plan
 Event Overages Apply
 The application-based model remains primary.
 Event metering becomes secondary.
-12. Phase 3 Packaging Evolution
+13. Phase 3 Packaging Evolution
 Phase 3 introduces:
 * Autonomous Validation
 * Test Generation
@@ -327,7 +300,7 @@ Additional Credits Available
 AI consumption shall always remain transparent and separately reported.
 
 
-13. Packaging Governance
+14. Packaging Governance
 Any change to:
 * Plan pricing
 * Application limits
@@ -339,7 +312,7 @@ must be approved through formal pricing review.
 Packaging changes must remain consistent with the Pricing Strategy Document.
 
 
-14. Success Criteria
+15. Success Criteria
 The Pricing & Packaging Model shall be considered successful when:
 1. Customers can select a plan in under five minutes.
 2. Plan differences are immediately understandable.

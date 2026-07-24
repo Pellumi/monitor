@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -36,11 +37,15 @@ interface Plan {
   monthlyPriceNgn?: number | null;
   annualPriceUsd?: number | null;
   annualPriceNgn?: number | null;
-  maxApplications: number;
-  maxUsers: number;
-  maxStorageGb: number;
-  retentionDays: number;
+  maxApplications: number | null;
+  maxUsers: number | null;
+  maxStorageGb: number | null;
+  retentionDays: number | null;
   maxDemoSessions?: number | null;
+  eligible?: boolean;
+  eligibilityReason?: string | null;
+  highlights?: string[];
+  exportFormats?: string[];
   featureFlags?: Array<{ feature: string; enabled: boolean; tier?: string | null }>;
 }
 
@@ -84,6 +89,16 @@ interface Entitlement {
   };
 }
 
+interface BillingProfile {
+  countryCode: string;
+  legalName?: string | null;
+  billingEmail?: string | null;
+}
+
+interface UsageSummary {
+  usage: Array<{ metric: string; value: number; limit: number | null; percent: number; thresholdAlert80: boolean; thresholdAlert100: boolean }>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,7 +108,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(data?.message || data?.error || 'Request failed');
@@ -208,6 +223,9 @@ export default function BillingPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+  const [billingCountry, setBillingCountry] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -237,16 +255,21 @@ export default function BillingPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [nextPlans, nextSub, nextInvoices, nextEnt] = await Promise.all([
-        requestJson<Plan[]>('/api-gateway/billing/plans').catch(() => [] as Plan[]),
+      const [nextPlans, nextSub, nextInvoices, nextEnt, nextProfile, nextUsage] = await Promise.all([
+        requestJson<Plan[]>(`/api-gateway/billing/plans?organizationId=${encodeURIComponent(selectedOrgId)}`).catch(() => [] as Plan[]),
         requestJson<Subscription | null>(`/api-gateway/billing/organizations/${selectedOrgId}/subscription`).catch(() => null),
         requestJson<Invoice[]>(`/api-gateway/billing/organizations/${selectedOrgId}/invoices`).catch(() => [] as Invoice[]),
         requestJson<Entitlement>(`/api-gateway/organizations/${selectedOrgId}/entitlement`).catch(() => null as unknown as Entitlement),
+        requestJson<BillingProfile | null>(`/api-gateway/billing/organizations/${selectedOrgId}/profile`).catch(() => null),
+        requestJson<UsageSummary | null>(`/api-gateway/usage/organization/${selectedOrgId}`).catch(() => null),
       ]);
       setPlans(nextPlans);
       setSubscription(nextSub);
       setInvoices(nextInvoices);
       setEntitlement(nextEnt);
+      setBillingProfile(nextProfile);
+      setBillingCountry(nextProfile?.countryCode ?? '');
+      setUsageSummary(nextUsage);
       if (nextSub?.billingInterval) setBillingInterval(nextSub.billingInterval);
       if (nextSub?.billingCurrency) setBillingCurrency(nextSub.billingCurrency);
     } catch (err: any) {
@@ -257,6 +280,8 @@ export default function BillingPage() {
   }, [selectedOrgId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const usageByMetric = new Map((usageSummary?.usage ?? []).map((item) => [item.metric, item]));
 
   // ── Checkout ────────────────────────────────────────────────────────────────
   async function handleCheckout(plan: Plan) {
@@ -283,6 +308,50 @@ export default function BillingPage() {
       if (redirectUrl) window.location.href = redirectUrl;
     } catch (err: any) {
       setError(friendlyError(err.message || 'Checkout failed. Please try again.'));
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
+
+  async function handleEnterpriseSalesRequest() {
+    if (!selectedOrgId) return;
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      await requestJson(`/api-gateway/billing/organizations/${selectedOrgId}/enterprise-sales-requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestedCapabilities: ['SSO/OIDC/SAML', 'Custom retention', 'Data residency', 'Private networking'],
+          deploymentPreference: 'To be discussed',
+          notes: 'Requested from the billing plan comparison.',
+        }),
+      });
+      setError('Enterprise request submitted. Our sales team will follow up with an authorized organization contact.');
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not submit the Enterprise request.'));
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
+
+  async function saveBillingCountry() {
+    if (!selectedOrgId || !/^[A-Za-z]{2}$/.test(billingCountry.trim())) {
+      setError('Enter a valid two-letter ISO billing country code, such as NG or US.');
+      return;
+    }
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      const profile = await requestJson<BillingProfile>(`/api-gateway/billing/organizations/${selectedOrgId}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ countryCode: billingCountry.trim().toUpperCase() }),
+      });
+      setBillingProfile(profile);
+      await load();
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not update the billing country.'));
     } finally {
       setIsCheckingOut(false);
     }
@@ -407,15 +476,15 @@ export default function BillingPage() {
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MetricTile
             label="Applications"
-            value={entitlement?.limits?.applications ?? subscription?.plan?.maxApplications ?? '—'}
+            value={`${usageByMetric.get('APPLICATIONS')?.value ?? 0} / ${entitlement?.limits?.applications ?? subscription?.plan?.maxApplications ?? '—'}`}
           />
           <MetricTile
             label="Team Members"
-            value={entitlement?.limits?.users ?? subscription?.plan?.maxUsers ?? '—'}
+            value={`${usageByMetric.get('USERS')?.value ?? 0} / ${entitlement?.limits?.users ?? subscription?.plan?.maxUsers ?? '—'}`}
           />
           <MetricTile
             label="Storage"
-            value={`${entitlement?.limits?.storageGb ?? subscription?.plan?.maxStorageGb ?? '—'} GB`}
+            value={`${(usageByMetric.get('STORAGE_GB')?.value ?? 0).toFixed(2)} / ${entitlement?.limits?.storageGb ?? subscription?.plan?.maxStorageGb ?? '—'} GB`}
           />
           <MetricTile
             label="Retention"
@@ -425,6 +494,24 @@ export default function BillingPage() {
 
         {/* Billing controls */}
         <div className="mt-6 flex flex-wrap items-center gap-6">
+          <div>
+            <label htmlFor="billing-country" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Billing Country
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="billing-country"
+                value={billingCountry}
+                onChange={(event) => setBillingCountry(event.target.value.toUpperCase().slice(0, 2))}
+                placeholder="NG"
+                aria-label="Two-letter billing country code"
+                className="w-20 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm uppercase text-white"
+              />
+              <button type="button" onClick={() => void saveBillingCountry()} disabled={isCheckingOut || billingCountry === billingProfile?.countryCode} className="rounded-md border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 disabled:opacity-40">
+                Save
+              </button>
+            </div>
+          </div>
           <div>
             <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
               Billing Cycle
@@ -477,26 +564,26 @@ export default function BillingPage() {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {plans.map((plan) => {
+            {plans.filter((plan) => plan.type !== 'LOCAL' || plan.eligible).map((plan) => {
               const isLocalPlan = plan.type === 'LOCAL';
               const displayCurrency: BillingCurrency = isLocalPlan ? 'NGN' : billingCurrency;
               const price = isLocalPlan ? planPrice(plan, billingInterval, 'NGN') : planPrice(plan, billingInterval, billingCurrency);
               const isCurrent = plan.type === currentPlanType;
               const isEnterprise = plan.type === 'ENTERPRISE';
-              const isUpgrade = !isCurrent && !isEnterprise;
+              const isUpgrade = !isCurrent && !isEnterprise && plan.type !== 'FREE';
 
               return (
                 <div
                   key={plan.id}
                   className={cn(
-                    'relative flex flex-col rounded-xl border p-5 transition',
+                    'relative flex flex-col rounded-md border p-5 transition',
                     isCurrent
-                      ? 'border-indigo-600 bg-indigo-950/20'
-                      : 'border-neutral-800 bg-neutral-950 hover:border-neutral-600',
+                      ? 'border-white bg-[#131313]'
+                      : 'border-[#262626] bg-[#000000] hover:border-neutral-600',
                   )}
                 >
                   {isCurrent && (
-                    <span className="absolute right-4 top-4 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                    <span className="absolute right-4 top-4 rounded-sm border border-[#444748] bg-black px-2 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wider text-[#8e9192]">
                       Current
                     </span>
                   )}
@@ -505,7 +592,7 @@ export default function BillingPage() {
                     {plan.description && (
                       <p className="mt-1 text-xs text-neutral-500">{plan.description}</p>
                     )}
-                    <div className="mt-4 text-3xl font-extrabold text-white">
+                    <div className="mt-4 text-3xl font-extrabold text-white font-mono">
                       {isEnterprise ? 'Custom' : centsToMoney(price, displayCurrency)}
                       {!isEnterprise && (
                         <span className="ml-1 text-sm font-normal text-neutral-500">
@@ -513,24 +600,26 @@ export default function BillingPage() {
                         </span>
                       )}
                     </div>
-                    <ul className="mt-4 space-y-1.5 text-xs text-neutral-400">
-                      <li>✦ {plan.maxApplications >= 9999 ? 'Unlimited' : plan.maxApplications} applications</li>
-                      <li>✦ {plan.maxUsers >= 9999 ? 'Unlimited' : plan.maxUsers} team members</li>
-                      <li>✦ {plan.maxStorageGb >= 9999 ? 'Unlimited' : `${plan.maxStorageGb} GB`} storage</li>
-                      <li>✦ {plan.retentionDays >= 9999 ? 'Unlimited' : `${plan.retentionDays} days`} data retention</li>
+                    <ul className="mt-4 space-y-1.5 text-xs text-neutral-400 font-mono">
+                      <li>✦ {plan.maxApplications === null ? 'Custom' : plan.maxApplications} applications</li>
+                      <li>✦ {plan.maxUsers === null ? 'Custom' : plan.maxUsers} team members</li>
+                      <li>✦ {plan.maxStorageGb === null ? 'Custom' : `${plan.maxStorageGb} GB`} storage</li>
+                      <li>✦ {plan.retentionDays === null ? 'Custom' : `${plan.retentionDays} days`} data retention</li>
+                      {plan.highlights?.slice(0, 4).map((highlight) => <li key={highlight}>✓ {highlight}</li>)}
+                      {plan.exportFormats?.length ? <li>✓ {plan.exportFormats.join(', ')} exports</li> : null}
                     </ul>
                   </div>
                   <button
                     id={`plan-checkout-${plan.type.toLowerCase()}`}
-                    onClick={() => isUpgrade && handleCheckout(plan)}
-                    disabled={isCurrent || isCheckingOut || isEnterprise}
+                    onClick={() => isEnterprise ? void handleEnterpriseSalesRequest() : isUpgrade ? void handleCheckout(plan) : undefined}
+                    disabled={isCurrent || isCheckingOut || plan.type === 'FREE'}
                     className={cn(
-                      'mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition',
+                      'mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-xs font-semibold transition cursor-pointer',
                       isCurrent
-                        ? 'cursor-default bg-indigo-600/30 text-indigo-300'
+                        ? 'cursor-default border border-[#262626] bg-[#1a1a1a] text-neutral-400 font-mono'
                         : isEnterprise
-                        ? 'border border-neutral-700 bg-transparent text-neutral-400 hover:border-neutral-500 hover:text-white'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50',
+                        ? 'border border-[#262626] bg-transparent text-neutral-400 hover:border-neutral-500 hover:text-white'
+                        : 'bg-white text-black hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50',
                     )}
                   >
                     {isCurrent ? 'Current Plan' : isEnterprise ? 'Contact Sales' : (

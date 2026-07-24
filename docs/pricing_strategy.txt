@@ -155,6 +155,17 @@ Target:
 * Individual developers
 * Students
 * Open source projects
+Local (Nigeria Only)
+Purpose:
+Affordable localized adoption.
+Target:
+* Nigerian developers
+* Nigerian startups
+* Small Nigerian products
+Commercial rules:
+* NGN billing only
+* Nigerian billing country required
+* Positioned between Free and Solo
 Solo
 Purpose:
 Independent developers.

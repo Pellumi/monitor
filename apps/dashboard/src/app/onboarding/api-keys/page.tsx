@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
@@ -32,14 +33,14 @@ function ApiKeysContent() {
   const generateKeyMutation = useMutation({
     mutationFn: async () => {
       // 1. Fetch environments
-      const envsRes = await fetch(`${ONBOARDING_API}/applications/${appId}/environments`);
+      const envsRes = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments`);
       if (!envsRes.ok) throw new Error('Failed to fetch environments');
       const envs = await envsRes.json();
       const devEnv = envs.find((e: any) => e.name === 'Development') || envs[0];
       if (!devEnv) throw new Error('No environment found for this application');
 
       // 2. Generate API Key scoped to this environment
-      const res = await fetch(`${ONBOARDING_API}/environments/${devEnv.id}/api-keys`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/environments/${devEnv.id}/api-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: `Key for ${appName} (Development)` }),

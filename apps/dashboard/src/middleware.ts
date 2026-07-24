@@ -15,11 +15,12 @@ export const config = {
 };
 
 export function middleware(request: NextRequest) {
-  const token = request.cookies.get('access_token')?.value;
+  const accessToken = request.cookies.get('access_token')?.value;
+  const refreshToken = request.cookies.get('refresh_token')?.value;
 
-  if (!token) {
+  if (!accessToken && !refreshToken) {
     const loginUrl = new URL('/auth/login', request.url);
-    loginUrl.searchParams.set('from', request.nextUrl.pathname);
+    loginUrl.searchParams.set('from', `${request.nextUrl.pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 

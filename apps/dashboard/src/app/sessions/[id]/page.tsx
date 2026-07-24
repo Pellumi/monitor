@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -106,7 +107,7 @@ function ReplayViewerContent() {
   const { data, isLoading, error } = useQuery<ReplayData>({
     queryKey: ['session-replay', sessionId],
     queryFn: async () => {
-      const res = await fetch(`${REPORT_ENGINE}/sessions/${sessionId}/replay`);
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/sessions/${sessionId}/replay`);
       if (!res.ok) throw new Error('Failed to fetch replay');
       return res.json();
     },

@@ -32,6 +32,12 @@ model Organization {
   notificationPreferences   NotificationPreference[]
   notificationEvents        NotificationEvent[]
   oidcProvider              OIDCProvider?
+  billingProfile            OrganizationBillingProfile?
+  enterpriseSalesRequests   EnterpriseSalesRequest[]
+  enterpriseAgreement       EnterpriseAgreement?
+  storageLedgerEntries      StorageLedgerEntry[]
+  programmaticAccessTokens  ProgrammaticAccessToken[]
+  trialHistory              SubscriptionTrialHistory[]
 }
 
 enum RulesetScope {
@@ -486,6 +492,7 @@ model Plan {
 
   featureFlags  FeatureFlag[]
   subscriptions Subscription[]
+  pendingSubscriptions Subscription[] @relation("PendingSubscriptionPlan")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -530,6 +537,9 @@ model Subscription {
   currentPeriodEnd   DateTime
   cancelledAt        DateTime?
   suspendedAt        DateTime?
+  pendingPlanId      String?
+  pendingPlan        Plan?                @relation("PendingSubscriptionPlan", fields: [pendingPlanId], references: [id])
+  pendingChangeAt    DateTime?
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -549,6 +559,102 @@ model Entitlement {
 
   resolvedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model OrganizationBillingProfile {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  countryCode    String
+  legalName      String?
+  billingEmail   String?
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  region         String?
+  postalCode     String?
+  taxId          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model SubscriptionTrialHistory {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planType       PlanType
+  startedAt      DateTime
+  endedAt        DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model StorageLedgerEntry {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  objectKey      String       @unique
+  ownerType      String
+  ownerId        String?
+  category       String
+  bytes          BigInt
+  reservedBytes  BigInt       @default(0)
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, deletedAt])
+}
+
+model ProgrammaticAccessToken {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUserId String
+  tokenHash       String       @unique
+  tokenPrefix     String
+  label           String?
+  scopes          String[]
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId, revokedAt])
+}
+
+model EnterpriseSalesRequest {
+  id                    String       @id @default(uuid())
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requesterUserId       String
+  currentPlan           PlanType
+  requestedCapabilities String[]
+  deploymentPreference  String?
+  notes                 String?
+  status                String       @default("REQUESTED")
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@index([organizationId, status])
+}
+
+model EnterpriseAgreement {
+  id                  String       @id @default(uuid())
+  organizationId      String       @unique
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contractStart       DateTime?
+  contractEnd         DateTime?
+  annualCommitment    Boolean      @default(true)
+  legalHold           Boolean      @default(false)
+  dataResidencyRegion String?
+  negotiatedLimits    Json?
+  negotiatedSupport   Json?
+  capabilities        Json
+  approvedAt          DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 }
 
 // =============================================================================
@@ -1311,6 +1417,11 @@ enum AuditAction {
   PLAN_CHANGED
   INVOICE_PAID
   INVOICE_FAILED
+  BILLING_PROFILE_UPDATED
+  ENTERPRISE_SALES_REQUESTED
+  RETENTION_DATA_DELETED
+  PROGRAMMATIC_TOKEN_CREATED
+  PROGRAMMATIC_TOKEN_REVOKED
 
   // ─── Reports & Exports ────────────────────────────
   REPORT_GENERATED

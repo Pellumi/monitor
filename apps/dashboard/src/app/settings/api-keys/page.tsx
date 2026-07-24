@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -46,7 +47,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
@@ -85,14 +86,14 @@ export default function ApiKeysPage() {
     queryKey: ['api-key-apps', selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return [];
-      const res = await fetch(`/api-gateway/organizations/${selectedOrgId}/applications`);
+      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/applications`);
       if (!res.ok) return [];
       const data = await res.json();
       // Enrich with environments
       const enriched = await Promise.all(
         data.map(async (app: Application) => {
           try {
-            const envRes = await fetch(`/api-gateway/applications/${app.id}/environments`);
+            const envRes = await authenticatedFetch(`/api-gateway/applications/${app.id}/environments`);
             const envData = envRes.ok ? await envRes.json() : [];
             return { ...app, environments: envData };
           } catch {
@@ -189,7 +190,7 @@ export default function ApiKeysPage() {
         <button
           id="create-api-key-btn"
           onClick={() => setShowCreateForm((v) => !v)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition"
+          className="flex items-center gap-2 px-4 py-2 rounded-md bg-white hover:bg-neutral-200 text-black text-sm font-semibold transition cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           New Key
@@ -200,7 +201,7 @@ export default function ApiKeysPage() {
       {alert && (
         <div
           className={cn(
-            'flex items-center gap-3 rounded-lg border px-4 py-3 text-sm',
+            'flex items-center gap-3 rounded-md border px-4 py-3 text-sm font-mono',
             alert.type === 'success'
               ? 'border-emerald-900/60 bg-emerald-950/40 text-emerald-300'
               : 'border-red-900/60 bg-red-950/40 text-red-300',
@@ -216,52 +217,30 @@ export default function ApiKeysPage() {
 
       {/* One-time key reveal */}
       {newKeyReveal && (
-        <div className="rounded-xl border border-amber-800/50 bg-amber-950/20 p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-amber-400" />
-            <span className="text-sm font-semibold text-amber-300">Copy your API key now — it won't be shown again</span>
+        <div className="rounded-md border border-[#333] bg-black p-5 space-y-3 font-mono text-xs">
+          <div className="flex items-center gap-2 text-white">
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
+            <span className="font-semibold text-sm">Key Generated Successfully</span>
           </div>
-          <div className="flex items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950 px-4 py-3">
-            <Key className="h-4 w-4 text-amber-400 shrink-0" />
-            <code className="flex-1 text-sm font-mono text-white break-all">
-              {showRawKey ? newKeyReveal.rawKey : maskKey(newKeyReveal.rawKey)}
-            </code>
-            <button
-              id="toggle-raw-key-btn"
-              onClick={() => setShowRawKey((v) => !v)}
-              className="text-neutral-500 hover:text-white transition"
-              title={showRawKey ? 'Hide key' : 'Reveal key'}
-            >
-              {showRawKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-            <button
-              id="copy-raw-key-btn"
-              onClick={() => void copyToClipboard(newKeyReveal.rawKey)}
-              className="text-neutral-500 hover:text-white transition"
-              title="Copy to clipboard"
-            >
-              {copied ? <CheckCircle className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
-            </button>
+          <p className="text-[#8e9192]">
+            Make sure to copy your key now. You won't be able to see it again!
+          </p>
+          <div className="flex items-center gap-2 bg-[#131313] border border-[#262626] p-3 rounded-md">
+            <code className="flex-1 font-mono text-white text-xs select-all break-all">{newKeyReveal.rawKey}</code>
           </div>
-          <button
-            onClick={() => setNewKeyReveal(null)}
-            className="text-xs text-neutral-500 hover:text-neutral-300 transition"
-          >
-            I've saved this key. Dismiss.
-          </button>
         </div>
       )}
 
       {/* Create key form */}
       {showCreateForm && (
-        <section className="rounded-lg border border-neutral-800 bg-neutral-900 p-5 space-y-4">
+        <section className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4">
           <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Plus className="h-4 w-4 text-indigo-400" /> Create New API Key
+            <Plus className="h-4 w-4 text-white" /> Create New Ingestion Key
           </h2>
           <form onSubmit={(e) => void handleCreate(e)} className="space-y-4">
             {/* Environment selector */}
             <div>
-              <label htmlFor="create-env-select" className="block text-xs text-neutral-400 mb-1.5 font-medium">
+              <label htmlFor="create-env-select" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">
                 Environment <span className="text-red-400">*</span>
               </label>
               <select
@@ -269,7 +248,7 @@ export default function ApiKeysPage() {
                 value={createEnvId}
                 onChange={(e) => setCreateEnvId(e.target.value)}
                 required
-                className="w-full rounded-md border border-neutral-700 bg-neutral-950 text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
               >
                 <option value="">Select environment…</option>
                 {allEnvs.map((env) => (
@@ -283,20 +262,20 @@ export default function ApiKeysPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Label */}
               <div>
-                <label htmlFor="create-key-label" className="block text-xs text-neutral-400 mb-1.5 font-medium">Label (optional)</label>
+                <label htmlFor="create-key-label" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">Label (optional)</label>
                 <input
                   id="create-key-label"
                   type="text"
                   placeholder="e.g. CI/CD pipeline"
                   value={createLabel}
                   onChange={(e) => setCreateLabel(e.target.value)}
-                  className="w-full rounded-md border border-neutral-700 bg-neutral-950 text-sm text-white placeholder-neutral-500 px-3 py-2 focus:outline-none focus:border-indigo-500 transition"
+                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
                 />
               </div>
 
               {/* Expiry */}
               <div>
-                <label htmlFor="create-key-expiry" className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                <label htmlFor="create-key-expiry" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">
                   Expiry (optional)
                 </label>
                 <input
@@ -305,7 +284,7 @@ export default function ApiKeysPage() {
                   value={createExpiry}
                   onChange={(e) => setCreateExpiry(e.target.value)}
                   min={new Date().toISOString().slice(0, 10)}
-                  className="w-full rounded-md border border-neutral-700 bg-neutral-950 text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-indigo-500 transition"
+                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
                 />
               </div>
             </div>
@@ -314,7 +293,7 @@ export default function ApiKeysPage() {
               <button
                 type="button"
                 onClick={() => setShowCreateForm(false)}
-                className="px-4 py-2 rounded-lg border border-neutral-700 text-sm text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
+                className="px-4 py-2 rounded-md border border-[#262626] text-sm text-neutral-400 hover:text-white hover:bg-neutral-800 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -322,7 +301,7 @@ export default function ApiKeysPage() {
                 id="create-key-submit-btn"
                 type="submit"
                 disabled={creating || !createEnvId}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-white hover:bg-neutral-200 text-black text-sm font-semibold transition disabled:opacity-50 cursor-pointer"
               >
                 {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
                 Generate Key
@@ -333,10 +312,10 @@ export default function ApiKeysPage() {
       )}
 
       {/* Keys list */}
-      <section className="rounded-lg border border-neutral-800 bg-neutral-900 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+      <section className="rounded-md border border-[#262626] bg-[#131313]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
           <div className="flex items-center gap-2">
-            <Key className="h-4 w-4 text-indigo-400" />
+            <Key className="h-4 w-4 text-white" />
             <span className="text-sm font-semibold text-white">
               {keys.length} {keys.length === 1 ? 'Key' : 'Keys'}
             </span>
@@ -346,7 +325,7 @@ export default function ApiKeysPage() {
             <button
               id="refresh-keys-btn"
               onClick={() => void loadKeys()}
-              className="p-1.5 rounded-md text-neutral-500 hover:text-white hover:bg-neutral-800 transition"
+              className="p-1.5 rounded-md text-neutral-500 hover:text-white hover:bg-neutral-800 transition cursor-pointer"
               title="Refresh"
             >
               <RefreshCw className="h-4 w-4" />
@@ -357,16 +336,16 @@ export default function ApiKeysPage() {
         {keys.length === 0 && !isLoading ? (
           <div className="py-14 text-center space-y-3">
             <Key className="h-8 w-8 text-neutral-700 mx-auto" />
-            <p className="text-sm text-neutral-500">No API keys yet.</p>
+            <p className="text-sm text-neutral-500">No ingestion keys yet.</p>
             <button
               onClick={() => setShowCreateForm(true)}
-              className="text-xs text-indigo-400 hover:text-indigo-300 transition underline underline-offset-2"
+              className="text-xs text-white hover:underline transition font-mono"
             >
               Create your first key
             </button>
           </div>
         ) : (
-          <ul className="divide-y divide-neutral-800">
+          <ul className="divide-y divide-[#262626]">
             {keys.map((apiKey) => {
               const isExpired = apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date();
               return (

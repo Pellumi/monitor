@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
@@ -78,7 +79,7 @@ function EndpointsContent() {
   const { data, isLoading, error } = useQuery<AnalysisData>({
     queryKey: ['endpoints', appId],
     queryFn: async () => {
-      const res = await fetch(`${REPORT_ENGINE}/reports/${appId}/endpoint-intelligence`);
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/endpoint-intelligence`);
       if (!res.ok) throw new Error('Failed to fetch endpoint analysis');
       return res.json();
     },

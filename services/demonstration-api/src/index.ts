@@ -126,6 +126,19 @@ app.post('/demonstrations/start', async (req: Request, res: Response) => {
           message: 'Your current plan does not include demonstration mode.',
         });
       }
+      const quota = await entitlementChecker.canStartDemonstration(resolvedOrgId);
+      if (!quota.allowed) {
+        return res.status(403).json({
+          error: 'QUOTA_EXCEEDED',
+          metric: quota.metric,
+          current: quota.current,
+          limit: quota.limit,
+          plan: quota.planType,
+          resetAt: quota.resetAt?.toISOString(),
+          upgradeUrl: '/settings/billing',
+          message: 'Monthly demonstration limit reached. Upgrade your plan or wait for the next billing period.',
+        });
+      }
     }
 
     const demo = await prisma.demonstration.create({

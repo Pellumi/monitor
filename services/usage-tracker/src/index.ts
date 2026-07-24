@@ -110,6 +110,65 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
     periodEnd: endDate,
   });
 
+  const now = new Date();
+  const [memberCount, pendingInvitationCount, storageTotals] = await Promise.all([
+    prisma.organizationMembership.count({ where: { organizationId: orgId } }),
+    prisma.organizationInvitation.count({ where: { organizationId: orgId, acceptedAt: null, expiresAt: { gt: now } } }),
+    prisma.storageLedgerEntry.aggregate({
+      where: { organizationId: orgId, deletedAt: null },
+      _sum: { bytes: true, reservedBytes: true },
+    }),
+  ]);
+  const userCount = memberCount + pendingInvitationCount;
+  const storageGb = Number((storageTotals._sum.bytes ?? 0n) + (storageTotals._sum.reservedBytes ?? 0n)) / 1024 / 1024 / 1024;
+  for (const item of [
+    { metric: UsageMetric.USERS, value: userCount, limit: plan.maxUsers },
+    { metric: UsageMetric.STORAGE_GB, value: storageGb, limit: plan.maxStorageGb },
+  ]) {
+    await prisma.usageRecord.create({
+      data: { subscriptionId: subscription.id, organizationId: orgId, ...item, periodStart: startDate, periodEnd: endDate },
+    });
+    await prisma.usageSnapshot.create({
+      data: { organizationId: orgId, metric: item.metric, value: item.value, snapshotDate: endDate },
+    });
+    await sendUsageLimitWarning({
+      organizationId: orgId,
+      organizationName,
+      metric: item.metric,
+      value: item.value,
+      limit: item.limit,
+      periodEnd: endDate,
+    });
+  }
+  const demonstrationCount = await prisma.demonstration.count({
+    where: {
+      application: { organizationId: orgId },
+      startedAt: { gte: subscription.currentPeriodStart, lt: subscription.currentPeriodEnd },
+    },
+  });
+  await prisma.usageRecord.create({
+    data: {
+      subscriptionId: subscription.id,
+      organizationId: orgId,
+      metric: UsageMetric.DEMONSTRATIONS,
+      value: demonstrationCount,
+      limit: plan.maxDemoSessions,
+      periodStart: subscription.currentPeriodStart,
+      periodEnd: subscription.currentPeriodEnd,
+    },
+  });
+  await prisma.usageSnapshot.create({
+    data: { organizationId: orgId, metric: UsageMetric.DEMONSTRATIONS, value: demonstrationCount, snapshotDate: endDate },
+  });
+  await sendUsageLimitWarning({
+    organizationId: orgId,
+    organizationName,
+    metric: UsageMetric.DEMONSTRATIONS,
+    value: demonstrationCount,
+    limit: plan.maxDemoSessions,
+    periodEnd: subscription.currentPeriodEnd,
+  });
+
   // Load all applications for organization
   const apps = await prisma.application.findMany({
     where: { organizationId: orgId },
@@ -118,47 +177,7 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
 
   for (const app of apps) {
     for (const env of app.environments) {
-      // 2. API Keys (USERS metric)
-      const apiKeyCount = await prisma.apiKey.count({
-        where: { environmentId: env.id, revokedAt: null }
-      });
-
-      await prisma.usageRecord.create({
-        data: {
-          subscriptionId: subscription.id,
-          organizationId: orgId,
-          applicationId: app.id,
-          environmentId: env.id,
-          metric: UsageMetric.USERS,
-          value: apiKeyCount,
-          limit: plan.maxApiKeys,
-          periodStart: startDate,
-          periodEnd: endDate
-        }
-      });
-
-      await prisma.usageSnapshot.create({
-        data: {
-          organizationId: orgId,
-          applicationId: app.id,
-          environmentId: env.id,
-          metric: UsageMetric.USERS,
-          value: apiKeyCount,
-          snapshotDate: endDate
-        }
-      });
-      await sendUsageLimitWarning({
-        organizationId: orgId,
-        organizationName,
-        applicationId: app.id,
-        environmentId: env.id,
-        metric: UsageMetric.USERS,
-        value: apiKeyCount,
-        limit: plan.maxApiKeys,
-        periodEnd: endDate,
-      });
-
-      // 3. Sessions usage (created within the period)
+      // Sessions usage (created within the period)
       const sessionCount = await prisma.session.count({
         where: {
           applicationId: app.id,
@@ -192,7 +211,7 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
         }
       });
 
-      // 4. Events usage (created within the period)
+      // Events usage (created within the period)
       const eventCount = await prisma.sessionEvent.count({
         where: {
           session: {
@@ -228,49 +247,6 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
         }
       });
 
-      // 5. Demonstration sessions usage (created within the period)
-      const demoCount = await prisma.demonstration.count({
-        where: {
-          applicationId: app.id,
-          environmentId: env.id,
-          startedAt: { gte: startDate, lte: endDate }
-        }
-      });
-
-      await prisma.usageRecord.create({
-        data: {
-          subscriptionId: subscription.id,
-          organizationId: orgId,
-          applicationId: app.id,
-          environmentId: env.id,
-          metric: UsageMetric.DEMONSTRATIONS,
-          value: demoCount,
-          limit: plan.maxDemoSessions,
-          periodStart: startDate,
-          periodEnd: endDate
-        }
-      });
-
-      await prisma.usageSnapshot.create({
-        data: {
-          organizationId: orgId,
-          applicationId: app.id,
-          environmentId: env.id,
-          metric: UsageMetric.DEMONSTRATIONS,
-          value: demoCount,
-          snapshotDate: endDate
-        }
-      });
-      await sendUsageLimitWarning({
-        organizationId: orgId,
-        organizationName,
-        applicationId: app.id,
-        environmentId: env.id,
-        metric: UsageMetric.DEMONSTRATIONS,
-        value: demoCount,
-        limit: plan.maxDemoSessions,
-        periodEnd: endDate,
-      });
     }
   }
 }
@@ -327,7 +303,8 @@ app.get('/usage/organization/:orgId', async (req: Request, res: Response) => {
     const usageItems = Object.values(latestMetrics).map((m: any) => {
       let limit: number | null = null;
       if (m.metric === UsageMetric.APPLICATIONS) limit = subscription.plan.maxApplications;
-      if (m.metric === UsageMetric.USERS) limit = subscription.plan.maxApiKeys;
+      if (m.metric === UsageMetric.USERS) limit = subscription.plan.maxUsers;
+      if (m.metric === UsageMetric.STORAGE_GB) limit = subscription.plan.maxStorageGb;
       if (m.metric === UsageMetric.DEMONSTRATIONS) limit = subscription.plan.maxDemoSessions;
 
       const percent = limit ? (m.value / limit) * 100 : 0;

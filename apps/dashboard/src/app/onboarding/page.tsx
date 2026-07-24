@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +24,7 @@ export default function OnboardingPage() {
   const { data: organizations, isLoading, error } = useQuery<Organization[]>({
     queryKey: ['organizations'],
     queryFn: async () => {
-      const res = await fetch(`${ONBOARDING_API}/organizations`);
+      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations`);
       if (!res.ok) throw new Error('Failed to load organizations');
       return res.json();
     },
@@ -31,7 +32,7 @@ export default function OnboardingPage() {
 
   const createOrgMutation = useMutation({
     mutationFn: async (name: string) => {
-      const res = await fetch(`${ONBOARDING_API}/organizations`, {
+      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),

@@ -15,7 +15,7 @@ import {
   SubscriptionStatus,
 } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Services } from '@sots/shared';
+import { PLAN_DEFINITIONS, Services, type PlanTypeKey } from '@sots/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 import { writeAuditLog, extractAuditContext } from '@sots/authz';
 import { createCheckoutSession, verifyStripeWebhook, ensureStripeCustomer } from './providers/stripe';
@@ -592,18 +592,127 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'healthy', service: 'billing-api' });
 });
 
-app.get('/billing/plans', async (_req: Request, res: Response) => {
+function publicPlan(plan: Plan & { featureFlags?: Array<{ feature: string; enabled: boolean; tier: string | null }> }, countryCode?: string) {
+  const definition = PLAN_DEFINITIONS[plan.type as PlanTypeKey];
+  const isCustom = plan.type === PlanType.ENTERPRISE;
+  const eligible = !definition?.eligibleCountries || !!countryCode && definition.eligibleCountries.includes(countryCode.toUpperCase());
+  return {
+    id: plan.id,
+    type: plan.type,
+    name: plan.name,
+    description: plan.description,
+    rank: definition?.rank ?? plan.sortOrder,
+    audience: definition?.audience ?? [],
+    highlights: definition?.highlights ?? [],
+    exportFormats: definition?.exportFormats ?? [],
+    eligible,
+    eligibilityReason: eligible ? null : 'This plan is available only to organizations billed in Nigeria.',
+    eligibleCountries: definition?.eligibleCountries ?? null,
+    supportedCurrencies: definition?.supportedCurrencies ?? [],
+    supportedProviders: definition?.supportedProviders ?? [],
+    contactSales: definition?.contactSales ?? false,
+    hasTrial: definition?.hasTrial ?? false,
+    trialDays: definition?.trialDays ?? 0,
+    monthlyPriceUsd: plan.monthlyPriceUsd,
+    monthlyPriceNgn: plan.monthlyPriceNgn,
+    annualPriceUsd: plan.annualPriceUsd,
+    annualPriceNgn: plan.annualPriceNgn,
+    maxApplications: isCustom ? null : plan.maxApplications,
+    maxEnvironmentsPerApp: isCustom ? null : plan.maxEnvironmentsPerApp,
+    maxApiKeys: isCustom ? null : plan.maxApiKeys,
+    maxUsers: isCustom ? null : plan.maxUsers,
+    maxStorageGb: isCustom ? null : plan.maxStorageGb,
+    retentionDays: isCustom ? null : plan.retentionDays,
+    maxDemoSessions: plan.maxDemoSessions,
+    featureFlags: plan.featureFlags ?? [],
+  };
+}
+
+app.get('/billing/plans', async (req: Request, res: Response) => {
   try {
+    const orgId = typeof req.query.organizationId === 'string' ? req.query.organizationId : undefined;
+    const profile = orgId
+      ? await prisma.organizationBillingProfile.findUnique({ where: { organizationId: orgId } })
+      : null;
     const plans = await prisma.plan.findMany({
       where: { isPublic: true },
       include: { featureFlags: true },
       orderBy: { sortOrder: 'asc' },
     });
-    res.json(plans);
+    res.json(plans.map((plan) => publicPlan(plan, profile?.countryCode)));
   } catch (err) {
     console.error('[BillingAPI] List plans failed', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+app.get('/billing/organizations/:orgId/profile', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
+  const profile = await prisma.organizationBillingProfile.findUnique({ where: { organizationId: req.params.orgId } });
+  res.json(profile);
+});
+
+app.put('/billing/organizations/:orgId/profile', verifyJwt, requireBillingManager, async (req: AuthenticatedRequest, res: Response) => {
+  const countryCode = String(req.body.countryCode ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
+    return res.status(400).json({ error: 'INVALID_COUNTRY', message: 'countryCode must be an ISO 3166-1 alpha-2 code.' });
+  }
+  const subscription = await prisma.subscription.findUnique({
+    where: { organizationId: req.params.orgId },
+    include: { plan: true },
+  });
+  if (subscription?.plan.type === PlanType.LOCAL && countryCode !== 'NG') {
+    return res.status(409).json({
+      error: 'LOCAL_COUNTRY_LOCKED',
+      message: 'Move off the Local plan before changing the billing country from Nigeria.',
+    });
+  }
+  const data = {
+    countryCode,
+    legalName: req.body.legalName || null,
+    billingEmail: req.body.billingEmail || null,
+    addressLine1: req.body.addressLine1 || null,
+    addressLine2: req.body.addressLine2 || null,
+    city: req.body.city || null,
+    region: req.body.region || null,
+    postalCode: req.body.postalCode || null,
+    taxId: req.body.taxId || null,
+  };
+  const profile = await prisma.organizationBillingProfile.upsert({
+    where: { organizationId: req.params.orgId },
+    create: { organizationId: req.params.orgId, ...data },
+    update: data,
+  });
+  await writeAuditLog(prisma, {
+    action: AuditAction.BILLING_PROFILE_UPDATED,
+    userId: req.user!.id,
+    organizationId: req.params.orgId,
+    metadata: { countryCode },
+  });
+  res.json(profile);
+});
+
+app.post('/billing/organizations/:orgId/enterprise-sales-requests', verifyJwt, requireBillingManager, async (req: AuthenticatedRequest, res: Response) => {
+  const subscription = await prisma.subscription.findUnique({
+    where: { organizationId: req.params.orgId },
+    include: { plan: true },
+  });
+  const request = await prisma.enterpriseSalesRequest.create({
+    data: {
+      organizationId: req.params.orgId,
+      requesterUserId: req.user!.id,
+      currentPlan: subscription?.plan.type ?? PlanType.FREE,
+      requestedCapabilities: Array.isArray(req.body.requestedCapabilities) ? req.body.requestedCapabilities.map(String) : [],
+      deploymentPreference: req.body.deploymentPreference || null,
+      notes: req.body.notes || null,
+    },
+  });
+  await writeAuditLog(prisma, {
+    action: AuditAction.ENTERPRISE_SALES_REQUESTED,
+    userId: req.user!.id,
+    organizationId: req.params.orgId,
+    metadata: { requestId: request.id },
+  });
+  res.status(201).json(request);
 });
 
 app.get('/billing/organizations/:orgId/subscription', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
@@ -668,6 +777,50 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
   try {
     const plan = await prisma.plan.findUnique({ where: { type: planType } });
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (!plan.isPublic) return res.status(400).json({ error: 'PLAN_NOT_PUBLIC' });
+    if (planType === PlanType.FREE) {
+      return res.status(400).json({ error: 'FREE_CHECKOUT_UNSUPPORTED', message: 'The Free plan does not require checkout.' });
+    }
+    if (planType === PlanType.ENTERPRISE) {
+      return res.status(400).json({ error: 'CONTACT_SALES_REQUIRED', message: 'Enterprise subscriptions start through the sales workflow.' });
+    }
+    const profile = await prisma.organizationBillingProfile.findUnique({ where: { organizationId } });
+    if (!profile) {
+      return res.status(400).json({ error: 'BILLING_PROFILE_REQUIRED', message: 'Add a billing country before checkout.' });
+    }
+    if (planType === PlanType.LOCAL) {
+      if (profile.countryCode !== 'NG' || currency !== BillingCurrency.NGN || (provider !== 'PAYSTACK' && provider !== 'MOCK')) {
+        return res.status(400).json({
+          error: 'LOCAL_PLAN_INELIGIBLE',
+          message: 'Local is available only to Nigerian organizations, billed in NGN through Paystack.',
+        });
+      }
+    }
+    if (currency === BillingCurrency.USD && provider !== 'STRIPE' && provider !== 'MOCK') {
+      return res.status(400).json({ error: 'PROVIDER_CURRENCY_MISMATCH', message: 'USD checkout requires Stripe.' });
+    }
+    if (currency === BillingCurrency.NGN && provider !== 'PAYSTACK' && provider !== 'MOCK') {
+      return res.status(400).json({ error: 'PROVIDER_CURRENCY_MISMATCH', message: 'NGN checkout requires Paystack.' });
+    }
+    const currentSubscription = await prisma.subscription.findUnique({
+      where: { organizationId },
+      include: { plan: true },
+    });
+    const currentDefinition = currentSubscription ? PLAN_DEFINITIONS[currentSubscription.plan.type as PlanTypeKey] : null;
+    const targetDefinition = PLAN_DEFINITIONS[planType as PlanTypeKey];
+    if (currentSubscription && currentDefinition && targetDefinition.rank < currentDefinition.rank) {
+      const scheduled = await prisma.subscription.update({
+        where: { organizationId },
+        data: { pendingPlanId: plan.id, pendingChangeAt: currentSubscription.currentPeriodEnd },
+        include: { pendingPlan: true },
+      });
+      return res.status(202).json({
+        status: 'scheduled',
+        pendingPlan: scheduled.pendingPlan?.type,
+        effectiveAt: scheduled.pendingChangeAt,
+        message: 'Downgrade scheduled for the end of the current billing period. Existing data will not be deleted.',
+      });
+    }
 
     const total = priceFor(plan, interval, currency);
     const now = new Date();
@@ -1013,9 +1166,17 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
     }
 
     if (isCancellationEvent(event)) {
+      const freePlan = await prisma.plan.findUnique({ where: { type: PlanType.FREE } });
+      if (!freePlan) throw new Error('Free plan not configured');
       await prisma.subscription.updateMany({
         where: { organizationId: event.organizationId },
-        data: { status: SubscriptionStatus.CANCELLED, cancelledAt: new Date() },
+        data: {
+          planId: freePlan.id,
+          status: SubscriptionStatus.ACTIVE,
+          cancelledAt: new Date(),
+          pendingPlanId: null,
+          pendingChangeAt: null,
+        },
       });
       await entitlementChecker.resolveEntitlement(event.organizationId);
     }
@@ -1035,16 +1196,20 @@ app.post('/billing/organizations/:orgId/subscription/cancel', verifyJwt, require
   const { orgId } = req.params;
 
   try {
+    const freePlan = await prisma.plan.findUnique({ where: { type: PlanType.FREE } });
+    if (!freePlan) return res.status(500).json({ error: 'FREE_PLAN_NOT_CONFIGURED' });
+    const current = await prisma.subscription.findUnique({ where: { organizationId: orgId } });
+    if (!current) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
     const subscription = await prisma.subscription.update({
       where: { organizationId: orgId },
       data: {
-        status: SubscriptionStatus.CANCELLED,
         cancelledAt: new Date(),
+        pendingPlanId: freePlan.id,
+        pendingChangeAt: current.currentPeriodEnd,
       },
-      include: { plan: true },
+      include: { plan: true, pendingPlan: true },
     });
-    await recordPaymentEvent(orgId, 'MOCK', 'subscription.cancelled', { source: 'api' });
-    await entitlementChecker.resolveEntitlement(orgId);
+    await recordPaymentEvent(orgId, 'MOCK', 'subscription.cancellation_scheduled', { source: 'api', effectiveAt: current.currentPeriodEnd });
 
     // Audit: subscription cancelled
     await writeAuditLog(prisma, {
@@ -1053,7 +1218,7 @@ app.post('/billing/organizations/:orgId/subscription/cancel', verifyJwt, require
       metadata: { source: 'api', planType: subscription.plan?.type },
     });
 
-    res.json(subscription);
+    res.json({ ...subscription, status: 'CANCELLATION_SCHEDULED', effectiveAt: current.currentPeriodEnd });
   } catch (err) {
     console.error('[BillingAPI] Cancel subscription failed', err);
     res.status(500).json({ error: 'Internal server error' });

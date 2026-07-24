@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useEffect, useState } from 'react';
 import { useSession } from '@/components/providers';
@@ -53,7 +54,7 @@ export default function AdminJobsPage() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`${workersUrl}/health`);
+      const res = await authenticatedFetch(`${workersUrl}/health`);
       if (!res.ok) throw new Error('Workers not reachable');
       const health = await res.json();
 

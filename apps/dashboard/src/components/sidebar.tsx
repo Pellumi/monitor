@@ -1,9 +1,10 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { useState, useEffect, Suspense, createContext, useContext } from 'react';
+import { useState, useEffect, useRef, Suspense, createContext, useContext } from 'react';
 import {
   Activity,
   GitGraph,
@@ -31,6 +32,8 @@ import {
   TrendingUp,
   Lock,
   Globe,
+  LogOut,
+  ArrowLeft,
 } from 'lucide-react';
 import { useSession, Membership, Organization } from './providers';
 import { twMerge } from 'tailwind-merge';
@@ -104,7 +107,7 @@ const settingsNavigation: SettingsNavItem[] = [
   { name: 'Security & MFA', href: '/settings/security', icon: Shield, requiredFeature: 'SSO' },
   { name: 'Billing', href: '/settings/billing', icon: CreditCard },
   { name: 'Members', href: '/settings/members', icon: Users, requiredFeature: 'TEAM_COLLABORATION' },
-  { name: 'API Keys', href: '/settings/api-keys', icon: Code2, requiredFeature: 'API_ACCESS' },
+  { name: 'Ingestion Keys', href: '/settings/api-keys', icon: Code2, requiredFeature: 'SESSION_RECORDING' },
 ];
 
 const adminNavigation: NavItem[] = [
@@ -152,7 +155,7 @@ function AppSelector({
     queryKey: ['sidebar-apps', selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return [];
-      const res = await fetch(`/api-gateway/organizations/${selectedOrgId}/applications`);
+      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/applications`);
       if (!res.ok) throw new Error('Failed to fetch apps');
       return res.json();
     },
@@ -163,7 +166,7 @@ function AppSelector({
     queryKey: ['sidebar-entitlement', selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return null;
-      const res = await fetch(`/api-gateway/organizations/${selectedOrgId}/entitlement`);
+      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/entitlement`);
       if (!res.ok) throw new Error('Failed to fetch entitlement');
       return res.json();
     },
@@ -177,7 +180,7 @@ function AppSelector({
     queryKey: ['sidebar-envs', selectedApp?.id],
     queryFn: async () => {
       if (!selectedApp?.id) return [];
-      const res = await fetch(`/api-gateway/applications/${selectedApp.id}/environments`);
+      const res = await authenticatedFetch(`/api-gateway/applications/${selectedApp.id}/environments`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -385,10 +388,31 @@ function NavigationList() {
   const router = useRouter();
   const appId = searchParams.get('appId');
   const envId = searchParams.get('envId');
-  const { user, memberships } = useSession();
   const { entitlement } = useEntitlement();
 
-  const isSystemAdmin = (user as any)?.isSystemAdmin === true;
+  const isSettingsMode = pathname.startsWith('/settings');
+  const isAdminMode = pathname.startsWith('/admin');
+  const isMainAppMode = !isSettingsMode && !isAdminMode;
+
+  // Track last main app path so "Back to App" returns to the user's previous active page
+  useEffect(() => {
+    if (isMainAppMode && !pathname.startsWith('/auth') && !pathname.startsWith('/onboarding')) {
+      const fullPath = searchParams.toString() ? `${pathname}?${searchParams.toString()}` : pathname;
+      sessionStorage.setItem('lastMainAppPath', fullPath);
+    }
+  }, [pathname, searchParams, isMainAppMode]);
+
+  function handleBackToApp() {
+    const lastPath = sessionStorage.getItem('lastMainAppPath');
+    if (lastPath) {
+      router.push(lastPath);
+    } else {
+      const params = new URLSearchParams();
+      if (appId) params.set('appId', appId);
+      if (envId) params.set('envId', envId);
+      router.push(params.toString() ? `/?${params.toString()}` : '/');
+    }
+  }
 
   function buildHref(href: string, hasAppId = true) {
     const params = new URLSearchParams();
@@ -402,7 +426,7 @@ function NavigationList() {
     hasAppId = true,
   ) => {
     const enabled = isFeatureEnabled(entitlement, item.requiredFeature);
-    const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+    const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href + '/'));
 
     if (!enabled) {
       // Locked item — visible but greyed out with lock icon
@@ -448,19 +472,37 @@ function NavigationList() {
 
   return (
     <nav className="flex-1 space-y-1 px-4 py-2 overflow-y-auto">
-      {/* ── Observability ─── */}
-      {navigation.map((item) => renderNavItem(item, true))}
+      {/* ── Back to App Button (shown in Settings or Admin mode) ─── */}
+      {!isMainAppMode && (
+        <button
+          type="button"
+          onClick={handleBackToApp}
+          className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-300 hover:text-white hover:bg-neutral-800/80 rounded-md transition-colors w-full text-left mb-3 border-b border-neutral-800/80 pb-3 cursor-pointer"
+        >
+          <ArrowLeft className="h-4 w-4 text-neutral-400" />
+          <span>Back to App</span>
+        </button>
+      )}
 
-      {/* ── Settings ─── */}
-      <div className="pt-4">
-        <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Settings</p>
-        {settingsNavigation.map((item) => renderNavItem(item, false))}
-      </div>
+      {/* ── Main App Navigation Mode ─── */}
+      {isMainAppMode && (
+        <>
+          {navigation.map((item) => renderNavItem(item, true))}
+        </>
+      )}
 
-      {/* ── Admin (System Admin only) ─── */}
-      {isSystemAdmin && (
-        <div className="pt-4">
-          <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600">Admin</p>
+      {/* ── Settings Navigation Mode ─── */}
+      {isSettingsMode && (
+        <div>
+          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Settings</p>
+          {settingsNavigation.map((item) => renderNavItem(item, false))}
+        </div>
+      )}
+
+      {/* ── Admin Navigation Mode ─── */}
+      {isAdminMode && (
+        <div>
+          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-amber-600 font-medium">Admin</p>
           {adminNavigation.map((item) => renderNavItem(item, false))}
         </div>
       )}
@@ -468,58 +510,116 @@ function NavigationList() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// UserProfile (unchanged)
-// ─────────────────────────────────────────────────────────────
-
 function UserProfile() {
   const { user } = useSession();
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
   if (!user) return null;
 
+  const isSystemAdmin = (user as any)?.isSystemAdmin === true;
   const initial = (user.displayName?.[0] || user.email[0]).toUpperCase();
   const name = user.displayName || user.email.split('@')[0];
   const docsUrl = process.env.NEXT_PUBLIC_DOCS_URL || 'https://docs.domain-name.com';
-  const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com';
+
+  const avatarElement = user.avatarUrl ? (
+    <img
+      src={user.avatarUrl}
+      alt={name}
+      className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+    />
+  ) : (
+    <div className="w-7 h-7 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center font-medium text-xs flex-shrink-0">
+      {initial}
+    </div>
+  );
 
   return (
-    <div className="p-4 border-t border-neutral-800 flex-shrink-0 space-y-3 bg-neutral-950/20">
-      <div className="flex items-center gap-2.5 truncate">
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white flex items-center justify-center font-bold text-xs shadow-md flex-shrink-0">
-          {initial}
+    <div ref={containerRef} className="relative border-t border-neutral-800 flex-shrink-0 bg-neutral-950/20">
+      {/* Pop Up Menu */}
+      {isOpen && (
+        <div className="absolute bottom-full left-1 right-1 mb-2 bg-[#18181b] border border-neutral-800 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+          {/* Header inside Pop Up — Clicking opens profile settings */}
+          <Link
+            href="/settings/profile"
+            onClick={() => setIsOpen(false)}
+            className="flex items-center gap-2.5 px-2.5 py-2 border-b border-neutral-800/80 mb-1 hover:bg-neutral-800/70 rounded-lg transition-colors cursor-pointer group"
+          >
+            {avatarElement}
+            <div className="truncate">
+              <div className="text-xs font-semibold text-white group-hover:underline transition-colors truncate">{name}</div>
+              <div className="text-[10px] text-neutral-500 truncate">{user.email}</div>
+            </div>
+          </Link>
+
+          {/* Menu Options */}
+          <div className="space-y-0.5">
+            <Link
+              href="/settings/profile"
+              onClick={() => setIsOpen(false)}
+              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+            >
+              <Settings className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+              <span>Settings</span>
+            </Link>
+
+            {isSystemAdmin && (
+              <Link
+                href="/admin/rulesets"
+                onClick={() => setIsOpen(false)}
+                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+              >
+                <ShieldAlert className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                <span>Admin</span>
+              </Link>
+            )}
+
+            <a
+              href={docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setIsOpen(false)}
+              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+            >
+              <FileText className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+              <span>Documentation</span>
+            </a>
+
+            <Link
+              href="/auth/logout"
+              onClick={() => setIsOpen(false)}
+              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-red-400 hover:bg-red-950/30 transition-colors"
+            >
+              <LogOut className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+              <span>Log out</span>
+            </Link>
+          </div>
         </div>
-        <div className="truncate">
-          <div className="text-xs font-semibold text-white truncate">{name}</div>
-          <div className="text-[10px] text-neutral-500 truncate">{user.email}</div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-[10px]">
-        <a
-          href={docsUrl}
-          className="text-center py-1.5 border border-neutral-800 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-        >
-          Docs
-        </a>
-        <a
-          href={marketingUrl}
-          className="text-center py-1.5 border border-neutral-800 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-        >
-          Site
-        </a>
-      </div>
-      <div className="flex gap-2">
-        <Link
-          href="/settings/profile"
-          className="flex-1 text-center py-1.5 border border-neutral-800 rounded-md hover:bg-neutral-800 text-[10px] text-neutral-400 hover:text-white transition-colors"
-        >
-          Settings
-        </Link>
-        <Link
-          href="/auth/logout"
-          className="flex-1 text-center py-1.5 border border-neutral-800 rounded-md hover:bg-red-950/30 hover:border-red-900/50 hover:text-red-400 text-[10px] text-neutral-400 transition-colors"
-        >
-          Logout
-        </Link>
-      </div>
+      )}
+
+      {/* Main Sidebar User Trigger Row */}
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="flex items-center gap-2.5 w-full p-2.5 rounded-lg hover:bg-neutral-800/60 transition-colors text-left focus:outline-none cursor-pointer"
+      >
+        {avatarElement}
+        <span className="text-xs font-semibold text-white truncate">{name}</span>
+      </button>
     </div>
   );
 }
@@ -534,11 +634,10 @@ export function Sidebar() {
 
   return (
     <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
-      <div className="flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-900">
-        <div className="flex h-16 items-center justify-between border-b border-neutral-800 px-6 mb-4 flex-shrink-0">
+      <div className="flex h-full w-64 flex-col border-r border-[#262626] bg-[#0a0a0a]">
+        <div className="flex h-16 items-center justify-between px-6 mb-4 shrink-0">
           <Link href="/" className="flex items-center space-x-2">
-            <Building2 className="h-5 w-5 text-blue-400" />
-            <h1 className="text-lg font-bold tracking-tight text-white">Tellann Platform</h1>
+            <h1 className="text-[22px] font-extrabold tracking-tight text-white">Tellann</h1>
           </Link>
         </div>
 

@@ -10,6 +10,8 @@ import {
   runRuleCandidateAdminDigest,
 } from './digest-workers';
 import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
+import { runRetentionSweep } from './retention-worker';
+import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { createMetricsRegistry, createHttpMetricsMiddleware } from '@sots/shared';
 import http from 'http';
 
@@ -29,15 +31,28 @@ export async function runAiDraftJobProcessor(): Promise<void> {
 
   try {
     // Claim up to MAX_BATCH QUEUED jobs atomically (update to PROCESSING)
-    const jobs = await (prisma as any).aIFlowDraftJob.findMany({
+    const queuedJobs = await (prisma as any).aIFlowDraftJob.findMany({
       where: {
         status: 'QUEUED',
         scheduledAt: { lte: new Date() },
         attempts: { lt: 3 },
       },
-      take: MAX_BATCH,
+      take: 25,
       orderBy: { scheduledAt: 'asc' },
     });
+    const organizationIds = [...new Set(queuedJobs.map((job: any) => job.organizationId))] as string[];
+    const subscriptions = await prisma.subscription.findMany({
+      where: { organizationId: { in: organizationIds } },
+      include: { plan: true },
+    });
+    const priorityOrganizations = new Set(
+      subscriptions.filter((subscription) => ['BUSINESS', 'ENTERPRISE'].includes(subscription.plan.type)).map((subscription) => subscription.organizationId),
+    );
+    const jobs = queuedJobs
+      .sort((left: any, right: any) =>
+        Number(priorityOrganizations.has(right.organizationId)) - Number(priorityOrganizations.has(left.organizationId))
+        || left.scheduledAt.getTime() - right.scheduledAt.getTime())
+      .slice(0, MAX_BATCH);
 
     if (jobs.length === 0) return;
 
@@ -263,6 +278,8 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   { name: 'coverage-alert-digest',            handler: runCoverageAlertDigest,      pattern: '0 7 * * *' },   // daily 7am
   { name: 'rule-candidate-admin-digest',      handler: runRuleCandidateAdminDigest, pattern: '0 8 * * *' },   // daily 8am
   { name: 'cross-tenant-index-builder',       handler: runCrossTenantIndexBuilder,  pattern: '0 1 * * 0' },   // Sunday 1am (weekly)
+  { name: 'behavioral-data-retention',        handler: () => runRetentionSweep(prisma).then(() => undefined), pattern: '0 2 * * *' },
+  { name: 'scheduled-subscription-changes',   handler: () => applyScheduledSubscriptionChanges(prisma).then(() => undefined), every: 60_000 },
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -471,4 +488,3 @@ main().catch((err) => {
   console.error('[background-workers] Fatal error', err);
   process.exit(1);
 });
-

@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { usePathname } from 'next/navigation';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 export interface User {
   id: string;
@@ -56,7 +57,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const fetchSession = async () => {
     try {
-      const res = await fetch('/api-gateway/auth/me');
+      const res = await authenticatedFetch('/api-gateway/auth/me', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
@@ -113,9 +114,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {isLoading ? (
-        <div className="flex h-screen w-screen items-center justify-center bg-neutral-950 text-neutral-400 gap-4">
-          <span className="w-8 h-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
-          <p className="text-sm">Initializing Tellann...</p>
+        <div className="flex h-screen w-screen flex-col items-center justify-center bg-black text-[#c4c7c8] gap-3 font-mono">
+          <span className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+          <p className="text-xs tracking-widest uppercase text-[#8e9192]">Initializing Tellann...</p>
         </div>
       ) : (
         children

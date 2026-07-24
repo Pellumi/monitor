@@ -1,4 +1,5 @@
 "use client";
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -106,7 +107,7 @@ function getErrorMessage(payload: unknown, fallback: string) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   let payload: unknown = null;
   try {
     payload = await res.json();

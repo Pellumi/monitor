@@ -1,4 +1,5 @@
 'use client';
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Users, UserMinus, Shield, ChevronDown, Loader2, AlertTriangle, CheckCircle, UserPlus, Mail, X, Clock } from 'lucide-react';
@@ -42,10 +43,10 @@ const ROLE_LABELS: Record<MemberRole, string> = {
 };
 
 const ROLE_BADGE: Record<MemberRole, string> = {
-  OWNER: 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
-  ADMIN: 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20',
-  MEMBER: 'bg-neutral-800 text-neutral-300 border border-neutral-700',
-  VIEWER: 'bg-neutral-900 text-neutral-500 border border-neutral-800',
+  OWNER: 'bg-black text-white border border-[#444748]',
+  ADMIN: 'bg-black text-[#e2e2e2] border border-[#333333]',
+  MEMBER: 'bg-black text-neutral-400 border border-[#262626]',
+  VIEWER: 'bg-black text-neutral-500 border border-[#262626]',
 };
 
 const ROLES: MemberRole[] = ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER'];
@@ -55,7 +56,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
@@ -180,9 +181,9 @@ export default function MembersPage() {
 
       {/* Invite Member (owners/admins only) */}
       {isAdmin && (
-        <section className="rounded-lg border border-neutral-800 bg-neutral-900 p-5">
+        <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
           <div className="flex items-center gap-2 mb-4">
-            <UserPlus className="h-4 w-4 text-indigo-400" />
+            <UserPlus className="h-4 w-4 text-white" />
             <h2 className="text-sm font-semibold text-white">Invite Member</h2>
           </div>
           <form onSubmit={(e) => void handleInvite(e)} className="flex flex-col sm:flex-row gap-3">
@@ -195,14 +196,14 @@ export default function MembersPage() {
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 required
-                className="w-full pl-9 pr-3 py-2 rounded-md border border-neutral-700 bg-neutral-950 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full pl-9 pr-3 py-2 rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
               />
             </div>
             <select
               id="invite-role-select"
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-              className="rounded-md border border-neutral-700 bg-neutral-950 text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-indigo-500 transition"
+              className="rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
             >
               {ROLES.filter((r) => r !== 'OWNER').map((r) => (
                 <option key={r} value={r}>{ROLE_LABELS[r]}</option>
@@ -212,7 +213,7 @@ export default function MembersPage() {
               id="invite-submit-btn"
               type="submit"
               disabled={inviting || !inviteEmail.trim()}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition disabled:opacity-50 shrink-0"
+              className="flex items-center gap-2 px-4 py-2 rounded-md bg-white hover:bg-neutral-200 text-black text-sm font-semibold transition disabled:opacity-50 shrink-0 cursor-pointer"
             >
               {inviting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
               Send Invite
@@ -233,10 +234,11 @@ export default function MembersPage() {
         </div>
       )}
 
-      <section className="rounded-lg border border-neutral-800 bg-neutral-900 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+      {/* Members List */}
+      <section className="rounded-md border border-[#262626] bg-[#131313]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
           <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-indigo-400" />
+            <Users className="h-4 w-4 text-white" />
             <span className="text-sm font-semibold text-white">{members.length} Members</span>
           </div>
           {isLoading && <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />}
@@ -245,7 +247,7 @@ export default function MembersPage() {
         {members.length === 0 && !isLoading ? (
           <div className="py-12 text-center text-sm text-neutral-500">No members found.</div>
         ) : (
-          <ul className="divide-y divide-neutral-800">
+          <ul className="divide-y divide-[#262626]">
             {members.map((member) => {
               const initial = (member.user.displayName?.[0] || member.user.email[0]).toUpperCase();
               const isCurrentUser = member.userId === user?.id;
@@ -255,7 +257,7 @@ export default function MembersPage() {
               return (
                 <li key={member.id} className="flex items-center gap-4 px-5 py-4">
                   {/* Avatar */}
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white font-bold text-xs shadow">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black border border-[#262626] text-white font-bold font-mono text-xs shadow">
                     {initial}
                   </div>
 
@@ -266,7 +268,7 @@ export default function MembersPage() {
                         {member.user.displayName || member.user.email.split('@')[0]}
                       </span>
                       {isCurrentUser && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900/60 font-medium">You</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-[#8e9192] border border-[#444748] font-mono font-medium">You</span>
                       )}
                       <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider', ROLE_BADGE[member.role])}>
                         {ROLE_LABELS[member.role]}

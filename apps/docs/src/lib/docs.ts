@@ -1075,19 +1075,19 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Tellann Pricing',
-        body: 'Pricing scales based on ingest volumes, session counts, and access to premium features like Session Replay and Endpoint Intelligence.',
+        body: 'Phase 1 pricing is based on applications, organization members, storage, retention, and plan capabilities. Tellann does not charge by event volume during Phase 1.',
       },
     ],
   },
   {
     slug: 'billing/plans-comparison',
     title: 'Plans Comparison',
-    description: 'Detailed comparison of Free, Team, and Enterprise plans.',
+    description: 'Detailed comparison of Free, Local, Solo, Team, Business, and Enterprise plans.',
     category: '💳 BILLING & PLANS',
     sections: [
       {
         title: 'Tiers comparison table',
-        body: 'Free plan supports 1 organization and 5,000 events/mo. Team tier unlocks multi-environment support. Enterprise tier provides audit logging and custom retention policies.',
+        body: 'Free supports 1 application and JSON exports. Local is Nigeria-only at ₦20,000/month for 2 applications, 10 GB, and 30-day retention. Solo adds advanced reports and all export formats. Team adds collaboration and RBAC. Business adds API access and audit logs. Enterprise adds negotiated identity, deployment, residency, retention, and support capabilities.',
       },
     ],
   },
@@ -1099,19 +1099,19 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Enforcing limits',
-        body: 'Upstream services verify subscription flags during runtime. If a plan is suspended or over its quota limits, Tellann blocks reporting API endpoints or hides Session Replay timelines.',
+        body: 'Services enforce plan features and resource quotas server-side. At 80% usage Tellann warns organization administrators; at 100% it blocks new quota-consuming operations while preserving read, export, billing, deletion, and upgrade access.',
       },
     ],
   },
   {
     slug: 'billing/usage-limits',
     title: 'Usage Limits',
-    description: 'Monitoring monthly event ingestion metrics.',
+    description: 'Monitoring plan resource usage.',
     category: '💳 BILLING & PLANS',
     sections: [
       {
         title: 'Tracking usage',
-        body: 'View real-time event counts and session usage. Exceeding limits triggers warnings, with data buffered temporarily for 48 hours.',
+        body: 'View application, member, storage, and demonstration usage against the current plan. Phase 1 has no event allowance or event-overage charge.',
       },
     ],
   },
@@ -1123,7 +1123,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'Replay storage limits',
-        body: 'Replays and behavior assets utilize MinIO object storage. The Team plan allows up to 50GB of session timeline assets.',
+        body: 'Billable replay, report, and behavioral assets count toward storage: Free 1 GB, Local 10 GB, Solo 25 GB, Team 100 GB, Business 500 GB, and Enterprise custom.',
       },
     ],
   },
@@ -1135,7 +1135,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'History windows',
-        body: 'Telemetry data retention limits vary: Free tier holds 14 days, Team tier holds 90 days, Enterprise tier supports custom retention limits.',
+        body: 'Behavioral data retention is Free 14 days, Local 30 days, Solo 90 days, Team 180 days, Business 365 days, and Enterprise custom. Billing, audit, consent, membership, and security records follow separate compliance schedules.',
       },
     ],
   },
