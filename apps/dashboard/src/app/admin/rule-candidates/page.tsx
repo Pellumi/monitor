@@ -1,8 +1,11 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from '@/components/ui/button';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardList, CheckCircle, XCircle, Loader2, AlertTriangle, ChevronRight, Eye } from 'lucide-react';
+import { EmptyState } from '@/components/empty-state';
 
 interface RuleCandidate {
   id: string;
@@ -92,16 +95,25 @@ export default function AdminRuleCandidatesPage() {
           <h1 className="mt-1 text-3xl font-bold text-white">Rule Candidates</h1>
           <p className="mt-1 text-sm text-neutral-400">Review AI-proposed rule candidates and approve or reject them.</p>
         </div>
-        <select
+        <Select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 text-xs px-3 py-2 focus:outline-none focus:border-indigo-500"
+          onValueChange={setStatusFilter}
         >
-          <option value="PENDING">Pending</option>
-          <option value="APPROVED">Approved</option>
-          <option value="REJECTED">Rejected</option>
-          <option value="">All</option>
-        </select>
+          <SelectTrigger className="w-[120px] py-1.5 text-xs">
+            <SelectValue placeholder="Status">
+              {statusFilter === "PENDING" && "Pending"}
+              {statusFilter === "APPROVED" && "Approved"}
+              {statusFilter === "REJECTED" && "Rejected"}
+              {statusFilter === "" && "All"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="PENDING">Pending</SelectItem>
+            <SelectItem value="APPROVED">Approved</SelectItem>
+            <SelectItem value="REJECTED">Rejected</SelectItem>
+            <SelectItem value="">All</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {error && (
@@ -127,7 +139,15 @@ export default function AdminRuleCandidatesPage() {
         </div>
 
         {candidates.length === 0 && !isLoading ? (
-          <div className="py-12 text-center text-sm text-neutral-500">No {statusFilter.toLowerCase()} candidates.</div>
+          <EmptyState
+            variant={statusFilter === 'PENDING' ? 'success' : 'neutral'}
+            illustration="coverage"
+            layout="compact"
+            eyebrow="Rule review"
+            title={`No ${statusFilter.toLowerCase()} candidates`}
+            description="Candidate rules appear when Tellann finds repeatable behavior worth reviewing."
+            className="m-4"
+          />
         ) : (
           <ul className="divide-y divide-neutral-800">
             {candidates.map((c) => (
@@ -148,35 +168,40 @@ export default function AdminRuleCandidatesPage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <button
+                    <Button
                       id={`view-candidate-${c.id}`}
                       onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                      className="p-1.5 rounded-md text-neutral-500 hover:bg-neutral-800 hover:text-white transition"
-                      title="View rule JSON"
+                      variant="icon"
+                      size="icon"
+                      tooltip="View rule JSON"
                     >
                       <Eye className="h-4 w-4" />
-                    </button>
+                    </Button>
 
                     {c.status === 'PENDING' && (
                       <>
-                        <button
+                        <Button
                           id={`approve-candidate-${c.id}`}
                           onClick={() => void handleAction(c.id, 'approve')}
                           disabled={actionLoading === c.id}
-                          className="flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50"
+                          loading={actionLoading === c.id}
+                          variant="primary"
+                          size="xs"
                         >
-                          {actionLoading === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          {!actionLoading && <CheckCircle className="h-3 w-3" />}
                           Approve
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           id={`reject-candidate-${c.id}`}
                           onClick={() => void handleAction(c.id, 'reject')}
                           disabled={actionLoading === c.id}
-                          className="flex items-center gap-1 rounded-md border border-neutral-700 hover:bg-red-950/40 hover:border-red-900/60 hover:text-red-400 text-neutral-400 px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50"
+                          loading={actionLoading === c.id}
+                          variant="danger"
+                          size="xs"
                         >
-                          {actionLoading === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
+                          {!actionLoading && <XCircle className="h-3 w-3" />}
                           Reject
-                        </button>
+                        </Button>
                       </>
                     )}
                   </div>
@@ -194,12 +219,14 @@ export default function AdminRuleCandidatesPage() {
 
         {nextCursor && !isLoading && (
           <div className="border-t border-neutral-800 px-5 py-3">
-            <button
+            <Button
               onClick={() => void load(nextCursor)}
-              className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition"
+              variant="ghost"
+              size="sm"
+              className="text-xs text-indigo-400 hover:text-indigo-300 hover:bg-transparent p-0 h-auto"
             >
               Load more <ChevronRight className="h-3 w-3" />
-            </button>
+            </Button>
           </div>
         )}
       </section>

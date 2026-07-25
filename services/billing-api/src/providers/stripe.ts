@@ -139,3 +139,9 @@ export async function ensureStripeCustomer(
 export async function getStripeInvoice(invoiceId: string): Promise<Stripe.Invoice> {
   return getStripe().invoices.retrieve(invoiceId);
 }
+
+export async function setStripeCancellation(subscriptionId: string, cancelAtPeriodEnd: boolean): Promise<void> {
+  await getStripe().subscriptions.update(subscriptionId, {
+    cancel_at_period_end: cancelAtPeriodEnd,
+  });
+}

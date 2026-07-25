@@ -11,6 +11,7 @@ import { PrismaClient, OtpPurpose, AuditAction, MemberRole, SubscriptionStatus }
 import { EntitlementChecker } from '@sots/entitlement-checker';
 import { Feature } from '@sots/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { permissionsForRole } from '@sots/authz';
 import {
   createOIDCProvider,
   deleteOIDCProvider,
@@ -722,6 +723,7 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
             status: m.organization.subscription.status,
           } : null,
         },
+        permissions: permissionsForRole(m.role),
       })),
     });
   } catch (err) {
@@ -757,6 +759,107 @@ app.patch('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Respons
     console.error('[Patch Me] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Profile update failed' });
   }
+});
+
+const preferenceFields = [
+  'theme',
+  'density',
+  'sidebarCollapsed',
+  'reducedMotion',
+  'highContrast',
+  'tablePageSize',
+  'persistFilters',
+  'defaultLandingPage',
+  'rememberLastApplication',
+  'rememberLastEnvironment',
+  'reportsOpenInNewTab',
+  'graphPreferences',
+  'replayPreferences',
+  'reportPreferences',
+] as const;
+
+app.get('/auth/preferences', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  const preferences = await prisma.userPreference.upsert({
+    where: { userId: req.user.id },
+    update: {},
+    create: { userId: req.user.id },
+  });
+  res.json(preferences);
+});
+
+app.put('/auth/preferences', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  const current = await prisma.userPreference.findUnique({ where: { userId: req.user.id } });
+  if (current && req.body.version !== current.version) {
+    return res.status(409).json({
+      error: 'VERSION_CONFLICT',
+      message: 'Preferences changed in another session. Reload and try again.',
+      current,
+    });
+  }
+
+  const data: Record<string, unknown> = {};
+  for (const field of preferenceFields) {
+    if (req.body[field] !== undefined) data[field] = req.body[field];
+  }
+  if (data.tablePageSize !== undefined && ![10, 25, 50, 100].includes(Number(data.tablePageSize))) {
+    return res.status(400).json({ error: 'INVALID_PAGE_SIZE', message: 'tablePageSize must be 10, 25, 50, or 100' });
+  }
+  const createData = { ...data };
+  data.version = { increment: 1 };
+  const preferences = await prisma.userPreference.upsert({
+    where: { userId: req.user.id },
+    create: { userId: req.user.id, ...createData, version: 1 },
+    update: data,
+  });
+  res.json(preferences);
+});
+
+app.get('/auth/sessions', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  const refreshToken = req.cookies?.refresh_token as string | undefined;
+  const currentHash = refreshToken ? sha256(refreshToken) : null;
+  const sessions = await prisma.userSession.findMany({
+    where: { userId: req.user.id, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(sessions.map((session) => ({
+    id: session.id,
+    userAgent: session.userAgent,
+    ipAddress: session.ipAddress,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    current: currentHash === session.refreshTokenHash,
+  })));
+});
+
+app.delete('/auth/sessions/:sessionId', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  const session = await prisma.userSession.findFirst({
+    where: { id: req.params.sessionId, userId: req.user.id },
+  });
+  if (!session) return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
+  await prisma.userSession.update({
+    where: { id: session.id },
+    data: { revokedAt: new Date() },
+  });
+  res.status(204).send();
+});
+
+app.delete('/auth/sessions', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  const refreshToken = req.cookies?.refresh_token as string | undefined;
+  const currentHash = refreshToken ? sha256(refreshToken) : '';
+  const result = await prisma.userSession.updateMany({
+    where: {
+      userId: req.user.id,
+      revokedAt: null,
+      ...(currentHash ? { refreshTokenHash: { not: currentHash } } : {}),
+    },
+    data: { revokedAt: new Date() },
+  });
+  res.json({ revoked: result.count });
 });
 
 // Set or change password and optionally switch preferred auth mode.

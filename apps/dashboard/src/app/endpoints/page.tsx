@@ -2,8 +2,10 @@
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
+import { ApplicationRequiredState } from '@/components/application-required-state';
+import { EmptyState } from '@/components/empty-state';
+import { useSelectedApplication } from '@/hooks/use-selected-application';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -72,8 +74,8 @@ function LatencyBar({ value, max }: { value: number; max: number }) {
 import { Suspense } from 'react';
 
 function EndpointsContent() {
-  const searchParams = useSearchParams();
-  const appId        = searchParams.get('appId') ?? 'app-test-checkout-success.json';
+  const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
+    useSelectedApplication();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<AnalysisData>({
@@ -84,11 +86,29 @@ function EndpointsContent() {
       return res.json();
     },
     refetchInterval: 30_000, // refresh every 30s
+    enabled: !!appId,
   });
+
+  if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
+  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
+  if (!appId) return <ApplicationRequiredState feature="Endpoint intelligence" />;
 
   if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading endpoint analysis…</div>;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data)     return null;
+  if (data.endpoints.length === 0) {
+    return (
+      <EmptyState
+        variant="activation"
+        illustration="telemetry"
+        eyebrow="Waiting for API traffic"
+        title="Connect the SDK to analyze endpoints"
+        description="Endpoint latency, request volume, and error patterns appear after Tellann receives application traffic."
+        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+      />
+    );
+  }
 
   const maxAvg = Math.max(...data.endpoints.map((e) => e.avgMs), 1);
 

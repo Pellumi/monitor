@@ -1,5 +1,6 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Button } from '@/components/ui/button';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -289,21 +290,23 @@ function ReplayViewerContent() {
       <div className="flex-shrink-0 flex items-center justify-between gap-4 rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-2.5">
         <div className="flex items-center gap-2">
           {/* Prev */}
-          <button
+          <Button
             onClick={() => { setIsPlaying(false); goPrev(); }}
             disabled={selectedIdx === null || selectedIdx <= 0}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Previous event (←)"
+            variant="secondary"
+            className="h-7 w-7 p-0 flex items-center justify-center border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white"
+            tooltip="Previous event (←)"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-          </button>
+          </Button>
           {/* Play / Pause */}
-          <button
+          <Button
             onClick={() => setIsPlaying(p => !p)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-            title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+            variant="accent"
+            className="h-8 w-8 p-0 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white border-transparent"
+            tooltip={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
           >
             {isPlaying ? (
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
@@ -315,18 +318,19 @@ function ReplayViewerContent() {
                 <path d="M8 5v14l11-7z" />
               </svg>
             )}
-          </button>
+          </Button>
           {/* Next */}
-          <button
+          <Button
             onClick={() => { setIsPlaying(false); goNext(); }}
             disabled={selectedIdx !== null && selectedIdx >= data.timeline.length - 1}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Next event (→)"
+            variant="secondary"
+            className="h-7 w-7 p-0 flex items-center justify-center border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white"
+            tooltip="Next event (→)"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {/* Time display */}

@@ -475,10 +475,16 @@ async function main() {
         },
       },
       '/billing/plans': {
-        get: { summary: 'List available pricing plans', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Plan array' } } },
+        get: { summary: 'List localized pricing plans and permitted plan-change actions', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Localized plan catalog' } } },
       },
-      '/billing/checkout': {
-        post: { summary: 'Initiate Stripe or Paystack checkout', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Checkout redirect URL' } } },
+      '/billing/subscriptions/checkout': {
+        post: { summary: 'Initiate server-routed subscription checkout', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '201': { description: 'Hosted checkout URL' } } },
+      },
+      '/billing/subscriptions/changes/preview': {
+        post: { summary: 'Preview a prorated subscription change', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Proration and effective-mode options' } } },
+      },
+      '/billing/subscriptions/changes': {
+        post: { summary: 'Apply or schedule a subscription change', tags: ['Billing'], security: [{ cookieAuth: [] }], responses: { '200': { description: 'Subscription change state' } } },
       },
     },
   } as const;

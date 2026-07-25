@@ -1,8 +1,11 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from '@/components/ui/button';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Shield, Loader2, AlertTriangle, Search, Filter, Download } from 'lucide-react';
+import { EmptyState } from '@/components/empty-state';
 
 interface AuditLogEntry {
   id: string;
@@ -109,22 +112,35 @@ export default function AdminAuditLogsPage() {
             className="w-full rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 text-sm pl-9 pr-4 py-2 focus:outline-none focus:border-indigo-500"
           />
         </div>
-        <select
-          id="audit-action-filter"
+        <Select
           value={actionFilter}
-          onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
-          className="rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 text-sm px-3 py-2 focus:outline-none focus:border-indigo-500"
+          onValueChange={(val) => { setActionFilter(val); setPage(1); }}
         >
-          <option value="">All Actions</option>
-          <option value="MEMBER_REMOVED">Member Removed</option>
-          <option value="ROLE_CHANGED">Role Changed</option>
-          <option value="AI_SUGGESTION_ACCEPTED">AI Suggestion Accepted</option>
-          <option value="RULESET_PROMOTED">Ruleset Promoted</option>
-          <option value="FLOW_DELETED">Flow Deleted</option>
-          <option value="API_KEY_CREATED">API Key Created</option>
-          <option value="API_KEY_REVOKED">API Key Revoked</option>
-          <option value="APPLICATION_CREATED">Application Created</option>
-        </select>
+          <SelectTrigger id="audit-action-filter" className="w-[200px] text-sm">
+            <SelectValue placeholder="All Actions">
+              {actionFilter === "" && "All Actions"}
+              {actionFilter === "MEMBER_REMOVED" && "Member Removed"}
+              {actionFilter === "ROLE_CHANGED" && "Role Changed"}
+              {actionFilter === "AI_SUGGESTION_ACCEPTED" && "AI Suggestion Accepted"}
+              {actionFilter === "RULESET_PROMOTED" && "Ruleset Promoted"}
+              {actionFilter === "FLOW_DELETED" && "Flow Deleted"}
+              {actionFilter === "API_KEY_CREATED" && "API Key Created"}
+              {actionFilter === "API_KEY_REVOKED" && "API Key Revoked"}
+              {actionFilter === "APPLICATION_CREATED" && "Application Created"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All Actions</SelectItem>
+            <SelectItem value="MEMBER_REMOVED">Member Removed</SelectItem>
+            <SelectItem value="ROLE_CHANGED">Role Changed</SelectItem>
+            <SelectItem value="AI_SUGGESTION_ACCEPTED">AI Suggestion Accepted</SelectItem>
+            <SelectItem value="RULESET_PROMOTED">Ruleset Promoted</SelectItem>
+            <SelectItem value="FLOW_DELETED">Flow Deleted</SelectItem>
+            <SelectItem value="API_KEY_CREATED">API Key Created</SelectItem>
+            <SelectItem value="API_KEY_REVOKED">API Key Revoked</SelectItem>
+            <SelectItem value="APPLICATION_CREATED">Application Created</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {error && (
@@ -143,7 +159,15 @@ export default function AdminAuditLogsPage() {
         </div>
 
         {logs.length === 0 && !isLoading ? (
-          <div className="py-12 text-center text-sm text-neutral-500">No audit log entries.</div>
+          <EmptyState
+            variant="neutral"
+            illustration="list"
+            layout="compact"
+            eyebrow="Audit history"
+            title="No events match this view"
+            description="Administrative and organization changes will appear here as they occur."
+            className="m-4"
+          />
         ) : (
           <ul className="divide-y divide-neutral-800">
             {logs.map((log) => (
@@ -183,22 +207,24 @@ export default function AdminAuditLogsPage() {
           <div className="border-t border-neutral-800 px-5 py-3 flex items-center justify-between">
             <span className="text-xs text-neutral-500">Page {page} of {totalPages}</span>
             <div className="flex gap-2">
-              <button
+              <Button
                 id="audit-prev-page"
                 disabled={page === 1}
                 onClick={() => setPage((p) => p - 1)}
-                className="text-xs px-3 py-1.5 rounded border border-neutral-800 text-neutral-400 hover:text-white hover:border-neutral-700 transition disabled:opacity-40"
+                variant="secondary"
+                size="sm"
               >
                 Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 id="audit-next-page"
                 disabled={page === totalPages}
                 onClick={() => setPage((p) => p + 1)}
-                className="text-xs px-3 py-1.5 rounded border border-neutral-800 text-neutral-400 hover:text-white hover:border-neutral-700 transition disabled:opacity-40"
+                variant="secondary"
+                size="sm"
               >
                 Next
-              </button>
+              </Button>
             </div>
           </div>
         )}

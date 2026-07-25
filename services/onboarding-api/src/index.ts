@@ -448,6 +448,78 @@ app.get('/organizations/:id', verifyJwt, verifyOrgMembership, async (req: Authen
   }
 });
 
+async function requireOrgManager(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const organizationId = req.params.orgId || req.params.id;
+  const membership = await prisma.organizationMembership.findUnique({
+    where: { userId_organizationId: { userId: req.user!.id, organizationId } },
+  });
+  if (!membership || (membership.role !== MemberRole.OWNER && membership.role !== MemberRole.ADMIN)) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Organisation administrator access required' });
+  }
+  next();
+}
+
+app.get('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const organization = await prisma.organization.findUnique({
+    where: { id: req.params.orgId },
+    select: { id: true, name: true, slug: true, createdAt: true, createdByUserId: true },
+  });
+  if (!organization) return res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
+  const settings = await prisma.organizationSettings.upsert({
+    where: { organizationId: organization.id },
+    update: {},
+    create: { organizationId: organization.id },
+  });
+  res.json({ organization, settings });
+});
+
+app.put('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, requireOrgManager, async (req: AuthenticatedRequest, res: Response) => {
+  const current = await prisma.organizationSettings.findUnique({ where: { organizationId: req.params.orgId } });
+  if (current && req.body.version !== current.version) {
+    return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Organisation settings changed. Reload and try again.', current });
+  }
+  const allowed = [
+    'primaryTimezone', 'defaultApplicationId', 'defaultEnvironmentId', 'defaultReportFormat',
+    'defaultGraphVisibility', 'defaultDemonstrationMode', 'defaultMemberRole',
+    'defaultInvitationExpiryDays', 'defaultSeverityThreshold', 'billingContactEmail',
+    'technicalContactEmail', 'securityContactEmail',
+  ];
+  const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]]));
+  const settings = await prisma.organizationSettings.upsert({
+    where: { organizationId: req.params.orgId },
+    create: { organizationId: req.params.orgId, ...data },
+    update: { ...data, version: { increment: 1 } },
+  });
+  res.json(settings);
+});
+
+app.get('/organizations/:orgId/security-settings', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const settings = await prisma.organizationSecuritySettings.upsert({
+    where: { organizationId: req.params.orgId },
+    update: {},
+    create: { organizationId: req.params.orgId },
+  });
+  res.json(settings);
+});
+
+app.put('/organizations/:orgId/security-settings', verifyJwt, verifyOrgMembership, requireOrgManager, async (req: AuthenticatedRequest, res: Response) => {
+  const current = await prisma.organizationSecuritySettings.findUnique({ where: { organizationId: req.params.orgId } });
+  if (current && req.body.version !== current.version) {
+    return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Security settings changed. Reload and try again.', current });
+  }
+  const allowed = [
+    'requireMfa', 'idleTimeoutMinutes', 'maximumSessionHours', 'allowedEmailDomains',
+    'blockPersonalEmailDomains', 'invitationExpiryDays', 'requireVerifiedEmail', 'revokeSessionsOnRoleChange',
+  ];
+  const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]]));
+  const settings = await prisma.organizationSecuritySettings.upsert({
+    where: { organizationId: req.params.orgId },
+    create: { organizationId: req.params.orgId, ...data },
+    update: { ...data, version: { increment: 1 } },
+  });
+  res.json(settings);
+});
+
 /** GET /organizations/:orgId/activation-events — get activation events */
 app.get('/organizations/:orgId/activation-events', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
   const { orgId } = req.params;
@@ -896,6 +968,136 @@ app.get('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authenti
   } catch (err) {
     console.error('[Onboarding] Get app error', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** DELETE /applications/:id — delete an application and all associated resources */
+app.delete('/applications/:id', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const app = await prisma.application.findUnique({
+      where: { id },
+      select: { id: true, name: true, organizationId: true },
+    });
+    if (!app) return res.status(404).json({ error: 'Application not found' });
+
+    // Perform cascade deletion of all child records inside a transaction
+    await prisma.$transaction(async (tx) => {
+      // 1. Find all environments for this app
+      const envs = await tx.environment.findMany({
+        where: { applicationId: id },
+        select: { id: true },
+      });
+      const envIds = envs.map((e) => e.id);
+
+      // 2. Delete environment child entities (API keys)
+      if (envIds.length > 0) {
+        await tx.apiKey.deleteMany({ where: { environmentId: { in: envIds } } });
+      }
+
+      // 3. Find behavior graphs & nodes for this app to safely delete graph sub-trees
+      const graphs = await tx.behaviorGraph.findMany({
+        where: { applicationId: id },
+        select: { id: true },
+      });
+      const graphIds = graphs.map((g) => g.id);
+
+      const nodes = graphIds.length > 0
+        ? await tx.behaviorGraphNode.findMany({
+            where: { graphId: { in: graphIds } },
+            select: { id: true },
+          })
+        : [];
+      const nodeIds = nodes.map((n) => n.id);
+
+      // 4. Delete suggestions & outcomes referencing nodes/flows/app
+      const suggestions = await tx.declaredStateSuggestion.findMany({
+        where: {
+          OR: [
+            { applicationId: id },
+            ...(nodeIds.length > 0 ? [{ parentStateId: { in: nodeIds } }] : []),
+            ...(graphIds.length > 0 ? [{ flowId: { in: graphIds } }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      const suggestionIds = suggestions.map((s) => s.id);
+
+      if (suggestionIds.length > 0) {
+        await tx.suggestionOutcome.deleteMany({ where: { suggestionId: { in: suggestionIds } } });
+      }
+      await tx.suggestionOutcome.deleteMany({ where: { applicationId: id } });
+
+      await tx.declaredStateSuggestion.deleteMany({
+        where: {
+          OR: [
+            { applicationId: id },
+            ...(nodeIds.length > 0 ? [{ parentStateId: { in: nodeIds } }] : []),
+            ...(graphIds.length > 0 ? [{ flowId: { in: graphIds } }] : []),
+          ],
+        },
+      });
+
+      // 5. Delete graph edges, nodes, versions
+      if (graphIds.length > 0) {
+        await tx.behaviorGraphEdge.deleteMany({ where: { graphId: { in: graphIds } } });
+        await tx.behaviorGraphNode.deleteMany({ where: { graphId: { in: graphIds } } });
+        await tx.behaviorGraphVersion.deleteMany({ where: { graphId: { in: graphIds } } });
+      }
+
+      // 6. Delete compiled rulesets & reconciliation reports
+      await tx.compiledRuleset.deleteMany({ where: { applicationId: id } });
+      if (graphIds.length > 0) {
+        await tx.compiledRuleset.deleteMany({ where: { flowId: { in: graphIds } } });
+      }
+
+      await tx.reconciliationReport.deleteMany({ where: { applicationId: id } });
+      if (graphIds.length > 0) {
+        await tx.reconciliationReport.deleteMany({ where: { flowId: { in: graphIds } } });
+      }
+
+      // 7. Delete BehaviorGraphs
+      await tx.behaviorGraph.deleteMany({ where: { applicationId: id } });
+
+      // 8. Delete AI flow drafts and jobs
+      await tx.aIFlowDraftJob.deleteMany({ where: { applicationId: id } });
+      await tx.aIFlowDraft.deleteMany({ where: { applicationId: id } });
+
+      // 9. Delete remaining application child entities
+      await tx.applicationProfile.deleteMany({ where: { applicationId: id } });
+      await tx.applicationOnboardingProgress.deleteMany({ where: { applicationId: id } });
+      await tx.observedGraphSnapshot.deleteMany({ where: { applicationId: id } });
+      await tx.promotionDecision.deleteMany({ where: { applicationId: id } });
+      await tx.recommendationEvidence.deleteMany({ where: { applicationId: id } });
+      await tx.intentNormalizationEntry.deleteMany({ where: { applicationId: id } });
+      await tx.coverageSnapshot.deleteMany({ where: { applicationId: id } });
+      await tx.workflow.deleteMany({ where: { applicationId: id } });
+      await tx.demonstration.deleteMany({ where: { applicationId: id } });
+      await tx.candidateState.deleteMany({ where: { applicationId: id } });
+      await tx.missingState.deleteMany({ where: { applicationId: id } });
+      await tx.missingFlow.deleteMany({ where: { applicationId: id } });
+      await tx.transition.deleteMany({ where: { applicationId: id } });
+      await tx.state.deleteMany({ where: { applicationId: id } });
+      await tx.session.deleteMany({ where: { applicationId: id } });
+      await tx.environment.deleteMany({ where: { applicationId: id } });
+
+      // 10. Finally delete the application itself
+      await tx.application.delete({ where: { id } });
+    });
+
+    if (app.organizationId) {
+      void writeAuditLog(prisma, {
+        action: AuditAction.RETENTION_DATA_DELETED,
+        userId: req.user?.id ?? null,
+        organizationId: app.organizationId,
+        metadata: { applicationId: app.id, applicationName: app.name, deletedType: 'APPLICATION' },
+      });
+    }
+
+    res.json({ success: true, message: `Application '${app.name}' deleted successfully` });
+  } catch (err) {
+    console.error('[Onboarding] Delete app error', err);
+    res.status(500).json({ error: 'Failed to delete application' });
   }
 });
 

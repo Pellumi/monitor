@@ -1,9 +1,12 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Users, UserMinus, Shield, ChevronDown, Loader2, AlertTriangle, CheckCircle, UserPlus, Mail, X, Clock } from 'lucide-react';
 import { useSession } from '@/components/providers';
+import { EmptyState } from '@/components/empty-state';
 
 type MemberRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
 
@@ -199,25 +202,34 @@ export default function MembersPage() {
                 className="w-full pl-9 pr-3 py-2 rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
               />
             </div>
-            <select
-              id="invite-role-select"
+            <Select
               value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-              className="rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
+              onValueChange={(val) => setInviteRole(val as MemberRole)}
             >
-              {ROLES.filter((r) => r !== 'OWNER').map((r) => (
-                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-              ))}
-            </select>
-            <button
+              <SelectTrigger id="invite-role-select" className="w-[150px]">
+                <SelectValue placeholder="Select role...">
+                  {ROLE_LABELS[inviteRole]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {ROLES.filter((r) => r !== 'OWNER').map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
               id="invite-submit-btn"
               type="submit"
+              variant="primary"
+              size="sm"
               disabled={inviting || !inviteEmail.trim()}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-white hover:bg-neutral-200 text-black text-sm font-semibold transition disabled:opacity-50 shrink-0 cursor-pointer"
+              loading={inviting}
             >
-              {inviting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+              {!inviting && <UserPlus className="h-4 w-4" />}
               Send Invite
-            </button>
+            </Button>
           </form>
         </section>
       )}
@@ -245,7 +257,15 @@ export default function MembersPage() {
         </div>
 
         {members.length === 0 && !isLoading ? (
-          <div className="py-12 text-center text-sm text-neutral-500">No members found.</div>
+          <EmptyState
+            variant="neutral"
+            illustration="list"
+            layout="compact"
+            eyebrow="Team"
+            title="No members found"
+            description="Invite a teammate when you are ready to collaborate on this organization."
+            className="m-4"
+          />
         ) : (
           <ul className="divide-y divide-[#262626]">
             {members.map((member) => {
@@ -281,49 +301,66 @@ export default function MembersPage() {
                   {canModify && (
                     <div className="flex items-center gap-2 shrink-0">
                       {/* Role dropdown */}
-                      <div className="relative">
-                        <select
-                          id={`role-select-${member.userId}`}
+                      <div className="relative w-[110px]">
+                        <Select
                           value={member.role}
-                          disabled={changingRole === member.userId}
-                          onChange={(e) => void handleRoleChange(member.userId, e.target.value as MemberRole)}
-                          className="appearance-none cursor-pointer rounded-md border border-neutral-700 bg-neutral-950 py-1.5 pl-3 pr-7 text-xs text-neutral-200 focus:outline-none focus:border-indigo-500 transition disabled:opacity-50"
+                          onValueChange={(val) => void handleRoleChange(member.userId, val as MemberRole)}
                         >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                          ))}
-                        </select>
-                        {changingRole === member.userId
-                          ? <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 animate-spin text-indigo-400" />
-                          : <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-neutral-500 pointer-events-none" />
-                        }
+                          <SelectTrigger
+                            id={`role-select-${member.userId}`}
+                            disabled={changingRole === member.userId}
+                            className="py-1.5 px-2.5 text-xs font-normal"
+                          >
+                            <SelectValue placeholder="Role">
+                              {ROLE_LABELS[member.role]}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ROLES.map((r) => (
+                              <SelectItem key={r} value={r}>
+                                {ROLE_LABELS[r]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {changingRole === member.userId && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-md">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                          </div>
+                        )}
                       </div>
 
                       {/* Remove */}
                       {confirmRemove === member.userId ? (
                         <div className="flex items-center gap-1.5 text-xs">
                           <span className="text-red-400">Remove?</span>
-                          <button
+                          <Button
                             id={`confirm-remove-${member.userId}`}
+                            variant="danger"
+                            size="xs"
                             onClick={() => void handleRemove(member.userId)}
                             disabled={removing === member.userId}
-                            className="rounded px-2 py-1 bg-red-600 hover:bg-red-500 text-white font-semibold transition disabled:opacity-50"
                           >
                             {removing === member.userId ? '...' : 'Yes'}
-                          </button>
-                          <button onClick={() => setConfirmRemove(null)} className="rounded px-2 py-1 border border-neutral-700 text-neutral-400 hover:text-white transition">
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setConfirmRemove(null)}
+                          >
                             No
-                          </button>
+                          </Button>
                         </div>
                       ) : (
-                        <button
+                        <Button
                           id={`remove-member-${member.userId}`}
+                          variant="icon"
+                          size="icon"
                           onClick={() => setConfirmRemove(member.userId)}
-                          className="p-1.5 rounded-md text-neutral-500 hover:bg-red-950/40 hover:text-red-400 border border-transparent hover:border-red-900/40 transition"
-                          title="Remove member"
+                          tooltip="Remove member"
                         >
                           <UserMinus className="h-4 w-4" />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   )}
@@ -352,16 +389,18 @@ export default function MembersPage() {
                   </p>
                 </div>
                 {isAdmin && (
-                  <button
+                  <Button
                     id={`rescind-invite-${inv.id}`}
+                    variant="danger"
+                    size="xs"
                     onClick={() => void handleRescind(inv.id)}
                     disabled={rescinding === inv.id}
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 border border-neutral-700 text-xs text-neutral-400 hover:text-red-400 hover:border-red-900/50 hover:bg-red-950/20 transition disabled:opacity-50"
-                    title="Rescind invitation"
+                    loading={rescinding === inv.id}
+                    tooltip="Rescind invitation"
                   >
-                    {rescinding === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                    {rescinding !== inv.id && <X className="h-3 w-3" />}
                     Rescind
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}

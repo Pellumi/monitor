@@ -1,7 +1,9 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Button } from '@/components/ui/button';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   CreditCard,
   CheckCircle2,
@@ -18,7 +20,8 @@ import {
   Info,
 } from 'lucide-react';
 import { useSession } from '@/components/providers';
-import { Switch, SegmentedControl } from '@/components/ui/switch';
+import { Switch } from '@/components/ui/switch';
+import { EmptyState } from '@/components/empty-state';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -26,7 +29,6 @@ import { Switch, SegmentedControl } from '@/components/ui/switch';
 
 type BillingInterval = 'MONTHLY' | 'ANNUAL';
 type BillingCurrency = 'USD' | 'NGN';
-type CheckoutProvider = 'MOCK' | 'STRIPE' | 'PAYSTACK';
 
 interface Plan {
   id: string;
@@ -47,6 +49,29 @@ interface Plan {
   highlights?: string[];
   exportFormats?: string[];
   featureFlags?: Array<{ feature: string; enabled: boolean; tier?: string | null }>;
+  action?: 'SUBSCRIBE' | 'UPGRADE' | 'DOWNGRADE' | 'CURRENT' | 'CONTACT_SALES';
+  allowedEffectiveModes?: Array<'IMMEDIATE' | 'NEXT_RENEWAL'>;
+  displayPriceMonthly?: number | null;
+  displayPriceAnnual?: number | null;
+}
+
+interface PlanCatalog {
+  currency: BillingCurrency;
+  countryRequired: boolean;
+  currentPlanType: string;
+  plans: Plan[];
+}
+
+interface ChangePreview {
+  previewId: string;
+  direction: 'UPGRADE' | 'DOWNGRADE' | 'INTERVAL_CHANGE';
+  currency: BillingCurrency;
+  amountDue: number;
+  creditAmount: number;
+  nextCycleAmount: number;
+  currentRenewalDate: string;
+  expiresAt: string;
+  supportedEffectiveModes: Array<'IMMEDIATE' | 'NEXT_RENEWAL'>;
 }
 
 interface Subscription {
@@ -58,6 +83,8 @@ interface Subscription {
   currentPeriodEnd: string;
   cancelledAt?: string | null;
   trialEndsAt?: string | null;
+  activeProvider?: string | null;
+  migrationStatus?: string | null;
   plan: Plan;
 }
 
@@ -149,11 +176,6 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(value));
 }
 
-function planPrice(plan: Plan, interval: BillingInterval, currency: BillingCurrency) {
-  if (currency === 'NGN') return interval === 'ANNUAL' ? plan.annualPriceNgn : plan.monthlyPriceNgn;
-  return interval === 'ANNUAL' ? plan.annualPriceUsd : plan.monthlyPriceUsd;
-}
-
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ComponentType<{ className?: string }>; color: string; bg: string }> = {
   ACTIVE:       { label: 'Active',       icon: CheckCircle2,   color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
   TRIAL:        { label: 'Trial',        icon: Zap,            color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-500/20' },
@@ -225,13 +247,14 @@ export default function BillingPage() {
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
-  const [billingCountry, setBillingCountry] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('MONTHLY');
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>('USD');
-  const [checkoutProvider, setCheckoutProvider] = useState<CheckoutProvider>('STRIPE');
+  const [countryRequired, setCountryRequired] = useState(false);
+  const [changePreview, setChangePreview] = useState<ChangePreview | null>(null);
+  const [changePlan, setChangePlan] = useState<Plan | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -245,33 +268,29 @@ export default function BillingPage() {
   const isFreePlan = currentPlanType === 'FREE';
 
   // ── Auto-select provider based on currency ──────────────────────────────────
-  useEffect(() => {
-    setCheckoutProvider(billingCurrency === 'NGN' ? 'PAYSTACK' : 'STRIPE');
-  }, [billingCurrency]);
-
   // ── Load all billing data ───────────────────────────────────────────────────
   const load = useCallback(async () => {
     if (!selectedOrgId) return;
     setIsLoading(true);
     setError(null);
     try {
-      const [nextPlans, nextSub, nextInvoices, nextEnt, nextProfile, nextUsage] = await Promise.all([
-        requestJson<Plan[]>(`/api-gateway/billing/plans?organizationId=${encodeURIComponent(selectedOrgId)}`).catch(() => [] as Plan[]),
+      const [catalog, nextSub, nextInvoices, nextEnt, nextProfile, nextUsage] = await Promise.all([
+        requestJson<PlanCatalog>(`/api-gateway/billing/plans?organizationId=${encodeURIComponent(selectedOrgId)}`),
         requestJson<Subscription | null>(`/api-gateway/billing/organizations/${selectedOrgId}/subscription`).catch(() => null),
         requestJson<Invoice[]>(`/api-gateway/billing/organizations/${selectedOrgId}/invoices`).catch(() => [] as Invoice[]),
         requestJson<Entitlement>(`/api-gateway/organizations/${selectedOrgId}/entitlement`).catch(() => null as unknown as Entitlement),
         requestJson<BillingProfile | null>(`/api-gateway/billing/organizations/${selectedOrgId}/profile`).catch(() => null),
         requestJson<UsageSummary | null>(`/api-gateway/usage/organization/${selectedOrgId}`).catch(() => null),
       ]);
-      setPlans(nextPlans);
+      setPlans(catalog.plans);
+      setBillingCurrency(catalog.currency);
+      setCountryRequired(catalog.countryRequired);
       setSubscription(nextSub);
       setInvoices(nextInvoices);
       setEntitlement(nextEnt);
       setBillingProfile(nextProfile);
-      setBillingCountry(nextProfile?.countryCode ?? '');
       setUsageSummary(nextUsage);
       if (nextSub?.billingInterval) setBillingInterval(nextSub.billingInterval);
-      if (nextSub?.billingCurrency) setBillingCurrency(nextSub.billingCurrency);
     } catch (err: any) {
       setError(err.message || 'Failed to load billing data.');
     } finally {
@@ -292,14 +311,11 @@ export default function BillingPage() {
       const body: Record<string, unknown> = {
         organizationId: selectedOrgId,
         planType: plan.type,
-        planId: plan.id,
-        provider: checkoutProvider,
         billingInterval,
-        billingCurrency,
         successUrl: `${window.location.origin}/settings/billing?success=1`,
         cancelUrl: `${window.location.origin}/settings/billing?cancelled=1`,
       };
-      const data = await requestJson<{ checkoutUrl?: string; url?: string; authorizationUrl?: string }>('/api-gateway/billing/checkout', {
+      const data = await requestJson<{ checkoutUrl?: string; url?: string; authorizationUrl?: string }>('/api-gateway/billing/subscriptions/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -335,23 +351,49 @@ export default function BillingPage() {
     }
   }
 
-  async function saveBillingCountry() {
-    if (!selectedOrgId || !/^[A-Za-z]{2}$/.test(billingCountry.trim())) {
-      setError('Enter a valid two-letter ISO billing country code, such as NG or US.');
-      return;
-    }
+  async function previewPlanChange(plan: Plan) {
+    if (!selectedOrgId) return;
     setIsCheckingOut(true);
     setError(null);
     try {
-      const profile = await requestJson<BillingProfile>(`/api-gateway/billing/organizations/${selectedOrgId}/profile`, {
-        method: 'PUT',
+      const preview = await requestJson<ChangePreview>('/api-gateway/billing/subscriptions/changes/preview', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ countryCode: billingCountry.trim().toUpperCase() }),
+        body: JSON.stringify({ organizationId: selectedOrgId, planType: plan.type, billingInterval }),
       });
-      setBillingProfile(profile);
+      setChangePlan(plan);
+      setChangePreview(preview);
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not preview this plan change.'));
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
+
+  async function confirmPlanChange(effectiveMode: 'IMMEDIATE' | 'NEXT_RENEWAL') {
+    if (!selectedOrgId || !changePreview) return;
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      const result = await requestJson<{ checkoutUrl?: string }>('/api-gateway/billing/subscriptions/changes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: selectedOrgId,
+          previewId: changePreview.previewId,
+          effectiveMode,
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      });
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+        return;
+      }
+      setChangePreview(null);
+      setChangePlan(null);
       await load();
     } catch (err: any) {
-      setError(friendlyError(err.message || 'Could not update the billing country.'));
+      setError(friendlyError(err.message || 'Could not change the subscription.'));
     } finally {
       setIsCheckingOut(false);
     }
@@ -381,6 +423,64 @@ export default function BillingPage() {
     }
   }
 
+  async function retryPayment() {
+    if (!selectedOrgId) return;
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      await requestJson('/api-gateway/billing/subscriptions/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId: selectedOrgId }),
+      });
+      setError('Payment retry scheduled. Refresh shortly to see the result.');
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not retry payment.'));
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
+
+  async function updatePaymentMethod() {
+    if (!selectedOrgId) return;
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      const result = await requestJson<{ checkoutUrl: string }>('/api-gateway/billing/payment-method/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: selectedOrgId,
+          successUrl: `${window.location.origin}/settings/billing?payment_method=updated`,
+        }),
+      });
+      window.location.href = result.checkoutUrl;
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not open the secure card update.'));
+      setIsCheckingOut(false);
+    }
+  }
+
+  async function authorizePaystackMigration() {
+    if (!selectedOrgId) return;
+    setIsCheckingOut(true);
+    setError(null);
+    try {
+      const result = await requestJson<{ checkoutUrl: string }>('/api-gateway/billing/subscriptions/migration/paystack/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: selectedOrgId,
+          successUrl: `${window.location.origin}/settings/billing?migration=authorized`,
+        }),
+      });
+      window.location.href = result.checkoutUrl;
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not start Paystack authorization.'));
+      setIsCheckingOut(false);
+    }
+  }
+
   // ── Skeleton while loading ──────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -403,14 +503,15 @@ export default function BillingPage() {
             Manage your subscription, upgrade your plan, and view payment history.
           </p>
         </div>
-        <button
+        <Button
           id="billing-refresh-btn"
           onClick={() => void load()}
-          className="inline-flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm font-medium text-neutral-300 transition hover:bg-neutral-800"
+          variant="secondary"
+          className="h-9 px-3 py-2 text-sm"
         >
           <RefreshCw className="h-4 w-4" />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* ── Error banner ── */}
@@ -420,13 +521,40 @@ export default function BillingPage() {
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-400" />
             <span>{error}</span>
           </div>
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setError(null)}
-            className="shrink-0 rounded p-0.5 text-red-400 transition hover:bg-red-900/30 hover:text-red-200"
+            className="shrink-0 rounded p-0.5 text-red-400 transition hover:bg-red-900/30 hover:text-red-200 h-6 w-6"
             aria-label="Dismiss error"
           >
             <XCircle className="h-4 w-4" />
-          </button>
+          </Button>
+        </div>
+      )}
+      {subscription && ['GRACE_PERIOD', 'PAST_DUE', 'SUSPENDED'].includes(subscription.status) && (
+        <div className="flex flex-col gap-3 rounded-lg border border-amber-800 bg-amber-950/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-amber-200">Your latest subscription payment failed.</p>
+            <p className="mt-1 text-xs text-amber-300/70">
+              {subscription.status === 'SUSPENDED' ? 'Paid features are suspended until payment is recovered.' : 'Your account remains active during the seven-day grace period.'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="accent" onClick={() => void retryPayment()} disabled={isCheckingOut} className="border-amber-700 text-amber-100 hover:border-amber-500 hover:bg-amber-950/20 px-3 py-2 text-xs font-semibold h-auto">Retry now</Button>
+            <Button type="button" variant="accent" onClick={() => void updatePaymentMethod()} disabled={isCheckingOut} className="bg-amber-200 text-black hover:bg-amber-100 px-3 py-2 text-xs font-semibold h-auto">Update card</Button>
+          </div>
+        </div>
+      )}
+      {subscription?.activeProvider === 'STRIPE' && subscription.migrationStatus !== 'PAYSTACK_AUTHORIZED' && (
+        <div className="flex flex-col gap-3 rounded-lg border border-indigo-800 bg-indigo-950/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-indigo-100">Move future renewals to Paystack</p>
+            <p className="mt-1 text-xs text-indigo-300/70">Your Stripe subscription remains active until renewal. Paystack starts only after you securely authorize your card.</p>
+          </div>
+          <Button type="button" variant="accent" onClick={() => void authorizePaystackMigration()} disabled={isCheckingOut} className="bg-indigo-200 text-indigo-950 hover:bg-indigo-100 px-3 py-2 text-xs font-semibold h-auto">
+            Authorize Paystack
+          </Button>
         </div>
       )}
 
@@ -459,14 +587,16 @@ export default function BillingPage() {
                   Free plan
                 </span>
               ) : (
-                <button
+                <Button
                   id="billing-cancel-btn"
                   onClick={handleCancelClick}
                   disabled={isCancelling}
-                  className="text-xs text-neutral-500 underline underline-offset-2 transition hover:text-red-400 disabled:cursor-not-allowed"
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-neutral-500 underline underline-offset-2 hover:text-red-400 hover:bg-transparent p-0"
                 >
                   {isCancelling ? 'Cancelling\u2026' : 'Cancel subscription'}
-                </button>
+                </Button>
               )
             )}
           </div>
@@ -492,26 +622,7 @@ export default function BillingPage() {
           />
         </div>
 
-        {/* Billing controls */}
-        <div className="mt-6 flex flex-wrap items-center gap-6">
-          <div>
-            <label htmlFor="billing-country" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              Billing Country
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="billing-country"
-                value={billingCountry}
-                onChange={(event) => setBillingCountry(event.target.value.toUpperCase().slice(0, 2))}
-                placeholder="NG"
-                aria-label="Two-letter billing country code"
-                className="w-20 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm uppercase text-white"
-              />
-              <button type="button" onClick={() => void saveBillingCountry()} disabled={isCheckingOut || billingCountry === billingProfile?.countryCode} className="rounded-md border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 disabled:opacity-40">
-                Save
-              </button>
-            </div>
-          </div>
+        <div className="mt-6 flex flex-wrap items-end justify-between gap-6">
           <div>
             <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
               Billing Cycle
@@ -523,31 +634,11 @@ export default function BillingPage() {
               labels={['Monthly', 'Annual']}
             />
           </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              Currency
-            </label>
-            <Switch
-              id="billing-currency-switch"
-              checked={billingCurrency === 'NGN'}
-              onCheckedChange={(ngn) => setBillingCurrency(ngn ? 'NGN' : 'USD')}
-              labels={['USD ($)', 'NGN (\u20A6)']}
-            />
-          </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              Processor
-            </label>
-            <SegmentedControl<CheckoutProvider>
-              id="billing-processor-control"
-              value={checkoutProvider}
-              onChange={setCheckoutProvider}
-              options={[
-                { value: 'STRIPE', label: 'Stripe' },
-                { value: 'PAYSTACK', label: 'Paystack' },
-                { value: 'MOCK', label: 'Mock' },
-              ]}
-            />
+          <div className="text-right">
+            <p className="text-sm font-semibold text-white">Prices shown in {billingCurrency}</p>
+            <Link href="/settings/profile" className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-300">
+              {countryRequired ? 'Complete billing profile' : `Based on ${billingProfile?.countryCode ?? 'your organization country'}`}
+            </Link>
           </div>
         </div>
       </Card>
@@ -559,18 +650,24 @@ export default function BillingPage() {
           description="Upgrades activate immediately via checkout. Downgrades take effect at the next renewal period."
         />
         {plans.length === 0 ? (
-          <div className="rounded-lg border border-neutral-800 bg-neutral-950 py-10 text-center text-sm text-neutral-500">
-            No plans available. Check back shortly or contact support.
-          </div>
+          <EmptyState
+            variant="neutral"
+            illustration="list"
+            layout="compact"
+            eyebrow="Plan catalog"
+            title="Plans are temporarily unavailable"
+            description="Refresh this page shortly. Your current subscription remains unchanged."
+          />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {plans.filter((plan) => plan.type !== 'LOCAL' || plan.eligible).map((plan) => {
-              const isLocalPlan = plan.type === 'LOCAL';
-              const displayCurrency: BillingCurrency = isLocalPlan ? 'NGN' : billingCurrency;
-              const price = isLocalPlan ? planPrice(plan, billingInterval, 'NGN') : planPrice(plan, billingInterval, billingCurrency);
+              const displayCurrency = billingCurrency;
+              const price = billingInterval === 'ANNUAL' ? plan.displayPriceAnnual : plan.displayPriceMonthly;
               const isCurrent = plan.type === currentPlanType;
               const isEnterprise = plan.type === 'ENTERPRISE';
-              const isUpgrade = !isCurrent && !isEnterprise && plan.type !== 'FREE';
+              const action = plan.action ?? (isCurrent ? 'CURRENT' : 'SUBSCRIBE');
+              const needsCheckout = action === 'SUBSCRIBE';
+              const needsChangePreview = action === 'UPGRADE' || action === 'DOWNGRADE';
 
               return (
                 <div
@@ -609,23 +706,27 @@ export default function BillingPage() {
                       {plan.exportFormats?.length ? <li>✓ {plan.exportFormats.join(', ')} exports</li> : null}
                     </ul>
                   </div>
-                  <button
+                  <Button
                     id={`plan-checkout-${plan.type.toLowerCase()}`}
-                    onClick={() => isEnterprise ? void handleEnterpriseSalesRequest() : isUpgrade ? void handleCheckout(plan) : undefined}
-                    disabled={isCurrent || isCheckingOut || plan.type === 'FREE'}
+                    onClick={() => isEnterprise
+                      ? void handleEnterpriseSalesRequest()
+                      : needsCheckout
+                        ? void handleCheckout(plan)
+                        : needsChangePreview
+                          ? void previewPlanChange(plan)
+                          : undefined}
+                    disabled={isCurrent || isCheckingOut || plan.type === 'FREE' || countryRequired}
+                    variant={isCurrent ? "secondary" : isEnterprise ? "secondary" : "primary"}
                     className={cn(
-                      'mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-xs font-semibold transition cursor-pointer',
-                      isCurrent
-                        ? 'cursor-default border border-[#262626] bg-[#1a1a1a] text-neutral-400 font-mono'
-                        : isEnterprise
-                        ? 'border border-[#262626] bg-transparent text-neutral-400 hover:border-neutral-500 hover:text-white'
-                        : 'bg-white text-black hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50',
+                      'mt-5 w-full',
+                      isCurrent && 'cursor-default border border-[#262626] bg-[#1a1a1a] text-neutral-400 font-mono hover:bg-[#1a1a1a]',
+                      isEnterprise && 'border border-[#262626] bg-transparent text-neutral-400 hover:border-neutral-500 hover:text-white',
                     )}
                   >
                     {isCurrent ? 'Current Plan' : isEnterprise ? 'Contact Sales' : (
-                      <>Start Checkout <ArrowUpRight className="h-4 w-4" /></>
+                      <>{action === 'DOWNGRADE' ? 'Downgrade' : action === 'UPGRADE' ? 'Upgrade' : 'Subscribe'} <ArrowUpRight className="h-4 w-4" /></>
                     )}
-                  </button>
+                  </Button>
                 </div>
               );
             })}
@@ -678,8 +779,15 @@ export default function BillingPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-neutral-500">
-                    No invoices yet. Your first invoice will appear here after your first payment.
+                  <td colSpan={6} className="p-4">
+                    <EmptyState
+                      variant="neutral"
+                      illustration="report"
+                      layout="compact"
+                      eyebrow="Billing history"
+                      title="No invoices yet"
+                      description="Your first invoice will appear after a completed payment."
+                    />
                   </td>
                 </tr>
               )}
@@ -735,13 +843,15 @@ export default function BillingPage() {
           {/* Dialog */}
           <div className="relative z-10 w-full max-w-md mx-4 rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl shadow-black/50">
             {/* Close button */}
-            <button
+            <Button
               onClick={() => setShowCancelDialog(false)}
-              className="absolute right-4 top-4 rounded-lg p-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-300"
+              variant="ghost"
+              size="icon"
+              className="absolute right-4 top-4 rounded-lg p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
               aria-label="Close dialog"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
 
             {/* Header */}
             <div className="flex flex-col items-center px-6 pt-8 pb-4">
@@ -777,19 +887,62 @@ export default function BillingPage() {
 
             {/* Actions */}
             <div className="flex flex-col-reverse gap-3 px-6 pt-5 pb-6 sm:flex-row sm:justify-end">
-              <button
+              <Button
                 onClick={() => setShowCancelDialog(false)}
-                className="inline-flex items-center justify-center rounded-lg border border-neutral-700 bg-transparent px-4 py-2.5 text-sm font-medium text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                variant="secondary"
               >
                 Keep My Plan
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleConfirmCancel}
                 disabled={isCancelling}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                loading={isCancelling}
+                variant="danger"
               >
-                {isCancelling ? `Cancelling\u2026` : `Yes, Cancel Subscription`}
-              </button>
+                Yes, Cancel Subscription
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {changePreview && changePlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="change-plan-title">
+          <div className="w-full max-w-lg rounded-xl border border-neutral-800 bg-neutral-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 id="change-plan-title" className="text-lg font-bold text-white">
+                  {changePreview.direction === 'DOWNGRADE' ? 'Schedule downgrade' : `Change to ${changePlan.name}`}
+                </h3>
+                <p className="mt-2 text-sm text-neutral-400">
+                  Your next full charge will be {centsToMoney(changePreview.nextCycleAmount, changePreview.currency)}.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => { setChangePreview(null); setChangePlan(null); }}
+                aria-label="Close plan change"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="mt-5 rounded-lg border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-300">
+              {changePreview.direction === 'DOWNGRADE' ? (
+                <p>Your current plan remains active until {formatDate(changePreview.currentRenewalDate)}. There is no charge today.</p>
+              ) : (
+                <p>Start now for {centsToMoney(changePreview.amountDue, changePreview.currency)}, or keep your current plan until {formatDate(changePreview.currentRenewalDate)}.</p>
+              )}
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" onClick={() => void confirmPlanChange('NEXT_RENEWAL')} disabled={isCheckingOut}>
+                Start next billing cycle
+              </Button>
+              {changePreview.supportedEffectiveModes.includes('IMMEDIATE') && (
+                <Button type="button" variant="primary" onClick={() => void confirmPlanChange('IMMEDIATE')} disabled={isCheckingOut}>
+                  Pay difference and start now
+                </Button>
+              )}
             </div>
           </div>
         </div>

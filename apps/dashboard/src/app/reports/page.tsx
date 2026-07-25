@@ -1,12 +1,14 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Button } from '@/components/ui/button';
 
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
-import { FileText, Download, CheckCircle, AlertTriangle, HelpCircle } from 'lucide-react';
-import { useSession } from '@/components/providers';
+import { Download, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ApplicationRequiredState } from '@/components/application-required-state';
+import { EmptyState } from '@/components/empty-state';
+import { useSelectedApplication } from '@/hooks/use-selected-application';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -40,9 +42,8 @@ interface ReportData {
 }
 
 function ReportsContent() {
-  const searchParams = useSearchParams();
-  const { selectedOrgId } = useSession();
-  const appId = searchParams.get('appId') ?? 'app-test-checkout-success.json';
+  const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
+    useSelectedApplication();
   const [exportingFormat, setExportingFormat] = React.useState<string | null>(null);
   const [exportError, setExportError] = React.useState<string | null>(null);
 
@@ -53,6 +54,7 @@ function ReportsContent() {
       if (!res.ok) throw new Error('Failed to fetch report');
       return res.json();
     },
+    enabled: !!appId,
   });
 
   const { data: entitlement } = useQuery<{
@@ -74,9 +76,27 @@ function ReportsContent() {
       ? ['pdf', 'json']
       : ['json'];
 
+  if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
+  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
+  if (!appId) return <ApplicationRequiredState feature="Report" />;
+
   if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading report…</div>;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data)     return null;
+  if (data.summary.sessionCount === 0 && data.summary.workflowCount === 0) {
+    return (
+      <EmptyState
+        variant="activation"
+        illustration="report"
+        eyebrow="Report not ready"
+        title="Run a demonstration to generate evidence"
+        description="Reports combine captured sessions, discovered workflows, and coverage results. Send telemetry first, then Tellann can produce the report."
+        primaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
+        secondaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+      />
+    );
+  }
 
   async function handleExport(format: string) {
     setExportingFormat(format);
@@ -109,8 +129,8 @@ function ReportsContent() {
         document.body.removeChild(link);
         URL.revokeObjectURL(objUrl);
       }
-    } catch (err: any) {
-      setExportError(err?.message ?? 'Export failed');
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
     } finally {
       setExportingFormat(null);
     }
@@ -136,19 +156,18 @@ function ReportsContent() {
             { label: 'CSV', format: 'csv' },
             { label: 'JSON', format: 'json' },
           ].filter((btn) => allowedFormats.includes(btn.format)).map((btn) => (
-            <button
+            <Button
               key={btn.format}
               id={`export-${btn.format}-btn`}
               onClick={() => void handleExport(btn.format)}
               disabled={!!exportingFormat}
-              className="flex items-center space-x-1.5 rounded-lg border border-neutral-800 bg-neutral-800 hover:bg-neutral-700 px-4 py-2 text-xs font-semibold text-white transition-colors disabled:opacity-50"
+              loading={exportingFormat === btn.format}
+              variant="secondary"
+              size="sm"
             >
-              {exportingFormat === btn.format
-                ? <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin inline-block" />
-                : <Download className="h-3.5 w-3.5" />
-              }
+              {exportingFormat !== btn.format && <Download className="h-3.5 w-3.5" />}
               <span>Export {btn.label}</span>
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -188,7 +207,14 @@ function ReportsContent() {
               </div>
             ))}
             {data.workflows.length === 0 && (
-              <p className="text-sm text-neutral-500 text-center py-6">No workflows discovered yet.</p>
+              <EmptyState
+                variant="neutral"
+                illustration="flow"
+                layout="compact"
+                eyebrow="Workflow discovery"
+                title="No workflows in this report"
+                description="Continue exercising the application to reveal repeatable paths."
+              />
             )}
           </div>
         </div>
@@ -217,7 +243,14 @@ function ReportsContent() {
                   </li>
                 ))}
                 {data.missingStates.length === 0 && (
-                  <p className="text-xs text-neutral-500">No missing states detected.</p>
+                  <EmptyState
+                    variant="success"
+                    illustration="coverage"
+                    layout="compact"
+                    eyebrow="State coverage"
+                    title="No missing states"
+                    description="All expected states were reached in this report."
+                  />
                 )}
               </ul>
             </div>
@@ -238,7 +271,14 @@ function ReportsContent() {
                   </li>
                 ))}
                 {data.missingFlows.length === 0 && (
-                  <p className="text-xs text-neutral-500">No missing flows detected.</p>
+                  <EmptyState
+                    variant="success"
+                    illustration="coverage"
+                    layout="compact"
+                    eyebrow="Flow coverage"
+                    title="No missing flows"
+                    description="No untested workflow variations were detected."
+                  />
                 )}
               </ul>
             </div>

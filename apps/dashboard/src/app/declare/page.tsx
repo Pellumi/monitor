@@ -1,12 +1,31 @@
-'use client';
-import { authenticatedFetch } from '@/lib/authenticated-fetch';
+"use client";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
-import { useState, useMemo, Suspense, useEffect, useCallback, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'next/navigation';
-import { ReactFlow, Background, Controls, Node, Edge, applyNodeChanges, applyEdgeChanges, type OnNodesChange, type OnEdgesChange } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+import {
+  useState,
+  useMemo,
+  Suspense,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Node,
+  Edge,
+  applyNodeChanges,
+  applyEdgeChanges,
+  type OnNodesChange,
+  type OnEdgesChange,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
   ClipboardList,
   Plus,
@@ -29,10 +48,10 @@ import {
   CheckCircle2,
   RefreshCw,
   Pencil,
-} from 'lucide-react';
+} from "lucide-react";
 
-const FDRS_API = '/api-gateway';
-const ONBOARDING_API = '/api-gateway';
+const FDRS_API = "/api-gateway";
+const ONBOARDING_API = "/api-gateway";
 
 interface DeclaredStateSuggestion {
   id: string;
@@ -46,12 +65,22 @@ interface DeclaredStateSuggestion {
   description?: string;
   suggestionType?: string;
   severity?: string;
-  source?: 'RULE_ENGINE' | 'AI' | 'HYBRID';
+  source?: "RULE_ENGINE" | "AI" | "HYBRID";
   suggestedStatesJson?: Array<{ name: string; category: string }>;
-  suggestedTransitionsJson?: Array<{ from: string; to: string; action?: string }>;
+  suggestedTransitionsJson?: Array<{
+    from: string;
+    to: string;
+    action?: string;
+  }>;
   graphVersion?: number;
   graphHash?: string;
-  status: 'PENDING' | 'EDITED' | 'ACCEPTED' | 'REJECTED' | 'DISMISSED' | 'SUPERSEDED';
+  status:
+    | "PENDING"
+    | "EDITED"
+    | "ACCEPTED"
+    | "REJECTED"
+    | "DISMISSED"
+    | "SUPERSEDED";
   patternId?: string;
 }
 
@@ -77,7 +106,7 @@ interface DeclaredTransition {
 interface DeclaredFlow {
   id: string;
   name: string;
-  status: 'DRAFT' | 'COMPLETE';
+  status: "DRAFT" | "COMPLETE";
   version: number;
   workflowType: string;
   states: DeclaredState[];
@@ -91,7 +120,14 @@ interface FlowSuggestionsResponse {
     graphVersion: number;
     graphHash: string;
     suggestions: DeclaredStateSuggestion[];
-    meta?: { ruleCount: number; aiCount: number; aiAttempted: boolean; fallbackUsed: boolean; stale: boolean; latencyMs: number };
+    meta?: {
+      ruleCount: number;
+      aiCount: number;
+      aiAttempted: boolean;
+      fallbackUsed: boolean;
+      stale: boolean;
+      latencyMs: number;
+    };
   };
 }
 
@@ -101,20 +137,34 @@ interface ReconciliationReport {
   trueGapCount: number;
   undeclaredCount: number;
   expectedCoverageScore: number;
-  trueGaps: Array<{ stateName: string; provenance: string; declaredById: string | null }>;
+  trueGaps: Array<{
+    stateName: string;
+    provenance: string;
+    declaredById: string | null;
+  }>;
   undeclared: Array<{ stateName: string; observationCount: number }>;
   confirmedTransitions: number;
   trueGapTransitions: number;
   undeclaredTransitions: number;
   transitionCoverageScore: number;
-  trueGapTransitionsList: Array<{ fromStateId: string; toStateId: string; fromStateName: string; toStateName: string; action: string | null }>;
-  undeclaredTransitionsList: Array<{ fromStateName: string; toStateName: string; observationCount: number }>;
+  trueGapTransitionsList: Array<{
+    fromStateId: string;
+    toStateId: string;
+    fromStateName: string;
+    toStateName: string;
+    action: string | null;
+  }>;
+  undeclaredTransitionsList: Array<{
+    fromStateName: string;
+    toStateName: string;
+    observationCount: number;
+  }>;
   generatedAt: string;
 }
 
 function DeclareContent() {
   const searchParams = useSearchParams();
-  const appId = searchParams.get('appId') ?? 'acadai-local';
+  const appId = searchParams.get("appId") ?? "acadai-local";
   const queryClient = useQueryClient();
 
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -122,44 +172,54 @@ function DeclareContent() {
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    [setNodes]
+    [setNodes],
   );
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    [setEdges]
+    [setEdges],
   );
 
-  const [selectedFlowId, setSelectedFlowId] = useState<string>('');
-  const [newFlowName, setNewFlowName] = useState('');
-  const [newFlowType, setNewFlowType] = useState('CUSTOM');
+  const [selectedFlowId, setSelectedFlowId] = useState<string>("");
+  const [newFlowName, setNewFlowName] = useState("");
+  const [newFlowType, setNewFlowType] = useState("CUSTOM");
 
   // State builder inputs
-  const [stateName, setStateName] = useState('');
-  const [stateCategory, setStateCategory] = useState('BUSINESS');
+  const [stateName, setStateName] = useState("");
+  const [stateCategory, setStateCategory] = useState("BUSINESS");
 
   // Transition builder inputs
-  const [fromStateId, setFromStateId] = useState('');
-  const [toStateId, setToStateId] = useState('');
-  const [transAction, setTransAction] = useState('');
+  const [fromStateId, setFromStateId] = useState("");
+  const [toStateId, setToStateId] = useState("");
+  const [transAction, setTransAction] = useState("");
 
   // Rejection modal state
   const [rejectingSugId, setRejectingSugId] = useState<string | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionReason, setRejectionReason] = useState("");
 
   // Onboarding Wizard state
-  const prevFlowIdRef = useRef<string>('');
-  const [rawApiKey, setRawApiKey] = useState('');
-  const [selectedTab, setSelectedTab] = useState<'react' | 'node'>('react');
+  const prevFlowIdRef = useRef<string>("");
+  const [rawApiKey, setRawApiKey] = useState("");
+  const [selectedTab, setSelectedTab] = useState<"react" | "node">("react");
   const [sdkReadiness, setSdkReadiness] = useState<any>(null);
   const [isCheckingSdkReadiness, setIsCheckingSdkReadiness] = useState(false);
   const [demoStatus, setDemoStatus] = useState<any>(null);
   const [feedbackRating, setFeedbackRating] = useState(5);
-  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackText, setFeedbackText] = useState("");
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
   const [highlightedNodeIds, setHighlightedNodeIds] = useState<string[]>([]);
   const suggestionAbortRef = useRef<AbortController | null>(null);
   const suggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 3000);
+  }, []);
 
   // ─────────────────────────────────────────────────────────────
   // Onboarding / Environment Queries
@@ -167,11 +227,13 @@ function DeclareContent() {
 
   // Fetch onboarding progress
   const { data: onboardingProgress, refetch: refetchProgress } = useQuery<any>({
-    queryKey: ['onboarding-progress', appId],
+    queryKey: ["onboarding-progress", appId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`);
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/onboarding-progress`,
+      );
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error('Failed to fetch onboarding progress');
+      if (!res.ok) throw new Error("Failed to fetch onboarding progress");
       return res.json();
     },
     enabled: !!appId,
@@ -179,10 +241,12 @@ function DeclareContent() {
 
   // Fetch environments
   const { data: environments } = useQuery<any[]>({
-    queryKey: ['environments', appId],
+    queryKey: ["environments", appId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments`);
-      if (!res.ok) throw new Error('Failed to fetch environments');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/environments`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch environments");
       return res.json();
     },
     enabled: !!appId,
@@ -195,8 +259,10 @@ function DeclareContent() {
 
     setIsCheckingSdkReadiness(true);
     try {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/sdk-readiness`);
-      if (!res.ok) throw new Error('Failed to verify SDK readiness');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/sdk-readiness`,
+      );
+      if (!res.ok) throw new Error("Failed to verify SDK readiness");
 
       const data = await res.json();
       setSdkReadiness(data);
@@ -205,7 +271,7 @@ function DeclareContent() {
       }
       return data;
     } catch (err) {
-      console.error('Failed to verify SDK readiness', err);
+      console.error("Failed to verify SDK readiness", err);
       return null;
     } finally {
       setIsCheckingSdkReadiness(false);
@@ -218,83 +284,109 @@ function DeclareContent() {
 
   const selectProfileMutation = useMutation({
     mutationFn: async (profileType: string) => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileType }),
-      });
-      if (!res.ok) throw new Error('Failed to set profile template');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/profile`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profileType }),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to set profile template");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['onboarding-progress', appId] });
-      queryClient.invalidateQueries({ queryKey: ['declared-flows', appId] });
-    }
+      queryClient.invalidateQueries({
+        queryKey: ["onboarding-progress", appId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
+    },
   });
 
   const patchProgressMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to update progress');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/onboarding-progress`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to update progress");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['onboarding-progress', appId] });
-    }
+      queryClient.invalidateQueries({
+        queryKey: ["onboarding-progress", appId],
+      });
+    },
   });
 
   const generateKeyMutation = useMutation({
     mutationFn: async () => {
-      if (!activeEnv) throw new Error('No environment initialized');
-      const res = await authenticatedFetch(`${ONBOARDING_API}/environments/${activeEnv.id}/api-keys`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: 'Onboarding API Key' }),
-      });
-      if (!res.ok) throw new Error('Failed to generate API key');
+      if (!activeEnv) throw new Error("No environment initialized");
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/environments/${activeEnv.id}/api-keys`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: "Onboarding API Key" }),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to generate API key");
       const data = await res.json();
       setRawApiKey(data.rawKey);
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['environments', appId] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["environments", appId] });
+    },
   });
 
   const analyzeDemoMutation = useMutation({
     mutationFn: async () => {
-      if (!activeEnv) throw new Error('No environment initialized');
-      
+      if (!activeEnv) throw new Error("No environment initialized");
+
       // 1. Mark demo completed and first report generated
-      await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/onboarding-progress`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          demonstrationCompleted: true,
-          firstReportGenerated: true
-        })
-      });
+      await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/onboarding-progress`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            demonstrationCompleted: true,
+            firstReportGenerated: true,
+          }),
+        },
+      );
 
       // 2. Trigger reconciliation
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ environmentId: activeEnv.id })
-      });
-      if (!res.ok) throw new Error('Reconciliation trigger failed');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/reconciliation/run`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ environmentId: activeEnv.id }),
+        },
+      );
+      if (!res.ok) throw new Error("Reconciliation trigger failed");
 
       // 3. Force auto-value realization check
-      await authenticatedFetch(`${ONBOARDING_API}/internal/applications/${appId}/reconcile-value`, { method: 'POST' });
+      await authenticatedFetch(
+        `${ONBOARDING_API}/internal/applications/${appId}/reconcile-value`,
+        { method: "POST" },
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['onboarding-progress', appId] });
-      queryClient.invalidateQueries({ queryKey: ['reconciliation-reports', appId] });
+      queryClient.invalidateQueries({
+        queryKey: ["onboarding-progress", appId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["reconciliation-reports", appId],
+      });
       refetchReconciliation();
-    }
+    },
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -303,88 +395,140 @@ function DeclareContent() {
 
   // List flows
   const { data: flows } = useQuery<DeclaredFlow[]>({
-    queryKey: ['declared-flows', appId],
+    queryKey: ["declared-flows", appId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow`);
-      if (!res.ok) throw new Error('Failed to fetch declared flows');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch declared flows");
       return res.json();
     },
   });
 
   // Get selected flow details
-  const { data: activeFlow, refetch: refetchActiveFlow } = useQuery<DeclaredFlow>({
-    queryKey: ['declared-flow-details', selectedFlowId],
-    queryFn: async () => {
-      if (!selectedFlowId) return null as any;
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}`);
-      if (!res.ok) throw new Error('Failed to fetch flow details');
-      return res.json();
-    },
-    enabled: !!selectedFlowId,
-  });
-
-  const { data: suggestionResponse, isFetching: isSuggestionsLoading } = useQuery<FlowSuggestionsResponse>({
-    queryKey: ['flow-suggestions', appId, selectedFlowId],
-    queryFn: async () => {
-      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions`);
-      if (!res.ok) throw new Error('Failed to fetch flow suggestions');
-      return res.json();
-    },
-    enabled: !!selectedFlowId,
-  });
-
-  const generateSuggestions = useCallback(async (
-    flow: DeclaredFlow,
-    trigger: 'STATE_ADDED' | 'TRANSITION_ADDED' | 'SUGGESTION_ACCEPTED' | 'MANUAL_REFRESH',
-    includeAi: boolean,
-    signal?: AbortSignal,
-  ) => {
-    const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${flow.id}/suggestions/generate`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-      body: JSON.stringify({ graphVersion: flow.version, graphHash: flow.graphHash, trigger, includeAi }),
+  const { data: activeFlow, refetch: refetchActiveFlow } =
+    useQuery<DeclaredFlow>({
+      queryKey: ["declared-flow-details", selectedFlowId],
+      queryFn: async () => {
+        if (!selectedFlowId) return null as any;
+        const res = await authenticatedFetch(
+          `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}`,
+        );
+        if (!res.ok) throw new Error("Failed to fetch flow details");
+        return res.json();
+      },
+      enabled: !!selectedFlowId,
     });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload.message ?? payload.error ?? 'Failed to generate suggestions');
-    if (payload.data.graphVersion !== flow.version || payload.data.graphHash !== flow.graphHash) return;
-    queryClient.setQueryData(['flow-suggestions', appId, flow.id], payload);
-    setSuggestionError(null);
-  }, [appId, queryClient]);
 
-  const refreshAfterGraphMutation = useCallback(async (
-    trigger: 'STATE_ADDED' | 'TRANSITION_ADDED' | 'SUGGESTION_ACCEPTED',
-  ) => {
-    if (trigger !== 'SUGGESTION_ACCEPTED') setHighlightedNodeIds([]);
-    suggestionAbortRef.current?.abort();
-    if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
-    const refreshed = await refetchActiveFlow();
-    const flow = refreshed.data;
-    if (!flow) return;
-    try {
-      await generateSuggestions(flow, trigger, false);
-      const controller = new AbortController();
-      suggestionAbortRef.current = controller;
-      suggestionTimerRef.current = setTimeout(() => {
-        void generateSuggestions(flow, trigger, true, controller.signal).catch((error) => {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          setSuggestionError(error instanceof Error ? error.message : 'AI enrichment failed');
-        });
-      }, 500);
-    } catch (error) {
-      setSuggestionError(error instanceof Error ? error.message : 'Suggestion refresh failed');
-    }
-  }, [generateSuggestions, refetchActiveFlow]);
+  const { data: suggestionResponse, isFetching: isSuggestionsLoading } =
+    useQuery<FlowSuggestionsResponse>({
+      queryKey: ["flow-suggestions", appId, selectedFlowId],
+      queryFn: async () => {
+        const res = await authenticatedFetch(
+          `${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions`,
+        );
+        if (!res.ok) throw new Error("Failed to fetch flow suggestions");
+        return res.json();
+      },
+      enabled: !!selectedFlowId,
+    });
 
-  useEffect(() => () => {
-    suggestionAbortRef.current?.abort();
-    if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
-  }, []);
+  const generateSuggestions = useCallback(
+    async (
+      flow: DeclaredFlow,
+      trigger:
+        | "STATE_ADDED"
+        | "TRANSITION_ADDED"
+        | "SUGGESTION_ACCEPTED"
+        | "MANUAL_REFRESH",
+      includeAi: boolean,
+      signal?: AbortSignal,
+    ) => {
+      const res = await authenticatedFetch(
+        `${FDRS_API}/v1/applications/${appId}/declared-flows/${flow.id}/suggestions/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            graphVersion: flow.version,
+            graphHash: flow.graphHash,
+            trigger,
+            includeAi,
+          }),
+        },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(
+          payload.message ?? payload.error ?? "Failed to generate suggestions",
+        );
+      if (
+        payload.data.graphVersion !== flow.version ||
+        payload.data.graphHash !== flow.graphHash
+      )
+        return;
+      queryClient.setQueryData(["flow-suggestions", appId, flow.id], payload);
+      setSuggestionError(null);
+    },
+    [appId, queryClient],
+  );
+
+  const refreshAfterGraphMutation = useCallback(
+    async (
+      trigger: "STATE_ADDED" | "TRANSITION_ADDED" | "SUGGESTION_ACCEPTED",
+    ) => {
+      if (trigger !== "SUGGESTION_ACCEPTED") setHighlightedNodeIds([]);
+      suggestionAbortRef.current?.abort();
+      if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+      const refreshed = await refetchActiveFlow();
+      const flow = refreshed.data;
+      if (!flow) return;
+      try {
+        await generateSuggestions(flow, trigger, false);
+        const controller = new AbortController();
+        suggestionAbortRef.current = controller;
+        suggestionTimerRef.current = setTimeout(() => {
+          void generateSuggestions(
+            flow,
+            trigger,
+            true,
+            controller.signal,
+          ).catch((error) => {
+            if (error instanceof DOMException && error.name === "AbortError")
+              return;
+            setSuggestionError(
+              error instanceof Error ? error.message : "AI enrichment failed",
+            );
+          });
+        }, 500);
+      } catch (error) {
+        setSuggestionError(
+          error instanceof Error ? error.message : "Suggestion refresh failed",
+        );
+      }
+    },
+    [generateSuggestions, refetchActiveFlow],
+  );
+
+  useEffect(
+    () => () => {
+      suggestionAbortRef.current?.abort();
+      if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+    },
+    [],
+  );
 
   // Get reconciliation reports
-  const { data: recReports, refetch: refetchReconciliation } = useQuery<ReconciliationReport[]>({
-    queryKey: ['reconciliation-reports', appId],
+  const { data: recReports, refetch: refetchReconciliation } = useQuery<
+    ReconciliationReport[]
+  >({
+    queryKey: ["reconciliation-reports", appId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/reconciliation`);
-      if (!res.ok) throw new Error('Failed to fetch reconciliation reports');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/reconciliation`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch reconciliation reports");
       return res.json();
     },
     enabled: !!appId,
@@ -400,123 +544,179 @@ function DeclareContent() {
 
   const createFlowMutation = useMutation({
     mutationFn: async (data: { name: string; workflowType: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to create flow');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to create flow");
       return res.json() as Promise<DeclaredFlow>;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flows', appId] });
+      queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
       setSelectedFlowId(data.id);
-      setNewFlowName('');
+      setNewFlowName("");
     },
   });
 
   const addStateMutation = useMutation({
-    mutationFn: async (data: { stateName: string; category: string; provenance: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/states`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to add state');
+    mutationFn: async (data: {
+      stateName: string;
+      category: string;
+      provenance: string;
+    }) => {
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/states`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to add state");
       return res.json();
     },
     onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
-      setStateName('');
-      await refreshAfterGraphMutation('STATE_ADDED');
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
+      setStateName("");
+      await refreshAfterGraphMutation("STATE_ADDED");
     },
   });
 
   const addTransitionMutation = useMutation({
-    mutationFn: async (data: { fromStateId: string; toStateId: string; action?: string; provenance: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/transitions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to add transition');
+    mutationFn: async (data: {
+      fromStateId: string;
+      toStateId: string;
+      action?: string;
+      provenance: string;
+    }) => {
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/transitions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to add transition");
       return res.json();
     },
     onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
-      setFromStateId('');
-      setToStateId('');
-      setTransAction('');
-      await refreshAfterGraphMutation('TRANSITION_ADDED');
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
+      setFromStateId("");
+      setToStateId("");
+      setTransAction("");
+      await refreshAfterGraphMutation("TRANSITION_ADDED");
     },
   });
 
   const acceptSuggestionMutation = useMutation({
     mutationFn: async (sugId: string) => {
-      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/accept`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to accept suggestion');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/accept`,
+        {
+          method: "POST",
+        },
+      );
+      if (!res.ok) throw new Error("Failed to accept suggestion");
       return res.json();
     },
     onSuccess: async (data) => {
-      const createdIds = data?.data?.createdNodes?.map((node: { id: string }) => node.id) ?? [];
+      const createdIds =
+        data?.data?.createdNodes?.map((node: { id: string }) => node.id) ?? [];
       setHighlightedNodeIds(createdIds);
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
-      queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] });
-      await refreshAfterGraphMutation('SUGGESTION_ACCEPTED');
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["flow-suggestions", appId, selectedFlowId],
+      });
+      await refreshAfterGraphMutation("SUGGESTION_ACCEPTED");
     },
   });
 
   const rejectSuggestionMutation = useMutation({
     mutationFn: async (data: { sugId: string; reason?: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}/reject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rejectionReason: data.reason }),
-      });
-      if (!res.ok) throw new Error('Failed to reject suggestion');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}/reject`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rejectionReason: data.reason }),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to reject suggestion");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
-      queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] });
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["flow-suggestions", appId, selectedFlowId],
+      });
       setRejectingSugId(null);
-      setRejectionReason('');
+      setRejectionReason("");
     },
   });
 
   const dismissSuggestionMutation = useMutation({
     mutationFn: async (sugId: string) => {
-      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/dismiss`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to dismiss suggestion');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${sugId}/dismiss`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error("Failed to dismiss suggestion");
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["flow-suggestions", appId, selectedFlowId],
+      }),
   });
 
   const editSuggestionMutation = useMutation({
     mutationFn: async (data: { sugId: string; suggestedStateName: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ suggestedStateName: data.suggestedStateName }),
-      });
-      if (!res.ok) throw new Error('Failed to edit suggestion');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/v1/applications/${appId}/declared-flows/${selectedFlowId}/suggestions/${data.sugId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suggestedStateName: data.suggestedStateName }),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to edit suggestion");
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flow-suggestions', appId, selectedFlowId] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["flow-suggestions", appId, selectedFlowId],
+      }),
   });
 
   const completeFlowMutation = useMutation({
     mutationFn: async () => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/complete`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to complete flow');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/complete`,
+        {
+          method: "POST",
+        },
+      );
+      if (!res.ok) throw new Error("Failed to complete flow");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flows', appId] });
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
+      queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
       refetchReconciliation();
       if (onboardingProgress && !onboardingProgress.expectedFlowsDefined) {
         patchProgressMutation.mutate({ expectedFlowsDefined: true });
@@ -526,30 +726,44 @@ function DeclareContent() {
 
   const reopenFlowMutation = useMutation({
     mutationFn: async () => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/reopen`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to reopen flow');
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/reopen`,
+        {
+          method: "POST",
+        },
+      );
+      if (!res.ok) throw new Error("Failed to reopen flow");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flows', appId] });
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
+      queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
     },
   });
 
   const promoteStateMutation = useMutation({
-    mutationFn: async (data: { stateName: string; accepted: boolean; reason?: string }) => {
-      const res = await authenticatedFetch(`${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/promote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to promote state');
+    mutationFn: async (data: {
+      stateName: string;
+      accepted: boolean;
+      reason?: string;
+    }) => {
+      const res = await authenticatedFetch(
+        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/promote`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to promote state");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['declared-flow-details', selectedFlowId] });
+      queryClient.invalidateQueries({
+        queryKey: ["declared-flow-details", selectedFlowId],
+      });
       refetchReconciliation();
     },
   });
@@ -563,7 +777,7 @@ function DeclareContent() {
     if (!activeFlow) {
       setNodes([]);
       setEdges([]);
-      prevFlowIdRef.current = '';
+      prevFlowIdRef.current = "";
       return;
     }
 
@@ -574,12 +788,12 @@ function DeclareContent() {
       id: t.id,
       source: t.fromStateId,
       target: t.toStateId,
-      label: t.action ?? '',
-      type: 'smoothstep',
-      animated: activeFlow.status === 'DRAFT',
-      style: { stroke: '#404040' },
-      labelStyle: { fill: '#737373', fontSize: 9, fontFamily: 'monospace' },
-      labelBgStyle: { fill: '#0a0a0a' },
+      label: t.action ?? "",
+      type: "smoothstep",
+      animated: activeFlow.status === "DRAFT",
+      style: { stroke: "#404040" },
+      labelStyle: { fill: "#737373", fontSize: 9, fontFamily: "monospace" },
+      labelBgStyle: { fill: "#0a0a0a" },
     }));
     setEdges(initialEdges);
 
@@ -593,15 +807,18 @@ function DeclareContent() {
           position: { x: col * 220 + 50, y: row * 150 + 50 },
           data: { label: s.stateName },
           style: {
-            background: '#0a0a0a',
-            color: s.category === 'ERROR' ? '#f87171' : '#e5e5e5',
-            border: s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
-            borderRadius: '8px',
-            padding: '10px 15px',
-            fontSize: '11px',
-            fontWeight: '600',
-            fontFamily: 'monospace',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+            background: "#0a0a0a",
+            color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
+            border:
+              s.category === "ERROR"
+                ? "1px solid #7f1d1d"
+                : "1px solid #262626",
+            borderRadius: "8px",
+            padding: "10px 15px",
+            fontSize: "11px",
+            fontWeight: "600",
+            fontFamily: "monospace",
+            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
           },
         };
       });
@@ -610,7 +827,9 @@ function DeclareContent() {
     } else {
       // Same flow, update existing nodes list preserving positions
       setNodes((prevNodes) => {
-        const updatedNodes = prevNodes.filter((n) => stateList.some((s) => s.id === n.id));
+        const updatedNodes = prevNodes.filter((n) =>
+          stateList.some((s) => s.id === n.id),
+        );
 
         stateList.forEach((s, idx) => {
           if (!updatedNodes.some((n) => n.id === s.id)) {
@@ -621,15 +840,21 @@ function DeclareContent() {
               position: { x: col * 220 + 50, y: row * 150 + 50 },
               data: { label: s.stateName },
               style: {
-                background: '#0a0a0a',
-                color: s.category === 'ERROR' ? '#f87171' : '#e5e5e5',
-                border: highlightedNodeIds.includes(s.id) ? '2px solid #10b981' : s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
-                borderRadius: '8px',
-                padding: '10px 15px',
-                fontSize: '11px',
-                fontWeight: '600',
-                fontFamily: 'monospace',
-                boxShadow: highlightedNodeIds.includes(s.id) ? '0 0 18px rgba(16,185,129,.35)' : '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                background: "#0a0a0a",
+                color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
+                border: highlightedNodeIds.includes(s.id)
+                  ? "2px solid #10b981"
+                  : s.category === "ERROR"
+                    ? "1px solid #7f1d1d"
+                    : "1px solid #262626",
+                borderRadius: "8px",
+                padding: "10px 15px",
+                fontSize: "11px",
+                fontWeight: "600",
+                fontFamily: "monospace",
+                boxShadow: highlightedNodeIds.includes(s.id)
+                  ? "0 0 18px rgba(16,185,129,.35)"
+                  : "0 4px 6px -1px rgb(0 0 0 / 0.1)",
               },
             });
           }
@@ -643,9 +868,15 @@ function DeclareContent() {
               data: { label: s.stateName },
               style: {
                 ...n.style,
-                color: s.category === 'ERROR' ? '#f87171' : '#e5e5e5',
-                border: highlightedNodeIds.includes(s.id) ? '2px solid #10b981' : s.category === 'ERROR' ? '1px solid #7f1d1d' : '1px solid #262626',
-                boxShadow: highlightedNodeIds.includes(s.id) ? '0 0 18px rgba(16,185,129,.35)' : n.style?.boxShadow,
+                color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
+                border: highlightedNodeIds.includes(s.id)
+                  ? "2px solid #10b981"
+                  : s.category === "ERROR"
+                    ? "1px solid #7f1d1d"
+                    : "1px solid #262626",
+                boxShadow: highlightedNodeIds.includes(s.id)
+                  ? "0 0 18px rgba(16,185,129,.35)"
+                  : n.style?.boxShadow,
               },
             };
           }
@@ -658,7 +889,7 @@ function DeclareContent() {
   // Auto-select active flow on load
   useEffect(() => {
     if (flows && flows.length > 0 && !selectedFlowId) {
-      const activeDecl = flows.find((f) => f.status === 'DRAFT') || flows[0];
+      const activeDecl = flows.find((f) => f.status === "DRAFT") || flows[0];
       if (activeDecl) {
         setSelectedFlowId(activeDecl.id);
       }
@@ -667,11 +898,18 @@ function DeclareContent() {
 
   // Poll SDK readiness status
   useEffect(() => {
-    if (!appId || !activeEnv || !onboardingProgress || onboardingProgress.completedAt) return;
+    if (
+      !appId ||
+      !activeEnv ||
+      !onboardingProgress ||
+      onboardingProgress.completedAt
+    )
+      return;
     if (
       onboardingProgress.templateSelected &&
       onboardingProgress.expectedFlowsDefined &&
-      (!onboardingProgress.sdkConnected || !onboardingProgress.installationTestPassed)
+      (!onboardingProgress.sdkConnected ||
+        !onboardingProgress.installationTestPassed)
     ) {
       void checkSdkReadiness();
       const interval = setInterval(() => {
@@ -683,17 +921,28 @@ function DeclareContent() {
 
   // Poll Demonstration status
   useEffect(() => {
-    if (!appId || !activeEnv || !onboardingProgress || onboardingProgress.completedAt) return;
-    if (onboardingProgress.sdkConnected && !onboardingProgress.demonstrationCompleted) {
+    if (
+      !appId ||
+      !activeEnv ||
+      !onboardingProgress ||
+      onboardingProgress.completedAt
+    )
+      return;
+    if (
+      onboardingProgress.sdkConnected &&
+      !onboardingProgress.demonstrationCompleted
+    ) {
       const interval = setInterval(async () => {
         try {
-          const res = await authenticatedFetch(`${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/demo-status`);
+          const res = await authenticatedFetch(
+            `${ONBOARDING_API}/applications/${appId}/environments/${activeEnv.id}/demo-status`,
+          );
           if (res.ok) {
             const data = await res.json();
             setDemoStatus(data);
           }
         } catch (err) {
-          console.error('Failed to poll demo status', err);
+          console.error("Failed to poll demo status", err);
         }
       }, 3000);
       return () => clearInterval(interval);
@@ -702,7 +951,10 @@ function DeclareContent() {
 
   const pendingSuggestions = useMemo(() => {
     return (suggestionResponse?.data.suggestions ?? [])
-      .filter((suggestion) => suggestion.status === 'PENDING' || suggestion.status === 'EDITED')
+      .filter(
+        (suggestion) =>
+          suggestion.status === "PENDING" || suggestion.status === "EDITED",
+      )
       .toSorted((a, b) => b.confidence - a.confidence);
   }, [suggestionResponse]);
 
@@ -712,35 +964,40 @@ function DeclareContent() {
     if (!onboardingProgress.templateSelected) {
       return (
         <div className="flex min-h-[80vh] items-center justify-center px-4">
-          <div className="w-full max-w-2xl space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl">
-            <div className="text-center">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 animate-pulse">
-                <Sparkles className="h-6 w-6" />
-              </div>
-              <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Select Application Profile</h2>
+          <div className="w-full max-w-2xl space-y-2 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl">
+            <div className="w-full flex justify-between items-start">
+              <h2 className="text-3xl font-extrabold tracking-tight text-white">
+                Select Application Profile
+              </h2>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+                APPLICATION // PROFILE
+              </span>
+            </div>
+            <div className="text-left">
               <p className="mt-2 text-sm text-neutral-400">
-                Choose a workflow template to preload standard states and transitions, or start from scratch.
+                Choose a workflow template to preload standard states and
+                transitions, or start from scratch.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
               {[
                 {
-                  id: 'ECOMMERCE',
-                  name: 'E-commerce Store',
-                  desc: 'Auto-generates typical shop flow: Anonymous → Browse → View Product → Add to Cart → Checkout → Success',
+                  id: "ECOMMERCE",
+                  name: "E-commerce Store",
+                  desc: "Auto-generates typical shop flow: Anonymous → Browse → View Product → Add to Cart → Checkout → Success",
                   icon: Layers,
                 },
                 {
-                  id: 'LMS',
-                  name: 'Education / LMS',
-                  desc: 'Auto-generates typical learning flow: Anonymous → View Courses → Select → Enroll → Start Lesson → Complete',
+                  id: "LMS",
+                  name: "Education / LMS",
+                  desc: "Auto-generates typical learning flow: Anonymous → View Courses → Select → Enroll → Start Lesson → Complete",
                   icon: ClipboardList,
                 },
                 {
-                  id: 'CUSTOM',
-                  name: 'Custom Flow',
-                  desc: 'Start with a blank canvas to construct your application\'s exact state model manually',
+                  id: "CUSTOM",
+                  name: "Custom Flow",
+                  desc: "Start with a blank canvas to construct your application's exact state model manually",
                   icon: Plus,
                 },
               ].map((template) => {
@@ -750,12 +1007,12 @@ function DeclareContent() {
                     key={template.id}
                     onClick={() => selectProfileMutation.mutate(template.id)}
                     disabled={selectProfileMutation.isPending}
-                    className="flex flex-col items-center p-6 bg-neutral-950/40 hover:bg-neutral-900 border border-neutral-800 hover:border-blue-500/50 rounded-xl text-center transition-all duration-200 group"
+                    className="flex flex-col items-center p-6 bg-black/40 hover:bg-[#131313] border border-[#262626] hover:border-white/50 rounded-md text-center transition-all duration-200 group"
                   >
-                    <div className="p-3 bg-neutral-900 group-hover:bg-blue-500/10 rounded-lg text-neutral-400 group-hover:text-blue-400 transition-colors mb-4">
+                    <div className="p-3 bg-[#131313] group-hover:bg-black border border-[#262626] rounded-lg text-neutral-400 group-hover:text-white transition-colors mb-4">
                       <IconComponent className="h-6 w-6" />
                     </div>
-                    <span className="font-bold text-sm text-white group-hover:text-blue-400 transition-colors mb-2">
+                    <span className="font-bold text-sm text-white group-hover:text-white transition-colors mb-2">
                       {template.name}
                     </span>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -771,64 +1028,93 @@ function DeclareContent() {
     }
 
     // Stage 3: SDK Connection Check
-    if (onboardingProgress.expectedFlowsDefined && (!onboardingProgress.sdkConnected || !onboardingProgress.installationTestPassed)) {
-      const sdkConnected = sdkReadiness?.connected ?? onboardingProgress.sdkConnected ?? false;
-      const installationTestPassed = sdkReadiness?.installationTestPassed ?? onboardingProgress.installationTestPassed ?? false;
-      const currentStage = !sdkConnected ? 1
-        : !installationTestPassed ? 2
-        : 3;
+    if (
+      onboardingProgress.expectedFlowsDefined &&
+      (!onboardingProgress.sdkConnected ||
+        !onboardingProgress.installationTestPassed)
+    ) {
+      const sdkConnected =
+        sdkReadiness?.connected ?? onboardingProgress.sdkConnected ?? false;
+      const installationTestPassed =
+        sdkReadiness?.installationTestPassed ??
+        onboardingProgress.installationTestPassed ??
+        false;
+      const currentStage = !sdkConnected ? 1 : !installationTestPassed ? 2 : 3;
 
-      const apiKeyToShow = rawApiKey || 'YOUR_API_KEY';
-      const environmentId = activeEnv?.id || 'YOUR_ENVIRONMENT_ID';
-      const sdkCode = selectedTab === 'react'
-        ? `'use client';\n\nimport { useEffect, type ReactNode } from 'react';\nimport { SOTS } from '@sots/frontend-sdk';\n\nexport function SotsProvider({ children }: { children: ReactNode }) {\n  useEffect(() => {\n    SOTS.initialize({\n      endpoint: 'http://localhost:3000',\n      apiKey: '${apiKeyToShow}',\n      applicationId: '${appId}',\n      environmentId: '${environmentId}'\n    });\n\n    void SOTS.verifyInstallation();\n\n    return () => SOTS.teardown();\n  }, []);\n\n  return children;\n}`
-        : `const { SOTS } = require('@sots/backend-sdk');\n\nasync function verifySotsInstall() {\n  SOTS.initialize({\n    endpoint: 'http://localhost:3000',\n    apiKey: '${apiKeyToShow}',\n    applicationId: '${appId}',\n    environmentId: '${environmentId}'\n  });\n\n  await SOTS.verifyInstallation();\n}\n\nverifySotsInstall().catch(console.error);`;
+      const apiKeyToShow = rawApiKey || "YOUR_API_KEY";
+      const environmentId = activeEnv?.id || "YOUR_ENVIRONMENT_ID";
+      const sdkCode =
+        selectedTab === "react"
+          ? `'use client';\n\nimport { useEffect, type ReactNode } from 'react';\nimport { SOTS } from '@sots/frontend-sdk';\n\nexport function SotsProvider({ children }: { children: ReactNode }) {\n  useEffect(() => {\n    SOTS.initialize({\n      endpoint: 'http://localhost:3000',\n      apiKey: '${apiKeyToShow}',\n      applicationId: '${appId}',\n      environmentId: '${environmentId}'\n    });\n\n    void SOTS.verifyInstallation();\n\n    return () => SOTS.teardown();\n  }, []);\n\n  return children;\n}`
+          : `const { SOTS } = require('@sots/backend-sdk');\n\nasync function verifySotsInstall() {\n  SOTS.initialize({\n    endpoint: 'http://localhost:3000',\n    apiKey: '${apiKeyToShow}',\n    applicationId: '${appId}',\n    environmentId: '${environmentId}'\n  });\n\n  await SOTS.verifyInstallation();\n}\n\nverifySotsInstall().catch(console.error);`;
 
       return (
         <div className="flex min-h-[85vh] items-center justify-center px-4">
-          <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-5 gap-8 bg-neutral-900/40 border border-neutral-800 p-8 rounded-2xl backdrop-blur-xl shadow-2xl">
-            
+          <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-5 gap-8 bg-[#131313]/40 border border-[#262626] p-8 rounded-md backdrop-blur-xl shadow-2xl">
             {/* Connection Status Panel */}
             <div className="md:col-span-2 space-y-6">
               <div>
-                <h2 className="text-2xl font-black text-white">SDK Installation</h2>
-                <p className="text-xs text-neutral-400 mt-1">Connect your code to the Tellann gateway.</p>
+                <h2 className="text-2xl font-black text-white">
+                  SDK Installation
+                </h2>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Connect your code to the Tellann gateway.
+                </p>
               </div>
 
               {/* API Key Loader */}
               {!rawApiKey && !activeEnv?.apiKeys?.length ? (
-                <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-950/20 p-5 text-center space-y-3">
-                  <p className="text-xs text-neutral-400">Generate an environment-scoped API Key for Development to start sending telemetry.</p>
-                  <button
+                <div className="rounded-md border border-dashed border-[#262626] bg-black/20 p-5 text-center space-y-3">
+                  <p className="text-xs text-neutral-400">
+                    Generate an environment-scoped API Key for Development to
+                    start sending telemetry.
+                  </p>
+                  <Button
                     onClick={() => generateKeyMutation.mutate()}
                     disabled={generateKeyMutation.isPending}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white py-2 rounded-lg transition-colors"
+                    variant="primary"
+                    className="w-full text-xs py-2 rounded-lg"
                   >
-                    {generateKeyMutation.isPending ? 'Generating...' : 'Generate API Key'}
-                  </button>
+                    {generateKeyMutation.isPending
+                      ? "Generating..."
+                      : "Generate API Key"}
+                  </Button>
                 </div>
               ) : (
-                <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 space-y-2">
-                  <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Development API Key</span>
+                <div className="rounded-md border border-[#262626] bg-black p-4 space-y-2">
+                  <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                    Development API Key
+                  </span>
                   <div className="flex items-center justify-between">
                     <code className="text-xs font-mono text-neutral-300 truncate max-w-[80%]">
-                      {rawApiKey || `${activeEnv?.apiKeys?.[0]?.keyPrefix}****************`}
+                      {rawApiKey ||
+                        `${activeEnv?.apiKeys?.[0]?.keyPrefix}****************`}
                     </code>
                     {rawApiKey && (
-                      <button
+                      <Button
                         onClick={() => {
                           navigator.clipboard.writeText(rawApiKey);
-                          alert('API Key copied!');
+                          setCopiedKey(true);
+                          showToast("API Key copied to clipboard");
+                          setTimeout(() => setCopiedKey(false), 2000);
                         }}
-                        className="p-1.5 bg-neutral-900 hover:bg-neutral-850 rounded border border-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                        variant="icon"
+                        size="icon"
+                        className="bg-[#131313] border border-[#262626] h-8 w-8 text-neutral-400 hover:text-white"
+                        tooltip="Copy API Key"
                       >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
+                        {copiedKey ? (
+                          <Check className="h-3.5 w-3.5 text-white" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
                     )}
                   </div>
                   {!rawApiKey && (
-                    <p className="text-[10px] text-amber-400">
-                      Existing keys are masked after creation. Generate a new key if you need a copy-pasteable API key.
+                    <p className="text-[10px] text-white">
+                      Existing keys are masked after creation. Generate a new
+                      key if you need a copy-pasteable API key.
                     </p>
                   )}
                 </div>
@@ -836,23 +1122,57 @@ function DeclareContent() {
 
               {/* Staged Tracker */}
               <div className="space-y-4">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider text-neutral-400">Connection Checklist</h3>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider text-neutral-400">
+                  Connection Checklist
+                </h3>
                 <div className="space-y-3">
                   {[
-                    { stage: 1, label: 'Initialize SDK in code', desc: 'Tellann SDK package added & configured.' },
-                    { stage: 2, label: 'Establish session connection', desc: 'At least one telemetry session observed.' },
-                    { stage: 3, label: 'Onboarding test event pass', desc: 'SOTS_ONBOARDING_TEST event successfully received.' },
+                    {
+                      stage: 1,
+                      label: "Initialize SDK in code",
+                      desc: "Tellann SDK package added & configured.",
+                    },
+                    {
+                      stage: 2,
+                      label: "Establish session connection",
+                      desc: "At least one telemetry session observed.",
+                    },
+                    {
+                      stage: 3,
+                      label: "Onboarding test event pass",
+                      desc: "SOTS_ONBOARDING_TEST event successfully received.",
+                    },
                   ].map((s) => {
-                    const isPassed = currentStage > s.stage || (s.stage === 3 && installationTestPassed) || (s.stage === 2 && sdkConnected);
+                    const isPassed =
+                      currentStage > s.stage ||
+                      (s.stage === 3 && installationTestPassed) ||
+                      (s.stage === 2 && sdkConnected);
                     const isActive = currentStage === s.stage;
                     return (
-                      <div key={s.stage} className={`flex items-start space-x-3 p-3 rounded-lg border transition-all duration-200 ${isPassed ? 'border-emerald-950 bg-emerald-950/10' : isActive ? 'border-blue-900 bg-blue-950/10' : 'border-neutral-850 bg-neutral-950/10'}`}>
-                        <div className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border ${isPassed ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : isActive ? 'border-blue-500 bg-blue-500/25 text-blue-400 animate-pulse' : 'border-neutral-800 text-neutral-500'}`}>
-                          {isPassed ? <Check className="h-3 w-3" /> : <span className="text-[10px] font-bold">{s.stage}</span>}
+                      <div
+                        key={s.stage}
+                        className={`flex items-start space-x-3 p-3 rounded-lg border transition-all duration-200 ${isPassed ? "border-[#262626] bg-black" : isActive ? "border-[#262626] bg-[#131313]" : "border-neutral-850 bg-black/10"}`}
+                      >
+                        <div
+                          className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border ${isPassed ? "border-white bg-white/20 text-white" : isActive ? "border-white bg-white/25 text-white animate-pulse" : "border-[#262626] text-neutral-500"}`}
+                        >
+                          {isPassed ? (
+                            <Check className="h-3 w-3" />
+                          ) : (
+                            <span className="text-[10px] font-bold">
+                              {s.stage}
+                            </span>
+                          )}
                         </div>
                         <div>
-                          <span className={`text-xs font-bold ${isPassed ? 'text-emerald-400' : isActive ? 'text-blue-400' : 'text-neutral-400'}`}>{s.label}</span>
-                          <p className="text-[10px] text-neutral-500 mt-0.5">{s.desc}</p>
+                          <span
+                            className={`text-xs font-bold ${isPassed ? "text-white" : isActive ? "text-white" : "text-neutral-400"}`}
+                          >
+                            {s.label}
+                          </span>
+                          <p className="text-[10px] text-neutral-500 mt-0.5">
+                            {s.desc}
+                          </p>
                         </div>
                       </div>
                     );
@@ -864,17 +1184,17 @@ function DeclareContent() {
             {/* Code Integration Snippet */}
             <div className="md:col-span-3 space-y-4 flex flex-col justify-between">
               <div className="space-y-3 flex-1">
-                <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
+                <div className="flex items-center justify-between border-b border-[#262626] pb-2">
                   <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5 font-mono">
-                    <Terminal className="h-4 w-4 text-blue-400" />
+                    <Terminal className="h-4 w-4 text-white" />
                     <span>Quickstart Snippet</span>
                   </span>
                   <div className="flex space-x-1.5">
-                    {['react', 'node'].map((tab) => (
+                    {["react", "node"].map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setSelectedTab(tab as any)}
-                        className={`text-[10px] px-2.5 py-1 rounded font-bold uppercase transition-colors ${selectedTab === tab ? 'bg-blue-600 text-white' : 'bg-neutral-850 text-neutral-400 hover:bg-neutral-800'}`}
+                        className={`text-[10px] px-2.5 py-1 rounded font-bold uppercase transition-colors ${selectedTab === tab ? "bg-white text-black font-bold" : "bg-black text-neutral-400 border border-[#262626] hover:text-white"}`}
                       >
                         {tab}
                       </button>
@@ -882,34 +1202,49 @@ function DeclareContent() {
                   </div>
                 </div>
 
-                <div className="relative bg-neutral-950 border border-neutral-800 p-4 rounded-xl font-mono text-[11px] text-neutral-300 leading-relaxed overflow-x-auto h-[280px]">
+                <div className="relative bg-black border border-[#262626] p-4 rounded-md font-mono text-[11px] text-neutral-300 leading-relaxed overflow-x-auto h-[280px]">
                   <pre className="whitespace-pre select-all">{sdkCode}</pre>
-                  <button
+                  <Button
                     onClick={() => {
                       navigator.clipboard.writeText(sdkCode);
-                      alert('Snippet copied!');
+                      setCopiedSnippet(true);
+                      showToast("Snippet copied to clipboard");
+                      setTimeout(() => setCopiedSnippet(false), 2000);
                     }}
-                    className="absolute top-4 right-4 p-1.5 bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 hover:text-white rounded text-neutral-400 transition-colors"
+                    variant="icon"
+                    size="icon"
+                    className="absolute top-4 right-4 bg-[#131313] border border-[#262626] h-8 w-8 text-neutral-400 hover:text-white"
+                    tooltip="Copy Snippet"
                   >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
+                    {copiedSnippet ? (
+                      <Check className="h-3.5 w-3.5 text-white" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
                 </div>
               </div>
 
-              <div className="pt-4 flex justify-between items-center text-xs text-neutral-500 bg-neutral-950/30 p-4 rounded-xl border border-neutral-850">
+              <div className="pt-4 flex justify-between items-center text-xs text-neutral-500 bg-black/30 p-4 rounded-md border border-[#262626]">
                 <div className="flex items-center space-x-2">
-                  <RefreshCw className="h-3.5 w-3.5 text-blue-500 animate-spin" />
-                  <span>{isCheckingSdkReadiness ? 'Verifying SDK connection...' : 'Waiting for telemetry signals...'}</span>
+                  <RefreshCw className="h-3.5 w-3.5 text-white animate-spin" />
+                  <span>
+                    {isCheckingSdkReadiness
+                      ? "Verifying SDK connection..."
+                      : "Waiting for telemetry signals..."}
+                  </span>
                 </div>
-                <button
+                <Button
                   onClick={() => {
                     void checkSdkReadiness();
                   }}
                   disabled={isCheckingSdkReadiness}
-                  className="text-blue-400 hover:underline font-semibold"
+                  variant="ghost"
+                  size="sm"
+                  className="text-white hover:underline hover:bg-transparent font-semibold p-0 h-auto"
                 >
-                  {isCheckingSdkReadiness ? 'Checking...' : 'Force check'}
-                </button>
+                  {isCheckingSdkReadiness ? "Checking..." : "Force check"}
+                </Button>
               </div>
             </div>
           </div>
@@ -918,7 +1253,10 @@ function DeclareContent() {
     }
 
     // Stage 4: Run Demonstration Walkthrough
-    if (onboardingProgress.installationTestPassed && !onboardingProgress.demonstrationCompleted) {
+    if (
+      onboardingProgress.installationTestPassed &&
+      !onboardingProgress.demonstrationCompleted
+    ) {
       const observed = demoStatus?.observedStates ?? 0;
       const required = demoStatus?.minStatesRequired ?? 3;
       const percent = Math.min(100, Math.round((observed / required) * 100));
@@ -926,26 +1264,36 @@ function DeclareContent() {
 
       return (
         <div className="flex min-h-[80vh] items-center justify-center px-4">
-          <div className="w-full max-w-xl space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl text-center">
+          <div className="w-full max-w-xl space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl text-center">
             <div>
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-black border border-[#262626] text-white">
                 <Play className="h-6 w-6 animate-pulse" />
               </div>
-              <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Demonstrate Workflows</h2>
+              <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">
+                Demonstrate Workflows
+              </h2>
               <p className="mt-2 text-sm text-neutral-400 max-w-md mx-auto">
-                Now start your app and interact with it. Go through at least <span className="font-semibold text-white">{required} states</span> so Tellann can build its observed behavioral model.
+                Now start your app and interact with it. Go through at least{" "}
+                <span className="font-semibold text-white">
+                  {required} states
+                </span>{" "}
+                so Tellann can build its observed behavioral model.
               </p>
             </div>
 
             {/* Gauge */}
             <div className="relative py-6 flex flex-col items-center justify-center">
-              <div className="w-36 h-36 rounded-full border-4 border-neutral-805 flex flex-col items-center justify-center relative bg-neutral-950">
+              <div className="w-36 h-36 rounded-full border-4 border-neutral-805 flex flex-col items-center justify-center relative bg-black">
                 <div
-                  className="absolute inset-0 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"
-                  style={{ animationDuration: '6s' }}
+                  className="absolute inset-0 rounded-full border-4 border-white border-t-transparent animate-spin"
+                  style={{ animationDuration: "6s" }}
                 ></div>
-                <span className="text-3xl font-black text-white font-mono">{observed}</span>
-                <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider mt-1">Observed</span>
+                <span className="text-3xl font-black text-white font-mono">
+                  {observed}
+                </span>
+                <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider mt-1">
+                  Observed
+                </span>
               </div>
               <div className="mt-4 text-xs text-neutral-400 font-mono">
                 Target: {required} states (based on expected graph scale)
@@ -953,68 +1301,87 @@ function DeclareContent() {
             </div>
 
             <div className="space-y-4">
-              <div className="w-full bg-neutral-950 h-2 rounded-full overflow-hidden border border-neutral-800">
+              <div className="w-full bg-black h-2 rounded-full overflow-hidden border border-[#262626]">
                 <div
-                  className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                  className="h-full bg-white rounded-full transition-all duration-500"
                   style={{ width: `${percent}%` }}
                 ></div>
               </div>
 
               {ready ? (
-                <div className="rounded-lg bg-emerald-950/20 border border-emerald-900/50 p-4 text-sm text-emerald-400 flex items-start space-x-3 text-left">
-                  <CheckCircle2 className="h-5 w-5 mt-0.5 text-emerald-400 flex-shrink-0" />
+                <div className="rounded-lg bg-[#131313] border border-[#262626] p-4 text-sm text-white flex items-start space-x-3 text-left">
+                  <CheckCircle2 className="h-5 w-5 mt-0.5 text-white flex-shrink-0" />
                   <div>
-                    <span className="font-bold">Observation threshold met!</span> You have recorded enough telemetry events to run a reconciliation comparison. Click Analyze below to generate your report.
+                    <span className="font-bold">
+                      Observation threshold met!
+                    </span>{" "}
+                    You have recorded enough telemetry events to run a
+                    reconciliation comparison. Click Analyze below to generate
+                    your report.
                   </div>
                 </div>
               ) : (
-                <div className="rounded-lg bg-neutral-950/40 border border-neutral-800 p-4 text-xs text-neutral-400 text-left space-y-2">
-                  <span className="font-bold text-white">Expected Flow Walkthrough Guide:</span>
+                <div className="rounded-lg bg-black/40 border border-[#262626] p-4 text-xs text-neutral-400 text-left space-y-2">
+                  <span className="font-bold text-white">
+                    Expected Flow Walkthrough Guide:
+                  </span>
                   <div className="text-[10px] text-neutral-500 mt-1">
-                    To cover this profile, perform actions to visit these declared states in your app:
+                    To cover this profile, perform actions to visit these
+                    declared states in your app:
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {activeFlow?.states.map((s: any) => (
-                      <span key={s.id} className="px-2 py-0.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-400 font-mono text-[9px]">
+                      <span
+                        key={s.id}
+                        className="px-2 py-0.5 bg-[#131313] border border-[#262626] rounded text-neutral-400 font-mono text-[9px]"
+                      >
                         {s.stateName}
                       </span>
                     ))}
                   </div>
-                  {activeFlow?.transitions && activeFlow.transitions.length > 0 && (
-                    <div className="mt-3 space-y-1">
-                      <span className="font-semibold text-[11px] text-neutral-350">Expected Transitions:</span>
-                      <div className="max-h-24 overflow-y-auto pr-1 text-[10px] text-neutral-550 font-mono space-y-0.5 mt-1">
-                        {activeFlow.transitions.map((t: any) => (
-                          <div key={t.id} className="flex items-center space-x-1.5">
-                            <span className="text-neutral-400">{t.fromState?.stateName || 'Start'}</span>
-                            <span>→</span>
-                            <span className="text-neutral-300">{t.toState?.stateName || 'End'}</span>
-                            {t.action && <span className="text-neutral-600">({t.action})</span>}
-                          </div>
-                        ))}
+                  {activeFlow?.transitions &&
+                    activeFlow.transitions.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <span className="font-semibold text-[11px] text-neutral-350">
+                          Expected Transitions:
+                        </span>
+                        <div className="max-h-24 overflow-y-auto pr-1 text-[10px] text-neutral-550 font-mono space-y-0.5 mt-1">
+                          {activeFlow.transitions.map((t: any) => (
+                            <div
+                              key={t.id}
+                              className="flex items-center space-x-1.5"
+                            >
+                              <span className="text-neutral-400">
+                                {t.fromState?.stateName || "Start"}
+                              </span>
+                              <span>→</span>
+                              <span className="text-neutral-300">
+                                {t.toState?.stateName || "End"}
+                              </span>
+                              {t.action && (
+                                <span className="text-neutral-600">
+                                  ({t.action})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
                 </div>
               )}
 
-              <button
+              <Button
                 onClick={() => analyzeDemoMutation.mutate()}
                 disabled={analyzeDemoMutation.isPending || !ready}
-                className="w-full flex items-center justify-center space-x-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-30 py-3.5 text-sm font-semibold text-white transition-all shadow-lg shadow-blue-600/15"
+                loading={analyzeDemoMutation.isPending}
+                variant="primary"
+                size="lg"
+                className="w-full shadow-lg shadow-blue-600/15"
               >
-                {analyzeDemoMutation.isPending ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>Analyzing behavioral telemetry...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Analyze Demonstration & Generate Report</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
+                <span>Analyze Demonstration & Generate Report</span>
+                {!analyzeDemoMutation.isPending && <ArrowRight className="h-4 w-4" />}
+              </Button>
             </div>
           </div>
         </div>
@@ -1022,61 +1389,88 @@ function DeclareContent() {
     }
 
     // Stage 5: Celebration & Value Realization Checkpoint
-    if (onboardingProgress.demonstrationCompleted && onboardingProgress.valueRealized) {
+    if (
+      onboardingProgress.demonstrationCompleted &&
+      onboardingProgress.valueRealized
+    ) {
       return (
         <div className="flex min-h-[85vh] items-center justify-center px-4">
-          <div className="w-full max-w-xl space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl text-center">
-            
+          <div className="w-full max-w-xl space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl text-center">
             {/* Header */}
             <div>
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-md bg-black border border-[#262626] text-white">
                 <Sparkles className="h-8 w-8 animate-bounce" />
               </div>
-              <h2 className="mt-6 text-3xl font-black text-white tracking-tight">Behavioral QA Activated!</h2>
+              <h2 className="mt-6 text-3xl font-black text-white tracking-tight">
+                Behavioral QA Activated!
+              </h2>
               <p className="mt-2 text-sm text-neutral-400">
-                Congratulations! We successfully generated your first reconciliation report and identified behavioral discrepancies in your demonstration.
+                Congratulations! We successfully generated your first
+                reconciliation report and identified behavioral discrepancies in
+                your demonstration.
               </p>
             </div>
 
             {/* Gap findings summary card */}
             {activeReport && (
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-5 text-left space-y-4">
-                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Identified Gaps Summary</span>
+              <div className="rounded-md border border-[#262626] bg-black p-5 text-left space-y-4">
+                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                  Identified Gaps Summary
+                </span>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="border border-red-950/40 bg-red-950/5 p-3.5 rounded-lg">
-                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">Missing States</span>
-                    <div className="text-2xl font-black text-red-400 font-mono mt-1">{activeReport.trueGapCount}</div>
-                    <p className="text-[9px] text-neutral-500 mt-0.5">Defined but never reached</p>
+                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">
+                      Missing States
+                    </span>
+                    <div className="text-2xl font-black text-red-400 font-mono mt-1">
+                      {activeReport.trueGapCount}
+                    </div>
+                    <p className="text-[9px] text-neutral-500 mt-0.5">
+                      Defined but never reached
+                    </p>
                   </div>
-                  <div className="border border-amber-950/40 bg-amber-950/5 p-3.5 rounded-lg">
-                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">Unexpected States</span>
-                    <div className="text-2xl font-black text-amber-400 font-mono mt-1">{activeReport.undeclaredCount}</div>
-                    <p className="text-[9px] text-neutral-500 mt-0.5">Reached but never declared</p>
+                  <div className="border border border-[#262626] bg-black p-3.5 rounded-lg">
+                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">
+                      Unexpected States
+                    </span>
+                    <div className="text-2xl font-black text-white font-mono mt-1">
+                      {activeReport.undeclaredCount}
+                    </div>
+                    <p className="text-[9px] text-neutral-500 mt-0.5">
+                      Reached but never declared
+                    </p>
                   </div>
                 </div>
-                
+
                 {/* Insights alert */}
-                <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/50 p-3 rounded-lg border border-neutral-800">
-                  ⚡ **Tellann Insight**: The system detected that your app behaves differently than your expectations. Click **Complete Onboarding** below to check the full behavioral diff tree and promote unexpected states!
+                <div className="text-[11px] text-neutral-400 leading-relaxed bg-[#131313]/50 p-3 rounded-lg border border-[#262626]">
+                  ⚡ **Tellann Insight**: The system detected that your app
+                  behaves differently than your expectations. Click **Complete
+                  Onboarding** below to check the full behavioral diff tree and
+                  promote unexpected states!
                 </div>
               </div>
             )}
 
             {/* Qualitative Feedback Questionnaire (Non-gating) */}
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-5 text-left space-y-4">
-              <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Onboarding Feedback</span>
-              
+            <div className="rounded-md border border-[#262626] bg-black p-5 text-left space-y-4">
+              <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                Onboarding Feedback
+              </span>
+
               {!feedbackSubmitted ? (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="block text-xs font-semibold text-neutral-300">Rate your setup experience (1-5):</label>
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Rate your setup experience (1-5):
+                    </label>
                     <div className="flex space-x-2">
                       {[1, 2, 3, 4, 5].map((stars) => (
                         <button
                           key={stars}
                           type="button"
                           onClick={() => setFeedbackRating(stars)}
-                          className={`h-8 w-10 text-xs font-bold rounded-lg border transition-all ${feedbackRating === stars ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'}`}
+                          className={`h-8 w-10 text-xs font-bold rounded-lg border transition-all ${feedbackRating === stars ? "bg-white text-black font-bold border-white" : "bg-[#131313] border-[#262626] text-neutral-400 hover:text-white"}`}
                         >
                           {stars} ★
                         </button>
@@ -1085,41 +1479,51 @@ function DeclareContent() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-semibold text-neutral-300">Any comments or issues faced?</label>
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Any comments or issues faced?
+                    </label>
                     <textarea
                       value={feedbackText}
                       onChange={(e) => setFeedbackText(e.target.value)}
                       placeholder="Optional. Let us know what we can improve!"
-                      className="w-full h-16 rounded-lg border border-neutral-800 bg-neutral-905 p-2.5 text-xs text-white placeholder-neutral-600 focus:border-blue-500 focus:outline-none"
+                      className="w-full h-16 rounded-lg border border-[#262626] bg-black p-2.5 text-xs text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                     />
                   </div>
 
-                  <button
+                  <Button
                     onClick={() => {
                       setFeedbackSubmitted(true);
                     }}
-                    className="w-full bg-neutral-850 hover:bg-neutral-800 text-xs font-bold text-neutral-300 py-2 rounded-lg transition-colors border border-neutral-800"
+                    variant="secondary"
+                    className="w-full text-xs font-bold text-neutral-300 border border-[#262626]"
                   >
                     Submit Feedback
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="text-center py-2 flex flex-col items-center">
-                  <Check className="h-6 w-6 text-emerald-400 mb-2" />
-                  <span className="text-xs font-semibold text-neutral-300">Thank you for your feedback!</span>
+                  <Check className="h-6 w-6 text-white mb-2" />
+                  <span className="text-xs font-semibold text-neutral-300">
+                    Thank you for your feedback!
+                  </span>
                 </div>
               )}
             </div>
 
             {/* Complete Button */}
-            <button
-              onClick={() => patchProgressMutation.mutate({ completedAt: new Date() })}
+            <Button
+              onClick={() =>
+                patchProgressMutation.mutate({ completedAt: new Date() })
+              }
               disabled={patchProgressMutation.isPending}
-              className="w-full flex items-center justify-center space-x-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3.5 text-sm font-semibold text-white transition-all shadow-lg shadow-emerald-600/15"
+              loading={patchProgressMutation.isPending}
+              variant="primary"
+              size="lg"
+              className="w-full shadow-lg shadow-emerald-600/15"
             >
               <span>Complete Onboarding & Go to Dashboard</span>
               <ArrowRight className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
         </div>
       );
@@ -1129,60 +1533,80 @@ function DeclareContent() {
   return (
     <div className="flex h-full flex-col space-y-6">
       {onboardingProgress && !onboardingProgress.expectedFlowsDefined && (
-        <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 flex items-start space-x-3 text-blue-400">
-          <Info className="h-5 w-5 flex-shrink-0 mt-0.5" />
+        <div className="rounded-md border border-white/20 bg-white/5 p-4 flex items-start space-x-3 text-white">
+          {/* <Info className="h-5 w-5 flex-shrink-0 mt-0.5" /> */}
           <div className="text-sm">
-            <span className="font-semibold">Step 2: Define expected workflows.</span> We&apos;ve preloaded a standard flow graph. Feel free to drag states around to clean up the layout, add edges, or create states. Click <span className="font-semibold">Mark Complete & Compile</span> at the top right when you are ready to configure the SDK.
+            <span className="font-semibold">
+              Step 2: Define expected workflows.
+            </span>{" "}
+            We&apos;ve preloaded a standard flow graph. Feel free to drag states
+            around to clean up the layout, add edges, or create states. Click{" "}
+            <span className="font-semibold">Mark Complete & Compile</span> at
+            the top right when you are ready to configure the SDK.
           </div>
         </div>
       )}
 
       {/* Top bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-neutral-800 pb-5 space-y-4 md:space-y-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#262626] pb-5 space-y-4 md:space-y-0">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight text-white flex items-center space-x-3">
-            <ClipboardList className="h-8 w-8 text-blue-400" />
             <span>Flow Declaration Builder</span>
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Author top-down intent graphs and get real-time branch state suggestions.
+            Author top-down intent graphs and get real-time branch state
+            suggestions.
           </p>
         </div>
 
         <div className="flex items-center space-x-3">
-          <select
+          <Select
             value={selectedFlowId}
-            onChange={(e) => setSelectedFlowId(e.target.value)}
-            className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            onValueChange={setSelectedFlowId}
           >
-            <option value="">-- Select a Declared Flow --</option>
-            {flows?.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name} (v{f.version}) [{f.status}]
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[280px]">
+              <SelectValue placeholder="-- Select a Declared Flow --">
+                {(() => {
+                  const f = flows?.find((fl) => fl.id === selectedFlowId);
+                  return f ? `${f.name} (v${f.version}) [${f.status}]` : "";
+                })()}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">-- Select a Declared Flow --</SelectItem>
+              {flows?.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  {f.name} (v{f.version}) [{f.status}]
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {activeFlow && (
             <>
-              {activeFlow.status === 'DRAFT' ? (
-                <button
+              {activeFlow.status === "DRAFT" ? (
+                <Button
                   onClick={() => completeFlowMutation.mutate()}
-                  disabled={completeFlowMutation.isPending || activeFlow.states.length === 0}
-                  className="flex items-center space-x-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 text-sm font-semibold text-white transition-colors"
+                  disabled={
+                    completeFlowMutation.isPending ||
+                    activeFlow.states.length === 0
+                  }
+                  loading={completeFlowMutation.isPending}
+                  variant="primary"
                 >
-                  <Lock className="h-4 w-4" />
+                  {!completeFlowMutation.isPending && <Lock className="h-4 w-4" />}
                   <span>Mark Complete & Compile</span>
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
                   onClick={() => reopenFlowMutation.mutate()}
                   disabled={reopenFlowMutation.isPending}
-                  className="flex items-center space-x-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 px-4 py-2 text-sm font-semibold text-white border border-neutral-700 transition-colors"
+                  loading={reopenFlowMutation.isPending}
+                  variant="secondary"
                 >
-                  <Unlock className="h-4 w-4" />
+                  {!reopenFlowMutation.isPending && <Unlock className="h-4 w-4" />}
                   <span>Reopen Flow for Edit</span>
-                </button>
+                </Button>
               )}
             </>
           )}
@@ -1191,18 +1615,17 @@ function DeclareContent() {
 
       {/* Main container */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
-        
         {/* Panel 1: Flow List & Creator + Builder */}
         <div className="lg:col-span-2 flex flex-col space-y-6 min-h-0">
           {!selectedFlowId ? (
-            <div className="flex-1 rounded-2xl border border-neutral-800 bg-neutral-900/30 backdrop-blur-xl p-8 flex flex-col items-center justify-center text-center space-y-6">
-              <div className="h-16 w-16 rounded-2xl bg-neutral-950 flex items-center justify-center border border-neutral-800">
-                <Layers className="h-8 w-8 text-neutral-500" />
-              </div>
+            <div className="flex-1 rounded-md border border-[#262626] bg-[#131313] backdrop-blur-xl p-8 flex flex-col items-center justify-center text-center space-y-6">
               <div className="max-w-sm space-y-2">
-                <h3 className="text-lg font-bold text-white">Create a Declared Flow</h3>
+                <h3 className="text-lg font-bold text-white">
+                  Create a Declared Flow
+                </h3>
                 <p className="text-xs text-neutral-400">
-                  Choose an existing flow from the dropdown, or create a new flow to design your behavioral intent.
+                  Choose an existing flow from the dropdown, or create a new
+                  flow to design your behavioral intent.
                 </p>
               </div>
 
@@ -1210,61 +1633,84 @@ function DeclareContent() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (newFlowName.trim()) {
-                    createFlowMutation.mutate({ name: newFlowName.trim(), workflowType: newFlowType });
+                    createFlowMutation.mutate({
+                      name: newFlowName.trim(),
+                      workflowType: newFlowType,
+                    });
                   }
                 }}
-                className="w-full max-w-sm space-y-4 border border-neutral-800 bg-neutral-950 p-6 rounded-xl text-left"
+                className="w-full max-w-sm space-y-4 border border-[#262626] bg-black p-6 rounded-md text-left"
               >
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">FLOW NAME</label>
+                  <label className="block text-xs font-semibold text-neutral-400 mb-1">
+                    FLOW NAME
+                  </label>
                   <input
                     type="text"
                     required
                     value={newFlowName}
                     onChange={(e) => setNewFlowName(e.target.value)}
                     placeholder="e.g. Checkout Flow"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">WORKFLOW TYPE</label>
-                  <select
+                  <label className="block text-xs font-semibold text-neutral-400 mb-1">
+                    WORKFLOW TYPE
+                  </label>
+                  <Select
                     value={newFlowType}
-                    onChange={(e) => setNewFlowType(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    onValueChange={setNewFlowType}
                   >
-                    <option value="CUSTOM">Custom</option>
-                    <option value="CHECKOUT">Checkout</option>
-                    <option value="AUTHENTICATION">Authentication</option>
-                    <option value="REGISTRATION">Registration</option>
-                    <option value="ASSESSMENT">Assessment</option>
-                    <option value="ENROLLMENT">Enrollment</option>
-                  </select>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select workflow type...">
+                        {newFlowType === "CUSTOM" && "Custom"}
+                        {newFlowType === "CHECKOUT" && "Checkout"}
+                        {newFlowType === "AUTHENTICATION" && "Authentication"}
+                        {newFlowType === "REGISTRATION" && "Registration"}
+                        {newFlowType === "ASSESSMENT" && "Assessment"}
+                        {newFlowType === "ENROLLMENT" && "Enrollment"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CUSTOM">Custom</SelectItem>
+                      <SelectItem value="CHECKOUT">Checkout</SelectItem>
+                      <SelectItem value="AUTHENTICATION">Authentication</SelectItem>
+                      <SelectItem value="REGISTRATION">Registration</SelectItem>
+                      <SelectItem value="ASSESSMENT">Assessment</SelectItem>
+                      <SelectItem value="ENROLLMENT">Enrollment</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <button
+                <Button
                   type="submit"
                   disabled={createFlowMutation.isPending || !newFlowName.trim()}
-                  className="w-full flex items-center justify-center space-x-2 rounded-lg bg-blue-600 hover:bg-blue-500 py-2.5 text-sm font-semibold text-white transition-colors"
+                  loading={createFlowMutation.isPending}
+                  variant="primary"
+                  className="w-full"
                 >
-                  <Plus className="h-4 w-4" />
+                  {!createFlowMutation.isPending && <Plus className="h-4 w-4" />}
                   <span>Create Flow</span>
-                </button>
-               </form>
+                </Button>
+              </form>
             </div>
           ) : !activeFlow ? (
-            <div className="flex-1 rounded-2xl border border-neutral-800 bg-neutral-900/30 backdrop-blur-xl p-8 flex items-center justify-center">
-              <div className="text-neutral-400 animate-pulse text-sm">Loading flow details...</div>
+            <div className="flex-1 rounded-md border border-[#262626] bg-[#131313] backdrop-blur-xl p-8 flex items-center justify-center">
+              <div className="text-neutral-400 animate-pulse text-sm">
+                Loading flow details...
+              </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col space-y-6 min-h-0">
               {/* Interactive Flow Visualizer */}
-              <div className="h-[380px] rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden relative">
-                <div className="absolute top-4 left-4 z-10 bg-neutral-900/80 backdrop-blur px-3 py-1.5 rounded-lg border border-neutral-800 flex items-center space-x-2">
-                  <span className="h-2 w-2 rounded-full bg-blue-400 animate-ping"></span>
+              <div className="h-[380px] rounded-md border border-[#262626] bg-black overflow-hidden relative">
+                <div className="absolute top-4 left-4 z-10 bg-[#131313]/80 backdrop-blur px-3 py-1.5 rounded-lg border border-[#262626] flex items-center space-x-2">
+                  <span className="h-2 w-2 rounded-full bg-white animate-ping"></span>
                   <span className="text-xs font-semibold text-neutral-300">
-                    {activeFlow.name} (v{activeFlow.version}) - {activeFlow.status}
+                    {activeFlow.name} (v{activeFlow.version}) -{" "}
+                    {activeFlow.status}
                   </span>
                 </div>
 
@@ -1287,7 +1733,7 @@ function DeclareContent() {
               </div>
 
               {/* Builder Controls */}
-              {activeFlow.status === 'DRAFT' && (
+              {activeFlow.status === "DRAFT" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Add State */}
                   <form
@@ -1297,53 +1743,69 @@ function DeclareContent() {
                         addStateMutation.mutate({
                           stateName: stateName.toUpperCase().trim(),
                           category: stateCategory,
-                          provenance: 'USER_AUTHORED',
+                          provenance: "USER_AUTHORED",
                         });
                       }
                     }}
-                    className="rounded-xl border border-neutral-800 bg-neutral-900/20 p-5 space-y-4"
+                    className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4"
                   >
                     <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                      <Plus className="h-4 w-4 text-blue-400" />
+                      <Plus className="h-4 w-4 text-white" />
                       <span>Add Declared State</span>
                     </h3>
 
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">STATE NAME</label>
+                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                          STATE NAME
+                        </label>
                         <input
                           type="text"
                           required
                           value={stateName}
                           onChange={(e) => setStateName(e.target.value)}
                           placeholder="e.g. PAYMENT_FAILED"
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-blue-500 focus:outline-none"
+                          className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">CATEGORY</label>
-                        <select
+                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                          CATEGORY
+                        </label>
+                        <Select
                           value={stateCategory}
-                          onChange={(e) => setStateCategory(e.target.value)}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                          onValueChange={setStateCategory}
                         >
-                          <option value="BUSINESS">Business</option>
-                          <option value="UI">UI / Interaction</option>
-                          <option value="NAVIGATION">Navigation</option>
-                          <option value="ERROR">Error Handling</option>
-                          <option value="SYSTEM">System/API</option>
-                        </select>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Category...">
+                              {stateCategory === "BUSINESS" && "Business"}
+                              {stateCategory === "UI" && "UI / Interaction"}
+                              {stateCategory === "NAVIGATION" && "Navigation"}
+                              {stateCategory === "ERROR" && "Error Handling"}
+                              {stateCategory === "SYSTEM" && "System/API"}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="BUSINESS">Business</SelectItem>
+                            <SelectItem value="UI">UI / Interaction</SelectItem>
+                            <SelectItem value="NAVIGATION">Navigation</SelectItem>
+                            <SelectItem value="ERROR">Error Handling</SelectItem>
+                            <SelectItem value="SYSTEM">System/API</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
 
-                    <button
+                    <Button
                       type="submit"
                       disabled={addStateMutation.isPending || !stateName.trim()}
-                      className="w-full flex items-center justify-center space-x-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 py-2 text-xs font-semibold text-white border border-neutral-750 transition-colors"
+                      loading={addStateMutation.isPending}
+                      variant="secondary"
+                      className="w-full"
                     >
                       <span>Add State</span>
-                    </button>
+                    </Button>
                   </form>
 
                   {/* Add Transition */}
@@ -1355,73 +1817,95 @@ function DeclareContent() {
                           fromStateId,
                           toStateId,
                           action: transAction.trim() || undefined,
-                          provenance: 'USER_AUTHORED',
+                          provenance: "USER_AUTHORED",
                         });
                       }
                     }}
-                    className="rounded-xl border border-neutral-800 bg-neutral-900/20 p-5 space-y-4"
+                    className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4"
                   >
                     <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                      <ArrowRight className="h-4 w-4 text-blue-400" />
+                      <ArrowRight className="h-4 w-4 text-white" />
                       <span>Add Declared Transition</span>
                     </h3>
 
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">FROM STATE</label>
-                          <select
-                            required
+                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                            FROM STATE
+                          </label>
+                          <Select
                             value={fromStateId}
-                            onChange={(e) => setFromStateId(e.target.value)}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+                            onValueChange={setFromStateId}
                           >
-                            <option value="">Select...</option>
-                            {activeFlow.states.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.stateName}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="px-2.5 py-1.5 text-xs">
+                              <SelectValue placeholder="Select...">
+                                {activeFlow.states.find((s) => s.id === fromStateId)?.stateName}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">Select...</SelectItem>
+                              {activeFlow.states.map((s) => (
+                                <SelectItem key={s.id} value={s.id}>
+                                  {s.stateName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">TO STATE</label>
-                          <select
-                            required
+                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                            TO STATE
+                          </label>
+                          <Select
                             value={toStateId}
-                            onChange={(e) => setToStateId(e.target.value)}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+                            onValueChange={setToStateId}
                           >
-                            <option value="">Select...</option>
-                            {activeFlow.states.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.stateName}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="px-2.5 py-1.5 text-xs">
+                              <SelectValue placeholder="Select...">
+                                {activeFlow.states.find((s) => s.id === toStateId)?.stateName}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">Select...</SelectItem>
+                              {activeFlow.states.map((s) => (
+                                <SelectItem key={s.id} value={s.id}>
+                                  {s.stateName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">ACTION (OPTIONAL)</label>
+                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
+                          ACTION (OPTIONAL)
+                        </label>
                         <input
                           type="text"
                           value={transAction}
                           onChange={(e) => setTransAction(e.target.value)}
                           placeholder="e.g. CLICK_SUBMIT"
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-blue-500 focus:outline-none"
+                          className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                         />
                       </div>
                     </div>
 
-                    <button
+                    <Button
                       type="submit"
-                      disabled={addTransitionMutation.isPending || !fromStateId || !toStateId}
-                      className="w-full flex items-center justify-center space-x-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 py-2 text-xs font-semibold text-white border border-neutral-750 transition-colors"
+                      disabled={
+                        addTransitionMutation.isPending ||
+                        !fromStateId ||
+                        !toStateId
+                      }
+                      loading={addTransitionMutation.isPending}
+                      variant="secondary"
+                      className="w-full"
                     >
                       <span>Add Transition</span>
-                    </button>
+                    </Button>
                   </form>
                 </div>
               )}
@@ -1431,28 +1915,40 @@ function DeclareContent() {
 
         {/* Panel 2: Suggestions Panel & Reconciliation Summary */}
         <div className="flex flex-col space-y-6 min-h-0">
-          
           {/* Suggestions List (Derivation Engine output) */}
-          {activeFlow && activeFlow.status === 'DRAFT' && (
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-5 flex flex-col h-[380px] min-h-0">
-              <div className="flex items-center justify-between border-b border-neutral-800 pb-3 flex-shrink-0">
+          {activeFlow && activeFlow.status === "DRAFT" && (
+            <div className="rounded-md border border-[#262626] bg-[#131313] p-5 flex flex-col h-[380px] min-h-0">
+              <div className="flex items-center justify-between border-b border-[#262626] pb-3 flex-shrink-0">
                 <h2 className="text-sm font-bold text-white flex items-center space-x-2">
-                  <Activity className="h-4 w-4 text-blue-400" />
+                  <Activity className="h-4 w-4 text-white" />
                   <span>Flow Suggestions ({pendingSuggestions.length})</span>
                 </h2>
-                <button
+                <Button
                   type="button"
                   aria-label="Refresh flow suggestions"
                   disabled={isSuggestionsLoading || !activeFlow}
-                  onClick={() => activeFlow && generateSuggestions(activeFlow, 'MANUAL_REFRESH', true).catch((error) => setSuggestionError(error.message))}
-                  className="rounded p-1 text-blue-400 hover:bg-blue-950 disabled:opacity-50"
+                  onClick={() =>
+                    activeFlow &&
+                    generateSuggestions(
+                      activeFlow,
+                      "MANUAL_REFRESH",
+                      true,
+                    ).catch((error) => setSuggestionError(error.message))
+                  }
+                  variant="icon"
+                  size="icon"
                 >
-                  <RefreshCw className={`h-3.5 w-3.5 ${isSuggestionsLoading ? 'animate-spin' : ''}`} />
-                </button>
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${isSuggestionsLoading ? "animate-spin" : ""}`}
+                  />
+                </Button>
               </div>
 
               {suggestionError && (
-                <div role="alert" className="mt-2 rounded border border-red-900 bg-red-950/30 p-2 text-[10px] text-red-300">
+                <div
+                  role="alert"
+                  className="mt-2 rounded border border-red-900 bg-red-950/30 p-2 text-[10px] text-red-300"
+                >
                   {suggestionError}
                 </div>
               )}
@@ -1462,81 +1958,114 @@ function DeclareContent() {
                   pendingSuggestions.map((sug) => (
                     <div
                       key={sug.id}
-                      className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 space-y-3 hover:border-neutral-700 transition-all"
+                      className="rounded-md border border-[#262626] bg-black p-4 space-y-3 hover:border-neutral-700 transition-all"
                     >
                       <div className="flex items-start justify-between">
                         <div>
-                          <span className="text-xs font-bold text-white">{sug.title ?? sug.suggestedStateName}</span>
+                          <span className="text-xs font-bold text-white">
+                            {sug.title ?? sug.suggestedStateName}
+                          </span>
                           <div className="flex items-center space-x-1.5 mt-0.5">
                             <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 px-1.5 py-0.25 rounded font-semibold">
                               {sug.suggestionType ?? sug.category}
                             </span>
                             <span className="text-[9px] text-neutral-500">
-                              {sug.source === 'AI' ? 'Experimental AI' : sug.source === 'HYBRID' ? 'AI-assisted' : 'Rule-based'}
+                              {sug.source === "AI"
+                                ? "Experimental AI"
+                                : sug.source === "HYBRID"
+                                  ? "AI-assisted"
+                                  : "Rule-based"}
                             </span>
                           </div>
                         </div>
 
                         {/* Confidence score progress bar */}
                         <div className="text-right">
-                          <span className="text-[10px] font-bold text-blue-400 font-mono">
+                          <span className="text-[10px] font-bold text-white font-mono">
                             {(sug.confidence * 100).toFixed(0)}%
                           </span>
                           <div className="w-12 h-1.5 bg-neutral-850 rounded-full overflow-hidden mt-1">
                             <div
-                              className="h-full bg-blue-500 rounded-full"
+                              className="h-full bg-white rounded-full"
                               style={{ width: `${sug.confidence * 100}%` }}
                             ></div>
                           </div>
                         </div>
                       </div>
 
-                      <p className="text-[10px] text-neutral-400 leading-normal bg-neutral-900/50 p-2 rounded">
+                      <p className="text-[10px] text-neutral-400 leading-normal bg-[#131313]/50 p-2 rounded">
                         {sug.rationale}
                       </p>
 
-                      {(sug.suggestedStatesJson?.length || sug.suggestedTransitionsJson?.length) ? (
+                      {sug.suggestedStatesJson?.length ||
+                      sug.suggestedTransitionsJson?.length ? (
                         <div className="text-[10px] text-neutral-500 font-mono">
-                          {sug.suggestedStatesJson?.map((state) => state.name).join(', ')}
-                          {sug.suggestedTransitionsJson?.map((transition) => ` ${transition.from} → ${transition.to}`).join(', ')}
+                          {sug.suggestedStatesJson
+                            ?.map((state) => state.name)
+                            .join(", ")}
+                          {sug.suggestedTransitionsJson
+                            ?.map(
+                              (transition) =>
+                                ` ${transition.from} → ${transition.to}`,
+                            )
+                            .join(", ")}
                         </div>
                       ) : null}
 
                       <div className="flex space-x-2 pt-1">
-                        <button
-                          onClick={() => acceptSuggestionMutation.mutate(sug.id)}
+                        <Button
+                          onClick={() =>
+                            acceptSuggestionMutation.mutate(sug.id)
+                          }
                           disabled={acceptSuggestionMutation.isPending}
-                          className="flex-1 flex items-center justify-center space-x-1.5 rounded-lg bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-900/50 py-1 text-xs font-semibold transition-all"
+                          variant="primary"
+                          size="sm"
+                          className="flex-1 border border-white"
                         >
                           <Check className="h-3 w-3" />
                           <span>Accept</span>
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           aria-label={`Edit ${sug.title ?? sug.suggestedStateName}`}
                           disabled={editSuggestionMutation.isPending}
                           onClick={() => {
-                            const name = window.prompt('Suggested state name', sug.suggestedStateName);
-                            if (name?.trim()) editSuggestionMutation.mutate({ sugId: sug.id, suggestedStateName: name.trim() });
+                            const name = window.prompt(
+                              "Suggested state name",
+                              sug.suggestedStateName,
+                            );
+                            if (name?.trim())
+                              editSuggestionMutation.mutate({
+                                sugId: sug.id,
+                                suggestedStateName: name.trim(),
+                              });
                           }}
-                          className="rounded-lg border border-neutral-700 px-2 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                          variant="secondary"
+                          size="sm"
+                          className="px-2 text-neutral-300"
                         >
                           <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           onClick={() => setRejectingSugId(sug.id)}
-                          className="flex-1 flex items-center justify-center space-x-1.5 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white border border-red-900/50 py-1 text-xs font-semibold transition-all"
+                          variant="danger"
+                          size="sm"
+                          className="flex-1"
                         >
                           <X className="h-3 w-3" />
                           <span>Reject</span>
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           aria-label={`Dismiss ${sug.title ?? sug.suggestedStateName}`}
                           disabled={dismissSuggestionMutation.isPending}
-                          onClick={() => dismissSuggestionMutation.mutate(sug.id)}
-                          className="rounded-lg border border-neutral-700 px-2 text-neutral-400 hover:bg-neutral-800 disabled:opacity-50"
+                          onClick={() =>
+                            dismissSuggestionMutation.mutate(sug.id)
+                          }
+                          variant="secondary"
+                          size="sm"
+                          className="px-2 text-neutral-400"
                         >
                           <ChevronRight className="h-3 w-3" />
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   ))
@@ -1550,43 +2079,57 @@ function DeclareContent() {
           )}
 
           {/* Reconciliation Report Summary (when complete) */}
-          {activeFlow && activeFlow.status === 'COMPLETE' && (
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-5 flex flex-col max-h-[500px] min-h-0">
-              <h2 className="text-sm font-bold text-white flex items-center justify-between border-b border-neutral-800 pb-3 flex-shrink-0">
+          {activeFlow && activeFlow.status === "COMPLETE" && (
+            <div className="rounded-md border border-[#262626] bg-[#131313] p-5 flex flex-col max-h-[500px] min-h-0">
+              <h2 className="text-sm font-bold text-white flex items-center justify-between border-b border-[#262626] pb-3 flex-shrink-0">
                 <div className="flex items-center space-x-2">
-                  <GitCompare className="h-4 w-4 text-blue-400" />
+                  <GitCompare className="h-4 w-4 text-white" />
                   <span>Reconciliation Status</span>
                 </div>
-                <button
+                <Button
                   onClick={() => refetchReconciliation()}
-                  className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold"
+                  variant="ghost"
+                  size="sm"
+                  className="text-[10px] text-white hover:text-white font-semibold p-0 h-auto hover:bg-transparent"
                 >
                   Refresh
-                </button>
+                </Button>
               </h2>
 
               {activeReport ? (
                 <div className="flex-1 overflow-y-auto space-y-5 mt-4 pr-1">
-                  
                   {/* Hero Coverage Metrics */}
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 text-center">
-                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">STATE COV</div>
+                    <div className="rounded-md border border-[#262626] bg-black p-4 text-center">
+                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">
+                        STATE COV
+                      </div>
                       <div className="text-2xl font-black text-white font-mono mt-1">
                         {(activeReport.expectedCoverageScore * 100).toFixed(0)}%
                       </div>
                       <div className="text-[9px] text-neutral-400 mt-1">
-                        {activeReport.confirmedCount} / {activeReport.confirmedCount + activeReport.trueGapCount} states
+                        {activeReport.confirmedCount} /{" "}
+                        {activeReport.confirmedCount +
+                          activeReport.trueGapCount}{" "}
+                        states
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 text-center">
-                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">TRANS COV</div>
+                    <div className="rounded-md border border-[#262626] bg-black p-4 text-center">
+                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">
+                        TRANS COV
+                      </div>
                       <div className="text-2xl font-black text-white font-mono mt-1">
-                        {(activeReport.transitionCoverageScore * 100).toFixed(0)}%
+                        {(activeReport.transitionCoverageScore * 100).toFixed(
+                          0,
+                        )}
+                        %
                       </div>
                       <div className="text-[9px] text-neutral-400 mt-1">
-                        {activeReport.confirmedTransitions} / {activeReport.confirmedTransitions + activeReport.trueGapTransitions} edges
+                        {activeReport.confirmedTransitions} /{" "}
+                        {activeReport.confirmedTransitions +
+                          activeReport.trueGapTransitions}{" "}
+                        edges
                       </div>
                     </div>
                   </div>
@@ -1610,118 +2153,143 @@ function DeclareContent() {
                         </div>
                       ))}
                       {activeReport.trueGapCount === 0 && (
-                        <p className="text-[10px] text-neutral-500 italic">No missing states detected.</p>
+                        <p className="text-[10px] text-neutral-500 italic">
+                          No missing states detected.
+                        </p>
                       )}
                     </div>
                   </div>
 
                   {/* Telemetry Promotion (Undeclared states) */}
                   <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-amber-400 flex items-center space-x-1">
+                    <h3 className="text-xs font-bold text-white flex items-center space-x-1">
                       <TrendingUp className="h-3.5 w-3.5" />
-                      <span>Undeclared States ({activeReport.undeclaredCount})</span>
+                      <span>
+                        Undeclared States ({activeReport.undeclaredCount})
+                      </span>
                     </h3>
                     <div className="space-y-1.5">
                       {activeReport.undeclared.map((und: any) => (
                         <div
                           key={und.stateName}
-                          className="flex flex-col border border-amber-950/40 bg-amber-950/10 p-3 rounded-lg text-neutral-300"
+                          className="flex flex-col border border border-[#262626] bg-black p-3 rounded-lg text-neutral-300"
                         >
                           <div className="flex items-center justify-between text-xs">
                             <span className="font-mono">{und.stateName}</span>
-                            <span className="text-[10px] font-semibold text-neutral-500">{und.observationCount} visits</span>
+                            <span className="text-[10px] font-semibold text-neutral-500">
+                              {und.observationCount} visits
+                            </span>
                           </div>
-                          
+
                           {/* Promote Button */}
-                          <div className="flex space-x-2 mt-2 pt-1 border-t border-amber-950/20">
-                            <button
-                              onClick={() =>
-                                promoteStateMutation.mutate({
-                                  stateName: und.stateName,
-                                  accepted: true,
-                                })
-                              }
-                              className="flex-1 rounded bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-800 text-[10px] py-1 font-semibold transition-all"
-                            >
-                              Promote to Declared
-                            </button>
-                            <button
-                              onClick={() =>
-                                promoteStateMutation.mutate({
-                                  stateName: und.stateName,
-                                  accepted: false,
-                                })
-                              }
-                              className="px-2.5 rounded border border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300 text-[10px] py-1 transition-all"
-                            >
-                              Ignore
-                            </button>
+                          <div className="flex space-x-2 mt-2 pt-1 border-t border-[#262626]">
+                             <Button
+                               onClick={() =>
+                                 promoteStateMutation.mutate({
+                                   stateName: und.stateName,
+                                   accepted: true,
+                                 })
+                               }
+                               variant="primary"
+                               size="xs"
+                               className="flex-1"
+                             >
+                               Promote to Declared
+                             </Button>
+                             <Button
+                               onClick={() =>
+                                 promoteStateMutation.mutate({
+                                   stateName: und.stateName,
+                                   accepted: false,
+                                 })
+                               }
+                               variant="secondary"
+                               size="xs"
+                               className="px-2.5"
+                             >
+                               Ignore
+                             </Button>
                           </div>
                         </div>
                       ))}
                       {activeReport.undeclaredCount === 0 && (
-                        <p className="text-[10px] text-neutral-500 italic">No unexpected states observed.</p>
+                        <p className="text-[10px] text-neutral-500 italic">
+                          No unexpected states observed.
+                        </p>
                       )}
                     </div>
                   </div>
-
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center p-6 text-center space-y-4">
                   <Info className="h-8 w-8 text-neutral-600" />
                   <div className="max-w-[200px] text-[11px] text-neutral-400">
-                    Reconciliation runs when telemetry events are observed for this flow. Click Run below to force.
+                    Reconciliation runs when telemetry events are observed for
+                    this flow. Click Run below to force.
                   </div>
-                  <button
-                    onClick={() => refetchReconciliation()}
-                    className="rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-1.5 text-xs font-semibold text-white transition-colors"
-                  >
-                    Run Reconciliation
-                  </button>
+                  <Button
+                     onClick={() => refetchReconciliation()}
+                     variant="primary"
+                     size="sm"
+                   >
+                     Run Reconciliation
+                   </Button>
                 </div>
               )}
             </div>
           )}
-
         </div>
       </div>
 
       {/* Suggestion Rejection Modal */}
       {rejectingSugId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-900 p-6 space-y-4 shadow-2xl">
+          <div className="w-full max-w-sm rounded-md border border-[#262626] bg-[#131313] p-6 space-y-4 shadow-2xl">
             <h3 className="text-sm font-bold text-white">Reject Suggestion</h3>
             <p className="text-xs text-neutral-400">
-              Provide an optional reason for rejecting this state suggestion (feedback will be collected to train patterns).
+              Provide an optional reason for rejecting this state suggestion
+              (feedback will be collected to train patterns).
             </p>
 
             <textarea
               value={rejectionReason}
               onChange={(e) => setRejectionReason(e.target.value)}
               placeholder="e.g. This state is not applicable to our user segment."
-              className="w-full h-24 rounded-lg border border-neutral-800 bg-neutral-950 p-2.5 text-xs text-white placeholder-neutral-600 focus:border-blue-500 focus:outline-none"
+              className="w-full h-24 rounded-lg border border-[#262626] bg-black p-2.5 text-xs text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
             />
 
-            <div className="flex space-x-3 pt-2">
-              <button
-                onClick={() => setRejectingSugId(null)}
-                className="flex-1 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-400 hover:text-white py-2 text-xs font-semibold transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() =>
-                  rejectSuggestionMutation.mutate({
-                    sugId: rejectingSugId,
-                    reason: rejectionReason.trim(),
-                  })
-                }
-                className="flex-1 rounded-lg bg-red-600 hover:bg-red-500 text-white py-2 text-xs font-semibold transition-colors"
-              >
-                Reject
-              </button>
-            </div>
+             <div className="flex space-x-3 pt-2">
+               <Button
+                 onClick={() => setRejectingSugId(null)}
+                 variant="secondary"
+                 size="sm"
+                 className="flex-1"
+               >
+                 Cancel
+               </Button>
+               <Button
+                 onClick={() =>
+                   rejectSuggestionMutation.mutate({
+                     sugId: rejectingSugId,
+                     reason: rejectionReason.trim(),
+                   })
+                 }
+                 variant="danger"
+                 size="sm"
+                 className="flex-1"
+               >
+                 Reject
+               </Button>
+             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-md border border-[#262626] bg-[#131313]/95 px-4 py-3 text-xs font-semibold text-white shadow-2xl backdrop-blur-md transition-all duration-200 animate-in fade-in slide-in-from-bottom-4">
+          <CheckCircle2 className="h-4 w-4 text-white shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>
@@ -1730,7 +2298,11 @@ function DeclareContent() {
 
 export default function DeclarePage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400 animate-pulse">Loading Builder...</div>}>
+    <Suspense
+      fallback={
+        <div className="text-neutral-400 animate-pulse">Loading Builder...</div>
+      }
+    >
       <DeclareContent />
     </Suspense>
   );

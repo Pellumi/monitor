@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Button } from '@/components/ui/button';
 
 // ─── Error humaniser ────────────────────────────────────────────────────────
 type ErrorKind = 'network' | 'auth' | 'generic';
@@ -396,17 +397,16 @@ export default function LoginPage() {
             />
           </div>
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="lg"
             disabled={isLoading || !email}
-            className="w-full py-2.5 bg-white text-black font-semibold text-sm rounded-md hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-white transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+            loading={isLoading}
+            className="w-full"
           >
-            {isLoading ? (
-              <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-            ) : (
-              'Continue'
-            )}
-          </button>
+            Continue
+          </Button>
         </form>
       ) : step === 2 ? (
         <form onSubmit={handleVerifyOtp} className="space-y-5">
@@ -466,17 +466,16 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="lg"
             disabled={isLoading || otp.some((d) => !d)}
-            className="w-full py-2.5 bg-white text-black font-semibold text-sm rounded-md hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-white transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+            loading={isLoading}
+            className="w-full"
           >
-            {isLoading ? (
-              <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-            ) : (
-              purpose === 'SIGNUP' ? 'Create Account' : 'Verify & Login'
-            )}
-          </button>
+            {purpose === 'SIGNUP' ? 'Create Account' : 'Verify & Login'}
+          </Button>
         </form>
       ) : (
         <form onSubmit={handlePasswordLogin} className="space-y-5">
@@ -504,17 +503,16 @@ export default function LoginPage() {
             />
           </div>
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="lg"
             disabled={isLoading || !password}
-            className="w-full py-2.5 bg-white text-black font-semibold text-sm rounded-md hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-white transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+            loading={isLoading}
+            className="w-full"
           >
-            {isLoading ? (
-              <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-            ) : (
-              'Sign in with Password'
-            )}
-          </button>
+            Sign in with Password
+          </Button>
 
           <button
             type="button"

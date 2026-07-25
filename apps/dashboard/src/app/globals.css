@@ -30,6 +30,33 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+@keyframes empty-state-path-scan {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -282; }
+}
+
+@keyframes empty-state-node-pulse {
+  0%, 100% { opacity: 0.04; transform: scale(0.9); }
+  50% { opacity: 0.14; transform: scale(1.08); }
+}
+
+.empty-state-active-path {
+  animation: empty-state-path-scan 8s linear infinite;
+}
+
+.empty-state-active-node {
+  animation: empty-state-node-pulse 3.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-state-active-path,
+  .empty-state-active-node {
+    animation: none;
+  }
+}
+
 /* ═══════════════════════════════════════════════════
    ReactFlow — Comprehensive Dark Mode Theme
    ═══════════════════════════════════════════════════ */
@@ -166,4 +193,3 @@ body {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
-

@@ -1,10 +1,14 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Button } from '@/components/ui/button';
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ApplicationRequiredState } from '@/components/application-required-state';
+import { EmptyState } from '@/components/empty-state';
+import { useSelectedApplication } from '@/hooks/use-selected-application';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -27,9 +31,9 @@ function formatTime(iso: string): string {
 import { Suspense } from 'react';
 
 function SessionsContent() {
-  const searchParams  = useSearchParams();
   const router        = useRouter();
-  const appId         = searchParams.get('appId') ?? 'app-test-checkout-success.json';
+  const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
+    useSelectedApplication();
   const [page, setPage] = useState(1);
 
   const { data, isLoading, error } = useQuery({
@@ -61,8 +65,26 @@ function SessionsContent() {
     router.push(`/sessions/${sessionId}?appId=${appId}`);
   }
 
+  if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
+  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
+  if (!appId) return <ApplicationRequiredState feature="Session" />;
+
   if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading sessions…</div>;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
+  if (data?.sessions.length === 0) {
+    return (
+      <EmptyState
+        variant="activation"
+        illustration="telemetry"
+        eyebrow="No sessions captured"
+        title="Record your first behavior session"
+        description="Once the SDK is connected, interactions and state transitions will appear here as replayable sessions."
+        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        secondaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -128,21 +150,23 @@ function SessionsContent() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-2">
-          <button
+          <Button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="rounded px-3 py-1 text-sm text-neutral-400 border border-neutral-700 hover:border-neutral-500 disabled:opacity-30 transition-colors"
+            variant="secondary"
+            size="sm"
           >
             ← Previous
-          </button>
+          </Button>
           <span className="text-sm text-neutral-500">Page {page} of {totalPages}</span>
-          <button
+          <Button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="rounded px-3 py-1 text-sm text-neutral-400 border border-neutral-700 hover:border-neutral-500 disabled:opacity-30 transition-colors"
+            variant="secondary"
+            size="sm"
           >
             Next →
-          </button>
+          </Button>
         </div>
       )}
     </div>

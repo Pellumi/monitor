@@ -1,8 +1,11 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from '@/components/ui/button';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Code2, CheckCircle, XCircle, Loader2, AlertTriangle, ChevronDown, ToggleLeft, ToggleRight } from 'lucide-react';
+import { EmptyState } from '@/components/empty-state';
 
 interface CompiledRuleset {
   id: string;
@@ -81,16 +84,25 @@ export default function AdminRulesetsPage() {
           <h1 className="mt-1 text-3xl font-bold text-white">Ruleset Governance</h1>
           <p className="mt-1 text-sm text-neutral-400">Manage compiled rulesets and promote DRAFT to ACTIVE production rules.</p>
         </div>
-        <select
+        <Select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 text-xs px-3 py-2 focus:outline-none focus:border-indigo-500"
+          onValueChange={setStatusFilter}
         >
-          <option value="">All Statuses</option>
-          <option value="DRAFT">Draft</option>
-          <option value="ACTIVE">Active</option>
-          <option value="ARCHIVED">Archived</option>
-        </select>
+          <SelectTrigger className="w-[130px] py-1.5 text-xs">
+            <SelectValue placeholder="Status">
+              {statusFilter === "" && "All Statuses"}
+              {statusFilter === "DRAFT" && "Draft"}
+              {statusFilter === "ACTIVE" && "Active"}
+              {statusFilter === "ARCHIVED" && "Archived"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All Statuses</SelectItem>
+            <SelectItem value="DRAFT">Draft</SelectItem>
+            <SelectItem value="ACTIVE">Active</SelectItem>
+            <SelectItem value="ARCHIVED">Archived</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {error && (
@@ -118,7 +130,15 @@ export default function AdminRulesetsPage() {
         </div>
 
         {rulesets.length === 0 && !isLoading ? (
-          <div className="py-12 text-center text-sm text-neutral-500">No rulesets found.</div>
+          <EmptyState
+            variant="neutral"
+            illustration="flow"
+            layout="compact"
+            eyebrow="Ruleset governance"
+            title="No rulesets compiled"
+            description="Compiled application rulesets will appear here after expected behavior is completed."
+            className="m-4"
+          />
         ) : (
           <ul className="divide-y divide-neutral-800">
             {rulesets.map((r) => (
@@ -142,25 +162,29 @@ export default function AdminRulesetsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <button
+                    <Button
                       id={`view-ruleset-${r.id}`}
                       onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
-                      className="text-xs text-neutral-500 hover:text-white border border-neutral-800 hover:border-neutral-700 rounded-md px-3 py-1.5 transition flex items-center gap-1"
+                      variant="secondary"
+                      size="xs"
                     >
                       <ChevronDown className={cn('h-3 w-3 transition-transform', expandedId === r.id && 'rotate-180')} />
                       Rules
-                    </button>
+                    </Button>
 
                     {r.status === 'DRAFT' && (
-                      <button
+                      <Button
                         id={`promote-ruleset-${r.id}`}
                         onClick={() => void handlePromote(r.id)}
                         disabled={promoteLoading === r.id}
-                        className="flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50"
+                        loading={promoteLoading === r.id}
+                        variant="accent"
+                        size="xs"
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white"
                       >
-                        {promoteLoading === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ToggleRight className="h-3 w-3" />}
+                        {!promoteLoading && <ToggleRight className="h-3 w-3" />}
                         Promote
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>

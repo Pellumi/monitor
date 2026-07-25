@@ -18,9 +18,26 @@ import { EntitlementChecker } from '@sots/entitlement-checker';
 import { PLAN_DEFINITIONS, Services, type PlanTypeKey } from '@sots/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
 import { writeAuditLog, extractAuditContext } from '@sots/authz';
-import { createCheckoutSession, verifyStripeWebhook, ensureStripeCustomer } from './providers/stripe';
-import { initializeTransaction, verifyPaystackWebhook } from './providers/paystack';
+import { createCheckoutSession, verifyStripeWebhook, ensureStripeCustomer, setStripeCancellation } from './providers/stripe';
+import {
+  chargeAuthorization,
+  createSubscription as createPaystackSubscription,
+  disableSubscription as disablePaystackSubscription,
+  enableSubscription as enablePaystackSubscription,
+  initializeTransaction,
+  verifyPaystackWebhook,
+} from './providers/paystack';
 import { generateReceiptPdf } from './receipt';
+import {
+  billingPolicy,
+  checkoutProviders,
+  currencyForCountry,
+  openPaymentReference,
+  previewExpiry,
+  proratedDifference,
+  providerPlanCode,
+  sealPaymentReference,
+} from './billing-policy';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -167,36 +184,6 @@ function priceFor(plan: Plan, interval: BillingInterval, currency: BillingCurren
     : plan.monthlyPriceUsd ?? 0;
 }
 
-function envKey(...parts: string[]): string {
-  return parts.map((part) => part.replace(/[^a-z0-9]/gi, '_').toUpperCase()).join('_');
-}
-
-function configuredProviderCode(provider: 'STRIPE' | 'PAYSTACK', planType: PlanType, interval: BillingInterval, currency: BillingCurrency): string | null {
-  const candidates = provider === 'STRIPE'
-    ? [
-        envKey('STRIPE_PRICE_ID', planType, interval, currency),
-        envKey('STRIPE_PRICE_ID', planType, interval),
-        envKey('STRIPE_PRICE_ID', planType),
-      ]
-    : [
-        envKey('PAYSTACK_PLAN_CODE', planType, interval, currency),
-        envKey('PAYSTACK_PLAN_CODE', planType, interval),
-        envKey('PAYSTACK_PLAN_CODE', planType),
-      ];
-
-  for (const key of candidates) {
-    const value = process.env[key];
-    if (value?.trim()) return value.trim();
-  }
-  return null;
-}
-
-function checkoutProviderCode(req: Request, provider: 'STRIPE' | 'PAYSTACK', planType: PlanType, interval: BillingInterval, currency: BillingCurrency): string | null {
-  const bodyCode = provider === 'STRIPE' ? req.body.priceId : req.body.planCode;
-  return typeof bodyCode === 'string' && bodyCode.trim()
-    ? bodyCode.trim()
-    : configuredProviderCode(provider, planType, interval, currency);
-}
 function invoiceNumber(): string {
   return `TELLANN-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
 }
@@ -442,6 +429,16 @@ async function activateSubscription(params: {
   provider: Provider;
   providerCustomerId?: string | null;
   providerSubscriptionId?: string | null;
+  providerPlanCode?: string | null;
+  providerPeriodStart?: Date | null;
+  providerPeriodEnd?: Date | null;
+  providerNextChargeAt?: Date | null;
+  paymentMethodReference?: string | null;
+  paymentMethodBrand?: string | null;
+  paymentMethodLast4?: string | null;
+  paymentMethodExpMonth?: string | null;
+  paymentMethodExpYear?: string | null;
+  providerManagementToken?: string | null;
 }) {
   const now = new Date();
   const end = periodEnd(params.interval);
@@ -460,6 +457,22 @@ async function activateSubscription(params: {
       stripeSubscriptionId: params.provider === 'STRIPE' ? params.providerSubscriptionId ?? null : null,
       paystackCustomerCode: params.provider === 'PAYSTACK' ? params.providerCustomerId ?? null : null,
       paystackSubscriptionCode: params.provider === 'PAYSTACK' ? params.providerSubscriptionId ?? null : null,
+      activeProvider: params.provider,
+      providerCustomerId: params.providerCustomerId ?? null,
+      providerSubscriptionId: params.providerSubscriptionId ?? null,
+      providerPlanCode: params.providerPlanCode ?? null,
+      providerPeriodStart: params.providerPeriodStart ?? now,
+      providerPeriodEnd: params.providerPeriodEnd ?? end,
+      providerNextChargeAt: params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
+      paymentMethodReference: params.paymentMethodReference ?? null,
+      paymentMethodBrand: params.paymentMethodBrand ?? null,
+      paymentMethodLast4: params.paymentMethodLast4 ?? null,
+      paymentMethodExpMonth: params.paymentMethodExpMonth ?? null,
+      paymentMethodExpYear: params.paymentMethodExpYear ?? null,
+      paymentMethodAuthorizedAt: params.paymentMethodReference ? now : null,
+      providerManagementToken: params.providerManagementToken ?? null,
+      cancelAtPeriodEnd: false,
+      migrationStatus: params.provider === 'PAYSTACK' ? 'PAYSTACK_ACTIVE' : 'STRIPE_ACTIVE',
     },
     update: {
       planId: params.plan.id,
@@ -474,6 +487,24 @@ async function activateSubscription(params: {
       stripeSubscriptionId: params.provider === 'STRIPE' ? params.providerSubscriptionId ?? undefined : undefined,
       paystackCustomerCode: params.provider === 'PAYSTACK' ? params.providerCustomerId ?? undefined : undefined,
       paystackSubscriptionCode: params.provider === 'PAYSTACK' ? params.providerSubscriptionId ?? undefined : undefined,
+      activeProvider: params.provider,
+      providerCustomerId: params.providerCustomerId ?? undefined,
+      providerSubscriptionId: params.providerSubscriptionId ?? undefined,
+      providerPlanCode: params.providerPlanCode ?? undefined,
+      providerPeriodStart: params.providerPeriodStart ?? now,
+      providerPeriodEnd: params.providerPeriodEnd ?? end,
+      providerNextChargeAt: params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
+      paymentMethodReference: params.paymentMethodReference ?? undefined,
+      paymentMethodBrand: params.paymentMethodBrand ?? undefined,
+      paymentMethodLast4: params.paymentMethodLast4 ?? undefined,
+      paymentMethodExpMonth: params.paymentMethodExpMonth ?? undefined,
+      paymentMethodExpYear: params.paymentMethodExpYear ?? undefined,
+      paymentMethodAuthorizedAt: params.paymentMethodReference ? now : undefined,
+      providerManagementToken: params.providerManagementToken ?? undefined,
+      cancelAtPeriodEnd: false,
+      pendingPlanId: null,
+      pendingChangeAt: null,
+      migrationStatus: params.provider === 'PAYSTACK' ? 'PAYSTACK_ACTIVE' : 'STRIPE_ACTIVE',
     },
   });
 
@@ -628,18 +659,55 @@ function publicPlan(plan: Plan & { featureFlags?: Array<{ feature: string; enabl
   };
 }
 
+function firstDate(...values: unknown[]): Date | null {
+  for (const value of values) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+    if (typeof value === 'string' || typeof value === 'number') {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  }
+  return null;
+}
+
 app.get('/billing/plans', async (req: Request, res: Response) => {
   try {
     const orgId = typeof req.query.organizationId === 'string' ? req.query.organizationId : undefined;
-    const profile = orgId
-      ? await prisma.organizationBillingProfile.findUnique({ where: { organizationId: orgId } })
-      : null;
-    const plans = await prisma.plan.findMany({
-      where: { isPublic: true },
-      include: { featureFlags: true },
-      orderBy: { sortOrder: 'asc' },
+    const [profile, organization, subscription, plans] = await Promise.all([
+      orgId ? prisma.organizationBillingProfile.findUnique({ where: { organizationId: orgId } }) : null,
+      orgId ? prisma.organization.findUnique({ where: { id: orgId } }) : null,
+      orgId ? prisma.subscription.findUnique({ where: { organizationId: orgId }, include: { plan: true } }) : null,
+      prisma.plan.findMany({
+        where: { isPublic: true },
+        include: { featureFlags: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+    ]);
+    const countryCode = profile?.countryCode ?? (organization as any)?.countryCode ?? null;
+    const currency = currencyForCountry(countryCode);
+    const currentRank = subscription ? PLAN_DEFINITIONS[subscription.plan.type as PlanTypeKey]?.rank ?? 0 : 0;
+    res.json({
+      currency,
+      countryRequired: !countryCode,
+      currentPlanType: subscription?.plan.type ?? PlanType.FREE,
+      plans: plans.map((plan) => {
+        const item = publicPlan(plan, countryCode ?? undefined);
+        const rank = PLAN_DEFINITIONS[plan.type as PlanTypeKey]?.rank ?? plan.sortOrder;
+        const action = plan.type === PlanType.ENTERPRISE
+          ? 'CONTACT_SALES'
+          : plan.type === subscription?.plan.type
+            ? 'CURRENT'
+            : rank > currentRank ? (subscription ? 'UPGRADE' : 'SUBSCRIBE') : 'DOWNGRADE';
+        return {
+          ...item,
+          resolvedCurrency: currency,
+          displayPriceMonthly: currency === BillingCurrency.NGN ? plan.monthlyPriceNgn : plan.monthlyPriceUsd,
+          displayPriceAnnual: currency === BillingCurrency.NGN ? plan.annualPriceNgn : plan.annualPriceUsd,
+          action,
+          allowedEffectiveModes: action === 'DOWNGRADE' ? ['NEXT_RENEWAL'] : ['IMMEDIATE', 'NEXT_RENEWAL'],
+        };
+      }),
     });
-    res.json(plans.map((plan) => publicPlan(plan, profile?.countryCode)));
   } catch (err) {
     console.error('[BillingAPI] List plans failed', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -754,12 +822,12 @@ app.get('/billing/organizations/:orgId/invoices', verifyJwt, requireBillingViewe
   }
 });
 
-app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
   const organizationId = req.body.organizationId || req.headers['x-sots-org-id'];
   const planType = assertEnumValue(PlanType, req.body.planType);
   const interval = assertEnumValue(BillingInterval, req.body.billingInterval) ?? BillingInterval.MONTHLY;
-  const currency = assertEnumValue(BillingCurrency, req.body.currency ?? req.body.billingCurrency) ?? BillingCurrency.USD;
-  const provider = (req.body.provider || 'MOCK').toUpperCase() as Provider;
+  let currency: BillingCurrency = BillingCurrency.USD;
+  let provider: Provider = 'PAYSTACK';
 
   if (!organizationId || typeof organizationId !== 'string') {
     return res.status(400).json({ error: 'organizationId is required' });
@@ -767,13 +835,6 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
   if (!planType) {
     return res.status(400).json({ error: `planType must be one of ${Object.values(PlanType).join(', ')}` });
   }
-  if (!['STRIPE', 'PAYSTACK', 'MOCK'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be STRIPE, PAYSTACK, or MOCK' });
-  }
-  if (provider === 'MOCK' && process.env.NODE_ENV === 'production') {
-    return res.status(400).json({ error: 'MOCK provider is disabled in production' });
-  }
-
   try {
     const plan = await prisma.plan.findUnique({ where: { type: planType } });
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
@@ -784,41 +845,36 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
     if (planType === PlanType.ENTERPRISE) {
       return res.status(400).json({ error: 'CONTACT_SALES_REQUIRED', message: 'Enterprise subscriptions start through the sales workflow.' });
     }
-    const profile = await prisma.organizationBillingProfile.findUnique({ where: { organizationId } });
-    if (!profile) {
-      return res.status(400).json({ error: 'BILLING_PROFILE_REQUIRED', message: 'Add a billing country before checkout.' });
+    const [profile, org] = await Promise.all([
+      prisma.organizationBillingProfile.findUnique({ where: { organizationId } }),
+      prisma.organization.findUnique({ where: { id: organizationId } }),
+    ]);
+    const countryCode = profile?.countryCode ?? (org as any)?.countryCode ?? null;
+    if (!countryCode) {
+      return res.status(400).json({ error: 'BILLING_COUNTRY_REQUIRED', message: 'Complete the organization billing profile before checkout.' });
     }
+    currency = currencyForCountry(countryCode);
+    const requestedTestProvider = String(req.body.provider ?? '').toUpperCase();
+    provider = process.env.NODE_ENV !== 'production' && requestedTestProvider === 'MOCK'
+      ? 'MOCK'
+      : checkoutProviders(currency)[0];
     if (planType === PlanType.LOCAL) {
-      if (profile.countryCode !== 'NG' || currency !== BillingCurrency.NGN || (provider !== 'PAYSTACK' && provider !== 'MOCK')) {
+      if (countryCode !== 'NG' || currency !== BillingCurrency.NGN || (provider !== 'PAYSTACK' && provider !== 'MOCK')) {
         return res.status(400).json({
           error: 'LOCAL_PLAN_INELIGIBLE',
           message: 'Local is available only to Nigerian organizations, billed in NGN through Paystack.',
         });
       }
     }
-    if (currency === BillingCurrency.USD && provider !== 'STRIPE' && provider !== 'MOCK') {
-      return res.status(400).json({ error: 'PROVIDER_CURRENCY_MISMATCH', message: 'USD checkout requires Stripe.' });
-    }
-    if (currency === BillingCurrency.NGN && provider !== 'PAYSTACK' && provider !== 'MOCK') {
-      return res.status(400).json({ error: 'PROVIDER_CURRENCY_MISMATCH', message: 'NGN checkout requires Paystack.' });
-    }
     const currentSubscription = await prisma.subscription.findUnique({
       where: { organizationId },
       include: { plan: true },
     });
     const currentDefinition = currentSubscription ? PLAN_DEFINITIONS[currentSubscription.plan.type as PlanTypeKey] : null;
-    const targetDefinition = PLAN_DEFINITIONS[planType as PlanTypeKey];
-    if (currentSubscription && currentDefinition && targetDefinition.rank < currentDefinition.rank) {
-      const scheduled = await prisma.subscription.update({
-        where: { organizationId },
-        data: { pendingPlanId: plan.id, pendingChangeAt: currentSubscription.currentPeriodEnd },
-        include: { pendingPlan: true },
-      });
-      return res.status(202).json({
-        status: 'scheduled',
-        pendingPlan: scheduled.pendingPlan?.type,
-        effectiveAt: scheduled.pendingChangeAt,
-        message: 'Downgrade scheduled for the end of the current billing period. Existing data will not be deleted.',
+    if (currentSubscription && (currentDefinition?.rank ?? 0) > 0 && currentSubscription.plan.type !== planType) {
+      return res.status(409).json({
+        error: 'SUBSCRIPTION_CHANGE_REQUIRED',
+        message: 'Use the subscription change preview flow to upgrade or downgrade an active subscription.',
       });
     }
 
@@ -849,7 +905,7 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
     }, { invoiceId: invoice.id });
 
     // ── Free plan / MOCK: activate immediately ──────────────────────────────
-    if (total === 0 || provider === 'MOCK') {
+    if (total === 0) {
       await activateSubscription({ organizationId, plan, interval, currency, provider });
       await prisma.invoice.update({
         where: { id: invoice.id },
@@ -871,16 +927,16 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
       if (currency !== BillingCurrency.USD) {
         return res.status(400).json({ error: 'Stripe checkout currently supports USD plans only' });
       }
-      const priceId = checkoutProviderCode(req, 'STRIPE', planType, interval, currency);
+      const priceId = await providerPlanCode(prisma, 'STRIPE', planType, interval, currency);
       if (!priceId) {
         return res.status(400).json({
           error: `Stripe price is not configured for ${planType}/${interval}/${currency}`,
-          message: `Set ${envKey('STRIPE_PRICE_ID', planType, interval, currency)} or pass priceId for controlled test checkout.`,
+          message: `Configure an active Stripe provider-plan catalog entry for ${planType}/${interval}/${currency}.`,
         });
       }
 
-      const org = await prisma.organization.findUnique({ where: { id: organizationId } });
-      const customerEmail = req.body.email || (org as any)?.billingEmail || (org as any)?.email || '';
+      const customerEmail = profile?.billingEmail || '';
+      if (!customerEmail) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
       const existing = await prisma.subscription.findUnique({
         where: { organizationId },
         select: { stripeCustomerId: true },
@@ -926,24 +982,72 @@ app.post('/billing/checkout', verifyJwt, requireBillingManager, async (req: Requ
 
     // ── PAYSTACK: initialize transaction ───────────────────────────────────
     if (provider === 'PAYSTACK') {
-      if (currency !== BillingCurrency.NGN) {
-        return res.status(400).json({ error: 'Paystack checkout currently supports NGN plans only' });
-      }
-      const org = await prisma.organization.findUnique({ where: { id: organizationId } });
-      const email = req.body.email || (org as any)?.billingEmail || (org as any)?.email || '';
+      const email = profile?.billingEmail || '';
+      if (!email) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
       // Paystack works in lowest denomination (kobo for NGN, cents for USD)
       const amountMinor = Math.round(total);
-      const planCode = checkoutProviderCode(req, 'PAYSTACK', planType, interval, currency) ?? undefined;
+      const planCode = await providerPlanCode(prisma, 'PAYSTACK', planType, interval, currency) ?? undefined;
+      if (!planCode) {
+        return res.status(503).json({
+          error: 'PROVIDER_PLAN_NOT_CONFIGURED',
+          message: `Paystack is not configured for ${planType}/${interval}/${currency}.`,
+        });
+      }
 
-      const { authorizationUrl, reference } = await initializeTransaction({
-        email,
-        amountKobo: amountMinor,
-        currency: currency === BillingCurrency.NGN ? 'NGN' : 'USD',
-        reference: `sots-${invoice.id}-${Date.now()}`,
-        organizationId,
-        planCode,
-        metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency },
-      });
+      let authorizationUrl: string;
+      let reference: string;
+      try {
+        ({ authorizationUrl, reference } = await initializeTransaction({
+          email,
+          amountKobo: amountMinor,
+          currency,
+          reference: `tellann-${invoice.id}-${Date.now()}`,
+          organizationId,
+          planCode,
+          metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency },
+        }));
+      } catch (paystackError) {
+        await recordPaymentEvent(organizationId, 'PAYSTACK', 'checkout.initialization_failed', {
+          invoiceId: invoice.id,
+          message: paystackError instanceof Error ? paystackError.message : 'Paystack initialization failed',
+        }, { invoiceId: invoice.id });
+        if (!billingPolicy.stripeCheckoutFallbackEnabled) throw paystackError;
+        const stripePriceId = await providerPlanCode(prisma, 'STRIPE', planType, interval, currency);
+        if (!stripePriceId) throw paystackError;
+        const existing = await prisma.subscription.findUnique({
+          where: { organizationId },
+          select: { stripeCustomerId: true },
+        });
+        const stripeCheckout = await createCheckoutSession({
+          planStripeProductId: '',
+          planStripePriceId: stripePriceId,
+          interval,
+          currency,
+          organizationId,
+          customerEmail: email,
+          existingStripeCustomerId: existing?.stripeCustomerId,
+          metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency, fallbackFrom: 'PAYSTACK' },
+          successUrl: typeof req.body.successUrl === 'string' ? req.body.successUrl : undefined,
+          cancelUrl: typeof req.body.cancelUrl === 'string' ? req.body.cancelUrl : undefined,
+        });
+        await prisma.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            provider: 'STRIPE',
+            providerReference: stripeCheckout.sessionId,
+            providerCustomerId: stripeCheckout.customerId,
+          },
+        });
+        return res.status(201).json({
+          checkoutId: invoice.id,
+          provider: 'STRIPE',
+          fallbackFrom: 'PAYSTACK',
+          status: 'pending',
+          checkoutUrl: stripeCheckout.checkoutUrl,
+          url: stripeCheckout.checkoutUrl,
+          invoiceId: invoice.id,
+        });
+      }
 
       await prisma.invoice.update({
         where: { id: invoice.id },
@@ -1061,12 +1165,110 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
 
     let reconciledInvoice = await reconcileInvoiceForEvent(event);
     let paidInvoice: typeof reconciledInvoice = null;
+    const eventData = asRecord(req.body?.data);
+    const eventMetadata = asRecord(eventData.metadata);
+    const paymentMethodPurpose = firstString(eventMetadata.purpose);
+    const isPaymentMethodUpdate = provider === 'PAYSTACK'
+      && ['PAYMENT_METHOD_UPDATE', 'STRIPE_MIGRATION'].includes(paymentMethodPurpose ?? '');
 
-    if (isActivationEvent(event)) {
+    if (isPaymentMethodUpdate && event.eventType === 'charge.success') {
+      const authorization = asRecord(eventData.authorization);
+      const authorizationCode = firstString(authorization.authorization_code);
+      if (!authorizationCode) throw new Error('Paystack payment method update did not return a reusable authorization');
+      await prisma.subscription.update({
+        where: { organizationId: event.organizationId },
+        data: {
+          paymentMethodReference: sealPaymentReference(authorizationCode),
+          paymentMethodBrand: firstString(authorization.brand, authorization.card_type),
+          paymentMethodLast4: firstString(authorization.last4),
+          paymentMethodExpMonth: firstString(authorization.exp_month),
+          paymentMethodExpYear: firstString(authorization.exp_year),
+          paymentMethodAuthorizedAt: new Date(),
+        },
+      });
+      if (paymentMethodPurpose === 'STRIPE_MIGRATION') {
+        const subscription = await prisma.subscription.findUnique({
+          where: { organizationId: event.organizationId },
+          include: { plan: true },
+        });
+        if (!subscription || subscription.activeProvider !== 'STRIPE' || !subscription.providerSubscriptionId) {
+          throw new Error('Stripe migration requires an active linked Stripe subscription');
+        }
+        const planCode = await providerPlanCode(
+          prisma,
+          'PAYSTACK',
+          subscription.plan.type,
+          subscription.billingInterval,
+          subscription.billingCurrency,
+        );
+        if (!planCode) throw new Error('Paystack migration plan is not configured');
+        const customer = asRecord(eventData.customer);
+        const customerCode = firstString(customer.customer_code, event.customerId);
+        if (!customerCode) throw new Error('Paystack migration customer was not returned');
+        const replacement = await createPaystackSubscription({
+          customer: customerCode,
+          planCode,
+          authorizationCode,
+          startDate: subscription.providerPeriodEnd ?? subscription.currentPeriodEnd,
+        });
+        await setStripeCancellation(subscription.providerSubscriptionId, true);
+        await prisma.$transaction([
+          prisma.subscriptionChange.create({
+            data: {
+              organizationId: event.organizationId,
+              sourcePlanId: subscription.planId,
+              targetPlanId: subscription.planId,
+              sourceInterval: subscription.billingInterval,
+              targetInterval: subscription.billingInterval,
+              currency: subscription.billingCurrency,
+              direction: 'MIGRATION',
+              effectiveMode: 'NEXT_RENEWAL',
+              status: 'SCHEDULED',
+              previewExpiresAt: subscription.currentPeriodEnd,
+              prorationAt: new Date(),
+              amountDue: 0,
+              creditAmount: 0,
+              nextCycleAmount: priceFor(subscription.plan, subscription.billingInterval, subscription.billingCurrency),
+              effectiveAt: subscription.providerPeriodEnd ?? subscription.currentPeriodEnd,
+              provider: 'PAYSTACK',
+              providerOperationId: replacement.subscriptionCode,
+              providerReference: replacement.emailToken ? sealPaymentReference(replacement.emailToken) : null,
+              idempotencyKey: `migration:${event.organizationId}:${replacement.subscriptionCode}`,
+            },
+          }),
+          prisma.subscription.update({
+            where: { organizationId: event.organizationId },
+            data: {
+              migrationStatus: 'PAYSTACK_AUTHORIZED',
+              cancelAtPeriodEnd: true,
+              pendingPlanId: subscription.planId,
+              pendingChangeAt: subscription.providerPeriodEnd ?? subscription.currentPeriodEnd,
+              paymentMethodReference: sealPaymentReference(authorizationCode),
+              paystackCustomerCode: customerCode,
+            },
+          }),
+        ]);
+      }
+    }
+
+    if (isActivationEvent(event) && !isPaymentMethodUpdate) {
       paidInvoice = await reconcileInvoiceForEvent(event, 'PAID');
       reconciledInvoice = paidInvoice ?? reconciledInvoice;
 
-      const planType = event.planType ?? reconciledInvoice?.planType ?? null;
+      const scheduledProviderChange = event.subscriptionId
+        ? await prisma.subscriptionChange.findFirst({
+            where: {
+              organizationId: event.organizationId,
+              providerOperationId: event.subscriptionId,
+              status: { in: ['SCHEDULED', 'PROCESSING'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null;
+      const scheduledTargetPlan = scheduledProviderChange
+        ? await prisma.plan.findUnique({ where: { id: scheduledProviderChange.targetPlanId } })
+        : null;
+      const planType = event.planType ?? reconciledInvoice?.planType ?? scheduledTargetPlan?.type ?? null;
       if (!planType) throw new Error('planType is required for activation events');
 
       const plan = await prisma.plan.findUnique({ where: { type: planType } });
@@ -1074,6 +1276,14 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
 
       const interval = event.billingInterval ?? reconciledInvoice?.billingInterval ?? BillingInterval.MONTHLY;
       const currency = event.currency ?? reconciledInvoice?.currency ?? BillingCurrency.USD;
+      const webhookData = asRecord(req.body?.data);
+      const authorization = asRecord(webhookData.authorization);
+      const webhookSubscription = asRecord(webhookData.subscription);
+      const authorizationCode = firstString(authorization.authorization_code);
+      const emailToken = firstString(webhookSubscription.email_token, webhookData.email_token);
+      const providerPlan = asRecord(webhookSubscription.plan);
+      const providerPeriodStart = firstDate(webhookData.period_start, webhookSubscription.period_start);
+      const providerPeriodEnd = firstDate(webhookData.period_end, webhookSubscription.next_payment_date);
 
       await activateSubscription({
         organizationId: event.organizationId,
@@ -1083,6 +1293,26 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
         provider,
         providerCustomerId: event.customerId,
         providerSubscriptionId: event.subscriptionId,
+        providerPlanCode: firstString(providerPlan.plan_code, webhookData.plan_code),
+        providerPeriodStart,
+        providerPeriodEnd,
+        providerNextChargeAt: firstDate(webhookSubscription.next_payment_date),
+        paymentMethodReference: provider === 'PAYSTACK' && authorizationCode ? sealPaymentReference(authorizationCode) : null,
+        paymentMethodBrand: firstString(authorization.brand, authorization.card_type),
+        paymentMethodLast4: firstString(authorization.last4),
+        paymentMethodExpMonth: firstString(authorization.exp_month),
+        paymentMethodExpYear: firstString(authorization.exp_year),
+        providerManagementToken: provider === 'PAYSTACK' && emailToken ? sealPaymentReference(emailToken) : null,
+      });
+      if (scheduledProviderChange) {
+        await prisma.subscriptionChange.update({
+          where: { id: scheduledProviderChange.id },
+          data: { status: 'APPLIED', effectiveAt: new Date() },
+        });
+      }
+      await prisma.billingDunningAttempt.updateMany({
+        where: { organizationId: event.organizationId, status: { in: ['SCHEDULED', 'PROCESSING'] } },
+        data: { status: 'CANCELLED', completedAt: new Date() },
       });
 
       // Persist the subscription linkage even if the invoice was found before activateSubscription.
@@ -1140,8 +1370,43 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
       const failedInvoice = await reconcileInvoiceForEvent(event, 'FAILED');
       await prisma.subscription.updateMany({
         where: { organizationId: event.organizationId },
-        data: { status: SubscriptionStatus.PAST_DUE },
+        data: { status: SubscriptionStatus.GRACE_PERIOD },
       });
+      const subscription = await prisma.subscription.findUnique({ where: { organizationId: event.organizationId } });
+      const retryAmount = failedInvoice?.total ?? (subscription
+        ? priceFor(
+            await prisma.plan.findUniqueOrThrow({ where: { id: subscription.planId } }),
+            subscription.billingInterval,
+            subscription.billingCurrency,
+          )
+        : 0);
+      const base = new Date();
+      const retryReference = event.providerReference ?? event.providerEventId;
+      for (const [index, days] of [1, 3, 7].entries()) {
+        const scheduledAt = new Date(base);
+        scheduledAt.setUTCDate(scheduledAt.getUTCDate() + days);
+        await prisma.billingDunningAttempt.upsert({
+          where: {
+            organizationId_providerReference_attemptNumber: {
+              organizationId: event.organizationId,
+              providerReference: retryReference,
+              attemptNumber: index + 1,
+            },
+          },
+          create: {
+            organizationId: event.organizationId,
+            invoiceId: failedInvoice?.id,
+            provider,
+            providerReference: retryReference,
+            attemptNumber: index + 1,
+            scheduledAt,
+            amount: Number(retryAmount),
+            currency: subscription?.billingCurrency ?? event.currency ?? BillingCurrency.USD,
+            idempotencyKey: `dunning:${event.organizationId}:${retryReference}:${index + 1}`,
+          },
+          update: {},
+        });
+      }
       await entitlementChecker.resolveEntitlement(event.organizationId);
 
       const org = await prisma.organization.findUnique({ where: { id: event.organizationId } });
@@ -1192,24 +1457,241 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-app.post('/billing/organizations/:orgId/subscription/cancel', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
-  const { orgId } = req.params;
+app.post('/billing/subscriptions/changes/preview', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  const targetPlanType = assertEnumValue(PlanType, req.body.planType);
+  const targetInterval = assertEnumValue(BillingInterval, req.body.billingInterval);
+  if (!organizationId || !targetPlanType || !targetInterval) {
+    return res.status(400).json({ error: 'organizationId, planType, and billingInterval are required' });
+  }
+  try {
+    const [subscription, targetPlan, profile] = await Promise.all([
+      prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } }),
+      prisma.plan.findUnique({ where: { type: targetPlanType } }),
+      prisma.organizationBillingProfile.findUnique({ where: { organizationId } }),
+    ]);
+    if (!subscription) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
+    if (!targetPlan || targetPlan.type === PlanType.FREE || targetPlan.type === PlanType.ENTERPRISE) {
+      return res.status(400).json({ error: 'INVALID_TARGET_PLAN' });
+    }
+    const currency = currencyForCountry(profile?.countryCode);
+    const currentRank = PLAN_DEFINITIONS[subscription.plan.type as PlanTypeKey]?.rank ?? 0;
+    const targetRank = PLAN_DEFINITIONS[targetPlan.type as PlanTypeKey]?.rank ?? 0;
+    const direction = targetRank > currentRank ? 'UPGRADE' : targetRank < currentRank ? 'DOWNGRADE' : 'INTERVAL_CHANGE';
+    const at = new Date();
+    const periodStart = subscription.providerPeriodStart ?? subscription.currentPeriodStart;
+    const periodEndDate = subscription.providerPeriodEnd ?? subscription.currentPeriodEnd;
+    const currentPrice = priceFor(subscription.plan, subscription.billingInterval, currency);
+    const targetPrice = priceFor(targetPlan, targetInterval, currency);
+    const { amountDue, creditAmount } = proratedDifference({
+      currentPrice,
+      targetPrice,
+      periodStart,
+      periodEnd: periodEndDate,
+      at,
+    });
+    const change = await prisma.subscriptionChange.create({
+      data: {
+        organizationId,
+        sourcePlanId: subscription.planId,
+        targetPlanId: targetPlan.id,
+        sourceInterval: subscription.billingInterval,
+        targetInterval,
+        currency,
+        direction,
+        effectiveMode: direction === 'DOWNGRADE' ? 'NEXT_RENEWAL' : 'UNSELECTED',
+        previewExpiresAt: previewExpiry(at),
+        prorationAt: at,
+        amountDue,
+        creditAmount,
+        nextCycleAmount: targetPrice,
+        effectiveAt: periodEndDate,
+        provider: subscription.activeProvider,
+        idempotencyKey: `preview:${organizationId}:${cryptoRandomFallback()}`,
+      },
+    });
+    res.json({
+      previewId: change.id,
+      direction,
+      currency,
+      amountDue,
+      creditAmount,
+      nextCycleAmount: targetPrice,
+      currentRenewalDate: periodEndDate,
+      expiresAt: change.previewExpiresAt,
+      supportedEffectiveModes: direction === 'DOWNGRADE' ? ['NEXT_RENEWAL'] : ['IMMEDIATE', 'NEXT_RENEWAL'],
+    });
+  } catch (err) {
+    console.error('[BillingAPI] Subscription change preview failed', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/billing/checkouts/:invoiceId/status', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.invoiceId } });
+  if (!invoice || invoice.organizationId !== organizationId) return res.status(404).json({ error: 'CHECKOUT_NOT_FOUND' });
+  res.json({
+    invoiceId: invoice.id,
+    status: invoice.status,
+    provider: invoice.provider,
+    paidAt: invoice.paidAt,
+    verified: invoice.status === 'PAID',
+  });
+});
+
+app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  const effectiveMode = String(req.body.effectiveMode ?? '');
+  const idempotencyKey = String(req.body.idempotencyKey ?? '').trim();
+  if (!organizationId || !req.body.previewId || !['IMMEDIATE', 'NEXT_RENEWAL'].includes(effectiveMode) || !idempotencyKey) {
+    return res.status(400).json({ error: 'organizationId, previewId, effectiveMode, and idempotencyKey are required' });
+  }
+  try {
+    const existing = await prisma.subscriptionChange.findUnique({ where: { idempotencyKey } });
+    if (existing) return res.json(existing);
+    const [preview, subscription, profile] = await Promise.all([
+      prisma.subscriptionChange.findUnique({ where: { id: String(req.body.previewId) } }),
+      prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } }),
+      prisma.organizationBillingProfile.findUnique({ where: { organizationId } }),
+    ]);
+    if (!preview || preview.organizationId !== organizationId || preview.status !== 'PREVIEWED') {
+      return res.status(409).json({ error: 'PREVIEW_INVALID' });
+    }
+    if (preview.previewExpiresAt <= new Date()) return res.status(409).json({ error: 'PREVIEW_EXPIRED' });
+    if (!subscription) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
+    if (preview.direction === 'DOWNGRADE' && effectiveMode !== 'NEXT_RENEWAL') {
+      return res.status(400).json({ error: 'DOWNGRADE_NEXT_RENEWAL_ONLY' });
+    }
+    if (subscription.activeProvider !== 'PAYSTACK') {
+      return res.status(409).json({
+        error: 'PAYSTACK_AUTHORIZATION_REQUIRED',
+        message: 'Authorize Paystack before changing this Stripe subscription.',
+      });
+    }
+    const targetPlan = await prisma.plan.findUnique({ where: { id: preview.targetPlanId } });
+    if (!targetPlan) return res.status(404).json({ error: 'TARGET_PLAN_NOT_FOUND' });
+    const planCode = await providerPlanCode(prisma, 'PAYSTACK', targetPlan.type, preview.targetInterval, preview.currency);
+    if (!planCode) return res.status(503).json({ error: 'PROVIDER_PLAN_NOT_CONFIGURED' });
+    if (!subscription.providerCustomerId || !subscription.paymentMethodReference || !subscription.providerManagementToken) {
+      return res.status(409).json({ error: 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED' });
+    }
+    const authorizationCode = openPaymentReference(subscription.paymentMethodReference);
+    const managementToken = openPaymentReference(subscription.providerManagementToken);
+    const email = profile?.billingEmail || '';
+    if (!email) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
+    const renewalDate = subscription.providerPeriodEnd ?? subscription.currentPeriodEnd;
+    await prisma.subscriptionChange.update({
+      where: { id: preview.id },
+      data: { status: 'PROCESSING', effectiveMode, idempotencyKey },
+    });
+    if (effectiveMode === 'IMMEDIATE' && preview.amountDue > 0) {
+      const charge = await chargeAuthorization({
+        authorizationCode,
+        email,
+        amount: preview.amountDue,
+        currency: preview.currency,
+        reference: `change-${preview.id}`,
+        metadata: { organizationId, subscriptionChangeId: preview.id },
+      });
+      if (charge.status !== 'success') {
+        await prisma.subscriptionChange.update({
+          where: { id: preview.id },
+          data: { status: 'PAYMENT_ACTION_REQUIRED', providerReference: charge.reference },
+        });
+        return res.status(202).json({
+          status: 'PAYMENT_ACTION_REQUIRED',
+          checkoutUrl: charge.authorizationUrl,
+          providerReference: charge.reference,
+        });
+      }
+    }
+    const replacement = await createPaystackSubscription({
+      customer: subscription.providerCustomerId,
+      planCode,
+      authorizationCode,
+      startDate: renewalDate,
+    });
+    if (subscription.providerSubscriptionId) {
+      await disablePaystackSubscription(subscription.providerSubscriptionId, managementToken);
+    }
+    const now = new Date();
+    const updated = await prisma.$transaction(async (tx) => {
+      if (effectiveMode === 'IMMEDIATE') {
+        await tx.subscription.update({
+          where: { organizationId },
+          data: {
+            planId: targetPlan.id,
+            billingInterval: preview.targetInterval,
+            billingCurrency: preview.currency,
+            providerPlanCode: planCode,
+            providerSubscriptionId: replacement.subscriptionCode,
+            paystackSubscriptionCode: replacement.subscriptionCode,
+            providerNextChargeAt: replacement.nextPaymentDate ? new Date(replacement.nextPaymentDate) : renewalDate,
+            providerManagementToken: replacement.emailToken ? sealPaymentReference(replacement.emailToken) : undefined,
+            pendingPlanId: null,
+            pendingChangeAt: null,
+          },
+        });
+      } else {
+        await tx.subscription.update({
+          where: { organizationId },
+          data: { pendingPlanId: targetPlan.id, pendingChangeAt: renewalDate },
+        });
+      }
+      return tx.subscriptionChange.update({
+        where: { id: preview.id },
+        data: {
+          status: effectiveMode === 'IMMEDIATE' ? 'APPLIED' : 'SCHEDULED',
+          providerOperationId: replacement.subscriptionCode,
+          providerReference: replacement.emailToken ? sealPaymentReference(replacement.emailToken) : null,
+          effectiveAt: effectiveMode === 'IMMEDIATE' ? now : renewalDate,
+        },
+      });
+    });
+    if (effectiveMode === 'IMMEDIATE') await entitlementChecker.resolveEntitlement(organizationId);
+    res.json(updated);
+  } catch (err) {
+    console.error('[BillingAPI] Subscription change failed', err);
+    const previewId = typeof req.body.previewId === 'string' ? req.body.previewId : null;
+    if (previewId) {
+      await prisma.subscriptionChange.updateMany({
+        where: { id: previewId, organizationId },
+        data: { status: 'FAILED', processingError: err instanceof Error ? err.message.slice(0, 1000) : 'Unknown failure' },
+      });
+    }
+    res.status(500).json({ error: 'SUBSCRIPTION_CHANGE_FAILED' });
+  }
+});
+
+app.post(['/billing/organizations/:orgId/subscription/cancel', '/billing/subscriptions/cancel'], verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const orgId = requestOrganizationId(req);
+  if (!orgId) return res.status(400).json({ error: 'organizationId is required' });
 
   try {
     const freePlan = await prisma.plan.findUnique({ where: { type: PlanType.FREE } });
     if (!freePlan) return res.status(500).json({ error: 'FREE_PLAN_NOT_CONFIGURED' });
     const current = await prisma.subscription.findUnique({ where: { organizationId: orgId } });
     if (!current) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
+    if (current.activeProvider === 'PAYSTACK' && current.providerSubscriptionId) {
+      if (!current.providerManagementToken) return res.status(409).json({ error: 'PROVIDER_MANAGEMENT_TOKEN_MISSING' });
+      await disablePaystackSubscription(current.providerSubscriptionId, openPaymentReference(current.providerManagementToken));
+    } else if (current.activeProvider === 'STRIPE' && current.providerSubscriptionId) {
+      await setStripeCancellation(current.providerSubscriptionId, true);
+    } else {
+      return res.status(409).json({ error: 'PROVIDER_SUBSCRIPTION_NOT_LINKED' });
+    }
     const subscription = await prisma.subscription.update({
       where: { organizationId: orgId },
       data: {
         cancelledAt: new Date(),
         pendingPlanId: freePlan.id,
         pendingChangeAt: current.currentPeriodEnd,
+        cancelAtPeriodEnd: true,
       },
       include: { plan: true, pendingPlan: true },
     });
-    await recordPaymentEvent(orgId, 'MOCK', 'subscription.cancellation_scheduled', { source: 'api', effectiveAt: current.currentPeriodEnd });
+    await recordPaymentEvent(orgId, (current.activeProvider || 'PAYSTACK') as Provider, 'subscription.cancellation_scheduled', { source: 'api', effectiveAt: current.currentPeriodEnd });
 
     // Audit: subscription cancelled
     await writeAuditLog(prisma, {
@@ -1223,6 +1705,96 @@ app.post('/billing/organizations/:orgId/subscription/cancel', verifyJwt, require
     console.error('[BillingAPI] Cancel subscription failed', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+app.post('/billing/subscriptions/resume', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  if (!organizationId) return res.status(400).json({ error: 'organizationId is required' });
+  try {
+    const subscription = await prisma.subscription.findUnique({ where: { organizationId } });
+    if (!subscription?.cancelAtPeriodEnd) return res.status(409).json({ error: 'CANCELLATION_NOT_SCHEDULED' });
+    if (subscription.activeProvider === 'PAYSTACK' && subscription.providerSubscriptionId) {
+      if (!subscription.providerManagementToken) return res.status(409).json({ error: 'PROVIDER_MANAGEMENT_TOKEN_MISSING' });
+      await enablePaystackSubscription(subscription.providerSubscriptionId, openPaymentReference(subscription.providerManagementToken));
+    } else if (subscription.activeProvider === 'STRIPE' && subscription.providerSubscriptionId) {
+      await setStripeCancellation(subscription.providerSubscriptionId, false);
+    } else {
+      return res.status(409).json({ error: 'PROVIDER_SUBSCRIPTION_NOT_LINKED' });
+    }
+    const updated = await prisma.subscription.update({
+      where: { organizationId },
+      data: { cancelAtPeriodEnd: false, cancelledAt: null, pendingPlanId: null, pendingChangeAt: null },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('[BillingAPI] Resume subscription failed', err);
+    res.status(500).json({ error: 'SUBSCRIPTION_RESUME_FAILED' });
+  }
+});
+
+app.post(['/billing/payment-method/session', '/billing/subscriptions/migration/paystack/authorize'], verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  if (!organizationId) return res.status(400).json({ error: 'organizationId is required' });
+  try {
+    const [subscription, profile] = await Promise.all([
+      prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } }),
+      prisma.organizationBillingProfile.findUnique({ where: { organizationId } }),
+    ]);
+    if (!subscription) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
+    const isMigration = req.path.includes('/migration/paystack/authorize');
+    if (isMigration && subscription.activeProvider !== 'STRIPE') {
+      return res.status(409).json({ error: 'STRIPE_SUBSCRIPTION_REQUIRED' });
+    }
+    const billingEmail = profile?.billingEmail || '';
+    if (!billingEmail) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
+    const reference = `payment-method-${organizationId}-${Date.now()}`;
+    const result = await initializeTransaction({
+      email: billingEmail,
+      amountKobo: subscription.billingCurrency === BillingCurrency.NGN ? 5_000 : 200,
+      currency: subscription.billingCurrency,
+      reference,
+      organizationId,
+      metadata: { purpose: isMigration ? 'STRIPE_MIGRATION' : 'PAYMENT_METHOD_UPDATE', organizationId },
+      callbackUrl: typeof req.body.successUrl === 'string' ? req.body.successUrl : undefined,
+    });
+    res.status(201).json({ provider: 'PAYSTACK', checkoutUrl: result.authorizationUrl, reference: result.reference });
+  } catch (err) {
+    console.error('[BillingAPI] Payment method session failed', err);
+    res.status(500).json({ error: 'PAYMENT_METHOD_SESSION_FAILED' });
+  }
+});
+
+app.get('/billing/subscriptions/migration/status', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  if (!organizationId) return res.status(400).json({ error: 'organizationId is required' });
+  const subscription = await prisma.subscription.findUnique({ where: { organizationId } });
+  if (!subscription) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
+  const migration = await prisma.subscriptionChange.findFirst({
+    where: { organizationId, direction: 'MIGRATION' },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json({
+    migrationStatus: subscription.migrationStatus,
+    activeProvider: subscription.activeProvider,
+    effectiveAt: migration?.effectiveAt ?? null,
+    status: migration?.status ?? null,
+    authorizationRequired: subscription.activeProvider === 'STRIPE' && subscription.migrationStatus !== 'PAYSTACK_AUTHORIZED',
+  });
+});
+
+app.post('/billing/subscriptions/retry', verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
+  const organizationId = requestOrganizationId(req);
+  if (!organizationId) return res.status(400).json({ error: 'organizationId is required' });
+  const attempt = await prisma.billingDunningAttempt.findFirst({
+    where: { organizationId, status: 'SCHEDULED' },
+    orderBy: { attemptNumber: 'asc' },
+  });
+  if (!attempt) return res.status(404).json({ error: 'NO_PAYMENT_RETRY_AVAILABLE' });
+  const updated = await prisma.billingDunningAttempt.update({
+    where: { id: attempt.id },
+    data: { scheduledAt: new Date() },
+  });
+  res.status(202).json({ status: 'RETRY_SCHEDULED', attemptId: updated.id });
 });
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));

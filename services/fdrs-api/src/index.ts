@@ -946,7 +946,7 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     let aiInvocationId: string | undefined;
     if (result.aiCalled) {
       const invocation = await prisma.aIInvocationLog.create({ data: {
-        organizationId, applicationId: appId, feature: 'FLOW_SUGGESTIONS', provider: result.provider ?? 'unknown',
+        organizationId, applicationId: appId, feature: 'FLOW_SUGGESTION', provider: result.provider ?? 'unknown',
         model: result.model ?? 'unknown', promptHash: result.promptHash ?? '', status: result.fallbackUsed ? 'FALLBACK_USED' : 'SUCCESS',
         fallbackUsed: result.fallbackUsed, repaired: result.aiRepaired, latencyMs: result.latencyMs,
       } as any });
@@ -2362,7 +2362,7 @@ app.post(
             data: {
               organizationId,
               applicationId,
-              feature: 'FLOW_SUGGESTIONS',
+              feature: 'FLOW_SUGGESTION',
               provider: result.provider ?? 'unknown',
               model: result.model ?? 'unknown',
               promptHash: result.promptHash ?? '',

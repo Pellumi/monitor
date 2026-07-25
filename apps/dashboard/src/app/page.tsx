@@ -3,13 +3,26 @@ import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useQuery } from '@tanstack/react-query';
 
-import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
-import Link from 'next/link';
+import { useSelectedApplication } from '@/hooks/use-selected-application';
+import { ApplicationRequiredState } from '@/components/application-required-state';
+import { EmptyState } from '@/components/empty-state';
 
 const REPORT_ENGINE = '/api-gateway';
 
-async function fetchReport(appId: string) {
+interface OverviewReport {
+  summary: { sessionCount: number; workflowCount: number };
+  coverage: {
+    expectedCoverage: number | null;
+    stateCoverage: number;
+    transitionCoverage: number;
+    flowCoverage: number;
+  };
+  missingStates: Array<{ stateName: string; confidence: number }>;
+  missingFlows: Array<{ path: string[] }>;
+}
+
+async function fetchReport(appId: string): Promise<OverviewReport> {
   const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/latest`);
   if (!res.ok) {
     throw new Error('Network response was not ok');
@@ -18,8 +31,8 @@ async function fetchReport(appId: string) {
 }
 
 function OverviewContent() {
-  const searchParams = useSearchParams();
-  const appId = searchParams.get('appId');
+  const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
+    useSelectedApplication();
 
   const { data, error, isLoading } = useQuery({
     queryKey: ['report', appId],
@@ -27,30 +40,27 @@ function OverviewContent() {
     enabled: !!appId,
   });
 
-  if (!appId) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[70vh] text-center max-w-md mx-auto space-y-6">
-        <div className="w-16 h-16 rounded-md bg-[#131313] border border-[#262626] text-white flex items-center justify-center font-bold text-xl shadow-lg font-mono">
-          T
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-2 tracking-tight">Welcome to Tellann Platform</h1>
-          <p className="text-[#c4c7c8] text-sm leading-relaxed">
-            To start tracking expected states, transitions, and observing behavioral gaps, you need to configure your first application.
-          </p>
-        </div>
-        <Link
-          href="/onboarding"
-          className="px-6 py-2.5 bg-white text-black font-semibold rounded-md hover:bg-neutral-200 transition-colors text-sm shadow-md cursor-pointer"
-        >
-          Create First Application
-        </Link>
-      </div>
-    );
-  }
+  if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
+  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
+  if (!appId) return <ApplicationRequiredState feature="Coverage Overview" />;
 
   if (isLoading) return <div className="text-neutral-400 font-mono text-xs">Loading overview...</div>;
   if (error) return <div className="text-red-400 font-mono text-xs">Error loading data: {(error as Error).message}</div>;
+  if (!data) return null;
+  if (data.summary.sessionCount === 0 && data.summary.workflowCount === 0) {
+    return (
+      <EmptyState
+        variant="activation"
+        illustration="telemetry"
+        eyebrow="Workspace ready"
+        title="Send your first behavior signal"
+        description="Coverage, sessions, and discovered workflows will assemble here after the SDK starts sending telemetry."
+        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        secondaryAction={{ label: 'Declare expected behavior', href: `/declare?appId=${encodeURIComponent(appId)}` }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -71,13 +81,24 @@ function OverviewContent() {
         <div className="rounded-md border border-[#262626] bg-[#131313] p-6">
           <h2 className="text-base font-semibold text-white mb-4">Top Missing States</h2>
           <ul className="space-y-2">
-            {data.missingStates.slice(0, 5).map((state: any) => (
+            {data.missingStates.slice(0, 5).map((state) => (
               <li key={state.stateName} className="flex items-center justify-between py-2 border-b border-[#262626] last:border-0">
                 <span className="text-xs font-mono text-neutral-300">{state.stateName}</span>
                 <span className="text-[11px] font-mono text-neutral-500">{(state.confidence * 100).toFixed(0)}% confidence</span>
               </li>
             ))}
-            {data.missingStates.length === 0 && <li className="text-xs text-neutral-500">No missing states found.</li>}
+            {data.missingStates.length === 0 && (
+              <li>
+                <EmptyState
+                  variant="success"
+                  illustration="coverage"
+                  layout="compact"
+                  eyebrow="State coverage"
+                  title="No missing states"
+                  description="All expected states were reached."
+                />
+              </li>
+            )}
           </ul>
         </div>
 
@@ -89,7 +110,18 @@ function OverviewContent() {
                 <span className="text-xs font-mono text-neutral-400">{flow.path.join(' → ')}</span>
               </li>
             ))}
-            {data.missingFlows.length === 0 && <li className="text-xs text-neutral-500">No missing flows found.</li>}
+            {data.missingFlows.length === 0 && (
+              <li>
+                <EmptyState
+                  variant="success"
+                  illustration="coverage"
+                  layout="compact"
+                  eyebrow="Flow coverage"
+                  title="No missing flows"
+                  description="No untested workflow variations were detected."
+                />
+              </li>
+            )}
           </ul>
         </div>
       </div>

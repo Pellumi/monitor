@@ -1,5 +1,6 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Button } from '@/components/ui/button';
 
 import { useEffect, useState } from 'react';
 import { useSession } from '@/components/providers';
@@ -157,12 +158,13 @@ export default function AdminJobsPage() {
               <><Pause className="h-3 w-3" /> Paused</>
             )}
           </button>
-          <button
+          <Button
             onClick={fetchStatus}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-400 hover:bg-neutral-900 hover:text-white text-xs font-medium transition-colors"
+            variant="secondary"
+            size="sm"
           >
             <RefreshCw className="h-3 w-3" /> Refresh
-          </button>
+          </Button>
           <a
             href={bullBoardUrl}
             target="_blank"

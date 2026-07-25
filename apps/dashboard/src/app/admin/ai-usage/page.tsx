@@ -1,5 +1,8 @@
 'use client';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { EmptyState } from '@/components/empty-state';
+import { Button } from '@/components/ui/button';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSession } from '@/components/providers';
@@ -113,27 +116,34 @@ export default function AdminAiUsagePage() {
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-neutral-400">Period:</label>
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-200 text-xs px-3 py-2 focus:outline-none focus:border-indigo-500"
+          <Select
+            value={String(days)}
+            onValueChange={(val) => setDays(Number(val))}
           >
-            {[7, 14, 30, 60, 90].map((d) => (
-              <option key={d} value={d}>Last {d} days</option>
-            ))}
-          </select>
-          <button
+            <SelectTrigger className="w-[120px] py-1.5 text-xs">
+              <SelectValue placeholder="Period">
+                {`Last ${days} days`}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {[7, 14, 30, 60, 90].map((d) => (
+                <SelectItem key={d} value={String(d)}>
+                  Last {d} days
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="accent"
+            size="sm"
             onClick={runBackfill}
             disabled={isBackfilling || isLoading}
-            className="flex items-center gap-1.5 rounded-lg border border-indigo-800 bg-indigo-950/40 text-indigo-300 px-3 py-2 text-xs font-medium hover:bg-indigo-900/40 disabled:opacity-50 transition"
+            loading={isBackfilling}
+            className="border-indigo-800 text-indigo-300 hover:border-indigo-600"
           >
-            {isBackfilling ? (
-              <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
-            ) : (
-              <BarChart3 className="h-3 w-3 text-indigo-400" />
-            )}
+            {!isBackfilling && <BarChart3 className="h-3 w-3 text-indigo-400" />}
             {isBackfilling ? 'Aggregating...' : 'Sync Metrics'}
-          </button>
+          </Button>
           {isLoading && <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />}
         </div>
       </div>
@@ -217,7 +227,18 @@ export default function AdminAiUsagePage() {
                     </tr>
                   ))}
                   {daily.length === 0 && (
-                    <tr><td colSpan={5} className="text-center py-8 text-neutral-500 text-xs">No data for this period.</td></tr>
+                    <tr>
+                      <td colSpan={5} className="p-4">
+                        <EmptyState
+                          variant="neutral"
+                          illustration="report"
+                          layout="compact"
+                          eyebrow="AI usage"
+                          title="No usage in this period"
+                          description="Invocation and cost data will appear when AI-assisted features run."
+                        />
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>

@@ -8,36 +8,38 @@ generator client {
 }
 
 model Organization {
-  id                        String                     @id @default(uuid())
-  name                      String
-  slug                      String                     @unique
-  createdByUserId           String?
-  createdAt                 DateTime                   @default(now())
+  id              String   @id @default(uuid())
+  name            String
+  slug            String   @unique
+  createdByUserId String?
+  createdAt       DateTime @default(now())
 
   // ─── Gap 4: Cross-tenant pattern matching ───────────────────────────────
   // Opted IN by default — org contributes anonymized state patterns to the
   // shared cross-tenant index. Org admins can disable this in settings.
-  allowCrossTenantPatterns  Boolean                    @default(true)
+  allowCrossTenantPatterns Boolean @default(true)
 
   // ─── Gap 5: MFA enforcement ─────────────────────────────────────────────
   // When true, OWNER/ADMIN members must have TOTP enabled to access the dashboard.
-  mfaRequiredForAdmins      Boolean                    @default(false)
+  mfaRequiredForAdmins Boolean @default(false)
 
-  memberships               OrganizationMembership[]
-  invitations               OrganizationInvitation[]
-  applications              Application[]
-  intentNormalizations      IntentNormalizationEntry[]
-  subscription              Subscription?
-  entitlement               Entitlement?
-  notificationPreferences   NotificationPreference[]
-  notificationEvents        NotificationEvent[]
-  oidcProvider              OIDCProvider?
-  billingProfile            OrganizationBillingProfile?
-  enterpriseSalesRequests   EnterpriseSalesRequest[]
-  enterpriseAgreement       EnterpriseAgreement?
-  storageLedgerEntries      StorageLedgerEntry[]
-  programmaticAccessTokens  ProgrammaticAccessToken[]
-  trialHistory              SubscriptionTrialHistory[]
+  memberships              OrganizationMembership[]
+  invitations              OrganizationInvitation[]
+  applications             Application[]
+  intentNormalizations     IntentNormalizationEntry[]
+  subscription             Subscription?
+  entitlement              Entitlement?
+  notificationPreferences  NotificationPreference[]
+  notificationEvents       NotificationEvent[]
+  oidcProvider             OIDCProvider?
+  billingProfile           OrganizationBillingProfile?
+  enterpriseSalesRequests  EnterpriseSalesRequest[]
+  enterpriseAgreement      EnterpriseAgreement?
+  storageLedgerEntries     StorageLedgerEntry[]
+  programmaticAccessTokens ProgrammaticAccessToken[]
+  trialHistory             SubscriptionTrialHistory[]
+  settings                 OrganizationSettings?
+  securitySettings         OrganizationSecuritySettings?
 }
 
 enum RulesetScope {
@@ -169,37 +171,37 @@ enum AIInvocationStatus {
 }
 
 model Domain {
-  id          String   @id @default(uuid())
-  key         String   @unique
+  id          String  @id @default(uuid())
+  key         String  @unique
   name        String
   description String?
-  isSystem    Boolean  @default(true)
-  isActive    Boolean  @default(true)
+  isSystem    Boolean @default(true)
+  isActive    Boolean @default(true)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  rulesets    DomainRuleset[]
+  rulesets DomainRuleset[]
 }
 
 model DomainRuleset {
-  id             String        @id @default(uuid())
-  domainId       String
-  key            String
-  name           String
-  description    String?
-  scope          RulesetScope  @default(GLOBAL)
-  status         RulesetStatus @default(ACTIVE)
-  priority       Int           @default(100)
+  id          String        @id @default(uuid())
+  domainId    String
+  key         String
+  name        String
+  description String?
+  scope       RulesetScope  @default(GLOBAL)
+  status      RulesetStatus @default(ACTIVE)
+  priority    Int           @default(100)
 
   organizationId String?
   applicationId  String?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  domain         Domain @relation(fields: [domainId], references: [id])
-  versions       DomainRulesetVersion[]
+  domain   Domain                 @relation(fields: [domainId], references: [id])
+  versions DomainRulesetVersion[]
 
   @@unique([domainId, key, organizationId, applicationId])
   @@index([domainId, status])
@@ -208,21 +210,21 @@ model DomainRuleset {
 }
 
 model DomainRulesetVersion {
-  id          String               @id @default(uuid())
-  rulesetId   String
-  version     Int
-  status      RulesetVersionStatus @default(DRAFT)
-  changelog   String?
-  metadata    Json?
+  id        String               @id @default(uuid())
+  rulesetId String
+  version   Int
+  status    RulesetVersionStatus @default(DRAFT)
+  changelog String?
+  metadata  Json?
 
-  createdBy   String?
-  promotedBy  String?
-  promotedAt  DateTime?
+  createdBy  String?
+  promotedBy String?
+  promotedAt DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  ruleset       DomainRuleset @relation(fields: [rulesetId], references: [id])
+  ruleset       DomainRuleset  @relation(fields: [rulesetId], references: [id])
   patterns      RulePattern[]
   flowTemplates FlowTemplate[]
 
@@ -244,11 +246,11 @@ model RulePattern {
   source           RuleSource      @default(SYSTEM)
   isActive         Boolean         @default(true)
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  rulesetVersion   DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
-  triggers         RuleTrigger[]
+  rulesetVersion DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
+  triggers       RuleTrigger[]
 
   @@index([rulesetVersionId, patternType])
   @@index([source])
@@ -262,7 +264,7 @@ model RuleTrigger {
   weight        Float           @default(1.0)
   createdAt     DateTime        @default(now())
 
-  rulePattern   RulePattern @relation(fields: [rulePatternId], references: [id])
+  rulePattern RulePattern @relation(fields: [rulePatternId], references: [id])
 
   @@index([triggerType, value])
   @@index([rulePatternId])
@@ -283,42 +285,42 @@ model FlowTemplate {
   confidenceBase     Float   @default(0.75)
   isActive           Boolean @default(true)
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  rulesetVersion     DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
+  rulesetVersion DomainRulesetVersion @relation(fields: [rulesetVersionId], references: [id])
 
   @@index([rulesetVersionId])
   @@index([workflowType])
 }
 
 model AIFlowDraft {
-  id                      String            @id @default(uuid())
-  organizationId          String
-  applicationId           String
-  environmentId           String?
-  source                  AIFlowDraftSource
-  status                  AIFlowDraftStatus @default(PENDING_REVIEW)
+  id                     String            @id @default(uuid())
+  organizationId         String
+  applicationId          String
+  environmentId          String?
+  source                 AIFlowDraftSource
+  status                 AIFlowDraftStatus @default(PENDING_REVIEW)
   /// Stores only the sanitized/redacted description — never raw user input
-  productDescription      String?
+  productDescription     String?
   /// SHA-256 of the original raw description for audit deduplication (raw text never stored)
-  productDescriptionHash  String?
-  inferredDomainKey       String?
-  rulesetVersionIds       String[]          @default([])
-  promptHash              String
-  provider                String
-  model                   String
-  aiInvocationId          String?
-  draftJson               Json
-  validationJson          Json?
-  confidence              Float             @default(0.0)
-  createdBy               String?
-  reviewedBy              String?
-  reviewedAt              DateTime?
-  rejectionReason         String?
+  productDescriptionHash String?
+  inferredDomainKey      String?
+  rulesetVersionIds      String[]          @default([])
+  promptHash             String
+  provider               String
+  model                  String
+  aiInvocationId         String?
+  draftJson              Json
+  validationJson         Json?
+  confidence             Float             @default(0.0)
+  createdBy              String?
+  reviewedBy             String?
+  reviewedAt             DateTime?
+  rejectionReason        String?
 
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([organizationId, applicationId])
   @@index([status])
@@ -338,44 +340,44 @@ enum AIFlowDraftJobStatus {
 }
 
 model AIFlowDraftJob {
-  id                  String               @id @default(uuid())
-  organizationId      String
-  applicationId       String
-  environmentId       String?
-  source              AIFlowDraftSource
+  id                 String               @id @default(uuid())
+  organizationId     String
+  applicationId      String
+  environmentId      String?
+  source             AIFlowDraftSource
   /// Already-sanitized description; raw text is never stored
-  productDescription  String
-  domainKey           String
-  rulesetVersionIds   String[]             @default([])
-  status              AIFlowDraftJobStatus @default(QUEUED)
+  productDescription String
+  domainKey          String
+  rulesetVersionIds  String[]             @default([])
+  status             AIFlowDraftJobStatus @default(QUEUED)
   /// Populated when status = COMPLETED
-  draftId             String?
-  errorMessage        String?
-  attempts            Int                  @default(0)
-  maxAttempts         Int                  @default(3)
-  scheduledAt         DateTime             @default(now())
-  startedAt           DateTime?
-  completedAt         DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  draftId            String?
+  errorMessage       String?
+  attempts           Int                  @default(0)
+  maxAttempts        Int                  @default(3)
+  scheduledAt        DateTime             @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   @@index([status, scheduledAt])
   @@index([organizationId, applicationId])
 }
 
 model RuleFeedback {
-  id              String           @id @default(uuid())
-  organizationId  String
-  applicationId   String?
-  rulePatternId   String?
-  suggestionId    String?
-  aiFlowDraftId   String?
-  feedbackType    RuleFeedbackType
-  beforeJson      Json?
-  afterJson       Json?
-  comment         String?
-  createdBy       String?
-  createdAt       DateTime         @default(now())
+  id             String           @id @default(uuid())
+  organizationId String
+  applicationId  String?
+  rulePatternId  String?
+  suggestionId   String?
+  aiFlowDraftId  String?
+  feedbackType   RuleFeedbackType
+  beforeJson     Json?
+  afterJson      Json?
+  comment        String?
+  createdBy      String?
+  createdAt      DateTime         @default(now())
 
   @@index([organizationId, applicationId])
   @@index([rulePatternId])
@@ -384,20 +386,20 @@ model RuleFeedback {
 }
 
 model RuleCandidate {
-  id                     String              @id @default(uuid())
-  domainId               String?
-  organizationId         String?
-  applicationId          String?
-  source                 RuleCandidateSource
-  status                 RuleCandidateStatus @default(PENDING_REVIEW)
-  candidateJson          Json
-  evidenceJson           Json?
-  confidence             Float               @default(0.0)
-  promotedRulePatternId  String?
-  reviewedBy             String?
-  reviewedAt             DateTime?
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
+  id                    String              @id @default(uuid())
+  domainId              String?
+  organizationId        String?
+  applicationId         String?
+  source                RuleCandidateSource
+  status                RuleCandidateStatus @default(PENDING_REVIEW)
+  candidateJson         Json
+  evidenceJson          Json?
+  confidence            Float               @default(0.0)
+  promotedRulePatternId String?
+  reviewedBy            String?
+  reviewedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   @@index([domainId])
   @@index([status])
@@ -425,8 +427,8 @@ model AIInvocationLog {
   totalTokens       Int?
   latencyMs         Int?
   costEstimate      Decimal?
-  repaired          Boolean @default(false)
-  fallbackUsed      Boolean @default(false)
+  repaired          Boolean            @default(false)
+  fallbackUsed      Boolean            @default(false)
   createdBy         String?
   createdAt         DateTime           @default(now())
 
@@ -442,7 +444,7 @@ model AIInvocationLog {
 
 enum PlanType {
   FREE
-  LOCAL       // Nigeria-only
+  LOCAL // Nigeria-only
   SOLO
   TEAM
   BUSINESS
@@ -474,24 +476,24 @@ model Plan {
   type            PlanType @unique
   name            String
   description     String?
-  monthlyPriceUsd Int?     // Price in cents (2900 = $29)
-  monthlyPriceNgn Int?     // Price in kobo (4200000 = ₦42,000)
-  annualPriceUsd  Int?     // Price in cents
-  annualPriceNgn  Int?     // Price in kobo
+  monthlyPriceUsd Int? // Price in cents (2900 = $29)
+  monthlyPriceNgn Int? // Price in kobo (4200000 = ₦42,000)
+  annualPriceUsd  Int? // Price in cents
+  annualPriceNgn  Int? // Price in kobo
   isPublic        Boolean  @default(true)
   sortOrder       Int      @default(0)
 
   // Resource limits
-  maxApplications Int
-  maxEnvironmentsPerApp Int @default(1)
-  maxApiKeys      Int @default(1)
-  maxUsers        Int
-  maxStorageGb    Int
-  retentionDays   Int
-  maxDemoSessions Int?     // null = unlimited
+  maxApplications       Int
+  maxEnvironmentsPerApp Int  @default(1)
+  maxApiKeys            Int  @default(1)
+  maxUsers              Int
+  maxStorageGb          Int
+  retentionDays         Int
+  maxDemoSessions       Int? // null = unlimited
 
-  featureFlags  FeatureFlag[]
-  subscriptions Subscription[]
+  featureFlags         FeatureFlag[]
+  subscriptions        Subscription[]
   pendingSubscriptions Subscription[] @relation("PendingSubscriptionPlan")
 
   createdAt DateTime @default(now())
@@ -502,7 +504,7 @@ model FeatureFlag {
   id      String  @id @default(uuid())
   planId  String
   plan    Plan    @relation(fields: [planId], references: [id])
-  feature String  // e.g. "SESSION_REPLAY", "API_ACCESS", "SSO"
+  feature String // e.g. "SESSION_REPLAY", "API_ACCESS", "SSO"
   enabled Boolean @default(false)
   tier    String? // e.g. "BASIC", "ADVANCED", "ALL_FORMATS"
 
@@ -512,22 +514,41 @@ model FeatureFlag {
 }
 
 model Subscription {
-  id                       String             @id @default(uuid())
-  organizationId           String             @unique
-  organization             Organization       @relation(fields: [organizationId], references: [id])
-  planId                   String
-  plan                     Plan               @relation(fields: [planId], references: [id])
-  status                   SubscriptionStatus @default(ACTIVE)
-  billingInterval          BillingInterval    @default(MONTHLY)
-  billingCurrency          BillingCurrency    @default(USD)
+  id              String             @id @default(uuid())
+  organizationId  String             @unique
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  planId          String
+  plan            Plan               @relation(fields: [planId], references: [id])
+  status          SubscriptionStatus @default(ACTIVE)
+  billingInterval BillingInterval    @default(MONTHLY)
+  billingCurrency BillingCurrency    @default(USD)
 
   // Stripe references (Phase 1.8C)
-  stripeCustomerId         String?
-  stripeSubscriptionId     String?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
 
   // Paystack references (Phase 1.8C)
   paystackCustomerCode     String?
   paystackSubscriptionCode String?
+
+  // Canonical provider state. Legacy provider-specific fields remain populated
+  // during migration so existing subscriptions can be reconciled safely.
+  activeProvider            String?
+  providerCustomerId        String?
+  providerSubscriptionId    String?
+  providerPlanCode          String?
+  providerManagementToken   String?
+  providerPeriodStart       DateTime?
+  providerPeriodEnd         DateTime?
+  providerNextChargeAt      DateTime?
+  paymentMethodReference    String?
+  paymentMethodBrand        String?
+  paymentMethodLast4        String?
+  paymentMethodExpMonth     String?
+  paymentMethodExpYear      String?
+  paymentMethodAuthorizedAt DateTime?
+  cancelAtPeriodEnd         Boolean   @default(false)
+  migrationStatus           String    @default("NONE")
 
   // Enterprise overrides (JSON: { maxApplications: 200, ... })
   enterpriseOverrides Json?
@@ -538,12 +559,83 @@ model Subscription {
   cancelledAt        DateTime?
   suspendedAt        DateTime?
   pendingPlanId      String?
-  pendingPlan        Plan?                @relation("PendingSubscriptionPlan", fields: [pendingPlanId], references: [id])
+  pendingPlan        Plan?     @relation("PendingSubscriptionPlan", fields: [pendingPlanId], references: [id])
   pendingChangeAt    DateTime?
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   usageRecords UsageRecord[]
+}
+
+model BillingProviderPlan {
+  id               String          @id @default(uuid())
+  planType         PlanType
+  billingInterval  BillingInterval
+  currency         BillingCurrency
+  provider         String
+  environment      String          @default("production")
+  providerPlanCode String
+  version          Int             @default(1)
+  active           Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  retiredAt        DateTime?
+
+  @@unique([planType, billingInterval, currency, provider, environment, version])
+  @@index([planType, billingInterval, currency, provider, environment, active])
+}
+
+model SubscriptionChange {
+  id                  String           @id @default(uuid())
+  organizationId      String
+  sourcePlanId        String?
+  targetPlanId        String
+  sourceInterval      BillingInterval?
+  targetInterval      BillingInterval
+  currency            BillingCurrency
+  direction           String
+  effectiveMode       String
+  status              String           @default("PREVIEWED")
+  previewedAt         DateTime         @default(now())
+  previewExpiresAt    DateTime
+  prorationAt         DateTime
+  amountDue           Int              @default(0)
+  creditAmount        Int              @default(0)
+  nextCycleAmount     Int
+  effectiveAt         DateTime?
+  provider            String?
+  providerOperationId String?
+  providerReference   String?
+  idempotencyKey      String           @unique
+  processingError     String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([organizationId, status])
+  @@index([effectiveAt, status])
+}
+
+model BillingDunningAttempt {
+  id                 String          @id @default(uuid())
+  organizationId     String
+  invoiceId          String?
+  provider           String
+  providerReference  String?
+  attemptNumber      Int
+  scheduledAt        DateTime
+  startedAt          DateTime?
+  completedAt        DateTime?
+  status             String          @default("SCHEDULED")
+  amount             Int
+  currency           BillingCurrency
+  idempotencyKey     String          @unique
+  processingError    String?
+  customerNotifiedAt DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([organizationId, providerReference, attemptNumber])
+  @@index([scheduledAt, status])
+  @@index([organizationId, status])
 }
 
 model Entitlement {
@@ -683,7 +775,7 @@ model UsageRecord {
   environmentId  String?
   metric         UsageMetric
   value          Float
-  limit          Float?       // Plan limit (null = unlimited)
+  limit          Float? // Plan limit (null = unlimited)
   periodStart    DateTime
   periodEnd      DateTime
   recordedAt     DateTime     @default(now())
@@ -716,7 +808,7 @@ model Invoice {
   planType               PlanType
   billingInterval        BillingInterval
   currency               BillingCurrency
-  subtotal               Int             // In smallest unit (cents/kobo)
+  subtotal               Int // In smallest unit (cents/kobo)
   tax                    Int             @default(0)
   total                  Int
   status                 String          @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
@@ -732,30 +824,30 @@ model Invoice {
   createdAt              DateTime        @default(now())
   paymentEvents          PaymentEvent[]
 
+  @@unique([provider, providerReference])
   @@index([organizationId, createdAt])
   @@index([provider, providerSubscriptionId])
-  @@unique([provider, providerReference])
 }
 
 model PaymentEvent {
-  id               String   @id @default(uuid())
-  organizationId   String
-  provider         String   // "STRIPE" | "PAYSTACK"
-  eventType        String   // "checkout.completed", "invoice.paid", etc.
-  providerEventId  String?
+  id                String    @id @default(uuid())
+  organizationId    String
+  provider          String // "STRIPE" | "PAYSTACK"
+  eventType         String // "checkout.completed", "invoice.paid", etc.
+  providerEventId   String?
   providerReference String?
-  invoiceId        String?
-  invoice          Invoice? @relation(fields: [invoiceId], references: [id])
-  payload          Json
-  processingStatus String   @default("PROCESSED")
-  processingError  String?
-  receivedAt       DateTime @default(now())
-  processedAt      DateTime?
+  invoiceId         String?
+  invoice           Invoice?  @relation(fields: [invoiceId], references: [id])
+  payload           Json
+  processingStatus  String    @default("PROCESSED")
+  processingError   String?
+  receivedAt        DateTime  @default(now())
+  processedAt       DateTime?
 
+  @@unique([provider, providerEventId])
   @@index([organizationId, processedAt])
   @@index([invoiceId])
   @@index([provider, providerReference])
-  @@unique([provider, providerEventId])
 }
 
 model ApiKey {
@@ -770,8 +862,8 @@ model ApiKey {
   createdAt       DateTime    @default(now())
   lastUsedAt      DateTime?
   revokedAt       DateTime?
-  expiresAt       DateTime?   // Explicit expiry for rotation policies
-  createdByUserId String?     // Audit: which user generated this key
+  expiresAt       DateTime? // Explicit expiry for rotation policies
+  createdByUserId String? // Audit: which user generated this key
 }
 
 model Application {
@@ -780,7 +872,7 @@ model Application {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
-  environments      Environment[]
+  environments       Environment[]
   onboardingProgress ApplicationOnboardingProgress?
 
   sessions          Session[]
@@ -922,18 +1014,18 @@ model MissingState {
 }
 
 model CoverageSnapshot {
-  id                 String      @id @default(uuid())
+  id                 String       @id @default(uuid())
   applicationId      String
-  application        Application @relation(fields: [applicationId], references: [id])
+  application        Application  @relation(fields: [applicationId], references: [id])
   environmentId      String?
   environment        Environment? @relation(fields: [environmentId], references: [id])
-  createdAt          DateTime    @default(now())
+  createdAt          DateTime     @default(now())
   observedStates     Int
   candidateStates    Int
   approvedStates     Int
   coveragePercent    Float
-  transitionCoverage Float       @default(0)
-  flowCoverage       Float       @default(0)
+  transitionCoverage Float        @default(0)
+  flowCoverage       Float        @default(0)
 }
 
 model MissingFlow {
@@ -961,14 +1053,14 @@ model Workflow {
 }
 
 model Demonstration {
-  id            String      @id @default(uuid())
+  id            String       @id @default(uuid())
   applicationId String
-  application   Application @relation(fields: [applicationId], references: [id])
+  application   Application  @relation(fields: [applicationId], references: [id])
   environmentId String?
   environment   Environment? @relation(fields: [environmentId], references: [id])
   sessionId     String
   reportId      String?
-  startedAt     DateTime    @default(now())
+  startedAt     DateTime     @default(now())
   completedAt   DateTime?
 }
 
@@ -1030,7 +1122,7 @@ model BehaviorGraph {
   application   Application     @relation(fields: [applicationId], references: [id])
   environmentId String?
   environment   Environment?    @relation(fields: [environmentId], references: [id])
-  isActive      Boolean         @default(true)  // Only one active version per app/env at a time
+  isActive      Boolean         @default(true) // Only one active version per app/env at a time
   name          String
   status        FlowStatus      @default(DRAFT)
   version       Int             @default(1)
@@ -1052,33 +1144,33 @@ model BehaviorGraph {
 }
 
 model BehaviorGraphNode {
-  id                String                  @id @default(uuid())
+  id                String          @id @default(uuid())
   graphId           String
-  graph             BehaviorGraph           @relation(fields: [graphId], references: [id])
+  graph             BehaviorGraph   @relation(fields: [graphId], references: [id])
   stateName         String
-  behaviorKey       String?                 // Stable semantic identity
-  category          StateCategory           @default(BUSINESS)
-  provenance        StateProvenance         @default(USER_AUTHORED)
+  behaviorKey       String? // Stable semantic identity
+  category          StateCategory   @default(BUSINESS)
+  provenance        StateProvenance @default(USER_AUTHORED)
   declaredById      String?
   canonicalBehavior String?
-  createdAt         DateTime                @default(now())
+  createdAt         DateTime        @default(now())
 
-  suggestions     DeclaredStateSuggestion[]
-  edgesFrom       BehaviorGraphEdge[]       @relation("FromNode")
-  edgesTo         BehaviorGraphEdge[]       @relation("ToNode")
+  suggestions DeclaredStateSuggestion[]
+  edgesFrom   BehaviorGraphEdge[]       @relation("FromNode")
+  edgesTo     BehaviorGraphEdge[]       @relation("ToNode")
 }
 
 model BehaviorGraphEdge {
-  id          String          @id @default(uuid())
-  graphId     String
-  graph       BehaviorGraph   @relation(fields: [graphId], references: [id])
-  fromNodeId  String
-  fromNode    BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
-  toNodeId    String
-  toNode      BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
-  action      String?
-  provenance  StateProvenance   @default(USER_AUTHORED)
-  createdAt   DateTime        @default(now())
+  id         String            @id @default(uuid())
+  graphId    String
+  graph      BehaviorGraph     @relation(fields: [graphId], references: [id])
+  fromNodeId String
+  fromNode   BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
+  toNodeId   String
+  toNode     BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
+  action     String?
+  provenance StateProvenance   @default(USER_AUTHORED)
+  createdAt  DateTime          @default(now())
 }
 
 model DeclaredStateSuggestion {
@@ -1118,17 +1210,17 @@ model DeclaredStateSuggestion {
 
   outcomes SuggestionOutcome[]
 
+  @@unique([flowId, graphHash, dedupeKey])
   @@index([organizationId, applicationId])
   @@index([flowId])
   @@index([status])
   @@index([suggestionType])
   @@index([flowId, graphHash, status])
-  @@unique([flowId, graphHash, dedupeKey])
 }
 
 model CompiledRuleset {
   id            String        @id @default(uuid())
-  flowId        String        // Map flowId to BehaviorGraph.id
+  flowId        String // Map flowId to BehaviorGraph.id
   flow          BehaviorGraph @relation(fields: [flowId], references: [id])
   applicationId String
   application   Application   @relation(fields: [applicationId], references: [id])
@@ -1142,7 +1234,7 @@ model CompiledRuleset {
 
 model ReconciliationReport {
   id            String        @id @default(uuid())
-  flowId        String        // Map flowId to BehaviorGraph.id
+  flowId        String // Map flowId to BehaviorGraph.id
   flow          BehaviorGraph @relation(fields: [flowId], references: [id])
   applicationId String
   application   Application   @relation(fields: [applicationId], references: [id])
@@ -1202,7 +1294,7 @@ model PatternLibraryEntry {
   libraryVersion     String
   active             Boolean @default(true)
 
-  outcomes           SuggestionOutcome[]
+  outcomes            SuggestionOutcome[]
   patternObservations PatternObservation[]
 }
 
@@ -1233,15 +1325,15 @@ model SuggestionOutcome {
 }
 
 model ObservedGraphSnapshot {
-  id              String      @id @default(uuid())
+  id              String       @id @default(uuid())
   applicationId   String
-  application     Application @relation(fields: [applicationId], references: [id])
+  application     Application  @relation(fields: [applicationId], references: [id])
   environmentId   String?
   environment     Environment? @relation(fields: [environmentId], references: [id])
   snapshot        Json
   stateCount      Int
   transitionCount Int
-  capturedAt      DateTime    @default(now())
+  capturedAt      DateTime     @default(now())
 }
 
 model PromotionDecision {
@@ -1292,17 +1384,17 @@ model Environment {
   id            String          @id @default(uuid())
   applicationId String
   application   Application     @relation(fields: [applicationId], references: [id])
-  name          String          // e.g. "Development", "Staging", "Production"
+  name          String // e.g. "Development", "Staging", "Production"
   type          EnvironmentType @default(DEVELOPMENT)
   isDefault     Boolean         @default(false)
   sdkEnabled    Boolean         @default(true)
 
-  apiKeys              ApiKey[]
-  sessions             Session[]
-  behaviorGraphs       BehaviorGraph[]
-  coverageSnapshots    CoverageSnapshot[]
-  observedSnapshots    ObservedGraphSnapshot[]
-  demonstrations       Demonstration[]
+  apiKeys               ApiKey[]
+  sessions              Session[]
+  behaviorGraphs        BehaviorGraph[]
+  coverageSnapshots     CoverageSnapshot[]
+  observedSnapshots     ObservedGraphSnapshot[]
+  demonstrations        Demonstration[]
   reconciliationReports ReconciliationReport[]
 
   createdAt DateTime @default(now())
@@ -1312,20 +1404,20 @@ model Environment {
 }
 
 model ApplicationOnboardingProgress {
-  id                       String      @id @default(uuid())
-  applicationId            String      @unique
-  application              Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  organizationCreated      Boolean     @default(true)
-  applicationCreated       Boolean     @default(true)
-  templateSelected         Boolean     @default(false)
-  expectedFlowsDefined     Boolean     @default(false)
-  installationTestPassed   Boolean     @default(false)
-  sdkConnected             Boolean     @default(false)
-  demonstrationCompleted   Boolean     @default(false)
-  firstReportGenerated     Boolean     @default(false)
-  valueRealized            Boolean     @default(false)
-  valueRealizedReason      String?
-  completedAt              DateTime?
+  id                     String      @id @default(uuid())
+  applicationId          String      @unique
+  application            Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  organizationCreated    Boolean     @default(true)
+  applicationCreated     Boolean     @default(true)
+  templateSelected       Boolean     @default(false)
+  expectedFlowsDefined   Boolean     @default(false)
+  installationTestPassed Boolean     @default(false)
+  sdkConnected           Boolean     @default(false)
+  demonstrationCompleted Boolean     @default(false)
+  firstReportGenerated   Boolean     @default(false)
+  valueRealized          Boolean     @default(false)
+  valueRealizedReason    String?
+  completedAt            DateTime?
 }
 
 model ActivationEvent {
@@ -1352,9 +1444,9 @@ enum MemberRole {
 }
 
 enum OtpPurpose {
-  SIGNUP      // New user — OTP sent before User exists
-  LOGIN       // Returning user OTP auth
-  INVITE      // Accept org invitation
+  SIGNUP // New user — OTP sent before User exists
+  LOGIN // Returning user OTP auth
+  INVITE // Accept org invitation
 }
 
 enum AuditAction {
@@ -1446,14 +1538,14 @@ model User {
 
   // ─── Gap 5: TOTP / MFA ──────────────────────────────────────────────────
   // totpSecret is stored AES-256 encrypted using MFA_ENCRYPTION_KEY.
-  totpEnabled       Boolean   @default(false)
-  totpSecret        String?   // AES-256-GCM encrypted — never store plaintext
-  totpEnabledAt     DateTime?
-  totpBackupCodes   String[]  @default([]) // bcrypt-hashed 8-char backup codes
+  totpEnabled     Boolean   @default(false)
+  totpSecret      String? // AES-256-GCM encrypted — never store plaintext
+  totpEnabledAt   DateTime?
+  totpBackupCodes String[]  @default([]) // bcrypt-hashed 8-char backup codes
 
-  lastLoginAt       DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   sessions                UserSession[]
   memberships             OrganizationMembership[]
@@ -1461,31 +1553,93 @@ model User {
   notificationPreferences NotificationPreference[]
   emailDeliveries         EmailDelivery[]
   digestPreference        NotificationDigestPreference?
+  preferences             UserPreference?
+}
+
+model UserPreference {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme                   String   @default("SYSTEM")
+  density                 String   @default("COMFORTABLE")
+  sidebarCollapsed        Boolean  @default(false)
+  reducedMotion           Boolean  @default(false)
+  highContrast            Boolean  @default(false)
+  tablePageSize           Int      @default(25)
+  persistFilters          Boolean  @default(true)
+  defaultLandingPage      String   @default("/")
+  rememberLastApplication Boolean  @default(true)
+  rememberLastEnvironment Boolean  @default(true)
+  reportsOpenInNewTab     Boolean  @default(false)
+  graphPreferences        Json?
+  replayPreferences       Json?
+  reportPreferences       Json?
+  version                 Int      @default(1)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model OrganizationSettings {
+  id                          String       @id @default(uuid())
+  organizationId              String       @unique
+  organization                Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  primaryTimezone             String       @default("UTC")
+  defaultApplicationId        String?
+  defaultEnvironmentId        String?
+  defaultReportFormat         String       @default("JSON")
+  defaultGraphVisibility      String       @default("STANDARD")
+  defaultDemonstrationMode    String       @default("GUIDED")
+  defaultMemberRole           MemberRole   @default(MEMBER)
+  defaultInvitationExpiryDays Int          @default(7)
+  defaultSeverityThreshold    String       @default("WARNING")
+  billingContactEmail         String?
+  technicalContactEmail       String?
+  securityContactEmail        String?
+  version                     Int          @default(1)
+  createdAt                   DateTime     @default(now())
+  updatedAt                   DateTime     @updatedAt
+}
+
+model OrganizationSecuritySettings {
+  id                         String       @id @default(uuid())
+  organizationId             String       @unique
+  organization               Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requireMfa                 Boolean      @default(false)
+  idleTimeoutMinutes         Int          @default(60)
+  maximumSessionHours        Int          @default(168)
+  allowedEmailDomains        String[]     @default([])
+  blockPersonalEmailDomains  Boolean      @default(false)
+  invitationExpiryDays       Int          @default(7)
+  requireVerifiedEmail       Boolean      @default(true)
+  revokeSessionsOnRoleChange Boolean      @default(true)
+  version                    Int          @default(1)
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
 }
 
 model OtpCode {
-  id          String     @id @default(uuid())
-  email       String
-  codeHash    String     // sha256(plaintext_code)
-  purpose     OtpPurpose
-  expiresAt   DateTime
-  usedAt      DateTime?
-  ipAddress   String?
-  createdAt   DateTime   @default(now())
+  id        String     @id @default(uuid())
+  email     String
+  codeHash  String // sha256(plaintext_code)
+  purpose   OtpPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  ipAddress String?
+  createdAt DateTime   @default(now())
 
   @@index([email, purpose])
 }
 
 model UserSession {
-  id                String    @id @default(uuid())
-  userId            String
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshTokenHash  String    @unique  // sha256(plaintext_refresh_token)
-  userAgent         String?
-  ipAddress         String?
-  expiresAt         DateTime
-  revokedAt         DateTime?
-  createdAt         DateTime  @default(now())
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique // sha256(plaintext_refresh_token)
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
 
   @@index([userId])
 }
@@ -1510,7 +1664,7 @@ model OrganizationInvitation {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   email           String
   role            MemberRole   @default(MEMBER)
-  tokenHash       String       @unique  // sha256(invitation_token)
+  tokenHash       String       @unique // sha256(invitation_token)
   createdByUserId String
   expiresAt       DateTime
   acceptedAt      DateTime?
@@ -1696,32 +1850,32 @@ model OrganizationFeatureFlag {
 // =============================================================================
 
 model AIUsageDailyAggregate {
-  id              String    @id @default(uuid())
-  organizationId  String?   // null = platform-wide aggregate
-  applicationId   String?
-  date            DateTime  // Truncated to UTC midnight (day boundary)
-  feature         AIFeature
-  provider        String
-  model           String
+  id             String    @id @default(uuid())
+  organizationId String? // null = platform-wide aggregate
+  applicationId  String?
+  date           DateTime // Truncated to UTC midnight (day boundary)
+  feature        AIFeature
+  provider       String
+  model          String
 
-  totalCalls      Int       @default(0)
-  successCalls    Int       @default(0)
-  failedCalls     Int       @default(0)
-  repairedCalls   Int       @default(0)
-  fallbackCalls   Int       @default(0)
-  timeoutCalls    Int       @default(0)
+  totalCalls    Int @default(0)
+  successCalls  Int @default(0)
+  failedCalls   Int @default(0)
+  repairedCalls Int @default(0)
+  fallbackCalls Int @default(0)
+  timeoutCalls  Int @default(0)
 
   totalInputTokens  Int     @default(0)
   totalOutputTokens Int     @default(0)
   totalTokens       Int     @default(0)
   totalCostUsd      Decimal @default(0) @db.Decimal(14, 6)
 
-  avgLatencyMs    Int       @default(0)
-  p95LatencyMs    Int       @default(0)
-  maxLatencyMs    Int       @default(0)
+  avgLatencyMs Int @default(0)
+  p95LatencyMs Int @default(0)
+  maxLatencyMs Int @default(0)
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([date, feature, provider, model, organizationId, applicationId])
   @@index([date, feature])
@@ -1734,22 +1888,22 @@ model AIUsageDailyAggregate {
 // =============================================================================
 
 enum SystemAdminScope {
-  FULL            // All admin capabilities
-  RULESETS_ONLY   // Can only manage rulesets and rule candidates
-  READ_ONLY       // Can only read admin data (audit logs, AI usage)
+  FULL // All admin capabilities
+  RULESETS_ONLY // Can only manage rulesets and rule candidates
+  READ_ONLY // Can only read admin data (audit logs, AI usage)
 }
 
 model SystemAdmin {
-  id             String           @id @default(uuid())
-  userId         String           @unique
-  scope          SystemAdminScope @default(FULL)
-  grantedBy      String?          // userId of granter (null = seeded)
-  grantedAt      DateTime         @default(now())
-  revokedAt      DateTime?        // null = still active
-  notes          String?          // Reason for grant
+  id        String           @id @default(uuid())
+  userId    String           @unique
+  scope     SystemAdminScope @default(FULL)
+  grantedBy String? // userId of granter (null = seeded)
+  grantedAt DateTime         @default(now())
+  revokedAt DateTime? // null = still active
+  notes     String? // Reason for grant
 
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([revokedAt])
@@ -1762,8 +1916,8 @@ model SystemAdmin {
 
 model CrossTenantPatternIndex {
   id                String   @id @default(cuid())
-  patternKey        String   // canonical state name, e.g. "CHECKOUT_FAILURE"
-  domain            String   // "ecommerce", "lms", "generic"
+  patternKey        String // canonical state name, e.g. "CHECKOUT_FAILURE"
+  domain            String // "ecommerce", "lms", "generic"
   /// Anonymized example — contains only { stateName, category, transitionCount }
   /// Never stores organizationId or applicationId.
   anonymizedExample Json
@@ -1787,15 +1941,15 @@ model CrossTenantPatternIndex {
 // =============================================================================
 
 model MfaChallengeToken {
-  id          String   @id @default(uuid())
-  userId      String
-  tokenHash   String   @unique // sha256(raw_challenge_token)
-  expiresAt   DateTime
-  usedAt      DateTime?
-  attempts    Int      @default(0)
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique // sha256(raw_challenge_token)
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
 
   @@index([userId])
 }
@@ -1811,21 +1965,21 @@ model OIDCProvider {
   organizationId String       @unique
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  displayName    String       // Shown on the login button, e.g. "Acme Corp SSO"
-  issuerUrl      String       // OIDC discovery base, e.g. https://login.microsoftonline.com/{tenant}/v2.0
+  displayName    String // Shown on the login button, e.g. "Acme Corp SSO"
+  issuerUrl      String // OIDC discovery base, e.g. https://login.microsoftonline.com/{tenant}/v2.0
   clientId       String
   /// AES-256-GCM encrypted client secret — never store plaintext
   clientSecret   String
-  scopes         String[]     @default(["openid", "email", "profile"])
-  isActive       Boolean      @default(true)
+  scopes         String[] @default(["openid", "email", "profile"])
+  isActive       Boolean  @default(true)
   /// Email domains that must use this SSO provider, e.g. ["acme.com", "acme.co.uk"]
-  allowedDomains String[]     @default([])
+  allowedDomains String[] @default([])
 
   /// Optional: preset name for UI hints. One of: "microsoft", "okta", "google", "custom"
-  providerPreset String?      @default("custom")
+  providerPreset String? @default("custom")
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([allowedDomains])
 }
@@ -1843,19 +1997,19 @@ enum DigestFrequency {
 }
 
 model NotificationDigestPreference {
-  id                  String           @id @default(uuid())
-  userId              String           @unique
-  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  weeklyReport        Boolean          @default(true)
-  coverageAlerts      Boolean          @default(true)
+  weeklyReport        Boolean @default(true)
+  coverageAlerts      Boolean @default(true)
   // Only relevant for SystemAdmin users
-  ruleCandidateAlerts Boolean          @default(false)
+  ruleCandidateAlerts Boolean @default(false)
 
-  digestFrequency     DigestFrequency  @default(WEEKLY)
+  digestFrequency     DigestFrequency @default(WEEKLY)
   lastWeeklyReportAt  DateTime?
   lastCoverageAlertAt DateTime?
 
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

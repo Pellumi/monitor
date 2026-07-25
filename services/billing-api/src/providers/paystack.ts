@@ -54,6 +54,18 @@ export interface PaystackVerifyResult {
   metadata: Record<string, unknown>;
 }
 
+export interface PaystackSubscriptionResult {
+  subscriptionCode: string;
+  emailToken: string | null;
+  nextPaymentDate: string | null;
+}
+
+export interface PaystackChargeResult {
+  status: 'success' | 'failed' | 'pending';
+  reference: string;
+  authorizationUrl: string | null;
+}
+
 /**
  * Initializes a Paystack transaction.
  * Returns the authorization URL to redirect the customer to.
@@ -147,4 +159,65 @@ export async function getSubscription(subscriptionCode: string): Promise<Record<
     throw new Error(`Paystack getSubscription failed: ${data.message}`);
   }
   return data.data;
+}
+
+export async function createSubscription(params: {
+  customer: string;
+  planCode: string;
+  authorizationCode?: string | null;
+  startDate?: Date | null;
+}): Promise<PaystackSubscriptionResult> {
+  const payload: Record<string, unknown> = {
+    customer: params.customer,
+    plan: params.planCode,
+  };
+  if (params.authorizationCode) payload.authorization = params.authorizationCode;
+  if (params.startDate) payload.start_date = params.startDate.toISOString();
+  const { data } = await getPaystackHttp().post('/subscription', payload);
+  if (!data.status) throw new Error(`Paystack create subscription failed: ${data.message}`);
+  return {
+    subscriptionCode: data.data.subscription_code,
+    emailToken: data.data.email_token ?? null,
+    nextPaymentDate: data.data.next_payment_date ?? null,
+  };
+}
+
+export async function disableSubscription(subscriptionCode: string, emailToken: string): Promise<void> {
+  const { data } = await getPaystackHttp().post('/subscription/disable', {
+    code: subscriptionCode,
+    token: emailToken,
+  });
+  if (!data.status) throw new Error(`Paystack disable subscription failed: ${data.message}`);
+}
+
+export async function enableSubscription(subscriptionCode: string, emailToken: string): Promise<void> {
+  const { data } = await getPaystackHttp().post('/subscription/enable', {
+    code: subscriptionCode,
+    token: emailToken,
+  });
+  if (!data.status) throw new Error(`Paystack enable subscription failed: ${data.message}`);
+}
+
+export async function chargeAuthorization(params: {
+  authorizationCode: string;
+  email: string;
+  amount: number;
+  currency: string;
+  reference: string;
+  metadata?: Record<string, unknown>;
+}): Promise<PaystackChargeResult> {
+  const { data } = await getPaystackHttp().post('/transaction/charge_authorization', {
+    authorization_code: params.authorizationCode,
+    email: params.email,
+    amount: params.amount,
+    currency: params.currency,
+    reference: params.reference,
+    metadata: params.metadata,
+  });
+  if (!data.status) throw new Error(`Paystack authorization charge failed: ${data.message}`);
+  return {
+    status: data.data.status,
+    reference: data.data.reference,
+    authorizationUrl: data.data.authorization_url ?? null,
+  };
 }

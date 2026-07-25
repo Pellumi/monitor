@@ -3,6 +3,7 @@ import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useState, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
 import {
   Shield,
   ShieldCheck,
@@ -14,7 +15,10 @@ import {
   RefreshCw,
   QrCode,
   ChevronDown,
+  Monitor,
+  LogOut,
 } from "lucide-react";
+import { SettingsPage, SettingsSection, UpgradeNotice } from "@/components/settings/settings-page";
 
 const AUTH_API = "/api-gateway/auth";
 
@@ -23,13 +27,15 @@ const AUTH_API = "/api-gateway/auth";
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }}
-      className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white transition-colors"
+      className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white transition-colors h-auto p-0"
     >
       {copied ? (
         <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
@@ -37,7 +43,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         <Copy className="h-3.5 w-3.5" />
       )}
       {copied ? "Copied!" : label}
-    </button>
+    </Button>
   );
 }
 
@@ -141,7 +147,7 @@ function MFAContent() {
   const isEnabled = mfaStatus?.totpEnabled ?? false;
 
   return (
-    <div className="p-6 max-w-2xl space-y-6">
+    <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${isEnabled ? "bg-emerald-500/10" : "bg-neutral-800"}`}>
@@ -187,30 +193,28 @@ function MFAContent() {
         </div>
 
         {!isEnabled && step === "idle" && (
-          <button
+          <Button
             id="setup-mfa-btn"
+            variant="primary"
             onClick={() => setupMutation.mutate()}
             disabled={setupMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-neutral-200 disabled:opacity-50 text-black text-sm font-semibold rounded-md transition-colors cursor-pointer"
+            loading={setupMutation.isPending}
           >
-            {setupMutation.isPending ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Shield className="h-3.5 w-3.5" />
-            )}
+            {!setupMutation.isPending && <Shield className="h-3.5 w-3.5" />}
             Enable MFA
-          </button>
+          </Button>
         )}
 
         {isEnabled && (
-          <button
+          <Button
             id="disable-mfa-btn"
+            variant="secondary"
+            size="sm"
             onClick={() => setShowDisable(!showDisable)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-[#262626] hover:bg-neutral-800 text-neutral-400 hover:text-white text-xs font-medium rounded-md transition-colors cursor-pointer"
           >
             <ShieldOff className="h-3.5 w-3.5" />
             Disable
-          </button>
+          </Button>
         )}
       </div>
 
@@ -232,20 +236,23 @@ function MFAContent() {
             className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white font-mono tracking-[0.3em] text-center focus:outline-none focus:border-red-500"
           />
           <div className="flex gap-3">
-            <button
+            <Button
+              variant="secondary"
+              className="flex-1"
               onClick={() => { setShowDisable(false); setDisableToken(""); setError(""); }}
-              className="flex-1 border border-neutral-700 text-neutral-400 hover:bg-neutral-800 py-2 text-xs font-semibold rounded-lg transition-colors"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               id="confirm-disable-mfa-btn"
+              variant="danger"
+              className="flex-1"
               onClick={() => disableMutation.mutate()}
               disabled={disableToken.length < 6 || disableMutation.isPending}
-              className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white py-2 text-xs font-semibold rounded-lg transition-colors"
+              loading={disableMutation.isPending}
             >
-              {disableMutation.isPending ? "Disabling…" : "Confirm Disable"}
-            </button>
+              Confirm Disable
+            </Button>
           </div>
         </div>
       )}
@@ -315,20 +322,23 @@ function MFAContent() {
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
+                variant="secondary"
+                className="flex-1"
                 onClick={() => { setStep("idle"); setError(""); }}
-                className="flex-1 border border-[#262626] text-neutral-400 hover:bg-neutral-800 hover:text-white py-2.5 text-sm font-semibold rounded-md transition-colors cursor-pointer"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 id="confirm-enable-mfa-btn"
+                variant="primary"
+                className="flex-1"
                 onClick={() => verifyMutation.mutate()}
                 disabled={token.length < 6 || verifyMutation.isPending}
-                className="flex-1 bg-white hover:bg-neutral-200 disabled:opacity-50 text-black py-2.5 text-sm font-semibold rounded-md transition-colors cursor-pointer"
+                loading={verifyMutation.isPending}
               >
-                {verifyMutation.isPending ? "Verifying…" : "Enable MFA"}
-              </button>
+                Enable MFA
+              </Button>
             </div>
           </div>
         </div>
@@ -360,13 +370,14 @@ function MFAContent() {
             <CopyButton text={backupCodes.join("\n")} label="Copy all codes" />
           </div>
 
-          <button
+          <Button
             id="mfa-done-btn"
+            variant="primary"
+            className="w-full font-bold uppercase tracking-wider text-xs h-10 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={() => { setStep("idle"); setBackupCodes([]); }}
-            className="w-full bg-emerald-700 hover:bg-emerald-600 text-white py-2.5 text-sm font-semibold rounded-lg transition-colors"
           >
             I've saved my backup codes — Done
-          </button>
+          </Button>
         </div>
       )}
 
@@ -388,7 +399,7 @@ function MFAContent() {
   );
 }
 
-export default function MFAPage() {
+function MFASettingsContent() {
   return (
     <Suspense
       fallback={
@@ -400,5 +411,93 @@ export default function MFAPage() {
     >
       <MFAContent />
     </Suspense>
+  );
+}
+
+type UserSession = {
+  id: string;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+};
+
+function SessionsContent() {
+  const sessions = useQuery<UserSession[]>({
+    queryKey: ["auth-sessions"],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`${AUTH_API}/sessions`);
+      if (!response.ok) throw new Error("Failed to load active sessions");
+      return response.json();
+    },
+  });
+
+  async function revoke(id: string) {
+    const response = await authenticatedFetch(`${AUTH_API}/sessions/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("Failed to revoke session");
+    await sessions.refetch();
+  }
+
+  async function revokeOthers() {
+    const response = await authenticatedFetch(`${AUTH_API}/sessions`, { method: "DELETE" });
+    if (!response.ok) throw new Error("Failed to revoke other sessions");
+    await sessions.refetch();
+  }
+
+  return (
+    <SettingsSection title="Active sessions" description="Devices currently signed in to your Tellann account.">
+      <div className="divide-y divide-neutral-800">
+        {(sessions.data ?? []).map((session) => (
+          <div key={session.id} className="flex items-start justify-between gap-4 py-4">
+            <div className="flex gap-3">
+              <Monitor className="mt-0.5 h-4 w-4 text-neutral-500" />
+              <div>
+                <div className="text-sm font-medium text-neutral-200">
+                  {session.userAgent || "Unknown browser"}
+                  {session.current ? <span className="ml-2 text-xs text-emerald-400">Current session</span> : null}
+                </div>
+                <div className="mt-1 text-xs text-neutral-500">
+                  {session.ipAddress || "Unknown network"} · Started {new Date(session.createdAt).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            {!session.current ? (
+              <Button
+                type="button"
+                variant="danger"
+                size="xs"
+                onClick={() => void revoke(session.id)}
+              >
+                Revoke
+              </Button>
+            ) : null}
+          </div>
+        ))}
+        {sessions.isLoading ? <p className="py-4 text-sm text-neutral-500">Loading sessions…</p> : null}
+      </div>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => void revokeOthers()}
+        className="mt-4"
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        Sign out all other sessions
+      </Button>
+    </SettingsSection>
+  );
+}
+
+export default function SecurityPage() {
+  return (
+    <SettingsPage title="Security & Sessions" description="Manage authentication, MFA, active devices, and enterprise identity controls." scope="USER">
+      <MFASettingsContent />
+      <SessionsContent />
+      <SettingsSection title="Enterprise SSO" description="SAML, OIDC, domain verification, and identity-provider policies.">
+        <UpgradeNotice>SSO configuration is available on Enterprise. Personal security and MFA remain available on every plan.</UpgradeNotice>
+      </SettingsSection>
+    </SettingsPage>
   );
 }

@@ -6,6 +6,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Key, Copy, Check, Terminal, ShieldAlert, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 
 const ONBOARDING_API = '/api-gateway';
 
@@ -85,69 +86,70 @@ verifySotsInstall().catch(console.error);`;
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center px-4">
-      <div className="w-full max-w-2xl space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl">
+      <div className="w-full max-w-2xl space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 shadow-2xl">
         <div className="text-center">
-          {/* <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
-            <Key className="h-6 w-6" />
-          </div> */}
-          <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Generate API Key</h2>
-          <p className="mt-2 text-sm text-neutral-400">
-            Create authentication credentials for <span className="font-semibold text-neutral-300">{appName}</span>
+          <h2 className="mt-6 text-2xl font-bold tracking-tight text-white">Generate Ingestion Key</h2>
+          <p className="mt-2 text-sm text-[#c4c7c8] leading-relaxed">
+            Create authentication credentials for <span className="font-semibold text-white">{appName}</span>
           </p>
         </div>
 
         {!apiKey ? (
           <div className="flex flex-col items-center justify-center py-8 space-y-4">
-            <p className="text-center text-sm text-neutral-400 max-w-md">
-              To connect your application to Tellann, you need an API key. This key will authorize telemetry events sent from the SDK.
+            <p className="text-center text-sm text-[#c4c7c8] leading-relaxed max-w-md">
+              To connect your application to Tellann, you need an ingestion key. This key will authorize telemetry events sent from the SDK.
             </p>
-            <button
+            <Button
+              variant="primary"
               onClick={() => generateKeyMutation.mutate()}
               disabled={generateKeyMutation.isPending}
-              className="flex items-center space-x-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-3 text-sm font-medium text-white transition-colors"
             >
-              <span>{generateKeyMutation.isPending ? 'Generating…' : 'Generate API Key'}</span>
-            </button>
+              <span>{generateKeyMutation.isPending ? 'Generating…' : 'Generate Ingestion Key'}</span>
+            </Button>
           </div>
         ) : (
           <div className="space-y-6">
             {/* Warning card */}
-            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4 flex items-start space-x-3 text-yellow-400">
-              {/* <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" /> */}
-              <div className="text-sm">
-                <span className="font-semibold">Store this key safely!</span> It will not be shown again. If you lose it, you will need to generate a new key.
+            <div className="rounded-md border border-[#444748] bg-black p-4 flex items-start space-x-3 text-[#e2e2e2] font-mono text-xs">
+              <div>
+                <span className="font-bold text-white uppercase tracking-wider block mb-0.5">Store this key safely!</span> It will not be shown again. If you lose it, you will need to generate a new key.
               </div>
             </div>
 
             {/* API Key box */}
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between">
+            <div className="rounded-md border border-[#262626] bg-black p-4 flex items-center justify-between">
               <code className="text-sm font-mono text-white select-all overflow-x-auto max-w-[80%] pr-2 no-scrollbar">
                 {apiKey.rawKey}
               </code>
-              <button
+              <Button
+                variant="icon"
+                size="icon"
                 onClick={() => copyToClipboard(apiKey.rawKey)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
+                tooltip="Copy key"
               >
-                {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
-              </button>
+                {copied ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
+              </Button>
             </div>
 
             {/* SDK setup */}
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-neutral-300 flex items-center space-x-2">
-                <Terminal className="h-4 w-4 text-blue-400" />
+              <h3 className="text-xs font-mono font-medium uppercase tracking-wider text-[#8e9192] flex items-center space-x-2">
+                <Terminal className="h-4 w-4 text-white" />
                 <span>SDK Integration Snippet</span>
               </h3>
-              <div className="relative rounded-xl border border-neutral-800 bg-neutral-950 p-4">
-                <pre className="text-xs font-mono text-neutral-300 overflow-x-auto select-all whitespace-pre">
+              <div className="relative rounded-md border border-[#262626] bg-black p-4">
+                <pre className="text-xs font-mono text-[#c4c7c8] overflow-x-auto select-all whitespace-pre">
                   {sdkCode}
                 </pre>
-                <button
+                <Button
+                  variant="icon"
+                  size="icon"
                   onClick={() => copyToClipboard(sdkCode)}
-                  className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
+                  tooltip="Copy snippet"
+                  className="absolute top-4 right-4"
                 >
                   <Copy className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -155,7 +157,7 @@ verifySotsInstall().catch(console.error);`;
             <div className="pt-4 flex justify-end">
               <Link
                 href={`/onboarding/declare?appId=${appId}`}
-                className="flex items-center space-x-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-3 text-sm font-medium text-white transition-colors"
+                className="flex items-center space-x-2 rounded-md bg-white hover:bg-neutral-200 px-6 py-3 text-sm font-semibold text-black transition-colors cursor-pointer"
               >
                 <span>Continue</span>
                 <ArrowRight className="h-4 w-4" />

@@ -1,5 +1,7 @@
 "use client";
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from '@/components/ui/button';
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -452,11 +454,10 @@ function GraphDriftContent() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 w-full mx-auto">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <TrendingUp className="h-6 w-6 text-indigo-400" />
             Graph Drift
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
@@ -466,26 +467,40 @@ function GraphDriftContent() {
 
         <div className="flex items-center gap-3">
           <label className="text-xs text-neutral-400 font-medium" htmlFor="flow-selector">Flow</label>
-          <select
-            id="flow-selector"
+          <Select
             value={selectedFlowId}
-            onChange={(e) => {
-              setSelectedFlowId(e.target.value);
+            onValueChange={(val) => {
+              setSelectedFlowId(val);
               setShowDiff(false);
               setFromVersionId("");
               setToVersionId("");
             }}
-            disabled={isFlowsLoading || flows.length === 0}
-            className="bg-neutral-900 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
           >
-            {isFlowsLoading && <option>Loading...</option>}
-            {!isFlowsLoading && flows.length === 0 && <option>No declared flows</option>}
-            {flows.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="flow-selector"
+              disabled={isFlowsLoading || flows.length === 0}
+              className="bg-neutral-900 border-neutral-700 w-[200px]"
+            >
+              <SelectValue
+                placeholder={
+                  isFlowsLoading
+                    ? "Loading..."
+                    : flows.length === 0
+                    ? "No declared flows"
+                    : "Select flow..."
+                }
+              >
+                {flows.find((f) => f.id === selectedFlowId)?.name}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {flows.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  {f.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -554,63 +569,83 @@ function GraphDriftContent() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end mb-4">
               <div className="flex-1">
                 <label className="text-xs text-neutral-500 mb-1 block" htmlFor="from-version-selector">From version</label>
-                <select
-                  id="from-version-selector"
+                <Select
                   value={fromVersionId}
-                  onChange={(e) => {
-                    setFromVersionId(e.target.value);
+                  onValueChange={(val) => {
+                    setFromVersionId(val);
                     setShowDiff(false);
                   }}
-                  disabled={sortedVersions.length < 2 || isVersionsLoading}
-                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                 >
-                  <option value="">Select version...</option>
-                  {sortedVersions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
-                      {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    id="from-version-selector"
+                    disabled={sortedVersions.length < 2 || isVersionsLoading}
+                    className="bg-neutral-950 border-neutral-700 w-full"
+                  >
+                    <SelectValue placeholder="Select version...">
+                      {(() => {
+                        const v = sortedVersions.find((ver) => ver.id === fromVersionId);
+                        return v ? `v${v.version} — ${new Date(v.createdAt).toLocaleDateString()}${v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}` : "";
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Select version...</SelectItem>
+                    {sortedVersions.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
+                        {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <ArrowRight className="hidden h-4 w-4 text-neutral-600 flex-shrink-0 mb-2 lg:block" />
 
               <div className="flex-1">
                 <label className="text-xs text-neutral-500 mb-1 block" htmlFor="to-version-selector">To version</label>
-                <select
-                  id="to-version-selector"
+                <Select
                   value={toVersionId}
-                  onChange={(e) => {
-                    setToVersionId(e.target.value);
+                  onValueChange={(val) => {
+                    setToVersionId(val);
                     setShowDiff(false);
                   }}
-                  disabled={sortedVersions.length < 2 || isVersionsLoading}
-                  className="w-full bg-neutral-950 text-white border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                 >
-                  <option value="">Select version...</option>
-                  {sortedVersions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
-                      {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    id="to-version-selector"
+                    disabled={sortedVersions.length < 2 || isVersionsLoading}
+                    className="bg-neutral-950 border-neutral-700 w-full"
+                  >
+                    <SelectValue placeholder="Select version...">
+                      {(() => {
+                        const v = sortedVersions.find((ver) => ver.id === toVersionId);
+                        return v ? `v${v.version} — ${new Date(v.createdAt).toLocaleDateString()}${v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}` : "";
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Select version...</SelectItem>
+                    {sortedVersions.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
+                        {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              <button
+              <Button
                 id="compare-versions-btn"
                 onClick={handleCompare}
                 disabled={!fromVersionId || !toVersionId || fromVersionId === toVersionId || isDiffLoading}
-                className="flex items-center justify-center gap-2 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+                loading={isDiffLoading}
+                variant="accent"
+                className="bg-indigo-600 hover:bg-indigo-500 hover:border-indigo-400 text-white font-medium text-sm flex-shrink-0"
               >
-                {isDiffLoading ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <GitCompare className="h-3.5 w-3.5" />
-                )}
+                {!isDiffLoading && <GitCompare className="h-3.5 w-3.5" />}
                 Compare
-              </button>
+              </Button>
             </div>
 
             {showDiff && diffError instanceof Error && (

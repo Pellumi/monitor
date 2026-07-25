@@ -26,6 +26,33 @@ export const Permissions = {
 
   REPORT_EXPORT: 'report:export',
   AUDIT_READ: 'audit:read',
+  PROFILE_UPDATE: 'profile:update',
+  PREFERENCES_UPDATE: 'preferences:update',
+  NOTIFICATIONS_UPDATE: 'notifications:update',
+  ORGANIZATION_READ: 'organization:read',
+  ORGANIZATION_UPDATE: 'organization:update',
+  ORGANIZATION_DELETE: 'organization:delete',
+  MEMBERS_READ: 'members:read',
+  MEMBERS_INVITE: 'members:invite',
+  MEMBERS_UPDATE: 'members:update',
+  MEMBERS_REMOVE: 'members:remove',
+  ROLES_MANAGE: 'roles:manage',
+  SECURITY_READ: 'security:read',
+  SECURITY_MANAGE: 'security:manage',
+  SSO_MANAGE: 'sso:manage',
+  INGESTION_KEYS_READ: 'ingestion_keys:read',
+  INGESTION_KEYS_CREATE: 'ingestion_keys:create',
+  INGESTION_KEYS_ROTATE: 'ingestion_keys:rotate',
+  INGESTION_KEYS_REVOKE: 'ingestion_keys:revoke',
+  PRIVACY_READ: 'privacy:read',
+  PRIVACY_MANAGE: 'privacy:manage',
+  RETENTION_READ: 'retention:read',
+  RETENTION_MANAGE: 'retention:manage',
+  INTEGRATIONS_READ: 'integrations:read',
+  INTEGRATIONS_MANAGE: 'integrations:manage',
+  AUDIT_EXPORT: 'audit:export',
+  BILLING_READ: 'billing:read',
+  BILLING_MANAGE: 'billing:manage',
 } as const;
 
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
@@ -49,16 +76,39 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
     Permissions.GRAPH_VERSION_WRITE,
     Permissions.RULESET_READ,
     Permissions.REPORT_EXPORT,
+    Permissions.ORGANIZATION_READ,
+    Permissions.MEMBERS_READ,
+    Permissions.SECURITY_READ,
+    Permissions.INGESTION_KEYS_READ,
+    Permissions.INGESTION_KEYS_CREATE,
+    Permissions.INGESTION_KEYS_ROTATE,
+    Permissions.INGESTION_KEYS_REVOKE,
+    Permissions.PRIVACY_READ,
+    Permissions.RETENTION_READ,
+    Permissions.INTEGRATIONS_READ,
+    Permissions.BILLING_READ,
   ],
   [MemberRole.VIEWER]: [
     Permissions.FLOW_READ,
     Permissions.GRAPH_VERSION_READ,
     Permissions.RULESET_READ,
+    Permissions.ORGANIZATION_READ,
+    Permissions.MEMBERS_READ,
+    Permissions.SECURITY_READ,
+    Permissions.INGESTION_KEYS_READ,
+    Permissions.PRIVACY_READ,
+    Permissions.RETENTION_READ,
+    Permissions.INTEGRATIONS_READ,
+    Permissions.BILLING_READ,
   ],
 };
 
-function roleHasPermission(role: MemberRole, permission: Permission): boolean {
+export function roleHasPermission(role: MemberRole, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
+}
+
+export function permissionsForRole(role: MemberRole): Permission[] {
+  return [...(ROLE_PERMISSIONS[role] ?? [])];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -208,6 +258,34 @@ export function makeRequireOrgRole(prisma: PrismaClient, allowedRoles: MemberRol
       console.error('[authz] requireOrgRole error', err);
       res.status(500).json({ error: 'Internal server error' });
     }
+  };
+}
+
+/** Requires a settings permission for the organization resolved from route params. */
+export function makeRequireOrgPermission(prisma: PrismaClient, permission: Permission) {
+  return async function requireOrgPermission(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    const orgId = req.params.orgId || req.params.id;
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'UNAUTHORIZED' });
+      return;
+    }
+    if (!orgId) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'Organization ID required' });
+      return;
+    }
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId, organizationId: orgId } },
+    });
+    if (!membership || !roleHasPermission(membership.role, permission)) {
+      res.status(403).json({ error: 'FORBIDDEN', message: `Requires permission: ${permission}` });
+      return;
+    }
+    next();
   };
 }
 

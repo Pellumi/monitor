@@ -1,12 +1,13 @@
-'use client';
-import { authenticatedFetch } from '@/lib/authenticated-fetch';
+"use client";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
-import { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { AppWindow, ArrowRight, ShieldAlert } from 'lucide-react';
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AppWindow, ArrowRight, ShieldAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
-const ONBOARDING_API = '/api-gateway';
+const ONBOARDING_API = "/api-gateway";
 
 interface Application {
   id: string;
@@ -15,32 +16,37 @@ interface Application {
   createdAt: string;
 }
 
-import { Suspense } from 'react';
+import { Suspense } from "react";
 
 function NewAppContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const orgId = searchParams.get('orgId') ?? '';
-  const orgName = searchParams.get('orgName') ?? '';
-  const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com';
+  const orgId = searchParams.get("orgId") ?? "";
+  const orgName = searchParams.get("orgName") ?? "";
+  const marketingUrl =
+    process.env.NEXT_PUBLIC_MARKETING_URL || "https://domain-name.com";
 
-  const [appName, setAppName] = useState('');
+  const [appName, setAppName] = useState("");
 
   const { data: entitlement, isLoading: isEntitlementLoading } = useQuery({
-    queryKey: ['entitlement', orgId],
+    queryKey: ["entitlement", orgId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/entitlement`);
-      if (!res.ok) throw new Error('Failed to load entitlement');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/organizations/${orgId}/entitlement`,
+      );
+      if (!res.ok) throw new Error("Failed to load entitlement");
       return res.json();
     },
     enabled: !!orgId,
   });
 
   const { data: apps, isLoading: isAppsLoading } = useQuery<Application[]>({
-    queryKey: ['apps', orgId],
+    queryKey: ["apps", orgId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/applications`);
-      if (!res.ok) throw new Error('Failed to load applications');
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/organizations/${orgId}/applications`,
+      );
+      if (!res.ok) throw new Error("Failed to load applications");
       return res.json();
     },
     enabled: !!orgId,
@@ -48,13 +54,16 @@ function NewAppContent() {
 
   const createAppMutation = useMutation({
     mutationFn: async (data: { name: string }) => {
-      const res = await authenticatedFetch(`${ONBOARDING_API}/organizations/${orgId}/applications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: data.name }),
-      });
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/organizations/${orgId}/applications`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: data.name }),
+        },
+      );
       if (!res.ok) {
-        let errMsg = 'Failed to create application';
+        let errMsg = "Failed to create application";
         try {
           const errData = await res.json();
           if (errData.message) {
@@ -63,13 +72,11 @@ function NewAppContent() {
         } catch {}
         throw new Error(errMsg);
       }
-      const app = await res.json() as Application;
+      const app = (await res.json()) as Application;
       return app;
     },
     onSuccess: (data) => {
-      router.push(
-        `/onboarding/declare?appId=${data.id}`
-      );
+      router.push(`/onboarding/declare?appId=${data.id}`);
     },
   });
 
@@ -86,7 +93,9 @@ function NewAppContent() {
   if (!orgId) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
-        <div className="text-red-400">Error: Organization context is missing. Please restart onboarding.</div>
+        <div className="text-red-400">
+          Error: Organization context is missing. Please restart onboarding.
+        </div>
       </div>
     );
   }
@@ -94,7 +103,9 @@ function NewAppContent() {
   if (isEntitlementLoading || isAppsLoading) {
     return (
       <div className="flex h-[80vh] items-center justify-center">
-        <div className="text-neutral-400 animate-pulse text-lg">Checking plan limits…</div>
+        <div className="text-neutral-400 animate-pulse text-lg">
+          Checking plan limits…
+        </div>
       </div>
     );
   }
@@ -106,32 +117,43 @@ function NewAppContent() {
   if (hasReachedLimit) {
     return (
       <div className="flex min-h-[80vh] items-center justify-center px-4">
-        <div className="w-full max-w-lg space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400">
+        <div className="w-full max-w-lg space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 shadow-2xl text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-[#262626] bg-black text-white">
             <ShieldAlert className="h-6 w-6" />
           </div>
           <div className="space-y-3">
-            <h2 className="text-3xl font-extrabold tracking-tight text-white font-sans">Limit Reached</h2>
-            <p className="text-sm text-neutral-400 font-sans">
-              Your organization <span className="font-semibold text-neutral-300">{orgName}</span> has onboarded{' '}
-              <span className="font-semibold text-white">{currentAppCount}</span> of{' '}
-              <span className="font-semibold text-white">{appLimit}</span> allowed applications on the{' '}
-              <span className="font-semibold text-blue-400 uppercase">{entitlement?.planType}</span> plan.
+            <h2 className="text-2xl font-bold tracking-tight text-white">
+              Limit Reached
+            </h2>
+            <p className="text-sm text-[#c4c7c8] leading-relaxed">
+              Your organization{" "}
+              <span className="font-semibold text-white">{orgName}</span> has
+              onboarded{" "}
+              <span className="font-semibold text-white">
+                {currentAppCount}
+              </span>{" "}
+              of <span className="font-semibold text-white">{appLimit}</span>{" "}
+              allowed applications on the{" "}
+              <span className="font-mono text-white font-semibold uppercase">
+                {entitlement?.planType}
+              </span>{" "}
+              plan.
             </p>
           </div>
           <div className="pt-2 space-y-3">
             <a
               href={`${marketingUrl}/pricing`}
-              className="w-full flex items-center justify-center space-x-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 hover:opacity-95 py-3 text-sm font-semibold text-white shadow-md transition-all font-sans"
+              className="w-full flex items-center justify-center space-x-2 rounded-md bg-white hover:bg-neutral-200 py-3 text-sm font-semibold text-black transition-colors cursor-pointer"
             >
               <span>Upgrade Plan</span>
             </a>
-            <button
+            <Button
+              variant="secondary"
               onClick={() => router.back()}
-              className="w-full rounded-xl border border-neutral-800 bg-neutral-950 py-3 text-sm font-medium text-neutral-400 hover:bg-neutral-900 transition-colors font-sans"
+              className="w-full"
             >
               Go Back
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -139,27 +161,36 @@ function NewAppContent() {
   }
 
   return (
-    <div className="flex min-h-[80vh] items-center justify-center px-4">
-      <div className="w-full max-w-lg space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl shadow-2xl">
-        <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
-            <AppWindow className="h-6 w-6" />
-          </div>
-          <h2 className="mt-6 text-3xl font-extrabold tracking-tight text-white">Register Application</h2>
-          <p className="mt-2 text-sm text-neutral-400">
-            Create an application configuration for <span className="font-semibold text-neutral-300">{orgName}</span>. You will define its expected behavior next.
+    <div className="flex min-h-[80vh] h-full items-center justify-center px-4">
+      <div className="w-full max-w-lg space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 shadow-2xl">
+        <div className="w-full flex justify-between items-center">
+          <h2 className="text-2xl font-bold tracking-tight text-white">
+            Register Application
+          </h2>
+          <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+            APP // DEFINE
+          </span>
+        </div>
+        <div className="text-left">
+          <p className="mt-2 text-sm text-[#c4c7c8] leading-relaxed">
+            Create an application configuration for{" "}
+            <span className="font-semibold text-white">{orgName}</span>. You
+            will define its expected behavior next.
           </p>
         </div>
 
         {createAppMutation.error && (
-          <div className="rounded-lg bg-red-500/10 p-4 text-sm text-red-400 border border-red-500/20">
+          <div className="rounded-md bg-red-950/20 p-4 text-xs font-mono text-red-400 border border-red-900/30">
             {(createAppMutation.error as Error).message}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label htmlFor="app-name" className="block text-sm font-medium text-neutral-300">
+            <label
+              htmlFor="app-name"
+              className="block text-xs font-mono font-medium uppercase tracking-wider text-[#8e9192]"
+            >
               Application Name
             </label>
             <input
@@ -169,26 +200,30 @@ function NewAppContent() {
               value={appName}
               onChange={(e) => setAppName(e.target.value)}
               placeholder="e.g. Production E-commerce Store"
-              className="mt-1 block w-full rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-2 text-sm text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="mt-1.5 block w-full rounded-md border border-[#262626] bg-black px-4 py-2.5 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white transition-colors"
             />
           </div>
 
           <div className="flex space-x-3 pt-2">
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => router.back()}
-              className="flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-400 hover:bg-neutral-800 transition-colors"
+              className="w-[150px]"
             >
               Back
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
+              variant="primary"
               disabled={createAppMutation.isPending || !appName.trim()}
-              className="flex-1 flex items-center justify-center space-x-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 transition-colors"
+              className="flex-1"
             >
-              <span>{createAppMutation.isPending ? 'Creating…' : 'Register App'}</span>
+              <span>
+                {createAppMutation.isPending ? "Creating…" : "Register App"}
+              </span>
               <ArrowRight className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -198,7 +233,9 @@ function NewAppContent() {
 
 export default function NewAppPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400 animate-pulse">Loading…</div>}>
+    <Suspense
+      fallback={<div className="text-neutral-400 animate-pulse">Loading…</div>}
+    >
       <NewAppContent />
     </Suspense>
   );
