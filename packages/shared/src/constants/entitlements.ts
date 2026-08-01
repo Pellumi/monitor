@@ -21,6 +21,14 @@ export enum Feature {
   ENDPOINT_INTELLIGENCE   = 'ENDPOINT_INTELLIGENCE',
   DASHBOARD_ACCESS        = 'DASHBOARD_ACCESS',
 
+  // â”€â”€ Desktop Agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  DESKTOP_GUIDED_RUNS          = 'DESKTOP_GUIDED_RUNS',
+  DOCUMENT_FLOW_INFERENCE      = 'DOCUMENT_FLOW_INFERENCE',
+  AUTOMATED_INSTRUMENTATION    = 'AUTOMATED_INSTRUMENTATION',
+  SHARED_RUN_GOVERNANCE        = 'SHARED_RUN_GOVERNANCE',
+  BROWSER_TRACE_CAPTURE        = 'BROWSER_TRACE_CAPTURE',
+  VISUAL_ACCESSIBILITY_ANALYSIS = 'VISUAL_ACCESSIBILITY_ANALYSIS',
+
   // ── Reporting ───────────────────────────────────────────────
   REPORT_GENERATION       = 'REPORT_GENERATION',
   REPORT_EXPORT           = 'REPORT_EXPORT',

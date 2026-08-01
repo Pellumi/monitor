@@ -136,6 +136,7 @@ async function resolveProgrammaticToken(rawToken: string): Promise<{ organizatio
 const fastify = Fastify({ logger: true });
 
 async function main() {
+  const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
   // CORS — allow all origins so browser SDKs work
   await fastify.register(cors, { origin: true, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] });
 
@@ -187,6 +188,22 @@ async function main() {
       request.headers['x-sots-org-id'] = token.organizationId;
       request.headers['x-sots-auth-mode'] = 'PROGRAMMATIC_TOKEN';
       return;
+    }
+
+    // Desktop and user access tokens are JWTs, not ingestion keys. Preserve
+    // the bearer token for the owning service to revalidate and authorize.
+    try {
+      const decoded = jwt.verify(rawKey, JWT_SECRET) as {
+        sub?: string; client?: string; deviceSessionId?: string;
+      };
+      if (decoded.sub) {
+        request.headers['x-sots-user-id'] = decoded.sub;
+        request.headers['x-sots-auth-mode'] = decoded.client === 'desktop' ? 'DESKTOP_SESSION' : 'USER_JWT';
+        if (decoded.deviceSessionId) request.headers['x-sots-device-session-id'] = decoded.deviceSessionId;
+        return;
+      }
+    } catch {
+      // Not a JWT; continue with ingestion-key validation.
     }
 
     const keyEntry = await resolveApiKey(rawKey);
@@ -591,6 +608,8 @@ async function main() {
   fastify.all('/v1/rules/*', forwardToFdrs);
   fastify.all('/v1/admin/rules/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/flows/*', forwardToFdrs);
+  fastify.all('/v1/applications/:id/intent-drafts', forwardToFdrs);
+  fastify.all('/v1/applications/:id/intent-drafts/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/declared-flows/*', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow/*', forwardToFdrs);
@@ -599,6 +618,7 @@ async function main() {
   fastify.all('/applications/:id/graph', forwardToReportEngine);
   fastify.all('/applications/:id/workflows', forwardToReportEngine);
   fastify.all('/applications/:id/sessions', forwardToReportEngine);
+  fastify.all('/qa-runs/:runId/report', forwardToReportEngine);
 
   await fastify.register(httpProxy, {
     upstream: UPSTREAM.ONBOARDING_API,
@@ -611,6 +631,13 @@ async function main() {
     upstream: UPSTREAM.ONBOARDING_API,
     prefix: '/applications',
     rewritePrefix: '/applications',
+    http2: false,
+  });
+
+  await fastify.register(httpProxy, {
+    upstream: UPSTREAM.ONBOARDING_API,
+    prefix: '/qa-runs',
+    rewritePrefix: '/qa-runs',
     http2: false,
   });
 
@@ -687,8 +714,6 @@ async function main() {
   // ─────────────────────────────────────────────────────────────
   // These routes proxy to onboarding-api, which does its own auth.
   // The gateway adds a system-admin prevalidation hook.
-
-  const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 
   async function requireSystemAdmin(request: FastifyRequest, reply: FastifyReply) {
     const authHeader = request.headers['authorization'];

@@ -5,6 +5,7 @@ import express, { Request, Response } from 'express';
 import { SotsEventSchema, EventBatchSchema, Topics, Feature } from '@sots/shared';
 import { PrismaClient } from '@sots/db';
 import { EntitlementChecker } from '@sots/entitlement-checker';
+import jwt from 'jsonwebtoken';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -91,6 +92,39 @@ function applyGatewayIdentity<T extends { tenantId: string; applicationId: strin
   };
 }
 
+function runCredential(req: Request): {
+  runId: string; sessionId?: string; traceId?: string;
+  organizationId: string; applicationId: string; environmentId: string;
+} | null {
+  const authorization = req.headers.authorization;
+  if (!authorization?.startsWith('Bearer ')) return null;
+  try {
+    const claims = jwt.verify(
+      authorization.slice(7),
+      process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+      { audience: 'event-collector', issuer: 'sots-onboarding-api' },
+    ) as Record<string, unknown>;
+    if (claims.kind !== 'tellann-run-ingestion' || typeof claims.runId !== 'string') return null;
+    return claims as ReturnType<typeof runCredential>;
+  } catch {
+    return null;
+  }
+}
+
+function applyRunCorrelation<T extends Record<string, unknown>>(event: T, req: Request): T {
+  const credential = runCredential(req);
+  if (!credential) return event;
+  return {
+    ...event,
+    runId: credential.runId,
+    sessionId: credential.sessionId || event.sessionId,
+    traceId: credential.traceId || event.traceId,
+    tenantId: credential.organizationId,
+    applicationId: credential.applicationId,
+    environmentId: credential.environmentId,
+  };
+}
+
 /**
  * Sends events to Kafka (when enabled) or falls back to Postgres RawEvent.
  * Never throws — errors are logged and result in a 202 (optimistic acceptance).
@@ -153,7 +187,7 @@ app.post('/v1/events', async (req: Request, res: Response) => {
     }
 
     const event = SotsEventSchema.parse(req.body);
-    const enriched = applyGatewayIdentity(event, req);
+    const enriched = applyRunCorrelation(applyGatewayIdentity(event, req), req);
 
     await publishEvents([enriched], event.sessionId);
 
@@ -199,7 +233,7 @@ app.post('/v1/events/batch', async (req: Request, res: Response) => {
       return res.status(413).json({ error: 'All events in batch exceeded size limit constraints' });
     }
 
-    const enriched = validEvents.map((e) => applyGatewayIdentity(e, req));
+    const enriched = validEvents.map((e) => applyRunCorrelation(applyGatewayIdentity(e, req), req));
     await publishEvents(enriched, enriched[0].sessionId);
 
     res.status(202).json({ accepted: true, eventCount: validEvents.length });

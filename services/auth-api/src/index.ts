@@ -85,6 +85,18 @@ function generateSlug(name: string): string {
     .slice(0, 63);
 }
 
+function base64UrlSha256(text: string): string {
+  return crypto.createHash('sha256').update(text).digest('base64url');
+}
+
+function issueDesktopAccessToken(user: { id: string; email: string }, deviceSessionId: string) {
+  return jwt.sign(
+    { sub: user.id, email: user.email, deviceSessionId, client: 'desktop' },
+    JWT_SECRET,
+    { expiresIn: '15m' },
+  );
+}
+
 async function getUniqueOrgSlug(baseName: string): Promise<string> {
   const baseSlug = generateSlug(baseName);
   let slug = baseSlug;
@@ -288,6 +300,174 @@ async function verifyAuth(req: AuthenticatedRequest, res: Response, next: NextFu
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', service: 'auth-api' });
+});
+
+app.post('/auth/desktop/authorize', async (req: Request, res: Response) => {
+  const { codeChallenge, deviceIdentifier, deviceName, platform, appVersion, scopes } = req.body ?? {};
+  if (
+    typeof codeChallenge !== 'string' ||
+    !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge) ||
+    typeof deviceIdentifier !== 'string' ||
+    typeof deviceName !== 'string' ||
+    typeof platform !== 'string' ||
+    typeof appVersion !== 'string'
+  ) {
+    return res.status(400).json({ error: 'INVALID_DESKTOP_AUTH_REQUEST' });
+  }
+  const requestedScopes = Array.isArray(scopes)
+    ? scopes.filter((scope: unknown): scope is string => typeof scope === 'string').slice(0, 20)
+    : ['desktop:guided-runs'];
+  const requestToken = crypto.randomBytes(48).toString('base64url');
+  const authorization = await prisma.desktopAuthorizationRequest.create({
+    data: {
+      requestTokenHash: sha256(requestToken),
+      codeChallenge,
+      challengeMethod: 'S256',
+      deviceIdentifier: deviceIdentifier.slice(0, 200),
+      deviceName: deviceName.slice(0, 120),
+      platform: platform.slice(0, 50),
+      appVersion: appVersion.slice(0, 50),
+      scopes: requestedScopes,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+  res.status(201).json({
+    requestId: authorization.id,
+    requestToken,
+    authorizeUrl: appUrl(`/auth/login?desktopRequest=${encodeURIComponent(requestToken)}`),
+    expiresAt: authorization.expiresAt.toISOString(),
+    pollingIntervalSeconds: 2,
+  });
+});
+
+app.post('/auth/desktop/authorize/complete', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const requestToken = typeof req.body?.requestToken === 'string' ? req.body.requestToken : '';
+  const authorization = await prisma.desktopAuthorizationRequest.findUnique({
+    where: { requestTokenHash: sha256(requestToken) },
+  });
+  if (!authorization || authorization.expiresAt <= new Date() || authorization.consumedAt) {
+    return res.status(400).json({ error: 'DESKTOP_AUTH_REQUEST_EXPIRED' });
+  }
+  await prisma.desktopAuthorizationRequest.update({
+    where: { id: authorization.id },
+    data: { userId: req.user!.id, authorizedAt: new Date() },
+  });
+  res.json({ success: true });
+});
+
+app.post('/auth/desktop/token', async (req: Request, res: Response) => {
+  const requestToken = typeof req.body?.requestToken === 'string' ? req.body.requestToken : '';
+  const codeVerifier = typeof req.body?.codeVerifier === 'string' ? req.body.codeVerifier : '';
+  const authorization = await prisma.desktopAuthorizationRequest.findUnique({
+    where: { requestTokenHash: sha256(requestToken) },
+  });
+  if (!authorization) return res.status(400).json({ error: 'INVALID_DESKTOP_AUTH_REQUEST' });
+  if (!authorization.authorizedAt || !authorization.userId) {
+    return res.status(428).json({ error: 'AUTHORIZATION_PENDING' });
+  }
+  if (authorization.expiresAt <= new Date() || authorization.consumedAt) {
+    return res.status(400).json({ error: 'DESKTOP_AUTH_REQUEST_EXPIRED' });
+  }
+  if (base64UrlSha256(codeVerifier) !== authorization.codeChallenge) {
+    return res.status(400).json({ error: 'PKCE_VERIFICATION_FAILED' });
+  }
+  const user = await prisma.user.findUnique({ where: { id: authorization.userId } });
+  if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+  const rawRefreshToken = crypto.randomBytes(64).toString('base64url');
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const device = await prisma.$transaction(async (tx) => {
+    await tx.desktopAuthorizationRequest.update({
+      where: { id: authorization.id },
+      data: { consumedAt: new Date() },
+    });
+    return tx.deviceSession.upsert({
+      where: {
+        userId_deviceIdentifier: {
+          userId: user.id,
+          deviceIdentifier: authorization.deviceIdentifier,
+        },
+      },
+      create: {
+        userId: user.id,
+        deviceIdentifier: authorization.deviceIdentifier,
+        deviceName: authorization.deviceName,
+        platform: authorization.platform,
+        appVersion: authorization.appVersion,
+        scopes: authorization.scopes,
+        refreshTokenHash: sha256(rawRefreshToken),
+        expiresAt,
+      },
+      update: {
+        deviceName: authorization.deviceName,
+        platform: authorization.platform,
+        appVersion: authorization.appVersion,
+        scopes: authorization.scopes,
+        refreshTokenHash: sha256(rawRefreshToken),
+        expiresAt,
+        revokedAt: null,
+        lastSeenAt: new Date(),
+      },
+    });
+  });
+  res.json({
+    accessToken: issueDesktopAccessToken(user, device.id),
+    refreshToken: rawRefreshToken,
+    expiresIn: 15 * 60,
+    deviceSessionId: device.id,
+    user: { id: user.id, email: user.email, displayName: user.displayName, avatarUrl: user.avatarUrl },
+  });
+});
+
+app.post('/auth/desktop/refresh', async (req: Request, res: Response) => {
+  const rawRefreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : '';
+  const session = await prisma.deviceSession.findUnique({
+    where: { refreshTokenHash: sha256(rawRefreshToken) },
+    include: { user: true },
+  });
+  if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    return res.status(401).json({ error: 'DESKTOP_SESSION_INVALID' });
+  }
+  const nextRefreshToken = crypto.randomBytes(64).toString('base64url');
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await prisma.deviceSession.update({
+    where: { id: session.id },
+    data: {
+      refreshTokenHash: sha256(nextRefreshToken),
+      expiresAt,
+      lastSeenAt: new Date(),
+    },
+  });
+  res.json({
+    accessToken: issueDesktopAccessToken(session.user, session.id),
+    refreshToken: nextRefreshToken,
+    expiresIn: 15 * 60,
+  });
+});
+
+app.get('/auth/desktop/devices', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const devices = await prisma.deviceSession.findMany({
+    where: { userId: req.user!.id },
+    orderBy: { lastSeenAt: 'desc' },
+    select: {
+      id: true,
+      deviceName: true,
+      platform: true,
+      appVersion: true,
+      scopes: true,
+      lastSeenAt: true,
+      expiresAt: true,
+      revokedAt: true,
+      createdAt: true,
+    },
+  });
+  res.json(devices);
+});
+
+app.delete('/auth/desktop/devices/:deviceId', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const device = await prisma.deviceSession.findUnique({ where: { id: req.params.deviceId } });
+  if (!device || device.userId !== req.user!.id) return res.status(404).json({ error: 'DEVICE_NOT_FOUND' });
+  await prisma.deviceSession.update({ where: { id: device.id }, data: { revokedAt: new Date() } });
+  res.status(204).send();
 });
 
 async function requireEnterpriseIdentityManager(req: AuthenticatedRequest, res: Response): Promise<boolean> {

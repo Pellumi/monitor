@@ -60,6 +60,39 @@ const CORE_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.MISSING_STATE_DETECTION, enabled: true },
   { feature: Feature.ENDPOINT_INTELLIGENCE,   enabled: true },
   { feature: Feature.DASHBOARD_ACCESS,        enabled: true },
+  { feature: Feature.DESKTOP_GUIDED_RUNS,     enabled: true },
+];
+
+const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
+  { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: false },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: false },
+  { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
+  { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: false },
+  { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.BASIC },
+];
+
+const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
+  { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: true, tier: FeatureTier.STANDARD },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: false },
+  { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
+  { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.BASIC },
+  { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.STANDARD },
+];
+
+const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
+  { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: true, tier: FeatureTier.BASIC },
+  { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
+  { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
+];
+
+const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
+  { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: true },
+  { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -94,6 +127,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_FREE_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.BASIC },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.JSON_ONLY },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: false },
@@ -158,6 +192,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_LOCAL_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.STANDARD },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.JSON_PDF },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: '30_DAYS' },
@@ -221,6 +256,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_SOLO_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.ALL_FORMATS },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: '90_DAYS' },
@@ -284,6 +320,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_TEAM_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.ALL_FORMATS },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: '180_DAYS' },
@@ -347,6 +384,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_TEAM_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.ALL_FORMATS },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: '365_DAYS' },
@@ -410,6 +448,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
+      ...DESKTOP_TEAM_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.ALL_FORMATS },
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: 'CUSTOM' },

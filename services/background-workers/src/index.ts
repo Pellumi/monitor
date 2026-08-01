@@ -13,8 +13,11 @@ import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
 import { runRetentionSweep } from './retention-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
+import { processDocumentJobs } from './document-processing-worker';
 import { createMetricsRegistry, createHttpMetricsMiddleware } from '@sots/shared';
 import http from 'http';
+import { createHash } from 'crypto';
+import { validateGeneratedGraph } from '@sots/graph-validation';
 
 const prisma = new PrismaClient();
 
@@ -66,7 +69,7 @@ export async function runAiDraftJobProcessor(): Promise<void> {
 
       try {
         // Load rulesets for the domain
-        const { getActiveRulesets } = await import('@sots/rules');
+        const { getActiveRulesets, generateRuleBasedFlow } = await import('@sots/rules');
         const rulesets = await getActiveRulesets({
           organizationId: job.organizationId,
           applicationId: job.applicationId,
@@ -75,12 +78,32 @@ export async function runAiDraftJobProcessor(): Promise<void> {
         });
 
         // Run AI generation (productDescription is already sanitized/redacted)
-        const result = await generateAiFlowDraft({
-          productDescription: job.productDescription,
-          domainKey: job.domainKey,
-          rulesets,
-          provider: resolveAiProvider(),
-        });
+        let result;
+        try {
+          result = await generateAiFlowDraft({
+            productDescription: job.productDescription,
+            domainKey: job.domainKey,
+            rulesets,
+            provider: resolveAiProvider(),
+          });
+        } catch (providerError) {
+          const fallbackDraft = await generateRuleBasedFlow({
+            domainKey: job.domainKey,
+            productDescription: job.productDescription,
+            rulesets,
+          });
+          result = {
+            draft: { ...fallbackDraft, source: 'HYBRID' as const },
+            provider: 'rule-engine-fallback',
+            model: 'ruleset-fallback-v1',
+            promptHash: createHash('sha256')
+              .update(JSON.stringify({ description: job.productDescription, domainKey: job.domainKey }))
+              .digest('hex'),
+            validation: validateGeneratedGraph({ workflows: fallbackDraft.workflows }),
+          };
+          console.warn(`[ai-draft-job-processor] Provider unavailable for ${job.id}; used rules fallback`,
+            providerError instanceof Error ? providerError.message : 'Unknown provider error');
+        }
 
         // Create the AIFlowDraft record
         const sanitized = sanitizeAiInputFull(job.productDescription);
@@ -98,11 +121,27 @@ export async function runAiDraftJobProcessor(): Promise<void> {
             promptHash: result.promptHash,
             provider: result.provider,
             model: result.model,
-            draftJson: result.draft as any,
+            draftJson: {
+              ...result.draft,
+              sourceManifest: job.sourceManifest ?? null,
+              conflicts: (job.sourceManifest as any)?.conflicts ?? [],
+              unresolvedQuestions: (job.sourceManifest as any)?.unresolvedQuestions ?? [],
+            } as any,
             validationJson: result.validation as any,
             confidence: result.draft.confidence,
+            sourceManifest: job.sourceManifest ?? undefined,
           },
         });
+
+        const evidenceIds = Array.isArray((job.sourceManifest as any)?.evidenceIds)
+          ? (job.sourceManifest as any).evidenceIds.filter((id: unknown) => typeof id === 'string')
+          : [];
+        if (evidenceIds.length) {
+          await prisma.intentEvidence.updateMany({
+            where: { id: { in: evidenceIds }, applicationId: job.applicationId, aiFlowDraftId: null },
+            data: { aiFlowDraftId: draftRecord.id },
+          });
+        }
 
         // Mark job COMPLETED
         await (prisma as any).aIFlowDraftJob.update({
@@ -269,6 +308,7 @@ interface JobDefinition {
 }
 
 const JOB_DEFINITIONS: JobDefinition[] = [
+  { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },
   { name: 'ruleset-cache-warmer',             handler: runRulesetCacheWarmer,       every: 600_000 },
   { name: 'ai-invocation-metrics-aggregator', handler: runAiMetricsAggregator,      pattern: '0 * * * *' },   // hourly
@@ -442,7 +482,8 @@ async function main() {
   }
 
   // ── Prometheus /metrics + Bull Board server ───────────────────
-  const metricsPort = parseInt(process.env.BACKGROUND_WORKERS_METRICS_PORT ?? '3020', 10);
+  // 3020 is reserved by the marketing/docs dev surface in the monorepo.
+  const metricsPort = parseInt(process.env.BACKGROUND_WORKERS_METRICS_PORT ?? '3022', 10);
 
   if (bullBoardMiddleware) {
     // Use express to serve both /metrics and /admin/jobs

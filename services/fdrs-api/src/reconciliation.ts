@@ -23,7 +23,7 @@ export interface ReconciliationReportResult {
 /**
  * Runs reconciliation for all completed flows of an application.
  */
-export async function runReconciliation(applicationId: string, environmentId?: string, expectedGraphId?: string): Promise<ReconciliationReportResult[]> {
+export async function runReconciliation(applicationId: string, environmentId?: string, expectedGraphId?: string, runId?: string): Promise<ReconciliationReportResult[]> {
   let targetEnvId = environmentId;
   if (!targetEnvId) {
     const devEnv = await prisma.environment.findFirst({
@@ -38,7 +38,10 @@ export async function runReconciliation(applicationId: string, environmentId?: s
     graphType: 'DECLARED',
   };
   if (expectedGraphId) {
-    completedFlowWhere.id = expectedGraphId;
+    const version = await prisma.behaviorGraphVersion.findFirst({
+      where: { id: expectedGraphId, graph: { applicationId } }, select: { graphId: true },
+    });
+    completedFlowWhere.id = version?.graphId ?? expectedGraphId;
   } else if (targetEnvId) {
     completedFlowWhere.OR = [
       { environmentId: targetEnvId },
@@ -63,7 +66,7 @@ export async function runReconciliation(applicationId: string, environmentId?: s
 
   // Find sessions in the target environment
   const sessions = targetEnvId ? await prisma.session.findMany({
-    where: { applicationId, environmentId: targetEnvId },
+    where: { applicationId, environmentId: targetEnvId, ...(runId ? { qaRunId: runId } : {}) },
     select: { id: true }
   }) : [];
   const sessionIds = sessions.map(s => s.id);

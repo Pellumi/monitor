@@ -11,6 +11,8 @@
     "@sots/entitlement-checker": "workspace:*",
     "@sots/rules": "workspace:*",
     "@sots/ai": "workspace:*",
+    "@sots/document-intelligence": "workspace:*",
+    "@sots/graph-validation": "workspace:*",
     "@sots/shared": "workspace:*",
     "@sots/storage": "workspace:*",
     "@sots/telemetry": "workspace:*",

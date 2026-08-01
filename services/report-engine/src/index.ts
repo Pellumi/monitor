@@ -475,6 +475,109 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Canonical browser-first QA report. It is deliberately run-scoped so evidence
+ * from another environment or execution can never leak into this result.
+ */
+app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
+  try {
+    const run = await prisma.qARun.findUnique({
+      where: { id: req.params.runId },
+      include: {
+        application: { select: { id: true, name: true } },
+        environment: { select: { id: true, name: true, type: true } },
+        repositorySnapshot: true,
+        expectedGraphVersion: { include: { graph: true } },
+        observedSessions: {
+          include: { statistics: true },
+          orderBy: { startTime: 'asc' },
+        },
+        artifacts: { orderBy: { capturedAt: 'asc' } },
+        findings: {
+          include: { evidence: { include: { artifact: true } } },
+          orderBy: [{ severity: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+    });
+    if (!run) return res.status(404).json({ error: 'QA_RUN_NOT_FOUND' });
+
+    const reconciliation = await prisma.reconciliationReport.findMany({
+      where: {
+        applicationId: run.applicationId,
+        environmentId: run.environmentId,
+        ...(run.expectedGraphVersion?.graphId ? { flowId: run.expectedGraphVersion.graphId } : {}),
+      },
+      orderBy: { generatedAt: 'desc' },
+      take: 25,
+    });
+    const expectedCoverage = reconciliation.length
+      ? reconciliation.reduce((sum, item) => sum + item.expectedCoverageScore, 0) / reconciliation.length
+      : null;
+    const observedSessionIds = run.observedSessions.map((session) => session.id);
+    const [observedStateCount, observedTransitionCount] = observedSessionIds.length
+      ? await Promise.all([
+          prisma.stateObservation.count({ where: { sessionId: { in: observedSessionIds } } }),
+          prisma.transitionObservation.count({ where: { sessionId: { in: observedSessionIds } } }),
+        ])
+      : [0, 0];
+    const reportId = run.reportId ?? `qa-report:${run.id}`;
+    if (!run.reportId) {
+      await prisma.qARun.update({ where: { id: run.id }, data: { reportId } });
+    }
+
+    res.json({
+      id: reportId,
+      runId: run.id,
+      status: run.status,
+      generatedAt: new Date().toISOString(),
+      application: run.application,
+      environment: run.environment,
+      correlation: {
+        runId: run.id,
+        sessions: run.observedSessions.map((session) => ({
+          sessionId: session.id,
+          traceId: session.traceId,
+          startedAt: session.startTime,
+          endedAt: session.endTime,
+        })),
+      },
+      repository: run.repositorySnapshot ? {
+        revision: run.repositorySnapshot.revision,
+        dirty: run.repositorySnapshot.dirty,
+        scannerVersion: run.repositorySnapshot.scannerVersion,
+        redactionSummary: run.repositorySnapshot.redactionSummary,
+      } : null,
+      expectedIntent: run.expectedGraphVersion ? {
+        graphId: run.expectedGraphVersion.graphId,
+        graphVersionId: run.expectedGraphVersion.id,
+        graphName: run.expectedGraphVersion.graph.name,
+        provenance: run.expectedGraphVersion.graph.sourceType,
+        evidenceManifest: (run.expectedGraphVersion.snapshot as any)?.evidenceManifest ?? null,
+        expectedStateCount: run.expectedGraphVersion.expectedStateCount,
+        expectedTransitionCount: run.expectedGraphVersion.expectedTransitionCount,
+      } : null,
+      coverage: {
+        expected: expectedCoverage === null ? null : expectedCoverage * 100,
+        reconciledFlows: reconciliation.length,
+      },
+      findings: run.findings,
+      artifacts: run.artifacts.map((artifact) => ({ ...artifact, bytes: artifact.bytes.toString() })),
+      summary: {
+        sessionCount: run.observedSessions.length,
+        observedStateCount,
+        observedTransitionCount,
+        artifactCount: run.artifacts.length,
+        findingCount: run.findings.length,
+        criticalOrHighFindings: run.findings.filter((finding) =>
+          finding.severity === 'CRITICAL' || finding.severity === 'HIGH').length,
+      },
+    });
+  } catch (error) {
+    console.error('[ReportEngine] QA run report error', error);
+    res.status(500).json({ error: 'QA_RUN_REPORT_FAILED' });
+  }
+});
+
 // 6. Endpoint Intelligence proxy
 app.get('/reports/:applicationId/endpoint-intelligence', async (req: Request, res: Response) => {
   const { applicationId } = req.params;

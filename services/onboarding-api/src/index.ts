@@ -11,6 +11,9 @@ import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate 
 import { writeAuditLog, extractAuditContext } from '@sots/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { createDesktopRouter } from './desktop-routes';
+import { createDocumentRouter } from './document-routes';
+import { createStorageClient } from '@sots/storage';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 
@@ -261,8 +264,18 @@ async function ensureAiUsageAggregated(startDate: Date, endDate: Date, organizat
 }
 
 const entitlementChecker = new EntitlementChecker(prisma);
+const storageClient = createStorageClient();
 const emailService = new NotificationEmailService(prisma);
 app.use(express.json());
+app.use(createDesktopRouter({
+  prisma,
+  entitlementChecker,
+  verifyJwt,
+  verifyAppOwnership,
+  jwtSecret: JWT_SECRET,
+  storage: storageClient,
+}));
+app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership }));
 
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {

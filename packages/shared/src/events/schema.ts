@@ -19,7 +19,18 @@ export const EventTypeSchema = z.enum([
   'WORKFLOW_STARTED',
   'WORKFLOW_COMPLETED',
   'WORKFLOW_FAILED',
-  'SOTS_ONBOARDING_TEST'
+  'SOTS_ONBOARDING_TEST',
+  'QA_RUN_STARTED',
+  'QA_RUN_COMPLETED',
+  'QA_RUN_FAILED',
+  'BROWSER_PAGE_LOADED',
+  'BROWSER_CONSOLE_ERROR',
+  'BROWSER_NETWORK_FAILED',
+  'VISUAL_ASSERTION_FAILED',
+  'ACCESSIBILITY_FINDING',
+  'INSTRUMENTATION_VERIFIED',
+  'REPOSITORY_SNAPSHOT_CREATED',
+  'EXPECTED_FLOW_VERSION_SELECTED'
 ]);
 
 export const SotsEventSchema = z.object({
@@ -27,6 +38,9 @@ export const SotsEventSchema = z.object({
   sessionId: z.string().uuid(),
   tenantId: z.string(),
   applicationId: z.string(),
+  environmentId: z.string().nullable().optional(),
+  runId: z.string().uuid().nullable().optional(),
+  traceId: z.string().uuid().nullable().optional(),
   source: z.string(),
   eventVersion: z.literal('1.0'),
   eventType: EventTypeSchema,

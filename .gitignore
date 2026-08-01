@@ -5,10 +5,14 @@ node_modules/
 # Build and build cache outputs
 dist/
 build/
+release/
+apps/desktop/release/
 .next/
 .codex/
 .turbo/
 out/
+tmp/
+**/tmp/
 
 # Logs
 *.log

@@ -278,6 +278,15 @@ async function requireAiAccess(applicationId: string, key: 'experimentalAiFlowGe
   return { allowed: true, appRecord };
 }
 
+async function requireDocumentInferenceAccess(applicationId: string) {
+  const appRecord = await getApplicationContext(applicationId);
+  if (!appRecord?.organizationId) return { allowed: false, status: 404, error: 'Application not found' as const };
+  const allowed = await entitlementChecker.canAccess(appRecord.organizationId, Feature.DOCUMENT_FLOW_INFERENCE);
+  return allowed
+    ? { allowed: true, appRecord }
+    : { allowed: false, status: 403, error: 'FEATURE_NOT_ENTITLED' as const, appRecord };
+}
+
 async function createGraphFromWorkflow(params: {
   applicationId: string;
   environmentId?: string | null;
@@ -285,8 +294,8 @@ async function createGraphFromWorkflow(params: {
     key: string;
     name: string;
     workflowType?: string;
-    states: Array<{ key?: string; name: string; category?: string }>;
-    transitions: Array<{ from: string; to: string; action?: string }>;
+    states: Array<{ key?: string; name: string; category?: string; evidenceIds?: string[] }>;
+    transitions: Array<{ from: string; to: string; action?: string; evidenceIds?: string[] }>;
   };
   sourceType: GraphSourceType;
   declaredById?: string | null;
@@ -337,6 +346,7 @@ async function createGraphFromWorkflow(params: {
           ? StateProvenance.SUGGESTED_ACCEPTED
           : StateProvenance.USER_AUTHORED,
         canonicalBehavior: key,
+        evidenceIds: state.evidenceIds ?? [],
         declaredById: params.declaredById || null,
       },
     });
@@ -356,11 +366,32 @@ async function createGraphFromWorkflow(params: {
         provenance: params.sourceType === GraphSourceType.SYSTEM_GENERATED
           ? StateProvenance.SUGGESTED_ACCEPTED
           : StateProvenance.USER_AUTHORED,
+        evidenceIds: transition.evidenceIds ?? [],
       },
     });
   }
 
   return graph;
+}
+
+async function finalizeAcceptedGraphVersion(graphId: string, evidenceManifest: unknown) {
+  const graph = await prisma.behaviorGraph.findUnique({
+    where: { id: graphId }, include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+  });
+  if (!graph) throw new Error('ACCEPTED_GRAPH_NOT_FOUND');
+  const snapshot = {
+    graphId: graph.id, name: graph.name, workflowType: graph.workflowType, sourceType: graph.sourceType,
+    nodes: graph.nodes.map((node) => ({ id: node.id, stateName: node.stateName, category: node.category, provenance: node.provenance, evidenceIds: node.evidenceIds })),
+    edges: graph.edges.map((edge) => ({ id: edge.id, from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action, provenance: edge.provenance, evidenceIds: edge.evidenceIds })),
+    evidenceManifest,
+  };
+  const version = await prisma.$transaction(async (tx) => {
+    await tx.behaviorGraph.update({ where: { id: graph.id }, data: { status: 'COMPLETE', completedAt: new Date() } });
+    return tx.behaviorGraphVersion.create({
+      data: { graphId: graph.id, version: graph.version, snapshot: snapshot as any, isBaseline: true, expectedStateCount: graph.nodes.length, expectedTransitionCount: graph.edges.length },
+    });
+  });
+  return { graph, version };
 }
 
 async function ensureSuggestionPattern(patternId: string, suggestion: {
@@ -891,6 +922,175 @@ app.post('/v1/applications/:appId/flows/ai-drafts/:draftId/reject', async (req: 
   }
 });
 
+// Phase 2 document/repository intent drafts. These routes only create review
+// proposals; graph truth changes exclusively in the explicit review endpoint.
+app.post('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId } = req.params;
+  try {
+    const access = await requireDocumentInferenceAccess(appId);
+    if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+    const versionIds = Array.isArray(req.body.documentVersionIds)
+      ? req.body.documentVersionIds.filter((id: unknown) => typeof id === 'string')
+      : [];
+    if (!versionIds.length && !req.body.repositorySnapshotId) return res.status(400).json({ error: 'INTENT_SOURCE_REQUIRED' });
+    const versions = await prisma.sourceDocumentVersion.findMany({
+      where: { id: { in: versionIds }, document: { applicationId: appId, status: 'PROCESSED' } },
+      include: { document: true, evidence: true },
+    });
+    if (versions.length !== versionIds.length) return res.status(400).json({ error: 'INVALID_OR_UNPROCESSED_DOCUMENT_VERSION' });
+    const repository = req.body.repositorySnapshotId ? await prisma.repositorySnapshot.findFirst({
+      where: { id: String(req.body.repositorySnapshotId), workspace: { applicationId: appId } },
+    }) : null;
+    if (req.body.repositorySnapshotId && !repository) return res.status(400).json({ error: 'INVALID_REPOSITORY_SNAPSHOT' });
+    const evidence = versions.flatMap((version) => version.evidence);
+    const byLabel = new Map<string, typeof evidence>();
+    for (const item of evidence) {
+      const items = byLabel.get(item.sourceLabel) ?? [];
+      items.push(item);
+      byLabel.set(item.sourceLabel, items);
+    }
+    const conflicts = [...byLabel.entries()].flatMap(([label, items]) => {
+      const excerpts = new Set(items.map((item) => item.excerpt?.toLowerCase().replace(/\s+/g, ' ').slice(0, 240)));
+      return items.length > 1 && excerpts.size > 1
+        ? [{ key: crypto.createHash('sha256').update(label).digest('hex').slice(0, 16), description: `Sources differ for ${label}.`, evidenceIds: items.map((item) => item.id) }]
+        : [];
+    });
+    const approvedSummary = [
+      ...versions.map((version) => `${version.document.filename}: ${String((version.extractedSummary as any)?.summary ?? '')}`),
+      ...(repository ? [`Repository routes: ${JSON.stringify(repository.routeSummary)}\nRepository endpoints: ${JSON.stringify(repository.endpointSummary)}`] : []),
+    ].join('\n\n').slice(0, 100_000);
+    const sanitized = (await import('@sots/ai')).sanitizeAiInputFull(approvedSummary);
+    if (sanitized.promptInjectionRisk) return res.status(422).json({ error: 'DERIVED_SUMMARY_PROMPT_INJECTION_RISK' });
+    const inference = await inferDomain({
+      description: sanitized.sanitizedText, selectedDomainKey: req.body.selectedDomainKey,
+      organizationId: access.appRecord!.organizationId!, applicationId: appId, prisma,
+    });
+    const rulesets = await getActiveRulesets({ organizationId: access.appRecord!.organizationId!, applicationId: appId, domainKey: inference.domainKey, prisma });
+    const sourceManifest = {
+      documentVersionIds: versions.map((version) => version.id), repositorySnapshotId: repository?.id ?? null,
+      evidenceIds: evidence.map((item) => item.id), conflicts,
+      unresolvedQuestions: conflicts.length ? ['Resolve every source conflict before accepting graph truth.'] : [],
+      processorVersions: versions.map((version) => version.processorVersion), requestedBy: req.user!.id,
+    };
+    const job = await prisma.aIFlowDraftJob.create({
+      data: {
+        organizationId: access.appRecord!.organizationId!, applicationId: appId,
+        environmentId: access.appRecord!.environments[0]?.id,
+        source: versions.length && repository ? 'HYBRID_ANALYSIS' : versions.length ? 'DOCUMENT' : 'REPOSITORY_SCAN',
+        productDescription: sanitized.sanitizedText, domainKey: inference.domainKey,
+        rulesetVersionIds: rulesets.flatMap((ruleset) => ruleset.rulesetVersionId ? [ruleset.rulesetVersionId] : []),
+        sourceManifest: sourceManifest as any,
+      },
+    });
+    res.status(202).json({ success: true, data: { jobId: job.id, status: job.status, sourceManifest } });
+  } catch (error) {
+    console.error('[FDRS] Create intent draft error', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedRequest, res: Response) => {
+  const access = await requireDocumentInferenceAccess(req.params.appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const drafts = await prisma.aIFlowDraft.findMany({
+    where: { applicationId: req.params.appId, source: { in: ['DOCUMENT', 'REPOSITORY_SCAN', 'HYBRID_ANALYSIS', 'USER_CORRECTION'] } },
+    orderBy: { createdAt: 'desc' }, take: 100,
+  });
+  res.json({ success: true, data: drafts });
+});
+
+app.get('/v1/applications/:appId/intent-drafts/jobs/:jobId', async (req: AuthenticatedRequest, res: Response) => {
+  const access = await requireDocumentInferenceAccess(req.params.appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const job = await prisma.aIFlowDraftJob.findFirst({ where: { id: req.params.jobId, applicationId: req.params.appId } });
+  if (!job) return res.status(404).json({ error: 'Intent draft job not found' });
+  res.json({ success: true, data: job });
+});
+
+app.get('/v1/applications/:appId/intent-drafts/:draftId', async (req: AuthenticatedRequest, res: Response) => {
+  const access = await requireDocumentInferenceAccess(req.params.appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const draft = await prisma.aIFlowDraft.findFirst({
+    where: { id: req.params.draftId, applicationId: req.params.appId },
+    include: { evidence: { include: { sourceDocument: true, documentVersion: true } } },
+  });
+  if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
+  res.json({ success: true, data: draft });
+});
+
+app.post('/v1/applications/:appId/intent-drafts/:draftId/correct', async (req: AuthenticatedRequest, res: Response) => {
+  const access = await requireDocumentInferenceAccess(req.params.appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const draft = await prisma.aIFlowDraft.findFirst({ where: { id: req.params.draftId, applicationId: req.params.appId } });
+  if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
+  if (draft.status !== 'PENDING_REVIEW') return res.status(409).json({ error: 'REVIEWED_DRAFT_IS_IMMUTABLE' });
+  const correction = typeof req.body.correction === 'string' ? req.body.correction.trim() : '';
+  if (!correction) return res.status(400).json({ error: 'CORRECTION_REQUIRED' });
+  const sanitized = (await import('@sots/ai')).sanitizeAiInputFull(correction);
+  if (sanitized.promptInjectionRisk || sanitized.riskLevel === 'HIGH') return res.status(422).json({ error: 'CORRECTION_BLOCKED_BY_PRIVACY_POLICY' });
+  const job = await prisma.aIFlowDraftJob.create({
+    data: {
+      organizationId: draft.organizationId, applicationId: draft.applicationId, environmentId: draft.environmentId,
+      source: 'USER_CORRECTION', productDescription: `${draft.productDescription ?? ''}\n\nUser correction: ${sanitized.sanitizedText}`.slice(0, 100_000),
+      domainKey: draft.inferredDomainKey ?? 'CUSTOM', rulesetVersionIds: draft.rulesetVersionIds,
+      sourceManifest: { ...(draft.sourceManifest as any ?? {}), parentDraftId: draft.id, correctedBy: req.user!.id } as any,
+    },
+  });
+  res.status(202).json({ success: true, data: { jobId: job.id, status: job.status } });
+});
+
+app.post('/v1/applications/:appId/intent-drafts/:draftId/review', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, draftId } = req.params;
+  const access = await requireDocumentInferenceAccess(appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const draft = await prisma.aIFlowDraft.findFirst({ where: { id: draftId, applicationId: appId }, include: { evidence: true } });
+  if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
+  if (draft.status !== 'PENDING_REVIEW') return res.status(409).json({ error: 'DRAFT_ALREADY_REVIEWED' });
+  const action = String(req.body.action ?? '').toUpperCase();
+  if (action === 'REJECT') {
+    const rejected = await prisma.aIFlowDraft.update({
+      where: { id: draft.id }, data: { status: 'REJECTED', reviewedBy: req.user!.id, reviewedAt: new Date(), rejectionReason: typeof req.body.reason === 'string' ? req.body.reason : null },
+    });
+    return res.json({ success: true, data: rejected });
+  }
+  if (action !== 'ACCEPT') return res.status(400).json({ error: 'REVIEW_ACTION_MUST_BE_ACCEPT_OR_REJECT' });
+  const manifest = draft.sourceManifest as any ?? {};
+  const conflicts = Array.isArray(manifest.conflicts) ? manifest.conflicts : [];
+  const resolutions = req.body.conflictResolutions && typeof req.body.conflictResolutions === 'object' ? req.body.conflictResolutions : {};
+  if (conflicts.some((conflict: any) => typeof resolutions[conflict.key] !== 'string' || !resolutions[conflict.key].trim())) {
+    return res.status(422).json({ error: 'UNRESOLVED_SOURCE_CONFLICTS', conflicts });
+  }
+  const draftJson = draft.draftJson as any;
+  const available = Array.isArray(draftJson.workflows) ? draftJson.workflows : [];
+  const selectedKeys = Array.isArray(req.body.acceptedWorkflowKeys) && req.body.acceptedWorkflowKeys.length
+    ? new Set(req.body.acceptedWorkflowKeys.map((value: unknown) => String(value).toUpperCase())) : null;
+  const selected = selectedKeys ? available.filter((workflow: any) => selectedKeys.has(String(workflow.key).toUpperCase())) : available;
+  if (!selected.length) return res.status(400).json({ error: 'NO_WORKFLOWS_SELECTED' });
+  const states: any[] = [];
+  const transitions: any[] = [];
+  for (const workflow of selected) {
+    const workflowEvidence = Array.isArray(workflow.evidenceIds) ? workflow.evidenceIds : draft.evidence.map((item) => item.id);
+    for (const state of workflow.states ?? []) states.push({ ...state, key: `${workflow.key}_${state.key ?? state.name}`, evidenceIds: state.evidenceIds ?? workflowEvidence });
+    for (const transition of workflow.transitions ?? []) transitions.push({
+      ...transition, from: `${workflow.key}_${transition.from}`, to: `${workflow.key}_${transition.to}`, evidenceIds: transition.evidenceIds ?? workflowEvidence,
+    });
+  }
+  const graph = await createGraphFromWorkflow({
+    applicationId: appId, environmentId: draft.environmentId,
+    workflow: { key: `DOCUMENT_INTENT_${draft.id}`, name: selected.length === 1 ? selected[0].name : `Accepted intent (${selected.length} workflows)`, workflowType: 'DOCUMENT_DERIVED', states, transitions },
+    sourceType: GraphSourceType.SYSTEM_GENERATED, declaredById: req.user!.id,
+  });
+  const accepted = await finalizeAcceptedGraphVersion(graph.id, { ...manifest, conflictResolutions: resolutions, acceptedBy: req.user!.id });
+  const status = selected.length === available.length ? 'ACCEPTED' : 'PARTIALLY_ACCEPTED';
+  await prisma.aIFlowDraft.update({
+    where: { id: draft.id }, data: { status, reviewedBy: req.user!.id, reviewedAt: new Date(), acceptedGraphId: graph.id, acceptedGraphVersionId: accepted.version.id },
+  });
+  await prisma.ruleFeedback.create({
+    data: { organizationId: draft.organizationId, applicationId: appId, aiFlowDraftId: draft.id, feedbackType: status === 'ACCEPTED' ? 'ACCEPTED' : 'EDITED', afterJson: { graphId: graph.id, graphVersionId: accepted.version.id, acceptedWorkflowKeys: selected.map((item: any) => item.key), conflictResolutions: resolutions } as any, createdBy: req.user!.id },
+  });
+  res.json({ success: true, data: { behaviorGraphId: graph.id, graphVersionId: accepted.version.id, acceptedWorkflows: selected.length, status } });
+});
+
 app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', async (req: Request, res: Response) => {
   const startedAt = Date.now();
   const { appId, flowId } = req.params;
@@ -1046,6 +1246,7 @@ app.get('/applications/:id/declared-flow', async (req: Request, res: Response) =
   try {
     const flows = await prisma.behaviorGraph.findMany({
       where: { applicationId, graphType: GraphType.DECLARED },
+      include: { versions: { orderBy: { version: 'desc' }, take: 1 } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -2179,9 +2380,10 @@ app.post('/applications/:id/reconciliation/run', async (req: Request, res: Respo
   const { id: applicationId } = req.params;
   const environmentId = (req.body.environmentId || req.query.environmentId) as string | undefined;
   const expectedGraphId = (req.body.expectedGraphId || req.query.expectedGraphId) as string | undefined;
+  const runId = (req.body.runId || req.query.runId) as string | undefined;
 
   try {
-    const reports = await runReconciliation(applicationId, environmentId, expectedGraphId);
+    const reports = await runReconciliation(applicationId, environmentId, expectedGraphId, runId);
     res.json(reports);
   } catch (err) {
     console.error('[FDRS] Run reconciliation error:', err);

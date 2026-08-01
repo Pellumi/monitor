@@ -1,0 +1,22 @@
+{
+  "name": "@sots/document-intelligence",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/index.test.js"
+  },
+  "dependencies": {
+    "@sots/ai": "workspace:*",
+    "js-yaml": "^4.1.0",
+    "mammoth": "^1.10.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "@types/pdf-parse": "^1.1.5",
+    "typescript": "^5.0.0"
+  }
+}

@@ -55,13 +55,17 @@ class PostgresSessionRepository implements SessionRepository {
       where: { id: sessionId },
       update: {
         endTime: new Date(event.timestamp),
-        environmentId: event.environmentId ?? null
+        environmentId: event.environmentId ?? null,
+        qaRunId: event.runId ?? null,
+        traceId: event.traceId ?? null,
       },
       create: {
         id: sessionId,
         applicationId: event.applicationId,
         environmentId: event.environmentId ?? null,
         tenantId: event.tenantId,
+        qaRunId: event.runId ?? null,
+        traceId: event.traceId ?? null,
         startTime: new Date(event.timestamp),
         endTime: new Date(event.timestamp)
       }
@@ -138,6 +142,8 @@ class PostgresSessionRepository implements SessionRepository {
       sessionId: e.sessionId,
       tenantId: session.tenantId,
       applicationId: session.applicationId,
+      runId: session.qaRunId,
+      traceId: session.traceId,
       eventType: e.eventType as any,
       eventVersion: e.eventVersion,
       source: e.source,

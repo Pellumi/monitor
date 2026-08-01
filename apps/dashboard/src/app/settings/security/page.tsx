@@ -490,11 +490,65 @@ function SessionsContent() {
   );
 }
 
+type DesktopDevice = {
+  id: string;
+  deviceName: string;
+  platform: string;
+  appVersion: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+};
+
+function DesktopDevicesContent() {
+  const devices = useQuery<DesktopDevice[]>({
+    queryKey: ["desktop-devices"],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`${AUTH_API}/desktop/devices`);
+      if (!response.ok) throw new Error("Failed to load desktop devices");
+      return response.json();
+    },
+  });
+
+  async function revoke(id: string) {
+    const response = await authenticatedFetch(`${AUTH_API}/desktop/devices/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("Failed to revoke desktop device");
+    await devices.refetch();
+  }
+
+  return (
+    <SettingsSection title="Tellann Desktop devices" description="Device-bound desktop sessions. Revocation immediately blocks refresh and cloud synchronization.">
+      <div className="divide-y divide-neutral-800">
+        {(devices.data ?? []).map((device) => (
+          <div key={device.id} className="flex items-start justify-between gap-4 py-4">
+            <div className="flex gap-3">
+              <Monitor className="mt-0.5 h-4 w-4 text-neutral-500" />
+              <div>
+                <div className="text-sm font-medium text-neutral-200">
+                  {device.deviceName}
+                  {device.revokedAt ? <span className="ml-2 text-xs text-red-400">Revoked</span> : null}
+                </div>
+                <div className="mt-1 text-xs text-neutral-500">
+                  {device.platform} · Tellann {device.appVersion} · Last seen {new Date(device.lastSeenAt).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            {!device.revokedAt ? <Button type="button" variant="danger" size="xs" onClick={() => void revoke(device.id)}>Revoke</Button> : null}
+          </div>
+        ))}
+        {devices.isLoading ? <p className="py-4 text-sm text-neutral-500">Loading desktop devices…</p> : null}
+        {!devices.isLoading && !devices.data?.length ? <p className="py-4 text-sm text-neutral-500">No desktop devices connected.</p> : null}
+      </div>
+    </SettingsSection>
+  );
+}
+
 export default function SecurityPage() {
   return (
     <SettingsPage title="Security & Sessions" description="Manage authentication, MFA, active devices, and enterprise identity controls." scope="USER">
       <MFASettingsContent />
       <SessionsContent />
+      <DesktopDevicesContent />
       <SettingsSection title="Enterprise SSO" description="SAML, OIDC, domain verification, and identity-provider policies.">
         <UpgradeNotice>SSO configuration is available on Enterprise. Personal security and MFA remain available on every plan.</UpgradeNotice>
       </SettingsSection>

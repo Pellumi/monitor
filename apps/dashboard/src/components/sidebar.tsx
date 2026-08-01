@@ -49,6 +49,7 @@ import {
   Plug,
   ScrollText,
   KeyRound,
+  Laptop,
 } from "lucide-react";
 import { useSession, Membership, Organization } from "./providers";
 import { twMerge } from "tailwind-merge";
@@ -154,6 +155,12 @@ const navigation: NavItem[] = [
     href: "/endpoints",
     icon: Zap,
     requiredFeature: "ENDPOINT_INTELLIGENCE",
+  },
+  {
+    name: "QA Runs",
+    href: "/qa-runs",
+    icon: Laptop,
+    requiredFeature: "DESKTOP_GUIDED_RUNS",
   },
   {
     name: "Reports",

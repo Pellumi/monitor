@@ -72,6 +72,7 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const from = searchParams.get('from') || '/';
+  const desktopRequest = searchParams.get('desktopRequest');
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [email, setEmail] = useState('');
@@ -87,6 +88,23 @@ export default function LoginPage() {
   const [expiryTimer, setExpiryTimer] = useState(600); // 10 minutes
 
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const finishAuthentication = async (isNewUser = false) => {
+    if (desktopRequest) {
+      const completion = await fetch('/api-gateway/auth/desktop/authorize/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestToken: desktopRequest }),
+      });
+      if (!completion.ok) {
+        const payload = await completion.json().catch(() => ({}));
+        throw new Error(payload.message || 'Unable to authorize the Tellann desktop application.');
+      }
+      router.push('/auth/desktop-complete');
+      return;
+    }
+    router.push(isNewUser ? '/onboarding' : from);
+  };
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -201,7 +219,7 @@ export default function LoginPage() {
         throw new Error(data.message || 'Password login failed. Try again.');
       }
 
-      router.push(from);
+      await finishAuthentication(false);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -285,13 +303,7 @@ export default function LoginPage() {
         throw new Error(data.message || 'Verification failed. Try again.');
       }
 
-      // Check if they need onboarding
-      if (data.user.isNew) {
-        router.push('/onboarding');
-      } else {
-        // Successful login, redirect to target
-        router.push(from);
-      }
+      await finishAuthentication(Boolean(data.user.isNew));
     } catch (err: any) {
       setError(err.message);
     } finally {

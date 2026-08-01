@@ -1,0 +1,797 @@
+import crypto from 'crypto';
+import { Router, raw, type NextFunction, type Request, type Response } from 'express';
+import jwt from 'jsonwebtoken';
+import {
+  EnvironmentType,
+  PrismaClient,
+  QARunArtifactType,
+  QARunMode,
+  QARunStatus,
+  PrivacyClassification,
+} from '@sots/db';
+import { Feature } from '@sots/shared';
+import type { EntitlementChecker } from '@sots/entitlement-checker';
+import type { StorageClient } from '@sots/storage';
+
+type DesktopRequest = Request & { user?: { id: string; email: string } };
+type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
+
+const TERMINAL_STATUSES = new Set<QARunStatus>([
+  QARunStatus.COMPLETED,
+  QARunStatus.FAILED,
+  QARunStatus.CANCELLED,
+]);
+
+function safeArtifact(artifact: { bytes: bigint } & Record<string, unknown>) {
+  return { ...artifact, bytes: artifact.bytes.toString() };
+}
+
+export function createDesktopRouter(input: {
+  prisma: PrismaClient;
+  entitlementChecker: EntitlementChecker;
+  verifyJwt: Middleware;
+  verifyAppOwnership: Middleware;
+  jwtSecret: string;
+  storage: StorageClient;
+}) {
+  const { prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret, storage } = input;
+  const router = Router();
+
+  async function authorizedRun(runId: string, userId: string) {
+    return prisma.qARun.findFirst({
+      where: { id: runId, organization: { memberships: { some: { userId } } } },
+      include: {
+        environment: true,
+        workspace: true,
+        repositorySnapshot: true,
+        expectedGraphVersion: true,
+        artifacts: true,
+        findings: { include: { evidence: { include: { artifact: true } } } },
+      },
+    });
+  }
+
+  router.post(
+    '/applications/:appId/workspaces',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const { appId } = req.params;
+      const { opaqueLocalId, repositoryFingerprint, detectedStack, packageManager } = req.body ?? {};
+      if (!opaqueLocalId || !repositoryFingerprint) {
+        return res.status(400).json({ error: 'opaqueLocalId and repositoryFingerprint are required' });
+      }
+      if (req.body.absolutePath || req.body.path || req.body.workspaceRoot) {
+        return res.status(400).json({ error: 'Absolute local paths must not be uploaded' });
+      }
+
+      const application = await prisma.application.findUnique({
+        where: { id: appId },
+        select: { organizationId: true },
+      });
+      if (!application?.organizationId) return res.status(404).json({ error: 'Application not found' });
+
+      const workspace = await prisma.projectWorkspace.upsert({
+        where: { applicationId_opaqueLocalId: { applicationId: appId, opaqueLocalId: String(opaqueLocalId) } },
+        create: {
+          organizationId: application.organizationId,
+          applicationId: appId,
+          createdByUserId: req.user!.id,
+          opaqueLocalId: String(opaqueLocalId),
+          repositoryFingerprint: String(repositoryFingerprint),
+          detectedStack: detectedStack ?? undefined,
+          packageManager: packageManager ? String(packageManager) : undefined,
+          trustStatus: 'READ_ONLY',
+          lastScannedAt: new Date(),
+        },
+        update: {
+          repositoryFingerprint: String(repositoryFingerprint),
+          detectedStack: detectedStack ?? undefined,
+          packageManager: packageManager ? String(packageManager) : undefined,
+          lastScannedAt: new Date(),
+        },
+      });
+      res.status(201).json(workspace);
+    },
+  );
+
+  router.post(
+    '/applications/:appId/repository-snapshots',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const {
+        workspaceId, revision, branch, dirty, repositoryFingerprint, frameworkSummary,
+        routeSummary, endpointSummary, documentationSummary, manifestHashes,
+        scannerVersion, redactionSummary,
+      } = req.body ?? {};
+      if (!workspaceId || !repositoryFingerprint || !scannerVersion) {
+        return res.status(400).json({
+          error: 'workspaceId, repositoryFingerprint, and scannerVersion are required',
+        });
+      }
+
+      const workspace = await prisma.projectWorkspace.findFirst({
+        where: { id: String(workspaceId), applicationId: req.params.appId },
+      });
+      if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+
+      const snapshot = await prisma.repositorySnapshot.create({
+        data: {
+          workspaceId: workspace.id,
+          revision: revision ? String(revision) : undefined,
+          branch: branch ? String(branch) : undefined,
+          dirty: Boolean(dirty),
+          repositoryFingerprint: String(repositoryFingerprint),
+          frameworkSummary: frameworkSummary ?? {},
+          routeSummary: routeSummary ?? {},
+          endpointSummary: endpointSummary ?? {},
+          documentationSummary: documentationSummary ?? {},
+          manifestHashes: manifestHashes ?? {},
+          scannerVersion: String(scannerVersion),
+          redactionSummary: redactionSummary ?? {},
+        },
+      });
+      res.status(201).json(snapshot);
+    },
+  );
+
+  router.get(
+    '/applications/:appId/workspaces',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const workspaces = await prisma.projectWorkspace.findMany({
+        where: { applicationId: req.params.appId },
+        include: {
+          snapshots: { orderBy: { createdAt: 'desc' }, take: 1 },
+          permissions: { where: { revokedAt: null } },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      res.json(workspaces.map((workspace) => ({
+        id: workspace.id,
+        opaqueLocalId: workspace.opaqueLocalId,
+        repositoryFingerprint: workspace.repositoryFingerprint,
+        detectedStack: workspace.detectedStack,
+        packageManager: workspace.packageManager,
+        trustStatus: workspace.trustStatus,
+        lastScannedAt: workspace.lastScannedAt,
+        latestSnapshot: workspace.snapshots[0] ?? null,
+        permissions: workspace.permissions,
+      })));
+    },
+  );
+
+  router.get(
+    '/applications/:appId/repository-snapshots',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const snapshots = await prisma.repositorySnapshot.findMany({
+        where: { workspace: { applicationId: req.params.appId } },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(Math.max(Number(req.query.limit) || 25, 1), 100),
+      });
+      res.json(snapshots);
+    },
+  );
+
+  router.post(
+    '/applications/:appId/qa-runs',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const {
+        environmentId, workspaceId, deviceSessionId, repositorySnapshotId,
+        expectedGraphVersionId, mode = QARunMode.GUIDED, targetUrl, retryOfRunId,
+      } = req.body ?? {};
+      if (!environmentId || !targetUrl) {
+        return res.status(400).json({ error: 'environmentId and targetUrl are required' });
+      }
+      try {
+        const target = new URL(String(targetUrl));
+        if (!['http:', 'https:'].includes(target.protocol)) throw new Error();
+      } catch {
+        return res.status(400).json({ error: 'targetUrl must be an http(s) URL' });
+      }
+
+      const environment = await prisma.environment.findFirst({
+        where: { id: String(environmentId), applicationId: req.params.appId },
+        include: { application: { select: { organizationId: true } } },
+      });
+      if (!environment?.application.organizationId) {
+        return res.status(404).json({ error: 'Environment not found' });
+      }
+      if (!Object.values(QARunMode).includes(mode)) {
+        return res.status(400).json({ error: 'Invalid QA run mode' });
+      }
+      if (environment.type === EnvironmentType.PRODUCTION && mode !== QARunMode.OBSERVATION_ONLY) {
+        return res.status(403).json({
+          error: 'PRODUCTION_ACTIVE_CONTROL_BLOCKED',
+          message: 'Production environments support observation-only runs.',
+        });
+      }
+      if (!await entitlementChecker.canAccess(environment.application.organizationId, Feature.DESKTOP_GUIDED_RUNS)) {
+        return res.status(403).json({
+          error: 'FEATURE_NOT_ENTITLED',
+          feature: Feature.DESKTOP_GUIDED_RUNS,
+        });
+      }
+
+      const [workspace, snapshot, expectedGraphVersion] = await Promise.all([
+        workspaceId
+          ? prisma.projectWorkspace.findFirst({ where: { id: String(workspaceId), applicationId: req.params.appId } })
+          : null,
+        repositorySnapshotId
+          ? prisma.repositorySnapshot.findFirst({
+              where: { id: String(repositorySnapshotId), workspace: { applicationId: req.params.appId } },
+            })
+          : null,
+        expectedGraphVersionId
+          ? prisma.behaviorGraphVersion.findFirst({ where: { id: String(expectedGraphVersionId), graph: { applicationId: req.params.appId, graphType: 'DECLARED' } } })
+          : null,
+      ]);
+      if (workspaceId && !workspace) return res.status(404).json({ error: 'Workspace not found' });
+      if (repositorySnapshotId && !snapshot) {
+        return res.status(404).json({ error: 'Repository snapshot not found' });
+      }
+      if (expectedGraphVersionId && !expectedGraphVersion) return res.status(404).json({ error: 'Expected graph version not found' });
+
+      const run = await prisma.qARun.create({
+        data: {
+          organizationId: environment.application.organizationId,
+          applicationId: req.params.appId,
+          environmentId: environment.id,
+          workspaceId: workspace?.id,
+          deviceSessionId: deviceSessionId ? String(deviceSessionId) : undefined,
+          repositorySnapshotId: snapshot?.id,
+          expectedGraphVersionId: expectedGraphVersion?.id,
+          createdByUserId: req.user!.id,
+          mode,
+          targetUrl: String(targetUrl),
+          retryOfRunId: retryOfRunId ? String(retryOfRunId) : undefined,
+        },
+      });
+      res.status(201).json(run);
+    },
+  );
+
+  router.get(
+    '/applications/:appId/qa-runs',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const runs = await prisma.qARun.findMany({
+        where: { applicationId: req.params.appId },
+        include: {
+          environment: { select: { id: true, name: true, type: true } },
+          _count: { select: { artifacts: true, findings: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(Math.max(Number(req.query.limit) || 50, 1), 100),
+      });
+      res.json(runs);
+    },
+  );
+
+  router.get('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    res.json({
+      ...run,
+      artifacts: run.artifacts.map(safeArtifact),
+      findings: run.findings.map((finding) => ({
+        ...finding,
+        evidence: finding.evidence.map((link) => ({ ...link, artifact: safeArtifact(link.artifact) })),
+      })),
+    });
+  });
+
+  router.post('/qa-runs/:runId/start', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    const updated = await prisma.qARun.update({
+      where: { id: run.id },
+      data: { status: QARunStatus.RUNNING, startedAt: run.startedAt ?? new Date() },
+    });
+    res.json(updated);
+  });
+
+  router.post('/qa-runs/:runId/pause', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.status !== QARunStatus.RUNNING) return res.status(409).json({ error: 'QA run is not running' });
+    res.json(await prisma.qARun.update({
+      where: { id: run.id },
+      data: { status: QARunStatus.PAUSED },
+    }));
+  });
+
+  router.post('/qa-runs/:runId/resume', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.status !== QARunStatus.PAUSED) return res.status(409).json({ error: 'QA run is not paused' });
+    res.json(await prisma.qARun.update({
+      where: { id: run.id },
+      data: { status: QARunStatus.RUNNING },
+    }));
+  });
+
+  router.post('/qa-runs/:runId/cancel', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    res.json(await prisma.qARun.update({
+      where: { id: run.id },
+      data: {
+        status: QARunStatus.CANCELLED,
+        endedAt: new Date(),
+        failureReasonSafe: String(req.body?.reason ?? 'Cancelled by user').slice(0, 500),
+      },
+    }));
+  });
+
+  router.post('/qa-runs/:runId/retry', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (!TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is not terminal' });
+    const retried = await prisma.qARun.create({
+      data: {
+        organizationId: run.organizationId,
+        applicationId: run.applicationId,
+        environmentId: run.environmentId,
+        workspaceId: run.workspaceId,
+        deviceSessionId: run.deviceSessionId,
+        repositorySnapshotId: run.repositorySnapshotId,
+        expectedGraphVersionId: run.expectedGraphVersionId,
+        patchSetId: run.patchSetId,
+        createdByUserId: req.user!.id,
+        mode: run.mode,
+        targetUrl: run.targetUrl,
+        browserMetadata: run.browserMetadata ?? undefined,
+        retryOfRunId: run.id,
+      },
+    });
+    res.status(201).json(retried);
+  });
+
+  router.post('/qa-runs/:runId/credentials', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+
+    const credential = jwt.sign({
+      kind: 'tellann-run-ingestion',
+      runId: run.id,
+      organizationId: run.organizationId,
+      applicationId: run.applicationId,
+      environmentId: run.environmentId,
+      sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined,
+      traceId: typeof req.body?.traceId === 'string' ? req.body.traceId : undefined,
+      nonce: crypto.randomUUID(),
+    }, jwtSecret, {
+      subject: req.user!.id,
+      expiresIn: '1h',
+      issuer: 'sots-onboarding-api',
+      audience: 'event-collector',
+    });
+    res.json({ credential, expiresInSeconds: 3600, runId: run.id });
+  });
+
+  router.post(
+    '/qa-runs/:runId/artifacts/:checksum/content',
+    verifyJwt,
+    raw({ type: 'application/octet-stream', limit: '50mb' }),
+    async (req: DesktopRequest, res: Response) => {
+      const run = await authorizedRun(req.params.runId, req.user!.id);
+      if (!run) return res.status(404).json({ error: 'QA run not found' });
+      if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ error: 'Artifact content is required' });
+      }
+      const checksum = crypto.createHash('sha256').update(req.body).digest('hex');
+      if (checksum !== req.params.checksum) {
+        return res.status(422).json({ error: 'ARTIFACT_CHECKSUM_MISMATCH' });
+      }
+      const artifactType = String(req.headers['x-tellann-artifact-type'] ?? '') as QARunArtifactType;
+      if (!Object.values(QARunArtifactType).includes(artifactType)) {
+        return res.status(400).json({ error: 'Invalid artifact type' });
+      }
+      if (
+        artifactType === QARunArtifactType.PLAYWRIGHT_TRACE
+        && !await entitlementChecker.canAccess(run.organizationId, Feature.BROWSER_TRACE_CAPTURE)
+      ) {
+        return res.status(403).json({ error: 'FEATURE_NOT_ENTITLED', feature: Feature.BROWSER_TRACE_CAPTURE });
+      }
+      const privacy = String(
+        req.headers['x-tellann-privacy-classification'] ?? PrivacyClassification.INTERNAL,
+      ) as PrivacyClassification;
+      if (!Object.values(PrivacyClassification).includes(privacy)) {
+        return res.status(400).json({ error: 'Invalid privacy classification' });
+      }
+      const contentTypes: Record<QARunArtifactType, string> = {
+        SCREENSHOT: 'image/png',
+        PLAYWRIGHT_TRACE: 'application/zip',
+        ACCESSIBILITY_SNAPSHOT: 'text/plain; charset=utf-8',
+        CONSOLE_LOG: 'application/json',
+        NETWORK_LOG: 'application/json',
+        RUN_MANIFEST: 'application/json',
+      };
+      const extensions: Record<QARunArtifactType, string> = {
+        SCREENSHOT: 'png',
+        PLAYWRIGHT_TRACE: 'zip',
+        ACCESSIBILITY_SNAPSHOT: 'txt',
+        CONSOLE_LOG: 'json',
+        NETWORK_LOG: 'json',
+        RUN_MANIFEST: 'json',
+      };
+      const objectKey = [
+        'qa-runs',
+        run.organizationId,
+        run.applicationId,
+        run.id,
+        `${checksum}.${extensions[artifactType]}`,
+      ].join('/');
+      try {
+        const uploaded = await storage.uploadAndPresign(
+          objectKey,
+          req.body,
+          contentTypes[artifactType],
+          15 * 60,
+        );
+        const artifact = await prisma.$transaction(async (tx) => {
+          const stored = await tx.qARunArtifact.upsert({
+            where: { runId_checksum: { runId: run.id, checksum } },
+            create: {
+              runId: run.id,
+              artifactType,
+              privacyClassification: privacy,
+              objectKey,
+              bytes: BigInt(req.body.length),
+              checksum,
+              capturedAt: req.headers['x-tellann-captured-at']
+                ? new Date(String(req.headers['x-tellann-captured-at'])) : new Date(),
+              metadata: { approved: true, storageAdapter: uploaded.adapter },
+            },
+            update: {
+              artifactType,
+              privacyClassification: privacy,
+              objectKey,
+              bytes: BigInt(req.body.length),
+              metadata: { approved: true, storageAdapter: uploaded.adapter },
+            },
+          });
+          await tx.storageLedgerEntry.upsert({
+            where: { objectKey },
+            create: {
+              organizationId: run.organizationId,
+              objectKey,
+              ownerType: 'QA_RUN',
+              ownerId: run.id,
+              category: artifactType,
+              bytes: BigInt(req.body.length),
+            },
+            update: { bytes: BigInt(req.body.length), deletedAt: null },
+          });
+          return stored;
+        });
+        res.status(201).json({ ...safeArtifact(artifact), downloadUrl: uploaded.url });
+      } catch (error) {
+        console.error('[DesktopArtifacts] Upload failed', error);
+        res.status(503).json({ error: 'ARTIFACT_UPLOAD_FAILED', retryable: true });
+      }
+    },
+  );
+
+  router.post('/qa-runs/:runId/artifacts', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const artifacts = Array.isArray(req.body?.artifacts) ? req.body.artifacts : [];
+    const findings = Array.isArray(req.body?.findings) ? req.body.findings : [];
+
+    const createdArtifacts = await Promise.all(artifacts.map((artifact: Record<string, unknown>) =>
+      prisma.qARunArtifact.upsert({
+        where: { runId_checksum: { runId: run.id, checksum: String(artifact.checksum) } },
+        create: {
+          runId: run.id,
+          artifactType: (artifact.artifactType ?? artifact.type) as QARunArtifactType,
+          privacyClassification: (artifact.privacyClassification as PrivacyClassification) ?? PrivacyClassification.INTERNAL,
+          objectKey: artifact.objectKey ? String(artifact.objectKey) : undefined,
+          bytes: BigInt(String(artifact.bytes ?? 0)),
+          checksum: String(artifact.checksum),
+          capturedAt: artifact.capturedAt ? new Date(String(artifact.capturedAt)) : new Date(),
+          metadata: (artifact.metadata as object) ?? undefined,
+        },
+        update: {
+          objectKey: artifact.objectKey ? String(artifact.objectKey) : undefined,
+          metadata: (artifact.metadata as object) ?? undefined,
+        },
+      })
+    ));
+    const artifactIds = new Map(createdArtifacts.map((artifact) => [artifact.checksum, artifact.id]));
+    const createdFindings = await Promise.all(findings.map((finding: Record<string, unknown>) =>
+      prisma.browserFinding.create({
+        data: {
+          runId: run.id,
+          category: String(finding.category),
+          severity: String(finding.severity),
+          confidence: Number(finding.confidence),
+          title: String(finding.title),
+          description: String(finding.description),
+          url: finding.url ? String(finding.url) : undefined,
+          viewport: (finding.viewport as object) ?? undefined,
+          reproductionSteps: (finding.reproductionSteps as object) ?? [],
+          recommendation: finding.recommendation ? String(finding.recommendation) : undefined,
+          relatedWorkflowId: finding.relatedWorkflowId ? String(finding.relatedWorkflowId) : undefined,
+          relatedStateName: finding.relatedStateName ? String(finding.relatedStateName) : undefined,
+          evidence: {
+            create: (Array.isArray(finding.evidenceChecksums) ? finding.evidenceChecksums : [])
+              .flatMap((checksum) => {
+                const artifactId = artifactIds.get(String(checksum));
+                return artifactId ? [{ artifactId }] : [];
+              }),
+          },
+        },
+      })
+    ));
+    res.status(201).json({
+      artifacts: createdArtifacts.map(safeArtifact),
+      findings: createdFindings,
+    });
+  });
+
+  router.post('/qa-runs/:runId/complete', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.status === QARunStatus.COMPLETED) return res.json(run);
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    const observations = Array.isArray(req.body?.observations) ? req.body.observations : [];
+    const observedTransitions = Array.isArray(req.body?.observedTransitions) ? req.body.observedTransitions : [];
+    const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : crypto.randomUUID();
+    const traceId = typeof req.body?.traceId === 'string' ? req.body.traceId : null;
+    const startedAt = run.startedAt ?? new Date();
+    const endedAt = new Date();
+
+    if (observations.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        await tx.session.upsert({
+          where: { id: sessionId },
+          create: {
+            id: sessionId,
+            applicationId: run.applicationId,
+            environmentId: run.environmentId,
+            tenantId: run.organizationId,
+            qaRunId: run.id,
+            traceId,
+            startTime: startedAt,
+            endTime: endedAt,
+          },
+          update: { qaRunId: run.id, traceId, endTime: endedAt },
+        });
+        const stateByName = new Map<string, { id: string }>();
+        for (const raw of observations.slice(0, 500)) {
+          const observation = raw as Record<string, unknown>;
+          const stateName = String(observation.stateName ?? '').replace(/[^A-Z0-9_]/gi, '_').slice(0, 100);
+          if (!stateName) continue;
+          let state = await tx.state.findFirst({ where: { applicationId: run.applicationId, name: stateName } });
+          state = state
+            ? await tx.state.update({ where: { id: state.id }, data: { visitCount: { increment: 1 } } })
+            : await tx.state.create({
+                data: {
+                  applicationId: run.applicationId,
+                  name: stateName,
+                  category: String(observation.category ?? 'NAVIGATION'),
+                  visitCount: 1,
+                },
+              });
+          stateByName.set(stateName, state);
+          const eventId = String(observation.eventId ?? crypto.randomUUID());
+          const timestamp = new Date(String(observation.timestamp ?? endedAt.toISOString()));
+          await tx.sessionEvent.upsert({
+            where: { id: eventId },
+            create: {
+              id: eventId,
+              sessionId,
+              eventType: 'BROWSER_STATE_OBSERVED',
+              eventVersion: '1.0',
+              source: 'DESKTOP_BROWSER',
+              timestamp,
+              metadata: {
+                stateName,
+                url: String(observation.url ?? '').slice(0, 2000),
+                title: String(observation.title ?? '').slice(0, 200),
+                runId: run.id,
+                traceId,
+              },
+            },
+            update: {},
+          });
+          await tx.stateObservation.create({ data: { stateId: state.id, sessionId, eventId, timestamp } });
+        }
+        for (const raw of observedTransitions.slice(0, 500)) {
+          const transitionInput = raw as Record<string, unknown>;
+          const fromName = String(transitionInput.fromState ?? '').replace(/[^A-Z0-9_]/gi, '_').slice(0, 100);
+          const toName = String(transitionInput.toState ?? '').replace(/[^A-Z0-9_]/gi, '_').slice(0, 100);
+          const fromState = stateByName.get(fromName);
+          const toState = stateByName.get(toName);
+          if (!fromState || !toState) continue;
+          const action = String(transitionInput.action ?? 'NAVIGATE').slice(0, 100);
+          let transition = await tx.transition.findFirst({
+            where: {
+              applicationId: run.applicationId,
+              fromStateId: fromState.id,
+              toStateId: toState.id,
+              action,
+            },
+          });
+          transition = transition
+            ? await tx.transition.update({ where: { id: transition.id }, data: { frequency: { increment: 1 } } })
+            : await tx.transition.create({
+                data: {
+                  applicationId: run.applicationId,
+                  fromStateId: fromState.id,
+                  toStateId: toState.id,
+                  action,
+                  frequency: 1,
+                },
+              });
+          await tx.transitionObservation.create({
+            data: {
+              transitionId: transition.id,
+              sessionId,
+              fromEventId: String(transitionInput.fromEventId),
+              toEventId: String(transitionInput.toEventId),
+              timestamp: new Date(String(transitionInput.timestamp ?? endedAt.toISOString())),
+            },
+          });
+        }
+        await tx.sessionStatistic.upsert({
+          where: { sessionId },
+          create: {
+            sessionId,
+            eventCount: observations.length,
+            errorCount: run.findings.filter((finding) => finding.severity === 'CRITICAL' || finding.severity === 'HIGH').length,
+            durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
+          },
+          update: {
+            eventCount: observations.length,
+            durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
+          },
+        });
+      });
+    }
+
+    const completed = await prisma.qARun.update({
+      where: { id: run.id },
+      data: {
+        status: QARunStatus.COMPLETED,
+        endedAt,
+        browserMetadata: req.body?.browserMetadata ?? undefined,
+        artifactManifest: req.body?.artifactManifest ?? undefined,
+      },
+    });
+    res.json(completed);
+  });
+
+  router.get('/qa-runs/:runId/artifacts/:artifactId/download', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const artifact = run.artifacts.find((candidate) => candidate.id === req.params.artifactId);
+    if (!artifact?.objectKey) return res.status(404).json({ error: 'Artifact content not available' });
+    try {
+      res.json({ url: await storage.presign(artifact.objectKey, 15 * 60), expiresInSeconds: 900 });
+    } catch {
+      res.status(503).json({ error: 'ARTIFACT_DOWNLOAD_UNAVAILABLE' });
+    }
+  });
+
+  router.get('/qa-runs/:runId/artifacts', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    res.json(run.artifacts.map(safeArtifact));
+  });
+
+  router.get('/qa-runs/:runId/findings', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    res.json(run.findings.map((finding) => ({
+      ...finding,
+      evidence: finding.evidence.map((link) => ({
+        ...link,
+        artifact: safeArtifact(link.artifact),
+      })),
+    })));
+  });
+
+  router.get('/qa-runs/:runId/observed-graph', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const sessionIds = await prisma.session.findMany({
+      where: { qaRunId: run.id },
+      select: { id: true },
+    }).then((sessions) => sessions.map((session) => session.id));
+    const [states, transitions] = await Promise.all([
+      prisma.stateObservation.findMany({
+        where: { sessionId: { in: sessionIds } },
+        include: { state: true },
+        orderBy: { timestamp: 'asc' },
+      }),
+      prisma.transitionObservation.findMany({
+        where: { sessionId: { in: sessionIds } },
+        include: { transition: { include: { fromState: true, toState: true } } },
+        orderBy: { timestamp: 'asc' },
+      }),
+    ]);
+    res.json({
+      runId: run.id,
+      sessions: sessionIds,
+      states: states.map((item) => ({
+        id: item.state.id,
+        name: item.state.name,
+        category: item.state.category,
+        sessionId: item.sessionId,
+        timestamp: item.timestamp,
+      })),
+      transitions: transitions.map((item) => ({
+        id: item.transition.id,
+        from: item.transition.fromState.name,
+        to: item.transition.toState.name,
+        action: item.transition.action,
+        sessionId: item.sessionId,
+        timestamp: item.timestamp,
+      })),
+    });
+  });
+
+  router.get('/qa-runs/:runId/replay', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const sessions = await prisma.session.findMany({
+      where: { qaRunId: run.id },
+      include: { events: { orderBy: { timestamp: 'asc' } }, statistics: true },
+      orderBy: { startTime: 'asc' },
+    });
+    res.json({
+      runId: run.id,
+      sessions,
+      artifacts: run.artifacts.map(safeArtifact),
+      findings: run.findings,
+    });
+  });
+
+  router.get('/qa-runs/:runId/reconciliation', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const reports = await prisma.reconciliationReport.findMany({
+      where: {
+        applicationId: run.applicationId,
+        environmentId: run.environmentId,
+        ...(run.expectedGraphVersion?.graphId ? { flowId: run.expectedGraphVersion.graphId } : {}),
+      },
+      include: { flow: { select: { id: true, name: true, version: true } } },
+      orderBy: { generatedAt: 'desc' },
+      take: 50,
+    });
+    res.json({ runId: run.id, expectedGraphVersionId: run.expectedGraphVersionId, reports });
+  });
+
+  router.post('/qa-runs/:runId/fail', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.status === QARunStatus.FAILED) return res.json(run);
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    const failed = await prisma.qARun.update({
+      where: { id: run.id },
+      data: {
+        status: QARunStatus.FAILED,
+        endedAt: new Date(),
+        failureReasonSafe: String(req.body?.failureReasonSafe ?? 'Desktop run failed').slice(0, 500),
+      },
+    });
+    res.json(failed);
+  });
+
+  return router;
+}
