@@ -8,7 +8,9 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  DeclaredFlowDetail,
   DeclaredFlowSummary,
+  DocumentAccess,
   DesktopApplication,
   DesktopSession,
   QARunSummary,
@@ -46,7 +48,13 @@ type DesktopContextValue = {
   getRun(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
-  getDocuments(applicationId: string): Promise<SourceDocumentSummary[]>;
+  getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
+  createDeclaredFlow(applicationId: string, name: string, workflowType: string): Promise<DeclaredFlowSummary>;
+  addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string): Promise<Record<string, unknown>>;
+  addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
+  completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+  reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+  getDocuments(applicationId: string): Promise<DocumentAccess>;
   importDocuments(applicationId: string): Promise<Record<string, unknown>[]>;
   getIntentDrafts(applicationId: string): Promise<IntentDraft[]>;
   getIntentDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
@@ -213,6 +221,12 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getRun: (runId) => bridge().runs.get(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
+    getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
+    createDeclaredFlow: (applicationId, name, workflowType) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType)),
+    addDeclaredState: (applicationId, flowId, stateName, category) => perform(() => bridge().intent.addDeclaredState(applicationId, flowId, stateName, category)),
+    addDeclaredTransition: (applicationId, flowId, fromStateId, toStateId, action) => perform(() => bridge().intent.addDeclaredTransition(applicationId, flowId, fromStateId, toStateId, action)),
+    completeDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.completeDeclaredFlow(applicationId, flowId)),
+    reopenDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.reopenDeclaredFlow(applicationId, flowId)),
     getDocuments: (applicationId) => bridge().documents.list(applicationId),
     importDocuments: (applicationId) => perform(() => bridge().documents.import(applicationId)),
     getIntentDrafts: (applicationId) => bridge().intent.listDrafts(applicationId),

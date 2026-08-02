@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { app, shell } from 'electron';
 import type {
+  DeclaredFlowDetail,
   DeclaredFlowSummary,
   DesktopApplication,
   QARunSummary,
@@ -34,8 +35,9 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   }
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const error = new Error(String((body as Json | null)?.error ?? `HTTP_${response.status}`));
-    Object.assign(error, { status: response.status });
+    const payload = body as Json | null;
+    const error = new Error(String(payload?.message ?? payload?.error ?? `HTTP_${response.status}`));
+    Object.assign(error, { status: response.status, code: payload?.error });
     throw error;
   }
   return body as T;
@@ -160,6 +162,33 @@ export class DesktopCloudClient {
   async declaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]> {
     const flows = await this.request<DeclaredFlowSummary[]>(`/applications/${applicationId}/declared-flow`);
     return Array.isArray(flows) ? flows : [];
+  }
+
+  async declaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail> {
+    return this.request<DeclaredFlowDetail>(`/applications/${applicationId}/declared-flow/${flowId}`);
+  }
+
+  async createDeclaredFlow(applicationId: string, input: { name: string; workflowType: string }): Promise<DeclaredFlowSummary> {
+    return this.request<DeclaredFlowSummary>(`/applications/${applicationId}/declared-flow`, {
+      method: 'POST', body: JSON.stringify(input),
+    });
+  }
+
+  async addDeclaredState(applicationId: string, flowId: string, input: { stateName: string; category: string }): Promise<Json> {
+    return this.request<Json>(`/applications/${applicationId}/declared-flow/${flowId}/states`, {
+      method: 'POST', body: JSON.stringify({ ...input, provenance: 'USER_DECLARED' }),
+    });
+  }
+
+  async addDeclaredTransition(applicationId: string, flowId: string, input: { fromStateId: string; toStateId: string; action?: string }): Promise<Json> {
+    return this.request<Json>(`/applications/${applicationId}/declared-flow/${flowId}/transitions`, {
+      method: 'POST', body: JSON.stringify({ ...input, provenance: 'USER_DECLARED' }),
+    });
+  }
+
+  async setDeclaredFlowComplete(applicationId: string, flowId: string, complete: boolean): Promise<Json> {
+    const action = complete ? 'complete' : 'reopen';
+    return this.request<Json>(`/applications/${applicationId}/declared-flow/${flowId}/${action}`, { method: 'POST' });
   }
 
   async documents(applicationId: string): Promise<SourceDocumentSummary[]> {

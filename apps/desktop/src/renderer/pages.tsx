@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Accessibility, Activity, AlertTriangle, ArrowRight, BarChart3, BookOpenText,
-  Check, CirclePause, CircleStop, Code2, FileSearch, Folder, Globe2, KeyRound,
-  Network, Play, RefreshCw, SearchCode, ShieldCheck, TerminalSquare, Workflow,
+  Check, CirclePause, CircleStop, Code2, FileSearch, Folder, Globe2, KeyRound, Lock,
+  Network, Play, Plus, RefreshCw, SearchCode, ShieldCheck, TerminalSquare, Unlock, Workflow,
 } from 'lucide-react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import type { DeclaredFlowSummary, IntentDraft, QARunSummary, QualityReport, SourceDocumentSummary } from '@sots/desktop-contracts';
+import type { DeclaredFlowDetail, DeclaredFlowSummary, IntentDraft, QARunSummary, QualityReport, SourceDocumentSummary } from '@sots/desktop-contracts';
 import type { LiveEvidence } from '@sots/browser-observer';
 import { useDesktop } from './desktop-context';
 
@@ -211,13 +211,51 @@ export function SourcesPage() {
   const { getDocuments, importDocuments, busy } = useDesktop();
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const refresh = () => projectId ? getDocuments(projectId).then(setDocuments).finally(() => setLoading(false)) : Promise.resolve();
-  useEffect(() => { void refresh(); }, [projectId]);
-  if (!projectId) return <ProjectRequired />;
-  const upload = async () => {
-    await importDocuments(projectId);
-    await refresh();
+  const [unentitled, setUnentitled] = useState(false);
+
+  const refresh = async () => {
+    if (!projectId) return;
+    try {
+      const access = await getDocuments(projectId);
+      setDocuments(access.documents);
+      setUnentitled(!access.entitled);
+    } catch {
+      setDocuments([]);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => { void refresh(); }, [projectId]);
+
+  if (!projectId) return <ProjectRequired />;
+
+  if (unentitled) {
+    return (
+      <Page title="Sources" description="Local document extraction with approved, redacted evidence synchronized to Tellann.">
+        <section className="guarded-card">
+          <ShieldCheck size={32} />
+          <div>
+            <Status>Plan Entitlement Required</Status>
+            <h2>Document Flow Inference requires an upgraded plan</h2>
+            <p>Source document extraction and analysis (<code>DOCUMENT_FLOW_INFERENCE</code>) is not included on your organization's current plan (Free). Upgrade to Local, Solo, or Team plan to enable product document upload and workflow inference.</p>
+          </div>
+        </section>
+      </Page>
+    );
+  }
+
+  const upload = async () => {
+    try {
+      await importDocuments(projectId);
+      await refresh();
+    } catch (err: any) {
+      if (String(err?.message ?? err).includes('FEATURE_NOT_ENTITLED')) {
+        setUnentitled(true);
+      }
+    }
+  };
+
   return (
     <Page title="Sources" description="Local document extraction with approved, redacted evidence synchronized to Tellann." actions={<button className="button primary" disabled={busy} onClick={() => void upload()}><FileSearch size={15} />Add documents</button>}>
       <div className="context-banner">PDF, DOCX, Markdown, text, HTML, and OpenAPI files are extracted locally. Raw files stay on this device unless separately approved.</div>
@@ -239,29 +277,187 @@ export function ActivityPage() {
   return <GuardedFeaturePage title="Project activity" description="Workspace scans, runs, reports, and local synchronization activity." phase="Cloud audit expansion is scheduled for enterprise hardening." fallback="QA run and report history are available in their respective sections." />;
 }
 
+function ManualIntentBuilder({ projectId, flows, refreshFlows }: {
+  projectId: string;
+  flows: DeclaredFlowSummary[];
+  refreshFlows(): Promise<DeclaredFlowSummary[]>;
+}) {
+  const {
+    getDeclaredFlow, createDeclaredFlow, addDeclaredState, addDeclaredTransition,
+    completeDeclaredFlow, reopenDeclaredFlow, busy,
+  } = useDesktop();
+  const [selectedFlowId, setSelectedFlowId] = useState('');
+  const [activeFlow, setActiveFlow] = useState<DeclaredFlowDetail | null>(null);
+  const [newFlowName, setNewFlowName] = useState('');
+  const [workflowType, setWorkflowType] = useState('CUSTOM');
+  const [stateName, setStateName] = useState('');
+  const [stateCategory, setStateCategory] = useState('BUSINESS');
+  const [fromStateId, setFromStateId] = useState('');
+  const [toStateId, setToStateId] = useState('');
+  const [transitionAction, setTransitionAction] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedFlowId || !flows.length) return;
+    setSelectedFlowId(flows[0].id);
+  }, [flows, selectedFlowId]);
+
+  const refreshActiveFlow = async (flowId = selectedFlowId) => {
+    if (!flowId) {
+      setActiveFlow(null);
+      return;
+    }
+    setActiveFlow(await getDeclaredFlow(projectId, flowId));
+  };
+
+  useEffect(() => {
+    void refreshActiveFlow().catch((err) => setMessage(String(err?.message ?? err)));
+  }, [projectId, selectedFlowId]);
+
+  const createFlow = async () => {
+    const name = newFlowName.trim();
+    if (!name) return;
+    try {
+      const flow = await createDeclaredFlow(projectId, name, workflowType);
+      await refreshFlows();
+      setNewFlowName('');
+      setSelectedFlowId(flow.id);
+      setMessage('Flow created. Add the states users should move through.');
+    } catch (err: any) {
+      setMessage(String(err?.message ?? err));
+    }
+  };
+
+  const addState = async () => {
+    const name = stateName.trim();
+    if (!selectedFlowId || !name) return;
+    try {
+      await addDeclaredState(projectId, selectedFlowId, name, stateCategory);
+      setStateName('');
+      await refreshActiveFlow();
+      await refreshFlows();
+      setMessage('State added.');
+    } catch (err: any) {
+      setMessage(String(err?.message ?? err));
+    }
+  };
+
+  const addTransition = async () => {
+    if (!selectedFlowId || !fromStateId || !toStateId || fromStateId === toStateId) return;
+    try {
+      await addDeclaredTransition(projectId, selectedFlowId, fromStateId, toStateId, transitionAction.trim() || undefined);
+      setFromStateId('');
+      setToStateId('');
+      setTransitionAction('');
+      await refreshActiveFlow();
+      await refreshFlows();
+      setMessage('Transition added.');
+    } catch (err: any) {
+      setMessage(String(err?.message ?? err));
+    }
+  };
+
+  const toggleComplete = async () => {
+    if (!activeFlow) return;
+    try {
+      if (activeFlow.status === 'COMPLETE') await reopenDeclaredFlow(projectId, activeFlow.id);
+      else await completeDeclaredFlow(projectId, activeFlow.id);
+      await refreshActiveFlow();
+      await refreshFlows();
+      setMessage(activeFlow.status === 'COMPLETE' ? 'Flow reopened for editing.' : 'Flow completed and ready for QA reconciliation.');
+    } catch (err: any) {
+      setMessage(String(err?.message ?? err));
+    }
+  };
+
+  const editable = activeFlow?.status !== 'COMPLETE';
+  const stateNameById = new Map(activeFlow?.states.map((state) => [state.id, state.stateName]) ?? []);
+
+  return <div className="stack">
+    <section className="content-card upgrade-card">
+      <div><Status>Free plan · Manual declaration</Status><h2>Declare your intended behavior directly</h2><p>Manual flow declaration is included on Free. Upgrade to Local or Solo to turn requirements and product documents into reviewable AI-generated flows.</p></div>
+      <Status>Local or Solo unlocks AI</Status>
+    </section>
+
+    <section className="content-card manual-flow-create">
+      <div className="card-heading"><div><small>Step 1</small><h2>Create or choose a flow</h2></div></div>
+      <div className="manual-flow-controls">
+        <label><span>Existing flow</span><select value={selectedFlowId} onChange={(event) => setSelectedFlowId(event.target.value)}><option value="">Select a flow</option>{flows.map((flow) => <option key={flow.id} value={flow.id}>{flow.name} ({flow.status})</option>)}</select></label>
+        <label><span>New flow name</span><input value={newFlowName} onChange={(event) => setNewFlowName(event.target.value)} placeholder="e.g. Customer checkout" /></label>
+        <label><span>Flow type</span><select value={workflowType} onChange={(event) => setWorkflowType(event.target.value)}><option value="CUSTOM">Custom</option><option value="AUTHENTICATION">Authentication</option><option value="CHECKOUT">Checkout</option><option value="ONBOARDING">Onboarding</option></select></label>
+        <button className="button primary" disabled={busy || !newFlowName.trim()} onClick={() => void createFlow()}><Plus size={15} />Create flow</button>
+      </div>
+    </section>
+
+    {activeFlow ? <>
+      <section className="content-card">
+        <div className="card-heading"><div><small>Step 2</small><h2>Add expected states</h2></div><Status>{activeFlow.states.length} states</Status></div>
+        <p>States are meaningful moments in the workflow, such as CART_REVIEWED, PAYMENT_SUBMITTED, or ORDER_CONFIRMED.</p>
+        <div className="manual-flow-controls">
+          <label><span>State name</span><input disabled={!editable} value={stateName} onChange={(event) => setStateName(event.target.value)} placeholder="e.g. PAYMENT_SUBMITTED" /></label>
+          <label><span>Category</span><select disabled={!editable} value={stateCategory} onChange={(event) => setStateCategory(event.target.value)}><option value="BUSINESS">Business</option><option value="UI">UI</option><option value="SYSTEM">System</option><option value="ERROR">Error</option></select></label>
+          <button className="button primary" disabled={busy || !editable || !stateName.trim()} onClick={() => void addState()}><Plus size={15} />Add state</button>
+        </div>
+        {activeFlow.states.length ? <div className="manual-state-list">{activeFlow.states.map((state, index) => <div key={state.id}><span>{index + 1}</span><strong>{state.stateName}</strong><small>{state.category}</small></div>)}</div> : <p className="muted-callout">No states yet. Add the first expected behavior above.</p>}
+      </section>
+
+      <section className="content-card">
+        <div className="card-heading"><div><small>Step 3</small><h2>Connect the states</h2></div><Status>{activeFlow.transitions.length} transitions</Status></div>
+        <div className="manual-flow-controls transition-controls">
+          <label><span>From</span><select disabled={!editable} value={fromStateId} onChange={(event) => setFromStateId(event.target.value)}><option value="">Choose state</option>{activeFlow.states.map((state) => <option key={state.id} value={state.id}>{state.stateName}</option>)}</select></label>
+          <label><span>To</span><select disabled={!editable} value={toStateId} onChange={(event) => setToStateId(event.target.value)}><option value="">Choose state</option>{activeFlow.states.map((state) => <option key={state.id} value={state.id}>{state.stateName}</option>)}</select></label>
+          <label><span>Action (optional)</span><input disabled={!editable} value={transitionAction} onChange={(event) => setTransitionAction(event.target.value)} placeholder="e.g. submit payment" /></label>
+          <button className="button primary" disabled={busy || !editable || !fromStateId || !toStateId || fromStateId === toStateId} onClick={() => void addTransition()}><Plus size={15} />Add transition</button>
+        </div>
+        {activeFlow.transitions.length ? <div className="manual-transition-list">{activeFlow.transitions.map((transition) => <div key={transition.id}><strong>{stateNameById.get(transition.fromStateId) ?? transition.fromState?.stateName}</strong><ArrowRight size={14} /><strong>{stateNameById.get(transition.toStateId) ?? transition.toState?.stateName}</strong><small>{transition.action || 'Transition'}</small></div>)}</div> : <p className="muted-callout">Add at least two states, then describe how users move between them.</p>}
+      </section>
+
+      <section className="content-card manual-flow-finish"><div><small>Step 4</small><h2>{activeFlow.status === 'COMPLETE' ? 'Flow is complete' : 'Finish the declaration'}</h2><p>{activeFlow.status === 'COMPLETE' ? 'This flow can now be used as expected behavior during QA runs.' : 'Completing locks this version and makes it available for reconciliation. You can reopen it later.'}</p></div><button className="button primary" disabled={busy || (!activeFlow.states.length && editable)} onClick={() => void toggleComplete()}>{activeFlow.status === 'COMPLETE' ? <Unlock size={15} /> : <Lock size={15} />}{activeFlow.status === 'COMPLETE' ? 'Reopen flow' : 'Complete flow'}</button></section>
+    </> : <EmptyState icon={<Workflow size={36} />} title="Create your first intended flow" description="Name a workflow above, then add its expected states and transitions." />}
+    {message ? <div className="context-banner" role="status">{message}</div> : null}
+  </div>;
+}
+
 export function IntentPage() {
   const { projectId, application, getDeclaredFlows } = useProject();
   const { getIntentDrafts, getDocuments, createIntentDraft, busy } = useDesktop();
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
   const [drafts, setDrafts] = useState<IntentDraft[]>([]);
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
+  const [documentAutomationAvailable, setDocumentAutomationAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (!projectId) return;
-    void Promise.all([getDeclaredFlows(projectId), getIntentDrafts(projectId), getDocuments(projectId)])
-      .then(([nextFlows, nextDrafts, nextDocuments]) => { setFlows(nextFlows); setDrafts(nextDrafts); setDocuments(nextDocuments); })
-      .catch(() => { setFlows([]); setDrafts([]); setDocuments([]); }).finally(() => setLoading(false));
-  }, [getDeclaredFlows, getDocuments, getIntentDrafts, projectId]);
+    let cancelled = false;
+    void Promise.all([getDeclaredFlows(projectId).catch(() => []), getDocuments(projectId)])
+      .then(async ([nextFlows, access]) => {
+        if (cancelled) return;
+        setFlows(nextFlows);
+        setDocuments(access.documents);
+        setDocumentAutomationAvailable(access.entitled);
+        if (access.entitled) setDrafts(await getIntentDrafts(projectId));
+        else setDrafts([]);
+      })
+      .catch(() => { if (!cancelled) setDocumentAutomationAvailable(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [projectId]);
   if (!projectId) return <ProjectRequired />;
   if (!application) return <NotFoundPage title="Project unavailable" description="Select another project." />;
+  const refreshFlows = async () => {
+    const next = await getDeclaredFlows(projectId);
+    setFlows(next);
+    return next;
+  };
   const generate = async () => {
     const versionIds = documents.flatMap((document) => document.versions[0]?.id ? [document.versions[0].id] : []);
     await createIntentDraft(projectId, versionIds);
     setDrafts(await getIntentDrafts(projectId));
   };
   return (
-    <Page title="Intent" description="Generate expected workflows from approved document and repository evidence, then review before graph truth changes." actions={<><Link className="button" to={`/projects/${projectId}/intent/versions`}>Version history</Link><button className="button primary" disabled={busy || documents.every((document) => !document.versions.length)} onClick={() => void generate()}><Workflow size={15} />Generate draft</button></>}>
-      {loading ? <LoadingState /> : <div className="stack">
+    <Page title="Intent" description={documentAutomationAvailable === false ? 'Declare the system flows and behaviors your QA runs should expect.' : 'Generate expected workflows from approved document and repository evidence, then review before graph truth changes.'} actions={<Link className="button" to={`/projects/${projectId}/intent/versions`}>Version history</Link>}>
+      {loading ? <LoadingState /> : documentAutomationAvailable === false ? <ManualIntentBuilder projectId={projectId} flows={flows} refreshFlows={refreshFlows} /> : <div className="stack">
+        <section className="content-card ai-intent-actions"><div><Status>AI-assisted intent</Status><h2>Generate flows from your documents</h2><p>Tellann creates a review draft first. Nothing changes graph truth until you accept it.</p></div><button className="button primary" disabled={busy || documents.every((document) => !document.versions.length)} onClick={() => void generate()}><Workflow size={15} />Generate draft</button></section>
         {drafts.length ? <section className="content-card"><div className="card-heading"><div><small>Review queue</small><h2>Inferred intent drafts</h2></div><Status>{drafts.filter((draft) => draft.status === 'PENDING_REVIEW').length} pending</Status></div><div className="stack compact">{drafts.map((draft) => <Link className="row-card draft-link" key={draft.id} to={`/projects/${projectId}/intent/drafts/${draft.id}`}><div><strong>{(draft.draftJson as any)?.workflows?.[0]?.name ?? 'Document-derived intent'}</strong><small>{draft.source} · {Math.round(draft.confidence * 100)}% confidence</small></div><Status>{draft.status}</Status></Link>)}</div></section> : null}
         {flows.length ? <section className="content-card"><div className="card-heading"><div><small>Graph truth</small><h2>Accepted declared graphs</h2></div></div><div className="stack compact">{flows.map((flow) => <section className="row-card" key={flow.id}><div><strong>{flow.name}</strong><small>Immutable accepted behavior</small></div><Status>{flow.status}</Status></section>)}</div></section> : null}
         {!drafts.length && !flows.length ? <EmptyState icon={<Workflow size={36} />} title="No expected intent yet" description="Add product documents, process their derived evidence, then generate a reviewable flow draft." action={<Link className="button primary" to={`/projects/${projectId}/sources`}>Add documents</Link>} /> : null}

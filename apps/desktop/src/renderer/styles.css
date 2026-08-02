@@ -591,6 +591,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .flow-review-list span, .flow-review-list small { color: var(--muted); font-size: 11px; }
 .review-actions { display: grid; gap: 10px; }
 .button.danger { color: #fca5a5; border-color: rgba(239, 68, 68, .35); }
+.upgrade-card, .ai-intent-actions, .manual-flow-finish { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.upgrade-card { border-color: #555; background: linear-gradient(110deg, #171717, #0d0d0d); }
+.manual-flow-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(150px, .7fr) auto; gap: 10px; align-items: end; margin-top: 16px; }
+.manual-flow-controls label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.manual-flow-controls input, .manual-flow-controls select { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid var(--border); background: #080808; color: var(--strong); }
+.manual-state-list, .manual-transition-list { display: grid; gap: 7px; margin-top: 14px; }
+.manual-state-list > div { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px; border: 1px solid var(--border); background: #090909; }
+.manual-state-list span { display: grid; place-content: center; width: 22px; height: 22px; border: 1px solid var(--border); color: var(--muted); font: 10px ui-monospace, monospace; }
+.manual-state-list small, .manual-transition-list small { color: var(--muted); font: 10px ui-monospace, monospace; text-transform: uppercase; }
+.manual-transition-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px; border: 1px solid var(--border); background: #090909; }
+.muted-callout { margin-top: 14px; padding: 14px; border: 1px dashed var(--border); }
 
 @media (max-width: 1180px) {
   .routed-shell { grid-template-columns: 190px minmax(0, 1fr); }
@@ -598,4 +609,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .summary-grid, .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .live-run-page { grid-template-columns: 190px minmax(320px, 1fr) 280px; }
   .intent-review-grid { grid-template-columns: 1fr; }
+  .manual-flow-controls { grid-template-columns: 1fr 1fr; }
 }

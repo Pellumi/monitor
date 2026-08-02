@@ -201,7 +201,7 @@ export class StorageClient {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function createStorageClient(env: NodeJS.ProcessEnv = process.env): StorageClient {
-  let primary: StorageAdapter;
+  let primary: StorageAdapter | undefined;
   let fallback: StorageAdapter | undefined;
 
   // ── Primary: Railway S3-compatible ──────────────────────────────────────
@@ -219,20 +219,21 @@ export function createStorageClient(env: NodeJS.ProcessEnv = process.env): Stora
       accessKeyId: s3AccessKey,
       secretAccessKey: s3SecretKey,
     });
-  } else {
-    primary = new LocalFsStorageAdapter();
-    console.warn('[storage] No S3 credentials found — using local filesystem adapter');
   }
 
-  // ── Fallback: Firebase Storage ───────────────────────────────────────────
+  // ── Alternative: Firebase Storage ─────────────────────────────────────────
   const firebaseServiceAccountJson = env.STORAGE_FIREBASE_SERVICE_ACCOUNT_JSON;
   const firebaseBucket = env.STORAGE_FIREBASE_BUCKET;
 
+  let firebaseAdapter: FirebaseStorageAdapter | undefined;
   if (firebaseServiceAccountJson && firebaseBucket) {
     try {
       // Lazy import so firebase-admin is not required when not configured
       const admin = require('firebase-admin');
-      const serviceAccount = JSON.parse(firebaseServiceAccountJson);
+      const serviceAccount =
+        typeof firebaseServiceAccountJson === 'string'
+          ? JSON.parse(firebaseServiceAccountJson)
+          : firebaseServiceAccountJson;
       const appName = 'sots-storage';
       const existingApp = admin.apps.find((a: any) => a?.name === appName);
       const firebaseApp =
@@ -242,10 +243,21 @@ export function createStorageClient(env: NodeJS.ProcessEnv = process.env): Stora
           appName,
         );
       const bucket = admin.storage(firebaseApp).bucket();
-      fallback = new FirebaseStorageAdapter(bucket);
+      firebaseAdapter = new FirebaseStorageAdapter(bucket);
     } catch (err) {
-      console.warn('[storage] Firebase storage fallback failed to initialize', err);
+      console.warn('[storage] Firebase storage failed to initialize', err);
     }
+  }
+
+  if (primary) {
+    fallback = firebaseAdapter ?? new LocalFsStorageAdapter();
+  } else if (firebaseAdapter) {
+    primary = firebaseAdapter;
+    fallback = new LocalFsStorageAdapter();
+    console.info('[storage] No S3 credentials found — using Firebase storage adapter');
+  } else {
+    primary = new LocalFsStorageAdapter();
+    console.warn('[storage] No S3 credentials found — using local filesystem adapter');
   }
 
   return new StorageClient(primary, fallback);

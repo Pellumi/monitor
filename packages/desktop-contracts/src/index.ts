@@ -210,6 +210,30 @@ export const DeclaredFlowSummarySchema = z.object({
   versions: z.array(z.object({ id: z.string().uuid(), version: z.number().int(), isBaseline: z.boolean().optional() })).optional(),
 }).passthrough();
 
+export const DeclaredStateSchema = z.object({
+  id: z.string().uuid(),
+  stateName: z.string(),
+  category: z.string(),
+  provenance: z.string(),
+  canonicalBehavior: z.string().nullable().optional(),
+}).passthrough();
+
+export const DeclaredTransitionSchema = z.object({
+  id: z.string().uuid(),
+  fromStateId: z.string().uuid(),
+  toStateId: z.string().uuid(),
+  action: z.string().nullable().optional(),
+  provenance: z.string(),
+  fromState: DeclaredStateSchema.optional(),
+  toState: DeclaredStateSchema.optional(),
+}).passthrough();
+
+export const DeclaredFlowDetailSchema = DeclaredFlowSummarySchema.extend({
+  workflowType: z.string(),
+  states: z.array(DeclaredStateSchema).default([]),
+  transitions: z.array(DeclaredTransitionSchema).default([]),
+});
+
 export const SourceDocumentManifestSchema = z.object({
   filename: z.string(),
   mimeType: z.string(),
@@ -237,6 +261,11 @@ export const SourceDocumentSummarySchema = z.object({
   versions: z.array(z.object({ id: z.string().uuid(), version: z.number().int(), extractedSummary: z.unknown(), redactionSummary: z.unknown(), structureSummary: z.unknown().nullable(), processorVersion: z.string() })).default([]),
   processingJobs: z.array(z.object({ id: z.string().uuid(), status: z.string(), resultVersionId: z.string().nullable() })).default([]),
 }).passthrough();
+
+export const DocumentAccessSchema = z.object({
+  entitled: z.boolean(),
+  documents: z.array(SourceDocumentSummarySchema),
+});
 
 export const IntentDraftSchema = z.object({
   id: z.string().uuid(), status: z.string(), source: z.string(), confidence: z.number(), draftJson: z.any(), sourceManifest: z.any().nullable(),
@@ -266,6 +295,12 @@ export const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReport: 'tellann:cloud:runs:report',
   getDeclaredFlows: 'tellann:cloud:intent:list',
+  getDeclaredFlow: 'tellann:cloud:intent:get',
+  createDeclaredFlow: 'tellann:cloud:intent:create',
+  addDeclaredState: 'tellann:cloud:intent:state:add',
+  addDeclaredTransition: 'tellann:cloud:intent:transition:add',
+  completeDeclaredFlow: 'tellann:cloud:intent:complete',
+  reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
   importDocuments: 'tellann:documents:import',
   listDocuments: 'tellann:documents:list',
   createIntentDraft: 'tellann:intent:draft:create',
@@ -315,8 +350,12 @@ export type QARun = z.infer<typeof QARunSchema>;
 export type QARunSummary = z.infer<typeof QARunSummarySchema>;
 export type QualityReport = z.infer<typeof QualityReportSchema>;
 export type DeclaredFlowSummary = z.infer<typeof DeclaredFlowSummarySchema>;
+export type DeclaredState = z.infer<typeof DeclaredStateSchema>;
+export type DeclaredTransition = z.infer<typeof DeclaredTransitionSchema>;
+export type DeclaredFlowDetail = z.infer<typeof DeclaredFlowDetailSchema>;
 export type SourceDocumentManifest = z.infer<typeof SourceDocumentManifestSchema>;
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
+export type DocumentAccess = z.infer<typeof DocumentAccessSchema>;
 export type IntentDraft = z.infer<typeof IntentDraftSchema>;
 export type QARunArtifact = z.infer<typeof QARunArtifactSchema>;
 export type BrowserFinding = z.infer<typeof BrowserFindingSchema>;

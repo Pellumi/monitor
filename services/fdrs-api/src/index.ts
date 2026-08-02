@@ -2094,7 +2094,7 @@ app.post('/applications/:id/declared-flow/:flowId/complete', async (req: Request
       return res.status(404).json({ error: 'Behavior graph not found' });
     }
     if (flow.status === FlowStatus.COMPLETE) {
-      return res.status(400).json({ error: 'Flow is already marked COMPLETE' });
+      return res.json(flow);
     }
 
     // Mark complete
@@ -2160,7 +2160,7 @@ app.post('/applications/:id/declared-flow/:flowId/reopen', async (req: Request, 
       return res.status(404).json({ error: 'Behavior graph not found' });
     }
     if (flow.status !== FlowStatus.COMPLETE) {
-      return res.status(400).json({ error: 'Flow must be COMPLETE to reopen' });
+      return res.json(flow);
     }
 
     const updatedFlow = await prisma.behaviorGraph.update({

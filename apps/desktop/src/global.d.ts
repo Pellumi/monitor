@@ -1,5 +1,7 @@
 import type {
+  DeclaredFlowDetail,
   DeclaredFlowSummary,
+  DocumentAccess,
   DesktopApplication,
   DesktopSession,
   QARunSummary,
@@ -32,6 +34,12 @@ declare global {
       };
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
+        getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
+        createDeclaredFlow(applicationId: string, name: string, workflowType: string): Promise<DeclaredFlowSummary>;
+        addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string): Promise<Record<string, unknown>>;
+        addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
+        completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         listDrafts(applicationId: string): Promise<IntentDraft[]>;
         getDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
         createDraft(applicationId: string, documentVersionIds: string[]): Promise<Record<string, unknown>>;
@@ -39,7 +47,7 @@ declare global {
         correctDraft(applicationId: string, draftId: string, correction: string): Promise<Record<string, unknown>>;
       };
       documents: {
-        list(applicationId: string): Promise<SourceDocumentSummary[]>;
+        list(applicationId: string): Promise<DocumentAccess>;
         import(applicationId: string): Promise<Record<string, unknown>[]>;
       };
       runs: {

@@ -23,6 +23,25 @@ const observer = new BrowserObserver({
 });
 let selectedWorkspace: { localId: string; cloudId: string; snapshotId: string } | null = null;
 
+// Electron's development default is the shared "Electron" session directory.
+// Isolate Chromium caches so another Electron-based app or stale dev process
+// cannot lock Tellann's disk/GPU cache on Windows.
+if (!app.isPackaged) {
+  app.setPath('sessionData', path.join(app.getPath('sessionData'), 'TellannDesktopDev'));
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
+
 function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
     throw new Error('UNTRUSTED_IPC_SENDER');
@@ -111,10 +130,53 @@ function registerIpc(): void {
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     return cloud.declaredFlows(applicationId);
   });
+  ipcMain.handle(IPC.getDeclaredFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.declaredFlow(value.applicationId, value.flowId);
+  });
+  ipcMain.handle(IPC.createDeclaredFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; name?: unknown; workflowType?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.name !== 'string' || typeof value.workflowType !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.createDeclaredFlow(value.applicationId, { name: value.name, workflowType: value.workflowType });
+  });
+  ipcMain.handle(IPC.addDeclaredState, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; stateName?: unknown; category?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.stateName !== 'string' || typeof value.category !== 'string') throw new Error('INVALID_DECLARED_STATE_REQUEST');
+    return cloud.addDeclaredState(value.applicationId, value.flowId, { stateName: value.stateName, category: value.category });
+  });
+  ipcMain.handle(IPC.addDeclaredTransition, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; fromStateId?: unknown; toStateId?: unknown; action?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.fromStateId !== 'string' || typeof value.toStateId !== 'string' || (value.action !== undefined && typeof value.action !== 'string')) throw new Error('INVALID_DECLARED_TRANSITION_REQUEST');
+    return cloud.addDeclaredTransition(value.applicationId, value.flowId, { fromStateId: value.fromStateId, toStateId: value.toStateId, action: value.action });
+  });
+  ipcMain.handle(IPC.completeDeclaredFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.setDeclaredFlowComplete(value.applicationId, value.flowId, true);
+  });
+  ipcMain.handle(IPC.reopenDeclaredFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.setDeclaredFlowComplete(value.applicationId, value.flowId, false);
+  });
   ipcMain.handle(IPC.listDocuments, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return cloud.documents(applicationId);
+    try {
+      return { entitled: true, documents: await cloud.documents(applicationId) };
+    } catch (err: any) {
+      if (err?.status === 403 && String(err?.message ?? err).includes('FEATURE_NOT_ENTITLED')) {
+        return { entitled: false, documents: [] };
+      }
+      throw err;
+    }
   });
   ipcMain.handle(IPC.importDocuments, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -278,7 +340,7 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(async () => {
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   app.setAppUserModelId('com.tellann.desktop');
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   registerIpc();
