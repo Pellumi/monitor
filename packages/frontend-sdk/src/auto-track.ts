@@ -1,4 +1,4 @@
-import { EventType } from '@sots/shared';
+import type { EventType } from './event-types';
 import { SOTS } from './index';
 
 interface AutoTrackConfig {

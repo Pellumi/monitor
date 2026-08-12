@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import mammoth from 'mammoth';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import { sanitizeAiInputFull } from '@sots/ai';
 
 export const DOCUMENT_PROCESSOR_VERSION = 'document-intelligence/1.0.0';
@@ -94,8 +94,13 @@ async function extractRaw(buffer: Buffer, filename: string, mimeType: string): P
   if (!SUPPORTED_DOCUMENT_EXTENSIONS.has(extension)) throw new Error('UNSUPPORTED_DOCUMENT_TYPE');
   if (buffer.length === 0 || buffer.length > MAX_DOCUMENT_BYTES) throw new Error('INVALID_DOCUMENT_SIZE');
   if (extension === '.pdf' || mimeType === 'application/pdf') {
-    const parsed = await pdfParse(buffer);
-    return { kind: 'PDF', text: parsed.text, title: path.basename(filename, extension) };
+    const parser = new PDFParse({ data: buffer });
+    try {
+      const parsed = await parser.getText();
+      return { kind: 'PDF', text: parsed.text, title: path.basename(filename, extension) };
+    } finally {
+      await parser.destroy();
+    }
   }
   if (extension === '.docx' || mimeType.includes('wordprocessingml')) {
     const parsed = await mammoth.extractRawText({ buffer });

@@ -16,6 +16,10 @@ import type { StorageClient } from '@sots/storage';
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
 
+export function productionRunModeAllowed(environmentType: EnvironmentType, mode: QARunMode): boolean {
+  return environmentType !== EnvironmentType.PRODUCTION || mode === QARunMode.OBSERVATION_ONLY;
+}
+
 const TERMINAL_STATUSES = new Set<QARunStatus>([
   QARunStatus.COMPLETED,
   QARunStatus.FAILED,
@@ -184,7 +188,7 @@ export function createDesktopRouter(input: {
     async (req: DesktopRequest, res: Response) => {
       const {
         environmentId, workspaceId, deviceSessionId, repositorySnapshotId,
-        expectedGraphVersionId, mode = QARunMode.GUIDED, targetUrl, retryOfRunId,
+        expectedGraphVersionId, patchSetId, mode = QARunMode.GUIDED, targetUrl, retryOfRunId,
       } = req.body ?? {};
       if (!environmentId || !targetUrl) {
         return res.status(400).json({ error: 'environmentId and targetUrl are required' });
@@ -206,7 +210,7 @@ export function createDesktopRouter(input: {
       if (!Object.values(QARunMode).includes(mode)) {
         return res.status(400).json({ error: 'Invalid QA run mode' });
       }
-      if (environment.type === EnvironmentType.PRODUCTION && mode !== QARunMode.OBSERVATION_ONLY) {
+      if (!productionRunModeAllowed(environment.type, mode)) {
         return res.status(403).json({
           error: 'PRODUCTION_ACTIVE_CONTROL_BLOCKED',
           message: 'Production environments support observation-only runs.',
@@ -219,7 +223,7 @@ export function createDesktopRouter(input: {
         });
       }
 
-      const [workspace, snapshot, expectedGraphVersion] = await Promise.all([
+      const [workspace, snapshot, expectedGraphVersion, patchSet] = await Promise.all([
         workspaceId
           ? prisma.projectWorkspace.findFirst({ where: { id: String(workspaceId), applicationId: req.params.appId } })
           : null,
@@ -231,12 +235,18 @@ export function createDesktopRouter(input: {
         expectedGraphVersionId
           ? prisma.behaviorGraphVersion.findFirst({ where: { id: String(expectedGraphVersionId), graph: { applicationId: req.params.appId, graphType: 'DECLARED' } } })
           : null,
+        patchSetId
+          ? prisma.patchSet.findFirst({ where: { id: String(patchSetId), workspace: { applicationId: req.params.appId }, status: 'VALIDATED' } })
+          : workspaceId
+            ? prisma.patchSet.findFirst({ where: { workspaceId: String(workspaceId), status: 'VALIDATED' }, orderBy: { createdAt: 'desc' } })
+            : null,
       ]);
       if (workspaceId && !workspace) return res.status(404).json({ error: 'Workspace not found' });
       if (repositorySnapshotId && !snapshot) {
         return res.status(404).json({ error: 'Repository snapshot not found' });
       }
       if (expectedGraphVersionId && !expectedGraphVersion) return res.status(404).json({ error: 'Expected graph version not found' });
+      if (patchSetId && !patchSet) return res.status(404).json({ error: 'Validated instrumentation manifest not found' });
 
       const run = await prisma.qARun.create({
         data: {
@@ -247,6 +257,7 @@ export function createDesktopRouter(input: {
           deviceSessionId: deviceSessionId ? String(deviceSessionId) : undefined,
           repositorySnapshotId: snapshot?.id,
           expectedGraphVersionId: expectedGraphVersion?.id,
+          patchSetId: patchSet?.id,
           createdByUserId: req.user!.id,
           mode,
           targetUrl: String(targetUrl),

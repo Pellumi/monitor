@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSession } from "@/components/providers";
 import { SettingsPage, SettingsSection } from "@/components/settings/settings-page";
@@ -11,6 +11,10 @@ export default function ProfileSettingsPage() {
   const [displayName, setDisplayName] = useState(() => user?.displayName ?? "");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDisplayName(user?.displayName ?? "");
+  }, [user?.id, user?.displayName]);
 
   async function save(event: FormEvent) {
     event.preventDefault();

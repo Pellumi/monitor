@@ -6,14 +6,16 @@ declare global {
     interface Request {
       sots?: {
         sessionId?: string;
+        runId?: string;
+        traceId?: string;
       };
     }
   }
 }
 
 export function extractSessionId(headers: Record<string, any>): string | undefined {
-  if (headers['x-sots-session-id']) {
-    return headers['x-sots-session-id'] as string;
+  if (headers['x-tellann-session-id'] || headers['x-sots-session-id']) {
+    return (headers['x-tellann-session-id'] || headers['x-sots-session-id']) as string;
   }
   const traceparent = headers['traceparent'] as string | undefined;
   if (traceparent) {
@@ -26,6 +28,16 @@ export function extractSessionId(headers: Record<string, any>): string | undefin
   return undefined;
 }
 
+export function extractCorrelationContext(headers: Record<string, any>): { sessionId?: string; runId?: string; traceId?: string } {
+  const traceparent = headers.traceparent as string | undefined;
+  const traceId = (headers['x-tellann-trace-id'] as string | undefined) ?? traceparent?.split('-')[1];
+  return {
+    sessionId: extractSessionId(headers),
+    runId: headers['x-tellann-run-id'] as string | undefined,
+    traceId,
+  };
+}
+
 /**
  * Express middleware that automatically tracks every API request and hydrates req.sots context.
  *
@@ -35,11 +47,12 @@ export function extractSessionId(headers: Record<string, any>): string | undefin
 export function sotsExpressMiddleware(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
-    const sessionId = extractSessionId(req.headers);
+    const correlation = extractCorrelationContext(req.headers);
+    const { sessionId } = correlation;
     const requestId = req.headers['x-request-id'] as string | undefined;
 
     // Decorate request object
-    req.sots = { sessionId };
+    req.sots = correlation;
 
     res.on('finish', () => {
       SOTS.trackApi({
@@ -49,6 +62,8 @@ export function sotsExpressMiddleware(): RequestHandler {
         durationMs: Date.now() - start,
         sessionId,
         requestId,
+        runId: correlation.runId,
+        traceId: correlation.traceId,
       });
     });
 
@@ -66,6 +81,8 @@ export function sotsExpressErrorHandler(): ErrorRequestHandler {
       error: err,
       sessionId,
       eventType: 'SERVER_ERROR',
+      runId: req.sots?.runId,
+      traceId: req.sots?.traceId,
       context: {
         path: req.path,
         method: req.method,

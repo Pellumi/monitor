@@ -78,6 +78,14 @@ export const RepositorySnapshotSummarySchema = z.object({
   repositoryFingerprint: z.string().min(32),
   languages: z.array(z.string()),
   packageManager: z.string().nullable(),
+  launchCommands: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    executable: z.string(),
+    args: z.array(z.string()),
+    cwd: z.string(),
+    scriptName: z.string(),
+  })).optional(),
   frameworks: z.array(FrameworkEvidenceSchema),
   routes: z.array(z.string()),
   endpoints: z.array(z.string()),
@@ -181,6 +189,12 @@ export const QualityReportSchema = z.object({
     scannerVersion: z.string(),
     redactionSummary: z.unknown(),
   }).nullable(),
+  instrumentation: z.object({
+    patchSetId: z.string().uuid(), planId: z.string().uuid(), adapterId: z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']),
+    adapterVersion: z.string(), manifestVersion: z.string(), status: z.string(), risk: z.string(),
+    changedFileHashes: z.unknown(), validation: z.unknown().nullable(),
+    appliedAt: z.string().datetime().or(z.date()).nullable(), validatedAt: z.string().datetime().or(z.date()).nullable(),
+  }).nullable().optional(),
   expectedIntent: z.object({
     graphId: z.string().uuid(), graphVersionId: z.string().uuid(), graphName: z.string(), provenance: z.string(),
     evidenceManifest: z.unknown().nullable(), expectedStateCount: z.number().int().nullable(), expectedTransitionCount: z.number().int().nullable(),
@@ -273,6 +287,47 @@ export const IntentDraftSchema = z.object({
   evidence: z.array(z.any()).optional(),
 }).passthrough();
 
+export const InstrumentationFrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
+export const InstrumentationPlanStatusSchema = z.enum([
+  'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
+  'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
+]);
+export const StructuredInstrumentationCommandSchema = z.object({
+  id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(),
+  timeoutMs: z.number().int().min(1_000).max(30 * 60_000), allowedEnvironmentKeys: z.array(z.string()),
+  purpose: z.string(), networkRequired: z.boolean(),
+});
+export const InstrumentationOperationSchema = z.object({
+  id: z.string(), kind: z.enum(['CREATE_FILE', 'UPDATE_SOURCE', 'UPDATE_PACKAGE']), relativePath: z.string(),
+  symbol: z.string().nullable(), transformId: z.string(), transformVersion: z.string(), expectedHash: z.string().nullable(),
+  description: z.string(), eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable() })),
+}).passthrough();
+export const InstrumentationPlanSchema = z.object({
+  contractVersion: z.string(), manifestVersion: z.string(), id: z.string().uuid(), taskKey: z.string(),
+  adapterId: InstrumentationFrameworkIdSchema, adapterVersion: z.string(), frameworkVersion: z.string().nullable(),
+  supportedVersionRange: z.string(), baseRevision: z.string().nullable(), repositoryFingerprint: z.string(),
+  approvedFileScopes: z.array(z.string()), packageChanges: z.array(z.object({ packageName: z.string(), version: z.string(), kind: z.enum(['dependency', 'devDependency']) })),
+  operations: z.array(InstrumentationOperationSchema), validationCommands: z.array(StructuredInstrumentationCommandSchema),
+  networkRequirements: z.array(z.string()), risk: z.enum(['LOW', 'MEDIUM', 'HIGH']), riskReasons: z.array(z.string()),
+  evidence: z.any(), createdAt: z.string().datetime(), status: InstrumentationPlanStatusSchema.optional(),
+}).passthrough();
+export const InstrumentationDetectionSchema = z.object({
+  adapterId: InstrumentationFrameworkIdSchema, adapterVersion: z.string(), supported: z.boolean(), confidence: z.number().min(0).max(1),
+  frameworkVersion: z.string().nullable(), supportedVersionRange: z.string(), evidence: z.array(z.string()), reasons: z.array(z.string()),
+});
+export const InstrumentationApprovalSchema = z.object({
+  applicationId: z.string().uuid(), planId: z.string().uuid(), environmentId: z.string().uuid(),
+  approvedFileScopes: z.array(z.string()).min(1), approvedCommandIds: z.array(z.string()),
+});
+export const InstrumentationApplyResultSchema = z.object({
+  planId: z.string().uuid(), checkpointId: z.string().uuid(), checkpointDirectory: z.string(), baseRevision: z.string().nullable(),
+  files: z.array(z.object({ relativePath: z.string(), beforeHash: z.string().nullable(), afterHash: z.string(), changed: z.boolean() })),
+  changedFiles: z.array(z.string()), diff: z.string(), diffHash: z.string(), appliedAt: z.string().datetime(),
+});
+export const InstrumentationValidationResultSchema = z.object({
+  valid: z.boolean(), checks: z.array(z.object({ name: z.string(), passed: z.boolean(), output: z.string() })),
+});
+
 export const StartGuidedRunInputSchema = z.object({
   runId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
@@ -281,8 +336,16 @@ export const StartGuidedRunInputSchema = z.object({
   environmentId: z.string().uuid(),
   workspaceId: z.string().uuid().nullable(),
   expectedGraphVersionId: z.string().uuid().nullable(),
+  patchSetId: z.string().uuid().nullable().optional(),
   environmentType: EnvironmentTypeSchema,
+  mode: z.enum(['GUIDED', 'OBSERVATION_ONLY']).default('GUIDED'),
   targetUrl: z.string().url(),
+  productionObservationApproved: z.boolean().optional(),
+  launchCommandId: z.string().optional(),
+  launchApproved: z.boolean().optional(),
+  relayEndpoint: z.string().url().optional(),
+  relayToken: z.string().min(32).optional(),
+  agentVersion: z.string().optional(),
 });
 
 export const IPC = {
@@ -317,6 +380,16 @@ export const IPC = {
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
+  detectInstrumentation: 'tellann:instrumentation:detect',
+  proposeInstrumentation: 'tellann:instrumentation:propose',
+  listInstrumentationPlans: 'tellann:instrumentation:plans:list',
+  getInstrumentationPlan: 'tellann:instrumentation:plans:get',
+  approveInstrumentation: 'tellann:instrumentation:approve',
+  rejectInstrumentation: 'tellann:instrumentation:reject',
+  applyInstrumentation: 'tellann:instrumentation:apply',
+  validateInstrumentation: 'tellann:instrumentation:validate',
+  rollbackInstrumentation: 'tellann:instrumentation:rollback',
+  getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
 } as const;
 
 export const DesktopSessionSchema = z.object({
@@ -329,11 +402,24 @@ export const DesktopSessionSchema = z.object({
   }).nullable(),
 });
 
+export const DesktopEntitlementsSchema = z.object({
+  planType: z.enum(['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE']),
+  features: z.object({
+    DESKTOP_GUIDED_RUNS: z.boolean(),
+    DOCUMENT_FLOW_INFERENCE: z.boolean(),
+    AUTOMATED_INSTRUMENTATION: z.boolean(),
+    SHARED_RUN_GOVERNANCE: z.boolean(),
+    BROWSER_TRACE_CAPTURE: z.boolean(),
+    VISUAL_ACCESSIBILITY_ANALYSIS: z.boolean(),
+  }),
+});
+
 export const DesktopApplicationSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   organizationId: z.string().uuid(),
   organizationName: z.string(),
+  entitlements: DesktopEntitlementsSchema.nullable(),
   environments: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),
@@ -357,8 +443,13 @@ export type SourceDocumentManifest = z.infer<typeof SourceDocumentManifestSchema
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
 export type DocumentAccess = z.infer<typeof DocumentAccessSchema>;
 export type IntentDraft = z.infer<typeof IntentDraftSchema>;
+export type InstrumentationDetection = z.infer<typeof InstrumentationDetectionSchema>;
+export type InstrumentationPlan = z.infer<typeof InstrumentationPlanSchema>;
+export type InstrumentationApplyResult = z.infer<typeof InstrumentationApplyResultSchema>;
+export type InstrumentationValidationResult = z.infer<typeof InstrumentationValidationResultSchema>;
 export type QARunArtifact = z.infer<typeof QARunArtifactSchema>;
 export type BrowserFinding = z.infer<typeof BrowserFindingSchema>;
 export type StartGuidedRunInput = z.infer<typeof StartGuidedRunInputSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
+export type DesktopEntitlements = z.infer<typeof DesktopEntitlementsSchema>;
 export type DesktopApplication = z.infer<typeof DesktopApplicationSchema>;

@@ -135,9 +135,11 @@ export async function verifyTransaction(reference: string): Promise<PaystackVeri
  * Returns true if the signature is valid, false otherwise.
  */
 export function verifyPaystackWebhook(rawBody: Buffer, signature: string): boolean {
-  const secret = process.env.PAYSTACK_WEBHOOK_SECRET ?? process.env.PAYSTACK_SECRET_KEY!;
+  // Paystack signs webhook payloads with the integration secret key. Keeping a
+  // separate arbitrary webhook secret would cause every legitimate event to be rejected.
+  const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) {
-    console.error('[Paystack] PAYSTACK_WEBHOOK_SECRET or PAYSTACK_SECRET_KEY not configured');
+    console.error('[Paystack] PAYSTACK_SECRET_KEY not configured');
     return false;
   }
   const expected = crypto

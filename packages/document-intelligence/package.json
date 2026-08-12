@@ -11,12 +11,13 @@
     "@sots/ai": "workspace:*",
     "js-yaml": "^4.1.0",
     "mammoth": "^1.10.0",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
-    "@types/pdf-parse": "^1.1.5",
+    "@types/pdfkit": "^0.17.6",
+    "pdfkit": "^0.19.1",
     "typescript": "^5.0.0"
   }
 }

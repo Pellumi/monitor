@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { EventType, SotsEvent } from '@sots/shared';
+import type { EventType, SotsEvent } from './event-types';
+export type { EventType, SotsEvent } from './event-types';
 import { WorkflowTracker } from './workflow-tracker';
 import { setupAutoTrack, sanitizeMetadata } from './auto-track';
 
@@ -16,6 +17,11 @@ export interface SotsConfig {
   debug?: boolean;
   flushIntervalMs?: number;
   maxBufferSize?: number;
+  runId?: string;
+  sessionId?: string;
+  traceId?: string;
+  agentVersion?: string;
+  instrumentationManifestVersion?: string;
 }
 
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit for standard events
@@ -58,7 +64,7 @@ class SotsFrontendSDK {
   }
 
   startSession() {
-    this.sessionId = uuidv4();
+    this.sessionId = this.config?.sessionId ?? uuidv4();
     this.trackEvent('PAGE_VIEW', {
       url: window.location.href,
       title: document.title,
@@ -99,6 +105,11 @@ class SotsFrontendSDK {
       sessionId: this.sessionId,
       tenantId: this.config.tenantId ?? 'unknown',
       applicationId: this.config.applicationId,
+      environmentId: this.config.environmentId ?? null,
+      runId: this.config.runId ?? null,
+      traceId: this.config.traceId ?? null,
+      agentVersion: this.config.agentVersion ?? null,
+      instrumentationManifestVersion: this.config.instrumentationManifestVersion ?? null,
       source: 'frontend-sdk',
       eventVersion: '1.0',
       eventType,
@@ -135,8 +146,14 @@ class SotsFrontendSDK {
   }
 
   async verifyInstallation(): Promise<void> {
+    // Keep the established onboarding event contract so existing collectors and
+    // installation checks continue to work. Phase 3 correlation fields make
+    // the same event usable as the instrumentation verification signal.
     this.trackEvent('SOTS_ONBOARDING_TEST', {
       source: 'manual_verification',
+      verificationKind: 'INSTRUMENTATION_VERIFIED',
+      instrumentationManifestVersion: this.config?.instrumentationManifestVersion ?? null,
+      agentVersion: this.config?.agentVersion ?? null,
     });
     await this.flush();
   }
@@ -200,6 +217,18 @@ class SotsFrontendSDK {
     this.workflowTracker.abandon(workflowId);
   }
 
+  cancelWorkflow(workflowId: string, reason?: string) {
+    const result = this.workflowTracker.fail(workflowId);
+    if (result) {
+      this.trackEvent('WORKFLOW_CANCELLED', {
+        workflowId,
+        workflowName: result.name,
+        durationMs: result.durationMs,
+        reason: reason ?? 'Cancelled',
+      });
+    }
+  }
+
   captureException(error: Error | unknown, context?: Record<string, any>) {
     const err = error instanceof Error ? error : new Error(String(error));
     this.trackEvent('ERROR_OCCURRED', {
@@ -261,6 +290,9 @@ class SotsFrontendSDK {
       if (this.config.environmentId) {
         headers['x-sots-environment-id'] = this.config.environmentId;
       }
+      if (this.config.runId) headers['x-tellann-run-id'] = this.config.runId;
+      if (this.sessionId) headers['x-tellann-session-id'] = this.sessionId;
+      if (this.config.traceId) headers['x-tellann-trace-id'] = this.config.traceId;
 
       // sendBeacon cannot set auth headers, so only use it for unauthenticated direct collector targets.
       if (!this.config.apiKey && !this.config.environmentId && navigator.sendBeacon && typeof Blob !== 'undefined') {

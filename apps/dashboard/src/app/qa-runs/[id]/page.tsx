@@ -15,6 +15,11 @@ type Report = {
   id: string; generatedAt: string;
   coverage: { expected: number | null; reconciledFlows: number };
   correlation: { runId: string; sessions: Array<{ sessionId: string; traceId: string | null }> };
+  instrumentation: null | {
+    patchSetId: string; planId: string; adapterId: string; adapterVersion: string;
+    manifestVersion: string; status: string; risk: string; validation: unknown;
+    appliedAt: string | null; validatedAt: string | null;
+  };
   summary: {
     sessionCount: number;
     observedStateCount: number;
@@ -67,6 +72,15 @@ export default function QARunDetailPage() {
             ["Approved artifacts", report.data.summary.artifactCount],
             ["High-priority findings", report.data.summary.criticalOrHighFindings],
           ].map(([label, value]) => <div key={label} className="rounded-xl border border-neutral-800 bg-neutral-900 p-5"><div className="text-xs text-neutral-500">{label}</div><div className="mt-2 text-2xl font-semibold">{value}</div></div>)}
+        </section>
+      ) : null}
+      {report.data?.instrumentation ? (
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div><div className="text-xs uppercase tracking-wide text-neutral-500">Instrumentation manifest</div><h2 className="mt-2 text-lg font-semibold">{report.data.instrumentation.adapterId}</h2><p className="mt-1 text-sm text-neutral-400">Adapter {report.data.instrumentation.adapterVersion} · manifest {report.data.instrumentation.manifestVersion}</p></div>
+            <span className="rounded-full border border-emerald-800 px-3 py-1 text-xs text-emerald-400">{report.data.instrumentation.status}</span>
+          </div>
+          <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-3"><div><dt className="text-neutral-500">Plan</dt><dd className="mt-1 font-mono">{report.data.instrumentation.planId.slice(0, 8)}</dd></div><div><dt className="text-neutral-500">Risk</dt><dd className="mt-1">{report.data.instrumentation.risk}</dd></div><div><dt className="text-neutral-500">Validated</dt><dd className="mt-1">{report.data.instrumentation.validatedAt ? new Date(report.data.instrumentation.validatedAt).toLocaleString() : "Not validated"}</dd></div></dl>
         </section>
       ) : null}
       <section>

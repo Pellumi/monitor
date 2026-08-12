@@ -37,6 +37,7 @@ import {
   proratedDifference,
   providerPlanCode,
   sealPaymentReference,
+  validateProviderPayment,
 } from './billing-policy';
 
 const app = express();
@@ -205,6 +206,7 @@ interface NormalizedBillingEvent {
   stripeInvoiceId: string | null;
   paystackRef: string | null;
   paidAt: Date | null;
+  amountMinor: number | null;
   payloadData: Record<string, any>;
 }
 
@@ -264,6 +266,11 @@ function normalizeBillingWebhook(provider: Provider, body: any): NormalizedBilli
       stripeInvoiceId,
       paystackRef: null,
       paidAt: epochSecondsToDate(asRecord(stripeObject.status_transitions).paid_at) ?? epochSecondsToDate(stripeObject.created),
+      amountMinor: typeof stripeObject.amount_paid === 'number'
+        ? stripeObject.amount_paid
+        : typeof stripeObject.amount_total === 'number'
+          ? stripeObject.amount_total
+          : typeof stripeObject.amount_due === 'number' ? stripeObject.amount_due : null,
       payloadData: stripeObject,
     };
   }
@@ -292,6 +299,9 @@ function normalizeBillingWebhook(provider: Provider, body: any): NormalizedBilli
       stripeInvoiceId: null,
       paystackRef: reference,
       paidAt: typeof data.paid_at === 'string' ? new Date(data.paid_at) : null,
+      amountMinor: typeof data.amount === 'number'
+        ? data.amount
+        : typeof subscription.amount === 'number' ? subscription.amount : null,
       payloadData: data,
     };
   }
@@ -313,6 +323,7 @@ function normalizeBillingWebhook(provider: Provider, body: any): NormalizedBilli
     stripeInvoiceId: null,
     paystackRef: firstString(data.reference),
     paidAt: null,
+    amountMinor: typeof data.amount === 'number' ? data.amount : null,
     payloadData: data,
   };
 }
@@ -617,6 +628,7 @@ function isCancellationEvent(event: NormalizedBillingEvent): boolean {
   return [
     'customer.subscription.deleted',
     'subscription.cancelled',
+    'subscription.disable',
   ].includes(event.eventType);
 }
 app.get('/health', (_req: Request, res: Response) => {
@@ -657,6 +669,18 @@ function publicPlan(plan: Plan & { featureFlags?: Array<{ feature: string; enabl
     maxDemoSessions: plan.maxDemoSessions,
     featureFlags: plan.featureFlags ?? [],
   };
+}
+
+function validateInvoicePayment(event: NormalizedBillingEvent, invoice: Awaited<ReturnType<typeof findInvoiceForEvent>>): void {
+  if (!invoice) return;
+  validateProviderPayment({
+    eventCurrency: event.currency,
+    invoiceCurrency: invoice.currency,
+    eventAmountMinor: event.amountMinor,
+    invoiceTotal: invoice.total,
+    eventPlanType: event.planType,
+    invoicePlanType: invoice.planType,
+  });
 }
 
 function firstDate(...values: unknown[]): Date | null {
@@ -904,6 +928,26 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
       invoiceId: invoice.id,
     }, { invoiceId: invoice.id });
 
+    // Deterministic development provider. Paid plans remain pending until a
+    // signed MOCK webhook is delivered, matching the real provider boundary.
+    if (provider === 'MOCK') {
+      const providerReference = `mock-${invoice.id}`;
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { provider: 'MOCK', providerReference },
+      });
+      const mockCheckoutUrl = `${req.protocol}://${req.get('host')}/billing/mock-checkout/${invoice.id}`;
+      return res.status(201).json({
+        checkoutId: invoice.id,
+        provider,
+        status: 'pending',
+        checkoutUrl: mockCheckoutUrl,
+        url: mockCheckoutUrl,
+        invoiceId: invoice.id,
+        providerReference,
+      });
+    }
+
     // ── Free plan / MOCK: activate immediately ──────────────────────────────
     if (total === 0) {
       await activateSubscription({ organizationId, plan, interval, currency, provider });
@@ -1071,7 +1115,7 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
     // Unreachable — kept for exhaustiveness
     return res.status(400).json({ error: 'Unsupported provider' });
   } catch (err) {
-    console.error('[BillingAPI] Create checkout failed', err);
+    console.error('[BillingAPI] Create checkout failed', err instanceof Error ? err.message : 'Unknown checkout error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1171,6 +1215,36 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
     const isPaymentMethodUpdate = provider === 'PAYSTACK'
       && ['PAYMENT_METHOD_UPDATE', 'STRIPE_MIGRATION'].includes(paymentMethodPurpose ?? '');
 
+    if (provider === 'PAYSTACK' && event.eventType === 'subscription.create') {
+      const subscriptionPayload = asRecord(eventData.subscription);
+      const subscriptionCode = event.subscriptionId ?? firstString(eventData.subscription_code, subscriptionPayload.subscription_code);
+      const emailToken = firstString(eventData.email_token, subscriptionPayload.email_token);
+      const customer = asRecord(eventData.customer);
+      const customerCode = event.customerId ?? firstString(customer.customer_code);
+      if (!subscriptionCode || !emailToken) throw new Error('Paystack subscription.create omitted management credentials');
+      await prisma.subscription.update({
+        where: { organizationId: event.organizationId },
+        data: {
+          activeProvider: 'PAYSTACK',
+          providerCustomerId: customerCode ?? undefined,
+          paystackCustomerCode: customerCode ?? undefined,
+          providerSubscriptionId: subscriptionCode,
+          paystackSubscriptionCode: subscriptionCode,
+          providerManagementToken: sealPaymentReference(emailToken),
+          providerPlanCode: firstString(asRecord(eventData.plan).plan_code, eventData.plan_code) ?? undefined,
+          providerNextChargeAt: firstDate(eventData.next_payment_date, subscriptionPayload.next_payment_date) ?? undefined,
+        },
+      });
+      await prisma.subscriptionChange.updateMany({
+        where: {
+          organizationId: event.organizationId,
+          providerOperationId: subscriptionCode,
+          status: { in: ['SCHEDULED', 'PROCESSING'] },
+        },
+        data: { status: 'PROVIDER_CONFIRMED' },
+      });
+    }
+
     if (isPaymentMethodUpdate && event.eventType === 'charge.success') {
       const authorization = asRecord(eventData.authorization);
       const authorizationCode = firstString(authorization.authorization_code);
@@ -1252,6 +1326,7 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
     }
 
     if (isActivationEvent(event) && !isPaymentMethodUpdate) {
+      validateInvoicePayment(event, reconciledInvoice);
       paidInvoice = await reconcileInvoiceForEvent(event, 'PAID');
       reconciledInvoice = paidInvoice ?? reconciledInvoice;
 
@@ -1474,6 +1549,13 @@ app.post('/billing/subscriptions/changes/preview', verifyJwt, requireBillingMana
     if (!targetPlan || targetPlan.type === PlanType.FREE || targetPlan.type === PlanType.ENTERPRISE) {
       return res.status(400).json({ error: 'INVALID_TARGET_PLAN' });
     }
+    if (!targetPlan.isPublic) return res.status(400).json({ error: 'PLAN_NOT_PUBLIC' });
+    if (targetPlan.type === PlanType.LOCAL && profile?.countryCode?.toUpperCase() !== 'NG') {
+      return res.status(400).json({
+        error: 'LOCAL_PLAN_INELIGIBLE',
+        message: 'Local is available only to Nigerian organizations billed in NGN.',
+      });
+    }
     const currency = currencyForCountry(profile?.countryCode);
     const currentRank = PLAN_DEFINITIONS[subscription.plan.type as PlanTypeKey]?.rank ?? 0;
     const targetRank = PLAN_DEFINITIONS[targetPlan.type as PlanTypeKey]?.rank ?? 0;
@@ -1563,6 +1645,45 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
     if (preview.direction === 'DOWNGRADE' && effectiveMode !== 'NEXT_RENEWAL') {
       return res.status(400).json({ error: 'DOWNGRADE_NEXT_RENEWAL_ONLY' });
     }
+    if (subscription.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
+      const targetPlan = await prisma.plan.findUnique({ where: { id: preview.targetPlanId } });
+      if (!targetPlan) return res.status(404).json({ error: 'TARGET_PLAN_NOT_FOUND' });
+      const now = new Date();
+      const operationId = `mock-change-${preview.id}`;
+      const updated = await prisma.$transaction(async (tx) => {
+        if (effectiveMode === 'IMMEDIATE') {
+          await tx.subscription.update({
+            where: { organizationId },
+            data: {
+              planId: targetPlan.id,
+              billingInterval: preview.targetInterval,
+              billingCurrency: preview.currency,
+              providerPlanCode: `mock:${targetPlan.type}:${preview.targetInterval}:${preview.currency}`,
+              pendingPlanId: null,
+              pendingChangeAt: null,
+            },
+          });
+        } else {
+          await tx.subscription.update({
+            where: { organizationId },
+            data: { pendingPlanId: targetPlan.id, pendingChangeAt: preview.effectiveAt },
+          });
+        }
+        return tx.subscriptionChange.update({
+          where: { id: preview.id },
+          data: {
+            status: effectiveMode === 'IMMEDIATE' ? 'APPLIED' : 'PROVIDER_CONFIRMED',
+            effectiveMode,
+            idempotencyKey,
+            providerOperationId: operationId,
+            providerReference: operationId,
+            effectiveAt: effectiveMode === 'IMMEDIATE' ? now : preview.effectiveAt,
+          },
+        });
+      }, { maxWait: 10_000, timeout: 30_000 });
+      if (effectiveMode === 'IMMEDIATE') await entitlementChecker.resolveEntitlement(organizationId);
+      return res.json(updated);
+    }
     if (subscription.activeProvider !== 'PAYSTACK') {
       return res.status(409).json({
         error: 'PAYSTACK_AUTHORIZATION_REQUIRED',
@@ -1642,13 +1763,13 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
       return tx.subscriptionChange.update({
         where: { id: preview.id },
         data: {
-          status: effectiveMode === 'IMMEDIATE' ? 'APPLIED' : 'SCHEDULED',
+          status: effectiveMode === 'IMMEDIATE' ? 'APPLIED' : 'PROVIDER_CONFIRMED',
           providerOperationId: replacement.subscriptionCode,
           providerReference: replacement.emailToken ? sealPaymentReference(replacement.emailToken) : null,
           effectiveAt: effectiveMode === 'IMMEDIATE' ? now : renewalDate,
         },
       });
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
     if (effectiveMode === 'IMMEDIATE') await entitlementChecker.resolveEntitlement(organizationId);
     res.json(updated);
   } catch (err) {
@@ -1678,6 +1799,8 @@ app.post(['/billing/organizations/:orgId/subscription/cancel', '/billing/subscri
       await disablePaystackSubscription(current.providerSubscriptionId, openPaymentReference(current.providerManagementToken));
     } else if (current.activeProvider === 'STRIPE' && current.providerSubscriptionId) {
       await setStripeCancellation(current.providerSubscriptionId, true);
+    } else if (current.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
+      // The deterministic provider has no remote subscription to disable.
     } else {
       return res.status(409).json({ error: 'PROVIDER_SUBSCRIPTION_NOT_LINKED' });
     }
@@ -1718,6 +1841,8 @@ app.post('/billing/subscriptions/resume', verifyJwt, requireBillingManager, asyn
       await enablePaystackSubscription(subscription.providerSubscriptionId, openPaymentReference(subscription.providerManagementToken));
     } else if (subscription.activeProvider === 'STRIPE' && subscription.providerSubscriptionId) {
       await setStripeCancellation(subscription.providerSubscriptionId, false);
+    } else if (subscription.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
+      // The deterministic provider has no remote subscription to resume.
     } else {
       return res.status(409).json({ error: 'PROVIDER_SUBSCRIPTION_NOT_LINKED' });
     }

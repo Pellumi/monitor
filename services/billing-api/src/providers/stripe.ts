@@ -14,7 +14,7 @@ function getStripe(): Stripe {
       );
     }
     _stripe = new Stripe(key, {
-      apiVersion: '2026-05-27.dahlia' as any,
+      apiVersion: '2026-02-25.clover' as any,
       telemetry: false,
     });
   }

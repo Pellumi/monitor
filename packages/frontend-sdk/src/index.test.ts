@@ -31,9 +31,10 @@ const rejectionListeners: Function[] = [];
   removeEventListener: () => {},
 };
 
-(global as any).navigator = {
+const navigatorMock = {
   sendBeacon: () => true,
 };
+Object.defineProperty(global, 'navigator', { value: navigatorMock, configurable: true });
 
 (global as any).history = {
   pushState: () => {},
@@ -122,7 +123,7 @@ test('SOTS Frontend SDK Tests', async (t) => {
   await t.test('authenticated flush uses fetch with gateway headers', async () => {
     SOTS.teardown();
     fetchCalls = [];
-    (global as any).navigator.sendBeacon = () => {
+    navigatorMock.sendBeacon = () => {
       throw new Error('sendBeacon should not be used when gateway headers are required');
     };
 

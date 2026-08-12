@@ -5,7 +5,7 @@ import {
   Network, Play, Plus, RefreshCw, SearchCode, ShieldCheck, TerminalSquare, Unlock, Workflow,
 } from 'lucide-react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import type { DeclaredFlowDetail, DeclaredFlowSummary, IntentDraft, QARunSummary, QualityReport, SourceDocumentSummary } from '@sots/desktop-contracts';
+import type { DeclaredFlowDetail, DeclaredFlowSummary, InstrumentationDetection, InstrumentationPlan, IntentDraft, QARunSummary, QualityReport, SourceDocumentSummary } from '@sots/desktop-contracts';
 import type { LiveEvidence } from '@sots/browser-observer';
 import { useDesktop } from './desktop-context';
 
@@ -507,20 +507,125 @@ export function IntentDetailPage() {
 }
 
 export function InstrumentationPage() {
-  const { workspace } = useProject();
+  const {
+    projectId, application, workspace, busy, detectInstrumentation, proposeInstrumentation,
+    listInstrumentationPlans,
+  } = useProject();
+  const editableEnvironments = application?.environments.filter((item) => item.type !== 'PRODUCTION') ?? [];
+  const [environmentId, setEnvironmentId] = useState(editableEnvironments[0]?.id ?? application?.environments[0]?.id ?? '');
+  const environment = application?.environments.find((item) => item.id === environmentId);
+  const instrumentationEntitled = application?.entitlements?.features.AUTOMATED_INSTRUMENTATION === true;
+  const [detections, setDetections] = useState<InstrumentationDetection[]>([]);
+  const [plans, setPlans] = useState<Record<string, any>[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refreshPlans = async () => {
+    if (!projectId) return;
+    setPlans(await listInstrumentationPlans(projectId));
+  };
+
+  useEffect(() => {
+    if (!projectId) return;
+    void refreshPlans().finally(() => setLoading(false));
+  }, [projectId]);
+
+  if (!projectId) return <ProjectRequired />;
+  if (!application) return <NotFoundPage title="Project unavailable" description="Select another project." />;
+
+  const detect = async () => {
+    if (!environment) return;
+    const result = await detectInstrumentation({ applicationId: projectId, environmentId: environment.id, environmentType: environment.type });
+    setDetections(result.detections);
+  };
+
+  const propose = async (adapterId: InstrumentationDetection['adapterId']) => {
+    if (!environment) return;
+    await proposeInstrumentation({ applicationId: projectId, environmentId: environment.id, environmentType: environment.type, adapterId });
+    await refreshPlans();
+  };
+
   return (
-    <Page title="Instrumentation" description="Choose how Tellann observes semantic application behavior.">
+    <Page title="Instrumentation" description="Detect the project stack, review a bounded task, and approve every file and command before Tellann writes.">
       <div className="mode-grid">
         <section className="mode-card featured"><Status>Available</Status><Globe2 /><h2>Browser-only</h2><p>No source mutation or SDK installation. Captures navigation, console, network, screenshots, and accessibility evidence.</p></section>
         <section className="mode-card"><Status>Manual</Status><Code2 /><h2>Manual SDK</h2><p>Continue using existing frontend and backend SDK integrations where deeper semantic telemetry is already installed.</p></section>
-        <section className="mode-card"><Status>{workspace ? 'Proposal planned' : 'Workspace required'}</Status><FileSearch /><h2>Automated instrumentation</h2><p>Bounded planning and application activate in Phase 3. Guided runs do not depend on this capability.</p></section>
+        <section className="mode-card"><Status>{!instrumentationEntitled ? 'Solo plan and above' : workspace ? 'Available' : 'Workspace required'}</Status><FileSearch /><h2>Automated instrumentation</h2><p>Syntax-aware SDK installation with task-scoped approval, validation, a local checkpoint, and conflict-safe rollback.</p></section>
       </div>
+      <section className="content-card stack">
+        <div className="card-heading"><div><small>Step 1</small><h2>Detect a supported adapter</h2></div><Status>{environment?.type ?? 'Select environment'}</Status></div>
+        <label>Environment<select value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}>{application.environments.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.type}</option>)}</select></label>
+        {environment?.type === 'PRODUCTION' ? <div className="context-banner"><Lock size={15} /> Production is observation-only. Instrumentation proposal and application are blocked locally and by the cloud.</div> : null}
+        {!instrumentationEntitled ? <div className="context-banner"><Lock size={15} /> Automated instrumentation is not included on the {application.entitlements?.planType ?? 'current'} plan. Browser-only QA remains available.</div> : null}
+        <div className="card-actions"><button className="button primary" disabled={busy || !workspace || !environment || environment.type === 'PRODUCTION' || !instrumentationEntitled} onClick={() => void detect()}><SearchCode size={15} />Detect framework</button></div>
+        {detections.length ? <div className="data-table"><div className="table-head"><span>Adapter</span><span>Version</span><span>Confidence</span><span>Action</span></div>{detections.map((item) => <div className="table-row" key={item.adapterId}><span><strong>{item.adapterId}</strong><small>{item.supported ? 'Supported' : item.reasons.join('; ')}</small></span><span>{item.frameworkVersion ?? 'Unknown'}<small>{item.supportedVersionRange}</small></span><span>{Math.round(item.confidence * 100)}%</span><span><button className="button" disabled={busy || !item.supported} onClick={() => void propose(item.adapterId)}>Create bounded plan</button></span></div>)}</div> : null}
+      </section>
+      <section className="content-card">
+        <div className="card-heading"><div><small>Step 2</small><h2>Instrumentation tasks</h2></div><button className="button" disabled={busy} onClick={() => void refreshPlans()}><RefreshCw size={15} />Refresh</button></div>
+        {loading ? <LoadingState /> : plans.length ? <div className="data-table"><div className="table-head"><span>Framework</span><span>Risk</span><span>Status</span><span>Created</span></div>{plans.map((plan) => <Link className="table-row" key={String(plan.id)} to={`/projects/${projectId}/instrumentation/plans/${plan.id}`}><span><strong>{String(plan.adapterId)}</strong><small>{String(plan.frameworkVersion ?? 'unknown version')}</small></span><span>{String(plan.risk)}</span><span><Status>{String(plan.status)}</Status></span><span>{plan.createdAt ? new Date(String(plan.createdAt)).toLocaleString() : '—'}</span></Link>)}</div> : <EmptyState icon={<FileSearch size={36} />} title="No instrumentation tasks" description="Detect the attached project and create a proposal. No files change until explicit approval." />}
+      </section>
     </Page>
   );
 }
 
 export function InstrumentationDetailPage() {
-  return <GuardedFeaturePage title="Instrumentation task" description="Plan scope, diff, validation, manifest, and rollback." phase="Automated application activates in Phase 3." fallback="Browser-only capture and manual SDK integrations remain usable." />;
+  const { projectId, planId } = useParams();
+  const {
+    application, busy, getInstrumentationPlan, getLocalInstrumentationResult, approveInstrumentation,
+    rejectInstrumentation, applyInstrumentation, validateInstrumentation, rollbackInstrumentation,
+  } = useProject();
+  const [record, setRecord] = useState<Record<string, any> | null>(null);
+  const [localResult, setLocalResult] = useState<Record<string, any> | null>(null);
+  const [files, setFiles] = useState<string[]>([]);
+  const [commands, setCommands] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const plan = record?.planJson as InstrumentationPlan | undefined;
+  const environment = application?.environments.find((item) => item.id === record?.environmentId);
+  const installRequired = plan?.validationCommands.some((command) => command.id === 'install-sdk') ?? false;
+  const instrumentationEntitled = application?.entitlements?.features.AUTOMATED_INSTRUMENTATION === true;
+
+  const refresh = async () => {
+    if (!projectId || !planId) return;
+    const [next, local] = await Promise.all([
+      getInstrumentationPlan(projectId, planId), getLocalInstrumentationResult(projectId, planId),
+    ]);
+    setRecord(next);
+    setLocalResult(local);
+    const nextPlan = next.planJson as InstrumentationPlan;
+    setFiles((current) => current.length ? current : nextPlan.approvedFileScopes);
+    setCommands((current) => current.length ? current : nextPlan.validationCommands.map((item) => item.id));
+  };
+
+  useEffect(() => {
+    void refresh().finally(() => setLoading(false));
+  }, [projectId, planId]);
+
+  if (!projectId) return <ProjectRequired />;
+  if (!planId) return <Page title="Instrumentation history" description="Select a task from the instrumentation workspace."><Link className="button primary" to={`/projects/${projectId}/instrumentation`}>Open tasks</Link></Page>;
+  if (loading) return <LoadingState />;
+  if (!record || !plan || !environment) return <NotFoundPage title="Instrumentation task unavailable" description="The task may be stale, removed, or outside this project." />;
+
+  const approve = async () => {
+    await approveInstrumentation({ applicationId: projectId, environmentId: environment.id, environmentType: environment.type, planId, approvedFileScopes: files, approvedCommandIds: commands });
+    await refresh();
+  };
+  const apply = async () => { await applyInstrumentation(projectId, planId); await refresh(); };
+  const validate = async () => { await validateInstrumentation(projectId, planId); await refresh(); };
+  const rollback = async () => { await rollbackInstrumentation(projectId, planId); await refresh(); };
+
+  return <Page title={`Instrumentation · ${plan.adapterId}`} description="Review scope, commands, evidence, local diff, validation, and rollback status." actions={<Status>{String(record.status)}</Status>}>
+    <div className="two-column">
+      <section className="content-card stack"><div className="card-heading"><div><small>Approved write boundary</small><h2>Files</h2></div><span>{files.length}/{plan.approvedFileScopes.length}</span></div>{plan.operations.map((operation) => <label className="check-row" key={operation.id}><input type="checkbox" disabled={record.status !== 'PROPOSED'} checked={files.includes(operation.relativePath)} onChange={(event) => setFiles((current) => event.target.checked ? [...new Set([...current, operation.relativePath])] : current.filter((item) => item !== operation.relativePath))} /><span><strong>{operation.relativePath}</strong><small>{operation.description}</small></span></label>)}</section>
+      <section className="content-card stack"><div className="card-heading"><div><small>Approved execution boundary</small><h2>Commands</h2></div><Status>{plan.risk}</Status></div>{plan.validationCommands.map((command) => <label className="check-row" key={command.id}><input type="checkbox" disabled={record.status !== 'PROPOSED' || command.id === 'install-sdk'} checked={commands.includes(command.id)} onChange={(event) => setCommands((current) => event.target.checked ? [...new Set([...current, command.id])] : current.filter((item) => item !== command.id))} /><span><strong>{command.purpose}</strong><small>{command.executable} {command.args.join(' ')} · {command.networkRequired ? 'network' : 'offline'}</small></span></label>)}<p className="muted">{installRequired ? 'SDK installation is part of this approved task.' : 'The SDK is already available, so no registry installation is required.'} Tellann executes argument arrays without a shell.</p></section>
+    </div>
+    <section className="content-card"><h2>Evidence and risk</h2><div className="tag-list">{plan.riskReasons.map((reason) => <span key={reason}>{reason}</span>)}</div><dl className="detail-list"><div><dt>Base revision</dt><dd>{plan.baseRevision ?? 'No Git revision'}</dd></div><div><dt>Repository fingerprint</dt><dd>{plan.repositoryFingerprint.slice(0, 16)}…</dd></div><div><dt>Adapter</dt><dd>{plan.adapterVersion} · {plan.supportedVersionRange}</dd></div></dl></section>
+    <section className="content-card review-actions">
+      {!instrumentationEntitled ? <div className="context-banner"><Lock size={15} /> This plan cannot approve or apply automated instrumentation. Browser-only QA remains available.</div> : null}
+      {record.status === 'PROPOSED' ? <><button className="button primary" disabled={busy || !instrumentationEntitled || files.length !== plan.approvedFileScopes.length || (installRequired && !commands.includes('install-sdk'))} onClick={() => void approve()}><ShieldCheck size={15} />Approve bounded task</button><button className="button danger" disabled={busy} onClick={() => void rejectInstrumentation(projectId, planId, 'Rejected in desktop review').then(refresh)}>Reject</button></> : null}
+      {record.status === 'APPROVED' ? <button className="button primary" disabled={busy || !instrumentationEntitled} onClick={() => void apply()}><TerminalSquare size={15} />Apply and validate</button> : null}
+      {['APPLIED', 'VALIDATION_FAILED', 'COMPLETED'].includes(String(record.status)) ? <><button className="button" disabled={busy} onClick={() => void validate()}>Re-run local checks</button><button className="button danger" disabled={busy} onClick={() => void rollback()}>Rollback Tellann changes</button></> : null}
+    </section>
+    {localResult ? <div className="two-column"><section className="content-card"><h2>Local validation</h2>{((localResult.validation as any)?.checks ?? []).map((check: any) => <Checklist key={check.name} checked={Boolean(check.passed)} text={`${check.name}: ${check.output}`} />)}</section><section className="content-card"><h2>Local diff</h2><p>Raw diff content remains encrypted on this device; the cloud stores only its hash and file manifest.</p><pre className="code-block">{String((localResult.patch as any)?.diff ?? 'No local diff')}</pre></section></div> : null}
+  </Page>;
 }
 
 function useRuns(projectId?: string) {
@@ -550,14 +655,20 @@ function RunTable({ projectId, runs }: { projectId: string; runs: QARunSummary[]
 }
 
 export function NewRunPage() {
-  const { projectId, application, workspace, startRun, busy, getDeclaredFlows } = useProject();
+  const { projectId, application, workspace, startRun, busy, getDeclaredFlows, listInstrumentationPlans } = useProject();
   const navigate = useNavigate();
   const [environmentId, setEnvironmentId] = useState(application?.environments[0]?.id ?? '');
   const environment = application?.environments.find((item) => item.id === environmentId);
   const [targetUrl, setTargetUrl] = useState(environment?.baseUrl ?? 'http://localhost:3010/auth/login');
   const [mode, setMode] = useState<'GUIDED' | 'OBSERVATION_ONLY'>(environment?.type === 'PRODUCTION' ? 'OBSERVATION_ONLY' : 'GUIDED');
+  const [productionObservationApproved, setProductionObservationApproved] = useState(false);
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
   const [expectedGraphVersionId, setExpectedGraphVersionId] = useState('');
+  const [instrumentationManifests, setInstrumentationManifests] = useState<Array<{ id: string; label: string }>>([]);
+  const [patchSetId, setPatchSetId] = useState('');
+  const launchCommands = workspace?.snapshot.launchCommands ?? [];
+  const [launchCommandId, setLaunchCommandId] = useState('');
+  const [launchApproved, setLaunchApproved] = useState(false);
   useEffect(() => {
     if (!projectId) return;
     void getDeclaredFlows(projectId).then((items) => {
@@ -565,6 +676,16 @@ export function NewRunPage() {
       setExpectedGraphVersionId(items.find((item) => item.status === 'COMPLETE' || item.status === 'COMPLETED')?.versions?.[0]?.id ?? '');
     });
   }, [getDeclaredFlows, projectId]);
+  useEffect(() => {
+    if (!projectId) return;
+    void listInstrumentationPlans(projectId).then((plans) => {
+      const manifests = plans.flatMap((plan: any) => ((plan.patchSets ?? []) as any[])
+        .filter((patch) => patch.status === 'VALIDATED')
+        .map((patch) => ({ id: String(patch.id), label: `${String(plan.adapterId)} · ${new Date(String(patch.validatedAt ?? patch.createdAt)).toLocaleString()}` })));
+      setInstrumentationManifests(manifests);
+      setPatchSetId((current) => current || manifests[0]?.id || '');
+    }).catch(() => undefined);
+  }, [listInstrumentationPlans, projectId]);
   if (!projectId) return <ProjectRequired />;
   if (!application) return <NotFoundPage title="Project unavailable" description="Select another project." />;
   const begin = async () => {
@@ -573,8 +694,13 @@ export function NewRunPage() {
       environmentId,
       workspaceId: workspace?.id ?? null,
       expectedGraphVersionId: expectedGraphVersionId || null,
+      patchSetId: patchSetId || null,
       environmentType: environment?.type ?? 'STAGING',
+      mode,
+      productionObservationApproved: environment?.type === 'PRODUCTION' && productionObservationApproved,
       targetUrl,
+      launchCommandId: launchCommandId || undefined,
+      launchApproved: Boolean(launchCommandId) && launchApproved,
     });
     navigate(`/projects/${projectId}/qa-runs/${run.runId}/live`);
   };
@@ -582,14 +708,17 @@ export function NewRunPage() {
     <Page title="New QA run" description="Configure a managed-browser run. Browser-only mode requires no SDK.">
       <section className="wizard-card">
         <div className="form-grid">
-          <label>Environment<select value={environmentId} onChange={(event) => { const id = event.target.value; const next = application.environments.find((item) => item.id === id); setEnvironmentId(id); setTargetUrl(next?.baseUrl ?? targetUrl); setMode(next?.type === 'PRODUCTION' ? 'OBSERVATION_ONLY' : 'GUIDED'); }}>{application.environments.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.type})</option>)}</select></label>
-          <label>Run mode<select value={mode} disabled={environment?.type === 'PRODUCTION'} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="GUIDED">Guided</option><option value="OBSERVATION_ONLY">Observation only</option></select></label>
+          <label>Environment<select value={environmentId} onChange={(event) => { const id = event.target.value; const next = application.environments.find((item) => item.id === id); setEnvironmentId(id); setTargetUrl(next?.baseUrl ?? targetUrl); setMode(next?.type === 'PRODUCTION' ? 'OBSERVATION_ONLY' : 'GUIDED'); setLaunchCommandId(''); setLaunchApproved(false); setProductionObservationApproved(false); }}>{application.environments.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.type})</option>)}</select></label>
+          <label>Run mode<select value={mode} disabled={environment?.type === 'PRODUCTION'} onChange={(event) => { const next = event.target.value as typeof mode; setMode(next); if (next === 'OBSERVATION_ONLY') { setLaunchCommandId(''); setLaunchApproved(false); } }}><option value="GUIDED">Guided</option><option value="OBSERVATION_ONLY">Observation only</option></select></label>
           <label className="full">Application URL<input type="url" value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /></label>
           <label className="full">Expected intent<select value={expectedGraphVersionId} onChange={(event) => setExpectedGraphVersionId(event.target.value)}><option value="">Observational run (no expected graph)</option>{flows.flatMap((flow) => flow.versions?.[0] ? [<option key={flow.versions[0].id} value={flow.versions[0].id}>{flow.name} · version {flow.versions[0].version}</option>] : [])}</select></label>
+          <label className="full">Instrumentation evidence<select value={patchSetId} onChange={(event) => setPatchSetId(event.target.value)}><option value="">Browser-only run (no instrumentation manifest)</option>{instrumentationManifests.map((manifest) => <option key={manifest.id} value={manifest.id}>{manifest.label}</option>)}</select></label>
+          {launchCommands.length && mode !== 'OBSERVATION_ONLY' ? <label className="full">Local application process<select value={launchCommandId} onChange={(event) => { setLaunchCommandId(event.target.value); setLaunchApproved(false); }}><option value="">Attach to an already running application</option>{launchCommands.map((command) => <option key={command.id} value={command.id}>{command.label}</option>)}</select></label> : null}
         </div>
-        <div className="permission-summary"><KeyRound /><div><strong>Capture policy</strong><p>Console, network, screenshot, and accessibility evidence. Secrets and personal data are redacted. Repository write and command permissions are not requested.</p></div></div>
-        {environment?.type === 'PRODUCTION' ? <div className="context-banner">Production supports explicitly approved observation-only attachment. Active guided control remains blocked.</div> : null}
-        <button className="button primary" disabled={busy || !targetUrl || !environmentId || environment?.type === 'PRODUCTION'} onClick={() => void begin()}><Play size={16} />{environment?.type === 'PRODUCTION' ? 'Production attachment requires observation workflow' : 'Start guided run'}</button>
+        {launchCommandId ? <label className="check-row"><input type="checkbox" checked={launchApproved} onChange={(event) => setLaunchApproved(event.target.checked)} /><span><strong>Approve this package script for this run</strong><small>Tellann executes only the selected package.json script without a shell and stops only the process tree it started.</small></span></label> : null}
+        <div className="permission-summary"><KeyRound /><div><strong>Capture policy</strong><p>Console, network, screenshot, and accessibility evidence. Secrets and personal data are redacted. Repository access remains read-only unless you separately approved instrumentation. A local package script runs only when selected and approved above.</p></div></div>
+        {environment?.type === 'PRODUCTION' ? <><div className="context-banner">Production is observation-only. Tellann blocks process launch, SDK injection, and non-read HTTP requests.</div><label className="check-row"><input type="checkbox" checked={productionObservationApproved} onChange={(event) => setProductionObservationApproved(event.target.checked)} /><span><strong>Approve production observation for this run</strong><small>No repository command, instrumentation, form submission, upload, or data mutation is permitted.</small></span></label></> : null}
+        <button className="button primary" disabled={busy || !targetUrl || !environmentId || Boolean(launchCommandId && !launchApproved) || Boolean(environment?.type === 'PRODUCTION' && !productionObservationApproved)} onClick={() => void begin()}><Play size={16} />{environment?.type === 'PRODUCTION' ? 'Start observation-only run' : 'Start guided run'}</button>
       </section>
     </Page>
   );
@@ -679,6 +808,7 @@ export function ReportDetailPage() {
     <Page title="Quality report" description={`${report.application.name} · ${report.environment.name} · generated ${new Date(report.generatedAt).toLocaleString()}`} actions={<Status>{report.status}</Status>}>
       <div className="metric-grid"><Metric label="Expected coverage" value={report.coverage.expected == null ? 'Observational' : `${report.coverage.expected.toFixed(1)}%`} /><Metric label="Observed states" value={report.summary.observedStateCount} /><Metric label="Transitions" value={report.summary.observedTransitionCount} /><Metric label="High priority" value={report.summary.criticalOrHighFindings} /></div>
       <div className="two-column"><section className="content-card"><h2>Evidence and findings</h2><p>{report.summary.artifactCount} approved artifacts and {report.summary.findingCount} evidence-backed findings.</p><Link className="button" to={`/projects/${projectId}/qa-runs/${report.runId}/evidence`}>Review evidence</Link></section><section className="content-card"><h2>Correlation</h2><p>Run {report.correlation.runId.slice(0, 8)} · {report.correlation.sessions.length} observed session(s)</p><Link className="button" to={`/projects/${projectId}/qa-runs/${report.runId}/reconciliation`}>View reconciliation</Link></section></div>
+      {report.instrumentation ? <section className="content-card"><div className="card-heading"><div><small>Instrumentation manifest</small><h2>{report.instrumentation.adapterId}</h2></div><Status>{report.instrumentation.status}</Status></div><dl className="detail-list"><div><dt>Plan</dt><dd>{report.instrumentation.planId.slice(0, 8)}</dd></div><div><dt>Adapter version</dt><dd>{report.instrumentation.adapterVersion}</dd></div><div><dt>Manifest version</dt><dd>{report.instrumentation.manifestVersion}</dd></div><div><dt>Validated</dt><dd>{report.instrumentation.validatedAt ? new Date(report.instrumentation.validatedAt).toLocaleString() : 'Not validated'}</dd></div></dl></section> : null}
       {report.findings.length ? <pre className="json-view">{JSON.stringify(report.findings, null, 2)}</pre> : <div className="context-banner">No findings were generated for this run.</div>}
     </Page>
   );

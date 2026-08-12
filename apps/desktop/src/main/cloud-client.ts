@@ -5,13 +5,19 @@ import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   DesktopApplication,
+  DesktopEntitlements,
   QARunSummary,
   QualityReport,
   RepositorySnapshotSummary,
   SourceDocumentManifest,
   SourceDocumentSummary,
   IntentDraft,
+  InstrumentationDetection,
+  InstrumentationPlan,
+  InstrumentationApplyResult,
+  InstrumentationValidationResult,
 } from '@sots/desktop-contracts';
+import type { InstrumentationCheckpoint } from './git-checkpoint';
 import type { GuidedRunState } from '@sots/browser-observer';
 import { clearDesktopSession, loadDesktopSession, saveDesktopSession, type StoredDesktopSession } from './secure-store';
 
@@ -105,18 +111,44 @@ export class DesktopCloudClient {
 
   async applications(): Promise<DesktopApplication[]> {
     const apps = await this.request<Array<Json>>('/applications');
-    return apps.map((item) => ({
+    const organizationIds = [...new Set(apps.map((item) => String((item.organization as Json | undefined)?.id ?? item.organizationId)))];
+    const entitlementEntries = await Promise.all(organizationIds.map(async (organizationId) => {
+      try {
+        const entitlement = await this.request<Json>(`/organizations/${organizationId}/entitlement`);
+        const features = (entitlement.features as Json | undefined) ?? {};
+        const enabled = (feature: string) => features[feature] === true || typeof features[feature] === 'string';
+        return [organizationId, {
+          planType: String(entitlement.planType) as DesktopEntitlements['planType'],
+          features: {
+            DESKTOP_GUIDED_RUNS: enabled('DESKTOP_GUIDED_RUNS'),
+            DOCUMENT_FLOW_INFERENCE: enabled('DOCUMENT_FLOW_INFERENCE'),
+            AUTOMATED_INSTRUMENTATION: enabled('AUTOMATED_INSTRUMENTATION'),
+            SHARED_RUN_GOVERNANCE: enabled('SHARED_RUN_GOVERNANCE'),
+            BROWSER_TRACE_CAPTURE: enabled('BROWSER_TRACE_CAPTURE'),
+            VISUAL_ACCESSIBILITY_ANALYSIS: enabled('VISUAL_ACCESSIBILITY_ANALYSIS'),
+          },
+        }] as const;
+      } catch {
+        return [organizationId, null] as const;
+      }
+    }));
+    const entitlements = new Map(entitlementEntries);
+    return apps.map((item) => {
+      const organizationId = String((item.organization as Json | undefined)?.id ?? item.organizationId);
+      return ({
       id: String(item.id),
       name: String(item.name),
-      organizationId: String((item.organization as Json | undefined)?.id ?? item.organizationId),
+      organizationId,
       organizationName: String((item.organization as Json | undefined)?.name ?? 'Organization'),
+      entitlements: entitlements.get(organizationId) ?? null,
       environments: ((item.environments as Json[] | undefined) ?? []).map((environment) => ({
         id: String(environment.id),
         name: String(environment.name),
         type: environment.type as DesktopApplication['environments'][number]['type'],
         baseUrl: typeof environment.baseUrl === 'string' ? environment.baseUrl : null,
       })),
-    }));
+      });
+    });
   }
 
   async runs(applicationId: string): Promise<QARunSummary[]> {
@@ -255,6 +287,119 @@ export class DesktopCloudClient {
     return { workspaceId: String(workspace.id), repositorySnapshotId: String(repositorySnapshot.id) };
   }
 
+  async detectInstrumentation(applicationId: string, input: { workspaceId: string; environmentId: string; detections: InstrumentationDetection[] }) {
+    return this.request<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>(
+      `/v1/applications/${applicationId}/instrumentation/detect`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+  }
+
+  async createInstrumentationPlan(applicationId: string, input: {
+    workspaceId: string;
+    repositorySnapshotId: string;
+    environmentId: string;
+    deviceSessionId: string;
+    plan: InstrumentationPlan;
+  }): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans`, {
+      method: 'POST', body: JSON.stringify(input),
+    });
+  }
+
+  async instrumentationPlans(applicationId: string): Promise<Json[]> {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans`);
+  }
+
+  async instrumentationPlan(applicationId: string, planId: string): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}`);
+  }
+
+  async approveInstrumentation(applicationId: string, planId: string, input: { approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/approve`, {
+      method: 'POST', body: JSON.stringify(input),
+    });
+  }
+
+  async rejectInstrumentation(applicationId: string, planId: string, reason?: string): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/reject`, {
+      method: 'POST', body: JSON.stringify({ reason }),
+    });
+  }
+
+  async instrumentationApplyIntent(applicationId: string, planId: string) {
+    const current = loadDesktopSession();
+    if (!current) throw new Error('AUTHENTICATION_REQUIRED');
+    return this.request<{ capability: string; expiresInSeconds: number; approvalHash: string }>(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/apply-intent`,
+      { method: 'POST', body: JSON.stringify({ deviceSessionId: current.deviceSessionId }) },
+    );
+  }
+
+  async submitInstrumentationResult(
+    applicationId: string,
+    planId: string,
+    capability: string,
+    result: InstrumentationApplyResult,
+    validation: InstrumentationValidationResult,
+    commandResults: unknown[],
+    checkpoint: InstrumentationCheckpoint,
+  ): Promise<Json> {
+    // Raw diffs and local checkpoint paths stay on-device. The cloud receives
+    // only hashes and the bounded file manifest required for governance.
+    const cloudResult = {
+      planId: result.planId,
+      checkpointId: result.checkpointId,
+      baseRevision: result.baseRevision,
+      files: result.files,
+      changedFiles: result.changedFiles,
+      diffHash: result.diffHash,
+      appliedAt: result.appliedAt,
+    };
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/results`, {
+      method: 'POST',
+      headers: { 'x-tellann-instrumentation-capability': capability },
+      body: JSON.stringify({
+        result: cloudResult,
+        validation,
+        commandResults,
+        checkpointKind: checkpoint.kind,
+        checkpointMetadata: {
+          branch: checkpoint.branch,
+          previousBranch: checkpoint.previousBranch,
+          baseRevision: checkpoint.baseRevision,
+          dirty: checkpoint.dirty,
+          reason: checkpoint.reason,
+          createdAt: checkpoint.createdAt,
+        },
+      }),
+    });
+  }
+
+  async failInstrumentation(applicationId: string, planId: string, capability: string, reason: string) {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/fail`, {
+      method: 'POST',
+      headers: { 'x-tellann-instrumentation-capability': capability },
+      body: JSON.stringify({ reason: reason.slice(0, 1_000) }),
+    });
+  }
+
+  async instrumentationRollbackIntent(applicationId: string, planId: string) {
+    const current = loadDesktopSession();
+    if (!current) throw new Error('AUTHENTICATION_REQUIRED');
+    return this.request<{ capability: string; patchSetId: string; expiresInSeconds: number }>(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/rollback-intent`,
+      { method: 'POST', body: JSON.stringify({ deviceSessionId: current.deviceSessionId }) },
+    );
+  }
+
+  async submitInstrumentationRollback(applicationId: string, planId: string, patchSetId: string, capability: string, result: unknown) {
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/rollback-results`, {
+      method: 'POST',
+      headers: { 'x-tellann-instrumentation-capability': capability },
+      body: JSON.stringify({ patchSetId, result }),
+    });
+  }
+
   async createRun(input: Json) {
     const session = loadDesktopSession();
     return this.request<Json>(`/applications/${input.applicationId}/qa-runs`, {
@@ -264,11 +409,12 @@ export class DesktopCloudClient {
   }
 
   async startRun(runId: string, sessionId: string, traceId: string) {
-    await this.request(`/qa-runs/${runId}/credentials`, {
+    const credential = await this.request<{ credential: string; expiresInSeconds: number; runId: string }>(`/qa-runs/${runId}/credentials`, {
       method: 'POST',
       body: JSON.stringify({ sessionId, traceId }),
     });
-    return this.request<Json>(`/qa-runs/${runId}/start`, { method: 'POST' });
+    const run = await this.request<Json>(`/qa-runs/${runId}/start`, { method: 'POST' });
+    return { run, credential };
   }
 
   async completeRun(state: GuidedRunState) {
@@ -364,13 +510,22 @@ export class DesktopCloudClient {
       this.refreshing = (async () => {
         const current = loadDesktopSession();
         if (!current) throw new Error('AUTHENTICATION_REQUIRED');
-        const tokens = await jsonRequest<{ accessToken: string; refreshToken: string }>(
-          `${AUTH_URL}/auth/desktop/refresh`,
-          { method: 'POST', body: JSON.stringify({ refreshToken: current.refreshToken }) },
-        );
-        const next = { ...current, ...tokens };
-        saveDesktopSession(next);
-        return next;
+        try {
+          const tokens = await jsonRequest<{ accessToken: string; refreshToken: string }>(
+            `${AUTH_URL}/auth/desktop/refresh`,
+            { method: 'POST', body: JSON.stringify({ refreshToken: current.refreshToken }) },
+          );
+          const next = { ...current, ...tokens };
+          saveDesktopSession(next);
+          return next;
+        } catch (error) {
+          // A rejected refresh is terminal for this device-bound session. Keeping
+          // it in secure storage leaves the renderer in a misleading authenticated
+          // shell that can never recover. Network failures remain retryable and do
+          // not clear the credential.
+          if ((error as { status?: number }).status === 401) clearDesktopSession();
+          throw error;
+        }
       })().finally(() => { this.refreshing = null; });
     }
     return this.refreshing;

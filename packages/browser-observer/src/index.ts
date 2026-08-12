@@ -36,6 +36,7 @@ export type GuidedRunState = {
   sessionId: string;
   traceId: string;
   expectedGraphVersionId: string | null;
+  mode: 'GUIDED' | 'OBSERVATION_ONLY';
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
   targetUrl: string;
   evidence: LiveEvidence[];
@@ -62,6 +63,10 @@ function uuid(): string {
 
 function checksum(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+export function isObservationOnlyRequestAllowed(method: string): boolean {
+  return ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
 }
 
 export function deriveBrowserState(urlValue: string, titleValue = ''): {
@@ -99,7 +104,12 @@ export class BrowserObserver {
 
   async start(input: StartGuidedRunInput, artifactRoot: string): Promise<GuidedRunState> {
     if (this.active) throw new Error('RUN_ALREADY_ACTIVE');
-    assertEnvironmentActionAllowed(input.environmentType, input.environmentType === 'PRODUCTION' ? 'OBSERVE' : 'INTERACT');
+    const observationOnly = input.mode === 'OBSERVATION_ONLY' || input.environmentType === 'PRODUCTION';
+    assertEnvironmentActionAllowed(input.environmentType, observationOnly ? 'OBSERVE' : 'INTERACT');
+    if (input.environmentType === 'PRODUCTION' && (!observationOnly || !input.productionObservationApproved)) {
+      throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
+    }
+    if (observationOnly && input.launchCommandId) throw new Error('OBSERVATION_ONLY_PROCESS_LAUNCH_BLOCKED');
     const runId = input.runId ?? uuid();
     const sessionId = input.sessionId ?? uuid();
     const traceId = input.traceId ?? uuid();
@@ -109,18 +119,49 @@ export class BrowserObserver {
       headless: false,
       ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
     });
+    const applicationOrigin = new URL(input.targetUrl).origin;
+    const correlationHeaders = {
+      'x-tellann-run-id': runId,
+      'x-tellann-session-id': sessionId,
+      'x-tellann-trace-id': traceId,
+      'x-tellann-environment-id': input.environmentId,
+    };
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       locale: 'en-US',
       colorScheme: 'light',
-      extraHTTPHeaders: {
-        'x-tellann-run-id': runId,
-        'x-tellann-session-id': sessionId,
-        'x-tellann-trace-id': traceId,
-        'x-tellann-environment-id': input.environmentId,
-      },
       recordVideo: undefined,
     });
+    await context.route('**/*', async (route) => {
+      const requestUrl = route.request().url();
+      let sameApplicationOrigin = false;
+      try { sameApplicationOrigin = new URL(requestUrl).origin === applicationOrigin; } catch { /* non-URL requests remain unmodified */ }
+      if (observationOnly && !isObservationOnlyRequestAllowed(route.request().method())) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      await route.continue(sameApplicationOrigin ? { headers: { ...route.request().headers(), ...correlationHeaders } } : undefined);
+    });
+    if (!observationOnly && input.relayEndpoint && input.relayToken) {
+      await context.addInitScript(({ allowedOrigin, run }) => {
+        if (globalThis.location?.origin !== allowedOrigin) return;
+        Object.defineProperty(globalThis, '__TELLANN_RUN__', {
+          value: Object.freeze(run), configurable: false, enumerable: false, writable: false,
+        });
+      }, {
+        allowedOrigin: applicationOrigin,
+        run: {
+          relayEndpoint: input.relayEndpoint,
+          relayToken: input.relayToken,
+          applicationId: input.applicationId,
+          environmentId: input.environmentId,
+          runId,
+          sessionId,
+          traceId,
+          agentVersion: input.agentVersion ?? 'desktop-dev',
+        },
+      });
+    }
     await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
     const page = await context.newPage();
     const state: GuidedRunState = {
@@ -128,6 +169,7 @@ export class BrowserObserver {
       sessionId,
       traceId,
       expectedGraphVersionId: input.expectedGraphVersionId,
+      mode: observationOnly ? 'OBSERVATION_ONLY' : 'GUIDED',
       status: 'RUNNING',
       targetUrl: input.targetUrl,
       evidence: [],

@@ -1,27 +1,20 @@
 import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { resolveDesktopUpdatePolicy } from './update-policy';
 
 export type DesktopUpdateStatus =
   | { state: 'DISABLED'; reason: string }
   | { state: 'CHECKING'; channel: string };
 
 export async function initializeUpdater(): Promise<DesktopUpdateStatus> {
-  if (!app.isPackaged) return { state: 'DISABLED', reason: 'DEVELOPMENT_BUILD' };
-  const updateUrl = process.env.TELLANN_UPDATE_URL;
-  if (!updateUrl) return { state: 'DISABLED', reason: 'UPDATE_URL_NOT_CONFIGURED' };
-  const parsed = new URL(updateUrl);
-  if (parsed.protocol !== 'https:') return { state: 'DISABLED', reason: 'HTTPS_UPDATE_URL_REQUIRED' };
-
-  const channel = process.env.TELLANN_UPDATE_CHANNEL ?? 'stable';
-  if (!['stable', 'beta', 'internal'].includes(channel)) {
-    return { state: 'DISABLED', reason: 'INVALID_UPDATE_CHANNEL' };
-  }
+  const policy = resolveDesktopUpdatePolicy({ packaged: app.isPackaged, updateUrl: process.env.TELLANN_UPDATE_URL, channel: process.env.TELLANN_UPDATE_CHANNEL });
+  if (!policy.enabled) return { state: 'DISABLED', reason: policy.reason };
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
-  autoUpdater.channel = channel;
-  autoUpdater.setFeedURL({ provider: 'generic', url: parsed.toString() });
+  autoUpdater.channel = policy.channel;
+  autoUpdater.setFeedURL({ provider: 'generic', url: policy.url });
   await autoUpdater.checkForUpdates();
-  return { state: 'CHECKING', channel };
+  return { state: 'CHECKING', channel: policy.channel };
 }

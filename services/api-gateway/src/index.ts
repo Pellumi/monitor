@@ -604,12 +604,14 @@ async function main() {
   // Onboarding: orgs, apps, api-keys (public management plane)
   const forwardToFdrs = forwardToUpstream(UPSTREAM.FDRS_API);
   const forwardToReportEngine = forwardToUpstream(UPSTREAM.REPORT_ENGINE);
+  const forwardToOnboarding = forwardToUpstream(UPSTREAM.ONBOARDING_API);
 
   fastify.all('/v1/rules/*', forwardToFdrs);
   fastify.all('/v1/admin/rules/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/flows/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/intent-drafts', forwardToFdrs);
   fastify.all('/v1/applications/:id/intent-drafts/*', forwardToFdrs);
+  fastify.all('/v1/applications/:id/instrumentation/*', forwardToOnboarding);
   fastify.all('/v1/applications/:id/declared-flows/*', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow/*', forwardToFdrs);
@@ -732,8 +734,6 @@ async function main() {
   }
 
   // Admin: forward to onboarding-api which proxies member management
-  const forwardToOnboarding = forwardToUpstream(UPSTREAM.ONBOARDING_API);
-
   fastify.get('/admin/ai-usage', { preHandler: requireSystemAdmin }, async (request, reply) => {
     return forwardToOnboarding({ ...request, url: request.url } as any, reply);
   });

@@ -1,15 +1,25 @@
 {
   "name": "@sots/frontend-sdk",
   "version": "0.1.0",
+  "description": "Tellann browser telemetry and QA-run correlation SDK",
+  "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
-    "test": "node --test dist/index.test.js"
+    "test": "node --test dist/index.test.js",
+    "prepack": "pnpm build"
   },
   "dependencies": {
-    "@sots/shared": "workspace:*",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

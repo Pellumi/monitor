@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import crypto from 'crypto';
 
-const ONBOARDING = process.env.ONBOARDING_API_URL ?? 'http://localhost:3002';
+const ONBOARDING = process.env.ONBOARDING_API_URL ?? 'http://localhost:3006';
 const EVENT      = process.env.EVENT_COLLECTOR_URL ?? 'http://localhost:3001';
 const REPORT     = process.env.REPORT_ENGINE_URL   ?? 'http://localhost:3004';
 const TIMEOUT_MS = 20_000;

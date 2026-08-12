@@ -487,6 +487,7 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
         application: { select: { id: true, name: true } },
         environment: { select: { id: true, name: true, type: true } },
         repositorySnapshot: true,
+        patchSet: { include: { instrumentationPlan: true } },
         expectedGraphVersion: { include: { graph: true } },
         observedSessions: {
           include: { statistics: true },
@@ -546,6 +547,19 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
         dirty: run.repositorySnapshot.dirty,
         scannerVersion: run.repositorySnapshot.scannerVersion,
         redactionSummary: run.repositorySnapshot.redactionSummary,
+      } : null,
+      instrumentation: run.patchSet ? {
+        patchSetId: run.patchSet.id,
+        planId: run.patchSet.instrumentationPlanId,
+        adapterId: run.patchSet.instrumentationPlan.adapterId,
+        adapterVersion: run.patchSet.instrumentationPlan.adapterVersion,
+        manifestVersion: run.patchSet.manifestVersion,
+        status: run.patchSet.status,
+        risk: run.patchSet.instrumentationPlan.risk,
+        changedFileHashes: run.patchSet.changedFileHashes,
+        validation: run.patchSet.validationJson,
+        appliedAt: run.patchSet.appliedAt,
+        validatedAt: run.patchSet.validatedAt,
       } : null,
       expectedIntent: run.expectedGraphVersion ? {
         graphId: run.expectedGraphVersion.graphId,

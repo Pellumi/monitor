@@ -1,8 +1,8 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
-import { IPC, StartGuidedRunInputSchema } from '@sots/desktop-contracts';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { IPC, StartGuidedRunInputSchema, type RepositorySnapshotSummary } from '@sots/desktop-contracts';
 import { resolveWithinWorkspace } from '@sots/agent-policy';
 import { scanWorkspace } from '@sots/project-intelligence';
 import { BrowserObserver } from '@sots/browser-observer';
@@ -10,18 +10,33 @@ import { DesktopCloudClient } from './cloud-client';
 import { initializeUpdater } from './update-manager';
 import { closeLocalStore, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@sots/document-intelligence';
+import { InstrumentationController, type SelectedWorkspace } from './instrumentation-controller';
+import { LocalRunRelay, type BufferedRelayRequest } from '@sots/local-relay';
+import { LocalApplicationLauncher } from './application-launcher';
 
 let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;
 const packagedChromiumPath = path.join(process.resourcesPath, 'chromium', 'chrome-win64', 'chrome.exe');
 const cloud = new DesktopCloudClient();
+const relay = new LocalRunRelay();
+const applicationLauncher = new LocalApplicationLauncher();
+let selectedWorkspace: SelectedWorkspace | null = null;
+const instrumentation = new InstrumentationController(cloud, () => selectedWorkspace);
 const observer = new BrowserObserver({
   executablePath: app.isPackaged ? packagedChromiumPath : undefined,
   onUnexpectedTermination: async (state) => {
+    await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
+    await applicationLauncher.stop().catch(() => undefined);
+    await relay.stop().catch(() => undefined);
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
 });
-let selectedWorkspace: { localId: string; cloudId: string; snapshotId: string } | null = null;
+
+// Some Windows GPU/driver combinations render packaged transparent/composited
+// Electron surfaces as black even though the renderer DOM is healthy. Tellann's
+// desktop shell does not need GPU acceleration; the managed Playwright browser
+// remains a separate Chromium process and is unaffected by this safeguard.
+app.disableHardwareAcceleration();
 
 // Electron's development default is the shared "Electron" session directory.
 // Isolate Chromium caches so another Electron-based app or stale dev process
@@ -46,6 +61,18 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
     throw new Error('UNTRUSTED_IPC_SENDER');
   }
+}
+
+function parseInstrumentationContext(input: unknown) {
+  const value = input as Record<string, unknown>;
+  if (typeof value?.applicationId !== 'string' || typeof value.environmentId !== 'string' || !['DEVELOPMENT', 'STAGING', 'PRODUCTION'].includes(String(value.environmentType))) {
+    throw new Error('INVALID_INSTRUMENTATION_CONTEXT');
+  }
+  return {
+    applicationId: value.applicationId,
+    environmentId: value.environmentId,
+    environmentType: value.environmentType as 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION',
+  };
 }
 
 async function createWindow(): Promise<void> {
@@ -254,12 +281,15 @@ function registerIpc(): void {
       id: string;
       path: string;
       name: string;
-      snapshot: unknown;
+      snapshot: RepositorySnapshotSummary;
       cloudId?: string;
       snapshotId?: string;
     }>(`workspace:${applicationId}`);
     if (stored?.cloudId && stored.snapshotId) {
-      selectedWorkspace = { localId: stored.id, cloudId: stored.cloudId, snapshotId: stored.snapshotId };
+      selectedWorkspace = {
+        applicationId, localId: stored.id, cloudId: stored.cloudId, snapshotId: stored.snapshotId,
+        root: stored.path, snapshot: stored.snapshot,
+      };
     }
     if (!stored) return null;
     const { cloudId: _cloudId, snapshotId: _snapshotId, ...rendererSafe } = stored;
@@ -277,7 +307,10 @@ function registerIpc(): void {
       ? String((parsed as { applicationId: string }).applicationId) : null;
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
     const registered = await cloud.registerWorkspace(applicationId, parsed.workspaceId, snapshot);
-    selectedWorkspace = { localId: parsed.workspaceId, cloudId: registered.workspaceId, snapshotId: registered.repositorySnapshotId };
+    selectedWorkspace = {
+      applicationId, localId: parsed.workspaceId, cloudId: registered.workspaceId,
+      snapshotId: registered.repositorySnapshotId, root: parsed.path, snapshot,
+    };
     writeLocalState(`workspace:${applicationId}`, {
       id: parsed.workspaceId,
       path: parsed.path,
@@ -288,33 +321,130 @@ function registerIpc(): void {
     });
     return snapshot;
   });
+  ipcMain.handle(IPC.detectInstrumentation, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    return instrumentation.detect(parseInstrumentationContext(input));
+  });
+  ipcMain.handle(IPC.proposeInstrumentation, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const context = parseInstrumentationContext(input);
+    const adapterId = (input as { adapterId?: unknown }).adapterId;
+    if (!['react-vite', 'nextjs', 'express', 'fastify', 'nestjs'].includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
+    return instrumentation.propose({ ...context, adapterId: adapterId as 'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs' });
+  });
+  ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return instrumentation.list(applicationId);
+  });
+  ipcMain.handle(IPC.getInstrumentationPlan, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+    return instrumentation.get(value.applicationId, value.planId);
+  });
+  ipcMain.handle(IPC.getLocalInstrumentationResult, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+    return instrumentation.localResult(value.applicationId, value.planId);
+  });
+  ipcMain.handle(IPC.approveInstrumentation, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const context = parseInstrumentationContext(input);
+    const value = input as { planId?: unknown; approvedFileScopes?: unknown; approvedCommandIds?: unknown };
+    if (typeof value.planId !== 'string' || !Array.isArray(value.approvedFileScopes) || !Array.isArray(value.approvedCommandIds)) throw new Error('INVALID_INSTRUMENTATION_APPROVAL');
+    return instrumentation.approve({
+      ...context, planId: value.planId,
+      approvedFileScopes: value.approvedFileScopes.filter((item): item is string => typeof item === 'string'),
+      approvedCommandIds: value.approvedCommandIds.filter((item): item is string => typeof item === 'string'),
+    });
+  });
+  ipcMain.handle(IPC.rejectInstrumentation, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown; reason?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_REJECTION');
+    return instrumentation.reject(value.applicationId, value.planId, typeof value.reason === 'string' ? value.reason : undefined);
+  });
+  for (const [channel, action] of [
+    [IPC.applyInstrumentation, 'apply'],
+    [IPC.validateInstrumentation, 'validate'],
+    [IPC.rollbackInstrumentation, 'rollback'],
+  ] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertTrustedSender(event);
+      const value = input as { applicationId?: unknown; planId?: unknown };
+      if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_ACTION');
+      return instrumentation[action](value.applicationId, value.planId);
+    });
+  }
   ipcMain.handle(IPC.startGuidedRun, async (event, input: unknown) => {
     assertTrustedSender(event);
     const parsed = StartGuidedRunInputSchema.parse(input);
-    if (parsed.environmentType === 'PRODUCTION') {
-      throw new Error('PRODUCTION_OBSERVATION_ONLY_ATTACHMENT_REQUIRED');
+    if (parsed.environmentType === 'PRODUCTION' && (parsed.mode !== 'OBSERVATION_ONLY' || !parsed.productionObservationApproved)) {
+      throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
     }
+    if (parsed.mode === 'OBSERVATION_ONLY' && parsed.launchCommandId) throw new Error('OBSERVATION_ONLY_PROCESS_LAUNCH_BLOCKED');
     const run = await cloud.createRun({
       applicationId: parsed.applicationId,
       environmentId: parsed.environmentId,
       workspaceId: selectedWorkspace?.cloudId ?? null,
       repositorySnapshotId: selectedWorkspace?.snapshotId ?? null,
       expectedGraphVersionId: parsed.expectedGraphVersionId,
-      mode: 'GUIDED',
+      patchSetId: parsed.patchSetId ?? null,
+      mode: parsed.mode,
       targetUrl: parsed.targetUrl,
     });
     const runId = String(run.id);
+    if (typeof run.organizationId !== 'string') throw new Error('RUN_ORGANIZATION_CONTEXT_MISSING');
     const sessionId = crypto.randomUUID();
     const traceId = crypto.randomUUID();
-    await cloud.startRun(runId, sessionId, traceId);
+    const started = await cloud.startRun(runId, sessionId, traceId);
+    const queueKey = `run-relay-queue:${runId}`;
     try {
+      const relaySession = await relay.start({
+        collectorBaseUrl: (process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, ''),
+        runCredential: started.credential.credential,
+        allowedOrigin: new URL(parsed.targetUrl).origin,
+        correlation: {
+          runId, sessionId, traceId,
+          organizationId: run.organizationId,
+          applicationId: parsed.applicationId,
+          environmentId: parsed.environmentId,
+        },
+        initialQueue: readLocalState<BufferedRelayRequest[]>(queueKey) ?? [],
+        onQueueChanged: (queue) => writeLocalState(queueKey, queue),
+      });
+      await relay.emit('QA_RUN_STARTED', { mode: parsed.mode });
+      if (parsed.launchCommandId) {
+        if (!parsed.launchApproved) throw new Error('APPLICATION_LAUNCH_APPROVAL_REQUIRED');
+        if (!selectedWorkspace || selectedWorkspace.applicationId !== parsed.applicationId) throw new Error('MATCHING_WORKSPACE_SELECTION_REQUIRED');
+        const launchCommand = selectedWorkspace.snapshot.launchCommands?.find((command) => command.id === parsed.launchCommandId);
+        if (!launchCommand) throw new Error('APPLICATION_LAUNCH_COMMAND_STALE');
+        await applicationLauncher.start(launchCommand, selectedWorkspace.root, {
+          endpoint: relaySession.endpoint,
+          relayToken: relaySession.relayToken,
+          runId,
+          sessionId,
+          traceId,
+          applicationId: parsed.applicationId,
+          environmentId: parsed.environmentId,
+          agentVersion: app.getVersion(),
+        });
+      }
       return await observer.start({
         ...parsed,
         runId,
         sessionId,
         traceId,
+        relayEndpoint: relaySession.endpoint,
+        relayToken: relaySession.relayToken,
+        agentVersion: app.getVersion(),
       }, path.join(app.getPath('userData'), 'qa-runs'));
     } catch (error) {
+      await applicationLauncher.stop().catch(() => undefined);
+      await relay.emit('QA_RUN_FAILED', { reason: 'browser_start_failed' }).catch(() => undefined);
+      await relay.stop().catch(() => undefined);
       await cloud.failRun(runId, error instanceof Error ? error.message : 'Managed browser failed to start').catch(() => undefined);
       throw error;
     }
@@ -327,6 +457,9 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const state = await observer.end();
     try {
+      await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length });
+      await applicationLauncher.stop();
+      await relay.stop();
       await cloud.completeRun(state);
     } catch (error) {
       await cloud.failRun(state.runId, error instanceof Error ? error.message : 'Run synchronization failed').catch(() => undefined);
@@ -342,6 +475,7 @@ function registerIpc(): void {
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   app.setAppUserModelId('com.tellann.desktop');
+  Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   registerIpc();
   await createWindow();
@@ -359,6 +493,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   quittingAfterRunCleanup = true;
   void observer.abort('Desktop application closed during a guided run')
+    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); return state; })
     .then((state) => cloud.failRun(state.runId, 'Desktop application closed during a guided run'))
     .catch(() => undefined)
     .finally(() => app.quit());

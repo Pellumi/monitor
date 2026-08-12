@@ -27,22 +27,31 @@ export default function OrganizationPage() {
   const role = memberships.find((membership) => membership.organization.id === selectedOrgId)?.role;
   const canManage = role === "OWNER" || role === "ADMIN";
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     if (!selectedOrgId) return;
-    const response = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/settings`);
+    const response = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/settings`, { signal });
     if (!response.ok) throw new Error("Unable to load organisation settings.");
-    setPayload(await response.json());
+    const nextPayload = await response.json() as Payload;
+    if (!signal?.aborted) setPayload(nextPayload);
   }, [selectedOrgId]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    setPayload(null);
+    setMessage("");
     const timer = window.setTimeout(() => {
-      void load().catch((error: Error) => setMessage(error.message));
+      void load(controller.signal).catch((error: Error) => {
+        if (error.name !== "AbortError") setMessage(error.message);
+      });
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, [load]);
 
   async function save() {
-    if (!selectedOrgId || !payload) return;
+    if (!selectedOrgId || !payload || payload.organization.id !== selectedOrgId) return;
     const response = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/settings`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

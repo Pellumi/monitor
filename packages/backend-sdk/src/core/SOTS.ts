@@ -3,7 +3,7 @@ import { captureErrorEvent, CaptureErrorOptions } from './captureError';
 import { trackStateEvent, TrackStateOptions } from './trackState';
 import { BackendWorkflowTracker } from './workflowTracker';
 import { v4 as uuidv4 } from 'uuid';
-import { EventType, SotsEvent } from '@sots/shared';
+import type { EventType, SotsEvent } from '../event-types';
 
 export interface SotsBackendConfig {
   endpoint: string;
@@ -11,6 +11,11 @@ export interface SotsBackendConfig {
   applicationId: string;
   apiKey?: string;
   environmentId?: string;
+  runId?: string;
+  sessionId?: string;
+  traceId?: string;
+  agentVersion?: string;
+  instrumentationManifestVersion?: string;
 }
 
 export class SOTSBackend {
@@ -95,6 +100,18 @@ export class SOTSBackend {
     this.workflowTracker.abandon(workflowId);
   }
 
+  async cancelWorkflow(workflowId: string, reason?: string, sessionId?: string): Promise<void> {
+    const result = this.workflowTracker.fail(workflowId);
+    if (result) {
+      await this.sendEvent('WORKFLOW_CANCELLED', sessionId, {
+        workflowId,
+        workflowName: result.name,
+        durationMs: result.durationMs,
+        reason: reason ?? 'Cancelled',
+      });
+    }
+  }
+
   async captureMessage(message: string, severity?: string, sessionId?: string): Promise<void> {
     await this.sendEvent('SERVER_ERROR', sessionId, {
       message,
@@ -110,10 +127,14 @@ export class SOTSBackend {
     if (!this.config) return;
     const event: SotsEvent = {
       eventId: uuidv4(),
-      sessionId: sessionId ?? uuidv4(),
+      sessionId: sessionId ?? this.config.sessionId ?? uuidv4(),
       tenantId: this.config.tenantId ?? 'unknown',
       applicationId: this.config.applicationId,
       environmentId: this.config.environmentId ?? null,
+      runId: this.config.runId ?? null,
+      traceId: this.config.traceId ?? null,
+      agentVersion: this.config.agentVersion ?? null,
+      instrumentationManifestVersion: this.config.instrumentationManifestVersion ?? null,
       source: 'backend-sdk',
       eventVersion: '1.0',
       eventType: eventType as any,
@@ -143,6 +164,9 @@ export class SOTSBackend {
       if (this.config.environmentId) {
         headers['x-sots-environment-id'] = this.config.environmentId;
       }
+      if (this.config.runId) headers['x-tellann-run-id'] = this.config.runId;
+      if (sessionId ?? this.config.sessionId) headers['x-tellann-session-id'] = sessionId ?? this.config.sessionId!;
+      if (this.config.traceId) headers['x-tellann-trace-id'] = this.config.traceId;
 
       await fetch(`${this.config.endpoint}/v1/events`, {
         method: 'POST',

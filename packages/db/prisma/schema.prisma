@@ -332,7 +332,7 @@ model AIFlowDraft {
   acceptedGraphId        String?
   acceptedGraphVersionId String?
 
-  evidence               IntentEvidence[]
+  evidence IntentEvidence[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -931,7 +931,7 @@ model Session {
   environment   Environment?      @relation(fields: [environmentId], references: [id])
   tenantId      String
   qaRunId       String?
-  qaRun          QARun?            @relation(fields: [qaRunId], references: [id], onDelete: SetNull)
+  qaRun         QARun?            @relation(fields: [qaRunId], references: [id], onDelete: SetNull)
   traceId       String?
   startTime     DateTime
   endTime       DateTime
@@ -1186,17 +1186,17 @@ model BehaviorGraphNode {
 }
 
 model BehaviorGraphEdge {
-  id         String            @id @default(uuid())
-  graphId    String
-  graph      BehaviorGraph     @relation(fields: [graphId], references: [id])
-  fromNodeId String
-  fromNode   BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
-  toNodeId   String
-  toNode     BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
-  action     String?
-  provenance StateProvenance   @default(USER_AUTHORED)
+  id          String            @id @default(uuid())
+  graphId     String
+  graph       BehaviorGraph     @relation(fields: [graphId], references: [id])
+  fromNodeId  String
+  fromNode    BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
+  toNodeId    String
+  toNode      BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
+  action      String?
+  provenance  StateProvenance   @default(USER_AUTHORED)
   evidenceIds String[]          @default([])
-  createdAt  DateTime          @default(now())
+  createdAt   DateTime          @default(now())
 }
 
 model DeclaredStateSuggestion {
@@ -1423,7 +1423,7 @@ model Environment {
   observedSnapshots     ObservedGraphSnapshot[]
   demonstrations        Demonstration[]
   reconciliationReports ReconciliationReport[]
-  qaRuns               QARun[]
+  qaRuns                QARun[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1462,6 +1462,36 @@ enum WorkspaceTrustStatus {
   READ_ONLY
   TRUSTED
   REVOKED
+}
+
+enum InstrumentationPlanStatus {
+  PROPOSED
+  APPROVED
+  APPLYING
+  APPLIED
+  VALIDATING
+  COMPLETED
+  VALIDATION_FAILED
+  STALE
+  REJECTED
+  FAILED
+  ROLLED_BACK
+}
+
+enum PatchSetStatus {
+  CHECKPOINTED
+  APPLYING
+  APPLIED
+  VALIDATED
+  VALIDATION_FAILED
+  ROLLING_BACK
+  ROLLED_BACK
+  ROLLBACK_FAILED
+}
+
+enum InstrumentationCapabilityAction {
+  APPLY
+  ROLLBACK
 }
 
 enum QARunMode {
@@ -1506,24 +1536,25 @@ enum SourceDocumentStatus {
 }
 
 model DeviceSession {
-  id                String       @id @default(uuid())
-  userId            String
-  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organizationId    String?
-  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  deviceIdentifier  String
-  deviceName        String
-  platform          String
-  appVersion        String
-  publicKey         String?
-  scopes            String[]
-  refreshTokenHash  String       @unique
-  lastSeenAt        DateTime     @default(now())
-  expiresAt         DateTime
-  revokedAt         DateTime?
-  createdAt         DateTime     @default(now())
+  id               String        @id @default(uuid())
+  userId           String
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceIdentifier String
+  deviceName       String
+  platform         String
+  appVersion       String
+  publicKey        String?
+  scopes           String[]
+  refreshTokenHash String        @unique
+  lastSeenAt       DateTime      @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime      @default(now())
 
-  qaRuns            QARun[]
+  qaRuns                      QARun[]
+  instrumentationCapabilities InstrumentationCapability[]
 
   @@unique([userId, deviceIdentifier])
   @@index([userId, revokedAt])
@@ -1531,21 +1562,21 @@ model DeviceSession {
 }
 
 model DesktopAuthorizationRequest {
-  id                String   @id @default(uuid())
-  requestTokenHash  String   @unique
+  id                String    @id @default(uuid())
+  requestTokenHash  String    @unique
   codeChallenge     String
-  challengeMethod   String   @default("S256")
+  challengeMethod   String    @default("S256")
   deviceIdentifier  String
   deviceName        String
   platform          String
   appVersion        String
   scopes            String[]
   userId            String?
-  authorizationHash String?  @unique
+  authorizationHash String?   @unique
   expiresAt         DateTime
   authorizedAt      DateTime?
   consumedAt        DateTime?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   @@index([expiresAt, consumedAt])
   @@index([userId, authorizedAt])
@@ -1568,11 +1599,11 @@ model ProjectWorkspace {
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
 
-  permissions           PermissionGrant[]
-  snapshots             RepositorySnapshot[]
-  qaRuns                QARun[]
-  instrumentationPlans  InstrumentationPlan[]
-  patchSets             PatchSet[]
+  permissions          PermissionGrant[]
+  snapshots            RepositorySnapshot[]
+  qaRuns               QARun[]
+  instrumentationPlans InstrumentationPlan[]
+  patchSets            PatchSet[]
 
   @@unique([applicationId, opaqueLocalId])
   @@index([organizationId, applicationId])
@@ -1611,34 +1642,34 @@ model RepositorySnapshot {
   redactionSummary      Json
   createdAt             DateTime         @default(now())
 
-  qaRuns                QARun[]
-  instrumentationPlans  InstrumentationPlan[]
+  qaRuns               QARun[]
+  instrumentationPlans InstrumentationPlan[]
 
   @@index([workspaceId, createdAt])
 }
 
 model SourceDocument {
-  id                    String               @id @default(uuid())
-  organizationId        String
-  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  applicationId         String
-  application           Application          @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  uploadedByUserId      String
-  logicalKey            String
-  filename              String
-  mimeType              String
-  checksum              String
-  objectKey             String?
-  uploadMode            String
-  status                SourceDocumentStatus @default(UPLOADING)
-  parserVersion         String?
-  errorMessageSafe      String?
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
+  id               String               @id @default(uuid())
+  organizationId   String
+  organization     Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId    String
+  application      Application          @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  uploadedByUserId String
+  logicalKey       String
+  filename         String
+  mimeType         String
+  checksum         String
+  objectKey        String?
+  uploadMode       String
+  status           SourceDocumentStatus @default(UPLOADING)
+  parserVersion    String?
+  errorMessageSafe String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
-  versions              SourceDocumentVersion[]
-  evidence              IntentEvidence[]
-  processingJobs        DocumentProcessingJob[]
+  versions       SourceDocumentVersion[]
+  evidence       IntentEvidence[]
+  processingJobs DocumentProcessingJob[]
 
   @@unique([applicationId, logicalKey])
   @@index([applicationId, checksum])
@@ -1678,39 +1709,39 @@ model DocumentProcessingJob {
 }
 
 model SourceDocumentVersion {
-  id                 String         @id @default(uuid())
-  documentId         String
-  document           SourceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  version            Int
-  extractedSummary   Json
-  redactionSummary   Json
-  structureSummary   Json?
-  processorVersion   String
-  createdAt          DateTime       @default(now())
+  id               String         @id @default(uuid())
+  documentId       String
+  document         SourceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version          Int
+  extractedSummary Json
+  redactionSummary Json
+  structureSummary Json?
+  processorVersion String
+  createdAt        DateTime       @default(now())
 
-  evidence           IntentEvidence[]
+  evidence IntentEvidence[]
 
   @@unique([documentId, version])
 }
 
 model IntentEvidence {
-  id                String                 @id @default(uuid())
-  applicationId     String
-  evidenceType      String
-  sourceDocumentId  String?
-  sourceDocument    SourceDocument?        @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
-  documentVersionId String?
-  documentVersion   SourceDocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  id                 String                 @id @default(uuid())
+  applicationId      String
+  evidenceType       String
+  sourceDocumentId   String?
+  sourceDocument     SourceDocument?        @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  documentVersionId  String?
+  documentVersion    SourceDocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
   aiFlowDraftId      String?
   aiFlowDraft        AIFlowDraft?           @relation(fields: [aiFlowDraftId], references: [id], onDelete: Cascade)
   repositoryPathHash String?
-  sourceLabel       String
-  excerpt           String?
-  symbol            String?
-  locator           String?
-  confidence        Float
-  metadata          Json?
-  createdAt         DateTime               @default(now())
+  sourceLabel        String
+  excerpt            String?
+  symbol             String?
+  locator            String?
+  confidence         Float
+  metadata           Json?
+  createdAt          DateTime               @default(now())
 
   @@index([applicationId, evidenceType])
   @@index([sourceDocumentId])
@@ -1718,27 +1749,68 @@ model IntentEvidence {
 }
 
 model InstrumentationPlan {
-  id                   String             @id @default(uuid())
-  workspaceId          String
-  workspace            ProjectWorkspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  repositorySnapshotId String
-  repositorySnapshot   RepositorySnapshot @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
-  createdByUserId      String
-  adapterId            String
-  adapterVersion       String
-  status               String             @default("PROPOSED")
-  risk                 String
-  approvedFileScopes   String[]
-  planJson             Json
-  validationJson       Json?
-  approvedAt           DateTime?
-  completedAt          DateTime?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  id                    String                    @id @default(uuid())
+  workspaceId           String
+  workspace             ProjectWorkspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repositorySnapshotId  String
+  repositorySnapshot    RepositorySnapshot        @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  createdByUserId       String
+  environmentId         String?
+  deviceSessionId       String?
+  taskKey               String
+  contractVersion       String                    @default("1.0")
+  manifestVersion       String                    @default("1.0")
+  adapterId             String
+  adapterVersion        String
+  frameworkVersion      String?
+  supportedVersionRange String?
+  status                InstrumentationPlanStatus @default(PROPOSED)
+  risk                  String
+  approvedFileScopes    String[]
+  approvedCommandIds    String[]                  @default([])
+  approvalHash          String?
+  baseRevision          String?
+  repositoryFingerprint String?
+  targetFileHashes      Json?
+  evidenceJson          Json?
+  commandManifest       Json?
+  eventMappingManifest  Json?
+  planJson              Json
+  validationJson        Json?
+  staleReasonSafe       String?
+  rejectionReasonSafe   String?
+  failureReasonSafe     String?
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  expiresAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
 
-  patchSets            PatchSet[]
+  patchSets    PatchSet[]
+  capabilities InstrumentationCapability[]
 
+  @@unique([workspaceId, taskKey])
   @@index([workspaceId, status])
+  @@index([environmentId, status])
+}
+
+model InstrumentationCapability {
+  id              String                          @id @default(uuid())
+  jtiHash         String                          @unique
+  planId          String
+  plan            InstrumentationPlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  patchSetId      String?
+  patchSet        PatchSet?                       @relation(fields: [patchSetId], references: [id], onDelete: Cascade)
+  deviceSessionId String
+  deviceSession   DeviceSession                   @relation(fields: [deviceSessionId], references: [id], onDelete: Cascade)
+  action          InstrumentationCapabilityAction
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdAt       DateTime                        @default(now())
+
+  @@index([planId, action, consumedAt])
+  @@index([deviceSessionId, expiresAt])
 }
 
 model PatchSet {
@@ -1749,40 +1821,51 @@ model PatchSet {
   instrumentationPlan   InstrumentationPlan @relation(fields: [instrumentationPlanId], references: [id], onDelete: Cascade)
   baseRevision          String?
   checkpointId          String
+  checkpointKind        String              @default("LOCAL")
+  checkpointMetadata    Json?
+  manifestVersion       String              @default("1.0")
+  approvedScopeHash     String?
   diffHash              String
   changedFileHashes     Json
-  status                String              @default("PLANNED")
+  status                PatchSetStatus      @default(CHECKPOINTED)
+  commandResultsJson    Json?
   validationJson        Json?
+  rollbackJson          Json?
+  failureReasonSafe     String?
+  appliedByUserId       String?
+  rolledBackByUserId    String?
   appliedAt             DateTime?
+  validatedAt           DateTime?
   rolledBackAt          DateTime?
   createdAt             DateTime            @default(now())
 
-  qaRuns                QARun[]
+  qaRuns       QARun[]
+  capabilities InstrumentationCapability[]
 
   @@index([workspaceId, status])
 }
 
 model QARun {
-  id                     String               @id @default(uuid())
+  id                     String                @id @default(uuid())
   organizationId         String
-  organization           Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization           Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   applicationId          String
-  application            Application          @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application            Application           @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   environmentId          String
-  environment            Environment          @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  environment            Environment           @relation(fields: [environmentId], references: [id], onDelete: Restrict)
   workspaceId            String?
-  workspace              ProjectWorkspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  workspace              ProjectWorkspace?     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   deviceSessionId        String?
-  deviceSession          DeviceSession?       @relation(fields: [deviceSessionId], references: [id], onDelete: SetNull)
+  deviceSession          DeviceSession?        @relation(fields: [deviceSessionId], references: [id], onDelete: SetNull)
   repositorySnapshotId   String?
-  repositorySnapshot     RepositorySnapshot?  @relation(fields: [repositorySnapshotId], references: [id], onDelete: SetNull)
+  repositorySnapshot     RepositorySnapshot?   @relation(fields: [repositorySnapshotId], references: [id], onDelete: SetNull)
   expectedGraphVersionId String?
   expectedGraphVersion   BehaviorGraphVersion? @relation(fields: [expectedGraphVersionId], references: [id], onDelete: SetNull)
   patchSetId             String?
-  patchSet               PatchSet?            @relation(fields: [patchSetId], references: [id], onDelete: SetNull)
+  patchSet               PatchSet?             @relation(fields: [patchSetId], references: [id], onDelete: SetNull)
   createdByUserId        String
   mode                   QARunMode
-  status                 QARunStatus          @default(CREATED)
+  status                 QARunStatus           @default(CREATED)
   targetUrl              String
   browserMetadata        Json?
   artifactManifest       Json?
@@ -1792,12 +1875,12 @@ model QARun {
   retryOfRunId           String?
   startedAt              DateTime?
   endedAt                DateTime?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
 
-  artifacts              QARunArtifact[]
-  findings               BrowserFinding[]
-  observedSessions       Session[]
+  artifacts        QARunArtifact[]
+  findings         BrowserFinding[]
+  observedSessions Session[]
 
   @@index([organizationId, applicationId, createdAt])
   @@index([environmentId, status])
@@ -1817,39 +1900,39 @@ model QARunArtifact {
   metadata              Json?
   createdAt             DateTime              @default(now())
 
-  findings              BrowserFindingEvidence[]
+  findings BrowserFindingEvidence[]
 
   @@unique([runId, checksum])
   @@index([runId, artifactType])
 }
 
 model BrowserFinding {
-  id                  String    @id @default(uuid())
-  runId               String
-  run                 QARun     @relation(fields: [runId], references: [id], onDelete: Cascade)
-  category            String
-  severity            String
-  confidence          Float
-  title               String
-  description         String
-  url                 String?
-  viewport            Json?
-  reproductionSteps   Json
-  recommendation      String?
-  relatedWorkflowId   String?
-  relatedStateName    String?
-  createdAt           DateTime  @default(now())
+  id                String   @id @default(uuid())
+  runId             String
+  run               QARun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  category          String
+  severity          String
+  confidence        Float
+  title             String
+  description       String
+  url               String?
+  viewport          Json?
+  reproductionSteps Json
+  recommendation    String?
+  relatedWorkflowId String?
+  relatedStateName  String?
+  createdAt         DateTime @default(now())
 
-  evidence            BrowserFindingEvidence[]
+  evidence BrowserFindingEvidence[]
 
   @@index([runId, severity])
 }
 
 model BrowserFindingEvidence {
-  findingId String
-  finding   BrowserFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  findingId  String
+  finding    BrowserFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
   artifactId String
-  artifact QARunArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact   QARunArtifact  @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   @@id([findingId, artifactId])
 }
@@ -1930,6 +2013,13 @@ enum AuditAction {
   FLOW_UPDATED
   FLOW_DELETED
   FLOW_COMPLETED
+  INSTRUMENTATION_PLAN_CREATED
+  INSTRUMENTATION_PLAN_APPROVED
+  INSTRUMENTATION_PLAN_REJECTED
+  INSTRUMENTATION_APPLIED
+  INSTRUMENTATION_VALIDATED
+  INSTRUMENTATION_ROLLED_BACK
+  INSTRUMENTATION_FAILED
 
   // ─── API Keys ─────────────────────────────────────
   API_KEY_CREATED

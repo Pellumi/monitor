@@ -17,6 +17,7 @@ export type EventType =
   | 'WORKFLOW_STARTED'
   | 'WORKFLOW_COMPLETED'
   | 'WORKFLOW_FAILED'
+  | 'WORKFLOW_CANCELLED'
   | 'SOTS_ONBOARDING_TEST'
   | 'QA_RUN_STARTED'
   | 'QA_RUN_COMPLETED'
@@ -38,6 +39,8 @@ export interface SotsEvent {
   environmentId?: string | null;
   runId?: string | null;
   traceId?: string | null;
+  agentVersion?: string | null;
+  instrumentationManifestVersion?: string | null;
   source: string;
   eventVersion: string;
   eventType: EventType;

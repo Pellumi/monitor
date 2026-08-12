@@ -32,6 +32,31 @@ describe('pricing catalog contract', () => {
     expect(PLAN_DEFINITIONS.ENTERPRISE.features.find((item) => item.feature === Feature.SSO)?.enabled).toBe(true);
   });
 
+  it('preserves the locked desktop entitlement progression', () => {
+    const enabled = (plan: keyof typeof PLAN_DEFINITIONS, feature: Feature) =>
+      PLAN_DEFINITIONS[plan].features.find((item) => item.feature === feature)?.enabled;
+
+    for (const plan of ['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
+      expect(enabled(plan, Feature.DESKTOP_GUIDED_RUNS)).toBe(true);
+    }
+    expect(enabled('FREE', Feature.DOCUMENT_FLOW_INFERENCE)).toBe(false);
+    for (const plan of ['LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
+      expect(enabled(plan, Feature.DOCUMENT_FLOW_INFERENCE)).toBe(true);
+    }
+    for (const plan of ['FREE', 'LOCAL'] as const) {
+      expect(enabled(plan, Feature.AUTOMATED_INSTRUMENTATION)).toBe(false);
+    }
+    for (const plan of ['SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
+      expect(enabled(plan, Feature.AUTOMATED_INSTRUMENTATION)).toBe(true);
+    }
+    for (const plan of ['FREE', 'LOCAL', 'SOLO'] as const) {
+      expect(enabled(plan, Feature.SHARED_RUN_GOVERNANCE)).toBe(false);
+    }
+    for (const plan of ['TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
+      expect(enabled(plan, Feature.SHARED_RUN_GOVERNANCE)).toBe(true);
+    }
+  });
+
   it('does not expose placeholder enterprise limits as public contract values', () => {
     expect(PLAN_DEFINITIONS.ENTERPRISE.contactSales).toBe(true);
     expect(PLAN_DEFINITIONS.ENTERPRISE.pricing.monthlyUsd).toBeNull();

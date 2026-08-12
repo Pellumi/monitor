@@ -3,7 +3,7 @@ import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Users, UserMinus, Shield, ChevronDown, Loader2, AlertTriangle, CheckCircle, UserPlus, Mail, X, Clock } from 'lucide-react';
 import { useSession } from '@/components/providers';
 import { EmptyState } from '@/components/empty-state';
@@ -80,30 +80,43 @@ export default function MembersPage() {
   const [inviteRole, setInviteRole] = useState<MemberRole>('MEMBER');
   const [inviting, setInviting] = useState(false);
   const [rescinding, setRescinding] = useState<string | null>(null);
+  const loadSequence = useRef(0);
 
   const currentMembership = memberships.find((m) => m.organization.id === selectedOrgId);
   const isOwner = currentMembership?.role === 'OWNER';
   const isAdmin = currentMembership?.role === 'ADMIN' || isOwner;
+  const planType = currentMembership?.organization.subscription?.planType;
+  const hasTeamCollaboration = planType === 'TEAM' || planType === 'BUSINESS' || planType === 'ENTERPRISE';
 
   const loadMembers = useCallback(async () => {
     if (!selectedOrgId) return;
+    const sequence = ++loadSequence.current;
+    const organizationId = selectedOrgId;
     setIsLoading(true);
     try {
       const [memberData, inviteData] = await Promise.all([
-        requestJson<TeamMember[]>(`/api-gateway/organizations/${selectedOrgId}/members`),
-        requestJson<{ success: boolean; data: PendingInvitation[] }>(`/api-gateway/organizations/${selectedOrgId}/invitations/pending`)
+        requestJson<TeamMember[]>(`/api-gateway/organizations/${organizationId}/members`),
+        requestJson<{ success: boolean; data: PendingInvitation[] }>(`/api-gateway/organizations/${organizationId}/invitations/pending`)
           .then((r) => r.data).catch(() => [] as PendingInvitation[]),
       ]);
+      if (sequence !== loadSequence.current) return;
       setMembers(memberData);
       setPendingInvitations(inviteData);
     } catch (err: any) {
+      if (sequence !== loadSequence.current) return;
       setAlert({ type: 'error', message: err.message || 'Failed to load members.' });
     } finally {
-      setIsLoading(false);
+      if (sequence === loadSequence.current) setIsLoading(false);
     }
   }, [selectedOrgId]);
 
-  useEffect(() => { void loadMembers(); }, [loadMembers]);
+  useEffect(() => {
+    setMembers([]);
+    setPendingInvitations([]);
+    setAlert(null);
+    void loadMembers();
+    return () => { loadSequence.current += 1; };
+  }, [loadMembers]);
 
   async function handleRoleChange(userId: string, newRole: MemberRole) {
     setChangingRole(userId);
@@ -183,7 +196,7 @@ export default function MembersPage() {
       </div>
 
       {/* Invite Member (owners/admins only) */}
-      {isAdmin && (
+      {isAdmin && hasTeamCollaboration && (
         <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
           <div className="flex items-center gap-2 mb-4">
             <UserPlus className="h-4 w-4 text-white" />
@@ -232,6 +245,12 @@ export default function MembersPage() {
             </Button>
           </form>
         </section>
+      )}
+
+      {isAdmin && !hasTeamCollaboration && (
+        <div className="rounded-md border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          Team collaboration starts on the Team plan. Existing membership remains visible, but inviting teammates requires an upgrade.
+        </div>
       )}
 
       {alert && (

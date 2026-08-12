@@ -21,10 +21,10 @@ import crypto from 'crypto';
 
 const GW          = process.env.API_GATEWAY_URL          ?? 'http://localhost:3000';
 const EVENT       = process.env.EVENT_COLLECTOR_URL       ?? 'http://localhost:3001';
-const ONBOARDING  = process.env.ONBOARDING_API_URL        ?? 'http://localhost:3002';
+const ONBOARDING  = process.env.ONBOARDING_API_URL        ?? 'http://localhost:3006';
 const REPORT      = process.env.REPORT_ENGINE_URL         ?? 'http://localhost:3004';
 const DEMO        = process.env.DEMONSTRATION_API_URL     ?? 'http://localhost:3005';
-const COVERAGE    = process.env.COVERAGE_ENGINE_URL       ?? 'http://localhost:3006';
+const COVERAGE    = process.env.COVERAGE_ENGINE_URL       ?? 'http://localhost:3003';
 
 const TIMEOUT_MS = 30_000;
 
@@ -51,7 +51,7 @@ async function get(url: string, headers: Record<string, string> = {}) {
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
     eventId: crypto.randomUUID(),
-    sessionId: `session-${crypto.randomUUID()}`,
+    sessionId: crypto.randomUUID(),
     tenantId: 'test-tenant',
     applicationId: 'app-integration-test',
     eventType: 'PAGE_VIEW',
@@ -94,7 +94,7 @@ describe('Event Ingestion — /v1/events', () => {
     const sessionId = crypto.randomUUID();
     const batch = [
       makeEvent({ sessionId, eventType: 'PAGE_VIEW', metadata: { page: '/login' } }),
-      makeEvent({ sessionId, eventType: 'CLICK',     metadata: { element: 'login-btn' } }),
+      makeEvent({ sessionId, eventType: 'BUTTON_CLICK', metadata: { element: 'login-btn' } }),
       makeEvent({ sessionId, eventType: 'PAGE_VIEW', metadata: { page: '/dashboard' } }),
     ];
     const r = await post(`${EVENT}/v1/events/batch`, batch);
@@ -171,7 +171,7 @@ describe('Demonstration Pipeline', () => {
   it('sends a batch of events for the demo session', async () => {
     const events = [
       { sessionId, tenantId: 'demo', applicationId: appId, eventType: 'PAGE_VIEW', eventId: crypto.randomUUID(), eventVersion: '1.0', source: 'web', timestamp: new Date().toISOString(), metadata: { page: '/home' } },
-      { sessionId, tenantId: 'demo', applicationId: appId, eventType: 'CLICK', eventId: crypto.randomUUID(), eventVersion: '1.0', source: 'web', timestamp: new Date().toISOString(), metadata: { element: 'cta' } },
+      { sessionId, tenantId: 'demo', applicationId: appId, eventType: 'BUTTON_CLICK', eventId: crypto.randomUUID(), eventVersion: '1.0', source: 'web', timestamp: new Date().toISOString(), metadata: { element: 'cta' } },
     ];
     const r = await post(`${EVENT}/v1/events/batch`, events);
     expect(r.status).toBe(202);

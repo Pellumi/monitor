@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BillingCurrency } from '@sots/db';
-import { currencyForCountry, proratedDifference } from './billing-policy';
+import { BillingCurrency, PlanType } from '@sots/db';
+import { currencyForCountry, proratedDifference, validateProviderPayment } from './billing-policy';
 
 test('currencyForCountry resolves only Nigerian organizations to NGN', () => {
   assert.equal(currencyForCountry('NG'), BillingCurrency.NGN);
@@ -38,4 +38,19 @@ test('proratedDifference returns credit for a downgrade and clamps expired perio
     periodEnd: new Date('2026-07-31T00:00:00.000Z'),
     at: new Date('2026-08-01T00:00:00.000Z'),
   }), { amountDue: 0, creditAmount: 0 });
+});
+
+test('provider payment validation rejects amount, currency, and plan substitution', () => {
+  const valid = {
+    eventCurrency: BillingCurrency.NGN,
+    invoiceCurrency: BillingCurrency.NGN,
+    eventAmountMinor: 50_000,
+    invoiceTotal: 50_000,
+    eventPlanType: PlanType.SOLO,
+    invoicePlanType: PlanType.SOLO,
+  };
+  assert.doesNotThrow(() => validateProviderPayment(valid));
+  assert.throws(() => validateProviderPayment({ ...valid, eventAmountMinor: 49_999 }), /PAYMENT_AMOUNT_MISMATCH/);
+  assert.throws(() => validateProviderPayment({ ...valid, eventCurrency: BillingCurrency.USD }), /PAYMENT_CURRENCY_MISMATCH/);
+  assert.throws(() => validateProviderPayment({ ...valid, eventPlanType: PlanType.TEAM }), /PAYMENT_PLAN_MISMATCH/);
 });

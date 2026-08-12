@@ -4,6 +4,7 @@ import { CaptureErrorOptions } from './core/captureError';
 import { TrackStateOptions } from './core/trackState';
 
 export * from './core/SOTS';
+export type { EventType, SotsEvent } from './event-types';
 export { TrackApiOptions } from './core/trackApi';
 export { CaptureErrorOptions } from './core/captureError';
 export { TrackStateOptions } from './core/trackState';

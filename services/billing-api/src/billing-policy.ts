@@ -71,6 +71,25 @@ export function proratedDifference(params: {
   };
 }
 
+export function validateProviderPayment(params: {
+  eventCurrency: BillingCurrency | null;
+  invoiceCurrency: BillingCurrency;
+  eventAmountMinor: number | null;
+  invoiceTotal: number;
+  eventPlanType: PlanType | null;
+  invoicePlanType: PlanType;
+}): void {
+  if (params.eventCurrency && params.eventCurrency !== params.invoiceCurrency) {
+    throw new Error(`PAYMENT_CURRENCY_MISMATCH:${params.eventCurrency}:${params.invoiceCurrency}`);
+  }
+  if (params.eventAmountMinor !== null && params.eventAmountMinor !== params.invoiceTotal) {
+    throw new Error(`PAYMENT_AMOUNT_MISMATCH:${params.eventAmountMinor}:${params.invoiceTotal}`);
+  }
+  if (params.eventPlanType && params.eventPlanType !== params.invoicePlanType) {
+    throw new Error(`PAYMENT_PLAN_MISMATCH:${params.eventPlanType}:${params.invoicePlanType}`);
+  }
+}
+
 export function sealPaymentReference(value: string): string {
   const keyMaterial = process.env.BILLING_ENCRYPTION_KEY;
   if (!keyMaterial) throw new Error('BILLING_ENCRYPTION_KEY is required to store recurring payment authorization');

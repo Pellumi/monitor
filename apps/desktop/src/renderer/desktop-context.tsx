@@ -19,6 +19,8 @@ import type {
   StartGuidedRunInput,
   SourceDocumentSummary,
   IntentDraft,
+  InstrumentationDetection,
+  InstrumentationValidationResult,
 } from '@sots/desktop-contracts';
 import type { GuidedRunState } from '@sots/browser-observer';
 
@@ -61,10 +63,26 @@ type DesktopContextValue = {
   createIntentDraft(applicationId: string, documentVersionIds: string[]): Promise<Record<string, unknown>>;
   reviewIntentDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
   correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<Record<string, unknown>>;
+  detectInstrumentation(input: InstrumentationEnvironmentInput): Promise<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>;
+  proposeInstrumentation(input: InstrumentationEnvironmentInput & { adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
+  listInstrumentationPlans(applicationId: string): Promise<Record<string, unknown>[]>;
+  getInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+  getLocalInstrumentationResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
+  approveInstrumentation(input: InstrumentationEnvironmentInput & { planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
+  rejectInstrumentation(applicationId: string, planId: string, reason?: string): Promise<Record<string, unknown>>;
+  applyInstrumentation(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+  validateInstrumentation(applicationId: string, planId: string): Promise<InstrumentationValidationResult>;
+  rollbackInstrumentation(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   startRun(input: StartGuidedRunInput): Promise<GuidedRunState>;
   pauseRun(): Promise<GuidedRunState>;
   endRun(): Promise<GuidedRunState>;
   clearError(): void;
+};
+
+type InstrumentationEnvironmentInput = {
+  applicationId: string;
+  environmentId: string;
+  environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
 };
 
 const DesktopContext = createContext<DesktopContextValue | null>(null);
@@ -106,11 +124,19 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
         ] as const));
         setWorkspaces(Object.fromEntries(localEntries.filter((entry): entry is [string, LocalWorkspace] => Boolean(entry[1]))));
       }
-    }).catch((cause) => {
-      if (!cancelled) {
-        setCloudAvailable(false);
-        setError(normalizeDesktopError(cause));
+    }).catch(async (cause) => {
+      if (cancelled) return;
+      const message = normalizeDesktopError(cause);
+      const nextSession = await window.tellann?.auth.getSession().catch(() => null);
+      if (nextSession && !nextSession.authenticated) {
+        setSession(nextSession);
+        setApplications([]);
+        setCloudAvailable(true);
+        setError('Your Tellann Desktop session expired or was revoked. Sign in again.');
+        return;
       }
+      setCloudAvailable(false);
+      setError(message);
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
@@ -234,6 +260,16 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     createIntentDraft: (applicationId, documentVersionIds) => perform(() => bridge().intent.createDraft(applicationId, documentVersionIds)),
     reviewIntentDraft: (applicationId, draftId, review) => perform(() => bridge().intent.reviewDraft(applicationId, draftId, review)),
     correctIntentDraft: (applicationId, draftId, correction) => perform(() => bridge().intent.correctDraft(applicationId, draftId, correction)),
+    detectInstrumentation: (input) => perform(() => bridge().instrumentation.detect(input)),
+    proposeInstrumentation: (input) => perform(() => bridge().instrumentation.propose(input)),
+    listInstrumentationPlans: (applicationId) => bridge().instrumentation.list(applicationId),
+    getInstrumentationPlan: (applicationId, planId) => bridge().instrumentation.get(applicationId, planId),
+    getLocalInstrumentationResult: (applicationId, planId) => bridge().instrumentation.getLocalResult(applicationId, planId),
+    approveInstrumentation: (input) => perform(() => bridge().instrumentation.approve(input)),
+    rejectInstrumentation: (applicationId, planId, reason) => perform(() => bridge().instrumentation.reject(applicationId, planId, reason)),
+    applyInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.apply(applicationId, planId)),
+    validateInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.validate(applicationId, planId)),
+    rollbackInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.rollback(applicationId, planId)),
     startRun,
     pauseRun,
     endRun,

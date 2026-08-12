@@ -127,6 +127,21 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     fs.existsSync(path.join(resolvedRoot, 'bun.lockb')) ? 'bun' :
     fs.existsSync(path.join(resolvedRoot, 'package-lock.json')) ? 'npm' :
     fs.existsSync(path.join(resolvedRoot, 'pyproject.toml')) ? 'python' : null;
+  const packageScripts = packageJson?.scripts && typeof packageJson.scripts === 'object'
+    ? packageJson.scripts as Record<string, unknown>
+    : {};
+  const launchCommands = packageManager && ['pnpm', 'npm', 'yarn', 'bun'].includes(packageManager)
+    ? ['dev', 'start', 'serve', 'preview']
+      .filter((scriptName) => typeof packageScripts[scriptName] === 'string')
+      .map((scriptName) => ({
+        id: `package-script:${scriptName}`,
+        label: `${packageManager} run ${scriptName}`,
+        executable: process.platform === 'win32' ? `${packageManager}.cmd` : packageManager,
+        args: ['run', scriptName],
+        cwd: '.',
+        scriptName,
+      }))
+    : [];
   const revision = git(resolvedRoot, ['rev-parse', 'HEAD']);
   const branch = git(resolvedRoot, ['branch', '--show-current']);
   const status = git(resolvedRoot, ['status', '--porcelain']);
@@ -139,6 +154,7 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     repositoryFingerprint: hash(`${resolvedRoot}\0${revision ?? ''}\0${Object.values(manifestHashes).join(':')}`),
     languages: [...languages].sort(),
     packageManager,
+    launchCommands,
     frameworks,
     routes: [...routes].sort().slice(0, 2_000),
     endpoints: [...endpoints].sort().slice(0, 2_000),

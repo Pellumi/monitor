@@ -17,6 +17,7 @@ async function runTestForFixture(fixtureName: string, events: any[]) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ applicationId })
   });
+  assert.ok(res.ok, `Demonstration start failed with HTTP ${res.status}`);
   const { id: demoId, sessionId } = await res.json();
 
   const formattedEvents = events.map((e, idx) => ({
@@ -32,11 +33,13 @@ async function runTestForFixture(fixtureName: string, events: any[]) {
   }));
 
   // Send telemetry
-  await fetch('http://localhost:3001/v1/events/batch', {
+  const ingestionResponse = await fetch('http://localhost:3001/v1/events/batch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(formattedEvents)
   });
+  const ingestionBody = await ingestionResponse.text();
+  assert.strictEqual(ingestionResponse.status, 202, `Event ingestion failed: HTTP ${ingestionResponse.status} ${ingestionBody}`);
 
   // Wait for Kafka propagation
   await delay(6000);
@@ -91,4 +94,9 @@ async function main() {
   console.log('\nAll E2E Golden-Master Tests Passed!');
 }
 
-main().catch(console.error).finally(() => prisma.$disconnect());
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

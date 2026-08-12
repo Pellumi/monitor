@@ -126,8 +126,8 @@ function applyRunCorrelation<T extends Record<string, unknown>>(event: T, req: R
 }
 
 /**
- * Sends events to Kafka (when enabled) or falls back to Postgres RawEvent.
- * Never throws — errors are logged and result in a 202 (optimistic acceptance).
+ * Sends events to Kafka (when enabled) or persists canonical session records
+ * directly to Postgres for local/development stacks.
  */
 async function publishEvents(events: Array<Record<string, unknown>>, sessionId: string): Promise<void> {
   if (KAFKA_ENABLED && producer) {
@@ -142,15 +142,57 @@ async function publishEvents(events: Array<Record<string, unknown>>, sessionId: 
     return;
   }
 
-  // Postgres fallback — log events (full persistence requires RawEvent model in schema)
-  // This keeps the service functional during local dev without schema migration
+  // Event IDs make buffered/offline replay idempotent in the Postgres fallback.
   if (prisma) {
-    console.log(
-      `[EventCollector] Postgres fallback: ${events.length} event(s) received (sessionId=${sessionId})`,
-      events.map((e) => ({ type: e['eventType'], tenant: e['tenantId'] })),
-    );
-    // Future: await prisma.rawEvent.createMany({ data: events })
-    // once RawEvent is added to schema.prisma and migrated
+    for (const event of events) {
+      const eventId = String(event.eventId);
+      const correlatedSessionId = String(event.sessionId || sessionId);
+      const applicationId = String(event.applicationId);
+      const timestamp = new Date(String(event.timestamp));
+      const requestedEnvironmentId = typeof event.environmentId === 'string' ? event.environmentId : null;
+      const requestedRunId = typeof event.runId === 'string' ? event.runId : null;
+      const [environment, run] = await Promise.all([
+        requestedEnvironmentId ? prisma.environment.findFirst({ where: { id: requestedEnvironmentId, applicationId }, select: { id: true } }) : null,
+        requestedRunId ? prisma.qARun.findFirst({ where: { id: requestedRunId, applicationId }, select: { id: true } }) : null,
+      ]);
+      await prisma.application.upsert({
+        where: { id: applicationId },
+        update: {},
+        create: { id: applicationId, name: `App ${applicationId}` },
+      });
+      await prisma.session.upsert({
+        where: { id: correlatedSessionId },
+        update: {
+          endTime: timestamp,
+          environmentId: environment?.id,
+          qaRunId: run?.id,
+          traceId: typeof event.traceId === 'string' ? event.traceId : undefined,
+        },
+        create: {
+          id: correlatedSessionId,
+          applicationId,
+          environmentId: environment?.id ?? null,
+          tenantId: String(event.tenantId),
+          qaRunId: run?.id ?? null,
+          traceId: typeof event.traceId === 'string' ? event.traceId : null,
+          startTime: timestamp,
+          endTime: timestamp,
+        },
+      });
+      await prisma.sessionEvent.upsert({
+        where: { id: eventId },
+        update: {},
+        create: {
+          id: eventId,
+          sessionId: correlatedSessionId,
+          eventType: String(event.eventType),
+          eventVersion: String(event.eventVersion),
+          source: String(event.source),
+          timestamp,
+          metadata: (event.metadata ?? {}) as object,
+        },
+      });
+    }
   }
 }
 

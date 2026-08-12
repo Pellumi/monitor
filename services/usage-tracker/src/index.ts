@@ -1,15 +1,49 @@
 import { initTracing } from '@sots/telemetry';
 initTracing('usage-tracker');
 
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import { MemberRole, PrismaClient, UsageMetric } from '@sots/db';
 import { Services } from '@sots/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import jwt from 'jsonwebtoken';
 
 const app = express();
 const prisma = new PrismaClient();
 const emailService = new NotificationEmailService(prisma);
+const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 app.use(express.json());
+
+interface AuthenticatedRequest extends Request {
+  userId?: string;
+}
+
+async function requireOrganizationMembership(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const authorization = req.headers.authorization;
+  let rawToken = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!rawToken && req.headers.cookie) {
+    const cookies = Object.fromEntries(req.headers.cookie.split(';').map((item) => {
+      const separator = item.indexOf('=');
+      return separator < 0 ? [item.trim(), ''] : [item.slice(0, separator).trim(), item.slice(separator + 1)];
+    }));
+    rawToken = cookies.access_token || '';
+  }
+  if (!rawToken) return res.status(401).json({ error: 'UNAUTHORIZED' });
+  try {
+    const decoded = jwt.verify(rawToken, JWT_SECRET) as { sub?: string };
+    if (!decoded.sub) return res.status(401).json({ error: 'UNAUTHORIZED' });
+    const organizationId = String(req.params.orgId || req.body?.orgId || '');
+    if (!organizationId) return res.status(400).json({ error: 'ORGANIZATION_REQUIRED' });
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: decoded.sub, organizationId } },
+      select: { id: true },
+    });
+    if (!membership) return res.status(403).json({ error: 'FORBIDDEN' });
+    req.userId = decoded.sub;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
+  }
+}
 
 // CORS
 app.use((req, res, next) => {
@@ -252,21 +286,14 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
 }
 
 // Perform aggregation for all orgs
-app.post('/usage/aggregate', async (req: Request, res: Response) => {
+app.post('/usage/aggregate', requireOrganizationMembership, async (req: Request, res: Response) => {
   const { orgId } = req.body;
   const now = new Date();
   const startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000); // last 24h
   const endDate = now;
 
   try {
-    if (orgId) {
-      await runAggregationForOrg(orgId, startDate, endDate);
-    } else {
-      const orgs = await prisma.organization.findMany({ select: { id: true } });
-      for (const org of orgs) {
-        await runAggregationForOrg(org.id, startDate, endDate);
-      }
-    }
+    await runAggregationForOrg(orgId, startDate, endDate);
     res.json({ success: true, message: 'Aggregation completed successfully.' });
   } catch (err) {
     console.error('[UsageTracker] Error during aggregation', err);
@@ -275,7 +302,7 @@ app.post('/usage/aggregate', async (req: Request, res: Response) => {
 });
 
 // GET /usage/organization/:orgId — get usage limits and thresholds
-app.get('/usage/organization/:orgId', async (req: Request, res: Response) => {
+app.get('/usage/organization/:orgId', requireOrganizationMembership, async (req: Request, res: Response) => {
   const { orgId } = req.params;
 
   try {
@@ -286,11 +313,23 @@ app.get('/usage/organization/:orgId', async (req: Request, res: Response) => {
 
     if (!subscription) return res.status(404).json({ error: 'No subscription found' });
 
-    // Fetch current snapshots
-    const snapshots = await prisma.usageSnapshot.findMany({
-      where: { organizationId: orgId },
-      orderBy: { snapshotDate: 'desc' }
-    });
+    const now = new Date();
+    const [snapshots, applicationCount, memberCount, pendingInvitationCount, storageTotals, demonstrationCount] = await Promise.all([
+      prisma.usageSnapshot.findMany({ where: { organizationId: orgId }, orderBy: { snapshotDate: 'desc' } }),
+      prisma.application.count({ where: { organizationId: orgId } }),
+      prisma.organizationMembership.count({ where: { organizationId: orgId } }),
+      prisma.organizationInvitation.count({ where: { organizationId: orgId, acceptedAt: null, expiresAt: { gt: now } } }),
+      prisma.storageLedgerEntry.aggregate({
+        where: { organizationId: orgId, deletedAt: null },
+        _sum: { bytes: true, reservedBytes: true },
+      }),
+      prisma.demonstration.count({
+        where: {
+          application: { organizationId: orgId },
+          startedAt: { gte: subscription.currentPeriodStart, lt: subscription.currentPeriodEnd },
+        },
+      }),
+    ]);
 
     const latestMetrics: Record<string, any> = {};
     for (const snap of snapshots) {
@@ -298,6 +337,23 @@ app.get('/usage/organization/:orgId', async (req: Request, res: Response) => {
       if (!latestMetrics[key]) {
         latestMetrics[key] = snap;
       }
+    }
+
+    const liveGlobalMetrics = [
+      { metric: UsageMetric.APPLICATIONS, value: applicationCount },
+      { metric: UsageMetric.USERS, value: memberCount + pendingInvitationCount },
+      {
+        metric: UsageMetric.STORAGE_GB,
+        value: Number((storageTotals._sum.bytes ?? 0n) + (storageTotals._sum.reservedBytes ?? 0n)) / 1024 / 1024 / 1024,
+      },
+      { metric: UsageMetric.DEMONSTRATIONS, value: demonstrationCount },
+    ];
+    for (const metric of liveGlobalMetrics) {
+      latestMetrics[`global_global_${metric.metric}`] = {
+        applicationId: null,
+        environmentId: null,
+        ...metric,
+      };
     }
 
     const usageItems = Object.values(latestMetrics).map((m: any) => {

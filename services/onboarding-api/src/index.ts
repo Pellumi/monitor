@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createDesktopRouter } from './desktop-routes';
 import { createDocumentRouter } from './document-routes';
+import { createInstrumentationRouter } from './instrumentation-routes';
 import { createStorageClient } from '@sots/storage';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
@@ -276,6 +277,7 @@ app.use(createDesktopRouter({
   storage: storageClient,
 }));
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership }));
+app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
@@ -491,13 +493,53 @@ app.put('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, requir
   if (current && req.body.version !== current.version) {
     return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Organisation settings changed. Reload and try again.', current });
   }
+  if (req.body.primaryTimezone !== undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: String(req.body.primaryTimezone) }).format();
+    } catch {
+      return res.status(400).json({ error: 'INVALID_TIMEZONE', message: 'primaryTimezone must be a valid IANA time zone.' });
+    }
+  }
+  if (req.body.defaultReportFormat !== undefined && !['JSON', 'PDF', 'CSV', 'HTML'].includes(String(req.body.defaultReportFormat))) {
+    return res.status(400).json({ error: 'INVALID_REPORT_FORMAT' });
+  }
+  if (req.body.defaultSeverityThreshold !== undefined && !['INFO', 'WARNING', 'ERROR', 'CRITICAL'].includes(String(req.body.defaultSeverityThreshold))) {
+    return res.status(400).json({ error: 'INVALID_SEVERITY_THRESHOLD' });
+  }
+  if (req.body.defaultInvitationExpiryDays !== undefined
+    && (!Number.isInteger(req.body.defaultInvitationExpiryDays) || req.body.defaultInvitationExpiryDays < 1 || req.body.defaultInvitationExpiryDays > 30)) {
+    return res.status(400).json({ error: 'INVALID_INVITATION_EXPIRY', message: 'Invitation expiry must be between 1 and 30 days.' });
+  }
+  const contactKeys = ['billingContactEmail', 'technicalContactEmail', 'securityContactEmail'] as const;
+  for (const key of contactKeys) {
+    const value = req.body[key];
+    if (value !== undefined && value !== null && value !== '' && (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) {
+      return res.status(400).json({ error: 'INVALID_CONTACT_EMAIL', field: key });
+    }
+  }
+  if (req.body.defaultApplicationId) {
+    const application = await prisma.application.findFirst({ where: { id: String(req.body.defaultApplicationId), organizationId: req.params.orgId } });
+    if (!application) return res.status(400).json({ error: 'INVALID_DEFAULT_APPLICATION' });
+  }
+  if (req.body.defaultEnvironmentId) {
+    const environment = await prisma.environment.findFirst({
+      where: { id: String(req.body.defaultEnvironmentId), application: { organizationId: req.params.orgId } },
+    });
+    if (!environment) return res.status(400).json({ error: 'INVALID_DEFAULT_ENVIRONMENT' });
+    if (req.body.defaultApplicationId && environment.applicationId !== req.body.defaultApplicationId) {
+      return res.status(400).json({ error: 'DEFAULT_ENVIRONMENT_APPLICATION_MISMATCH' });
+    }
+  }
   const allowed = [
     'primaryTimezone', 'defaultApplicationId', 'defaultEnvironmentId', 'defaultReportFormat',
     'defaultGraphVisibility', 'defaultDemonstrationMode', 'defaultMemberRole',
     'defaultInvitationExpiryDays', 'defaultSeverityThreshold', 'billingContactEmail',
     'technicalContactEmail', 'securityContactEmail',
   ];
-  const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]]));
+  const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => {
+    const value = req.body[key];
+    return [key, contactKeys.includes(key as typeof contactKeys[number]) && value === '' ? null : value];
+  }));
   const settings = await prisma.organizationSettings.upsert({
     where: { organizationId: req.params.orgId },
     create: { organizationId: req.params.orgId, ...data },
@@ -638,8 +680,8 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  if (!cleanEmail) {
-    return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Invitee email is required' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Enter a valid invitee email address.' });
   }
 
   const inviteRole = role && Object.values(MemberRole).includes(role) ? role as MemberRole : MemberRole.MEMBER;

@@ -1,12 +1,14 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import { SOTS } from '../../core/SOTS';
-import { extractSessionId } from '../express'; // Re-use traceparent extraction utility
+import { extractCorrelationContext } from '../express';
 
 declare module 'fastify' {
   interface FastifyRequest {
     sots?: {
       sessionId?: string;
+      runId?: string;
+      traceId?: string;
     };
   }
 }
@@ -24,8 +26,7 @@ declare module 'fastify' {
 const sotsFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
   // Add preHandler to extract session metadata
   fastify.addHook('onRequest', async (request: FastifyRequest) => {
-    const sessionId = extractSessionId(request.headers);
-    request.sots = { sessionId };
+    request.sots = extractCorrelationContext(request.headers);
   });
 
   // Track API completion
@@ -42,6 +43,8 @@ const sotsFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
         durationMs: Math.round(reply.elapsedTime),
         sessionId,
         requestId,
+        runId: request.sots?.runId,
+        traceId: request.sots?.traceId,
       });
     }
   );
@@ -55,6 +58,8 @@ const sotsFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
         error,
         sessionId,
         eventType: 'SERVER_ERROR',
+        runId: request.sots?.runId,
+        traceId: request.sots?.traceId,
         context: {
           url: request.url,
           method: request.method,

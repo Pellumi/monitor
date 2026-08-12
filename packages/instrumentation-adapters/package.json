@@ -4,12 +4,19 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --test dist/index.test.js"
   },
   "dependencies": {
-    "@sots/desktop-contracts": "workspace:*"
+    "@sots/agent-policy": "workspace:*",
+    "@sots/desktop-contracts": "workspace:*",
+    "semver": "^7.7.2",
+    "ts-morph": "^27.0.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/semver": "^7.7.1",
     "typescript": "^5.0.0"
   }
 }

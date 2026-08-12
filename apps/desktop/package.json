@@ -1,6 +1,8 @@
 {
   "name": "@sots/desktop",
   "version": "0.1.0",
+  "description": "Tellann desktop agent for guided browser QA, expected-flow inference, and bounded instrumentation.",
+  "author": "Tellann",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -8,6 +10,7 @@
     "build": "vite build && tsc -p tsconfig.main.json",
     "start": "electron dist/main/main/main.js",
     "package:win": "pnpm build && electron-builder --win nsis",
+    "test:main": "pnpm build && node --test dist/main/main/application-launcher.test.js dist/main/main/git-checkpoint.test.js dist/main/main/update-policy.test.js",
     "typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.main.json"
   },
   "dependencies": {
@@ -15,6 +18,8 @@
     "@sots/browser-observer": "workspace:*",
     "@sots/desktop-contracts": "workspace:*",
     "@sots/document-intelligence": "workspace:*",
+    "@sots/instrumentation-adapters": "workspace:*",
+    "@sots/local-relay": "workspace:*",
     "@sots/project-intelligence": "workspace:*",
     "electron-updater": "^6.6.2",
     "lucide-react": "^1.18.0",
@@ -42,6 +47,7 @@
     "asar": true,
     "files": [
       "dist/**/*",
+      "!dist/**/*.test.js",
       "package.json"
     ],
     "directories": {
