@@ -4,7 +4,7 @@ import { EntitlementChecker } from '@sots/entitlement-checker';
 export async function applyScheduledSubscriptionChanges(prisma: PrismaClient, now = new Date()): Promise<number> {
   const pending = await prisma.subscription.findMany({
     where: { pendingPlanId: { not: null }, pendingChangeAt: { lte: now } },
-    select: { organizationId: true, pendingPlanId: true, pendingChangeAt: true },
+    select: { organizationId: true, pendingPlanId: true, pendingChangeAt: true, pendingPlan: { select: { type: true } } },
   });
   const checker = new EntitlementChecker(prisma);
   for (const subscription of pending) {
@@ -35,6 +35,7 @@ export async function applyScheduledSubscriptionChanges(prisma: PrismaClient, no
         pendingPlanId: null,
         pendingChangeAt: null,
         status: SubscriptionStatus.ACTIVE,
+        nonRenewing: subscription.pendingPlan?.type === 'FREE',
       },
     });
     await prisma.subscriptionChange.update({

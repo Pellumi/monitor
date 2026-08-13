@@ -435,12 +435,7 @@ function GraphDriftContent() {
   }
 
   if (isAppsLoading) {
-    return (
-      <div className="p-6 flex items-center gap-2 text-neutral-500 text-sm">
-        <RefreshCw className="h-4 w-4 animate-spin" />
-        Loading applications...
-      </div>
-    );
+    return <GraphDriftSkeleton />;
   }
 
   if (!appId) {
@@ -906,16 +901,52 @@ function GraphDriftContent() {
   );
 }
 
+function GraphDriftSkeleton() {
+  return (
+    <div className="p-6 max-w-6xl mx-auto space-y-6 animate-pulse">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#262626]">
+        <div className="space-y-2">
+          <div className="h-7 w-48 bg-neutral-800 rounded-md" />
+          <div className="h-4 w-72 bg-neutral-800/60 rounded-md" />
+        </div>
+        <div className="flex gap-3">
+          <div className="h-9 w-36 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-36 bg-neutral-800 rounded-md" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
+          <div className="h-4 w-24 bg-neutral-800 rounded" />
+          <div className="h-8 w-16 bg-neutral-800 rounded" />
+        </div>
+        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
+          <div className="h-4 w-28 bg-neutral-800 rounded" />
+          <div className="h-8 w-20 bg-neutral-800 rounded" />
+        </div>
+        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
+          <div className="h-4 w-20 bg-neutral-800 rounded" />
+          <div className="h-8 w-16 bg-neutral-800 rounded" />
+        </div>
+      </div>
+      <div className="h-80 bg-[#141414] border border-[#262626] rounded-xl p-6 space-y-4">
+        <div className="flex justify-between items-center pb-4 border-b border-[#262626]">
+          <div className="h-5 w-44 bg-neutral-800 rounded" />
+          <div className="h-8 w-28 bg-neutral-800/60 rounded" />
+        </div>
+        <div className="space-y-3 pt-2">
+          <div className="h-10 w-full bg-neutral-800/40 rounded-lg" />
+          <div className="h-10 w-full bg-neutral-800/30 rounded-lg" />
+          <div className="h-10 w-full bg-neutral-800/40 rounded-lg" />
+          <div className="h-10 w-full bg-neutral-800/30 rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GraphDriftPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="p-6 flex items-center gap-2 text-neutral-500 text-sm">
-          <RefreshCw className="h-4 w-4 animate-spin" />
-          Loading graph drift…
-        </div>
-      }
-    >
+    <Suspense fallback={<GraphDriftSkeleton />}>
       <GraphDriftContent />
     </Suspense>
   );

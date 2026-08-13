@@ -949,11 +949,41 @@ app.post('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedReque
       items.push(item);
       byLabel.set(item.sourceLabel, items);
     }
+    const oppositionPatterns = [
+      [/\bmust\b/i, /\b(?:must not|optional|may)\b/i],
+      [/\brequired\b/i, /\b(?:not required|optional)\b/i],
+      [/\ballow(?:ed|s)?\b/i, /\b(?:deny|denied|disallow|forbid|prohibit)\b/i],
+      [/\benabled\b/i, /\bdisabled\b/i],
+      [/\bbefore\b/i, /\bafter\b/i],
+      [/\bsuccess(?:ful|fully)?\b/i, /\b(?:fail|failed|failure|error)\b/i],
+    ];
     const conflicts = [...byLabel.entries()].flatMap(([label, items]) => {
-      const excerpts = new Set(items.map((item) => item.excerpt?.toLowerCase().replace(/\s+/g, ' ').slice(0, 240)));
-      return items.length > 1 && excerpts.size > 1
-        ? [{ key: crypto.createHash('sha256').update(label).digest('hex').slice(0, 16), description: `Sources differ for ${label}.`, evidenceIds: items.map((item) => item.id) }]
-        : [];
+      const byDocument = new Map(items.map((item) => [item.sourceDocumentId, item]));
+      const distinctSources = [...byDocument.values()];
+      if (distinctSources.length < 2) return [];
+      for (let leftIndex = 0; leftIndex < distinctSources.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < distinctSources.length; rightIndex += 1) {
+          const left = distinctSources[leftIndex];
+          const right = distinctSources[rightIndex];
+          const leftExcerpt = left.excerpt ?? '';
+          const rightExcerpt = right.excerpt ?? '';
+          const opposed = oppositionPatterns.some(([positive, negative]) =>
+            (positive.test(leftExcerpt) && negative.test(rightExcerpt)) || (negative.test(leftExcerpt) && positive.test(rightExcerpt)));
+          if (!opposed) continue;
+          return [{
+            key: crypto.createHash('sha256').update(`${label}:${left.id}:${right.id}`).digest('hex').slice(0, 16),
+            question: `Which behavior is correct for ${label}?`,
+            description: `Two documents describe ${label} differently.`, severity: 'HIGH', blocking: true,
+            evidenceIds: [left.id, right.id],
+            sources: [left, right].map((item) => ({
+              evidenceId: item.id, sourceDocumentId: item.sourceDocumentId,
+              sourceLabel: item.sourceLabel, excerpt: item.excerpt, locator: item.locator,
+              filename: versions.find((version) => version.id === item.documentVersionId)?.document.filename ?? 'Product document',
+            })),
+          }];
+        }
+      }
+      return [];
     });
     const approvedSummary = [
       ...versions.map((version) => `${version.document.filename}: ${String((version.extractedSummary as any)?.summary ?? '')}`),
@@ -968,6 +998,7 @@ app.post('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedReque
     const rulesets = await getActiveRulesets({ organizationId: access.appRecord!.organizationId!, applicationId: appId, domainKey: inference.domainKey, prisma });
     const sourceManifest = {
       documentVersionIds: versions.map((version) => version.id), repositorySnapshotId: repository?.id ?? null,
+      documentNames: versions.map((version) => version.document.filename),
       evidenceIds: evidence.map((item) => item.id), conflicts,
       unresolvedQuestions: conflicts.length ? ['Resolve every source conflict before accepting graph truth.'] : [],
       processorVersions: versions.map((version) => version.processorVersion), requestedBy: req.user!.id,
@@ -1004,7 +1035,7 @@ app.get('/v1/applications/:appId/intent-drafts/jobs/:jobId', async (req: Authent
   if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
   const job = await prisma.aIFlowDraftJob.findFirst({ where: { id: req.params.jobId, applicationId: req.params.appId } });
   if (!job) return res.status(404).json({ error: 'Intent draft job not found' });
-  res.json({ success: true, data: job });
+  res.json({ success: true, data: { ...job, errorMessageSafe: job.errorMessage, errorMessage: undefined } });
 });
 
 app.get('/v1/applications/:appId/intent-drafts/:draftId', async (req: AuthenticatedRequest, res: Response) => {
@@ -1057,11 +1088,14 @@ app.post('/v1/applications/:appId/intent-drafts/:draftId/review', async (req: Au
   const manifest = draft.sourceManifest as any ?? {};
   const conflicts = Array.isArray(manifest.conflicts) ? manifest.conflicts : [];
   const resolutions = req.body.conflictResolutions && typeof req.body.conflictResolutions === 'object' ? req.body.conflictResolutions : {};
-  if (conflicts.some((conflict: any) => typeof resolutions[conflict.key] !== 'string' || !resolutions[conflict.key].trim())) {
+  const blockingConflicts = conflicts.filter((conflict: any) => conflict.blocking === true && conflict.severity === 'HIGH' && Array.isArray(conflict.sources) && conflict.sources.length > 1);
+  if (blockingConflicts.some((conflict: any) => typeof resolutions[conflict.key] !== 'string' || !resolutions[conflict.key].trim())) {
     return res.status(422).json({ error: 'UNRESOLVED_SOURCE_CONFLICTS', conflicts });
   }
   const draftJson = draft.draftJson as any;
-  const available = Array.isArray(draftJson.workflows) ? draftJson.workflows : [];
+  const proposedWorkflows = Array.isArray(req.body.editedWorkflows) ? req.body.editedWorkflows : draftJson.workflows;
+  const available = Array.isArray(proposedWorkflows) ? proposedWorkflows.filter((workflow: any) =>
+    workflow && typeof workflow.key === 'string' && typeof workflow.name === 'string' && Array.isArray(workflow.states) && Array.isArray(workflow.transitions)) : [];
   const selectedKeys = Array.isArray(req.body.acceptedWorkflowKeys) && req.body.acceptedWorkflowKeys.length
     ? new Set(req.body.acceptedWorkflowKeys.map((value: unknown) => String(value).toUpperCase())) : null;
   const selected = selectedKeys ? available.filter((workflow: any) => selectedKeys.has(String(workflow.key).toUpperCase())) : available;

@@ -7,8 +7,13 @@ import AppLayout from '@/components/app-layout';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Tellann Dashboard',
+  title: 'Tellann',
   description: 'Behavioral QA Platform',
+  icons: {
+    icon: '/logo_white_bg.svg',
+    shortcut: '/logo_white_bg.svg',
+    apple: '/logo_white_bg.svg',
+  },
 };
 
 export default function RootLayout({

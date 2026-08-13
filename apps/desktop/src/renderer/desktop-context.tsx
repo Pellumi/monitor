@@ -19,6 +19,10 @@ import type {
   StartGuidedRunInput,
   SourceDocumentSummary,
   IntentDraft,
+  DocumentImportResult,
+  DocumentProcessingJob,
+  IntentDraftJob,
+  IntentDraftJobCreated,
   InstrumentationDetection,
   InstrumentationValidationResult,
 } from '@sots/desktop-contracts';
@@ -57,12 +61,14 @@ type DesktopContextValue = {
   completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   getDocuments(applicationId: string): Promise<DocumentAccess>;
-  importDocuments(applicationId: string): Promise<Record<string, unknown>[]>;
+  importDocuments(applicationId: string): Promise<DocumentImportResult[]>;
+  getDocumentJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
   getIntentDrafts(applicationId: string): Promise<IntentDraft[]>;
   getIntentDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
-  createIntentDraft(applicationId: string, documentVersionIds: string[]): Promise<Record<string, unknown>>;
+  createIntentDraft(applicationId: string, documentVersionIds: string[]): Promise<IntentDraftJobCreated>;
+  getIntentDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
   reviewIntentDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
-  correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<Record<string, unknown>>;
+  correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
   detectInstrumentation(input: InstrumentationEnvironmentInput): Promise<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>;
   proposeInstrumentation(input: InstrumentationEnvironmentInput & { adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
   listInstrumentationPlans(applicationId: string): Promise<Record<string, unknown>[]>;
@@ -255,9 +261,11 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     reopenDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.reopenDeclaredFlow(applicationId, flowId)),
     getDocuments: (applicationId) => bridge().documents.list(applicationId),
     importDocuments: (applicationId) => perform(() => bridge().documents.import(applicationId)),
+    getDocumentJob: (applicationId, jobId) => bridge().documents.getJob(applicationId, jobId),
     getIntentDrafts: (applicationId) => bridge().intent.listDrafts(applicationId),
     getIntentDraft: (applicationId, draftId) => bridge().intent.getDraft(applicationId, draftId),
     createIntentDraft: (applicationId, documentVersionIds) => perform(() => bridge().intent.createDraft(applicationId, documentVersionIds)),
+    getIntentDraftJob: (applicationId, jobId) => bridge().intent.getDraftJob(applicationId, jobId),
     reviewIntentDraft: (applicationId, draftId, review) => perform(() => bridge().intent.reviewDraft(applicationId, draftId, review)),
     correctIntentDraft: (applicationId, draftId, correction) => perform(() => bridge().intent.correctDraft(applicationId, draftId, correction)),
     detectInstrumentation: (input) => perform(() => bridge().instrumentation.detect(input)),
@@ -290,6 +298,11 @@ export function useDesktop() {
 
 function normalizeDesktopError(cause: unknown): string {
   const raw = cause instanceof Error ? cause.message : 'Desktop operation failed';
+  if ((cause as { status?: number })?.status === 429 || /rate limit/i.test(raw)) {
+    return raw.includes('temporarily limiting')
+      ? raw
+      : 'Tellann is temporarily limiting new requests. Cached project data remains available and the app will recover automatically.';
+  }
   return raw
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')
     .replace(/^Error:\s*/i, '');

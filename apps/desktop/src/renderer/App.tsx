@@ -34,7 +34,7 @@ function AuthenticatedApp() {
     return (
       <div className="auth-shell">
         <div className="auth-card">
-          <div className="auth-card-icon"><ShieldCheck size={28} /></div>
+          {/* <div className="auth-card-icon"><ShieldCheck size={28} /></div> */}
           <h1>{bridgeAvailable ? 'Connect Tellann Desktop' : 'Open Tellann in the desktop app'}</h1>
           <p>{bridgeAvailable
             ? 'Sign in securely in your system browser. Raw source remains local and your device credential is protected by Windows.'

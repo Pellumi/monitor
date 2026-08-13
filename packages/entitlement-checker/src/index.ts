@@ -344,6 +344,7 @@ export class EntitlementChecker {
           planId: freePlan.id,
           status: SubscriptionStatus.ACTIVE,
           currentPeriodEnd: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000), // 100 years
+          nonRenewing: true,
         },
         include: { plan: { include: { featureFlags: true } } },
       });

@@ -14,6 +14,7 @@ import jwt from 'jsonwebtoken';
 import { createDesktopRouter } from './desktop-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
+import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@sots/storage';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
@@ -1165,10 +1166,18 @@ app.delete('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authe
 /** POST /applications/:appId/environments — create a new environment */
 app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
   const { appId } = req.params;
-  const { name, type } = req.body;
-  if (!name) return res.status(400).json({ error: '`name` is required' });
+  const { name, type, baseUrl } = req.body ?? {};
   if (!type || !Object.values(EnvironmentType).includes(type)) {
     return res.status(400).json({ error: `Valid environment 'type' is required: ${Object.values(EnvironmentType).join(', ')}` });
+  }
+
+  let normalizedName: string;
+  let normalizedBaseUrl: string | null;
+  try {
+    normalizedName = normalizeEnvironmentName(name);
+    normalizedBaseUrl = normalizeEnvironmentBaseUrl(baseUrl, type as EnvironmentType);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid environment configuration.' });
   }
 
   try {
@@ -1192,8 +1201,9 @@ app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, asy
     const env = await prisma.environment.create({
       data: {
         applicationId: appId,
-        name: name.trim(),
+        name: normalizedName,
         type: type as EnvironmentType,
+        baseUrl: normalizedBaseUrl,
         isDefault: false,
       }
     });
@@ -1202,6 +1212,33 @@ app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, asy
   } catch (err) {
     console.error('[Onboarding] Create environment error', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** PATCH /environments/:envId — update the display name or browser base URL. */
+app.patch('/environments/:envId', verifyJwt, verifyEnvOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { envId } = req.params;
+  const environment = await prisma.environment.findUnique({ where: { id: envId } });
+  if (!environment) return res.status(404).json({ error: 'Environment not found' });
+
+  const body = req.body ?? {};
+  if (body.type !== undefined && body.type !== environment.type) {
+    return res.status(400).json({ error: 'Environment type cannot be changed after creation.' });
+  }
+
+  try {
+    const updated = await prisma.environment.update({
+      where: { id: envId },
+      data: {
+        ...(body.name !== undefined ? { name: normalizeEnvironmentName(body.name) } : {}),
+        ...(body.baseUrl !== undefined ? { baseUrl: normalizeEnvironmentBaseUrl(body.baseUrl, environment.type) } : {}),
+      },
+    });
+    return res.json(updated);
+  } catch (error) {
+    if (error instanceof Error && !('code' in error)) return res.status(400).json({ error: error.message });
+    console.error('[Onboarding] Update environment error', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

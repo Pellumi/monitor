@@ -14,7 +14,6 @@ import {
   TrendingUp,
   Download,
   ArrowRight,
-  RefreshCw,
   GitPullRequest,
 } from 'lucide-react';
 

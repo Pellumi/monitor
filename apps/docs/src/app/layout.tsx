@@ -25,6 +25,11 @@ export const metadata: Metadata = {
     siteName: 'Tellann Docs',
     type: 'website',
   },
+  icons: {
+    icon: '/logo_hex.svg',
+    shortcut: '/logo_hex.svg',
+    apple: '/logo_hex.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

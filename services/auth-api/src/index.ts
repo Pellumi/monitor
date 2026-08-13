@@ -288,6 +288,10 @@ async function verifyAuth(req: AuthenticatedRequest, res: Response, next: NextFu
       id: decoded.sub,
       email: decoded.email,
     };
+    const activeUser = await prisma.user.findUnique({ where: { id: decoded.sub }, select: { deletedAt: true, deletionStatus: true } });
+    if (!activeUser || activeUser.deletedAt) {
+      return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'This account is scheduled for deletion. Contact support before the purge date to request restoration.' });
+    }
     next();
   } catch (err) {
     return res.status(401).json({ error: 'TOKEN_EXPIRED_OR_INVALID', message: 'Invalid or expired access token' });
@@ -536,6 +540,7 @@ app.post('/auth/identify', async (req: Request, res: Response) => {
 
   try {
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (user?.deletedAt) return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
     res.json({
       exists: !!user,
       preferredAuthMode: user?.preferredAuthMode || 'OTP',
@@ -644,6 +649,10 @@ app.post('/auth/verify-otp', verifyLimiter, async (req: Request, res: Response) 
 
     let isNewUser = false;
 
+    if (user?.deletedAt) {
+      return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
+    }
+
     if (!user) {
       if (purpose !== OtpPurpose.SIGNUP) {
         return res.status(400).json({ error: 'USER_NOT_FOUND', message: 'Registration required' });
@@ -740,6 +749,7 @@ app.post('/auth/login-password', verifyLimiter, async (req: Request, res: Respon
     });
 
     const isValid = user ? await verifyPassword(password, user.passwordHash) : false;
+    if (user?.deletedAt) return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
     if (!user || !isValid) {
       await writeAuditLog(user?.id || null, user?.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_FAILED, req, { email: cleanEmail, method: 'PASSWORD' });
       return res.status(400).json({ error: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
@@ -910,6 +920,79 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
     console.error('[Me] Error', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to retrieve profile' });
   }
+});
+
+async function solelyOwnedOrganizationIds(userId: string): Promise<string[]> {
+  const owned = await prisma.organizationMembership.findMany({
+    where: { userId, role: MemberRole.OWNER }, select: { organizationId: true },
+  });
+  const result: string[] = [];
+  for (const membership of owned) {
+    const owners = await prisma.organizationMembership.count({ where: { organizationId: membership.organizationId, role: MemberRole.OWNER } });
+    if (owners === 1) result.push(membership.organizationId);
+  }
+  return result;
+}
+
+app.get('/auth/account/deletion', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const organizationIds = await solelyOwnedOrganizationIds(req.user!.id);
+  res.json({ retentionDays: 30, confirmationPhrase: 'DELETE MY ACCOUNT', solelyOwnedOrganizationIds: organizationIds, restoration: 'SUPPORT_ONLY' });
+});
+
+app.post('/auth/account/deletion', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  if (req.body?.confirmationPhrase !== 'DELETE MY ACCOUNT') {
+    return res.status(400).json({ error: 'CONFIRMATION_PHRASE_REQUIRED' });
+  }
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+  if (!user || user.deletedAt) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+  let reauthenticated = typeof req.body.password === 'string' && await verifyPassword(req.body.password, user.passwordHash);
+  if (!reauthenticated && typeof req.body.otpCode === 'string') {
+    const otp = await prisma.otpCode.findFirst({ where: { email: user.email, purpose: OtpPurpose.ACCOUNT_DELETION, usedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' } });
+    reauthenticated = !!otp && otp.codeHash === sha256(req.body.otpCode);
+    if (reauthenticated && otp) await prisma.otpCode.update({ where: { id: otp.id }, data: { usedAt: new Date() } });
+  }
+  if (!reauthenticated) return res.status(401).json({ error: 'REAUTHENTICATION_REQUIRED' });
+
+  const organizationIds = await solelyOwnedOrganizationIds(user.id);
+  const authorization = req.headers.authorization ?? (req.cookies.access_token ? `Bearer ${req.cookies.access_token}` : '');
+  const billingBase = process.env.BILLING_API_URL || 'http://localhost:3009';
+  for (const organizationId of organizationIds) {
+    const subscription = await prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } });
+    if (subscription && subscription.plan.type !== 'FREE' && !subscription.cancelAtPeriodEnd) {
+      const response = await fetch(`${billingBase}/billing/organizations/${organizationId}/subscription/cancel`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', 'x-sots-org-id': organizationId }, body: JSON.stringify({ organizationId }) });
+      if (!response.ok) return res.status(409).json({ error: 'PROVIDER_CANCELLATION_FAILED', organizationId, message: 'Account deletion was not scheduled because the active subscription could not be cancelled.' });
+    }
+  }
+  const now = new Date();
+  const scheduledFor = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const request = await prisma.$transaction(async (tx) => {
+    const deletion = await tx.accountDeletionRequest.create({ data: {
+      userId: user.id, confirmationPhrase: 'DELETE MY ACCOUNT', organizationIds, scheduledFor,
+      requestedIpHash: req.ip ? sha256(req.ip) : null, requestedUserAgent: String(req.headers['user-agent'] ?? '').slice(0, 500),
+    } });
+    await tx.user.update({ where: { id: user.id }, data: { deletedAt: now, deletionScheduledFor: scheduledFor, deletionStatus: 'SCHEDULED' } });
+    await tx.organization.updateMany({ where: { id: { in: organizationIds } }, data: { deletedAt: now, deletionScheduledFor: scheduledFor, deletionStatus: 'SCHEDULED' } });
+    await tx.userSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now } });
+    await tx.deviceSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now } });
+    return deletion;
+  });
+  res.clearCookie('access_token'); res.clearCookie('refresh_token');
+  res.status(202).json({ status: request.status, scheduledFor, restoration: 'SUPPORT_ONLY' });
+});
+
+app.post('/auth/support/account-deletions/:requestId/restore', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const admin = await prisma.systemAdmin.findFirst({ where: { userId: req.user!.id, revokedAt: null } });
+  if (!admin) return res.status(403).json({ error: 'SYSTEM_ADMIN_REQUIRED' });
+  const deletion = await prisma.accountDeletionRequest.findUnique({ where: { id: req.params.requestId } });
+  if (!deletion || deletion.status !== 'SCHEDULED' || deletion.purgeStartedAt || deletion.scheduledFor <= new Date()) {
+    return res.status(409).json({ error: 'RESTORATION_WINDOW_CLOSED' });
+  }
+  await prisma.$transaction([
+    prisma.accountDeletionRequest.update({ where: { id: deletion.id }, data: { status: 'RESTORED' } }),
+    prisma.user.update({ where: { id: deletion.userId }, data: { deletedAt: null, deletionScheduledFor: null, deletionStatus: 'ACTIVE' } }),
+    prisma.organization.updateMany({ where: { id: { in: deletion.organizationIds } }, data: { deletedAt: null, deletionScheduledFor: null, deletionStatus: 'ACTIVE' } }),
+  ]);
+  res.json({ restored: true, userId: deletion.userId, organizationIds: deletion.organizationIds });
 });
 
 // Update profile

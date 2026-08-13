@@ -31,7 +31,7 @@ export default function DesktopAuthorizationCompletePage() {
 
         {/* Security Footer Note */}
         <div className="flex items-center justify-center gap-2 border-t border-[#262626] pt-5 text-xs text-[#8e9192] font-mono">
-          <ShieldCheck className="h-4 w-4 text-white shrink-0" />
+          {/* <ShieldCheck className="h-4 w-4 text-white shrink-0" /> */}
           <span>Device access remains revocable from Security &amp; Sessions.</span>
         </div>
       </section>

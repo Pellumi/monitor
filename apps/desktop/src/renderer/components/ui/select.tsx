@@ -85,9 +85,10 @@ interface SelectTriggerProps {
   className?: string;
   style?: React.CSSProperties;
   disabled?: boolean;
+  ariaLabel?: string;
 }
 
-export function SelectTrigger({ children, id, name, className = "", style, disabled }: SelectTriggerProps) {
+export function SelectTrigger({ children, id, name, className = "", style, disabled, ariaLabel }: SelectTriggerProps) {
   const context = useContext(SelectContext);
 
   if (!context) {
@@ -102,6 +103,9 @@ export function SelectTrigger({ children, id, name, className = "", style, disab
       name={name}
       type="button"
       disabled={disabled}
+      aria-label={ariaLabel}
+      aria-expanded={isOpen}
+      aria-haspopup="listbox"
       style={style}
       onClick={() => setIsOpen(!isOpen)}
       className={`select-trigger ${className}`}
@@ -210,7 +214,7 @@ export function SelectContent({ children, className = "" }: SelectContentProps) 
 
   return (
     isOpen && (
-      <div className={`select-content position-${position} ${className}`}>
+      <div className={`select-content position-${position} ${className}`} role="listbox">
         {showSearch && (
           <div className="select-search-wrapper">
             <Search
@@ -246,7 +250,7 @@ export function SelectItem({ value, children, className = "" }: SelectItemProps)
     throw new Error("SelectItem must be used within a Select component");
   }
 
-  const { onValueChange, setIsOpen } = context;
+  const { value: selectedValue, onValueChange, setIsOpen } = context;
 
   const handleSelect = () => {
     onValueChange(value);
@@ -257,9 +261,38 @@ export function SelectItem({ value, children, className = "" }: SelectItemProps)
     <button
       type="button"
       onClick={handleSelect}
-      className={`select-item ${className}`}
+      role="option"
+      aria-selected={selectedValue === value}
+      className={`select-item ${selectedValue === value ? "selected" : ""} ${className}`}
     >
       {children}
     </button>
+  );
+}
+
+export interface SelectFieldOption {
+  value: string;
+  label: ReactNode;
+}
+
+export function SelectField({ value, onValueChange, options, placeholder = "Select an option", ariaLabel, disabled, className = "" }: {
+  value: string;
+  onValueChange: (value: string) => void;
+  options: SelectFieldOption[];
+  placeholder?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const selected = options.find((option) => option.value === value);
+  return (
+    <Select value={value} onValueChange={onValueChange} className={className}>
+      <SelectTrigger disabled={disabled} ariaLabel={ariaLabel}>
+        <SelectValue placeholder={placeholder}>{selected?.label}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
   );
 }

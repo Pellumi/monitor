@@ -31,6 +31,11 @@ export const metadata: Metadata = {
     description:
       'Declare, observe, reconcile, and report on real software behavior.',
   },
+  icons: {
+    icon: '/logo_hex.svg',
+    shortcut: '/logo_hex.svg',
+    apple: '/logo_hex.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { BillingCurrency, BillingInterval, PlanType, PrismaClient } from '@sots/db';
 
-export type LiveBillingProvider = 'PAYSTACK' | 'STRIPE';
+export type LiveBillingProvider = 'PAYSTACK' | 'FLUTTERWAVE' | 'STRIPE';
 
 function enabled(name: string, fallback: boolean): boolean {
   const value = process.env[name];
@@ -10,7 +10,7 @@ function enabled(name: string, fallback: boolean): boolean {
 }
 
 export const billingPolicy = {
-  primaryProvider: (process.env.BILLING_PRIMARY_PROVIDER || 'PAYSTACK').toUpperCase() as LiveBillingProvider,
+  primaryProvider: (process.env.BILLING_PRIMARY_PROVIDER || 'FLUTTERWAVE').toUpperCase() as LiveBillingProvider,
   stripeCheckoutFallbackEnabled: enabled('BILLING_STRIPE_CHECKOUT_FALLBACK_ENABLED', false),
   stripeRenewalFallbackEnabled: false,
   paystackUsdEnabled: enabled('BILLING_PAYSTACK_USD_ENABLED', false),
@@ -22,7 +22,10 @@ export function currencyForCountry(countryCode?: string | null): BillingCurrency
 }
 
 export function checkoutProviders(currency: BillingCurrency): LiveBillingProvider[] {
-  if (currency === BillingCurrency.USD && !billingPolicy.paystackUsdEnabled) return ['STRIPE'];
+  if (currency === BillingCurrency.NGN) return ['PAYSTACK'];
+  if (currency === BillingCurrency.USD && !billingPolicy.paystackUsdEnabled) {
+    return billingPolicy.stripeCheckoutFallbackEnabled ? ['FLUTTERWAVE', 'STRIPE'] : ['FLUTTERWAVE'];
+  }
   const providers: LiveBillingProvider[] = [billingPolicy.primaryProvider];
   if (billingPolicy.stripeCheckoutFallbackEnabled && !providers.includes('STRIPE')) providers.push('STRIPE');
   return providers;
@@ -47,7 +50,8 @@ export async function providerPlanCode(
     orderBy: { version: 'desc' },
   });
   if (row) return row.providerPlanCode;
-  const key = `${provider === 'STRIPE' ? 'STRIPE_PRICE_ID' : 'PAYSTACK_PLAN_CODE'}_${planType}_${interval}_${currency}`;
+  const prefix = provider === 'STRIPE' ? 'STRIPE_PRICE_ID' : provider === 'FLUTTERWAVE' ? 'FLUTTERWAVE_PLAN_CODE' : 'PAYSTACK_PLAN_CODE';
+  const key = `${prefix}_${planType}_${interval}_${currency}`;
   return process.env[key]?.trim() || null;
 }
 

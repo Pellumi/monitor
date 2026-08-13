@@ -10,6 +10,9 @@ import type {
   QualityReport,
   RepositorySnapshotSummary,
   SourceDocumentManifest,
+  DocumentProcessingJob,
+  IntentDraftJob,
+  IntentDraftJobCreated,
   SourceDocumentSummary,
   IntentDraft,
   InstrumentationDetection,
@@ -43,7 +46,12 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const payload = body as Json | null;
     const error = new Error(String(payload?.message ?? payload?.error ?? `HTTP_${response.status}`));
-    Object.assign(error, { status: response.status, code: payload?.error });
+    const retryAfterSeconds = Number(response.headers.get('retry-after'));
+    Object.assign(error, {
+      status: response.status,
+      code: payload?.error,
+      retryAfterMs: Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1_000 : undefined,
+    });
     throw error;
   }
   return body as T;
@@ -59,6 +67,9 @@ type LocalArtifact = {
 
 export class DesktopCloudClient {
   private refreshing: Promise<StoredDesktopSession> | null = null;
+  private readonly inflightReads = new Map<string, Promise<unknown>>();
+  private readonly readCache = new Map<string, { value: unknown; cachedAt: number }>();
+  private rateLimitedUntil = 0;
 
   getSession() {
     const value = loadDesktopSession();
@@ -233,6 +244,10 @@ export class DesktopCloudClient {
     });
   }
 
+  async documentJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob> {
+    return this.request<DocumentProcessingJob>(`/applications/${applicationId}/source-documents/jobs/${jobId}`);
+  }
+
   async intentDrafts(applicationId: string): Promise<IntentDraft[]> {
     const response = await this.request<{ success: boolean; data: IntentDraft[] }>(`/v1/applications/${applicationId}/intent-drafts`);
     return response.data;
@@ -243,18 +258,25 @@ export class DesktopCloudClient {
     return response.data;
   }
 
-  async createIntentDraft(applicationId: string, documentVersionIds: string[], repositorySnapshotId?: string | null) {
-    return this.request<Json>(`/v1/applications/${applicationId}/intent-drafts`, {
+  async createIntentDraft(applicationId: string, documentVersionIds: string[], repositorySnapshotId?: string | null): Promise<IntentDraftJobCreated> {
+    const response = await this.request<{ success: boolean; data: IntentDraftJobCreated }>(`/v1/applications/${applicationId}/intent-drafts`, {
       method: 'POST', body: JSON.stringify({ documentVersionIds, repositorySnapshotId: repositorySnapshotId ?? null }),
     });
+    return response.data;
+  }
+
+  async intentDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob> {
+    const response = await this.request<{ success: boolean; data: IntentDraftJob }>(`/v1/applications/${applicationId}/intent-drafts/jobs/${jobId}`);
+    return response.data;
   }
 
   async reviewIntentDraft(applicationId: string, draftId: string, input: Json) {
     return this.request<Json>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/review`, { method: 'POST', body: JSON.stringify(input) });
   }
 
-  async correctIntentDraft(applicationId: string, draftId: string, correction: string) {
-    return this.request<Json>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/correct`, { method: 'POST', body: JSON.stringify({ correction }) });
+  async correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated> {
+    const response = await this.request<{ success: boolean; data: IntentDraftJobCreated }>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/correct`, { method: 'POST', body: JSON.stringify({ correction }) });
+    return response.data;
   }
 
   async registerWorkspace(applicationId: string, opaqueLocalId: string, snapshot: RepositorySnapshotSummary) {
@@ -532,6 +554,41 @@ export class DesktopCloudClient {
   }
 
   private async request<T = unknown>(pathName: string, init: RequestInit = {}, retry = true): Promise<T> {
+    const method = String(init.method ?? 'GET').toUpperCase();
+    if (method !== 'GET') {
+      this.readCache.clear();
+      return this.requestOnce<T>(pathName, init, retry);
+    }
+    const cached = this.readCache.get(pathName);
+    if (Date.now() < this.rateLimitedUntil) {
+      if (cached) return cached.value as T;
+      const seconds = Math.max(1, Math.ceil((this.rateLimitedUntil - Date.now()) / 1_000));
+      const error = new Error(`Tellann is temporarily limiting requests. Existing data remains available; retry in ${seconds} seconds.`);
+      Object.assign(error, { status: 429, code: 'RATE_LIMITED', retryAfterMs: seconds * 1_000 });
+      throw error;
+    }
+    if (cached && Date.now() - cached.cachedAt < 2_000) return cached.value as T;
+    const existing = this.inflightReads.get(pathName);
+    if (existing) return existing as Promise<T>;
+    const pending = this.requestOnce<T>(pathName, init, retry)
+      .then((value) => {
+        this.readCache.set(pathName, { value, cachedAt: Date.now() });
+        return value;
+      })
+      .catch((error) => {
+        if ((error as { status?: number }).status === 429) {
+          const retryAfterMs = (error as { retryAfterMs?: number }).retryAfterMs ?? 60_000;
+          this.rateLimitedUntil = Date.now() + retryAfterMs;
+          if (cached) return cached.value as T;
+        }
+        throw error;
+      })
+      .finally(() => this.inflightReads.delete(pathName));
+    this.inflightReads.set(pathName, pending);
+    return pending;
+  }
+
+  private async requestOnce<T = unknown>(pathName: string, init: RequestInit = {}, retry = true): Promise<T> {
     const current = loadDesktopSession();
     if (!current) throw new Error('AUTHENTICATION_REQUIRED');
     try {
@@ -542,7 +599,7 @@ export class DesktopCloudClient {
     } catch (error) {
       if (retry && (error as { status?: number }).status === 401) {
         await this.refresh();
-        return this.request<T>(pathName, init, false);
+        return this.requestOnce<T>(pathName, init, false);
       }
       throw error;
     }

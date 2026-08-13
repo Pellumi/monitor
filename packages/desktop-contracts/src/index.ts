@@ -281,6 +281,26 @@ export const DocumentAccessSchema = z.object({
   documents: z.array(SourceDocumentSummarySchema),
 });
 
+export const AsyncJobStatusSchema = z.enum(['QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED']);
+export const DocumentImportResultSchema = z.object({
+  filename: z.string(), documentId: z.string().uuid().nullable(), jobId: z.string().uuid().nullable(),
+  status: AsyncJobStatusSchema.or(z.literal('PROCESSED')), deduplicated: z.boolean().default(false),
+  versionId: z.string().uuid().nullable(), errorMessageSafe: z.string().nullable().default(null),
+});
+export const DocumentProcessingJobSchema = z.object({
+  id: z.string().uuid(), documentId: z.string().uuid(), status: AsyncJobStatusSchema,
+  resultVersionId: z.string().uuid().nullable(), errorMessageSafe: z.string().nullable(),
+  attempts: z.number().int(), maxAttempts: z.number().int(), scheduledAt: z.string().or(z.date()),
+  startedAt: z.string().or(z.date()).nullable(), completedAt: z.string().or(z.date()).nullable(),
+}).passthrough();
+export const IntentDraftJobSchema = z.object({
+  id: z.string().uuid(), status: AsyncJobStatusSchema, draftId: z.string().uuid().nullable(),
+  errorMessageSafe: z.string().nullable(), attempts: z.number().int(), maxAttempts: z.number().int(),
+  scheduledAt: z.string().or(z.date()), startedAt: z.string().or(z.date()).nullable(),
+  completedAt: z.string().or(z.date()).nullable(),
+}).passthrough();
+export const IntentDraftJobCreatedSchema = z.object({ jobId: z.string().uuid(), status: AsyncJobStatusSchema });
+
 export const IntentDraftSchema = z.object({
   id: z.string().uuid(), status: z.string(), source: z.string(), confidence: z.number(), draftJson: z.any(), sourceManifest: z.any().nullable(),
   acceptedGraphId: z.string().nullable().optional(), acceptedGraphVersionId: z.string().nullable().optional(), createdAt: z.string().or(z.date()).optional(),
@@ -366,7 +386,9 @@ export const IPC = {
   reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
   importDocuments: 'tellann:documents:import',
   listDocuments: 'tellann:documents:list',
+  getDocumentJob: 'tellann:documents:job:get',
   createIntentDraft: 'tellann:intent:draft:create',
+  getIntentDraftJob: 'tellann:intent:draft:job:get',
   listIntentDrafts: 'tellann:intent:draft:list',
   getIntentDraft: 'tellann:intent:draft:get',
   reviewIntentDraft: 'tellann:intent:draft:review',
@@ -442,6 +464,10 @@ export type DeclaredFlowDetail = z.infer<typeof DeclaredFlowDetailSchema>;
 export type SourceDocumentManifest = z.infer<typeof SourceDocumentManifestSchema>;
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
 export type DocumentAccess = z.infer<typeof DocumentAccessSchema>;
+export type DocumentImportResult = z.infer<typeof DocumentImportResultSchema>;
+export type DocumentProcessingJob = z.infer<typeof DocumentProcessingJobSchema>;
+export type IntentDraftJob = z.infer<typeof IntentDraftJobSchema>;
+export type IntentDraftJobCreated = z.infer<typeof IntentDraftJobCreatedSchema>;
 export type IntentDraft = z.infer<typeof IntentDraftSchema>;
 export type InstrumentationDetection = z.infer<typeof InstrumentationDetectionSchema>;
 export type InstrumentationPlan = z.infer<typeof InstrumentationPlanSchema>;

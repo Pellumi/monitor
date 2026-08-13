@@ -12,7 +12,6 @@ import {
   Copy,
   CheckCircle,
   AlertTriangle,
-  RefreshCw,
   QrCode,
   ChevronDown,
   Monitor,
@@ -137,9 +136,12 @@ function MFAContent() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-neutral-500 text-sm p-6">
-        <RefreshCw className="h-4 w-4 animate-spin" />
-        Loading MFA status…
+      <div className="w-full space-y-6">
+        <div className="space-y-2">
+          <div className="h-6 w-56 animate-pulse rounded-md bg-neutral-800" />
+          <div className="h-4 w-96 max-w-full animate-pulse rounded-md bg-neutral-800/60" />
+        </div>
+        <div className="h-20 w-full animate-pulse rounded-xl border border-neutral-800 bg-neutral-900" />
       </div>
     );
   }
@@ -150,13 +152,13 @@ function MFAContent() {
     <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-start gap-3">
-        <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${isEnabled ? "bg-emerald-500/10" : "bg-neutral-800"}`}>
+        {/* <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${isEnabled ? "bg-emerald-500/10" : "bg-neutral-800"}`}>
           {isEnabled ? (
             <ShieldCheck className="h-5 w-5 text-emerald-400" />
           ) : (
             <Shield className="h-5 w-5 text-neutral-400" />
           )}
-        </div>
+        </div> */}
         <div>
           <h1 className="text-xl font-bold text-white">Two-Factor Authentication</h1>
           <p className="text-sm text-neutral-400 mt-0.5">
@@ -399,16 +401,39 @@ function MFAContent() {
   );
 }
 
+function SecuritySettingsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse" role="status" aria-label="Loading security settings">
+      <div className="rounded-xl border border-[#262626] bg-[#141414] p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 bg-neutral-800 rounded-lg" />
+            <div className="space-y-2">
+              <div className="h-5 w-48 bg-neutral-800 rounded" />
+              <div className="h-3 w-64 bg-neutral-800/60 rounded" />
+            </div>
+          </div>
+          <div className="h-8 w-24 bg-neutral-800 rounded-md" />
+        </div>
+        <div className="pt-4 border-t border-[#262626] flex gap-3">
+          <div className="h-9 w-32 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-28 bg-neutral-800/60 rounded-md" />
+        </div>
+      </div>
+      <div className="rounded-xl border border-[#262626] bg-[#141414] p-6 space-y-4">
+        <div className="h-5 w-40 bg-neutral-800 rounded" />
+        <div className="space-y-2">
+          <div className="h-4 w-full bg-neutral-800/40 rounded" />
+          <div className="h-4 w-5/6 bg-neutral-800/40 rounded" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MFASettingsContent() {
   return (
-    <Suspense
-      fallback={
-        <div className="p-6 flex items-center gap-2 text-neutral-500 text-sm">
-          <RefreshCw className="h-4 w-4 animate-spin" />
-          Loading security settings…
-        </div>
-      }
-    >
+    <Suspense fallback={<SecuritySettingsSkeleton />}>
       <MFAContent />
     </Suspense>
   );
@@ -543,12 +568,48 @@ function DesktopDevicesContent() {
   );
 }
 
+function AccountDeletionContent() {
+  const [open, setOpen] = useState(false);
+  const [phrase, setPhrase] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    setSubmitting(true); setError('');
+    const response = await authenticatedFetch(`${AUTH_API}/account/deletion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmationPhrase: phrase, password }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { setError(body.message || body.error || 'Deletion could not be scheduled.'); setSubmitting(false); return; }
+    window.location.href = '/auth/login?account_deleted=1';
+  }
+  return (
+    <SettingsSection title="Delete account" description="Permanently remove your account and organizations you solely own.">
+      <div className="rounded-lg border border-red-900/50 bg-red-950/10 p-4">
+        <p className="text-sm text-neutral-300">Access is blocked immediately. Product data is retained for 30 days, during which restoration is available only through support. Required financial records are retained in anonymized form.</p>
+        {!open ? <Button type="button" variant="danger" className="mt-4" onClick={() => setOpen(true)}>Delete my account</Button> : (
+          <div className="mt-4 space-y-3">
+            <label className="block text-xs text-neutral-400">Type <span className="font-mono text-red-300">DELETE MY ACCOUNT</span></label>
+            <input value={phrase} onChange={(event) => setPhrase(event.target.value)} className="w-full rounded-lg border border-neutral-700 bg-black px-3 py-2 text-sm text-white" />
+            <label className="block text-xs text-neutral-400">Confirm with your password</label>
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-lg border border-neutral-700 bg-black px-3 py-2 text-sm text-white" />
+            {error ? <p className="text-xs text-red-300">{error}</p> : null}
+            <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button type="button" variant="danger" disabled={phrase !== 'DELETE MY ACCOUNT' || !password || submitting} onClick={() => void submit()}>{submitting ? 'Scheduling…' : 'Schedule deletion'}</Button></div>
+          </div>
+        )}
+      </div>
+    </SettingsSection>
+  );
+}
+
 export default function SecurityPage() {
   return (
     <SettingsPage title="Security & Sessions" description="Manage authentication, MFA, active devices, and enterprise identity controls." scope="USER">
       <MFASettingsContent />
       <SessionsContent />
       <DesktopDevicesContent />
+      <AccountDeletionContent />
       <SettingsSection title="Enterprise SSO" description="SAML, OIDC, domain verification, and identity-provider policies.">
         <UpgradeNotice>SSO configuration is available on Enterprise. Personal security and MFA remain available on every plan.</UpgradeNotice>
       </SettingsSection>

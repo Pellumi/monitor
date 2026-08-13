@@ -39,7 +39,7 @@ export interface PlanDefinition {
   exportFormats:  Array<'JSON' | 'PDF' | 'CSV' | 'HTML'>;
   eligibleCountries: string[] | null;
   supportedCurrencies: Array<'USD' | 'NGN'>;
-  supportedProviders: Array<'STRIPE' | 'PAYSTACK'>;
+  supportedProviders: Array<'STRIPE' | 'PAYSTACK' | 'FLUTTERWAVE'>;
   contactSales:   boolean;
 }
 
@@ -290,7 +290,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
     eligibleCountries: null,
     supportedCurrencies: ['USD', 'NGN'],
-    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    supportedProviders: ['FLUTTERWAVE', 'STRIPE'],
     contactSales: false,
   },
 
@@ -354,7 +354,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
     eligibleCountries: null,
     supportedCurrencies: ['USD', 'NGN'],
-    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    supportedProviders: ['FLUTTERWAVE', 'STRIPE'],
     contactSales: false,
   },
 
@@ -418,7 +418,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     exportFormats: ['JSON', 'PDF', 'CSV', 'HTML'],
     eligibleCountries: null,
     supportedCurrencies: ['USD', 'NGN'],
-    supportedProviders: ['STRIPE', 'PAYSTACK'],
+    supportedProviders: ['FLUTTERWAVE', 'STRIPE'],
     contactSales: false,
   },
 

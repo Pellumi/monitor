@@ -31,12 +31,27 @@ const UPSTREAM = {
 
 const ONBOARDING_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-key`;
 const PROGRAMMATIC_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-programmatic-token`;
+const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 const isProduction = process.env.NODE_ENV === 'production';
-const API_RATE_LIMIT_MAX = Number(process.env.API_GATEWAY_API_RATE_LIMIT_MAX || 100);
+const API_RATE_LIMIT_MAX = Number(process.env.API_GATEWAY_API_RATE_LIMIT_MAX || (isProduction ? 100 : 10_000));
+const DESKTOP_RATE_LIMIT_MAX = Number(
+  process.env.API_GATEWAY_DESKTOP_RATE_LIMIT_MAX || (isProduction ? 1_000 : 10_000),
+);
 const DASHBOARD_RATE_LIMIT_MAX = Number(
   process.env.API_GATEWAY_DASHBOARD_RATE_LIMIT_MAX || (isProduction ? 1_000 : 10_000),
 );
 const RATE_LIMIT_WINDOW = process.env.API_GATEWAY_RATE_LIMIT_WINDOW || '15 minutes';
+
+function bearerIdentity(request: FastifyRequest): { client?: string; key?: string } {
+  const authorization = request.headers.authorization;
+  if (!authorization?.startsWith('Bearer ')) return {};
+  try {
+    const decoded = jwt.verify(authorization.slice(7), JWT_SECRET) as { client?: string; deviceSessionId?: string; sub?: string };
+    return { client: decoded?.client, key: decoded?.deviceSessionId ?? decoded?.sub };
+  } catch {
+    return {};
+  }
+}
 
 // Routes that bypass API key authentication
 const PUBLIC_PREFIXES = ['/health', '/auth'];
@@ -136,20 +151,22 @@ async function resolveProgrammaticToken(rawToken: string): Promise<{ organizatio
 const fastify = Fastify({ logger: true });
 
 async function main() {
-  const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
   // CORS — allow all origins so browser SDKs work
   await fastify.register(cors, { origin: true, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] });
 
   // Rate limiting — keyed on API key prefix header (injected after auth) or IP
   await fastify.register(rateLimit, {
-    max: (req) =>
-      req.headers.authorization?.startsWith('Bearer ')
-        ? API_RATE_LIMIT_MAX
-        : DASHBOARD_RATE_LIMIT_MAX,
+    max: (req) => {
+      const identity = bearerIdentity(req);
+      if (identity.client === 'desktop') return DESKTOP_RATE_LIMIT_MAX;
+      return req.headers.authorization?.startsWith('Bearer ') ? API_RATE_LIMIT_MAX : DASHBOARD_RATE_LIMIT_MAX;
+    },
     timeWindow: RATE_LIMIT_WINDOW,
     keyGenerator: (req) => {
       const authorization = req.headers.authorization;
       if (authorization?.startsWith('Bearer ')) {
+        const identity = bearerIdentity(req);
+        if (identity.client === 'desktop' && identity.key) return `desktop:${identity.key}`;
         return `api:${crypto.createHash('sha256').update(authorization).digest('hex')}`;
       }
       return `dashboard:${req.ip}`;

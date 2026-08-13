@@ -29,6 +29,13 @@ import {
 } from './providers/paystack';
 import { generateReceiptPdf } from './receipt';
 import {
+  activateFlutterwaveSubscription,
+  cancelFlutterwaveSubscription,
+  createFlutterwaveCheckout,
+  verifyFlutterwaveTransaction,
+  verifyFlutterwaveWebhook,
+} from './providers/flutterwave';
+import {
   billingPolicy,
   checkoutProviders,
   currencyForCountry,
@@ -78,7 +85,7 @@ app.use((req, res, next) => {
   next();
 });
 
-type Provider = 'STRIPE' | 'PAYSTACK' | 'MOCK';
+type Provider = 'STRIPE' | 'PAYSTACK' | 'FLUTTERWAVE' | 'MOCK';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -187,6 +194,13 @@ function priceFor(plan: Plan, interval: BillingInterval, currency: BillingCurren
 
 function invoiceNumber(): string {
   return `TELLANN-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
+}
+
+function checkoutReturnUrl(value: unknown, invoiceId: string): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  const url = new URL(value);
+  url.searchParams.set('invoiceId', invoiceId);
+  return url.toString();
 }
 
 type PaymentEventProcessingStatus = 'PROCESSING' | 'PROCESSED' | 'FAILED';
@@ -302,6 +316,31 @@ function normalizeBillingWebhook(provider: Provider, body: any): NormalizedBilli
       amountMinor: typeof data.amount === 'number'
         ? data.amount
         : typeof subscription.amount === 'number' ? subscription.amount : null,
+      payloadData: data,
+    };
+  }
+
+  if (provider === 'FLUTTERWAVE') {
+    const data = asRecord(root.data ?? root);
+    const metadata = asRecord(data.meta ?? data.metadata ?? root.meta);
+    const reference = firstString(data.tx_ref, data.reference);
+    const customer = asRecord(data.customer);
+    return {
+      provider,
+      eventType,
+      providerEventId: firstString(root.id, data.id) ?? `${eventType}:${reference ?? cryptoRandomFallback()}`,
+      providerReference: reference ?? firstString(data.id),
+      organizationId: firstString(metadata.organizationId, data.organizationId) ?? '',
+      invoiceId: firstString(metadata.invoiceId, data.invoiceId),
+      planType: assertEnumValue(PlanType, metadata.planType ?? data.planType),
+      billingInterval: assertEnumValue(BillingInterval, metadata.billingInterval ?? data.billingInterval),
+      currency: assertEnumValue(BillingCurrency, String(data.currency ?? metadata.currency ?? '').toUpperCase()),
+      customerId: firstString(customer.id, data.customer_id),
+      subscriptionId: firstString(data.subscription_id, data.subscriptionId),
+      stripeInvoiceId: null,
+      paystackRef: null,
+      paidAt: typeof data.created_at === 'string' ? new Date(data.created_at) : null,
+      amountMinor: typeof data.amount === 'number' ? Math.round(data.amount * 100) : null,
       payloadData: data,
     };
   }
@@ -483,6 +522,7 @@ async function activateSubscription(params: {
       paymentMethodAuthorizedAt: params.paymentMethodReference ? now : null,
       providerManagementToken: params.providerManagementToken ?? null,
       cancelAtPeriodEnd: false,
+      nonRenewing: params.plan.type === PlanType.FREE,
       migrationStatus: params.provider === 'PAYSTACK' ? 'PAYSTACK_ACTIVE' : 'STRIPE_ACTIVE',
     },
     update: {
@@ -513,6 +553,7 @@ async function activateSubscription(params: {
       paymentMethodAuthorizedAt: params.paymentMethodReference ? now : undefined,
       providerManagementToken: params.providerManagementToken ?? undefined,
       cancelAtPeriodEnd: false,
+      nonRenewing: params.plan.type === PlanType.FREE,
       pendingPlanId: null,
       pendingChangeAt: null,
       migrationStatus: params.provider === 'PAYSTACK' ? 'PAYSTACK_ACTIVE' : 'STRIPE_ACTIVE',
@@ -612,6 +653,7 @@ function isActivationEvent(event: NormalizedBillingEvent): boolean {
     'invoice.payment_succeeded',
     'subscription.active',
     'charge.success',
+    'charge.completed',
   ].includes(event.eventType)
     || (event.eventType === 'customer.subscription.updated' && event.payloadData.status === 'active');
 }
@@ -633,6 +675,28 @@ function isCancellationEvent(event: NormalizedBillingEvent): boolean {
 }
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'healthy', service: 'billing-api' });
+});
+
+app.get('/billing/provider-diagnostics', verifyJwt, async (_req: Request, res: Response) => {
+  const present = (key: string) => Boolean(process.env[key]?.trim());
+  const callback = (key: string) => {
+    const value = process.env[key]?.trim();
+    return value ? { configured: true, local: value.startsWith('http://localhost:') } : { configured: false, local: false };
+  };
+  const planCounts = await prisma.billingProviderPlan.groupBy({
+    by: ['provider'], where: { environment: billingPolicy.environment, active: true }, _count: { _all: true },
+  });
+  res.json({
+    environment: billingPolicy.environment,
+    encryptionConfigured: present('BILLING_ENCRYPTION_KEY'),
+    providers: {
+      PAYSTACK: { configured: present('PAYSTACK_SECRET_KEY'), webhookConfigured: present('PAYSTACK_SECRET_KEY'), callback: callback('PAYSTACK_SUCCESS_URL') },
+      FLUTTERWAVE: { configured: present('FLUTTERWAVE_PUBLIC_KEY') && present('FLUTTERWAVE_SECRET_KEY'), webhookConfigured: present('FLUTTERWAVE_SECRET_HASH'), callback: callback('FLUTTERWAVE_SUCCESS_URL') },
+      STRIPE: { configured: present('STRIPE_SECRET_KEY'), webhookConfigured: present('STRIPE_WEBHOOK_SECRET'), callback: callback('STRIPE_SUCCESS_URL') },
+    },
+    providerPlanCounts: Object.fromEntries(planCounts.map((row) => [row.provider, row._count._all])),
+    testOverrideEnabled: process.env.NODE_ENV !== 'production' && process.env.BILLING_ALLOW_TEST_PROVIDER_OVERRIDE === 'true',
+  });
 });
 
 function publicPlan(plan: Plan & { featureFlags?: Array<{ feature: string; enabled: boolean; tier: string | null }> }, countryCode?: string) {
@@ -824,7 +888,10 @@ app.get('/billing/organizations/:orgId/subscription', verifyJwt, requireBillingV
       });
     }
 
-    res.json(subscription);
+    res.json(subscription ? {
+      ...subscription,
+      renewsAt: subscription.plan.type === PlanType.FREE || subscription.nonRenewing ? null : subscription.currentPeriodEnd,
+    } : null);
   } catch (err) {
     console.error('[BillingAPI] Get subscription failed', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -878,10 +945,20 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
       return res.status(400).json({ error: 'BILLING_COUNTRY_REQUIRED', message: 'Complete the organization billing profile before checkout.' });
     }
     currency = currencyForCountry(countryCode);
-    const requestedTestProvider = String(req.body.provider ?? '').toUpperCase();
-    provider = process.env.NODE_ENV !== 'production' && requestedTestProvider === 'MOCK'
-      ? 'MOCK'
-      : checkoutProviders(currency)[0];
+    const requestedTestProvider = String(req.body.provider ?? '').toUpperCase() as Provider;
+    const allowOverride = process.env.NODE_ENV !== 'production'
+      && process.env.BILLING_ALLOW_TEST_PROVIDER_OVERRIDE === 'true';
+    const eligibleProviders: Provider[] = allowOverride
+      ? currency === BillingCurrency.NGN ? ['PAYSTACK', 'MOCK'] : ['FLUTTERWAVE', 'STRIPE', 'MOCK']
+      : [...checkoutProviders(currency)];
+    if (requestedTestProvider && allowOverride) {
+      if (!eligibleProviders.includes(requestedTestProvider)) {
+        return res.status(400).json({ error: 'TEST_PROVIDER_NOT_ELIGIBLE', eligibleProviders });
+      }
+      provider = requestedTestProvider;
+    } else {
+      provider = checkoutProviders(currency)[0];
+    }
     if (planType === PlanType.LOCAL) {
       if (countryCode !== 'NG' || currency !== BillingCurrency.NGN || (provider !== 'PAYSTACK' && provider !== 'MOCK')) {
         return res.status(400).json({
@@ -903,6 +980,9 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
     }
 
     const total = priceFor(plan, interval, currency);
+    if (total <= 0) {
+      return res.status(503).json({ error: 'PLAN_PRICE_NOT_CONFIGURED', message: `A positive ${currency} price is required for ${planType}/${interval}.` });
+    }
     const now = new Date();
     const end = periodEnd(interval);
 
@@ -948,24 +1028,6 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
       });
     }
 
-    // ── Free plan / MOCK: activate immediately ──────────────────────────────
-    if (total === 0) {
-      await activateSubscription({ organizationId, plan, interval, currency, provider });
-      await prisma.invoice.update({
-        where: { id: invoice.id },
-        data: { status: 'PAID', paidAt: new Date() },
-      });
-      const mockCheckoutUrl = `${req.protocol}://${req.get('host')}/billing/mock-checkout/${invoice.id}`;
-      return res.status(201).json({
-        checkoutId: invoice.id,
-        provider,
-        status: 'completed',
-        checkoutUrl: mockCheckoutUrl,
-        url: mockCheckoutUrl,
-        invoiceId: invoice.id,
-      });
-    }
-
     // ── STRIPE: real hosted checkout ────────────────────────────────────────
     if (provider === 'STRIPE') {
       if (currency !== BillingCurrency.USD) {
@@ -1000,7 +1062,7 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
           billingInterval: interval,
           currency,
         },
-        successUrl: typeof req.body.successUrl === 'string' ? req.body.successUrl : undefined,
+        successUrl: checkoutReturnUrl(req.body.successUrl, invoice.id),
         cancelUrl: typeof req.body.cancelUrl === 'string' ? req.body.cancelUrl : undefined,
       });
 
@@ -1022,6 +1084,35 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
         url: checkoutUrl,
         invoiceId: invoice.id,
       });
+    }
+
+    if (provider === 'FLUTTERWAVE') {
+      const email = profile?.billingEmail || '';
+      const planCode = await providerPlanCode(prisma, 'FLUTTERWAVE', planType, interval, currency);
+      if (!email) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
+      if (!planCode) return res.status(503).json({ error: 'PROVIDER_PLAN_NOT_CONFIGURED', message: `Flutterwave is not configured for ${planType}/${interval}/${currency}.` });
+      try {
+        const reference = `tellann-${invoice.id}-${Date.now()}`;
+        const checkout = await createFlutterwaveCheckout({
+          txRef: reference, amount: total, currency, customerEmail: email,
+          customerName: profile?.legalName, organizationId, planCode,
+          redirectUrl: checkoutReturnUrl(req.body.successUrl, invoice.id),
+          metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency },
+        });
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { provider, providerReference: reference } });
+        return res.status(201).json({ checkoutId: invoice.id, invoiceId: invoice.id, provider, status: 'pending', checkoutUrl: checkout.checkoutUrl, url: checkout.checkoutUrl, providerReference: reference });
+      } catch (cause) {
+        await recordPaymentEvent(organizationId, provider, 'checkout.initialization_failed', { invoiceId: invoice.id, message: cause instanceof Error ? cause.message : String(cause) }, { invoiceId: invoice.id });
+        if (!billingPolicy.stripeCheckoutFallbackEnabled) throw cause;
+        const priceId = await providerPlanCode(prisma, 'STRIPE', planType, interval, currency);
+        if (!priceId) throw cause;
+        const fallback = await createCheckoutSession({ planStripeProductId: '', planStripePriceId: priceId, interval, currency, organizationId, customerEmail: email,
+          metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency, fallbackFrom: 'FLUTTERWAVE' },
+          successUrl: checkoutReturnUrl(req.body.successUrl, invoice.id),
+          cancelUrl: typeof req.body.cancelUrl === 'string' ? req.body.cancelUrl : undefined });
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { provider: 'STRIPE', providerReference: fallback.sessionId, providerCustomerId: fallback.customerId } });
+        return res.status(201).json({ checkoutId: invoice.id, invoiceId: invoice.id, provider: 'STRIPE', fallbackFrom: 'FLUTTERWAVE', status: 'pending', checkoutUrl: fallback.checkoutUrl, url: fallback.checkoutUrl });
+      }
     }
 
     // ── PAYSTACK: initialize transaction ───────────────────────────────────
@@ -1049,6 +1140,7 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
           organizationId,
           planCode,
           metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency },
+          callbackUrl: checkoutReturnUrl(req.body.successUrl, invoice.id),
         }));
       } catch (paystackError) {
         await recordPaymentEvent(organizationId, 'PAYSTACK', 'checkout.initialization_failed', {
@@ -1071,7 +1163,7 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
           customerEmail: email,
           existingStripeCustomerId: existing?.stripeCustomerId,
           metadata: { invoiceId: invoice.id, planType, billingInterval: interval, currency, fallbackFrom: 'PAYSTACK' },
-          successUrl: typeof req.body.successUrl === 'string' ? req.body.successUrl : undefined,
+          successUrl: checkoutReturnUrl(req.body.successUrl, invoice.id),
           cancelUrl: typeof req.body.cancelUrl === 'string' ? req.body.cancelUrl : undefined,
         });
         await prisma.invoice.update({
@@ -1141,7 +1233,7 @@ app.get('/billing/mock-checkout/:invoiceId', async (req: Request, res: Response)
 app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
   const provider = req.params.provider.toUpperCase() as Provider;
 
-  if (!['STRIPE', 'PAYSTACK', 'MOCK'].includes(provider)) {
+  if (!['STRIPE', 'PAYSTACK', 'FLUTTERWAVE', 'MOCK'].includes(provider)) {
     return res.status(400).json({ error: 'Unsupported provider' });
   }
 
@@ -1187,6 +1279,10 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
       console.error('[BillingAPI] Paystack webhook signature verification failed');
       return res.status(401).json({ error: 'Invalid Paystack webhook signature' });
     }
+  }
+
+  if (provider === 'FLUTTERWAVE' && (!req.rawBody || !verifyFlutterwaveWebhook(req.rawBody, req.headers))) {
+    return res.status(401).json({ error: 'Invalid Flutterwave webhook signature' });
   }
 
   const event = normalizeBillingWebhook(provider, req.body);
@@ -1516,6 +1612,16 @@ app.post('/billing/webhooks/:provider', async (req: any, res: Response) => {
           cancelledAt: new Date(),
           pendingPlanId: null,
           pendingChangeAt: null,
+          nonRenewing: true,
+          activeProvider: null,
+          providerCustomerId: null,
+          providerSubscriptionId: null,
+          providerPlanCode: null,
+          providerManagementToken: null,
+          providerPeriodStart: null,
+          providerPeriodEnd: null,
+          providerNextChargeAt: null,
+          paymentMethodReference: null,
         },
       });
       await entitlementChecker.resolveEntitlement(event.organizationId);
@@ -1539,6 +1645,7 @@ app.post('/billing/subscriptions/changes/preview', verifyJwt, requireBillingMana
   if (!organizationId || !targetPlanType || !targetInterval) {
     return res.status(400).json({ error: 'organizationId, planType, and billingInterval are required' });
   }
+
   try {
     const [subscription, targetPlan, profile] = await Promise.all([
       prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } }),
@@ -1601,7 +1708,11 @@ app.post('/billing/subscriptions/changes/preview', verifyJwt, requireBillingMana
       nextCycleAmount: targetPrice,
       currentRenewalDate: periodEndDate,
       expiresAt: change.previewExpiresAt,
-      supportedEffectiveModes: direction === 'DOWNGRADE' ? ['NEXT_RENEWAL'] : ['IMMEDIATE', 'NEXT_RENEWAL'],
+      supportedEffectiveModes: direction === 'DOWNGRADE'
+        ? ['NEXT_RENEWAL']
+        : subscription.plan.type === PlanType.FREE
+          ? ['IMMEDIATE']
+          : ['IMMEDIATE', 'NEXT_RENEWAL'],
     });
   } catch (err) {
     console.error('[BillingAPI] Subscription change preview failed', err);
@@ -1613,9 +1724,34 @@ app.get('/billing/checkouts/:invoiceId/status', verifyJwt, requireBillingViewer,
   const organizationId = requestOrganizationId(req);
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.invoiceId } });
   if (!invoice || invoice.organizationId !== organizationId) return res.status(404).json({ error: 'CHECKOUT_NOT_FOUND' });
+  if (invoice.status === 'PENDING' && invoice.provider === 'FLUTTERWAVE'
+      && process.env.NODE_ENV !== 'production' && typeof req.query.transaction_id === 'string') {
+    try {
+      const verified = await verifyFlutterwaveTransaction(req.query.transaction_id);
+      if (verified.status === 'successful' && verified.reference === invoice.providerReference) {
+        validateProviderPayment({
+          eventCurrency: assertEnumValue(BillingCurrency, verified.currency), invoiceCurrency: invoice.currency,
+          eventAmountMinor: verified.amountMinor, invoiceTotal: invoice.total,
+          eventPlanType: null, invoicePlanType: invoice.planType,
+        });
+        const plan = await prisma.plan.findUnique({ where: { type: invoice.planType } });
+        if (!plan) throw new Error('PLAN_NOT_FOUND');
+        await activateSubscription({
+          organizationId: invoice.organizationId, plan, interval: invoice.billingInterval,
+          currency: invoice.currency, provider: 'FLUTTERWAVE', providerCustomerId: verified.customerId,
+          paymentMethodBrand: verified.card?.brand, paymentMethodLast4: verified.card?.last4,
+          paymentMethodExpMonth: verified.card?.expMonth, paymentMethodExpYear: verified.card?.expYear,
+        });
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { status: 'PAID', paidAt: new Date(), providerCustomerId: verified.customerId } });
+        invoice.status = 'PAID'; invoice.paidAt = new Date();
+      }
+    } catch (err) {
+      console.warn('[BillingAPI] Local Flutterwave return verification did not reconcile checkout', err);
+    }
+  }
   res.json({
     invoiceId: invoice.id,
-    status: invoice.status,
+    status: invoice.status === 'PAID' ? 'VERIFIED' : invoice.status === 'FAILED' ? 'FAILED' : 'PENDING',
     provider: invoice.provider,
     paidAt: invoice.paidAt,
     verified: invoice.status === 'PAID',
@@ -1644,6 +1780,9 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
     if (!subscription) return res.status(404).json({ error: 'SUBSCRIPTION_NOT_FOUND' });
     if (preview.direction === 'DOWNGRADE' && effectiveMode !== 'NEXT_RENEWAL') {
       return res.status(400).json({ error: 'DOWNGRADE_NEXT_RENEWAL_ONLY' });
+    }
+    if (subscription.plan.type === PlanType.FREE && effectiveMode !== 'IMMEDIATE') {
+      return res.status(400).json({ error: 'FREE_UPGRADE_IMMEDIATE_ONLY' });
     }
     if (subscription.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
       const targetPlan = await prisma.plan.findUnique({ where: { id: preview.targetPlanId } });
@@ -1799,6 +1938,8 @@ app.post(['/billing/organizations/:orgId/subscription/cancel', '/billing/subscri
       await disablePaystackSubscription(current.providerSubscriptionId, openPaymentReference(current.providerManagementToken));
     } else if (current.activeProvider === 'STRIPE' && current.providerSubscriptionId) {
       await setStripeCancellation(current.providerSubscriptionId, true);
+    } else if (current.activeProvider === 'FLUTTERWAVE' && current.providerSubscriptionId) {
+      await cancelFlutterwaveSubscription(current.providerSubscriptionId);
     } else if (current.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
       // The deterministic provider has no remote subscription to disable.
     } else {
@@ -1841,6 +1982,8 @@ app.post('/billing/subscriptions/resume', verifyJwt, requireBillingManager, asyn
       await enablePaystackSubscription(subscription.providerSubscriptionId, openPaymentReference(subscription.providerManagementToken));
     } else if (subscription.activeProvider === 'STRIPE' && subscription.providerSubscriptionId) {
       await setStripeCancellation(subscription.providerSubscriptionId, false);
+    } else if (subscription.activeProvider === 'FLUTTERWAVE' && subscription.providerSubscriptionId) {
+      await activateFlutterwaveSubscription(subscription.providerSubscriptionId);
     } else if (subscription.activeProvider === 'MOCK' && process.env.NODE_ENV !== 'production') {
       // The deterministic provider has no remote subscription to resume.
     } else {

@@ -7,6 +7,7 @@
     "build:docs": "pnpm --filter @sots/docs build",
     "build:marketing": "pnpm --filter @sots/marketing build",
     "dev": "node scripts/dev.js",
+    "dev:desktop-intent": "node scripts/run-desktop-intent-stack.mjs",
     "dev:app": "pnpm --filter dashboard dev",
     "dev:docs": "pnpm --filter @sots/docs dev",
     "dev:marketing": "pnpm --filter @sots/marketing dev",
@@ -19,6 +20,7 @@
     "verify:settings": "tsx scripts/verify-settings-entitlements.ts",
     "verify:desktop:phase1": "node scripts/verify-desktop-phase1.mjs",
     "verify:desktop:phase2": "node scripts/verify-desktop-phase2.mjs",
+    "verify:desktop:intent": "node scripts/verify-desktop-phase2.mjs",
     "verify:desktop:phase3": "node scripts/verify-desktop-phase3.mjs",
     "verify:desktop:packaged-phase3": "node scripts/verify-packaged-desktop-phase3.mjs"
   },

@@ -13,6 +13,10 @@ model Organization {
   slug            String   @unique
   createdByUserId String?
   createdAt       DateTime @default(now())
+  deletedAt       DateTime?
+  deletionScheduledFor DateTime?
+  deletionStatus  String   @default("ACTIVE")
+  deletionLegalHold Boolean @default(false)
 
   // ─── Gap 4: Cross-tenant pattern matching ───────────────────────────────
   // Opted IN by default — org contributes anonymized state patterns to the
@@ -572,6 +576,8 @@ model Subscription {
   trialEndsAt        DateTime?
   currentPeriodStart DateTime  @default(now())
   currentPeriodEnd   DateTime
+  // Free subscriptions are entitlement records, not renewable provider contracts.
+  nonRenewing        Boolean   @default(false)
   cancelledAt        DateTime?
   suspendedAt        DateTime?
   pendingPlanId      String?
@@ -1413,6 +1419,7 @@ model Environment {
   application   Application     @relation(fields: [applicationId], references: [id])
   name          String // e.g. "Development", "Staging", "Production"
   type          EnvironmentType @default(DEVELOPMENT)
+  baseUrl       String?
   isDefault     Boolean         @default(false)
   sdkEnabled    Boolean         @default(true)
 
@@ -1964,6 +1971,7 @@ enum OtpPurpose {
   SIGNUP // New user — OTP sent before User exists
   LOGIN // Returning user OTP auth
   INVITE // Accept org invitation
+  ACCOUNT_DELETION
 }
 
 enum AuditAction {
@@ -2059,6 +2067,10 @@ model User {
   passwordHash      String?
   preferredAuthMode String    @default("OTP")
   passwordUpdatedAt DateTime?
+  deletedAt          DateTime?
+  deletionScheduledFor DateTime?
+  deletionStatus     String    @default("ACTIVE")
+  deletionLegalHold  Boolean   @default(false)
 
   // ─── Gap 5: TOTP / MFA ──────────────────────────────────────────────────
   // totpSecret is stored AES-256 encrypted using MFA_ENCRYPTION_KEY.
@@ -2079,6 +2091,27 @@ model User {
   digestPreference        NotificationDigestPreference?
   preferences             UserPreference?
   deviceSessions          DeviceSession[]
+  deletionRequests        AccountDeletionRequest[]
+}
+
+model AccountDeletionRequest {
+  id                    String   @id @default(uuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status                String   @default("SCHEDULED")
+  confirmationPhrase    String
+  organizationIds       String[]
+  scheduledFor          DateTime
+  requestedAt           DateTime @default(now())
+  purgeStartedAt        DateTime?
+  purgeCompletedAt      DateTime?
+  lastCheckpoint        String?
+  processingError       String?
+  requestedIpHash       String?
+  requestedUserAgent    String?
+
+  @@index([status, scheduledFor])
+  @@index([userId, requestedAt])
 }
 
 model UserPreference {

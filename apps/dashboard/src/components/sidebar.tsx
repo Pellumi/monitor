@@ -200,6 +200,7 @@ const settingsNavigation: SettingsNavSection[] = [
   {
     label: "Developer & Data",
     items: [
+      { name: "Environments", href: "/settings/environments", icon: Globe, hasAppId: true },
       { name: "Ingestion Keys", href: "/settings/ingestion-keys", icon: KeyRound },
       { name: "Privacy & Capture", href: "/settings/privacy", icon: EyeOff },
       { name: "Storage & Retention", href: "/settings/data", icon: Database },
@@ -535,35 +536,46 @@ function AppSelector({
       )}
 
       {showLimitModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl space-y-6">
-            <button
-              onClick={() => setShowLimitModal(false)}
-              className="absolute top-4 right-4 p-1 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <div className="flex flex-col items-center text-center space-y-3">
-              <h3 className="text-xl font-bold text-white font-sans">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-100">
+          <div className="relative w-full max-w-md rounded-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-4">
+              <span className="text-white text-lg font-extrabold tracking-tight">TELLANN</span>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[.08em] uppercase">
+                Plan // Limit
+              </span>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-semibold text-white tracking-tight">
                 Application Limit Reached
               </h3>
-              <p className="text-xs text-neutral-400 leading-relaxed font-sans">
+              <p className="text-xs text-[#c4c7c8] leading-relaxed">
                 You have reached the maximum number of applications allowed on
                 your plan ({entitlement?.limits?.applications ?? 1}{" "}
                 application). Please upgrade your plan to onboard more
                 applications.
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="bg-black border border-[#262626] rounded divide-y divide-[#262626]">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">CURRENT LIMIT</span>
+                <span className="text-white text-xs font-mono">{entitlement?.limits?.applications ?? 1} App{(entitlement?.limits?.applications ?? 1) > 1 ? "s" : ""}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">REQUIRED ACTION</span>
+                <span className="text-white text-xs font-mono uppercase">UPGRADE PLAN</span>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
               <button
+                type="button"
                 onClick={() => setShowLimitModal(false)}
-                className="flex-1 rounded-lg border border-neutral-800 bg-neutral-950 py-2.5 text-xs font-semibold text-neutral-400 hover:bg-neutral-800 transition-colors font-sans"
+                className="flex-1 h-10 flex items-center justify-center rounded border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <a
                 href={`${marketingUrl}/pricing`}
-                className="flex-1 flex items-center justify-center rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 hover:opacity-95 py-2.5 text-xs font-semibold text-white shadow-md transition-all text-center font-sans"
+                className="flex-1 h-10 flex items-center justify-center rounded border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors text-center cursor-pointer"
               >
                 Upgrade Plan
               </a>
@@ -573,19 +585,19 @@ function AppSelector({
       )}
 
       {appToDelete && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl space-y-5">
-            <div className="flex items-center space-x-3 text-red-400">
-              <AlertTriangle className="h-6 w-6 flex-shrink-0" />
-              <h3 className="text-lg font-bold text-white font-sans">
-                Delete Application
-              </h3>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-100">
+          <div className="relative w-full max-w-md rounded-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-4">
+              <span className="text-white text-lg font-extrabold tracking-tight">TELLANN</span>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[.08em] uppercase">
+                App // Delete
+              </span>
             </div>
 
             {deleteError && (
               <div
                 role="alert"
-                className="rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-xs font-mono text-neutral-300"
+                className="rounded border border-[#262626] bg-black p-3 text-xs font-mono text-neutral-300"
               >
                 <div className="flex items-start gap-2.5">
                   <div className="mt-0.5 shrink-0 text-red-400">
@@ -593,12 +605,12 @@ function AppSelector({
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-white leading-snug">Deletion Failed</p>
-                    <p className="mt-0.5 text-neutral-400 leading-relaxed font-sans">{deleteError}</p>
+                    <p className="mt-0.5 text-[#8e9192] leading-relaxed">{deleteError}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setDeleteError(null)}
-                    className="shrink-0 text-neutral-500 hover:text-white p-0.5 transition cursor-pointer"
+                    className="shrink-0 text-[#8e9192] hover:text-white p-0.5 transition cursor-pointer"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -606,11 +618,28 @@ function AppSelector({
               </div>
             )}
 
-            <p className="text-xs text-neutral-400 leading-relaxed font-sans">
-              Are you sure you want to delete <strong className="text-white">{appToDelete.name}</strong>?
-              This action cannot be undone and will permanently remove all associated environments, API keys, sessions, and behavior graphs.
-            </p>
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="space-y-2">
+              <h3 className="text-xl font-semibold text-white tracking-tight">
+                Delete Application
+              </h3>
+              <p className="text-xs text-[#c4c7c8] leading-relaxed">
+                Are you sure you want to delete <strong className="text-white font-semibold">{appToDelete.name}</strong>?
+                This action cannot be undone and will permanently remove all associated environments, API keys, sessions, and behavior graphs.
+              </p>
+            </div>
+
+            <div className="bg-black border border-[#262626] rounded divide-y divide-[#262626]">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">APPLICATION</span>
+                <span className="text-white text-xs font-mono font-semibold truncate max-w-[200px] text-right">{appToDelete.name}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">ACTION TYPE</span>
+                <span className="text-white text-xs font-mono uppercase">PERMANENT DELETE</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => {
@@ -618,7 +647,7 @@ function AppSelector({
                   setDeleteError(null);
                 }}
                 disabled={isDeletingApp}
-                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:bg-neutral-800 rounded-lg transition-colors font-sans"
+                className="flex-1 h-10 flex items-center justify-center rounded border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -626,7 +655,7 @@ function AppSelector({
                 type="button"
                 onClick={handleDeleteApp}
                 disabled={isDeletingApp}
-                className="px-4 py-2 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors disabled:opacity-50 font-sans"
+                className="flex-1 h-10 flex items-center justify-center rounded border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {isDeletingApp ? "Deleting…" : "Delete Application"}
               </button>
@@ -762,7 +791,7 @@ function NavigationList() {
               <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-600">
                 {section.label}
               </p>
-              {section.items.map((item) => renderNavItem(item, false))}
+              {section.items.map((item) => renderNavItem(item, item.hasAppId ?? false))}
             </div>
           ))}
         </div>

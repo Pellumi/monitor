@@ -32,11 +32,26 @@ const observer = new BrowserObserver({
   },
 });
 
+function safeDesktopError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('UNSUPPORTED_DOCUMENT_TYPE')) return 'This file type is not supported.';
+  if (message.includes('INVALID_DOCUMENT_SIZE')) return 'The file is empty or larger than 25 MB.';
+  if (message.includes('STRUCTURED_DOCUMENT_IS_NOT_OPENAPI')) return 'JSON and YAML uploads must contain an OpenAPI document.';
+  if (message.includes('FEATURE_NOT_ENTITLED')) return 'Document flow inference is not included on this plan.';
+  return message.replace(/^Error invoking remote method '[^']+':\s*/i, '').slice(0, 240) || 'Document import failed.';
+}
+
 // Some Windows GPU/driver combinations render packaged transparent/composited
 // Electron surfaces as black even though the renderer DOM is healthy. Tellann's
 // desktop shell does not need GPU acceleration; the managed Playwright browser
 // remains a separate Chromium process and is unaffected by this safeguard.
 app.disableHardwareAcceleration();
+
+// Give Windows a stable Tellann identity so taskbar grouping and shortcut icon
+// resolution do not fall back to Electron's executable identity.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.tellann.desktop');
+}
 
 // Electron's development default is the shared "Electron" session directory.
 // Isolate Chromium caches so another Electron-based app or stale dev process
@@ -77,16 +92,26 @@ function parseInstrumentationContext(input: unknown) {
 
 async function createWindow(): Promise<void> {
   const showImmediately = !app.isPackaged;
+  const windowIconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.resolve(__dirname, '../../../build/icon.png');
   mainWindow = new BrowserWindow({
     width: 1584,
     height: 990,
     minWidth: 1180,
     minHeight: 720,
+    icon: windowIconPath,
     // In development, show the shell immediately so a renderer/preload failure
     // cannot leave Electron running invisibly behind the Vite process.
     show: showImmediately,
     backgroundColor: '#080808',
     title: 'Tellann',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#000000',
+      symbolColor: '#ffffff',
+      height: 32,
+    },
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
@@ -215,11 +240,27 @@ function registerIpc(): void {
     if (result.canceled) return [];
     const uploaded = [];
     for (const filePath of result.filePaths.slice(0, 20)) {
-      const buffer = await fs.readFile(filePath);
-      const manifest = await extractDocument({ buffer, filename: path.basename(filePath) });
-      uploaded.push(await cloud.uploadDerivedDocument(applicationId, manifest));
+      const filename = path.basename(filePath);
+      try {
+        const buffer = await fs.readFile(filePath);
+        const manifest = await extractDocument({ buffer, filename });
+        const response = await cloud.uploadDerivedDocument(applicationId, manifest) as any;
+        uploaded.push({
+          filename, documentId: response.documentId ?? null, jobId: response.jobId ?? null,
+          status: response.status ?? 'QUEUED', deduplicated: response.deduplicated === true,
+          versionId: response.versionId ?? null, errorMessageSafe: null,
+        });
+      } catch (error) {
+        uploaded.push({ filename, documentId: null, jobId: null, status: 'FAILED', deduplicated: false, versionId: null, errorMessageSafe: safeDesktopError(error) });
+      }
     }
     return uploaded;
+  });
+  ipcMain.handle(IPC.getDocumentJob, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; jobId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.jobId !== 'string') throw new Error('INVALID_DOCUMENT_JOB_REQUEST');
+    return cloud.documentJob(value.applicationId, value.jobId);
   });
   ipcMain.handle(IPC.listIntentDrafts, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -237,6 +278,12 @@ function registerIpc(): void {
     const value = input as { applicationId?: unknown; documentVersionIds?: unknown };
     if (typeof value.applicationId !== 'string' || !Array.isArray(value.documentVersionIds)) throw new Error('INVALID_INTENT_DRAFT_REQUEST');
     return cloud.createIntentDraft(value.applicationId, value.documentVersionIds.filter((id): id is string => typeof id === 'string'), selectedWorkspace?.snapshotId);
+  });
+  ipcMain.handle(IPC.getIntentDraftJob, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; jobId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.jobId !== 'string') throw new Error('INVALID_INTENT_DRAFT_JOB_REQUEST');
+    return cloud.intentDraftJob(value.applicationId, value.jobId);
   });
   ipcMain.handle(IPC.reviewIntentDraft, async (event, input: unknown) => {
     assertTrustedSender(event);

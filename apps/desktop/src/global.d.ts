@@ -10,6 +10,10 @@ import type {
   StartGuidedRunInput,
   SourceDocumentSummary,
   IntentDraft,
+  DocumentImportResult,
+  DocumentProcessingJob,
+  IntentDraftJob,
+  IntentDraftJobCreated,
   InstrumentationDetection,
   InstrumentationValidationResult,
 } from '@sots/desktop-contracts';
@@ -44,13 +48,15 @@ declare global {
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         listDrafts(applicationId: string): Promise<IntentDraft[]>;
         getDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
-        createDraft(applicationId: string, documentVersionIds: string[]): Promise<Record<string, unknown>>;
+        createDraft(applicationId: string, documentVersionIds: string[]): Promise<IntentDraftJobCreated>;
+        getDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
         reviewDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
-        correctDraft(applicationId: string, draftId: string, correction: string): Promise<Record<string, unknown>>;
+        correctDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
       };
       documents: {
         list(applicationId: string): Promise<DocumentAccess>;
-        import(applicationId: string): Promise<Record<string, unknown>[]>;
+        import(applicationId: string): Promise<DocumentImportResult[]>;
+        getJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
       };
       runs: {
         list(applicationId: string): Promise<QARunSummary[]>;
