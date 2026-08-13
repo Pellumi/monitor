@@ -61,6 +61,20 @@ export function Select({ value, onValueChange, children, width = "", className }
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
   return (
     <SelectContext.Provider
       value={{
@@ -71,7 +85,7 @@ export function Select({ value, onValueChange, children, width = "", className }
         containerRef,
       }}
     >
-      <div ref={containerRef} className={cn("relative", className)} style={{ width }}>
+      <div ref={containerRef} className={cn("relative", isOpen && "z-50", className)} style={{ width }}>
         {children}
       </div>
     </SelectContext.Provider>

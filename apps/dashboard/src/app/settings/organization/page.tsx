@@ -5,6 +5,8 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSession } from "@/components/providers";
 import { PermissionNotice, SettingsPage, SettingsSection } from "@/components/settings/settings-page";
 import { Button } from "@/components/ui/button";
+import { Copy, Check, CheckCircle2, AlertCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Payload = {
   organization: { id: string; name: string; slug: string; createdAt: string };
@@ -20,10 +22,53 @@ type Payload = {
   };
 };
 
+const TIMEZONE_OPTIONS = [
+  { value: "UTC", label: "UTC (Coordinated Universal Time)" },
+  { value: "Africa/Lagos", label: "Africa/Lagos (WAT, UTC+1)" },
+  { value: "Africa/Johannesburg", label: "Africa/Johannesburg (SAST, UTC+2)" },
+  { value: "Africa/Cairo", label: "Africa/Cairo (EET, UTC+2)" },
+  { value: "America/New_York", label: "America/New_York (EST/EDT, UTC-5/-4)" },
+  { value: "America/Chicago", label: "America/Chicago (CST/CDT, UTC-6/-5)" },
+  { value: "America/Denver", label: "America/Denver (MST/MDT, UTC-7/-6)" },
+  { value: "America/Los_Angeles", label: "America/Los_Angeles (PST/PDT, UTC-8/-7)" },
+  { value: "America/Sao_Paulo", label: "America/Sao_Paulo (BRT, UTC-3)" },
+  { value: "Europe/London", label: "Europe/London (GMT/BST, UTC+0/+1)" },
+  { value: "Europe/Paris", label: "Europe/Paris (CET/CEST, UTC+1/+2)" },
+  { value: "Europe/Berlin", label: "Europe/Berlin (CET/CEST, UTC+1/+2)" },
+  { value: "Asia/Dubai", label: "Asia/Dubai (GST, UTC+4)" },
+  { value: "Asia/Kolkata", label: "Asia/Kolkata (IST, UTC+5:30)" },
+  { value: "Asia/Singapore", label: "Asia/Singapore (SGT, UTC+8)" },
+  { value: "Asia/Tokyo", label: "Asia/Tokyo (JST, UTC+9)" },
+  { value: "Australia/Sydney", label: "Australia/Sydney (AEST/AEDT, UTC+10/+11)" },
+];
+
+const REPORT_FORMAT_OPTIONS = [
+  { value: "PDF", label: "PDF Document" },
+  { value: "JSON", label: "Raw JSON Payload" },
+  { value: "CSV", label: "CSV Spreadsheet" },
+  { value: "HTML", label: "Interactive HTML Web Page" },
+];
+
+const INVITATION_EXPIRY_OPTIONS = [
+  { value: "1", label: "1 day" },
+  { value: "3", label: "3 days" },
+  { value: "7", label: "7 days (Recommended)" },
+  { value: "14", label: "14 days" },
+  { value: "30", label: "30 days" },
+];
+
+const SEVERITY_THRESHOLD_OPTIONS = [
+  { value: "INFO", label: "INFO — All findings & notices" },
+  { value: "WARNING", label: "WARNING — Warnings & critical items" },
+  { value: "ERROR", label: "ERROR — Errors & critical items" },
+  { value: "CRITICAL", label: "CRITICAL — Critical issues only" },
+];
+
 export default function OrganizationPage() {
   const { selectedOrgId, memberships } = useSession();
   const [payload, setPayload] = useState<Payload | null>(null);
-  const [message, setMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [copiedId, setCopiedId] = useState(false);
   const role = memberships.find((membership) => membership.organization.id === selectedOrgId)?.role;
   const canManage = role === "OWNER" || role === "ADMIN";
 
@@ -38,10 +83,10 @@ export default function OrganizationPage() {
   useEffect(() => {
     const controller = new AbortController();
     setPayload(null);
-    setMessage("");
+    setStatusMessage(null);
     const timer = window.setTimeout(() => {
       void load(controller.signal).catch((error: Error) => {
-        if (error.name !== "AbortError") setMessage(error.message);
+        if (error.name !== "AbortError") setStatusMessage({ text: error.message, type: "error" });
       });
     }, 0);
     return () => {
@@ -55,60 +100,293 @@ export default function OrganizationPage() {
     const response = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/settings`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload.settings),
+      body: JSON.stringify({
+        ...payload.settings,
+        name: payload.organization.name,
+      }),
     });
     const body = await response.json();
     if (!response.ok) {
-      setMessage(body.message ?? "Unable to save organisation settings.");
+      setStatusMessage({ text: body.message ?? "Unable to save organisation settings.", type: "error" });
       return;
     }
-    setPayload({ ...payload, settings: body });
-    setMessage("Organisation settings saved.");
+    setPayload({
+      ...payload,
+      organization: { ...payload.organization, name: payload.organization.name },
+      settings: body,
+    });
+    setStatusMessage({ text: "Organisation settings saved successfully.", type: "success" });
   }
 
   function field(key: keyof Payload["settings"], value: string | number) {
     setPayload((current) => current ? { ...current, settings: { ...current.settings, [key]: value } } : current);
   }
 
+  function orgField(key: keyof Payload["organization"], value: string) {
+    setPayload((current) => current ? { ...current, organization: { ...current.organization, [key]: value } } : current);
+  }
+
+  function copyOrganizationId(id: string) {
+    void navigator.clipboard.writeText(id);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  }
+
   return (
     <SettingsPage title="Organisation" description="Manage workspace identity, defaults, contacts, ownership, and lifecycle." scope="ORGANIZATION">
-      {message ? <div className="rounded-md border border-neutral-800 bg-neutral-950 p-3 text-sm text-neutral-300">{message}</div> : null}
+      {statusMessage ? (
+        <div
+          className={`flex items-center gap-2.5 rounded-md border px-3.5 py-2.5 text-xs font-medium transition-all ${
+            statusMessage.type === "success"
+              ? "border-emerald-500/30 bg-emerald-950/40 text-emerald-300"
+              : "border-red-500/30 bg-red-950/40 text-red-300"
+          }`}
+        >
+          {statusMessage.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          ) : (
+            <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+          )}
+          <span>{statusMessage.text}</span>
+        </div>
+      ) : null}
       {!canManage ? <PermissionNotice>You can view these settings, but only an Owner or Admin can change them.</PermissionNotice> : null}
       {payload ? (
         <>
           <SettingsSection title="Workspace identity">
             <div className="grid gap-4 md:grid-cols-2">
-              <ReadOnly label="Organisation name" value={payload.organization.name} />
+              <Input
+                label="Organisation name"
+                value={payload.organization.name}
+                disabled={!canManage}
+                onChange={(value) => orgField("name", value)}
+              />
               <ReadOnly label="Workspace slug" value={payload.organization.slug} />
-              <ReadOnly label="Organisation ID" value={payload.organization.id} />
-              <Input label="Primary timezone" value={payload.settings.primaryTimezone} disabled={!canManage} onChange={(value) => field("primaryTimezone", value)} />
+              
+              <ReadOnlyWithCopy
+                label="Organisation ID"
+                value={payload.organization.id}
+                copied={copiedId}
+                onCopy={() => copyOrganizationId(payload.organization.id)}
+              />
+
+              <SelectInput
+                label="Primary timezone"
+                value={payload.settings.primaryTimezone}
+                disabled={!canManage}
+                onChange={(value) => field("primaryTimezone", value)}
+                options={TIMEZONE_OPTIONS}
+              />
             </div>
           </SettingsSection>
+
           <SettingsSection title="Workspace defaults">
             <div className="grid gap-4 md:grid-cols-3">
-              <Input label="Default report format" value={payload.settings.defaultReportFormat} disabled={!canManage} onChange={(value) => field("defaultReportFormat", value)} />
-              <Input label="Invitation expiry (days)" type="number" value={String(payload.settings.defaultInvitationExpiryDays)} disabled={!canManage} onChange={(value) => field("defaultInvitationExpiryDays", Number(value))} />
-              <Input label="Severity threshold" value={payload.settings.defaultSeverityThreshold} disabled={!canManage} onChange={(value) => field("defaultSeverityThreshold", value)} />
+              <SelectInput
+                label="Default report format"
+                value={payload.settings.defaultReportFormat}
+                disabled={!canManage}
+                onChange={(value) => field("defaultReportFormat", value)}
+                options={REPORT_FORMAT_OPTIONS}
+              />
+
+              <SelectInput
+                label="Invitation expiry"
+                value={String(payload.settings.defaultInvitationExpiryDays)}
+                disabled={!canManage}
+                onChange={(value) => field("defaultInvitationExpiryDays", Number(value))}
+                options={INVITATION_EXPIRY_OPTIONS}
+              />
+
+              <SelectInput
+                label="Severity threshold"
+                value={payload.settings.defaultSeverityThreshold}
+                disabled={!canManage}
+                onChange={(value) => field("defaultSeverityThreshold", value)}
+                options={SEVERITY_THRESHOLD_OPTIONS}
+              />
             </div>
           </SettingsSection>
+
           <SettingsSection title="Contacts">
             <div className="grid gap-4 md:grid-cols-3">
-              {(["billingContactEmail", "technicalContactEmail", "securityContactEmail"] as const).map((key) => (
-                <Input key={key} label={key.replace("ContactEmail", " contact")} type="email" value={payload.settings[key] ?? ""} disabled={!canManage} onChange={(value) => field(key, value)} />
-              ))}
+              <InputWithHelper
+                label="Billing Contact Email"
+                type="email"
+                placeholder="billing@company.com"
+                value={payload.settings.billingContactEmail ?? ""}
+                disabled={!canManage}
+                onChange={(value) => field("billingContactEmail", value)}
+                description="Email address for invoices, billing receipts, and plan notices."
+              />
+
+              <InputWithHelper
+                label="Technical Contact Email"
+                type="email"
+                placeholder="eng-leads@company.com"
+                value={payload.settings.technicalContactEmail ?? ""}
+                disabled={!canManage}
+                onChange={(value) => field("technicalContactEmail", value)}
+                description="Email address for system telemetry alerts and API status updates."
+              />
+
+              <InputWithHelper
+                label="Security Contact Email"
+                type="email"
+                placeholder="security@company.com"
+                value={payload.settings.securityContactEmail ?? ""}
+                disabled={!canManage}
+                onChange={(value) => field("securityContactEmail", value)}
+                description="Email address for vulnerability advisories and security compliance."
+              />
             </div>
           </SettingsSection>
-          {canManage ? <div className="flex justify-end"><Button onClick={() => void save()} variant="primary">Save organisation</Button></div> : null}
+
+          {canManage ? (
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => void save()} variant="primary">
+                Save organisation
+              </Button>
+            </div>
+          ) : null}
         </>
-      ) : <div className="text-sm text-neutral-500">Loading organisation…</div>}
+      ) : (
+        <div className="text-sm text-neutral-500">Loading organisation…</div>
+      )}
     </SettingsPage>
   );
 }
 
 function Input({ label, value, onChange, disabled, type = "text" }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; type?: string }) {
-  return <label className="text-xs capitalize text-neutral-500">{label}<input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="mt-1.5 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white disabled:opacity-50" /></label>;
+  return (
+    <label className="text-xs text-neutral-400 font-medium">
+      {label}
+      <input
+        type={type}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1.5 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-500 transition-colors disabled:opacity-50"
+      />
+    </label>
+  );
+}
+
+function InputWithHelper({
+  label,
+  value,
+  onChange,
+  disabled,
+  type = "email",
+  placeholder,
+  description,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  type?: string;
+  placeholder?: string;
+  description: string;
+}) {
+  return (
+    <label className="text-xs text-neutral-400 font-medium flex flex-col">
+      <span>{label}</span>
+      <input
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1.5 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-500 transition-colors disabled:opacity-50"
+      />
+      <span className="mt-1.5 text-[11px] text-neutral-500 leading-normal">{description}</span>
+    </label>
+  );
+}
+
+function SelectInput({
+  label,
+  value,
+  onChange,
+  disabled,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  options: Array<{ value: string; label: string }>;
+}) {
+  const selectedOption = options.find((opt) => opt.value === value);
+
+  return (
+    <div className="text-xs text-neutral-400 font-medium flex flex-col">
+      <span>{label}</span>
+      <div className="mt-1.5">
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger disabled={disabled} className="w-full">
+            <SelectValue placeholder="Select...">{selectedOption?.label ?? value}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
 }
 
 function ReadOnly({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-xs text-neutral-500">{label}</div><div className="mt-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-300">{value}</div></div>;
+  return (
+    <div>
+      <div className="text-xs text-neutral-400 font-medium">{label}</div>
+      <div className="mt-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-400 font-mono select-all">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ReadOnlyWithCopy({
+  label,
+  value,
+  copied,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div>
+      <div className="text-xs text-neutral-400 font-medium">{label}</div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-300">
+        <span className="truncate select-all text-xs">{value}</span>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 flex items-center gap-1 text-[11px]"
+          title="Copy Organisation ID"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-emerald-400 font-mono">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3.5 w-3.5" />
+              <span className="text-neutral-400 hover:text-white font-mono">Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
 }

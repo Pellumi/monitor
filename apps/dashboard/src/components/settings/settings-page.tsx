@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { Lock, Sparkles } from "lucide-react";
 import { useSession } from "@/components/providers";
 
+import { cn } from "@/components/ui/utils";
+
 type SettingsScope = "USER" | "ORGANIZATION" | "APPLICATION";
 
 export function SettingsPage({
@@ -51,13 +53,15 @@ export function SettingsSection({
   title,
   description,
   children,
+  className,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-neutral-800 bg-[#111111]">
+    <section className={cn("rounded-xl border border-neutral-800 bg-[#111111]", className)}>
       <div className="border-b border-neutral-800 px-5 py-4">
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         {description ? <p className="mt-1 text-xs leading-5 text-neutral-500">{description}</p> : null}

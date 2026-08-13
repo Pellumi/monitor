@@ -493,6 +493,12 @@ app.put('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, requir
   if (current && req.body.version !== current.version) {
     return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Organisation settings changed. Reload and try again.', current });
   }
+  if (req.body.name && typeof req.body.name === "string" && req.body.name.trim()) {
+    await prisma.organization.update({
+      where: { id: req.params.orgId },
+      data: { name: req.body.name.trim() },
+    });
+  }
   if (req.body.primaryTimezone !== undefined) {
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: String(req.body.primaryTimezone) }).format();
