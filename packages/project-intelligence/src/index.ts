@@ -14,6 +14,41 @@ const SECRET_FILE = /(^|[/\\])(\.env($|\.)|id_rsa|id_ed25519|.*\.pem$|.*\.key$)/
 const ROUTE_PATTERN = /(?:path|route|href)\s*[:=]\s*['"`]([^'"`]+)['"`]/g;
 const ENDPOINT_PATTERN = /(?:app|router|fastify)\.(?:get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/g;
 
+function detectedApplicationUrls(
+  root: string,
+  packageScripts: Record<string, unknown>,
+  frameworks: RepositorySnapshotSummary['frameworks'],
+  routes: Set<string>,
+): NonNullable<RepositorySnapshotSummary['suggestedApplicationUrls']> {
+  const launchScript = ['dev', 'start', 'serve', 'preview']
+    .map((name) => packageScripts[name])
+    .find((script): script is string => typeof script === 'string');
+  const explicitPort = launchScript?.match(/(?:--port(?:=|\s+)|(?:^|\s)-p\s+)(\d{2,5})(?:\s|$)/)?.[1];
+  let configPort: string | undefined;
+  for (const configName of ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs']) {
+    const configPath = path.join(root, configName);
+    if (!fs.existsSync(configPath)) continue;
+    configPort = fs.readFileSync(configPath, 'utf8').match(/\bport\s*:\s*(\d{2,5})\b/)?.[1];
+    if (configPort) break;
+  }
+  const frameworkNames = new Set(frameworks.map((item) => item.framework));
+  const defaultPort = frameworkNames.has('Vite') ? '5173'
+    : frameworkNames.has('Next.js') || frameworkNames.has('React') || frameworkNames.has('Express') || frameworkNames.has('Fastify') || frameworkNames.has('NestJS')
+      ? '3000'
+      : undefined;
+  const port = explicitPort ?? configPort ?? defaultPort;
+  if (!port) return [];
+  const preferredRoute = ['/login', '/signin', '/sign-in'].find((candidate) => routes.has(candidate));
+  const source = explicitPort ? 'package.json launch script'
+    : configPort ? 'Vite server configuration'
+      : `${frameworkNames.has('Vite') ? 'Vite' : [...frameworkNames][0] ?? 'framework'} default`;
+  return [{
+    url: `http://localhost:${port}${preferredRoute ?? ''}`,
+    confidence: explicitPort || configPort ? 0.98 : 0.82,
+    source,
+  }];
+}
+
 type ScanOptions = {
   workspaceId: string;
   scannerVersion?: string;
@@ -142,6 +177,7 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
         scriptName,
       }))
     : [];
+  const suggestedApplicationUrls = detectedApplicationUrls(resolvedRoot, packageScripts, frameworks, routes);
   const revision = git(resolvedRoot, ['rev-parse', 'HEAD']);
   const branch = git(resolvedRoot, ['branch', '--show-current']);
   const status = git(resolvedRoot, ['status', '--porcelain']);
@@ -155,6 +191,7 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     languages: [...languages].sort(),
     packageManager,
     launchCommands,
+    suggestedApplicationUrls,
     frameworks,
     routes: [...routes].sort().slice(0, 2_000),
     endpoints: [...endpoints].sort().slice(0, 2_000),

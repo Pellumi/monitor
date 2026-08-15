@@ -1825,8 +1825,8 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
     }
     if (subscription.activeProvider !== 'PAYSTACK') {
       return res.status(409).json({
-        error: 'PAYSTACK_AUTHORIZATION_REQUIRED',
-        message: 'Authorize Paystack before changing this Stripe subscription.',
+        error: 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED',
+        message: `Authorize the primary billing provider before changing this ${subscription.activeProvider ?? 'unlinked'} subscription.`,
       });
     }
     const targetPlan = await prisma.plan.findUnique({ where: { id: preview.targetPlanId } });

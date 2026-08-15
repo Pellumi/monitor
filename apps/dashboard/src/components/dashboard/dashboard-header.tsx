@@ -2,14 +2,25 @@
 
 import React from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "./core/dashboard-provider";
 import { UserRole } from "./core/types";
-import { Play, Plus, Zap } from "lucide-react";
+import { Activity, ArrowRight, Play, Plus, Zap } from "lucide-react";
 
 export function DashboardHeader() {
   const { appId } = useSelectedApplication();
   const { state, userRole, setUserRole } = useDashboard();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const range = searchParams.get("range") || "30d";
+
+  const setRange = (nextRange: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("range", nextRange);
+    router.replace(`${pathname}?${next.toString()}`);
+  };
 
   const renderPrimaryCTA = () => {
     switch (state.lifecycle) {
@@ -26,7 +37,7 @@ export function DashboardHeader() {
       case "SDK_SETUP":
         return (
           <Link
-            href="/settings/ingestion-keys"
+            href={appId ? `/applications/${appId}/connect` : "/onboarding"}
             className="inline-flex items-center gap-2 px-4 py-2 bg-white text-black font-semibold text-xs rounded hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
           >
             <Zap className="w-3.5 h-3.5" />
@@ -34,7 +45,35 @@ export function DashboardHeader() {
           </Link>
         );
       case "READY_TO_DEMONSTRATE":
+        return (
+          <Link
+            href={`/qa-runs/new?appId=${appId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-black font-semibold text-xs rounded hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 fill-black" />
+            Start Demonstration
+          </Link>
+        );
+      case "ANALYSIS_IN_PROGRESS":
+        return (
+          <Link
+            href={`/qa-runs?appId=${appId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-black font-semibold text-xs rounded hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            Analysis Processing
+          </Link>
+        );
       case "FIRST_ANALYSIS_READY":
+        return (
+          <Link
+            href={`/reports?appId=${appId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-black font-semibold text-xs rounded hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            Review First Analysis
+          </Link>
+        );
       case "ACTIVE":
       default:
         return (
@@ -83,7 +122,8 @@ export function DashboardHeader() {
         {state.lifecycle === "ACTIVE" && (
           <select
             aria-label="Time range selector"
-            defaultValue="30d"
+            value={range}
+            onChange={(event) => setRange(event.target.value)}
             className="bg-[#141414] border border-[#2d2d2d] text-neutral-300 text-xs rounded px-2.5 py-1.5 focus:outline-none font-mono cursor-pointer"
           >
             <option value="latest">Last demonstration</option>

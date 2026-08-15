@@ -48,6 +48,7 @@ model Organization {
   qaRuns                   QARun[]
   sourceDocuments          SourceDocument[]
   deviceSessions           DeviceSession[]
+  desktopSetupHandoffs     DesktopSetupHandoff[]
 }
 
 enum RulesetScope {
@@ -896,6 +897,7 @@ model Application {
 
   environments       Environment[]
   onboardingProgress ApplicationOnboardingProgress?
+  desktopSetupHandoffs DesktopSetupHandoff[]
 
   sessions          Session[]
   states            State[]
@@ -1420,6 +1422,7 @@ model Environment {
   name          String // e.g. "Development", "Staging", "Production"
   type          EnvironmentType @default(DEVELOPMENT)
   baseUrl       String?
+  telemetryGatewayUrl String?
   isDefault     Boolean         @default(false)
   sdkEnabled    Boolean         @default(true)
 
@@ -1431,6 +1434,7 @@ model Environment {
   demonstrations        Demonstration[]
   reconciliationReports ReconciliationReport[]
   qaRuns                QARun[]
+  desktopSetupHandoffs  DesktopSetupHandoff[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1446,13 +1450,44 @@ model ApplicationOnboardingProgress {
   applicationCreated     Boolean     @default(true)
   templateSelected       Boolean     @default(false)
   expectedFlowsDefined   Boolean     @default(false)
+  connectionMethodSelected String?
+  sdkTargetsConfigured   Boolean     @default(false)
+  sessionObserved        Boolean     @default(false)
   installationTestPassed Boolean     @default(false)
   sdkConnected           Boolean     @default(false)
   demonstrationCompleted Boolean     @default(false)
+  analysisGenerated      Boolean     @default(false)
+  firstAnalysisReviewed  Boolean     @default(false)
   firstReportGenerated   Boolean     @default(false)
   valueRealized          Boolean     @default(false)
   valueRealizedReason    String?
   completedAt            DateTime?
+}
+
+model DesktopSetupHandoff {
+  id                     String         @id @default(uuid())
+  tokenHash              String         @unique
+  userId                 String
+  user                   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId         String
+  organization           Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId          String
+  application            Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  environmentId          String
+  environment            Environment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  requestedAction        String         @default("CONNECT_SDK")
+  claimedDeviceSessionId String?
+  claimedDeviceSession   DeviceSession? @relation(fields: [claimedDeviceSessionId], references: [id], onDelete: SetNull)
+  expiresAt              DateTime
+  claimedAt              DateTime?
+  consumedAt             DateTime?
+  cancelledAt            DateTime?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  @@index([userId, expiresAt])
+  @@index([applicationId, environmentId])
+  @@index([claimedDeviceSessionId])
 }
 
 enum DesktopPermissionType {
@@ -1562,6 +1597,7 @@ model DeviceSession {
 
   qaRuns                      QARun[]
   instrumentationCapabilities InstrumentationCapability[]
+  desktopSetupHandoffs         DesktopSetupHandoff[]
 
   @@unique([userId, deviceIdentifier])
   @@index([userId, revokedAt])
@@ -2091,6 +2127,7 @@ model User {
   digestPreference        NotificationDigestPreference?
   preferences             UserPreference?
   deviceSessions          DeviceSession[]
+  desktopSetupHandoffs    DesktopSetupHandoff[]
   deletionRequests        AccountDeletionRequest[]
 }
 

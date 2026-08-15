@@ -25,6 +25,10 @@ if (fs.existsSync(envPath)) {
   console.warn('[DevLauncher] Root .env file not found.');
 }
 
+// Port 3020 belongs to the marketing app. Keep worker health independently
+// addressable so a port collision cannot silently strand queued desktop jobs.
+process.env.BACKGROUND_WORKERS_METRICS_PORT = '3022';
+
 const isWindows = process.platform === 'win32';
 const cmd = isWindows ? 'pnpm.cmd' : 'pnpm';
 const args = ['exec', 'turbo', 'run', 'dev', '--concurrency=50', '--env-mode=loose'];

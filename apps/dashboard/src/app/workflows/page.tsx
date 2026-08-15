@@ -23,6 +23,31 @@ async function fetchWorkflows(appId: string): Promise<Workflow[]> {
   return res.json();
 }
 
+function WorkflowsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="h-8 w-56 bg-neutral-800 rounded-md" />
+
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+        <div className="bg-neutral-950 px-6 py-3 border-b border-neutral-800 flex justify-between">
+          <div className="h-4 w-24 bg-neutral-800 rounded" />
+          <div className="h-4 w-32 bg-neutral-800 rounded" />
+          <div className="h-4 w-24 bg-neutral-800 rounded" />
+        </div>
+        <div className="divide-y divide-neutral-800">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="px-6 py-4 flex items-center justify-between">
+              <div className="h-4 w-40 bg-neutral-800/80 rounded" />
+              <div className="h-4 w-64 bg-neutral-800/60 rounded font-mono" />
+              <div className="h-4 w-16 bg-neutral-800/60 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkflowsContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
@@ -32,12 +57,23 @@ function WorkflowsContent() {
     queryFn: () => fetchWorkflows(appId),
     enabled: !!appId,
   });
+  const { data: setup } = useQuery<{ readiness?: { connected?: boolean } }>({
+    queryKey: ['sdk-setup', appId],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`/api-gateway/applications/${appId}/sdk-setup`);
+      if (!response.ok) throw new Error('Failed to load SDK readiness');
+      return response.json();
+    },
+    enabled: !!appId,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: 'always',
+  });
 
   if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <WorkflowsSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Workflow" />;
-  if (isLoading) return <div className="text-neutral-400">Loading workflows...</div>;
+  if (isLoading) return <WorkflowsSkeleton />;
   if (error) return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data) return null;
   if (data.length === 0) {
@@ -45,10 +81,10 @@ function WorkflowsContent() {
       <EmptyState
         variant="activation"
         illustration="telemetry"
-        eyebrow="Waiting for telemetry"
-        title="Connect the SDK to discover workflows"
-        description="Tellann builds workflows from real navigation and state transitions. Connect an ingestion key, then exercise your application."
-        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        eyebrow={setup?.readiness?.connected ? 'SDK connected' : 'Waiting for telemetry'}
+        title={setup?.readiness?.connected ? 'Exercise your application to discover workflows' : 'Connect the SDK to discover workflows'}
+        description={setup?.readiness?.connected ? 'Tellann is receiving telemetry for this application. Navigate through complete user journeys so workflows can be assembled.' : 'Tellann builds workflows from real navigation and state transitions. Connect an ingestion key, then exercise your application.'}
+        primaryAction={setup?.readiness?.connected ? undefined : { label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
         secondaryAction={{ label: 'Declare a flow', href: `/declare?appId=${encodeURIComponent(appId)}` }}
       />
     );
@@ -88,7 +124,7 @@ function WorkflowsContent() {
 
 export default function WorkflowsPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400">Loading workflows...</div>}>
+    <Suspense fallback={<WorkflowsSkeleton />}>
       <WorkflowsContent />
     </Suspense>
   );

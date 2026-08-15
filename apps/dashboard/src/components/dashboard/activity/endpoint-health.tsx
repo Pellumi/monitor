@@ -2,12 +2,15 @@
 
 import React from "react";
 import Link from "next/link";
+import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "../core/dashboard-provider";
 import { renderMeasuredValue } from "../core/measurement-state";
 import { Activity, ArrowRight, Clock, AlertCircle } from "lucide-react";
 
 export function EndpointHealth() {
   const { data, state } = useDashboard();
+  const { appId } = useSelectedApplication();
+  const connectAppId = appId || data?.application?.id;
 
   if (state.lifecycle !== "ACTIVE") return null;
 
@@ -18,13 +21,13 @@ export function EndpointHealth() {
       <div className="rounded-lg border border-[#262626] bg-[#141414] p-6 text-center text-xs font-mono text-neutral-400 space-y-2">
         <span className="font-semibold text-white block">Backend Telemetry Unconnected</span>
         <p className="text-neutral-500">
-          Connect the @tellann/node SDK to include API performance and endpoint health in your quality analysis.
+          Connect the @sots/backend-sdk package to include API performance and endpoint health in your quality analysis.
         </p>
         <Link
-          href="/settings/ingestion-keys"
+          href={connectAppId ? `/applications/${connectAppId}/connect?appId=${connectAppId}` : "/onboarding"}
           className="inline-block mt-2 text-xs text-amber-400 underline"
         >
-          View Node.js Setup Guide
+          Add backend SDK
         </Link>
       </div>
     );

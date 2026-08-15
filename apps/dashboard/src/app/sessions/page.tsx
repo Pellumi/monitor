@@ -30,6 +30,40 @@ function formatTime(iso: string): string {
 
 import { Suspense } from 'react';
 
+function SessionsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="space-y-2">
+        <div className="h-8 w-40 bg-neutral-800 rounded-md" />
+        <div className="h-4 w-48 bg-neutral-800/60 rounded-md" />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+        <div className="bg-neutral-950 px-6 py-3 border-b border-neutral-800 flex justify-between">
+          <div className="h-4 w-24 bg-neutral-800 rounded" />
+          <div className="h-4 w-24 bg-neutral-800 rounded" />
+          <div className="h-4 w-20 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+        </div>
+        <div className="divide-y divide-neutral-800">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="px-6 py-4 flex items-center justify-between">
+              <div className="h-4 w-32 bg-neutral-800/80 rounded" />
+              <div className="h-4 w-36 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-20 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-12 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-12 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-16 bg-neutral-800/80 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SessionsContent() {
   const router        = useRouter();
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
@@ -66,11 +100,11 @@ function SessionsContent() {
   }
 
   if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <SessionsSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Session" />;
 
-  if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading sessions…</div>;
+  if (isLoading) return <SessionsSkeleton />;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (data?.sessions.length === 0) {
     return (
@@ -80,7 +114,7 @@ function SessionsContent() {
         eyebrow="No sessions captured"
         title="Record your first behavior session"
         description="Once the SDK is connected, interactions and state transitions will appear here as replayable sessions."
-        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        primaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
         secondaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
       />
     );
@@ -175,7 +209,7 @@ function SessionsContent() {
 
 export default function SessionsPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400 animate-pulse">Loading sessions…</div>}>
+    <Suspense fallback={<SessionsSkeleton />}>
       <SessionsContent />
     </Suspense>
   );

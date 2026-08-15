@@ -1030,12 +1030,54 @@ app.get('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedReques
   res.json({ success: true, data: drafts });
 });
 
+app.get('/v1/applications/:appId/intent-drafts/jobs', async (req: AuthenticatedRequest, res: Response) => {
+  const access = await requireDocumentInferenceAccess(req.params.appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const jobs = await prisma.aIFlowDraftJob.findMany({
+    where: {
+      applicationId: req.params.appId,
+      status: { in: ['QUEUED', 'PROCESSING'] },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
+  res.json({
+    success: true,
+    data: jobs.map((job) => ({ ...job, errorMessageSafe: job.errorMessage, errorMessage: undefined })),
+  });
+});
+
 app.get('/v1/applications/:appId/intent-drafts/jobs/:jobId', async (req: AuthenticatedRequest, res: Response) => {
   const access = await requireDocumentInferenceAccess(req.params.appId);
   if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
   const job = await prisma.aIFlowDraftJob.findFirst({ where: { id: req.params.jobId, applicationId: req.params.appId } });
   if (!job) return res.status(404).json({ error: 'Intent draft job not found' });
   res.json({ success: true, data: { ...job, errorMessageSafe: job.errorMessage, errorMessage: undefined } });
+});
+
+app.post('/v1/applications/:appId/intent-drafts/jobs/:jobId/cancel', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, jobId } = req.params;
+  const access = await requireDocumentInferenceAccess(appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const cancelled = await prisma.aIFlowDraftJob.updateMany({
+    where: { id: jobId, applicationId: appId, status: 'QUEUED' },
+    data: { status: 'CANCELLED', completedAt: new Date(), errorMessage: 'Cancelled by user' },
+  });
+  if (cancelled.count) {
+    const job = await prisma.aIFlowDraftJob.findUnique({ where: { id: jobId } });
+    return res.json({ success: true, data: { ...job, errorMessageSafe: job?.errorMessage, errorMessage: undefined } });
+  }
+  const existing = await prisma.aIFlowDraftJob.findFirst({ where: { id: jobId, applicationId: appId } });
+  if (!existing) return res.status(404).json({ error: 'Intent draft job not found' });
+  if (existing.status === 'CANCELLED') {
+    return res.json({ success: true, data: { ...existing, errorMessageSafe: existing.errorMessage, errorMessage: undefined } });
+  }
+  return res.status(409).json({
+    error: 'DRAFT_JOB_CANNOT_BE_CANCELLED',
+    message: existing.status === 'PROCESSING'
+      ? 'Generation has already started and can no longer be cancelled.'
+      : `Generation is already ${existing.status.toLowerCase()}.`,
+  });
 });
 
 app.get('/v1/applications/:appId/intent-drafts/:draftId', async (req: AuthenticatedRequest, res: Response) => {
@@ -1047,6 +1089,28 @@ app.get('/v1/applications/:appId/intent-drafts/:draftId', async (req: Authentica
   });
   if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
   res.json({ success: true, data: draft });
+});
+
+app.delete('/v1/applications/:appId/intent-drafts/:draftId', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, draftId } = req.params;
+  const access = await requireDocumentInferenceAccess(appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+  const draft = await prisma.aIFlowDraft.findFirst({
+    where: { id: draftId, applicationId: appId },
+    select: { id: true, status: true },
+  });
+  if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
+  if (!['PENDING_REVIEW', 'REJECTED', 'EXPIRED'].includes(draft.status)) {
+    return res.status(409).json({
+      error: 'ACCEPTED_DRAFT_IS_IMMUTABLE',
+      message: 'Accepted drafts are retained as evidence for immutable graph versions.',
+    });
+  }
+  await prisma.$transaction([
+    prisma.aIFlowDraftJob.deleteMany({ where: { applicationId: appId, draftId } }),
+    prisma.aIFlowDraft.delete({ where: { id: draftId } }),
+  ]);
+  res.json({ success: true, data: { id: draftId, deleted: true } });
 });
 
 app.post('/v1/applications/:appId/intent-drafts/:draftId/correct', async (req: AuthenticatedRequest, res: Response) => {
@@ -1064,7 +1128,13 @@ app.post('/v1/applications/:appId/intent-drafts/:draftId/correct', async (req: A
       organizationId: draft.organizationId, applicationId: draft.applicationId, environmentId: draft.environmentId,
       source: 'USER_CORRECTION', productDescription: `${draft.productDescription ?? ''}\n\nUser correction: ${sanitized.sanitizedText}`.slice(0, 100_000),
       domainKey: draft.inferredDomainKey ?? 'CUSTOM', rulesetVersionIds: draft.rulesetVersionIds,
-      sourceManifest: { ...(draft.sourceManifest as any ?? {}), parentDraftId: draft.id, correctedBy: req.user!.id } as any,
+      sourceManifest: {
+        ...(draft.sourceManifest as any ?? {}),
+        parentDraftId: draft.id,
+        correctedBy: req.user!.id,
+        correctionRequest: sanitized.sanitizedText,
+        correctionRequestedAt: new Date().toISOString(),
+      } as any,
     },
   });
   res.status(202).json({ success: true, data: { jobId: job.id, status: job.status } });

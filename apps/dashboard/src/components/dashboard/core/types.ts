@@ -53,6 +53,7 @@ export interface OnboardingMilestones {
   backendConnected: boolean;
   telemetryVerified: boolean;
   firstDemonstrationCompleted: boolean;
+  firstAnalysisGenerated: boolean;
   firstAnalysisReviewed: boolean;
 }
 

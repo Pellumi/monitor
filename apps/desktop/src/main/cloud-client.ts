@@ -29,6 +29,28 @@ const AUTH_URL = (process.env.TELLANN_AUTH_URL ?? API_URL).replace(/\/$/, '');
 
 type Json = Record<string, unknown>;
 
+function authCancelledError(): Error {
+  return Object.assign(new Error('DESKTOP_AUTH_CANCELLED'), { code: 'DESKTOP_AUTH_CANCELLED' });
+}
+
+function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(authCancelledError());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(authCancelledError());
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
@@ -70,6 +92,7 @@ export class DesktopCloudClient {
   private readonly inflightReads = new Map<string, Promise<unknown>>();
   private readonly readCache = new Map<string, { value: unknown; cachedAt: number }>();
   private rateLimitedUntil = 0;
+  private activeSignIn: { controller: AbortController; authorizeUrl: string | null } | null = null;
 
   getSession() {
     const value = loadDesktopSession();
@@ -79,37 +102,67 @@ export class DesktopCloudClient {
   }
 
   async signIn(): Promise<ReturnType<DesktopCloudClient['getSession']>> {
-    const verifier = crypto.randomBytes(48).toString('base64url');
-    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-    const authorization = await jsonRequest<{
-      requestToken: string; authorizeUrl: string; expiresAt: string; pollingIntervalSeconds: number;
-    }>(`${AUTH_URL}/auth/desktop/authorize`, {
-      method: 'POST',
-      body: JSON.stringify({
-        codeChallenge: challenge,
-        deviceIdentifier: this.deviceIdentifier(),
-        deviceName: os.hostname(),
-        platform: `${process.platform}-${process.arch}`,
-        appVersion: app.getVersion(),
-        scopes: ['desktop:guided-runs', 'desktop:read-workspace'],
-      }),
-    });
-    await shell.openExternal(authorization.authorizeUrl);
-    const deadline = new Date(authorization.expiresAt).getTime();
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, authorization.pollingIntervalSeconds * 1_000));
-      try {
-        const tokens = await jsonRequest<StoredDesktopSession & { expiresIn: number }>(
-          `${AUTH_URL}/auth/desktop/token`,
-          { method: 'POST', body: JSON.stringify({ requestToken: authorization.requestToken, codeVerifier: verifier }) },
-        );
-        saveDesktopSession(tokens);
-        return this.getSession();
-      } catch (error) {
-        if ((error as { status?: number }).status !== 428) throw error;
+    this.cancelSignIn();
+    const controller = new AbortController();
+    const attempt = { controller, authorizeUrl: null as string | null };
+    this.activeSignIn = attempt;
+    try {
+      const verifier = crypto.randomBytes(48).toString('base64url');
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+      const authorization = await jsonRequest<{
+        requestToken: string; authorizeUrl: string; expiresAt: string; pollingIntervalSeconds: number;
+      }>(`${AUTH_URL}/auth/desktop/authorize`, {
+        method: 'POST',
+        signal: controller.signal,
+        body: JSON.stringify({
+          codeChallenge: challenge,
+          deviceIdentifier: this.deviceIdentifier(),
+          deviceName: os.hostname(),
+          platform: `${process.platform}-${process.arch}`,
+          appVersion: app.getVersion(),
+          scopes: ['desktop:guided-runs', 'desktop:read-workspace'],
+        }),
+      });
+      if (controller.signal.aborted) throw authCancelledError();
+      attempt.authorizeUrl = authorization.authorizeUrl;
+      await shell.openExternal(authorization.authorizeUrl);
+      const deadline = new Date(authorization.expiresAt).getTime();
+      while (Date.now() < deadline) {
+        await waitFor(authorization.pollingIntervalSeconds * 1_000, controller.signal);
+        try {
+          const tokens = await jsonRequest<StoredDesktopSession & { expiresIn: number }>(
+            `${AUTH_URL}/auth/desktop/token`,
+            {
+              method: 'POST',
+              signal: controller.signal,
+              body: JSON.stringify({ requestToken: authorization.requestToken, codeVerifier: verifier }),
+            },
+          );
+          saveDesktopSession(tokens);
+          return this.getSession();
+        } catch (error) {
+          if (controller.signal.aborted) throw authCancelledError();
+          if ((error as { status?: number }).status !== 428) throw error;
+        }
       }
+      throw new Error('DESKTOP_AUTH_REQUEST_EXPIRED');
+    } catch (error) {
+      if (controller.signal.aborted) throw authCancelledError();
+      throw error;
+    } finally {
+      if (this.activeSignIn === attempt) this.activeSignIn = null;
     }
-    throw new Error('DESKTOP_AUTH_REQUEST_EXPIRED');
+  }
+
+  async reopenSignIn(): Promise<void> {
+    const authorizeUrl = this.activeSignIn?.authorizeUrl;
+    if (!authorizeUrl) throw new Error('DESKTOP_AUTH_NOT_PENDING');
+    await shell.openExternal(authorizeUrl);
+  }
+
+  cancelSignIn(): void {
+    this.activeSignIn?.controller.abort();
+    this.activeSignIn = null;
   }
 
   async signOut(): Promise<void> {
@@ -162,6 +215,35 @@ export class DesktopCloudClient {
     });
   }
 
+  async claimSetupHandoff(handoffToken: string): Promise<Json> {
+    const current = loadDesktopSession();
+    if (!current) throw new Error('AUTHENTICATION_REQUIRED');
+    return this.request('/desktop/setup-handoffs/claim', {
+      method: 'POST',
+      body: JSON.stringify({ handoffToken, deviceSessionId: current.deviceSessionId }),
+    });
+  }
+
+  async consumeSetupHandoff(handoffId: string): Promise<Json> {
+    const current = loadDesktopSession();
+    if (!current) throw new Error('AUTHENTICATION_REQUIRED');
+    return this.request(`/desktop/setup-handoffs/${handoffId}/consume`, {
+      method: 'POST',
+      body: JSON.stringify({ deviceSessionId: current.deviceSessionId }),
+    });
+  }
+
+  async sdkSetup(applicationId: string, environmentId: string): Promise<Json> {
+    return this.request(`/applications/${applicationId}/sdk-setup?environmentId=${encodeURIComponent(environmentId)}`);
+  }
+
+  async issueSetupKey(applicationId: string, environmentId: string): Promise<{ rawKey: string; keyPrefix: string }> {
+    return this.request(`/applications/${applicationId}/sdk-setup/key`, {
+      method: 'POST',
+      body: JSON.stringify({ environmentId }),
+    });
+  }
+
   async runs(applicationId: string): Promise<QARunSummary[]> {
     const runs = await this.request<Array<Json>>(`/applications/${applicationId}/qa-runs`);
     return runs.map((run) => {
@@ -196,6 +278,10 @@ export class DesktopCloudClient {
 
   async run(runId: string): Promise<Json> {
     return this.request<Json>(`/qa-runs/${runId}`);
+  }
+
+  async runReplay(runId: string): Promise<Json> {
+    return this.request<Json>(`/qa-runs/${runId}/replay`);
   }
 
   async runReport(runId: string): Promise<QualityReport> {
@@ -270,8 +356,22 @@ export class DesktopCloudClient {
     return response.data;
   }
 
+  async intentDraftJobs(applicationId: string): Promise<IntentDraftJob[]> {
+    const response = await this.request<{ success: boolean; data: IntentDraftJob[] }>(`/v1/applications/${applicationId}/intent-drafts/jobs`);
+    return response.data;
+  }
+
+  async cancelIntentDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob> {
+    const response = await this.request<{ success: boolean; data: IntentDraftJob }>(`/v1/applications/${applicationId}/intent-drafts/jobs/${jobId}/cancel`, { method: 'POST' });
+    return response.data;
+  }
+
   async reviewIntentDraft(applicationId: string, draftId: string, input: Json) {
     return this.request<Json>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/review`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async deleteIntentDraft(applicationId: string, draftId: string): Promise<void> {
+    await this.request<Json>(`/v1/applications/${applicationId}/intent-drafts/${draftId}`, { method: 'DELETE' });
   }
 
   async correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated> {
@@ -394,6 +494,14 @@ export class DesktopCloudClient {
           createdAt: checkpoint.createdAt,
         },
       }),
+    });
+  }
+
+  async revalidateInstrumentation(applicationId: string, planId: string, input: { checkpointId: string; diffHash: string; validation: InstrumentationValidationResult; commandResults: unknown[] }) {
+    const current = loadDesktopSession();
+    if (!current) throw new Error('AUTHENTICATION_REQUIRED');
+    return this.request(`/v1/applications/${applicationId}/instrumentation/plans/${planId}/revalidate`, {
+      method: 'POST', body: JSON.stringify({ ...input, deviceSessionId: current.deviceSessionId }),
     });
   }
 

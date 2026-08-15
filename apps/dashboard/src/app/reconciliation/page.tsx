@@ -125,11 +125,53 @@ function ReconciliationContent() {
     },
   });
 
+function ReconciliationSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#262626] pb-5">
+        <div className="space-y-2">
+          <div className="h-8 w-64 bg-neutral-800 rounded-md" />
+          <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+        </div>
+        <div className="flex gap-2">
+          <div className="h-9 w-36 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-28 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-28 bg-neutral-800 rounded-md" />
+        </div>
+      </div>
+
+      <div className="border-b border-[#262626] flex space-x-8 pb-4">
+        <div className="h-5 w-32 bg-neutral-800 rounded" />
+        <div className="h-5 w-28 bg-neutral-800/60 rounded" />
+        <div className="h-5 w-36 bg-neutral-800/60 rounded" />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {[1, 2].map((i) => (
+          <div key={i} className="rounded-md border border-[#262626] bg-[#131313] p-6 flex items-center justify-between">
+            <div className="space-y-3">
+              <div className="h-4 w-44 bg-neutral-800/80 rounded" />
+              <div className="h-9 w-24 bg-neutral-800 rounded" />
+              <div className="h-3.5 w-48 bg-neutral-800/50 rounded" />
+            </div>
+            <div className="h-12 w-12 rounded-md bg-neutral-800" />
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-4">
+        <div className="h-6 w-48 bg-neutral-800 rounded" />
+        <div className="h-32 bg-neutral-800/40 rounded-md" />
+      </div>
+    </div>
+  );
+}
+
   if (!selectedOrgId) {
     return <div className="text-neutral-400">No organization is selected.</div>;
   }
   if (isApplicationsLoading) {
-    return <div className="text-neutral-400">Loading applications...</div>;
+    return <ReconciliationSkeleton />;
   }
   if (applicationsError) {
     return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
@@ -138,11 +180,7 @@ function ReconciliationContent() {
     return <ApplicationRequiredState feature="Reconciliation" />;
   }
   if (isFlowsLoading || isReportsLoading) {
-    return (
-      <div className="flex h-[80vh] items-center justify-center">
-        <div className="text-neutral-400 animate-pulse text-lg">Loading reconciliation report…</div>
-      </div>
-    );
+    return <ReconciliationSkeleton />;
   }
 
   const triggerExport = async (format: string) => {

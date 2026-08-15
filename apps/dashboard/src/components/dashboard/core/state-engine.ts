@@ -45,7 +45,7 @@ export function evaluateDashboardState(
   const { onboarding, analysis } = response;
   const analysisCount = analysis?.analysisCount ?? 0;
 
-  if (!onboarding?.frontendConnected) {
+  if (!onboarding?.frontendConnected && !onboarding?.backendConnected) {
     return {
       lifecycle: "SDK_SETUP",
       maturity: "NEW",
@@ -55,7 +55,9 @@ export function evaluateDashboardState(
 
   if (analysisCount === 0) {
     return {
-      lifecycle: "READY_TO_DEMONSTRATE",
+      lifecycle: onboarding?.firstDemonstrationCompleted
+        ? "ANALYSIS_IN_PROGRESS"
+        : "READY_TO_DEMONSTRATE",
       maturity: "NEW",
       healthIssues,
     };

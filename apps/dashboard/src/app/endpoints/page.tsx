@@ -73,6 +73,54 @@ function LatencyBar({ value, max }: { value: number; max: number }) {
 
 import { Suspense } from 'react';
 
+function EndpointsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="space-y-2">
+          <div className="h-8 w-64 bg-neutral-800 rounded-md" />
+          <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+        </div>
+        <div className="h-4 w-36 bg-neutral-800/60 rounded-md" />
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 space-y-2">
+            <div className="h-4 w-28 bg-neutral-800 rounded" />
+            <div className="h-8 w-16 bg-neutral-800 rounded" />
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+        <div className="bg-neutral-950 px-6 py-3 border-b border-neutral-800 flex justify-between">
+          <div className="h-4 w-20 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+          <div className="h-4 w-20 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+          <div className="h-4 w-20 bg-neutral-800 rounded" />
+          <div className="h-4 w-16 bg-neutral-800 rounded" />
+        </div>
+        <div className="divide-y divide-neutral-800">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="px-6 py-4 flex items-center justify-between">
+              <div className="h-4 w-44 bg-neutral-800/80 rounded" />
+              <div className="h-5 w-12 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-16 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-24 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-16 bg-neutral-800/60 rounded" />
+              <div className="h-4 w-16 bg-neutral-800/60 rounded" />
+              <div className="h-5 w-20 bg-neutral-800/80 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EndpointsContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
@@ -81,36 +129,69 @@ function EndpointsContent() {
   const { data, isLoading, error } = useQuery<AnalysisData>({
     queryKey: ['endpoints', appId],
     queryFn: async () => {
-      const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/endpoint-intelligence`);
-      if (!res.ok) throw new Error('Failed to fetch endpoint analysis');
-      return res.json();
+      try {
+        const res = await authenticatedFetch(`${REPORT_ENGINE}/reports/${appId}/endpoint-intelligence`);
+        if (!res.ok) {
+          return {
+            applicationId: appId,
+            generatedAt: new Date().toISOString(),
+            totalEndpoints: 0,
+            slowEndpoints: 0,
+            errorEndpoints: 0,
+            endpoints: [],
+          };
+        }
+        return await res.json();
+      } catch {
+        return {
+          applicationId: appId,
+          generatedAt: new Date().toISOString(),
+          totalEndpoints: 0,
+          slowEndpoints: 0,
+          errorEndpoints: 0,
+          endpoints: [],
+        };
+      }
     },
     refetchInterval: 30_000, // refresh every 30s
     enabled: !!appId,
+    retry: 1,
+  });
+  const { data: setup } = useQuery<{ readiness?: { connected?: boolean } }>({
+    queryKey: ['sdk-setup', appId],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`/api-gateway/applications/${appId}/sdk-setup`);
+      if (!response.ok) throw new Error('Failed to load SDK readiness');
+      return response.json();
+    },
+    enabled: !!appId,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: 'always',
   });
 
-  if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
-  if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
+  if (isApplicationsLoading && !appId) return <EndpointsSkeleton />;
+  if (applicationsError && !appId) return <div className="p-8 text-red-400 font-mono text-xs">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Endpoint intelligence" />;
 
-  if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading endpoint analysis…</div>;
-  if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
-  if (!data)     return null;
-  if (data.endpoints.length === 0) {
+  if (isLoading) return <EndpointsSkeleton />;
+  if (error && !data) return <div className="p-8 text-red-400 font-mono text-xs">Error: {(error as Error).message}</div>;
+  if (!data) return null;
+
+  const endpointsList = Array.isArray(data.endpoints) ? data.endpoints : [];
+  if (endpointsList.length === 0) {
     return (
       <EmptyState
         variant="activation"
         illustration="telemetry"
-        eyebrow="Waiting for API traffic"
-        title="Connect the SDK to analyze endpoints"
-        description="Endpoint latency, request volume, and error patterns appear after Tellann receives application traffic."
-        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        eyebrow={setup?.readiness?.connected ? 'SDK connected' : 'Waiting for API traffic'}
+        title={setup?.readiness?.connected ? 'Generate API traffic to analyze endpoints' : 'Connect the SDK to analyze endpoints'}
+        description={setup?.readiness?.connected ? 'Tellann is receiving telemetry for this application. Exercise backend routes to populate latency, volume, and error analysis.' : 'Endpoint latency, request volume, and error patterns appear after Tellann receives application traffic.'}
+        primaryAction={setup?.readiness?.connected ? undefined : { label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
       />
     );
   }
 
-  const maxAvg = Math.max(...data.endpoints.map((e) => e.avgMs), 1);
+  const maxAvg = Math.max(...endpointsList.map((e) => e.avgMs), 1);
 
   return (
     <div className="space-y-6">
@@ -156,14 +237,14 @@ function EndpointsContent() {
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-800">
-            {data.endpoints.length === 0 && (
+            {endpointsList.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-neutral-500">
                   No endpoint data yet. Integrate <code className="font-mono text-xs">sotsExpressMiddleware()</code> and generate some traffic.
                 </td>
               </tr>
             )}
-            {data.endpoints.map((ep) => {
+            {endpointsList.map((ep) => {
               const key = `${ep.method}:${ep.endpoint}`;
               const isExpanded = expanded === key;
               return [
@@ -224,7 +305,7 @@ function EndpointsContent() {
 
 export default function EndpointsPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400 animate-pulse">Loading endpoint analysis…</div>}>
+    <Suspense fallback={<EndpointsSkeleton />}>
       <EndpointsContent />
     </Suspense>
   );

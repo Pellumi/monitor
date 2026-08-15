@@ -15,6 +15,7 @@ export const MOCK_MATURE_DASHBOARD_DATA: DashboardOverviewResponse = {
     backendConnected: true,
     telemetryVerified: true,
     firstDemonstrationCompleted: true,
+    firstAnalysisGenerated: true,
     firstAnalysisReviewed: true,
   },
   telemetry: {

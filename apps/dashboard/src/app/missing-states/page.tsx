@@ -24,6 +24,31 @@ async function fetchReport(appId: string): Promise<MissingStatesReport> {
   return res.json();
 }
 
+function MissingStatesSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="space-y-2">
+        <div className="h-8 w-52 bg-neutral-800 rounded-md" />
+        <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+        <ul className="divide-y divide-neutral-800">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <li key={i} className="flex flex-col px-6 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="h-7 w-40 bg-neutral-800 rounded" />
+                <div className="h-6 w-28 bg-neutral-800/80 rounded" />
+              </div>
+              <div className="h-4 w-72 bg-neutral-800/40 rounded" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function MissingStatesContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
@@ -35,10 +60,10 @@ function MissingStatesContent() {
   });
 
   if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <MissingStatesSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Missing states" />;
-  if (isLoading) return <div className="text-neutral-400">Loading missing states...</div>;
+  if (isLoading) return <MissingStatesSkeleton />;
   if (error) return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data) return null;
   if (data.missingStates.length === 0) {
@@ -80,7 +105,7 @@ function MissingStatesContent() {
 
 export default function MissingStatesPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400">Loading missing states...</div>}>
+    <Suspense fallback={<MissingStatesSkeleton />}>
       <MissingStatesContent />
     </Suspense>
   );

@@ -25,7 +25,15 @@ declare global {
       auth: {
         getSession(): Promise<DesktopSession>;
         signIn(): Promise<DesktopSession>;
+        reopenSignIn(): Promise<void>;
+        cancelSignIn(): Promise<void>;
         signOut(): Promise<void>;
+      };
+      setup: {
+        claimHandoff(): Promise<Record<string, unknown> | null>;
+        consumeHandoff(handoffId: string): Promise<Record<string, unknown>>;
+        getSdkSetup(applicationId: string, environmentId: string): Promise<Record<string, unknown>>;
+        issueKey(applicationId: string, environmentId: string): Promise<{ rawKey: string; keyPrefix: string }>;
       };
       projects: {
         list(): Promise<DesktopApplication[]>;
@@ -49,8 +57,11 @@ declare global {
         listDrafts(applicationId: string): Promise<IntentDraft[]>;
         getDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
         createDraft(applicationId: string, documentVersionIds: string[]): Promise<IntentDraftJobCreated>;
+        listDraftJobs(applicationId: string): Promise<IntentDraftJob[]>;
         getDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
+        cancelDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
         reviewDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
+        deleteDraft(applicationId: string, draftId: string): Promise<void>;
         correctDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
       };
       documents: {
@@ -61,6 +72,7 @@ declare global {
       runs: {
         list(applicationId: string): Promise<QARunSummary[]>;
         get(runId: string): Promise<Record<string, unknown>>;
+        getReplay(runId: string): Promise<Record<string, unknown>>;
         getReport(runId: string): Promise<QualityReport>;
         start(input: StartGuidedRunInput): Promise<GuidedRunState>;
         pause(): Promise<GuidedRunState>;
@@ -77,6 +89,7 @@ declare global {
         list(applicationId: string): Promise<Record<string, unknown>[]>;
         get(applicationId: string, planId: string): Promise<Record<string, unknown>>;
         getLocalResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
+        generateReport(applicationId: string, planId: string, applicationName: string, environmentName: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string; sourceAdded?: boolean; sourceStatus?: string; sourceError?: string }>;
         approve(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
         reject(applicationId: string, planId: string, reason?: string): Promise<Record<string, unknown>>;
         apply(applicationId: string, planId: string): Promise<Record<string, unknown>>;
@@ -85,6 +98,7 @@ declare global {
       };
       system: {
         getVersion(): Promise<string>;
+        copyText(value: string): Promise<{ copied: true }>;
         openExternal(url: string): Promise<void>;
         openProfile(): Promise<void>;
       };

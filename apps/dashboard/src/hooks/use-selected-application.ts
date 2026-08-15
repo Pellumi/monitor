@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { useSession } from '@/components/providers';
 
@@ -17,8 +17,11 @@ export function useSelectedApplication() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const params = useParams<{ appId?: string }>();
   const { selectedOrgId } = useSession();
-  const requestedAppId = searchParams.get('appId');
+  const routeAppId = params?.appId;
+  const queryAppId = searchParams.get('appId');
+  const requestedAppId = routeAppId || queryAppId;
 
   const applicationsQuery = useQuery<SelectedApplication[]>({
     queryKey: ['organization-applications', selectedOrgId],
@@ -44,15 +47,18 @@ export function useSelectedApplication() {
       null,
     [applications, requestedAppId],
   );
+  // Never expose an application id until it has been proven to belong to the
+  // selected organization. Using the URL value while the applications query
+  // is loading can issue requests for the previously selected organization.
   const appId = selectedApplication?.id ?? '';
 
   useEffect(() => {
-    if (!selectedApplication || requestedAppId === selectedApplication.id) return;
+    if (!selectedApplication || queryAppId === selectedApplication.id) return;
 
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('appId', selectedApplication.id);
-    router.replace(`${pathname}?${params.toString()}`);
-  }, [pathname, requestedAppId, router, searchParams, selectedApplication]);
+    const search = new URLSearchParams(searchParams.toString());
+    search.set('appId', selectedApplication.id);
+    router.replace(`${pathname}?${search.toString()}`);
+  }, [pathname, queryAppId, router, searchParams, selectedApplication]);
 
   return {
     ...applicationsQuery,

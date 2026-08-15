@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
 import { IPC, StartGuidedRunInputSchema, type RepositorySnapshotSummary } from '@sots/desktop-contracts';
 import { resolveWithinWorkspace } from '@sots/agent-policy';
 import { scanWorkspace } from '@sots/project-intelligence';
@@ -13,6 +13,7 @@ import { extractDocument } from '@sots/document-intelligence';
 import { InstrumentationController, type SelectedWorkspace } from './instrumentation-controller';
 import { LocalRunRelay, type BufferedRelayRequest } from '@sots/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
+import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
 
 let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;
@@ -20,8 +21,28 @@ const packagedChromiumPath = path.join(process.resourcesPath, 'chromium', 'chrom
 const cloud = new DesktopCloudClient();
 const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
-let selectedWorkspace: SelectedWorkspace | null = null;
-const instrumentation = new InstrumentationController(cloud, () => selectedWorkspace);
+const selectedWorkspaces = new Map<string, SelectedWorkspace>();
+let pendingSetupHandoffToken: string | null = null;
+const instrumentation = new InstrumentationController(
+  cloud,
+  (applicationId) => selectedWorkspaces.get(applicationId) ?? null,
+  applicationLauncher,
+);
+
+function captureSetupDeepLink(values: string[]): void {
+  const candidate = values.find((value) => value.startsWith('tellann://'));
+  if (!candidate) return;
+  try {
+    const url = new URL(candidate);
+    if (url.hostname !== 'connect') return;
+    const token = url.searchParams.get('handoff');
+    if (token && token.length >= 32) pendingSetupHandoffToken = token;
+  } catch {
+    // Ignore malformed external protocol input.
+  }
+}
+
+captureSetupDeepLink(process.argv);
 const observer = new BrowserObserver({
   executablePath: app.isPackaged ? packagedChromiumPath : undefined,
   onUnexpectedTermination: async (state) => {
@@ -65,7 +86,8 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    captureSetupDeepLink(argv);
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -145,18 +167,56 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return app.getVersion();
   });
+  ipcMain.handle(IPC.copyText, (event, value: unknown) => {
+    assertTrustedSender(event);
+    if (typeof value !== 'string' || value.length > 100_000) throw new Error('INVALID_CLIPBOARD_TEXT');
+    clipboard.writeText(value);
+    return { copied: true as const };
+  });
   ipcMain.handle(IPC.getSession, (event) => {
     assertTrustedSender(event);
     return cloud.getSession();
+  });
+  ipcMain.handle(IPC.claimSetupHandoff, async (event) => {
+    assertTrustedSender(event);
+    if (!pendingSetupHandoffToken) return null;
+    const claimed = await cloud.claimSetupHandoff(pendingSetupHandoffToken);
+    pendingSetupHandoffToken = null;
+    return claimed;
+  });
+  ipcMain.handle(IPC.consumeSetupHandoff, async (event, handoffId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof handoffId !== 'string') throw new Error('INVALID_SETUP_HANDOFF_ID');
+    return cloud.consumeSetupHandoff(handoffId);
+  });
+  ipcMain.handle(IPC.getSdkSetup, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; environmentId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string') throw new Error('INVALID_SDK_SETUP_REQUEST');
+    return cloud.sdkSetup(value.applicationId, value.environmentId);
+  });
+  ipcMain.handle(IPC.issueSdkSetupKey, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; environmentId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string') throw new Error('INVALID_SDK_SETUP_KEY_REQUEST');
+    return cloud.issueSetupKey(value.applicationId, value.environmentId);
   });
   ipcMain.handle(IPC.signIn, async (event) => {
     assertTrustedSender(event);
     return cloud.signIn();
   });
+  ipcMain.handle(IPC.reopenSignIn, async (event) => {
+    assertTrustedSender(event);
+    await cloud.reopenSignIn();
+  });
+  ipcMain.handle(IPC.cancelSignIn, (event) => {
+    assertTrustedSender(event);
+    cloud.cancelSignIn();
+  });
   ipcMain.handle(IPC.signOut, async (event) => {
     assertTrustedSender(event);
     await cloud.signOut();
-    selectedWorkspace = null;
+    selectedWorkspaces.clear();
   });
   ipcMain.handle(IPC.getApplications, async (event) => {
     assertTrustedSender(event);
@@ -171,6 +231,11 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
     return cloud.run(runId);
+  });
+  ipcMain.handle(IPC.getRunReplay, async (event, runId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
+    return cloud.runReplay(runId);
   });
   ipcMain.handle(IPC.getRunReport, async (event, runId: unknown) => {
     assertTrustedSender(event);
@@ -227,6 +292,14 @@ function registerIpc(): void {
       if (err?.status === 403 && String(err?.message ?? err).includes('FEATURE_NOT_ENTITLED')) {
         return { entitled: false, documents: [] };
       }
+      if (err?.status === 403 && (err?.code === 'FORBIDDEN' || /not a member of the organization/i.test(String(err?.message ?? err)))) {
+        return {
+          entitled: true,
+          documents: [],
+          accessDenied: true,
+          message: 'This project is no longer available to the signed-in account. Your project list has been refreshed.',
+        };
+      }
       throw err;
     }
   });
@@ -277,7 +350,11 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; documentVersionIds?: unknown };
     if (typeof value.applicationId !== 'string' || !Array.isArray(value.documentVersionIds)) throw new Error('INVALID_INTENT_DRAFT_REQUEST');
-    return cloud.createIntentDraft(value.applicationId, value.documentVersionIds.filter((id): id is string => typeof id === 'string'), selectedWorkspace?.snapshotId);
+    return cloud.createIntentDraft(
+      value.applicationId,
+      value.documentVersionIds.filter((id): id is string => typeof id === 'string'),
+      selectedWorkspaces.get(value.applicationId)?.snapshotId,
+    );
   });
   ipcMain.handle(IPC.getIntentDraftJob, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -285,11 +362,28 @@ function registerIpc(): void {
     if (typeof value.applicationId !== 'string' || typeof value.jobId !== 'string') throw new Error('INVALID_INTENT_DRAFT_JOB_REQUEST');
     return cloud.intentDraftJob(value.applicationId, value.jobId);
   });
+  ipcMain.handle(IPC.listIntentDraftJobs, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_INTENT_DRAFT_JOBS_REQUEST');
+    return cloud.intentDraftJobs(applicationId);
+  });
+  ipcMain.handle(IPC.cancelIntentDraftJob, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; jobId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.jobId !== 'string') throw new Error('INVALID_INTENT_DRAFT_JOB_CANCEL');
+    return cloud.cancelIntentDraftJob(value.applicationId, value.jobId);
+  });
   ipcMain.handle(IPC.reviewIntentDraft, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; draftId?: unknown; review?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.draftId !== 'string' || !value.review || typeof value.review !== 'object') throw new Error('INVALID_INTENT_REVIEW');
     return cloud.reviewIntentDraft(value.applicationId, value.draftId, value.review as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.deleteIntentDraft, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; draftId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.draftId !== 'string') throw new Error('INVALID_INTENT_DRAFT_DELETE');
+    await cloud.deleteIntentDraft(value.applicationId, value.draftId);
   });
   ipcMain.handle(IPC.correctIntentDraft, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -324,7 +418,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.getLocalWorkspace, (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    const stored = readLocalState<{
+    let stored = readLocalState<{
       id: string;
       path: string;
       name: string;
@@ -332,11 +426,26 @@ function registerIpc(): void {
       cloudId?: string;
       snapshotId?: string;
     }>(`workspace:${applicationId}`);
+    if (stored && !stored.snapshot.suggestedApplicationUrls) {
+      try {
+        stored = {
+          ...stored,
+          snapshot: scanWorkspace(stored.path, {
+            workspaceId: stored.id,
+            scannerVersion: stored.snapshot.scannerVersion,
+          }),
+        };
+        writeLocalState(`workspace:${applicationId}`, stored);
+      } catch {
+        // Keep the last valid snapshot when a previously attached folder is
+        // temporarily unavailable. The UI can still use the environment URL.
+      }
+    }
     if (stored?.cloudId && stored.snapshotId) {
-      selectedWorkspace = {
+      selectedWorkspaces.set(applicationId, {
         applicationId, localId: stored.id, cloudId: stored.cloudId, snapshotId: stored.snapshotId,
         root: stored.path, snapshot: stored.snapshot,
-      };
+      });
     }
     if (!stored) return null;
     const { cloudId: _cloudId, snapshotId: _snapshotId, ...rendererSafe } = stored;
@@ -354,10 +463,10 @@ function registerIpc(): void {
       ? String((parsed as { applicationId: string }).applicationId) : null;
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
     const registered = await cloud.registerWorkspace(applicationId, parsed.workspaceId, snapshot);
-    selectedWorkspace = {
+    selectedWorkspaces.set(applicationId, {
       applicationId, localId: parsed.workspaceId, cloudId: registered.workspaceId,
       snapshotId: registered.repositorySnapshotId, root: parsed.path, snapshot,
-    };
+    });
     writeLocalState(`workspace:${applicationId}`, {
       id: parsed.workspaceId,
       path: parsed.path,
@@ -396,6 +505,54 @@ function registerIpc(): void {
     if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
     return instrumentation.localResult(value.applicationId, value.planId);
   });
+  ipcMain.handle(IPC.generateInstrumentationReport, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown; applicationName?: unknown; environmentName?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_REPORT_REQUEST');
+    const record = await instrumentation.get(value.applicationId, value.planId) as Record<string, any>;
+    const local = instrumentation.localResult(value.applicationId, value.planId) as Record<string, any> | null;
+    if (!local) throw new Error('LOCAL_VALIDATION_RESULT_NOT_FOUND');
+    const plan = record.planJson as Record<string, any>;
+    const reportInput: ValidationReportInput = {
+      applicationName: String(value.applicationName ?? 'Tellann application').slice(0, 120),
+      environmentName: String(value.environmentName ?? record.environmentId ?? 'Environment').slice(0, 120),
+      planId: value.planId,
+      adapterId: String(plan.adapterId ?? record.adapterId ?? 'unknown'),
+      adapterVersion: String(plan.adapterVersion ?? record.adapterVersion ?? 'unknown'),
+      status: String(record.status ?? 'UNKNOWN'),
+      generatedAt: new Date().toISOString(),
+      baseRevision: typeof plan.baseRevision === 'string' ? plan.baseRevision : null,
+      repositoryFingerprint: String(plan.repositoryFingerprint ?? 'Not recorded'),
+      risk: String(plan.risk ?? record.risk ?? 'UNKNOWN'),
+      riskReasons: Array.isArray(plan.riskReasons) ? plan.riskReasons.map(String) : [],
+      packageChanges: Array.isArray(plan.packageChanges) ? plan.packageChanges.map((change: any) => ({ packageName: String(change.packageName), version: String(change.version), kind: String(change.kind) })) : [],
+      operations: Array.isArray(plan.operations) ? plan.operations.map((operation: any) => ({ id: String(operation.id), kind: String(operation.kind), relativePath: String(operation.relativePath), description: String(operation.description) })) : [],
+      files: Array.isArray(local.patch?.files) ? local.patch.files.map((file: any) => ({ relativePath: String(file.relativePath), beforeHash: typeof file.beforeHash === 'string' ? file.beforeHash : null, afterHash: String(file.afterHash), changed: file.changed === true })) : [],
+      patch: { checkpointId: String(local.patch?.checkpointId ?? 'Not recorded'), diffHash: String(local.patch?.diffHash ?? 'Not recorded'), appliedAt: String(local.patch?.appliedAt ?? new Date().toISOString()) },
+      checkpoint: local.checkpoint && typeof local.checkpoint === 'object' ? {
+        kind: String(local.checkpoint.kind ?? 'UNKNOWN'), branch: typeof local.checkpoint.branch === 'string' ? local.checkpoint.branch : null,
+        previousBranch: typeof local.checkpoint.previousBranch === 'string' ? local.checkpoint.previousBranch : null,
+        baseRevision: typeof local.checkpoint.baseRevision === 'string' ? local.checkpoint.baseRevision : null,
+        dirty: local.checkpoint.dirty === true, reason: typeof local.checkpoint.reason === 'string' ? local.checkpoint.reason : null,
+        createdAt: String(local.checkpoint.createdAt ?? new Date().toISOString()),
+      } : null,
+      checks: Array.isArray(local.validation?.checks) ? local.validation.checks.map((check: any) => ({ name: String(check.name), passed: check.passed === true, output: safeDesktopError(check.output) })) : [],
+      commands: Array.isArray(local.commandResults) ? local.commandResults.map((command: any) => ({ id: String(command.id), purpose: String(command.purpose ?? command.id), passed: command.passed === true, exitCode: typeof command.exitCode === 'number' ? command.exitCode : null, durationMs: Number(command.durationMs ?? 0), output: String(command.output ?? '').slice(-12_000) })) : [],
+    };
+    const pdf = await renderValidationReportPdf(reportInput);
+    const safeApplication = reportInput.applicationName.replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'application';
+    const filename = `Tellann-${safeApplication}-validation-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const save = await dialog.showSaveDialog(mainWindow!, { title: 'Save Tellann validation report', defaultPath: path.join(app.getPath('documents'), filename), filters: [{ name: 'PDF report', extensions: ['pdf'] }] });
+    if (save.canceled || !save.filePath) return { cancelled: true };
+    await fs.writeFile(save.filePath, pdf);
+    try {
+      const manifest = await extractDocument({ buffer: pdf, filename: path.basename(save.filePath) });
+      const source = await cloud.uploadDerivedDocument(value.applicationId, manifest) as Record<string, unknown>;
+      return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath), sourceAdded: true, sourceStatus: String(source.status ?? 'QUEUED') };
+    } catch (error) {
+      return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath), sourceAdded: false, sourceError: safeDesktopError(error) };
+    }
+  });
   ipcMain.handle(IPC.approveInstrumentation, async (event, input: unknown) => {
     assertTrustedSender(event);
     const context = parseInstrumentationContext(input);
@@ -432,6 +589,7 @@ function registerIpc(): void {
       throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
     }
     if (parsed.mode === 'OBSERVATION_ONLY' && parsed.launchCommandId) throw new Error('OBSERVATION_ONLY_PROCESS_LAUNCH_BLOCKED');
+    const selectedWorkspace = selectedWorkspaces.get(parsed.applicationId) ?? null;
     const run = await cloud.createRun({
       applicationId: parsed.applicationId,
       environmentId: parsed.environmentId,
@@ -522,6 +680,7 @@ function registerIpc(): void {
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   app.setAppUserModelId('com.tellann.desktop');
+  if (app.isPackaged) app.setAsDefaultProtocolClient('tellann');
   Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   registerIpc();
@@ -529,6 +688,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await initializeUpdater().catch((error) => {
     console.error('Desktop update check failed', error instanceof Error ? error.message : error);
   });
+});
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  captureSetupDeepLink([url]);
 });
 
 app.on('window-all-closed', () => {

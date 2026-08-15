@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { Prisma, type PrismaClient } from '@sots/db';
 import { Feature } from '@sots/shared';
 import type { EntitlementChecker } from '@sots/entitlement-checker';
-import { InstrumentationPlanSchema, type InstrumentationPlan } from '@sots/desktop-contracts';
+import { InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@sots/desktop-contracts';
 
 type InstrumentationRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: InstrumentationRequest, res: Response, next: NextFunction) => unknown;
@@ -46,7 +46,7 @@ function validatePlanPolicy(plan: InstrumentationPlan): string | null {
   if (plan.operations.some((operation) => !plan.approvedFileScopes.includes(operation.relativePath) || !boundedRelativePath(operation.relativePath))) return 'INSTRUMENTATION_OPERATION_OUTSIDE_SCOPE';
   if (plan.packageChanges.some((change) => !SDK_PACKAGES.has(change.packageName))) return 'UNAPPROVED_INSTRUMENTATION_PACKAGE';
   for (const command of plan.validationCommands) {
-    if (!PACKAGE_MANAGERS.has(command.executable) || command.cwd !== '.') return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
+    if (!PACKAGE_MANAGERS.has(command.executable) || (command.cwd !== '.' && !boundedRelativePath(command.cwd))) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
     if (command.allowedEnvironmentKeys.some((key) => !COMMAND_ENVIRONMENT_KEYS.has(key))) return 'UNAPPROVED_INSTRUMENTATION_ENVIRONMENT';
     const allowed = command.id === 'install-sdk'
       ? ['add', 'install'].includes(command.args[0] ?? '') && command.args.length === 2 && /^@sots\/(frontend|backend)-sdk@/.test(command.args[1] ?? '')
@@ -283,10 +283,49 @@ export function createInstrumentationRouter(input: {
         validationJson: validation, appliedByUserId: req.user!.id, appliedAt: new Date(), validatedAt: validation ? new Date() : null,
       } });
       await tx.instrumentationPlan.update({ where: { id: plan.id }, data: { status, validationJson: validation, completedAt: validation?.valid ? new Date() : null } });
+      if (validation?.valid) {
+        await tx.applicationOnboardingProgress.updateMany({
+          where: { applicationId: plan.workspace.applicationId },
+          data: { connectionMethodSelected: 'DESKTOP', sdkTargetsConfigured: true },
+        });
+      }
       return created;
     });
     await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, validation?.valid ? 'INSTRUMENTATION_VALIDATED' : 'INSTRUMENTATION_APPLIED', { planId: plan.id, patchSetId: patch.id, valid: validation?.valid ?? null });
     res.status(201).json(patch);
+  });
+
+  router.post('/v1/applications/:appId/instrumentation/plans/:planId/revalidate', async (req: InstrumentationRequest, res: Response) => {
+    const plan = await planFor(req, res);
+    if (!plan) return;
+    if (!['APPLIED', 'COMPLETED', 'VALIDATION_FAILED'].includes(plan.status)) return res.status(409).json({ error: 'PLAN_NOT_REVALIDATABLE' });
+    const device = await prisma.deviceSession.findFirst({ where: { id: String(req.body.deviceSessionId ?? ''), userId: req.user!.id, revokedAt: null, expiresAt: { gt: new Date() } } });
+    if (!device || (plan.deviceSessionId && plan.deviceSessionId !== device.id)) return res.status(403).json({ error: 'ACTIVE_PLAN_DEVICE_REQUIRED' });
+    const patch = plan.patchSets[0];
+    if (!patch || String(req.body.checkpointId ?? '') !== patch.checkpointId || String(req.body.diffHash ?? '') !== patch.diffHash) {
+      return res.status(409).json({ error: 'LOCAL_PATCH_IDENTITY_MISMATCH' });
+    }
+    const parsed = InstrumentationValidationResultSchema.safeParse(req.body.validation);
+    if (!parsed.success) return res.status(400).json({ error: 'INVALID_INSTRUMENTATION_VALIDATION' });
+    const commandResults = Array.isArray(req.body.commandResults) ? req.body.commandResults.slice(0, 20).map((command: any) => ({
+      id: String(command?.id ?? '').slice(0, 100), purpose: String(command?.purpose ?? '').slice(0, 500), passed: command?.passed === true,
+      exitCode: typeof command?.exitCode === 'number' ? command.exitCode : null, durationMs: Number(command?.durationMs ?? 0),
+      output: String(command?.output ?? '').slice(-12_000),
+    })) : [];
+    const status = parsed.data.valid ? 'COMPLETED' : 'VALIDATION_FAILED';
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.patchSet.update({ where: { id: patch.id }, data: { status: parsed.data.valid ? 'VALIDATED' : 'VALIDATION_FAILED', validationJson: parsed.data, commandResultsJson: commandResults, validatedAt: new Date() } });
+      const result = await tx.instrumentationPlan.update({ where: { id: plan.id }, data: { status, validationJson: parsed.data, completedAt: parsed.data.valid ? new Date() : null } });
+      if (parsed.data.valid) {
+        await tx.applicationOnboardingProgress.updateMany({
+          where: { applicationId: plan.workspace.applicationId },
+          data: { connectionMethodSelected: 'DESKTOP', sdkTargetsConfigured: true },
+        });
+      }
+      return result;
+    });
+    await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_VALIDATED', { planId: plan.id, patchSetId: patch.id, valid: parsed.data.valid, revalidation: true });
+    res.json(updated);
   });
 
   router.post('/v1/applications/:appId/instrumentation/plans/:planId/fail', async (req: InstrumentationRequest, res: Response) => {

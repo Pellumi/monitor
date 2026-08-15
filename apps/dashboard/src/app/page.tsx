@@ -74,6 +74,7 @@ const EndpointHealth = dynamic(
 
 async function fetchDashboardOverview(
   appId: string,
+  range: string,
 ): Promise<DashboardOverviewResponse> {
   const useMockMode = process.env.NEXT_PUBLIC_DASHBOARD_DATA_MODE === "mock";
 
@@ -84,7 +85,7 @@ async function fetchDashboardOverview(
   // 1. Try unified GET /api-gateway/dashboard/overview?appId=${appId} if available
   try {
     const res = await authenticatedFetch(
-      `/api-gateway/dashboard/overview?appId=${appId}`,
+      `/api-gateway/dashboard/overview?appId=${encodeURIComponent(appId)}&range=${encodeURIComponent(range)}`,
     );
     if (res.ok) {
       const data = await res.json();
@@ -104,23 +105,27 @@ async function fetchDashboardOverview(
     graphRes,
     endpointsRes,
     appRes,
+    progressRes,
+    setupRes,
   ] = await Promise.allSettled([
     authenticatedFetch(`/api-gateway/reports/${appId}/latest`),
     authenticatedFetch(`/api-gateway/applications/${appId}/workflows`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/sessions?page=1&limit=10`),
+    authenticatedFetch(`/api-gateway/applications/${appId}/sessions?page=1&limit=10&range=${encodeURIComponent(range)}`),
     authenticatedFetch(`/api-gateway/applications/${appId}/graph`),
     authenticatedFetch(`/api-gateway/reports/${appId}/endpoint-intelligence`),
     authenticatedFetch(`/api-gateway/applications/${appId}`),
+    authenticatedFetch(`/api-gateway/applications/${appId}/onboarding-progress`),
+    authenticatedFetch(`/api-gateway/applications/${appId}/sdk-setup`),
   ]);
 
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   const reportData = reportRes.status === "fulfilled" && reportRes.value.ok ? await reportRes.value.json() : null;
   const workflowsData = workflowsRes.status === "fulfilled" && workflowsRes.value.ok ? await workflowsRes.value.json() : null;
   const sessionsData = sessionsRes.status === "fulfilled" && sessionsRes.value.ok ? await sessionsRes.value.json() : null;
   const graphData = graphRes.status === "fulfilled" && graphRes.value.ok ? await graphRes.value.json() : null;
   const endpointsData = endpointsRes.status === "fulfilled" && endpointsRes.value.ok ? await endpointsRes.value.json() : null;
   const appData = appRes.status === "fulfilled" && appRes.value.ok ? await appRes.value.json() : null;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const progressData = progressRes.status === "fulfilled" && progressRes.value.ok ? await progressRes.value.json() : null;
+  const setupData = setupRes.status === "fulfilled" && setupRes.value.ok ? await setupRes.value.json() : null;
 
   // Build ApplicationContext
   const appName = appData?.name || reportData?.application || "Application";
@@ -202,12 +207,7 @@ async function fetchDashboardOverview(
         type: idx === 0 ? "entry" : idx === graphStates.length - 1 ? "exit" : "state",
         visitCount: s.visitCount || 1,
       }))
-    : [
-        { id: "1", label: "START", type: "entry", visitCount: sessionCount },
-        { id: "2", label: "MAIN_VIEW", type: "state", visitCount: sessionCount },
-        { id: "3", label: "ACTION", type: "state", visitCount: sessionCount },
-        { id: "4", label: "COMPLETE", type: "exit", visitCount: sessionCount },
-      ];
+    : [];
 
   const graphEdges = graphTransitions.length > 0
     ? graphTransitions.map((t: any, idx: number) => ({
@@ -276,9 +276,21 @@ async function fetchDashboardOverview(
   const workflowCoverageVal = cov.flowCoverage ?? (workflowCount > 0 ? 75 : null);
 
   const isMeasured = sessionCount > 0 || hasCoverageData;
+  const firstAnalysisGenerated = Boolean(
+    progressData?.analysisGenerated ||
+    progressData?.firstReportGenerated ||
+    reportData?.id ||
+    reportData?.reportId,
+  );
 
   const response: DashboardOverviewResponse = {
-    lifecycle: sessionCount === 0 ? "SDK_SETUP" : "ACTIVE",
+    lifecycle: !setupData?.readiness?.connected
+      ? "SDK_SETUP"
+      : !progressData?.demonstrationCompleted
+        ? "READY_TO_DEMONSTRATE"
+        : !progressData?.firstAnalysisReviewed
+          ? "FIRST_ANALYSIS_READY"
+          : "ACTIVE",
     maturity: sessionCount > 10 ? "ESTABLISHED" : sessionCount > 1 ? "EARLY" : "NEW",
     application: {
       id: appId,
@@ -288,11 +300,15 @@ async function fetchDashboardOverview(
     },
     onboarding: {
       applicationCreated: true,
-      frontendConnected: sessionCount > 0 || rawSessions.length > 0,
-      backendConnected: totalEp > 0,
-      telemetryVerified: sessionCount > 0,
-      firstDemonstrationCompleted: sessionCount > 0,
-      firstAnalysisReviewed: sessionCount > 0,
+      frontendConnected: setupData?.readiness?.targets?.some((target: { kind?: string; verified?: boolean }) => target.kind === "FRONTEND" && target.verified)
+        ?? setupData?.readiness?.connected
+        ?? progressData?.sdkConnected
+        ?? false,
+      backendConnected: setupData?.readiness?.targets?.some((target: { kind?: string; verified?: boolean }) => target.kind === "BACKEND" && target.verified) ?? false,
+      telemetryVerified: setupData?.readiness?.installationTestPassed ?? false,
+      firstDemonstrationCompleted: progressData?.demonstrationCompleted ?? false,
+      firstAnalysisGenerated,
+      firstAnalysisReviewed: progressData?.firstAnalysisReviewed ?? false,
     },
     telemetry: {
       frontendStatus: sessionCount > 0 ? "ACTIVE" : "INACTIVE",
@@ -303,7 +319,7 @@ async function fetchDashboardOverview(
     },
     analysis: {
       status: sessionCount > 0 ? "COMPLETED" : "NOT_STARTED",
-      analysisCount: sessionCount > 0 ? Math.max(1, sessionCount) : 0,
+      analysisCount: firstAnalysisGenerated ? Math.max(1, sessionCount) : 0,
       latestAnalysisId: `analysis-db-${appId}`,
       lastAnalysisAt: rawSessions[0]?.startTime ? new Date(rawSessions[0].startTime).toLocaleDateString() : undefined,
     },
@@ -572,16 +588,22 @@ function MainDashboardLayout() {
 
 function OverviewContent() {
   const searchParams = useSearchParams();
-  const requestedAppId = searchParams.get("appId");
   const { applications, selectedApplication, appId, isLoading: isApplicationsLoading } =
     useSelectedApplication();
 
-  const activeAppId = requestedAppId || appId || selectedApplication?.id || "";
+  const activeAppId = appId || selectedApplication?.id || "";
+  const range = searchParams.get("range") || "30d";
 
   const { data, isLoading } = useQuery<DashboardOverviewResponse>({
-    queryKey: ["dashboard-overview", activeAppId],
-    queryFn: () => fetchDashboardOverview(activeAppId),
+    queryKey: ["dashboard-overview", activeAppId, range],
+    queryFn: () => fetchDashboardOverview(activeAppId, range),
     enabled: !!activeAppId,
+    refetchInterval: (query) => {
+      if (query.state.data?.lifecycle === "ACTIVE") return false;
+      return typeof document !== "undefined" && document.hidden ? 15_000 : 3_000;
+    },
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: "always",
   });
 
   if (isApplicationsLoading || (isLoading && activeAppId)) {
@@ -610,7 +632,7 @@ function OverviewContent() {
   }
 
   return (
-    <DashboardProvider data={data ?? null} hasApplications={applications.length > 0}>
+    <DashboardProvider key={activeAppId} data={data ?? null} hasApplications={applications.length > 0}>
       <MainDashboardLayout />
     </DashboardProvider>
   );

@@ -30,6 +30,28 @@ async function fetchGraph(appId: string) {
   return res.json();
 }
 
+function GraphSkeleton() {
+  return (
+    <div className="flex h-full flex-col space-y-6 animate-pulse">
+      <div className="h-8 w-60 bg-neutral-800 rounded-md" />
+      <div className="flex-1 min-h-[400px] rounded-lg border border-neutral-800 bg-neutral-950 p-6 relative overflow-hidden flex items-center justify-center">
+        <div className="absolute inset-0 bg-[radial-gradient(#262626_1px,transparent_1px)] [background-size:16px_16px] opacity-40" />
+        <div className="relative z-10 flex flex-col items-center gap-8">
+          <div className="flex gap-12">
+            <div className="h-12 w-36 bg-neutral-800/80 rounded-lg border border-neutral-700/50" />
+            <div className="h-12 w-36 bg-neutral-800/80 rounded-lg border border-neutral-700/50" />
+          </div>
+          <div className="h-12 w-44 bg-neutral-800/90 rounded-lg border border-neutral-700/50" />
+          <div className="flex gap-16">
+            <div className="h-12 w-36 bg-neutral-800/80 rounded-lg border border-neutral-700/50" />
+            <div className="h-12 w-40 bg-neutral-800/80 rounded-lg border border-neutral-700/50" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GraphContent() {
   const {
     appId,
@@ -82,12 +104,12 @@ function GraphContent() {
   if (!selectedOrgId) {
     return <div className="text-neutral-400">No organization is selected.</div>;
   }
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <GraphSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) {
     return <ApplicationRequiredState feature="Behavioral Graph" />;
   }
-  if (isLoading) return <div className="text-neutral-400">Loading graph...</div>;
+  if (isLoading) return <GraphSkeleton />;
   if (error) return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (nodes.length === 0) {
     return (
@@ -97,7 +119,7 @@ function GraphContent() {
         eyebrow="Graph not observed"
         title="Connect the SDK to map real behavior"
         description="Tellann turns captured state transitions into a behavioral graph. Once telemetry arrives, nodes and paths will assemble here."
-        primaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        primaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
         secondaryAction={{ label: 'Declare expected behavior', href: `/declare?appId=${encodeURIComponent(appId)}` }}
       />
     );
@@ -118,7 +140,7 @@ function GraphContent() {
 
 export default function GraphPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400">Loading graph...</div>}>
+    <Suspense fallback={<GraphSkeleton />}>
       <GraphContent />
     </Suspense>
   );

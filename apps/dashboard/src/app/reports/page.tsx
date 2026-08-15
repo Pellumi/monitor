@@ -9,6 +9,7 @@ import { Download, CheckCircle, AlertTriangle } from 'lucide-react';
 import { ApplicationRequiredState } from '@/components/application-required-state';
 import { EmptyState } from '@/components/empty-state';
 import { useSelectedApplication } from '@/hooks/use-selected-application';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -41,11 +42,81 @@ interface ReportData {
   generatedAt: string;
 }
 
+interface QARunSummary {
+  id: string;
+  status: string;
+  reportId?: string | null;
+  endedAt?: string | null;
+  createdAt?: string;
+  environment?: { id: string; name: string; type: string };
+  _count?: { artifacts: number; findings: number };
+}
+
+interface QARunReport {
+  id: string;
+  runId: string;
+  status: string;
+  generatedAt: string;
+  application: { id: string; name: string };
+  environment: { id: string; name: string; type: string };
+  coverage: { expected: number | null; reconciledFlows: number };
+  summary: {
+    sessionCount: number;
+    observedStateCount: number;
+    observedTransitionCount: number;
+    artifactCount: number;
+    findingCount: number;
+    criticalOrHighFindings: number;
+  };
+}
+
+function ReportsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="h-8 w-60 bg-neutral-800 rounded-md" />
+          <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+        </div>
+        <div className="flex gap-2">
+          <div className="h-9 w-24 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-24 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-24 bg-neutral-800 rounded-md" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-6 space-y-3">
+            <div className="h-3.5 w-32 bg-neutral-800/80 rounded" />
+            <div className="h-8 w-20 bg-neutral-800 rounded" />
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {[1, 2].map((i) => (
+          <div key={i} className="rounded-xl border border-neutral-800 bg-neutral-900 p-6 space-y-4">
+            <div className="h-6 w-48 bg-neutral-800 rounded" />
+            <div className="space-y-3">
+              {[1, 2, 3].map((j) => (
+                <div key={j} className="h-12 bg-neutral-800/40 rounded-md" />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReportsContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
   const [exportingFormat, setExportingFormat] = React.useState<string | null>(null);
   const [exportError, setExportError] = React.useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const { data, isLoading, error } = useQuery<ReportData>({
     queryKey: ['latest-report', appId],
@@ -55,6 +126,33 @@ function ReportsContent() {
       return res.json();
     },
     enabled: !!appId,
+  });
+
+  const { data: qaRuns = [], isLoading: areRunsLoading } = useQuery<QARunSummary[]>({
+    queryKey: ['qa-report-runs', appId],
+    queryFn: async () => {
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/applications/${appId}/qa-runs`);
+      if (!res.ok) throw new Error('Failed to fetch QA runs');
+      return res.json();
+    },
+    enabled: !!appId,
+    refetchInterval: 10_000,
+  });
+
+  const completedRuns = React.useMemo(
+    () => qaRuns.filter((run) => run.status === 'COMPLETED'),
+    [qaRuns],
+  );
+  const requestedRunId = searchParams.get('runId');
+  const selectedRun = completedRuns.find((run) => run.id === requestedRunId) ?? completedRuns[0];
+  const { data: qaReport, isLoading: isQaReportLoading, error: qaReportError } = useQuery<QARunReport>({
+    queryKey: ['qa-run-report', selectedRun?.id],
+    queryFn: async () => {
+      const res = await authenticatedFetch(`${REPORT_ENGINE}/qa-runs/${selectedRun!.id}/report`);
+      if (!res.ok) throw new Error('Failed to fetch the QA run report');
+      return res.json();
+    },
+    enabled: !!selectedRun,
   });
 
   const { data: entitlement } = useQuery<{
@@ -77,14 +175,15 @@ function ReportsContent() {
       : ['json'];
 
   if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <ReportsSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Report" />;
 
-  if (isLoading) return <div className="text-neutral-400 animate-pulse">Loading report…</div>;
+  if (isLoading || areRunsLoading || isQaReportLoading) return <ReportsSkeleton />;
   if (error)     return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data)     return null;
-  if (data.summary.sessionCount === 0 && data.summary.workflowCount === 0) {
+  const aggregateReportEmpty = data.summary.sessionCount === 0 && data.summary.workflowCount === 0;
+  if (aggregateReportEmpty && completedRuns.length === 0) {
     return (
       <EmptyState
         variant="activation"
@@ -93,7 +192,20 @@ function ReportsContent() {
         title="Run a demonstration to generate evidence"
         description="Reports combine captured sessions, discovered workflows, and coverage results. Send telemetry first, then Tellann can produce the report."
         primaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
-        secondaryAction={{ label: 'Connect SDK', href: `/onboarding/api-keys?appId=${encodeURIComponent(appId)}` }}
+        secondaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
+      />
+    );
+  }
+  if (selectedRun && qaReportError && !qaReport) {
+    return (
+      <EmptyState
+        variant="neutral"
+        illustration="report"
+        eyebrow="Report temporarily unavailable"
+        title="Your completed QA run was found"
+        description="Tellann found the completed run, but could not assemble its report. Refresh this page or retry after the report service is available."
+        primaryAction={{ label: 'Refresh report', onClick: () => window.location.reload() }}
+        secondaryAction={{ label: 'View QA runs', href: '/qa-runs' }}
       />
     );
   }
@@ -171,6 +283,72 @@ function ReportsContent() {
           ))}
         </div>
       </div>
+
+      {qaReport && (
+        <section className="rounded-xl border border-emerald-900/60 bg-neutral-900 p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                <CheckCircle className="h-4 w-4" />
+                QA run report ready
+              </div>
+              <h2 className="mt-2 text-xl font-semibold text-white">
+                Run {qaReport.runId.slice(0, 8)}
+              </h2>
+              <p className="mt-1 text-sm text-neutral-400">
+                {qaReport.environment.name} · {qaReport.summary.artifactCount} artifacts ·{' '}
+                {qaReport.summary.findingCount} findings · generated{' '}
+                {new Date(qaReport.generatedAt).toLocaleString()}
+              </p>
+            </div>
+            {completedRuns.length > 1 && (
+              <label className="text-xs text-neutral-400">
+                Report run
+                <select
+                  className="ml-2 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white"
+                  value={qaReport.runId}
+                  onChange={(event) => {
+                    const params = new URLSearchParams(searchParams.toString());
+                    params.set('runId', event.target.value);
+                    router.replace(`?${params.toString()}`, { scroll: false });
+                  }}
+                >
+                  {completedRuns.map((run) => (
+                    <option key={run.id} value={run.id}>
+                      {run.id.slice(0, 8)} · {new Date(run.endedAt ?? run.createdAt ?? '').toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-neutral-800 bg-neutral-800 md:grid-cols-4">
+            {[
+              ['Observed sessions', qaReport.summary.sessionCount],
+              ['Observed states', qaReport.summary.observedStateCount],
+              ['Transitions', qaReport.summary.observedTransitionCount],
+              ['High priority findings', qaReport.summary.criticalOrHighFindings],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="bg-neutral-950 p-4">
+                <div className="text-xs uppercase tracking-wider text-neutral-500">{label}</div>
+                <div className="mt-1 text-2xl font-semibold text-white">{value}</div>
+              </div>
+            ))}
+          </div>
+          {qaReportError && <p className="mt-3 text-sm text-red-400">{(qaReportError as Error).message}</p>}
+        </section>
+      )}
+
+      {aggregateReportEmpty && qaReport ? (
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-6">
+          <h2 className="text-lg font-semibold text-white">Behavioral coverage is processing</h2>
+          <p className="mt-1 text-sm text-neutral-400">
+            The QA report above is ready. Aggregate workflow and coverage analysis has not produced a snapshot yet,
+            so Tellann will not interpret zero values as complete coverage.
+          </p>
+        </section>
+      ) : (
+        <>
 
       {/* Metrics Summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -285,13 +463,15 @@ function ReportsContent() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
 
 export default function ReportsPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400 animate-pulse">Loading report…</div>}>
+    <Suspense fallback={<ReportsSkeleton />}>
       <ReportsContent />
     </Suspense>
   );

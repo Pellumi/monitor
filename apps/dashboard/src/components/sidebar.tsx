@@ -2,7 +2,7 @@
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useState,
@@ -259,7 +259,8 @@ function AppSelector({
   const searchParams = useSearchParams();
   const { selectedOrg, selectedOrgId, setSelectedOrgId, memberships } =
     useSession();
-  const currentAppId = searchParams.get("appId");
+  const routeParams = useParams<{ appId?: string }>();
+  const currentAppId = routeParams?.appId || searchParams.get("appId");
   const currentEnvId = searchParams.get("envId");
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);

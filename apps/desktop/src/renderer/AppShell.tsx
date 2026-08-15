@@ -55,6 +55,18 @@ export function AppShell() {
   const effectiveSidebarWidth = sidebarMode === 'closed' ? 0 : sidebarMode === 'icon' ? 68 : sidebarWidth;
 
   useEffect(() => {
+    if (!projectId || application || !session?.authenticated || !cloudAvailable) return;
+    const fallback = applications[0]?.id;
+    if (fallback) {
+      localStorage.setItem('tellann:last-project', fallback);
+      navigate(equivalentProjectRoute(location.pathname, fallback), { replace: true });
+    } else {
+      localStorage.removeItem('tellann:last-project');
+      navigate('/projects', { replace: true });
+    }
+  }, [application, applications, cloudAvailable, location.pathname, navigate, projectId, session?.authenticated]);
+
+  useEffect(() => {
     if (!profileOpen) return;
     const closeOnOutsideClick = (event: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) setProfileOpen(false);

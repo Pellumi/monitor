@@ -1,6 +1,6 @@
-import { BarChart3, Code2, Folder, Play, Workflow, type LucideIcon } from 'lucide-react';
+import { BarChart3, BookOpenText, Code2, Folder, Play, Workflow, type LucideIcon } from 'lucide-react';
 
-export type DesktopSection = 'projects' | 'intent' | 'instrumentation' | 'qa-runs' | 'reports';
+export type DesktopSection = 'projects' | 'sources' | 'intent' | 'instrumentation' | 'qa-runs' | 'reports';
 
 export type DesktopNavItem = {
   id: DesktopSection;
@@ -24,7 +24,15 @@ export const desktopNavigation: DesktopNavItem[] = [
     matches: (pathname) =>
       pathname === '/projects'
       || pathname === '/projects/new'
-      || /^\/projects\/[^/]+(?:\/(?:workspace|sources|environments|activity))?$/.test(pathname),
+      || /^\/projects\/[^/]+(?:\/(?:workspace|environments|activity))?$/.test(pathname),
+  },
+  {
+    id: 'sources',
+    label: 'Documents',
+    icon: BookOpenText,
+    projectScoped: true,
+    resolveHref: (projectId) => projectId ? `/projects/${projectId}/sources` : '/projects',
+    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/sources`)),
   },
   {
     id: 'intent',

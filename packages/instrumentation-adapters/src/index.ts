@@ -393,15 +393,15 @@ function generatedFrontendModule(typed: boolean): string {
   const runDeclaration = typed
     ? `const run = (globalThis as typeof globalThis & { __TELLANN_RUN__?: Record<string, string> }).__TELLANN_RUN__ ?? {};`
     : `const run = globalThis.__TELLANN_RUN__ ?? {};`;
-  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { SOTS } from '@sots/frontend-sdk';\n\n${runDeclaration}\n\nSOTS.initialize({\n  endpoint: run.relayEndpoint ?? '/tellann-relay',\n  applicationId: run.applicationId ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId,\n  apiKey: run.relayToken,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid SOTS.verifyInstallation();\n\nexport { SOTS };\n/* tellann:generated:end */\n`;
+  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { SOTS } from '@sots/frontend-sdk';\n\n${runDeclaration}\nconst configured = import.meta.env ?? {};\n\nSOTS.initialize({\n  endpoint: run.relayEndpoint ?? configured.VITE_TELLANN_GATEWAY_URL ?? '/tellann-relay',\n  applicationId: run.applicationId ?? configured.VITE_TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? configured.VITE_TELLANN_ENVIRONMENT_ID,\n  apiKey: run.relayToken ?? configured.VITE_TELLANN_INGESTION_KEY,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid SOTS.verifyInstallation();\n\nexport { SOTS };\n/* tellann:generated:end */\n`;
 }
 
 function backendInitialization(): string {
   return `SOTS.initialize({
-  endpoint: process.env.TELLANN_RELAY_ENDPOINT ?? process.env.TELLANN_ENDPOINT ?? 'http://127.0.0.1:43117',
+  endpoint: process.env.TELLANN_RELAY_ENDPOINT ?? process.env.TELLANN_GATEWAY_URL ?? process.env.TELLANN_ENDPOINT ?? 'http://127.0.0.1:43117',
   applicationId: process.env.TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',
   environmentId: process.env.TELLANN_ENVIRONMENT_ID,
-  apiKey: process.env.TELLANN_RUN_CREDENTIAL,
+  apiKey: process.env.TELLANN_RUN_CREDENTIAL ?? process.env.TELLANN_INGESTION_KEY,
   runId: process.env.TELLANN_RUN_ID,
   sessionId: process.env.TELLANN_SESSION_ID,
   traceId: process.env.TELLANN_TRACE_ID,
@@ -482,11 +482,17 @@ import { SOTS } from '@sots/frontend-sdk';
 ${signature}
   useEffect(() => {
     ${runDeclaration}
+    const configured = {
+      endpoint: process.env.NEXT_PUBLIC_TELLANN_GATEWAY_URL,
+      applicationId: process.env.NEXT_PUBLIC_TELLANN_APPLICATION_ID,
+      environmentId: process.env.NEXT_PUBLIC_TELLANN_ENVIRONMENT_ID,
+      apiKey: process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY,
+    };
     SOTS.initialize({
-      endpoint: run.relayEndpoint ?? '/tellann-relay',
-      applicationId: run.applicationId ?? 'configure-in-tellann-desktop',
-      environmentId: run.environmentId,
-      apiKey: run.relayToken,
+      endpoint: run.relayEndpoint ?? configured.endpoint ?? '/tellann-relay',
+      applicationId: run.applicationId ?? configured.applicationId ?? 'configure-in-tellann-desktop',
+      environmentId: run.environmentId ?? configured.environmentId,
+      apiKey: run.relayToken ?? configured.apiKey,
       runId: run.runId,
       sessionId: run.sessionId,
       traceId: run.traceId,

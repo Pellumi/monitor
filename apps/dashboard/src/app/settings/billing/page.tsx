@@ -434,8 +434,13 @@ export default function BillingPage() {
       await load();
     } catch (err: any) {
       if (err?.code === 'PAYSTACK_AUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYSTACK_AUTHORIZATION_REQUIRED') || String(err?.message || '').includes('Authorize Paystack')) {
-        setError('Paystack authorization is required. Redirecting to authorization...');
-        void authorizePaystackMigration();
+        if (subscription?.activeProvider === 'STRIPE') {
+          setError('Paystack authorization is required. Redirecting to authorization...');
+          void authorizePaystackMigration();
+        } else {
+          setError('Your current payment method must be authorized before this plan change. Redirecting...');
+          void updatePaymentMethod();
+        }
         return;
       }
       if (err?.code === 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYMENT_METHOD_REAUTHORIZATION_REQUIRED')) {

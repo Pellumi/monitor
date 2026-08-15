@@ -14,6 +14,7 @@ import jwt from 'jsonwebtoken';
 import { createDesktopRouter } from './desktop-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
+import { createSdkSetupRouter } from './sdk-setup-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@sots/storage';
 
@@ -279,6 +280,7 @@ app.use(createDesktopRouter({
 }));
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership }));
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
+app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
 
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
@@ -1831,10 +1833,31 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
 app.get('/applications/:appId/onboarding-progress', async (req: Request, res: Response) => {
   const { appId } = req.params;
   try {
-    const progress = await prisma.applicationOnboardingProgress.findUnique({
-      where: { applicationId: appId }
-    });
+    let progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } });
     if (!progress) return res.status(404).json({ error: 'Onboarding progress not found' });
+    if (!progress.demonstrationCompleted) {
+      const completedRun = await prisma.qARun.findFirst({
+        where: { applicationId: appId, status: 'COMPLETED' },
+        select: { id: true, organizationId: true, environmentId: true },
+        orderBy: { endedAt: 'desc' },
+      });
+      if (completedRun) {
+        const updated = await prisma.applicationOnboardingProgress.updateMany({
+          where: { applicationId: appId, demonstrationCompleted: false },
+          data: { demonstrationCompleted: true },
+        });
+        if (updated.count === 1) {
+          await emitActivationEvent(
+            completedRun.organizationId,
+            appId,
+            completedRun.environmentId,
+            'DEMO_COMPLETED',
+            { source: 'QA_RUN_RECONCILIATION', runId: completedRun.id },
+          );
+        }
+        progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } }) ?? progress;
+      }
+    }
     res.json(progress);
   } catch (err) {
     console.error('[Onboarding] Get onboarding progress error', err);

@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -39,6 +40,7 @@ type DesktopContextValue = {
   bridgeAvailable: boolean;
   loading: boolean;
   busy: boolean;
+  authPending: boolean;
   error: string | null;
   cloudAvailable: boolean;
   session: DesktopSession | null;
@@ -47,11 +49,14 @@ type DesktopContextValue = {
   runs: Record<string, QARunSummary[]>;
   activeRun: GuidedRunState | null;
   signIn(): Promise<void>;
+  reopenSignIn(): Promise<void>;
+  cancelSignIn(): Promise<void>;
   signOut(): Promise<void>;
   refreshApplications(): Promise<DesktopApplication[]>;
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
   refreshRuns(applicationId: string): Promise<QARunSummary[]>;
   getRun(runId: string): Promise<Record<string, unknown>>;
+  getRunReplay(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
@@ -66,8 +71,11 @@ type DesktopContextValue = {
   getIntentDrafts(applicationId: string): Promise<IntentDraft[]>;
   getIntentDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
   createIntentDraft(applicationId: string, documentVersionIds: string[]): Promise<IntentDraftJobCreated>;
+  getIntentDraftJobs(applicationId: string): Promise<IntentDraftJob[]>;
   getIntentDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
+  cancelIntentDraftJob(applicationId: string, jobId: string): Promise<IntentDraftJob>;
   reviewIntentDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
+  deleteIntentDraft(applicationId: string, draftId: string): Promise<void>;
   correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
   detectInstrumentation(input: InstrumentationEnvironmentInput): Promise<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>;
   proposeInstrumentation(input: InstrumentationEnvironmentInput & { adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
@@ -102,6 +110,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const bridgeAvailable = Boolean(window.tellann);
   const [loading, setLoading] = useState(bridgeAvailable);
   const [busy, setBusy] = useState(false);
+  const [authPending, setAuthPending] = useState(false);
+  const authAttemptRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [cloudAvailable, setCloudAvailable] = useState(true);
   const [session, setSession] = useState<DesktopSession | null>(null);
@@ -172,13 +182,36 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async () => {
-    await perform(async () => {
+    const attemptId = ++authAttemptRef.current;
+    setAuthPending(true);
+    setError(null);
+    try {
       const nextSession = await bridge().auth.signIn();
       setSession(nextSession);
       setApplications(await bridge().projects.list());
       setCloudAvailable(true);
-    });
-  }, [perform]);
+    } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      if (!/DESKTOP_AUTH_CANCELLED/.test(raw)) setError(normalizeDesktopError(cause));
+    } finally {
+      if (authAttemptRef.current === attemptId) setAuthPending(false);
+    }
+  }, []);
+
+  const reopenSignIn = useCallback(async () => {
+    try {
+      await bridge().auth.reopenSignIn();
+    } catch (cause) {
+      setError(normalizeDesktopError(cause));
+    }
+  }, []);
+
+  const cancelSignIn = useCallback(async () => {
+    authAttemptRef.current += 1;
+    await bridge().auth.cancelSignIn();
+    setAuthPending(false);
+    setError(null);
+  }, []);
 
   const refreshApplications = useCallback(async () => perform(async () => {
     const nextApplications = await bridge().projects.list();
@@ -238,6 +271,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     bridgeAvailable,
     loading,
     busy,
+    authPending,
     error,
     cloudAvailable,
     session,
@@ -246,11 +280,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     runs,
     activeRun,
     signIn,
+    reopenSignIn,
+    cancelSignIn,
     signOut,
     refreshApplications,
     attachWorkspace,
     refreshRuns,
     getRun: (runId) => bridge().runs.get(runId),
+    getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
@@ -265,8 +302,11 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getIntentDrafts: (applicationId) => bridge().intent.listDrafts(applicationId),
     getIntentDraft: (applicationId, draftId) => bridge().intent.getDraft(applicationId, draftId),
     createIntentDraft: (applicationId, documentVersionIds) => perform(() => bridge().intent.createDraft(applicationId, documentVersionIds)),
+    getIntentDraftJobs: (applicationId) => bridge().intent.listDraftJobs(applicationId),
     getIntentDraftJob: (applicationId, jobId) => bridge().intent.getDraftJob(applicationId, jobId),
+    cancelIntentDraftJob: (applicationId, jobId) => perform(() => bridge().intent.cancelDraftJob(applicationId, jobId)),
     reviewIntentDraft: (applicationId, draftId, review) => perform(() => bridge().intent.reviewDraft(applicationId, draftId, review)),
+    deleteIntentDraft: (applicationId, draftId) => perform(() => bridge().intent.deleteDraft(applicationId, draftId)),
     correctIntentDraft: (applicationId, draftId, correction) => perform(() => bridge().intent.correctDraft(applicationId, draftId, correction)),
     detectInstrumentation: (input) => perform(() => bridge().instrumentation.detect(input)),
     proposeInstrumentation: (input) => perform(() => bridge().instrumentation.propose(input)),
@@ -283,8 +323,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     endRun,
     clearError: () => setError(null),
   }), [
-    activeRun, applications, attachWorkspace, bridgeAvailable, busy, cloudAvailable, endRun, error, loading,
-    pauseRun, perform, refreshApplications, refreshRuns, runs, session, signIn, signOut, startRun, workspaces,
+    activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
+    pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;
@@ -302,6 +342,12 @@ function normalizeDesktopError(cause: unknown): string {
     return raw.includes('temporarily limiting')
       ? raw
       : 'Tellann is temporarily limiting new requests. Cached project data remains available and the app will recover automatically.';
+  }
+  if (/DESKTOP_AUTH_REQUEST_EXPIRED/.test(raw)) {
+    return 'The sign-in request expired. Try again to open a new secure browser session.';
+  }
+  if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
+    return 'That sign-in request is no longer active. Cancel it and try again.';
   }
   return raw
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')

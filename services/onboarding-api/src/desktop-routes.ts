@@ -55,6 +55,36 @@ export function createDesktopRouter(input: {
     });
   }
 
+  async function markDemonstrationCompleted(run: {
+    id: string;
+    organizationId: string;
+    applicationId: string;
+    environmentId: string;
+  }) {
+    await prisma.$transaction(async (tx) => {
+      const progress = await tx.applicationOnboardingProgress.findUnique({
+        where: { applicationId: run.applicationId },
+        select: { demonstrationCompleted: true },
+      });
+      if (!progress || progress.demonstrationCompleted) return;
+      const updated = await tx.applicationOnboardingProgress.updateMany({
+        where: { applicationId: run.applicationId, demonstrationCompleted: false },
+        data: { demonstrationCompleted: true },
+      });
+      if (updated.count === 1) {
+        await tx.activationEvent.create({
+          data: {
+            organizationId: run.organizationId,
+            applicationId: run.applicationId,
+            environmentId: run.environmentId,
+            eventName: 'DEMO_COMPLETED',
+            metadata: { source: 'DESKTOP_QA_RUN', runId: run.id },
+          },
+        });
+      }
+    });
+  }
+
   router.post(
     '/applications/:appId/workspaces',
     verifyJwt,
@@ -556,7 +586,10 @@ export function createDesktopRouter(input: {
   router.post('/qa-runs/:runId/complete', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
-    if (run.status === QARunStatus.COMPLETED) return res.json(run);
+    if (run.status === QARunStatus.COMPLETED) {
+      await markDemonstrationCompleted(run);
+      return res.json(run);
+    }
     if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
     const observations = Array.isArray(req.body?.observations) ? req.body.observations : [];
     const observedTransitions = Array.isArray(req.body?.observedTransitions) ? req.body.observedTransitions : [];
@@ -683,6 +716,7 @@ export function createDesktopRouter(input: {
         artifactManifest: req.body?.artifactManifest ?? undefined,
       },
     });
+    await markDemonstrationCompleted(completed);
     res.json(completed);
   });
 

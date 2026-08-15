@@ -2,12 +2,15 @@
 
 import React from "react";
 import Link from "next/link";
+import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "../core/dashboard-provider";
 import { Radio } from "lucide-react";
 
 export function ObservationStatusCard() {
   const { data } = useDashboard();
+  const { appId } = useSelectedApplication();
   const telemetry = data?.telemetry;
+  const connectAppId = appId || data?.application?.id;
 
   return (
     <div className="rounded-lg border border-[#262626] bg-[#141414] p-5 font-mono text-xs space-y-3">
@@ -50,7 +53,7 @@ export function ObservationStatusCard() {
 
       <div className="pt-2 border-t border-[#262626]">
         <Link
-          href="/settings/ingestion-keys"
+          href={connectAppId ? `/applications/${connectAppId}/connect?appId=${connectAppId}` : "/onboarding"}
           className="text-neutral-400 hover:text-white underline text-[11px]"
         >
           Check Integration Health

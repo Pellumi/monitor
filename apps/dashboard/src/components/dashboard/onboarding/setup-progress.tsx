@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "../core/dashboard-provider";
 import {
   CheckCircle2,
@@ -17,9 +18,12 @@ import {
 
 export function SetupProgressCard() {
   const { data, state } = useDashboard();
+  const { appId } = useSelectedApplication();
   const onboarding = data?.onboarding;
 
   if (state.lifecycle === "ACTIVE") return null;
+
+  const connectAppId = appId || data?.application?.id;
 
   const steps = [
     {
@@ -37,16 +41,20 @@ export function SetupProgressCard() {
       ),
     },
     {
-      title: "2. Connect frontend SDK",
-      desc: "Install @tellann/react to capture user interactions, state transitions, and page visits.",
+      title: "2. Connect your application",
+      desc: "Connect a frontend, backend, or both manually or through Tellann Desktop.",
       done: onboarding?.frontendConnected ?? false,
       required: true,
-      action: (
+      action: onboarding?.frontendConnected ? (
+        <span className="text-xs text-neutral-400 font-mono">
+          Application Connected
+        </span>
+      ) : (
         <Link
-          href="/settings/ingestion-keys"
+          href={connectAppId ? `/applications/${connectAppId}/connect?appId=${connectAppId}` : "/onboarding"}
           className="text-xs text-[#00e599] hover:underline font-mono"
         >
-          View React Setup
+          Connect application
         </Link>
       ),
     },
@@ -67,12 +75,16 @@ export function SetupProgressCard() {
       done: onboarding?.firstDemonstrationCompleted ?? false,
       required: true,
       action: (
-        <Link
-          href="/qa-runs/new"
-          className="text-xs px-2.5 py-1 bg-white text-black font-semibold rounded hover:bg-neutral-200"
-        >
-          Start Demo
-        </Link>
+        onboarding?.firstDemonstrationCompleted ? (
+          <span className="text-xs text-neutral-400 font-mono">Completed</span>
+        ) : (
+          <Link
+            href="/qa-runs/new"
+            className="text-xs px-2.5 py-1 bg-white text-black font-semibold rounded hover:bg-neutral-200"
+          >
+            Start Demo
+          </Link>
+        )
       ),
     },
     {
@@ -81,9 +93,15 @@ export function SetupProgressCard() {
       done: onboarding?.firstAnalysisReviewed ?? false,
       required: true,
       action: (
-        <span className="text-xs text-neutral-500 font-mono">
-          Available after demo
-        </span>
+        onboarding?.firstAnalysisGenerated ? (
+          <Link href="/reports" className="text-xs text-[#00e599] hover:underline font-mono">
+            Review analysis
+          </Link>
+        ) : onboarding?.firstDemonstrationCompleted ? (
+          <span className="text-xs text-neutral-400 font-mono">Preparing analysis...</span>
+        ) : (
+          <span className="text-xs text-neutral-500 font-mono">Available after demo</span>
+        )
       ),
     },
   ];
@@ -152,10 +170,10 @@ export function SetupProgressCard() {
             </span>
           </div>
           <Link
-            href="/settings/ingestion-keys"
+            href={connectAppId ? `/applications/${connectAppId}/connect?appId=${connectAppId}` : "/onboarding"}
             className="text-neutral-400 hover:text-white underline"
           >
-            View Node.js Setup
+            Add backend SDK
           </Link>
         </div>
       </div>

@@ -24,6 +24,37 @@ async function fetchReport(appId: string): Promise<MissingFlowsReport> {
   return res.json();
 }
 
+function MissingFlowsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="space-y-2">
+        <div className="h-8 w-48 bg-neutral-800 rounded-md" />
+        <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+        <ul className="divide-y divide-neutral-800">
+          {[1, 2, 3, 4].map((i) => (
+            <li key={i} className="flex flex-col px-6 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="h-7 w-24 bg-neutral-800 rounded" />
+                  <div className="h-4 w-4 bg-neutral-800/60 rounded" />
+                  <div className="h-7 w-32 bg-neutral-800 rounded" />
+                  <div className="h-4 w-4 bg-neutral-800/60 rounded" />
+                  <div className="h-7 w-28 bg-neutral-800 rounded" />
+                </div>
+                <div className="h-6 w-28 bg-neutral-800/80 rounded" />
+              </div>
+              <div className="h-4 w-64 bg-neutral-800/40 rounded" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function MissingFlowsContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
@@ -35,10 +66,10 @@ function MissingFlowsContent() {
   });
 
   if (!selectedOrgId) return <div className="text-neutral-400">No organization is selected.</div>;
-  if (isApplicationsLoading) return <div className="text-neutral-400">Loading applications...</div>;
+  if (isApplicationsLoading) return <MissingFlowsSkeleton />;
   if (applicationsError) return <div className="text-red-400">Error: {(applicationsError as Error).message}</div>;
   if (!appId) return <ApplicationRequiredState feature="Missing flows" />;
-  if (isLoading) return <div className="text-neutral-400">Loading missing flows...</div>;
+  if (isLoading) return <MissingFlowsSkeleton />;
   if (error) return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (!data) return null;
   if (data.missingFlows.length === 0) {
@@ -87,7 +118,7 @@ function MissingFlowsContent() {
 
 export default function MissingFlowsPage() {
   return (
-    <Suspense fallback={<div className="text-neutral-400">Loading missing flows...</div>}>
+    <Suspense fallback={<MissingFlowsSkeleton />}>
       <MissingFlowsContent />
     </Suspense>
   );

@@ -10,9 +10,9 @@ export const metadata: Metadata = {
   title: 'Tellann',
   description: 'Behavioral QA Platform',
   icons: {
-    icon: '/logo_white_bg.svg',
-    shortcut: '/logo_white_bg.svg',
-    apple: '/logo_white_bg.svg',
+    icon: '/logo_icon.svg',
+    shortcut: '/logo_icon.svg',
+    apple: '/logo_icon.svg',
   },
 };
 

@@ -629,6 +629,7 @@ async function main() {
   fastify.all('/v1/applications/:id/intent-drafts', forwardToFdrs);
   fastify.all('/v1/applications/:id/intent-drafts/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/instrumentation/*', forwardToOnboarding);
+  fastify.all('/desktop/setup-handoffs/*', forwardToOnboarding);
   fastify.all('/v1/applications/:id/declared-flows/*', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow/*', forwardToFdrs);

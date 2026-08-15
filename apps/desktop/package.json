@@ -71,6 +71,12 @@
       "icon": "build/icon.png",
       "artifactName": "Tellann-${version}-${arch}.${ext}"
     },
+    "protocols": [
+      {
+        "name": "Tellann setup link",
+        "schemes": ["tellann"]
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

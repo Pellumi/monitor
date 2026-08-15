@@ -2,12 +2,20 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const IPC = {
   getVersion: 'tellann:version',
+  copyText: 'tellann:system:copy-text',
   getSession: 'tellann:auth:session',
+  claimSetupHandoff: 'tellann:setup:handoff:claim',
+  consumeSetupHandoff: 'tellann:setup:handoff:consume',
+  getSdkSetup: 'tellann:setup:sdk:get',
+  issueSdkSetupKey: 'tellann:setup:sdk:key',
   signIn: 'tellann:auth:sign-in',
+  reopenSignIn: 'tellann:auth:reopen-sign-in',
+  cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
+  getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
@@ -20,10 +28,13 @@ const IPC = {
   listDocuments: 'tellann:documents:list',
   getDocumentJob: 'tellann:documents:job:get',
   createIntentDraft: 'tellann:intent:draft:create',
+  listIntentDraftJobs: 'tellann:intent:draft:jobs:list',
   getIntentDraftJob: 'tellann:intent:draft:job:get',
+  cancelIntentDraftJob: 'tellann:intent:draft:job:cancel',
   listIntentDrafts: 'tellann:intent:draft:list',
   getIntentDraft: 'tellann:intent:draft:get',
   reviewIntentDraft: 'tellann:intent:draft:review',
+  deleteIntentDraft: 'tellann:intent:draft:delete',
   correctIntentDraft: 'tellann:intent:draft:correct',
   openExternal: 'tellann:system:open-external',
   openProfile: 'tellann:system:open-profile',
@@ -44,13 +55,22 @@ const IPC = {
   validateInstrumentation: 'tellann:instrumentation:validate',
   rollbackInstrumentation: 'tellann:instrumentation:rollback',
   getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
+  generateInstrumentationReport: 'tellann:instrumentation:report:generate',
 } as const;
 
 contextBridge.exposeInMainWorld('tellann', {
   auth: {
     getSession: () => ipcRenderer.invoke(IPC.getSession),
     signIn: () => ipcRenderer.invoke(IPC.signIn),
+    reopenSignIn: () => ipcRenderer.invoke(IPC.reopenSignIn),
+    cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),
     signOut: () => ipcRenderer.invoke(IPC.signOut),
+  },
+  setup: {
+    claimHandoff: () => ipcRenderer.invoke(IPC.claimSetupHandoff),
+    consumeHandoff: (handoffId: string) => ipcRenderer.invoke(IPC.consumeSetupHandoff, handoffId),
+    getSdkSetup: (applicationId: string, environmentId: string) => ipcRenderer.invoke(IPC.getSdkSetup, { applicationId, environmentId }),
+    issueKey: (applicationId: string, environmentId: string) => ipcRenderer.invoke(IPC.issueSdkSetupKey, { applicationId, environmentId }),
   },
   projects: {
     list: () => ipcRenderer.invoke(IPC.getApplications),
@@ -70,8 +90,11 @@ contextBridge.exposeInMainWorld('tellann', {
     listDrafts: (applicationId: string) => ipcRenderer.invoke(IPC.listIntentDrafts, applicationId),
     getDraft: (applicationId: string, draftId: string) => ipcRenderer.invoke(IPC.getIntentDraft, { applicationId, draftId }),
     createDraft: (applicationId: string, documentVersionIds: string[]) => ipcRenderer.invoke(IPC.createIntentDraft, { applicationId, documentVersionIds }),
+    listDraftJobs: (applicationId: string) => ipcRenderer.invoke(IPC.listIntentDraftJobs, applicationId),
     getDraftJob: (applicationId: string, jobId: string) => ipcRenderer.invoke(IPC.getIntentDraftJob, { applicationId, jobId }),
+    cancelDraftJob: (applicationId: string, jobId: string) => ipcRenderer.invoke(IPC.cancelIntentDraftJob, { applicationId, jobId }),
     reviewDraft: (applicationId: string, draftId: string, review: unknown) => ipcRenderer.invoke(IPC.reviewIntentDraft, { applicationId, draftId, review }),
+    deleteDraft: (applicationId: string, draftId: string) => ipcRenderer.invoke(IPC.deleteIntentDraft, { applicationId, draftId }),
     correctDraft: (applicationId: string, draftId: string, correction: string) => ipcRenderer.invoke(IPC.correctIntentDraft, { applicationId, draftId, correction }),
   },
   documents: {
@@ -82,6 +105,7 @@ contextBridge.exposeInMainWorld('tellann', {
   runs: {
     list: (applicationId: string) => ipcRenderer.invoke(IPC.listRuns, applicationId),
     get: (runId: string) => ipcRenderer.invoke(IPC.getRun, runId),
+    getReplay: (runId: string) => ipcRenderer.invoke(IPC.getRunReplay, runId),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.getRunReport, runId),
     start: (input: unknown) => ipcRenderer.invoke(IPC.startGuidedRun, input),
     pause: () => ipcRenderer.invoke(IPC.pauseGuidedRun),
@@ -94,6 +118,7 @@ contextBridge.exposeInMainWorld('tellann', {
     list: (applicationId: string) => ipcRenderer.invoke(IPC.listInstrumentationPlans, applicationId),
     get: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.getInstrumentationPlan, { applicationId, planId }),
     getLocalResult: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.getLocalInstrumentationResult, { applicationId, planId }),
+    generateReport: (applicationId: string, planId: string, applicationName: string, environmentName: string) => ipcRenderer.invoke(IPC.generateInstrumentationReport, { applicationId, planId, applicationName, environmentName }),
     approve: (input: unknown) => ipcRenderer.invoke(IPC.approveInstrumentation, input),
     reject: (applicationId: string, planId: string, reason?: string) => ipcRenderer.invoke(IPC.rejectInstrumentation, { applicationId, planId, reason }),
     apply: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.applyInstrumentation, { applicationId, planId }),
@@ -102,6 +127,7 @@ contextBridge.exposeInMainWorld('tellann', {
   },
   system: {
     getVersion: () => ipcRenderer.invoke(IPC.getVersion),
+    copyText: (value: string) => ipcRenderer.invoke(IPC.copyText, value),
     openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
     openProfile: () => ipcRenderer.invoke(IPC.openProfile),
   },

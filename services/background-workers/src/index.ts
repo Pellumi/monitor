@@ -60,12 +60,14 @@ export async function runAiDraftJobProcessor(): Promise<void> {
 
     if (jobs.length === 0) return;
 
-    for (const job of jobs) {
-      // Claim the job
-      await (prisma as any).aIFlowDraftJob.update({
-        where: { id: job.id },
+    await Promise.all(jobs.map(async (job: any) => {
+      // Claim only if the job is still queued. This prevents duplicate workers
+      // and user cancellation from being overwritten after the initial read.
+      const claim = await (prisma as any).aIFlowDraftJob.updateMany({
+        where: { id: job.id, status: 'QUEUED' },
         data: { status: 'PROCESSING', startedAt: new Date(), attempts: { increment: 1 } },
       });
+      if (claim.count !== 1) return;
 
       try {
         // Load rulesets for the domain
@@ -166,7 +168,7 @@ export async function runAiDraftJobProcessor(): Promise<void> {
 
         console.error(`[ai-draft-job-processor] Job ${job.id} ${isFinalAttempt ? 'FAILED permanently' : `retrying at ${nextSchedule.toISOString()}`}`, err?.message);
       }
-    }
+    }));
   } catch (err) {
     console.error('[ai-draft-job-processor] Poll error', err);
   }
@@ -328,7 +330,12 @@ const JOB_DEFINITIONS: JobDefinition[] = [
 // Fallback: setInterval scheduler (when REDIS_URL is not set)
 // ─────────────────────────────────────────────────────────────
 
-function every(ms: number, fn: () => Promise<void>, name: string): void {
+function every(
+  ms: number,
+  fn: () => Promise<void>,
+  name: string,
+  runImmediately = true,
+): void {
   const run = async () => {
     try {
       await fn();
@@ -336,7 +343,9 @@ function every(ms: number, fn: () => Promise<void>, name: string): void {
       console.error(`[worker:${name}] Unhandled error`, err);
     }
   };
-  run(); // run immediately on startup
+  if (runImmediately) {
+    void run();
+  }
   setInterval(run, ms);
 }
 
@@ -353,7 +362,9 @@ function startWithSetInterval(): void {
       if (job.delay) {
         setTimeout(() => every(intervalMs, job.handler, job.name), job.delay);
       } else {
-        every(intervalMs, job.handler, job.name);
+        // Cron-style maintenance jobs should wait for their schedule. Running all
+        // of them during local startup competes with document and draft processing.
+        every(intervalMs, job.handler, job.name, false);
       }
     }
   }

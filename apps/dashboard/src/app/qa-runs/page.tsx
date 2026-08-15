@@ -19,6 +19,41 @@ type QARun = {
   _count: { artifacts: number; findings: number };
 };
 
+function QARunsSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="space-y-2">
+        <div className="h-4 w-48 bg-neutral-800/80 rounded" />
+        <div className="h-8 w-36 bg-neutral-800 rounded-md" />
+        <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
+      </div>
+
+      <div className="grid gap-3">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 flex items-start justify-between gap-4">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 rounded-full bg-neutral-800" />
+                <div className="h-5 w-32 bg-neutral-800 rounded" />
+                <div className="h-5 w-16 bg-neutral-800/60 rounded" />
+              </div>
+              <div className="h-4 w-64 bg-neutral-800/60 rounded" />
+              <div className="h-3.5 w-48 bg-neutral-800/40 rounded" />
+            </div>
+            <div className="flex flex-col items-end space-y-3">
+              <div className="h-6 w-20 bg-neutral-800 rounded-full" />
+              <div className="flex gap-3">
+                <div className="h-4 w-20 bg-neutral-800/50 rounded" />
+                <div className="h-4 w-20 bg-neutral-800/50 rounded" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function QARunsPage() {
   const { appId, selectedOrgId, isLoading: loadingApplication } = useSelectedApplication();
   const runs = useQuery<QARun[]>({
@@ -32,7 +67,7 @@ export default function QARunsPage() {
   });
 
   if (!selectedOrgId) return <div className="text-neutral-400">Select an organization to view QA runs.</div>;
-  if (loadingApplication) return <div className="animate-pulse text-neutral-400">Loading application…</div>;
+  if (loadingApplication || runs.isLoading) return <QARunsSkeleton />;
   if (!appId) return <ApplicationRequiredState feature="QA runs" />;
 
   return (
@@ -42,7 +77,6 @@ export default function QARunsPage() {
         <h1 className="mt-2 text-3xl font-bold">QA Runs</h1>
         <p className="mt-1 text-sm text-neutral-400">Guided desktop runs, captured evidence, findings, reconciliation, and reports.</p>
       </div>
-      {runs.isLoading ? <div className="animate-pulse text-neutral-400">Loading QA runs…</div> : null}
       {runs.error ? <div className="text-red-400">{(runs.error as Error).message}</div> : null}
       <div className="grid gap-3">
         {(runs.data ?? []).map((run) => (

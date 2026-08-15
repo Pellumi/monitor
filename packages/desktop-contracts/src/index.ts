@@ -86,6 +86,11 @@ export const RepositorySnapshotSummarySchema = z.object({
     cwd: z.string(),
     scriptName: z.string(),
   })).optional(),
+  suggestedApplicationUrls: z.array(z.object({
+    url: z.string().url(),
+    confidence: z.number().min(0).max(1),
+    source: z.string(),
+  })).optional(),
   frameworks: z.array(FrameworkEvidenceSchema),
   routes: z.array(z.string()),
   endpoints: z.array(z.string()),
@@ -279,6 +284,8 @@ export const SourceDocumentSummarySchema = z.object({
 export const DocumentAccessSchema = z.object({
   entitled: z.boolean(),
   documents: z.array(SourceDocumentSummarySchema),
+  accessDenied: z.boolean().optional(),
+  message: z.string().optional(),
 });
 
 export const AsyncJobStatusSchema = z.enum(['QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED']);
@@ -297,7 +304,8 @@ export const IntentDraftJobSchema = z.object({
   id: z.string().uuid(), status: AsyncJobStatusSchema, draftId: z.string().uuid().nullable(),
   errorMessageSafe: z.string().nullable(), attempts: z.number().int(), maxAttempts: z.number().int(),
   scheduledAt: z.string().or(z.date()), startedAt: z.string().or(z.date()).nullable(),
-  completedAt: z.string().or(z.date()).nullable(),
+  completedAt: z.string().or(z.date()).nullable(), createdAt: z.string().or(z.date()).optional(),
+  updatedAt: z.string().or(z.date()).optional(),
 }).passthrough();
 export const IntentDraftJobCreatedSchema = z.object({ jobId: z.string().uuid(), status: AsyncJobStatusSchema });
 
@@ -308,6 +316,64 @@ export const IntentDraftSchema = z.object({
 }).passthrough();
 
 export const InstrumentationFrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
+
+export const SdkTargetKindSchema = z.enum(['FRONTEND', 'BACKEND']);
+export const SdkConnectionMethodSchema = z.enum(['MANUAL', 'DESKTOP']);
+export const SdkTargetReadinessSchema = z.object({
+  targetId: z.string(),
+  kind: SdkTargetKindSchema,
+  source: z.string(),
+  configured: z.boolean().default(false),
+  processHealthy: z.boolean(),
+  sessionObserved: z.boolean(),
+  eventObserved: z.boolean(),
+  installationTestPassed: z.boolean(),
+  verified: z.boolean(),
+  lastEventAt: z.string().datetime().nullable(),
+});
+export const SdkReadinessSchema = z.object({
+  applicationId: z.string().uuid(),
+  environmentId: z.string().uuid(),
+  connected: z.boolean(),
+  codeConfigured: z.boolean().default(false),
+  readyForDemonstration: z.boolean(),
+  sessionObserved: z.boolean(),
+  eventObserved: z.boolean(),
+  installationTestPassed: z.boolean(),
+  targets: z.array(SdkTargetReadinessSchema),
+});
+export const SdkSetupTargetSchema = z.object({
+  id: z.string(),
+  kind: SdkTargetKindSchema,
+  label: z.string(),
+  packageName: z.enum(['@sots/frontend-sdk', '@sots/backend-sdk']),
+  packageVersion: z.string(),
+  installCommands: z.record(z.string()),
+  environmentVariables: z.record(z.string()),
+  snippet: z.string(),
+});
+export const SdkSetupDescriptorSchema = z.object({
+  applicationId: z.string().uuid(),
+  applicationName: z.string(),
+  organizationId: z.string().uuid(),
+  environmentId: z.string().uuid(),
+  environmentName: z.string(),
+  environmentType: EnvironmentTypeSchema,
+  baseUrl: z.string().url().nullable(),
+  gatewayEndpoint: z.string().url(),
+  gatewayEndpointCustomized: z.boolean().default(false),
+  hasActiveKey: z.boolean(),
+  keyPrefix: z.string().nullable(),
+  targets: z.array(SdkSetupTargetSchema),
+  readiness: SdkReadinessSchema,
+});
+export const DesktopSetupHandoffSchema = z.object({
+  handoffToken: z.string().min(32),
+  expiresAt: z.string().datetime(),
+  deepLink: z.string(),
+  applicationId: z.string().uuid(),
+  environmentId: z.string().uuid(),
+});
 export const InstrumentationPlanStatusSchema = z.enum([
   'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
   'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
@@ -370,12 +436,20 @@ export const StartGuidedRunInputSchema = z.object({
 
 export const IPC = {
   getVersion: 'tellann:version',
+  copyText: 'tellann:system:copy-text',
   getSession: 'tellann:auth:session',
+  claimSetupHandoff: 'tellann:setup:handoff:claim',
+  consumeSetupHandoff: 'tellann:setup:handoff:consume',
+  getSdkSetup: 'tellann:setup:sdk:get',
+  issueSdkSetupKey: 'tellann:setup:sdk:key',
   signIn: 'tellann:auth:sign-in',
+  reopenSignIn: 'tellann:auth:reopen-sign-in',
+  cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
+  getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
@@ -388,10 +462,13 @@ export const IPC = {
   listDocuments: 'tellann:documents:list',
   getDocumentJob: 'tellann:documents:job:get',
   createIntentDraft: 'tellann:intent:draft:create',
+  listIntentDraftJobs: 'tellann:intent:draft:jobs:list',
   getIntentDraftJob: 'tellann:intent:draft:job:get',
+  cancelIntentDraftJob: 'tellann:intent:draft:job:cancel',
   listIntentDrafts: 'tellann:intent:draft:list',
   getIntentDraft: 'tellann:intent:draft:get',
   reviewIntentDraft: 'tellann:intent:draft:review',
+  deleteIntentDraft: 'tellann:intent:draft:delete',
   correctIntentDraft: 'tellann:intent:draft:correct',
   openExternal: 'tellann:system:open-external',
   openProfile: 'tellann:system:open-profile',
@@ -412,6 +489,7 @@ export const IPC = {
   validateInstrumentation: 'tellann:instrumentation:validate',
   rollbackInstrumentation: 'tellann:instrumentation:rollback',
   getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
+  generateInstrumentationReport: 'tellann:instrumentation:report:generate',
 } as const;
 
 export const DesktopSessionSchema = z.object({
@@ -470,6 +548,10 @@ export type IntentDraftJob = z.infer<typeof IntentDraftJobSchema>;
 export type IntentDraftJobCreated = z.infer<typeof IntentDraftJobCreatedSchema>;
 export type IntentDraft = z.infer<typeof IntentDraftSchema>;
 export type InstrumentationDetection = z.infer<typeof InstrumentationDetectionSchema>;
+export type SdkSetupDescriptor = z.infer<typeof SdkSetupDescriptorSchema>;
+export type SdkReadiness = z.infer<typeof SdkReadinessSchema>;
+export type SdkSetupTarget = z.infer<typeof SdkSetupTargetSchema>;
+export type DesktopSetupHandoff = z.infer<typeof DesktopSetupHandoffSchema>;
 export type InstrumentationPlan = z.infer<typeof InstrumentationPlanSchema>;
 export type InstrumentationApplyResult = z.infer<typeof InstrumentationApplyResultSchema>;
 export type InstrumentationValidationResult = z.infer<typeof InstrumentationValidationResultSchema>;

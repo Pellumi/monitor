@@ -16,9 +16,9 @@ export function FirstAnalysisReady() {
   return (
     <div className="rounded-lg border border-emerald-500/40 bg-gradient-to-br from-emerald-950/20 via-[#141414] to-[#141414] p-8 text-white space-y-6">
       <div className="flex items-center gap-3">
-        <div className="p-3 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+        {/* <div className="p-3 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
           <PartyPopper className="w-6 h-6" />
-        </div>
+        </div> */}
         <div>
           <span className="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold">
             Milestone Achieved
