@@ -43,7 +43,10 @@ describe('pricing catalog contract', () => {
     for (const plan of ['LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
       expect(enabled(plan, Feature.DOCUMENT_FLOW_INFERENCE)).toBe(true);
     }
-    for (const plan of ['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
+    for (const plan of ['FREE', 'LOCAL'] as const) {
+      expect(enabled(plan, Feature.AUTOMATED_INSTRUMENTATION)).toBe(false);
+    }
+    for (const plan of ['SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
       expect(enabled(plan, Feature.AUTOMATED_INSTRUMENTATION)).toBe(true);
     }
     for (const plan of ['FREE', 'LOCAL', 'SOLO'] as const) {

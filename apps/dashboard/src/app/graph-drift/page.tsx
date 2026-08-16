@@ -427,7 +427,7 @@ function GraphDriftContent() {
   if (!selectedOrgId) {
     return (
       <div className="p-6 max-w-6xl mx-auto">
-        <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-8 text-sm text-neutral-400">
+        <div className="border border-[#262626] bg-[#131313] rounded-md p-8 text-sm font-mono text-[#8e9192]">
           No organization is selected.
         </div>
       </div>
@@ -441,7 +441,7 @@ function GraphDriftContent() {
   if (!appId) {
     return (
       <div className="p-6 max-w-6xl mx-auto">
-        <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-8 text-sm text-neutral-400">
+        <div className="border border-[#262626] bg-[#131313] rounded-md p-8 text-sm font-mono text-[#8e9192]">
           No applications are available for this organization.
         </div>
       </div>
@@ -450,18 +450,19 @@ function GraphDriftContent() {
 
   return (
     <div className="space-y-6 w-full mx-auto">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      {/* Header */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between border-b border-[#262626] pb-5">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-3xl font-bold tracking-tight text-white">
             Graph Drift
           </h1>
-          <p className="text-sm text-neutral-400 mt-1">
+          <p className="text-sm text-[#c4c7c8] mt-1">
             {selectedAppName} behavioral graph coverage over time and version comparisons.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <label className="text-xs text-neutral-400 font-medium" htmlFor="flow-selector">Flow</label>
+          <label className="text-xs font-mono text-[#8e9192] uppercase tracking-wider" htmlFor="flow-selector">Flow</label>
           <Select
             value={selectedFlowId}
             onValueChange={(val) => {
@@ -474,7 +475,7 @@ function GraphDriftContent() {
             <SelectTrigger
               id="flow-selector"
               disabled={isFlowsLoading || flows.length === 0}
-              className="bg-neutral-900 border-neutral-700 w-[200px]"
+              className="bg-black border-[#262626] w-[220px] font-mono text-xs text-white rounded-sm"
             >
               <SelectValue
                 placeholder={
@@ -490,7 +491,7 @@ function GraphDriftContent() {
             </SelectTrigger>
             <SelectContent>
               {flows.map((f) => (
-                <SelectItem key={f.id} value={f.id}>
+                <SelectItem key={f.id} value={f.id} className="font-mono text-xs">
                   {f.name}
                 </SelectItem>
               ))}
@@ -500,25 +501,25 @@ function GraphDriftContent() {
       </div>
 
       {loadError instanceof Error && (
-        <div className="border border-red-900/40 bg-red-950/20 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+        <div className="border border-[#262626] bg-black rounded-md p-4 flex items-start gap-3 text-xs font-mono">
+          <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-red-300">Graph drift data failed to load</p>
-            <p className="mt-1 text-xs text-red-400/80">{loadError.message}</p>
+            <p className="font-semibold text-white">Graph drift data failed to load</p>
+            <p className="mt-1 text-[#8e9192]">{loadError.message}</p>
           </div>
         </div>
       )}
 
       {driftAlerts.length > 0 && (
-        <div className="border border-amber-900/40 bg-amber-950/20 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="border border-[#262626] bg-black rounded-md p-4 flex items-start gap-3 text-xs font-mono">
+          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-amber-300">Coverage Regression Detected</p>
+            <p className="font-semibold text-white">Coverage Regression Detected</p>
             <div className="mt-1 space-y-1">
               {driftAlerts.map((a, i) => (
-                <p key={i} className="text-xs text-amber-400/80">
+                <p key={i} className="text-[#8e9192]">
                   Version v{a.fromVersion} → v{a.toVersion}: coverage dropped by{" "}
-                  {Math.abs(a.delta * 100).toFixed(1)}%
+                  <span className="text-amber-400 font-bold">{Math.abs(a.delta * 100).toFixed(1)}%</span>
                 </p>
               ))}
             </div>
@@ -530,40 +531,54 @@ function GraphDriftContent() {
         {/* Main Content */}
         <div className="xl:col-span-2 space-y-6">
           {/* Coverage Trend Chart */}
-          <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
+          <div className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-3">
               <div>
                 <h2 className="text-sm font-semibold text-white">Coverage Trend</h2>
-                <p className="text-xs text-neutral-500 mt-0.5">
+                <p className="text-xs font-mono text-[#8e9192] mt-0.5">
                   {selectedFlow ? `${selectedFlow.name} expected state coverage` : "Expected state coverage"}
                 </p>
               </div>
-              {isHistoryLoading && (
-                <RefreshCw className="h-4 w-4 text-neutral-500 animate-spin" />
-              )}
+              <div className="flex items-center gap-2">
+                <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+                  Drift // Trend
+                </span>
+                {isHistoryLoading && (
+                  <RefreshCw className="h-3.5 w-3.5 text-[#8e9192] animate-spin" />
+                )}
+              </div>
             </div>
 
             {coverageHistory && coverageHistory.length > 0 ? (
-              <SimpleLineChart data={coverageHistory} />
+              <div className="bg-black border border-[#262626] rounded-sm p-4">
+                <SimpleLineChart data={coverageHistory} />
+              </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-48 text-neutral-600 text-xs gap-2">
-                <BarChart2 className="h-8 w-8 opacity-30" />
-                <p>No version history available yet</p>
-                <p className="text-neutral-700">Complete multiple flow declarations to see trends</p>
+              <div className="flex flex-col items-center justify-center h-48 bg-black border border-[#262626] rounded-sm text-[#8e9192] font-mono text-xs gap-2">
+                <BarChart2 className="h-8 w-8 text-[#444748]" />
+                <p className="text-white font-semibold">No version history available yet</p>
+                <p className="text-[#8e9192]">Complete multiple flow declarations to see trends</p>
               </div>
             )}
           </div>
 
           {/* Version Diff Panel */}
-          <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <GitCompare className="h-4 w-4 text-indigo-400" />
-              Version Comparison
-            </h2>
+          <div className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+              <div className="flex items-center gap-2">
+                <GitCompare className="h-4 w-4 text-white" />
+                <h2 className="text-sm font-semibold text-white">
+                  Version Comparison
+                </h2>
+              </div>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+                Version // Diff
+              </span>
+            </div>
 
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end mb-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
               <div className="flex-1">
-                <label className="text-xs text-neutral-500 mb-1 block" htmlFor="from-version-selector">From version</label>
+                <label className="text-[11px] font-mono text-[#8e9192] uppercase tracking-wider mb-1 block" htmlFor="from-version-selector">From version</label>
                 <Select
                   value={fromVersionId}
                   onValueChange={(val) => {
@@ -574,7 +589,7 @@ function GraphDriftContent() {
                   <SelectTrigger
                     id="from-version-selector"
                     disabled={sortedVersions.length < 2 || isVersionsLoading}
-                    className="bg-neutral-950 border-neutral-700 w-full"
+                    className="bg-black border-[#262626] w-full font-mono text-xs text-white rounded-sm"
                   >
                     <SelectValue placeholder="Select version...">
                       {(() => {
@@ -584,9 +599,9 @@ function GraphDriftContent() {
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Select version...</SelectItem>
+                    <SelectItem value="" className="font-mono text-xs">Select version...</SelectItem>
                     {sortedVersions.map((v) => (
-                      <SelectItem key={v.id} value={v.id}>
+                      <SelectItem key={v.id} value={v.id} className="font-mono text-xs">
                         v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
                         {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
                       </SelectItem>
@@ -595,10 +610,10 @@ function GraphDriftContent() {
                 </Select>
               </div>
 
-              <ArrowRight className="hidden h-4 w-4 text-neutral-600 flex-shrink-0 mb-2 lg:block" />
+              <ArrowRight className="hidden h-4 w-4 text-[#8e9192] flex-shrink-0 mb-2.5 lg:block" />
 
               <div className="flex-1">
-                <label className="text-xs text-neutral-500 mb-1 block" htmlFor="to-version-selector">To version</label>
+                <label className="text-[11px] font-mono text-[#8e9192] uppercase tracking-wider mb-1 block" htmlFor="to-version-selector">To version</label>
                 <Select
                   value={toVersionId}
                   onValueChange={(val) => {
@@ -609,7 +624,7 @@ function GraphDriftContent() {
                   <SelectTrigger
                     id="to-version-selector"
                     disabled={sortedVersions.length < 2 || isVersionsLoading}
-                    className="bg-neutral-950 border-neutral-700 w-full"
+                    className="bg-black border-[#262626] w-full font-mono text-xs text-white rounded-sm"
                   >
                     <SelectValue placeholder="Select version...">
                       {(() => {
@@ -619,9 +634,9 @@ function GraphDriftContent() {
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Select version...</SelectItem>
+                    <SelectItem value="" className="font-mono text-xs">Select version...</SelectItem>
                     {sortedVersions.map((v) => (
-                      <SelectItem key={v.id} value={v.id}>
+                      <SelectItem key={v.id} value={v.id} className="font-mono text-xs">
                         v{v.version} — {new Date(v.createdAt).toLocaleDateString()}
                         {v.expectedStateCount != null ? ` (${v.expectedStateCount} states)` : ""}
                       </SelectItem>
@@ -635,8 +650,7 @@ function GraphDriftContent() {
                 onClick={handleCompare}
                 disabled={!fromVersionId || !toVersionId || fromVersionId === toVersionId || isDiffLoading}
                 loading={isDiffLoading}
-                variant="accent"
-                className="bg-indigo-600 hover:bg-indigo-500 hover:border-indigo-400 text-white font-medium text-sm flex-shrink-0"
+                className="bg-white text-black font-semibold text-xs uppercase tracking-wider rounded-sm hover:bg-neutral-200 transition-colors flex-shrink-0"
               >
                 {!isDiffLoading && <GitCompare className="h-3.5 w-3.5" />}
                 Compare
@@ -644,7 +658,7 @@ function GraphDriftContent() {
             </div>
 
             {showDiff && diffError instanceof Error && (
-              <div className="flex items-center gap-2 text-xs text-red-400 border border-red-900/40 bg-red-950/20 rounded-lg px-4 py-3 mb-4">
+              <div className="flex items-center gap-2 text-xs font-mono text-red-400 border border-[#262626] bg-black rounded-sm px-4 py-3">
                 <AlertTriangle className="h-4 w-4" />
                 {diffError.message}
               </div>
@@ -654,19 +668,19 @@ function GraphDriftContent() {
               <div className="space-y-4">
                 {/* Summary badges */}
                 <div className="flex flex-wrap gap-2">
-                  <span className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-950/40 border border-emerald-900/40 text-emerald-400">
+                  <span className="flex items-center gap-1 text-[11px] font-mono uppercase px-2.5 py-1 rounded-sm bg-black border border-[#262626] text-emerald-400">
                     <Plus className="h-3 w-3" />
                     {diff.addedStates.length} states added
                   </span>
-                  <span className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-red-950/40 border border-red-900/40 text-red-400">
+                  <span className="flex items-center gap-1 text-[11px] font-mono uppercase px-2.5 py-1 rounded-sm bg-black border border-[#262626] text-red-400">
                     <Minus className="h-3 w-3" />
                     {diff.removedStates.length} states removed
                   </span>
-                  <span className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-950/40 border border-blue-900/40 text-blue-400">
+                  <span className="flex items-center gap-1 text-[11px] font-mono uppercase px-2.5 py-1 rounded-sm bg-black border border-[#262626] text-blue-400">
                     <Plus className="h-3 w-3" />
                     {diff.addedTransitions.length} transitions added
                   </span>
-                  <span className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-orange-950/40 border border-orange-900/40 text-orange-400">
+                  <span className="flex items-center gap-1 text-[11px] font-mono uppercase px-2.5 py-1 rounded-sm bg-black border border-[#262626] text-amber-400">
                     <Minus className="h-3 w-3" />
                     {diff.removedTransitions.length} transitions removed
                   </span>
@@ -677,16 +691,16 @@ function GraphDriftContent() {
                   <div className="grid grid-cols-2 gap-4">
                     {diff.addedStates.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-emerald-400 mb-2 uppercase tracking-wider">
+                        <p className="text-[11px] font-mono font-semibold text-emerald-400 mb-2 uppercase tracking-wider">
                           Added States
                         </p>
                         <div className="space-y-1">
                           {diff.addedStates.map((s) => (
                             <div
                               key={s}
-                              className="flex items-center gap-2 text-xs text-emerald-300 bg-emerald-950/20 px-2.5 py-1.5 rounded-md border border-emerald-900/20"
+                              className="flex items-center gap-2 text-xs font-mono text-emerald-300 bg-black px-2.5 py-1.5 rounded-sm border border-[#262626]"
                             >
-                              <Plus className="h-3 w-3 flex-shrink-0" />
+                              <Plus className="h-3 w-3 flex-shrink-0 text-emerald-400" />
                               {s}
                             </div>
                           ))}
@@ -695,16 +709,16 @@ function GraphDriftContent() {
                     )}
                     {diff.removedStates.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wider">
+                        <p className="text-[11px] font-mono font-semibold text-red-400 mb-2 uppercase tracking-wider">
                           Removed States
                         </p>
                         <div className="space-y-1">
                           {diff.removedStates.map((s) => (
                             <div
                               key={s}
-                              className="flex items-center gap-2 text-xs text-red-300 bg-red-950/20 px-2.5 py-1.5 rounded-md border border-red-900/20 line-through opacity-75"
+                              className="flex items-center gap-2 text-xs font-mono text-red-300 bg-black px-2.5 py-1.5 rounded-sm border border-[#262626] line-through opacity-75"
                             >
-                              <Minus className="h-3 w-3 flex-shrink-0 no-underline" />
+                              <Minus className="h-3 w-3 flex-shrink-0 no-underline text-red-400" />
                               {s}
                             </div>
                           ))}
@@ -719,22 +733,22 @@ function GraphDriftContent() {
                   <div className="grid grid-cols-2 gap-4">
                     {diff.addedTransitions.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-blue-400 mb-2 uppercase tracking-wider">
+                        <p className="text-[11px] font-mono font-semibold text-blue-400 mb-2 uppercase tracking-wider">
                           Added Transitions
                         </p>
                         <div className="space-y-1">
                           {diff.addedTransitions.slice(0, 10).map((t, i) => (
                             <div
                               key={i}
-                              className="flex items-center gap-1.5 text-xs text-blue-300 bg-blue-950/20 px-2.5 py-1.5 rounded-md border border-blue-900/20"
+                              className="flex items-center gap-1.5 text-xs font-mono text-blue-300 bg-black px-2.5 py-1.5 rounded-sm border border-[#262626]"
                             >
                               <span className="truncate">{t.fromState}</span>
-                              <ArrowRight className="h-3 w-3 flex-shrink-0" />
+                              <ArrowRight className="h-3 w-3 flex-shrink-0 text-[#8e9192]" />
                               <span className="truncate">{t.toState}</span>
                             </div>
                           ))}
                           {diff.addedTransitions.length > 10 && (
-                            <p className="text-xs text-neutral-600 px-2">
+                            <p className="text-xs font-mono text-[#8e9192] px-2">
                               +{diff.addedTransitions.length - 10} more…
                             </p>
                           )}
@@ -743,17 +757,17 @@ function GraphDriftContent() {
                     )}
                     {diff.removedTransitions.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-orange-400 mb-2 uppercase tracking-wider">
+                        <p className="text-[11px] font-mono font-semibold text-amber-400 mb-2 uppercase tracking-wider">
                           Removed Transitions
                         </p>
                         <div className="space-y-1">
                           {diff.removedTransitions.slice(0, 10).map((t, i) => (
                             <div
                               key={i}
-                              className="flex items-center gap-1.5 text-xs text-orange-300/70 bg-orange-950/20 px-2.5 py-1.5 rounded-md border border-orange-900/20 opacity-75"
+                              className="flex items-center gap-1.5 text-xs font-mono text-amber-300/70 bg-black px-2.5 py-1.5 rounded-sm border border-[#262626] opacity-75"
                             >
                               <span className="truncate line-through">{t.fromState}</span>
-                              <ArrowRight className="h-3 w-3 flex-shrink-0" />
+                              <ArrowRight className="h-3 w-3 flex-shrink-0 text-[#8e9192]" />
                               <span className="truncate line-through">{t.toState}</span>
                             </div>
                           ))}
@@ -767,8 +781,8 @@ function GraphDriftContent() {
                   diff.removedStates.length === 0 &&
                   diff.addedTransitions.length === 0 &&
                   diff.removedTransitions.length === 0 && (
-                    <div className="flex items-center gap-2 text-xs text-neutral-500 border border-neutral-800 rounded-lg px-4 py-3">
-                      <Info className="h-4 w-4" />
+                    <div className="flex items-center gap-2 text-xs font-mono text-[#8e9192] border border-[#262626] bg-black rounded-sm px-4 py-3">
+                      <Info className="h-4 w-4 text-white" />
                       No structural changes between these versions
                     </div>
                   )}
@@ -776,8 +790,8 @@ function GraphDriftContent() {
             )}
 
             {!showDiff && (
-              <div className="flex items-center gap-2 text-xs text-neutral-600 border border-neutral-800 border-dashed rounded-lg px-4 py-6 justify-center">
-                <GitCompare className="h-4 w-4" />
+              <div className="flex items-center gap-2 text-xs font-mono text-[#8e9192] border border-[#262626] border-dashed rounded-sm px-4 py-6 justify-center bg-black">
+                <GitCompare className="h-4 w-4 text-white" />
                 Select two versions and click Compare to see the diff
               </div>
             )}
@@ -786,13 +800,18 @@ function GraphDriftContent() {
 
         {/* Right sidebar — Version List */}
         <div className="space-y-4">
-          <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3">
-              Version History
-            </h3>
+          <div className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+              <h3 className="text-xs font-mono font-semibold uppercase tracking-wider text-[#8e9192]">
+                Version History
+              </h3>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+                History
+              </span>
+            </div>
 
             {!versions || versions.length === 0 ? (
-              <p className="text-xs text-neutral-600">No versions recorded yet</p>
+              <p className="text-xs font-mono text-[#8e9192]">No versions recorded yet</p>
             ) : (
               <div className="space-y-2">
                 {[...versions]
@@ -808,10 +827,10 @@ function GraphDriftContent() {
                       <div
                         key={v.id}
                         id={`version-${v.version}`}
-                        className="border border-neutral-800 bg-neutral-950 rounded-lg p-3 space-y-1.5"
+                        className="border border-[#262626] bg-black rounded-sm p-3 space-y-1.5 font-mono text-xs"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-white">v{v.version}</span>
+                          <span className="font-bold text-white">v{v.version}</span>
                           {history?.coverageScore != null && prevHistory?.coverageScore != null && (
                             <DriftAlertBadge
                               score={history.coverageScore}
@@ -819,14 +838,14 @@ function GraphDriftContent() {
                             />
                           )}
                         </div>
-                        <p className="text-[10px] text-neutral-600">
+                        <p className="text-[10px] text-[#8e9192]">
                           {new Date(v.createdAt).toLocaleDateString("en-US", {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
                           })}
                         </p>
-                        <div className="flex gap-3 text-[10px] text-neutral-500">
+                        <div className="flex gap-3 text-[10px] text-[#8e9192]">
                           {v.expectedStateCount != null && (
                             <span>{v.expectedStateCount} states</span>
                           )}
@@ -837,28 +856,14 @@ function GraphDriftContent() {
                         {history?.coverageScore != null && (
                           <div className="mt-1.5">
                             <div className="flex justify-between text-[10px] mb-0.5">
-                              <span className="text-neutral-500">Coverage</span>
-                              <span
-                                className={
-                                  history.coverageScore >= 0.7
-                                    ? "text-emerald-400"
-                                    : history.coverageScore >= 0.4
-                                    ? "text-amber-400"
-                                    : "text-red-400"
-                                }
-                              >
+                              <span className="text-[#8e9192]">Coverage</span>
+                              <span className="text-white font-bold">
                                 {(history.coverageScore * 100).toFixed(0)}%
                               </span>
                             </div>
-                            <div className="h-1 bg-neutral-800 rounded-full overflow-hidden">
+                            <div className="h-1 bg-[#262626] rounded-full overflow-hidden">
                               <div
-                                className={`h-full rounded-full transition-all ${
-                                  history.coverageScore >= 0.7
-                                    ? "bg-emerald-500"
-                                    : history.coverageScore >= 0.4
-                                    ? "bg-amber-500"
-                                    : "bg-red-500"
-                                }`}
+                                className="h-full bg-white transition-all"
                                 style={{ width: `${history.coverageScore * 100}%` }}
                               />
                             </div>
@@ -873,8 +878,8 @@ function GraphDriftContent() {
 
           {/* Drift Summary */}
           {driftAlerts.length > 0 && (
-            <div className="border border-neutral-800 bg-neutral-900 rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <div className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-3 font-mono text-xs">
+              <h3 className="text-xs font-semibold text-[#8e9192] uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
                 Drift Alerts
               </h3>
@@ -882,12 +887,12 @@ function GraphDriftContent() {
                 {driftAlerts.map((a, i) => (
                   <div
                     key={i}
-                    className="text-xs border border-amber-900/30 bg-amber-950/10 rounded-lg px-3 py-2"
+                    className="border border-[#262626] bg-black rounded-sm px-3 py-2"
                   >
-                    <p className="text-amber-300 font-medium">
+                    <p className="text-white font-medium">
                       v{a.fromVersion} → v{a.toVersion}
                     </p>
-                    <p className="text-amber-500/70 mt-0.5">
+                    <p className="text-amber-400 mt-0.5">
                       ↓ {Math.abs(a.delta * 100).toFixed(1)}% coverage
                     </p>
                   </div>
@@ -906,38 +911,38 @@ function GraphDriftSkeleton() {
     <div className="p-6 max-w-6xl mx-auto space-y-6 animate-pulse">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#262626]">
         <div className="space-y-2">
-          <div className="h-7 w-48 bg-neutral-800 rounded-md" />
-          <div className="h-4 w-72 bg-neutral-800/60 rounded-md" />
+          <div className="h-7 w-48 bg-[#131313] border border-[#262626] rounded-sm" />
+          <div className="h-4 w-72 bg-[#131313] border border-[#262626] rounded-sm" />
         </div>
         <div className="flex gap-3">
-          <div className="h-9 w-36 bg-neutral-800 rounded-md" />
-          <div className="h-9 w-36 bg-neutral-800 rounded-md" />
+          <div className="h-9 w-36 bg-[#131313] border border-[#262626] rounded-sm" />
+          <div className="h-9 w-36 bg-[#131313] border border-[#262626] rounded-sm" />
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
-          <div className="h-4 w-24 bg-neutral-800 rounded" />
-          <div className="h-8 w-16 bg-neutral-800 rounded" />
+        <div className="h-24 bg-[#131313] border border-[#262626] rounded-md p-4 space-y-2">
+          <div className="h-4 w-24 bg-black border border-[#262626] rounded-sm" />
+          <div className="h-8 w-16 bg-black border border-[#262626] rounded-sm" />
         </div>
-        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
-          <div className="h-4 w-28 bg-neutral-800 rounded" />
-          <div className="h-8 w-20 bg-neutral-800 rounded" />
+        <div className="h-24 bg-[#131313] border border-[#262626] rounded-md p-4 space-y-2">
+          <div className="h-4 w-28 bg-black border border-[#262626] rounded-sm" />
+          <div className="h-8 w-20 bg-black border border-[#262626] rounded-sm" />
         </div>
-        <div className="h-24 bg-[#141414] border border-[#262626] rounded-xl p-4 space-y-2">
-          <div className="h-4 w-20 bg-neutral-800 rounded" />
-          <div className="h-8 w-16 bg-neutral-800 rounded" />
+        <div className="h-24 bg-[#131313] border border-[#262626] rounded-md p-4 space-y-2">
+          <div className="h-4 w-20 bg-black border border-[#262626] rounded-sm" />
+          <div className="h-8 w-16 bg-black border border-[#262626] rounded-sm" />
         </div>
       </div>
-      <div className="h-80 bg-[#141414] border border-[#262626] rounded-xl p-6 space-y-4">
+      <div className="h-80 bg-[#131313] border border-[#262626] rounded-md p-6 space-y-4">
         <div className="flex justify-between items-center pb-4 border-b border-[#262626]">
-          <div className="h-5 w-44 bg-neutral-800 rounded" />
-          <div className="h-8 w-28 bg-neutral-800/60 rounded" />
+          <div className="h-5 w-44 bg-black border border-[#262626] rounded-sm" />
+          <div className="h-8 w-28 bg-black border border-[#262626] rounded-sm" />
         </div>
         <div className="space-y-3 pt-2">
-          <div className="h-10 w-full bg-neutral-800/40 rounded-lg" />
-          <div className="h-10 w-full bg-neutral-800/30 rounded-lg" />
-          <div className="h-10 w-full bg-neutral-800/40 rounded-lg" />
-          <div className="h-10 w-full bg-neutral-800/30 rounded-lg" />
+          <div className="h-10 w-full bg-black border border-[#262626] rounded-sm" />
+          <div className="h-10 w-full bg-black border border-[#262626] rounded-sm" />
+          <div className="h-10 w-full bg-black border border-[#262626] rounded-sm" />
+          <div className="h-10 w-full bg-black border border-[#262626] rounded-sm" />
         </div>
       </div>
     </div>

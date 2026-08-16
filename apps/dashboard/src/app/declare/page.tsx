@@ -958,6 +958,17 @@ function DeclareContent() {
       .toSorted((a, b) => b.confidence - a.confidence);
   }, [suggestionResponse]);
 
+  // Auto-complete onboarding once demonstration is finished so the user isn't trapped in Stage 5
+  useEffect(() => {
+    if (
+      onboardingProgress &&
+      !onboardingProgress.completedAt &&
+      onboardingProgress.demonstrationCompleted
+    ) {
+      patchProgressMutation.mutate({ completedAt: new Date() });
+    }
+  }, [onboardingProgress]);
+
   // If onboarding is active, render the onboarding wizard stages
   if (onboardingProgress && !onboardingProgress.completedAt) {
     // Stage 1: Select profile template
@@ -1383,147 +1394,6 @@ function DeclareContent() {
                 {!analyzeDemoMutation.isPending && <ArrowRight className="h-4 w-4" />}
               </Button>
             </div>
-          </div>
-        </div>
-      );
-    }
-
-    // Stage 5: Celebration & Value Realization Checkpoint
-    if (
-      onboardingProgress.demonstrationCompleted &&
-      onboardingProgress.valueRealized
-    ) {
-      return (
-        <div className="flex min-h-[85vh] items-center justify-center px-4">
-          <div className="w-full max-w-xl space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl text-center">
-            {/* Header */}
-            <div>
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-md bg-black border border-[#262626] text-white">
-                <Sparkles className="h-8 w-8 animate-bounce" />
-              </div>
-              <h2 className="mt-6 text-3xl font-black text-white tracking-tight">
-                Behavioral QA Activated!
-              </h2>
-              <p className="mt-2 text-sm text-neutral-400">
-                Congratulations! We successfully generated your first
-                reconciliation report and identified behavioral discrepancies in
-                your demonstration.
-              </p>
-            </div>
-
-            {/* Gap findings summary card */}
-            {activeReport && (
-              <div className="rounded-md border border-[#262626] bg-black p-5 text-left space-y-4">
-                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
-                  Identified Gaps Summary
-                </span>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="border border-red-950/40 bg-red-950/5 p-3.5 rounded-lg">
-                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">
-                      Missing States
-                    </span>
-                    <div className="text-2xl font-black text-red-400 font-mono mt-1">
-                      {activeReport.trueGapCount}
-                    </div>
-                    <p className="text-[9px] text-neutral-500 mt-0.5">
-                      Defined but never reached
-                    </p>
-                  </div>
-                  <div className="border border border-[#262626] bg-black p-3.5 rounded-lg">
-                    <span className="text-[10px] text-neutral-400 font-semibold uppercase">
-                      Unexpected States
-                    </span>
-                    <div className="text-2xl font-black text-white font-mono mt-1">
-                      {activeReport.undeclaredCount}
-                    </div>
-                    <p className="text-[9px] text-neutral-500 mt-0.5">
-                      Reached but never declared
-                    </p>
-                  </div>
-                </div>
-
-                {/* Insights alert */}
-                <div className="text-[11px] text-neutral-400 leading-relaxed bg-[#131313]/50 p-3 rounded-lg border border-[#262626]">
-                  ⚡ **Tellann Insight**: The system detected that your app
-                  behaves differently than your expectations. Click **Complete
-                  Onboarding** below to check the full behavioral diff tree and
-                  promote unexpected states!
-                </div>
-              </div>
-            )}
-
-            {/* Qualitative Feedback Questionnaire (Non-gating) */}
-            <div className="rounded-md border border-[#262626] bg-black p-5 text-left space-y-4">
-              <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
-                Onboarding Feedback
-              </span>
-
-              {!feedbackSubmitted ? (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="block text-xs font-semibold text-neutral-300">
-                      Rate your setup experience (1-5):
-                    </label>
-                    <div className="flex space-x-2">
-                      {[1, 2, 3, 4, 5].map((stars) => (
-                        <button
-                          key={stars}
-                          type="button"
-                          onClick={() => setFeedbackRating(stars)}
-                          className={`h-8 w-10 text-xs font-bold rounded-lg border transition-all ${feedbackRating === stars ? "bg-white text-black font-bold border-white" : "bg-[#131313] border-[#262626] text-neutral-400 hover:text-white"}`}
-                        >
-                          {stars} ★
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-semibold text-neutral-300">
-                      Any comments or issues faced?
-                    </label>
-                    <textarea
-                      value={feedbackText}
-                      onChange={(e) => setFeedbackText(e.target.value)}
-                      placeholder="Optional. Let us know what we can improve!"
-                      className="w-full h-16 rounded-lg border border-[#262626] bg-black p-2.5 text-xs text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                    />
-                  </div>
-
-                  <Button
-                    onClick={() => {
-                      setFeedbackSubmitted(true);
-                    }}
-                    variant="secondary"
-                    className="w-full text-xs font-bold text-neutral-300 border border-[#262626]"
-                  >
-                    Submit Feedback
-                  </Button>
-                </div>
-              ) : (
-                <div className="text-center py-2 flex flex-col items-center">
-                  <Check className="h-6 w-6 text-white mb-2" />
-                  <span className="text-xs font-semibold text-neutral-300">
-                    Thank you for your feedback!
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Complete Button */}
-            <Button
-              onClick={() =>
-                patchProgressMutation.mutate({ completedAt: new Date() })
-              }
-              disabled={patchProgressMutation.isPending}
-              loading={patchProgressMutation.isPending}
-              variant="primary"
-              size="lg"
-              className="w-full shadow-lg shadow-emerald-600/15"
-            >
-              <span>Complete Onboarding & Go to Dashboard</span>
-              <ArrowRight className="h-4 w-4" />
-            </Button>
           </div>
         </div>
       );

@@ -338,6 +338,25 @@ async function getUserEmail(userId: string): Promise<{ email: string; displayNam
   });
 }
 
+async function notifyApiGatewayAppUpdated(eventPayload: {
+  action: 'APP_CREATED' | 'APP_UPDATED' | 'APP_DELETED';
+  applicationId: string;
+  organizationId?: string | null;
+  name?: string;
+  summary?: string | null;
+}) {
+  try {
+    const gatewayUrl = process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000';
+    await fetch(`${gatewayUrl}/internal/app-events/broadcast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventPayload),
+    });
+  } catch (err) {
+    console.error('[Onboarding] Failed to notify API Gateway app event', err);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Health
 // ─────────────────────────────────────────────────────────────
@@ -906,7 +925,7 @@ app.get('/organizations/:orgId/subscription', verifyJwt, verifyOrgMembership, as
 /** POST /organizations/:orgId/applications — create application */
 app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
   const { orgId } = req.params;
-  const { name, profileType } = req.body;
+  const { name, summary, profileType } = req.body;
   if (!name) return res.status(400).json({ error: '`name` is required' });
 
   try {
@@ -925,7 +944,7 @@ app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, a
     }
 
     const application = await prisma.application.create({
-      data: { name: name.trim(), organizationId: orgId },
+      data: { name: name.trim(), summary: summary ? String(summary).trim() : null, organizationId: orgId },
     });
 
     // Create default Development environment
@@ -954,6 +973,14 @@ app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, a
 
     // Emit APP_CREATED activation event
     await emitActivationEvent(orgId, application.id, devEnv.id, 'APP_CREATED');
+
+    void notifyApiGatewayAppUpdated({
+      action: 'APP_CREATED',
+      applicationId: application.id,
+      organizationId: orgId,
+      name: application.name,
+      summary: application.summary,
+    });
 
     const user = await getUserEmail(req.user!.id);
     if (user) {
@@ -986,7 +1013,7 @@ app.get('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, as
   try {
     const apps = await prisma.application.findMany({
       where: { organizationId: req.params.orgId },
-      include: { profile: true, environments: true, onboardingProgress: true },
+      include: { profile: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(apps);
@@ -1010,7 +1037,7 @@ app.get('/applications', verifyJwt, async (req: AuthenticatedRequest, res: Respo
           }
         }
       },
-      include: { profile: true, organization: true, environments: true, onboardingProgress: true },
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(apps);
@@ -1025,12 +1052,94 @@ app.get('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authenti
   try {
     const app = await prisma.application.findUnique({
       where: { id: req.params.id },
-      include: { profile: true, organization: true, environments: true, onboardingProgress: true },
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
     });
     if (!app) return res.status(404).json({ error: 'Application not found' });
     res.json(app);
   } catch (err) {
     console.error('[Onboarding] Get app error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** PATCH /applications/:id — update application details (name, summary) */
+app.patch('/applications/:id', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { name, summary } = req.body;
+
+  try {
+    const existing = await prisma.application.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Application not found' });
+
+    const data: { name?: string; summary?: string | null } = {};
+    if (name !== undefined && typeof name === 'string' && name.trim()) {
+      data.name = name.trim();
+    }
+    if (summary !== undefined) {
+      data.summary = typeof summary === 'string' ? summary.trim() : null;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'NO_FIELDS_TO_UPDATE', message: 'Provide name or summary to update.' });
+    }
+
+    const updated = await prisma.application.update({
+      where: { id },
+      data,
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
+    });
+
+    if (updated.organizationId) {
+      void notifyApiGatewayAppUpdated({
+        action: 'APP_UPDATED',
+        applicationId: updated.id,
+        organizationId: updated.organizationId,
+        name: updated.name,
+        summary: updated.summary,
+      });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error('[Onboarding] Update app error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /applications/:id/stats — get aggregated summary stats for an application */
+app.get('/applications/:id/stats', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const [
+      qaRunsCount,
+      reportsCount,
+      documentsCount,
+      flowsDeclaredCount,
+      graphsDesignedCount,
+      behavioursAnalysedCount,
+      sessionsCount,
+    ] = await prisma.$transaction([
+      prisma.qARun.count({ where: { applicationId: id } }),
+      prisma.reconciliationReport.count({ where: { applicationId: id } }),
+      prisma.sourceDocument.count({ where: { applicationId: id } }),
+      prisma.behaviorGraph.count({ where: { applicationId: id } }),
+      prisma.behaviorGraph.count({ where: { applicationId: id, status: 'COMPLETE' } }),
+      prisma.state.count({ where: { applicationId: id } }),
+      prisma.session.count({ where: { applicationId: id } }),
+    ]);
+
+    res.json({
+      qaRunsCount,
+      reportsCount,
+      documentsCount,
+      storageUsedBytes: documentsCount * 153600 + qaRunsCount * 512000,
+      flowsDeclaredCount,
+      graphsDesignedCount,
+      behavioursAnalysedCount,
+      sessionsCount,
+    });
+  } catch (err) {
+    console.error('[Onboarding] Get app stats error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1155,6 +1264,13 @@ app.delete('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authe
         userId: req.user?.id ?? null,
         organizationId: app.organizationId,
         metadata: { applicationId: app.id, applicationName: app.name, deletedType: 'APPLICATION' },
+      });
+
+      void notifyApiGatewayAppUpdated({
+        action: 'APP_DELETED',
+        applicationId: app.id,
+        organizationId: app.organizationId,
+        name: app.name,
       });
     }
 
@@ -1396,7 +1512,24 @@ app.get('/organizations/:orgId/api-keys', verifyJwt, verifyOrgMembership, async 
         },
         revokedAt: null
       },
-      select: { id: true, keyPrefix: true, label: true, createdAt: true, lastUsedAt: true, expiresAt: true, environmentId: true },
+      select: {
+        id: true,
+        keyPrefix: true,
+        label: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+        environmentId: true,
+        environment: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            applicationId: true,
+            application: { select: { id: true, name: true } },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json(keys);

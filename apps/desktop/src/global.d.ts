@@ -45,6 +45,7 @@ declare global {
         } | null>;
         chooseWorkspace(): Promise<{ path: string; name: string } | null>;
         scanWorkspace(input: { path: string; workspaceId: string; applicationId: string }): Promise<RepositorySnapshotSummary>;
+        onAppUpdated(callback: (event: { action: string; applicationId: string; name?: string; summary?: string }) => void): () => void;
       };
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;

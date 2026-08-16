@@ -45,6 +45,9 @@ function captureSetupDeepLink(values: string[]): void {
 captureSetupDeepLink(process.argv);
 const observer = new BrowserObserver({
   executablePath: app.isPackaged ? packagedChromiumPath : undefined,
+  // Headless mode is reserved for deterministic installed-application
+  // acceptance. Normal desktop runs always show the managed browser.
+  headless: process.env.TELLANN_BROWSER_HEADLESS === 'true',
   onUnexpectedTermination: async (state) => {
     await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
     await applicationLauncher.stop().catch(() => undefined);
@@ -221,6 +224,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.getApplications, async (event) => {
     assertTrustedSender(event);
     return cloud.applications();
+  });
+  cloud.subscribeToAppEvents((appEvent) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.appUpdated, appEvent);
+    }
   });
   ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

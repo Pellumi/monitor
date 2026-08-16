@@ -94,6 +94,7 @@ export class BrowserObserver {
 
   constructor(private readonly options: {
     executablePath?: string;
+    headless?: boolean;
     onUnexpectedTermination?: (state: GuidedRunState) => Promise<void> | void;
   } = {}) {}
 
@@ -116,7 +117,7 @@ export class BrowserObserver {
     const artifactDirectory = path.join(artifactRoot, runId);
     fs.mkdirSync(artifactDirectory, { recursive: true });
     const browser = await chromium.launch({
-      headless: false,
+      headless: this.options.headless ?? false,
       ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
     });
     const applicationOrigin = new URL(input.targetUrl).origin;

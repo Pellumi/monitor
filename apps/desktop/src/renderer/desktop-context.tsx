@@ -160,6 +160,20 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!window.tellann?.projects?.onAppUpdated) return;
+    const unsubscribe = window.tellann.projects.onAppUpdated((event) => {
+      if (event.action === 'APP_DELETED') {
+        setApplications((current) => current.filter((app) => app.id !== event.applicationId));
+      } else {
+        void bridge().projects.list().then((nextApps) => {
+          setApplications(nextApps);
+        }).catch(() => undefined);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
     if (!activeRun || ['COMPLETED', 'FAILED'].includes(activeRun.status)) return;
     const timer = window.setInterval(() => {
       void bridge().runs.getActive().then((state) => state && setActiveRun(state)).catch(() => undefined);

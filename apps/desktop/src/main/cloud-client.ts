@@ -200,19 +200,69 @@ export class DesktopCloudClient {
     return apps.map((item) => {
       const organizationId = String((item.organization as Json | undefined)?.id ?? item.organizationId);
       return ({
-      id: String(item.id),
-      name: String(item.name),
-      organizationId,
-      organizationName: String((item.organization as Json | undefined)?.name ?? 'Organization'),
-      entitlements: entitlements.get(organizationId) ?? null,
-      environments: ((item.environments as Json[] | undefined) ?? []).map((environment) => ({
-        id: String(environment.id),
-        name: String(environment.name),
-        type: environment.type as DesktopApplication['environments'][number]['type'],
-        baseUrl: typeof environment.baseUrl === 'string' ? environment.baseUrl : null,
-      })),
+        id: String(item.id),
+        name: String(item.name),
+        summary: typeof item.summary === 'string' ? item.summary : null,
+        organizationId,
+        organizationName: String((item.organization as Json | undefined)?.name ?? 'Organization'),
+        entitlements: entitlements.get(organizationId) ?? null,
+        environments: ((item.environments as Json[] | undefined) ?? []).map((environment) => ({
+          id: String(environment.id),
+          name: String(environment.name),
+          type: environment.type as DesktopApplication['environments'][number]['type'],
+          baseUrl: typeof environment.baseUrl === 'string' ? environment.baseUrl : null,
+        })),
+        projectWorkspaces: Array.isArray(item.projectWorkspaces) ? item.projectWorkspaces as any : undefined,
       });
     });
+  }
+
+  subscribeToAppEvents(onEvent: (event: any) => void): () => void {
+    const controller = new AbortController();
+    const url = `${API_URL}/v1/desktop/app-events`;
+
+    void (async () => {
+      while (!controller.signal.aborted) {
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok || !res.body) {
+            await waitFor(5000, controller.signal).catch(() => undefined);
+            continue;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (!controller.signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.action) {
+                    onEvent(data);
+                  }
+                } catch {
+                  // Ignore parse error
+                }
+              }
+            }
+          }
+        } catch {
+          if (controller.signal.aborted) break;
+          await waitFor(5000, controller.signal).catch(() => undefined);
+        }
+      }
+    })();
+
+    return () => controller.abort();
   }
 
   async claimSetupHandoff(handoffToken: string): Promise<Json> {

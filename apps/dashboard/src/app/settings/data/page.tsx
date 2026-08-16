@@ -11,6 +11,32 @@ type Usage = { metric: string; value: number; limit: number | null; percent: num
 type Application = { id: string; name: string; createdAt?: string };
 type ErrorInfo = { title: string; detail: string } | null;
 
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function formatMetricDisplay(item: Usage) {
+  if (item.metric === "STORAGE_GB") {
+    const bytesValue = item.value * 1024 * 1024 * 1024;
+    const bytesLimit = item.limit ? item.limit * 1024 * 1024 * 1024 : null;
+    return {
+      label: "STORAGE USED",
+      valueDisplay: formatBytes(bytesValue),
+      limitDisplay: bytesLimit ? formatBytes(bytesLimit) : "Unlimited",
+    };
+  }
+
+  return {
+    label: item.metric.replaceAll("_", " "),
+    valueDisplay: String(item.value),
+    limitDisplay: item.limit !== null ? String(item.limit) : "Unlimited",
+  };
+}
+
 export default function DataSettingsPage() {
   const { selectedOrgId } = useSession();
   const [usage, setUsage] = useState<Usage[]>([]);
@@ -104,13 +130,24 @@ export default function DataSettingsPage() {
 
       <SettingsSection title="Usage overview" description={plan ? `${plan} plan` : "Current organisation"}>
         <div className="grid gap-4 md:grid-cols-3">
-          {usage.filter((item) => ["STORAGE_GB", "APPLICATIONS", "USERS", "DEMONSTRATIONS"].includes(item.metric)).map((item) => (
-            <div key={item.metric} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
-              <div className="text-xs uppercase tracking-wider text-neutral-500">{item.metric.replaceAll("_", " ")}</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{item.value} <span className="text-sm text-neutral-500">/ {item.limit ?? "Unlimited"}</span></div>
-              {item.limit ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-800"><div className="h-full bg-white" style={{ width: `${Math.min(100, item.percent)}%` }} /></div> : null}
-            </div>
-          ))}
+          {usage
+            .filter((item) => ["STORAGE_GB", "APPLICATIONS", "USERS", "DEMONSTRATIONS"].includes(item.metric))
+            .map((item) => {
+              const { label, valueDisplay, limitDisplay } = formatMetricDisplay(item);
+              return (
+                <div key={item.metric} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+                  <div className="text-xs uppercase tracking-wider text-neutral-500">{label}</div>
+                  <div className="mt-2 text-2xl font-semibold text-white">
+                    {valueDisplay} <span className="text-sm text-neutral-500">/ {limitDisplay}</span>
+                  </div>
+                  {item.limit ? (
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-800">
+                      <div className="h-full bg-white" style={{ width: `${Math.min(100, item.percent)}%` }} />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           {usage.length === 0 ? <p className="text-sm text-neutral-500">No usage snapshot is available yet.</p> : null}
         </div>
       </SettingsSection>

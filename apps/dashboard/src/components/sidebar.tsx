@@ -1,8 +1,20 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useState,
@@ -21,6 +33,7 @@ import {
   PlaySquare,
   Zap,
   ChevronDown,
+  ChevronRight,
   Building2,
   Plus,
   Trash2,
@@ -50,6 +63,7 @@ import {
   ScrollText,
   KeyRound,
   Laptop,
+  FolderKanban,
 } from "lucide-react";
 import { useSession, Membership, Organization } from "./providers";
 import { twMerge } from "tailwind-merge";
@@ -184,7 +198,11 @@ const settingsNavigation: SettingsNavSection[] = [
     label: "Personal",
     items: [
       { name: "Profile", href: "/settings/profile", icon: User },
-      { name: "Preferences", href: "/settings/preferences", icon: SlidersHorizontal },
+      {
+        name: "Preferences",
+        href: "/settings/preferences",
+        icon: SlidersHorizontal,
+      },
       { name: "Notifications", href: "/settings/notifications", icon: Bell },
       { name: "Security & Sessions", href: "/settings/security", icon: Shield },
     ],
@@ -193,6 +211,11 @@ const settingsNavigation: SettingsNavSection[] = [
     label: "Workspace",
     items: [
       { name: "Organisation", href: "/settings/organization", icon: Building2 },
+      {
+        name: "Applications",
+        href: "/settings/applications",
+        icon: FolderKanban,
+      },
       { name: "Members & Access", href: "/settings/members", icon: Users },
       { name: "Audit Logs", href: "/settings/audit-logs", icon: ScrollText },
     ],
@@ -200,8 +223,17 @@ const settingsNavigation: SettingsNavSection[] = [
   {
     label: "Developer & Data",
     items: [
-      { name: "Environments", href: "/settings/environments", icon: Globe, hasAppId: true },
-      { name: "Ingestion Keys", href: "/settings/ingestion-keys", icon: KeyRound },
+      {
+        name: "Environments",
+        href: "/settings/environments",
+        icon: Globe,
+        hasAppId: true,
+      },
+      {
+        name: "Ingestion Keys",
+        href: "/settings/ingestion-keys",
+        icon: KeyRound,
+      },
       { name: "Privacy & Capture", href: "/settings/privacy", icon: EyeOff },
       { name: "Storage & Retention", href: "/settings/data", icon: Database },
       { name: "Integrations", href: "/settings/integrations", icon: Plug },
@@ -236,10 +268,10 @@ function isFeatureEnabled(
   entitlement: Entitlement | null,
   feature?: string,
 ): boolean {
-  if (!feature) return true; // No gate = always visible
-  if (!entitlement?.features) return true; // No entitlement loaded yet = assume enabled (loading state)
+  if (!feature) return true;
+  if (!entitlement?.features) return true;
   const value = entitlement.features[feature];
-  if (value === undefined) return true; // Feature not in map = assume enabled
+  if (value === undefined) return true;
   return value === true || (typeof value === "string" && value !== "false");
 }
 
@@ -278,20 +310,28 @@ function AppSelector({
     try {
       const res = await authenticatedFetch(
         `/api-gateway/applications/${appToDelete.id}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || errData.message || "Failed to delete application");
+        throw new Error(
+          errData.error || errData.message || "Failed to delete application",
+        );
       }
 
       const deletedId = appToDelete.id;
       setAppToDelete(null);
       setIsOpen(false);
 
-      await queryClient.invalidateQueries({ queryKey: ["sidebar-apps", selectedOrgId] });
-      await queryClient.invalidateQueries({ queryKey: ["organization-applications", selectedOrgId] });
-      await queryClient.invalidateQueries({ queryKey: ["sidebar-entitlement", selectedOrgId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["sidebar-apps", selectedOrgId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["organization-applications", selectedOrgId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["sidebar-entitlement", selectedOrgId],
+      });
 
       if (selectedApp?.id === deletedId) {
         const remaining = apps?.filter((a) => a.id !== deletedId) ?? [];
@@ -403,7 +443,7 @@ function AppSelector({
   function handleSelect(appId: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("appId", appId);
-    params.delete("envId"); // Reset env when switching apps
+    params.delete("envId");
     router.push(`${pathname}?${params.toString()}`);
     setIsOpen(false);
   }
@@ -415,64 +455,86 @@ function AppSelector({
   }
 
   return (
-    <div className="relative px-4 mb-4 space-y-2">
+    <div className="relative px-3 mb-3 space-y-1.5">
       {/* Org Selector */}
       {memberships.length > 1 ? (
-        <div className="relative">
-          <select
+        <>
+          <span className="text-[10px] font-mono text-[#8e9192] tracking-[.04em] truncate">
+            Organization
+          </span>
+          <Select
             value={selectedOrgId || ""}
-            onChange={(e) => {
-              setSelectedOrgId(e.target.value);
+            onValueChange={(val) => {
+              setSelectedOrgId(val);
               const params = new URLSearchParams(searchParams.toString());
               params.delete("appId");
               params.delete("envId");
               router.push(`${pathname}?${params.toString()}`);
             }}
-            className="w-full bg-neutral-950 text-neutral-400 border border-neutral-800 rounded-lg py-1 px-2 text-xs font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
           >
-            {memberships.map((m) => (
-              <option key={m.organization.id} value={m.organization.id}>
-                {m.organization.name}
-              </option>
-            ))}
-          </select>
-        </div>
+            <SelectTrigger className="text-[10px] font-mono tracking-[.06em] uppercase text-[#8e9192] py-1.5 border-[#262626] bg-black hover:border-[#3a3a3a] transition-colors">
+              <SelectValue placeholder="Select organisation…">
+                {memberships.find((m) => m.organization.id === selectedOrgId)
+                  ?.organization.name ?? ""}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {memberships.map((m) => (
+                <SelectItem
+                  key={m.organization.id}
+                  value={m.organization.id}
+                  className="text-[10px] font-mono tracking-[.06em] uppercase"
+                >
+                  {m.organization.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </>
       ) : (
         memberships.length === 1 && (
-          <div className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider px-1">
+          <div className="text-[10px] font-mono tracking-[.08em] uppercase text-[#8e9192] px-1 pb-0.5">
             {memberships[0].organization.name}
           </div>
         )
       )}
 
+      <span className="text-[10px] font-mono text-[#8e9192] tracking-[.04em] truncate">
+        Application
+      </span>
       {/* App Selector button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={!apps || apps.length === 0}
-        className="w-full flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-left text-sm transition-all hover:bg-neutral-900 disabled:opacity-50"
+        className="w-full flex items-center justify-between border border-[#262626] bg-[#131313] px-3 py-2 text-left transition-all hover:bg-black hover:border-[#3a3a3a] disabled:opacity-40 cursor-pointer"
       >
         <div className="truncate pr-2">
-          <div className="font-semibold text-white truncate text-xs">
+          <div className="font-semibold text-white truncate text-xs tracking-tight">
             {selectedApp ? selectedApp.name : "No Applications"}
           </div>
         </div>
         {apps && apps.length > 0 && (
-          <ChevronDown className="h-4 w-4 text-neutral-500 flex-shrink-0" />
+          <ChevronDown
+            className={twMerge(
+              "h-3.5 w-3.5 text-[#8e9192] flex-shrink-0 transition-transform duration-150",
+              isOpen && "rotate-180",
+            )}
+          />
         )}
       </button>
 
       {isOpen && apps && apps.length > 0 && (
-        <div className="absolute left-4 right-4 z-50 mt-1 rounded-lg border border-neutral-800 bg-neutral-950 shadow-xl max-h-60 overflow-y-auto">
-          <div className="py-1">
+        <div className="absolute left-3 right-3 z-50 border border-[#262626] bg-[#0a0a0a] shadow-2xl max-h-60 overflow-y-auto">
+          <div className="py-0">
             {apps.map((app) => (
               <div
                 key={app.id}
                 onClick={() => handleSelect(app.id)}
                 className={twMerge(
-                  "group flex items-center justify-between w-full px-3 py-2 text-xs hover:bg-neutral-800 transition-colors cursor-pointer text-left",
+                  "group flex items-center justify-between w-full px-3 py-2.5 text-xs font-mono hover:bg-[#131313] transition-colors cursor-pointer border-b border-[#1a1a1a] last:border-b-0",
                   selectedApp?.id === app.id
-                    ? "bg-neutral-900 text-white font-semibold"
-                    : "text-neutral-400",
+                    ? "bg-[#131313] text-white"
+                    : "text-[#8e9192]",
                 )}
               >
                 <div className="truncate pr-2">{app.name}</div>
@@ -483,14 +545,14 @@ function AppSelector({
                     e.stopPropagation();
                     setAppToDelete(app);
                   }}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-neutral-500 hover:text-red-400 hover:bg-neutral-800 rounded transition-all"
+                  className="opacity-0 group-hover:opacity-100 p-1 text-[#8e9192] hover:text-red-400 transition-all cursor-pointer"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3 w-3" />
                 </button>
               </div>
             ))}
 
-            <div className="border-t border-neutral-800 mt-1 pt-1">
+            <div className="border-t border-[#262626]">
               <button
                 onClick={(e) => {
                   setIsOpen(false);
@@ -502,7 +564,7 @@ function AppSelector({
                     router.push("/onboarding");
                   }
                 }}
-                className="flex items-center space-x-1.5 px-3 py-2 text-xs text-blue-400 hover:bg-neutral-800 hover:text-blue-300 transition-colors font-medium w-full text-left"
+                className="flex items-center gap-2 px-3 py-2.5 text-[11px] font-mono text-[#8e9192] hover:bg-[#131313] hover:text-white transition-colors w-full text-left cursor-pointer tracking-[.04em]"
               >
                 <Plus className="h-3 w-3" />
                 <span>Add Application…</span>
@@ -512,15 +574,14 @@ function AppSelector({
         </div>
       )}
 
-      {/* Environment Selector — global, shown only when plan has MULTIPLE_ENVIRONMENTS or when envs > 1 */}
+      {/* Environment Selector */}
       {environments && environments.length > 0 && (
-        <div className="flex items-center gap-1">
-          <Globe className="h-3 w-3 text-neutral-600 flex-shrink-0" />
+        <div className="flex items-center border border-[#1e1e1e] bg-black px-2.5 py-1.5">
           {hasMultipleEnvs && environments.length > 1 ? (
             <select
               value={selectedEnv?.id || ""}
               onChange={(e) => handleEnvSelect(e.target.value)}
-              className="flex-1 bg-neutral-950 text-neutral-500 border border-neutral-800/50 rounded-md py-1 px-2 text-[10px] font-medium focus:outline-none focus:border-indigo-500/50 transition-colors"
+              className="flex-1 bg-transparent text-[#8e9192] text-[10px] font-mono tracking-[.04em] focus:outline-none appearance-none cursor-pointer"
             >
               {environments.map((env) => (
                 <option key={env.id} value={env.id}>
@@ -529,18 +590,21 @@ function AppSelector({
               ))}
             </select>
           ) : (
-            <span className="text-[10px] text-neutral-600 font-medium truncate">
-              {selectedEnv?.name ?? "Default"}
+            <span className="text-[10px] font-mono text-[#8e9192] tracking-[.04em] truncate">
+              {selectedEnv?.name ?? "Default"} · {selectedEnv?.type ?? "env"}
             </span>
           )}
         </div>
       )}
 
+      {/* Application Limit Modal */}
       {showLimitModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-100">
-          <div className="relative w-full max-w-md rounded-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
+          <div className="relative w-full max-w-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#262626] pb-4">
-              <span className="text-white text-lg font-extrabold tracking-tight">TELLANN</span>
+              <span className="text-white text-lg font-extrabold tracking-tight">
+                TELLANN
+              </span>
               <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[.08em] uppercase">
                 Plan // Limit
               </span>
@@ -556,27 +620,36 @@ function AppSelector({
                 applications.
               </p>
             </div>
-            <div className="bg-black border border-[#262626] rounded divide-y divide-[#262626]">
+            <div className="bg-black border border-[#262626] divide-y divide-[#262626]">
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">CURRENT LIMIT</span>
-                <span className="text-white text-xs font-mono">{entitlement?.limits?.applications ?? 1} App{(entitlement?.limits?.applications ?? 1) > 1 ? "s" : ""}</span>
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  CURRENT LIMIT
+                </span>
+                <span className="text-white text-xs font-mono">
+                  {entitlement?.limits?.applications ?? 1} App
+                  {(entitlement?.limits?.applications ?? 1) > 1 ? "s" : ""}
+                </span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">REQUIRED ACTION</span>
-                <span className="text-white text-xs font-mono uppercase">UPGRADE PLAN</span>
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  REQUIRED ACTION
+                </span>
+                <span className="text-white text-xs font-mono uppercase">
+                  UPGRADE PLAN
+                </span>
               </div>
             </div>
             <div className="flex gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setShowLimitModal(false)}
-                className="flex-1 h-10 flex items-center justify-center rounded border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer"
+                className="flex-1 h-10 flex items-center justify-center border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <a
                 href={`${marketingUrl}/pricing`}
-                className="flex-1 h-10 flex items-center justify-center rounded border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors text-center cursor-pointer"
+                className="flex-1 h-10 flex items-center justify-center border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors text-center cursor-pointer"
               >
                 Upgrade Plan
               </a>
@@ -585,11 +658,14 @@ function AppSelector({
         </div>
       )}
 
+      {/* Delete Application Modal */}
       {appToDelete && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-100">
-          <div className="relative w-full max-w-md rounded-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
+          <div className="relative w-full max-w-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#262626] pb-4">
-              <span className="text-white text-lg font-extrabold tracking-tight">TELLANN</span>
+              <span className="text-white text-lg font-extrabold tracking-tight">
+                TELLANN
+              </span>
               <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[.08em] uppercase">
                 App // Delete
               </span>
@@ -598,15 +674,19 @@ function AppSelector({
             {deleteError && (
               <div
                 role="alert"
-                className="rounded border border-[#262626] bg-black p-3 text-xs font-mono text-neutral-300"
+                className="border border-[#262626] bg-black p-3 text-xs font-mono text-neutral-300"
               >
                 <div className="flex items-start gap-2.5">
                   <div className="mt-0.5 shrink-0 text-red-400">
                     <AlertTriangle className="h-3.5 w-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white leading-snug">Deletion Failed</p>
-                    <p className="mt-0.5 text-[#8e9192] leading-relaxed">{deleteError}</p>
+                    <p className="font-semibold text-white leading-snug">
+                      Deletion Failed
+                    </p>
+                    <p className="mt-0.5 text-[#8e9192] leading-relaxed">
+                      {deleteError}
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -624,19 +704,32 @@ function AppSelector({
                 Delete Application
               </h3>
               <p className="text-xs text-[#c4c7c8] leading-relaxed">
-                Are you sure you want to delete <strong className="text-white font-semibold">{appToDelete.name}</strong>?
-                This action cannot be undone and will permanently remove all associated environments, API keys, sessions, and behavior graphs.
+                Are you sure you want to delete{" "}
+                <strong className="text-white font-semibold">
+                  {appToDelete.name}
+                </strong>
+                ? This action cannot be undone and will permanently remove all
+                associated environments, API keys, sessions, and behavior
+                graphs.
               </p>
             </div>
 
-            <div className="bg-black border border-[#262626] rounded divide-y divide-[#262626]">
+            <div className="bg-black border border-[#262626] divide-y divide-[#262626]">
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">APPLICATION</span>
-                <span className="text-white text-xs font-mono font-semibold truncate max-w-[200px] text-right">{appToDelete.name}</span>
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  APPLICATION
+                </span>
+                <span className="text-white text-xs font-mono font-semibold truncate max-w-[200px] text-right">
+                  {appToDelete.name}
+                </span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">ACTION TYPE</span>
-                <span className="text-white text-xs font-mono uppercase">PERMANENT DELETE</span>
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  ACTION TYPE
+                </span>
+                <span className="text-white text-xs font-mono uppercase">
+                  PERMANENT DELETE
+                </span>
               </div>
             </div>
 
@@ -648,7 +741,7 @@ function AppSelector({
                   setDeleteError(null);
                 }}
                 disabled={isDeletingApp}
-                className="flex-1 h-10 flex items-center justify-center rounded border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                className="flex-1 h-10 flex items-center justify-center border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -656,7 +749,7 @@ function AppSelector({
                 type="button"
                 onClick={handleDeleteApp}
                 disabled={isDeletingApp}
-                className="flex-1 h-10 flex items-center justify-center rounded border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
+                className="flex-1 h-10 flex items-center justify-center border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {isDeletingApp ? "Deleting…" : "Delete Application"}
               </button>
@@ -676,7 +769,8 @@ function NavigationList() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const appId = searchParams.get("appId");
+  const routeParams = useParams<{ appId?: string }>();
+  const appId = routeParams?.appId || searchParams.get("appId");
   const envId = searchParams.get("envId");
   const { entitlement } = useEntitlement();
 
@@ -724,19 +818,18 @@ function NavigationList() {
       (item.href !== "/" && pathname.startsWith(item.href + "/"));
 
     if (!enabled) {
-      // Locked item — visible but greyed out with lock icon
       return (
         <button
           key={item.name}
           onClick={() => router.push("/settings/billing?upgrade=1")}
-          className="group flex items-center justify-between rounded-md px-3 py-2 text-xs font-medium transition-all text-neutral-600 hover:bg-neutral-800/50 hover:text-neutral-500 w-full text-left cursor-pointer"
+          className="group flex items-center justify-between px-3 py-2 text-xs font-mono text-[#3a3a3a] hover:bg-[#131313] hover:text-[#5a5a5a] w-full text-left cursor-pointer transition-colors"
           title={`Upgrade your plan to access ${item.name}`}
         >
           <div className="flex items-center">
-            <item.icon className="mr-3 h-4 w-4 flex-shrink-0 text-neutral-700" />
+            <item.icon className="mr-3 h-3.5 w-3.5 flex-shrink-0 text-[#2a2a2a]" />
             {item.name}
           </div>
-          <Lock className="h-3 w-3 text-neutral-700 group-hover:text-amber-600/60" />
+          <Lock className="h-3 w-3 text-[#3a3a3a] group-hover:text-amber-700/60" />
         </button>
       );
     }
@@ -747,16 +840,16 @@ function NavigationList() {
         key={item.name}
         href={fullHref}
         className={twMerge(
+          "group flex items-center px-3 py-2 text-xs font-mono transition-colors",
           isActive
-            ? "bg-neutral-800 text-white font-semibold"
-            : "text-neutral-400 hover:bg-neutral-800 hover:text-white",
-          "group flex items-center rounded-md px-3 py-2 text-xs font-medium transition-all",
+            ? "bg-white text-black"
+            : "text-[#8e9192] hover:bg-[#131313] hover:text-white",
         )}
       >
         <item.icon
           className={twMerge(
-            isActive ? "text-white" : "text-neutral-500 group-hover:text-white",
-            "mr-3 h-4 w-4 flex-shrink-0 transition-colors",
+            "mr-3 h-3.5 w-3.5 flex-shrink-0 transition-colors",
+            isActive ? "text-black" : "text-[#555] group-hover:text-white",
           )}
           aria-hidden="true"
         />
@@ -766,15 +859,15 @@ function NavigationList() {
   };
 
   return (
-    <nav className="flex-1 space-y-1 px-4 py-2 overflow-y-auto">
+    <nav className="flex-1 px-3 py-2 overflow-y-auto space-y-0.5">
       {/* ── Back to App Button (shown in Settings or Admin mode) ─── */}
       {!isMainAppMode && (
         <button
           type="button"
           onClick={handleBackToApp}
-          className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-300 hover:text-white hover:bg-neutral-800/80 rounded-md transition-colors w-full text-left mb-3 border-b border-neutral-800/80 pb-3 cursor-pointer"
+          className="flex items-center gap-2 px-3 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] w-full text-left mb-2 border-b border-[#262626] pb-3 cursor-pointer transition-colors"
         >
-          <ArrowLeft className="h-4 w-4 text-neutral-400" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           <span>Back to App</span>
         </button>
       )}
@@ -789,10 +882,12 @@ function NavigationList() {
         <div className="space-y-4">
           {settingsNavigation.map((section) => (
             <div key={section.label}>
-              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-600">
+              <p className="px-3 pb-1.5 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-[#444748]">
                 {section.label}
               </p>
-              {section.items.map((item) => renderNavItem(item, item.hasAppId ?? false))}
+              {section.items.map((item) =>
+                renderNavItem(item, item.hasAppId ?? false),
+              )}
             </div>
           ))}
         </div>
@@ -801,7 +896,7 @@ function NavigationList() {
       {/* ── Admin Navigation Mode ─── */}
       {isAdminMode && (
         <div>
-          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-amber-600 font-medium">
+          <p className="px-3 pb-2 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-amber-600/80">
             Admin
           </p>
           {adminNavigation.map((item) => renderNavItem(item, false))}
@@ -816,6 +911,7 @@ function UserProfile() {
   const [isOpen, setIsOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -842,14 +938,14 @@ function UserProfile() {
   const docsUrl =
     process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
-  const avatarElement = user.avatarUrl ? (
+  const avatarEl = user.avatarUrl ? (
     <img
       src={user.avatarUrl}
       alt={name}
-      className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+      className="w-7 h-7 object-cover flex-shrink-0 border border-[#262626]"
     />
   ) : (
-    <div className="w-7 h-7 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center font-medium text-xs flex-shrink-0">
+    <div className="w-7 h-7 bg-black border border-[#444748] text-white flex items-center justify-center font-mono font-bold text-[10px] flex-shrink-0 tracking-widest">
       {initial}
     </div>
   );
@@ -857,46 +953,57 @@ function UserProfile() {
   return (
     <div
       ref={containerRef}
-      className="relative border-t border-neutral-800 flex-shrink-0 bg-neutral-950/20"
+      className="relative border-t border-[#262626] flex-shrink-0"
     >
-      {/* Pop Up Menu */}
+      {/* Popover — appears above the trigger, matching desktop AppShell pattern */}
       {isOpen && (
-        <div className="absolute bottom-full left-1 right-1 mb-2 bg-[#18181b] border border-neutral-800 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
-          {/* Header inside Pop Up — Clicking opens profile settings */}
-          <Link
-            href="/settings/profile"
-            onClick={() => setIsOpen(false)}
-            className="flex items-center gap-2.5 px-2.5 py-2 border-b border-neutral-800/80 mb-1 hover:bg-neutral-800/70 rounded-lg transition-colors cursor-pointer group"
+        <div
+          role="menu"
+          aria-label="Profile menu"
+          className="absolute bottom-full left-0 right-0 border border-[#262626] border-b-0 bg-[#0a0a0a] shadow-2xl z-50 animate-in fade-in duration-100"
+        >
+          {/* Profile summary row — click navigates to profile settings */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setIsOpen(false);
+              router.push("/settings/profile");
+            }}
+            className="flex items-center gap-2.5 w-full px-4 py-3 border-b border-[#262626] hover:bg-[#131313] transition-colors cursor-pointer group text-left"
           >
-            {avatarElement}
-            <div className="truncate">
-              <div className="text-xs font-semibold text-white group-hover:underline transition-colors truncate">
+            {avatarEl}
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-white truncate group-hover:underline">
                 {name}
               </div>
-              <div className="text-[10px] text-neutral-500 truncate">
+              <div className="text-[10px] font-mono text-[#8e9192] truncate">
                 {user.email}
               </div>
             </div>
-          </Link>
+            <ChevronRight className="w-3.5 h-3.5 text-[#444748] flex-shrink-0" />
+          </button>
 
-          {/* Menu Options */}
-          <div className="space-y-0.5">
+          {/* Action items */}
+          <div className="py-1">
             <Link
               href="/settings/profile"
+              role="menuitem"
               onClick={() => setIsOpen(false)}
-              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] transition-colors"
             >
-              <Settings className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-              <span>Settings</span>
+              <Settings className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Profile settings</span>
             </Link>
 
             {isSystemAdmin && (
               <Link
                 href="/admin/rulesets"
+                role="menuitem"
                 onClick={() => setIsOpen(false)}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+                className="flex items-center gap-2.5 px-4 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] transition-colors"
               >
-                <ShieldAlert className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Admin</span>
               </Link>
             )}
@@ -905,74 +1012,99 @@ function UserProfile() {
               href={docsUrl}
               target="_blank"
               rel="noopener noreferrer"
+              role="menuitem"
               onClick={() => setIsOpen(false)}
-              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800/70 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] transition-colors"
             >
-              <FileText className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+              <FileText className="w-3.5 h-3.5 flex-shrink-0" />
               <span>Documentation</span>
             </a>
 
-            <button
-              type="button"
-              onClick={() => {
-                setIsOpen(false);
-                setShowLogoutModal(true);
-              }}
-              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-neutral-300 hover:text-red-400 hover:bg-red-950/30 transition-colors w-full text-left cursor-pointer"
-            >
-              <LogOut className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-              <span>Log out</span>
-            </button>
+            <div className="border-t border-[#1e1e1e] mt-1 pt-1">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setIsOpen(false);
+                  setShowLogoutModal(true);
+                }}
+                className="flex items-center gap-2.5 px-4 py-2 text-xs font-mono text-[#8e9192] hover:text-red-400 hover:bg-[#131313] transition-colors w-full text-left cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Sign out</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Main Sidebar User Trigger Row */}
+      {/* Trigger Row */}
       <button
         type="button"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center gap-2.5 w-full p-2.5 rounded-lg hover:bg-neutral-800/60 transition-colors text-left focus:outline-none cursor-pointer"
+        className="flex items-center gap-2.5 w-full px-4 py-3 hover:bg-[#131313] transition-colors text-left focus:outline-none cursor-pointer"
       >
-        {avatarElement}
-        <span className="text-xs font-semibold text-white truncate">
+        {avatarEl}
+        <span className="flex-1 text-xs font-semibold text-white truncate min-w-0">
           {name}
         </span>
       </button>
 
-      {/* Logout Confirmation Modal */}
+      {/* Sign Out Confirmation Modal */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-100">
-          <div className="relative w-full max-w-md rounded-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
-            <button
-              type="button"
-              onClick={() => setShowLogoutModal(false)}
-              className="absolute top-4 right-4 p-1 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <div className="flex flex-col items-start text-left space-y-3">
-              <h3 className="text-lg font-bold text-white tracking-tight">
-                Log out of Tellann?
+          <div className="relative w-full max-w-md border border-[#262626] bg-[#131313] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[#262626] pb-4">
+              <span className="text-white text-lg font-extrabold tracking-tight">
+                TELLANN
+              </span>
+              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[.08em] uppercase">
+                Auth // Sign Out
+              </span>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-semibold text-white tracking-tight">
+                Sign out of Tellann?
               </h3>
-              <p className="text-xs text-neutral-400 leading-relaxed font-sans">
-                Are you sure you want to log out? You will need to sign in again
-                to access your workspace.
+              <p className="text-xs text-[#c4c7c8] leading-relaxed">
+                Are you sure you want to sign out? You will need to sign in
+                again to access your workspace.
               </p>
             </div>
-            <div className="flex gap-3 pt-1">
+            <div className="bg-black border border-[#262626] divide-y divide-[#262626]">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  ACCOUNT
+                </span>
+                <span className="text-white text-xs font-mono truncate max-w-[180px] text-right">
+                  {user.email}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[#8e9192] text-[11px] font-mono tracking-[.08em] uppercase">
+                  ACTION
+                </span>
+                <span className="text-white text-xs font-mono uppercase">
+                  SIGN OUT
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setShowLogoutModal(false)}
-                className="w-[100px]! rounded-md border border-[#262626] bg-black py-2.5 text-xs font-semibold text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
+                className="flex-1 h-10 flex items-center justify-center border border-[#262626] bg-black text-xs font-semibold uppercase tracking-[.08em] text-[#8e9192] hover:bg-[#262626] hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <Link
                 href="/auth/logout"
                 onClick={() => setShowLogoutModal(false)}
-                className="flex-1 flex items-center justify-center rounded-md bg-white text-black py-2.5 text-xs font-semibold hover:bg-neutral-200 transition-colors cursor-pointer"
+                className="flex-1 h-10 flex items-center justify-center border border-white bg-white text-xs font-semibold uppercase tracking-[.08em] text-black hover:bg-neutral-200 transition-colors cursor-pointer"
               >
-                Confirm Log Out
+                Confirm Sign Out
               </Link>
             </div>
           </div>
@@ -992,32 +1124,35 @@ export function Sidebar() {
 
   return (
     <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
-      <div className="hidden h-full w-64 shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] md:flex">
-        <div className="flex h-16 items-center justify-between px-6 mb-4 shrink-0">
-          <Link href="/" className="flex items-center space-x-2">
-            <h1 className="text-[22px] font-extrabold tracking-tight text-white">
-              Tellann
+      <div className="hidden h-full w-60 shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] md:flex">
+        {/* Logo header */}
+        <div className="flex h-14 items-center justify-between px-4 border-b border-[#262626] shrink-0">
+          <Link href="/" className="flex items-center">
+            <h1 className="text-[18px] font-extrabold tracking-tighter text-white uppercase">
+              TELLANN
             </h1>
           </Link>
         </div>
 
         <Suspense
           fallback={
-            <div className="h-10 px-4 mb-4 text-xs text-neutral-500 animate-pulse">
-              Loading selector...
+            <div className="h-10 px-4 mb-3 text-[10px] font-mono text-[#444748] animate-pulse pt-4">
+              Loading…
             </div>
           }
         >
-          <AppSelector
-            onEntitlementLoaded={setEntitlement}
-            onEnvSelected={setSelectedEnvId}
-          />
+          <div className="pt-3">
+            <AppSelector
+              onEntitlementLoaded={setEntitlement}
+              onEnvSelected={setSelectedEnvId}
+            />
+          </div>
         </Suspense>
 
         <Suspense
           fallback={
-            <div className="px-4 text-xs text-neutral-500 animate-pulse">
-              Loading menu...
+            <div className="px-4 text-[10px] font-mono text-[#444748] animate-pulse">
+              Loading menu…
             </div>
           }
         >

@@ -1,16 +1,18 @@
 'use client';
-import { authenticatedFetch } from '@/lib/authenticated-fetch';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   Key, Plus, Trash2, Copy, CheckCircle, Eye, EyeOff,
-  Loader2, AlertTriangle, Shield, RefreshCw, Calendar,
+  Loader2, AlertTriangle, Shield, RefreshCw, Calendar, Server,
 } from 'lucide-react';
+
+import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { useSession } from '@/components/providers';
-import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '@/components/empty-state';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -21,11 +23,11 @@ interface ApiKey {
   label: string | null;
   keyPrefix: string;
   environmentId: string | null;
-  applicationId: string | null;
+  applicationId?: string | null;
   lastUsedAt: string | null;
   expiresAt: string | null;
   createdAt: string;
-  environment?: { id: string; name: string; type: string } | null;
+  environment?: { id: string; name: string; type: string; applicationId?: string } | null;
   application?: { id: string; name: string } | null;
 }
 
@@ -57,16 +59,17 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function maskKey(raw: string): string {
-  return raw.slice(0, 12) + '••••••••••••••••••••••••••••';
-}
-
 // ─────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────
 
 export default function IngestionKeysClient() {
   const { selectedOrgId } = useSession();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const requestedAppId = searchParams.get('appId');
+  const [selectedAppId, setSelectedAppId] = useState<string>('');
 
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -84,15 +87,14 @@ export default function IngestionKeysClient() {
   const [createExpiry, setCreateExpiry] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // Load apps for the env selector
-  const { data: apps } = useQuery<Application[]>({
+  // Load applications and their environments
+  const { data: apps, isLoading: isLoadingApps } = useQuery<Application[]>({
     queryKey: ['api-key-apps', selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return [];
       const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/applications`);
       if (!res.ok) return [];
       const data = await res.json();
-      // Enrich with environments
       const enriched = await Promise.all(
         data.map(async (app: Application) => {
           try {
@@ -109,9 +111,36 @@ export default function IngestionKeysClient() {
     enabled: !!selectedOrgId,
   });
 
-  const allEnvs = apps?.flatMap((a) =>
-    (a.environments ?? []).map((e) => ({ ...e, appName: a.name, appId: a.id }))
-  ) ?? [];
+  // Sync selectedAppId with applications list or query parameter
+  useEffect(() => {
+    if (!apps || apps.length === 0) return;
+    if (requestedAppId && apps.some((a) => a.id === requestedAppId)) {
+      setSelectedAppId(requestedAppId);
+    } else if (!selectedAppId || !apps.some((a) => a.id === selectedAppId)) {
+      setSelectedAppId(apps[0].id);
+    }
+  }, [apps, requestedAppId, selectedAppId]);
+
+  function handleSelectApp(appId: string) {
+    setSelectedAppId(appId);
+    setCreateEnvId('');
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('appId', appId);
+    router.replace(`/settings/ingestion-keys?${params.toString()}`);
+  }
+
+  const selectedApp = apps?.find((a) => a.id === selectedAppId);
+  const selectedAppEnvs = selectedApp?.environments ?? [];
+  const selectedAppEnvIds = new Set(selectedAppEnvs.map((e) => e.id));
+
+  // Filter keys for the selected application
+  const filteredKeys = keys.filter((key) => {
+    if (!selectedAppId) return true;
+    if (key.applicationId === selectedAppId || key.application?.id === selectedAppId) return true;
+    if (key.environment?.applicationId === selectedAppId) return true;
+    if (key.environmentId && selectedAppEnvIds.has(key.environmentId)) return true;
+    return false;
+  });
 
   const loadKeys = useCallback(async () => {
     if (!selectedOrgId) return;
@@ -131,11 +160,18 @@ export default function IngestionKeysClient() {
     return () => window.clearTimeout(timer);
   }, [loadKeys]);
 
+  function openCreateForm() {
+    setShowCreateForm(true);
+    if (!createEnvId && selectedAppEnvs.length > 0) {
+      setCreateEnvId(selectedAppEnvs[0].id);
+    }
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedOrgId) return;
     if (!createEnvId) {
-      setAlert({ type: 'error', message: 'Please select an environment.' });
+      setAlert({ type: 'error', message: 'Please select an environment for this key.' });
       return;
     }
     setCreating(true);
@@ -190,24 +226,63 @@ export default function IngestionKeysClient() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white">API Keys</h1>
+          <h1 className="text-3xl font-bold text-white">Ingestion Keys</h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Manage SDK integration keys. Each key is bound to an environment and grants telemetry ingestion access.
+            Manage SDK integration keys scoped to your applications and environments for telemetry ingestion.
           </p>
         </div>
         <Button
           id="create-api-key-btn"
-          onClick={() => setShowCreateForm((v) => !v)}
+          onClick={openCreateForm}
           variant="primary"
+          disabled={!selectedAppId || selectedAppEnvs.length === 0}
         >
           <Plus className="h-4 w-4" />
           New Key
         </Button>
       </div>
 
-      {/* Alert */}
+      {/* Application Selector Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-[#262626] bg-[#131313] p-4">
+        <div className="flex items-center gap-3">
+          <Server className="h-4 w-4 text-white shrink-0" />
+          <span className="text-xs font-mono uppercase tracking-wider text-[#8e9192]">
+            Target Application:
+          </span>
+          {isLoadingApps ? (
+            <div className="flex items-center gap-2 text-xs font-mono text-neutral-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading applications...
+            </div>
+          ) : apps && apps.length > 0 ? (
+            <Select value={selectedAppId} onValueChange={handleSelectApp}>
+              <SelectTrigger className="w-64 font-mono text-xs bg-black border-[#262626]">
+                <SelectValue placeholder="Select application...">
+                  {selectedApp?.name}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {apps.map((app) => (
+                  <SelectItem key={app.id} value={app.id} className="font-mono text-xs">
+                    {app.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-xs text-neutral-500 font-mono">No applications created yet</span>
+          )}
+        </div>
+
+        {selectedApp && (
+          <span className="text-xs font-mono text-[#8e9192]">
+            {selectedAppEnvs.length} environment{selectedAppEnvs.length !== 1 ? 's' : ''} available
+          </span>
+        )}
+      </div>
+
+      {/* Alert Banner */}
       {alert && (
         <div
           className={cn(
@@ -218,80 +293,110 @@ export default function IngestionKeysClient() {
           )}
         >
           {alert.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
-          <span>{alert.message}</span>
-          <Button
-            variant="ghost"
-            size="icon"
+          <span className="flex-1">{alert.message}</span>
+          <button
+            type="button"
             onClick={() => setAlert(null)}
-            className="ml-auto text-neutral-500 hover:text-white h-5 w-5"
+            className="text-[#8e9192] hover:text-white transition-colors text-xs font-mono uppercase tracking-wider shrink-0 cursor-pointer"
           >
-            &times;
-          </Button>
+            [Cancel]
+          </button>
         </div>
       )}
 
       {/* One-time key reveal */}
       {newKeyReveal && (
         <div className="rounded-md border border-[#333] bg-black p-5 space-y-3 font-mono text-xs">
-          <div className="flex items-center gap-2 text-white">
-            <CheckCircle className="h-4 w-4 text-emerald-400" />
-            <span className="font-semibold text-sm">Key Generated Successfully</span>
+          <div className="flex items-center justify-between text-white">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-emerald-400" />
+              <span className="font-semibold text-sm">Key Generated Successfully</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNewKeyReveal(null)}
+              className="text-[#8e9192] hover:text-white transition-colors text-xs font-mono uppercase"
+            >
+              [Dismiss]
+            </button>
           </div>
           <p className="text-[#8e9192]">
-            Make sure to copy your key now. You won't be able to see it again!
+            Make sure to copy your raw ingestion key now. You won't be able to retrieve it again!
           </p>
           <div className="flex items-center gap-2 bg-[#131313] border border-[#262626] p-3 rounded-md">
             <code className="flex-1 font-mono text-white text-xs select-all break-all">{newKeyReveal.rawKey}</code>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => void copyToClipboard(newKeyReveal.rawKey)}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {copied ? 'Copied!' : 'Copy'}
+            </Button>
           </div>
         </div>
       )}
 
-      {/* Create key form */}
+      {/* Create Key Form (Scoped to Selected Application) */}
       {showCreateForm && (
         <section className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Plus className="h-4 w-4 text-white" /> Create New Ingestion Key
-          </h2>
+          <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <Plus className="h-4 w-4 text-white" />
+              Generate Ingestion Key for <span className="text-white font-mono">{selectedApp?.name}</span>
+            </h2>
+            <span className="border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[10px] font-mono uppercase">
+              Application Scoped
+            </span>
+          </div>
+
           <form onSubmit={(e) => void handleCreate(e)} className="space-y-4">
-            {/* Environment selector */}
+            {/* Environment selector for the selected application */}
             <div>
               <label htmlFor="create-env-select" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">
-                Environment <span className="text-red-400">*</span>
+                Target Environment ({selectedApp?.name}) <span className="text-red-400">*</span>
               </label>
-              <Select
-                value={createEnvId}
-                onValueChange={setCreateEnvId}
-              >
-                <SelectTrigger id="create-env-select" className="w-full">
-                  <SelectValue placeholder="Select environment…">
-                    {(() => {
-                      const env = allEnvs.find((e) => e.id === createEnvId);
-                      return env ? `${env.appName} — ${env.name} (${env.type})` : "";
-                    })()}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Select environment…</SelectItem>
-                  {allEnvs.map((env) => (
-                    <SelectItem key={env.id} value={env.id}>
-                      {env.appName} — {env.name} ({env.type})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {selectedAppEnvs.length > 0 ? (
+                <Select
+                  value={createEnvId}
+                  onValueChange={setCreateEnvId}
+                >
+                  <SelectTrigger id="create-env-select" className="w-full bg-black border-[#262626] font-mono text-xs">
+                    <SelectValue placeholder="Select environment…">
+                      {(() => {
+                        const env = selectedAppEnvs.find((e) => e.id === createEnvId);
+                        return env ? `${env.name} (${env.type})` : "Select environment…";
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedAppEnvs.map((env) => (
+                      <SelectItem key={env.id} value={env.id} className="font-mono text-xs">
+                        {env.name} ({env.type})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="p-3 bg-black border border-[#262626] rounded text-xs text-neutral-400 font-mono">
+                  No environments configured for {selectedApp?.name}. Create an environment in Settings first.
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Label */}
               <div>
-                <label htmlFor="create-key-label" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">Label (optional)</label>
+                <label htmlFor="create-key-label" className="block text-xs text-[#8e9192] mb-1.5 font-mono uppercase tracking-wider">
+                  Label (optional)
+                </label>
                 <input
                   id="create-key-label"
                   type="text"
-                  placeholder="e.g. CI/CD pipeline"
+                  placeholder="e.g. Production Ingestion / CI Pipeline"
                   value={createLabel}
                   onChange={(e) => setCreateLabel(e.target.value)}
-                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
+                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 px-3 py-2 font-mono text-xs focus:outline-none focus:border-white transition"
                 />
               </div>
 
@@ -306,12 +411,12 @@ export default function IngestionKeysClient() {
                   value={createExpiry}
                   onChange={(e) => setCreateExpiry(e.target.value)}
                   min={new Date().toISOString().slice(0, 10)}
-                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
+                  className="w-full rounded-md border border-[#262626] bg-black text-sm text-neutral-200 px-3 py-2 font-mono text-xs focus:outline-none focus:border-white transition"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 pt-1">
+            <div className="flex justify-end gap-3 pt-2 border-t border-[#262626]">
               <Button
                 type="button"
                 onClick={() => setShowCreateForm(false)}
@@ -334,13 +439,14 @@ export default function IngestionKeysClient() {
         </section>
       )}
 
-      {/* Keys list */}
+      {/* Keys List Scoped to Selected Application */}
       <section className="rounded-md border border-[#262626] bg-[#131313]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
           <div className="flex items-center gap-2">
             <Key className="h-4 w-4 text-white" />
-            <span className="text-sm font-semibold text-white">
-              {keys.length} {keys.length === 1 ? 'Key' : 'Keys'}
+            <span className="text-sm font-semibold text-white font-sans">
+              {filteredKeys.length} {filteredKeys.length === 1 ? 'Key' : 'Keys'}
+              {selectedApp ? ` for ${selectedApp.name}` : ''}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -357,27 +463,27 @@ export default function IngestionKeysClient() {
           </div>
         </div>
 
-        {keys.length === 0 && !isLoading ? (
+        {filteredKeys.length === 0 && !isLoading ? (
           <EmptyState
             variant="activation"
             illustration="telemetry"
             layout="compact"
             eyebrow="SDK connection"
-            title="Create your first ingestion key"
-            description="Use an environment-scoped key to authenticate telemetry from your application."
-            primaryAction={{ label: 'Generate key', onClick: () => setShowCreateForm(true) }}
+            title={selectedApp ? `No keys for ${selectedApp.name}` : "Create your first ingestion key"}
+            description={`Use an environment-scoped key to authenticate telemetry from ${selectedApp?.name || 'your application'}.`}
+            primaryAction={{ label: 'Generate key', onClick: openCreateForm }}
             className="m-4"
           />
         ) : (
           <ul className="divide-y divide-[#262626]">
-            {keys.map((apiKey) => {
+            {filteredKeys.map((apiKey) => {
               const isExpired = apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date();
               return (
                 <li key={apiKey.id} className="flex items-center gap-4 px-5 py-4">
                   {/* Key icon */}
                   <div className={cn(
-                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                    isExpired ? 'bg-red-950/40 text-red-400' : 'bg-indigo-950/40 text-indigo-400'
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#262626]',
+                    isExpired ? 'bg-red-950/40 text-red-400' : 'bg-black text-white'
                   )}>
                     <Key className="h-4 w-4" />
                   </div>
@@ -385,26 +491,25 @@ export default function IngestionKeysClient() {
                   {/* Details */}
                   <div className="flex-1 min-w-0 space-y-0.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-sm font-mono text-white">{apiKey.keyPrefix}••••••••</code>
+                      <code className="text-xs font-mono text-white select-all">{apiKey.keyPrefix}••••••••</code>
                       {apiKey.label && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black text-neutral-300 border border-[#262626]">
                           {apiKey.label}
                         </span>
                       )}
                       {isExpired && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-950/40 text-red-400 border border-red-900/40 font-semibold">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-950/40 text-red-400 border border-red-900/40 font-semibold">
                           EXPIRED
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-neutral-500 flex-wrap">
+                    <div className="flex items-center gap-3 text-xs text-[#8e9192] font-mono flex-wrap">
                       {apiKey.environment && (
                         <span className="flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
                           {apiKey.environment.name} ({apiKey.environment.type})
                         </span>
                       )}
-                      {apiKey.application && <span>{apiKey.application.name}</span>}
                       {apiKey.lastUsedAt && (
                         <span>Last used {new Date(apiKey.lastUsedAt).toLocaleDateString()}</span>
                       )}
@@ -419,7 +524,7 @@ export default function IngestionKeysClient() {
 
                   {/* Actions */}
                   {confirmDelete === apiKey.id ? (
-                    <div className="flex items-center gap-1.5 text-xs shrink-0">
+                    <div className="flex items-center gap-1.5 text-xs shrink-0 font-mono">
                       <span className="text-red-400">Revoke?</span>
                       <Button
                         id={`confirm-revoke-${apiKey.id}`}
@@ -457,9 +562,9 @@ export default function IngestionKeysClient() {
         )}
       </section>
 
-      <p className="text-xs text-neutral-600 flex items-center gap-1.5">
+      <p className="text-xs text-[#8e9192] font-mono flex items-center gap-1.5">
         <Shield className="h-3.5 w-3.5" />
-        API keys grant telemetry ingestion access. Revoke any key that is no longer in use or may be compromised.
+        API keys grant telemetry ingestion access for the selected application. Revoke any key that is no longer in use or may be compromised.
       </p>
     </div>
   );

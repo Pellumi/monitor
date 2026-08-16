@@ -468,7 +468,7 @@ function ReconciliationSkeleton() {
             <EmptyState
               variant="activation"
               illustration="telemetry"
-              layout="compact"
+              layout="page"
               eyebrow="Waiting for telemetry"
               title="No reconciliation report yet"
               description="Run your application through this flow, then trigger reconciliation to compare observed and expected behavior."

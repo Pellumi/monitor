@@ -73,21 +73,60 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
   const from = searchParams.get('from') || '/';
   const desktopRequest = searchParams.get('desktopRequest');
+  const inviteToken = searchParams.get('invite');
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [purpose, setPurpose] = useState<'SIGNUP' | 'LOGIN'>('LOGIN');
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Timers
   const [resendTimer, setResendTimer] = useState(0);
   const [expiryTimer, setExpiryTimer] = useState(600); // 10 minutes
 
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  /**
+   * After a successful auth, attempt to claim any pending invite token.
+   * On INVITE_EMAIL_MISMATCH the user is shown a clear error and NOT redirected.
+   * On any other failure we still redirect — the invite can be retried later.
+   */
+  const claimInviteIfPresent = async (): Promise<{ claimed: boolean; orgId?: string }> => {
+    if (!inviteToken) return { claimed: false };
+    try {
+      const res = await fetch('/api-gateway/organizations/invitations/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: inviteToken }),
+        credentials: 'include',
+      });
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error === 'INVITE_EMAIL_MISMATCH') {
+          throw new Error(
+            `This invitation was sent to a different email address. Please sign in with the correct account or ask the organization owner to resend the invite.`,
+          );
+        }
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // Expired / already used — silently swallow and continue
+        console.warn('[Invite] Non-fatal accept error:', data.error);
+        return { claimed: false };
+      }
+      const data = await res.json();
+      return { claimed: true, orgId: data.membership?.organizationId };
+    } catch (err: any) {
+      // Re-throw email mismatch so the UI can surface it; swallow the rest
+      if (err.message.startsWith('This invitation')) throw err;
+      console.warn('[Invite] Failed to claim invite:', err);
+      return { claimed: false };
+    }
+  };
 
   const finishAuthentication = async (isNewUser = false) => {
     if (desktopRequest) {
@@ -103,6 +142,16 @@ export default function LoginPage() {
       router.push('/auth/desktop-complete');
       return;
     }
+
+    if (inviteToken) {
+      // Claim the invite. This may throw on email mismatch.
+      const { orgId } = await claimInviteIfPresent();
+      // Redirect into the org workspace directly
+      const dest = orgId ? `/?orgId=${orgId}` : '/';
+      router.push(dest);
+      return;
+    }
+
     router.push(isNewUser ? '/onboarding' : from);
   };
 
@@ -332,14 +381,24 @@ export default function LoginPage() {
         </span>
       </div>
 
+      {/* Invite banner — shown on step 1 when there's a pending invite token */}
+      {step === 1 && inviteToken && (
+        <div className="mb-5 rounded-md border border-[#262626] bg-black px-4 py-3 font-mono text-xs text-[#e2e2e2]">
+          <p className="font-semibold text-white mb-0.5">You have been invited</p>
+          <p className="text-[#8e9192] leading-relaxed">
+            Sign in or create an account with the email address the invitation was sent to. You'll be added to the organization automatically.
+          </p>
+        </div>
+      )}
+
       {/* Title & Description */}
       <div className="mb-6">
         <h2 className="text-2xl font-semibold text-white tracking-tight">
-          {step === 1 ? 'Sign in to Tellann' : step === 2 ? 'Verify your identity' : 'Enter your password'}
+          {step === 1 ? (inviteToken ? 'Accept your invitation' : 'Sign in to Tellann') : step === 2 ? 'Verify your identity' : 'Enter your password'}
         </h2>
         <p className="text-sm text-[#c4c7c8] mt-1.5 leading-relaxed">
           {step === 1
-            ? 'Enter your email address to continue to your workspace.'
+            ? (inviteToken ? 'Enter the email address the invitation was sent to.' : 'Enter your email address to continue to your workspace.')
             : step === 2
             ? <>We sent a 6-digit verification code to <span className="text-white font-medium">{email}</span>.</>
             : <>Sign in to <span className="text-white font-medium">{email}</span> with your account password.</>}

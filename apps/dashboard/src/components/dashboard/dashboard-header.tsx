@@ -103,7 +103,7 @@ export function DashboardHeader() {
 
       <div className="flex flex-wrap items-center gap-3">
         {/* Role Selector (UX testing & role-based view adaptation) */}
-        <div className="relative inline-block text-xs">
+        {/* <div className="relative inline-block text-xs">
           <select
             aria-label="User role mode"
             value={userRole}
@@ -116,7 +116,7 @@ export function DashboardHeader() {
             <option value="PRODUCT_MANAGER">PM View</option>
             <option value="ORGANIZATION_ADMIN">Admin View</option>
           </select>
-        </div>
+        </div> */}
 
         {/* Date Range Selector */}
         {state.lifecycle === "ACTIVE" && (

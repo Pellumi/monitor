@@ -5,8 +5,15 @@ import { Button } from "@/components/ui/button";
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Users, UserMinus, Shield, ChevronDown, Loader2, AlertTriangle, CheckCircle, UserPlus, Mail, X, Clock } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useSession } from '@/components/providers';
 import { EmptyState } from '@/components/empty-state';
+
+interface Entitlement {
+  planType: string;
+  features: Record<string, boolean | string>;
+  limits: { users?: number };
+}
 
 type MemberRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
 
@@ -85,8 +92,25 @@ export default function MembersPage() {
   const currentMembership = memberships.find((m) => m.organization.id === selectedOrgId);
   const isOwner = currentMembership?.role === 'OWNER';
   const isAdmin = currentMembership?.role === 'ADMIN' || isOwner;
-  const planType = currentMembership?.organization.subscription?.planType;
-  const hasTeamCollaboration = planType === 'TEAM' || planType === 'BUSINESS' || planType === 'ENTERPRISE';
+
+  const { data: entitlement } = useQuery<Entitlement>({
+    queryKey: ['members-entitlement', selectedOrgId],
+    queryFn: async () => {
+      if (!selectedOrgId) return null;
+      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/entitlement`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!selectedOrgId,
+  });
+
+  const userLimit = entitlement?.limits?.users ?? 1;
+  // Only accepted members count against the hard seat limit.
+  // Pending invitations are shown in the UI counter but don't block new invites.
+  const activeMemberCount = members.length;
+  const currentMemberCount = members.length + pendingInvitations.length; // display only
+  const hasTeamAccess = entitlement?.features?.TEAM_COLLABORATION === true || userLimit > 1;
+  const userLimitReached = activeMemberCount >= userLimit;
 
   const loadMembers = useCallback(async () => {
     if (!selectedOrgId) return;
@@ -196,11 +220,16 @@ export default function MembersPage() {
       </div>
 
       {/* Invite Member (owners/admins only) */}
-      {isAdmin && hasTeamCollaboration && (
+      {isAdmin && hasTeamAccess && !userLimitReached && (
         <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <UserPlus className="h-4 w-4 text-white" />
-            <h2 className="text-sm font-semibold text-white">Invite Member</h2>
+          <div className="flex items-center justify-between gap-2 mb-4 border-b border-[#262626] pb-3">
+            <div className="flex items-center gap-2">
+              <UserPlus className="h-4 w-4 text-white" />
+              <h2 className="text-sm font-semibold text-white">Invite Member</h2>
+            </div>
+            <span className="text-xs font-mono text-[#8e9192]">
+              {currentMemberCount} of {userLimit} member slot{userLimit > 1 ? 's' : ''} used
+            </span>
           </div>
           <form onSubmit={(e) => void handleInvite(e)} className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -212,21 +241,21 @@ export default function MembersPage() {
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 required
-                className="w-full pl-9 pr-3 py-2 rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
+                className="w-full pl-9 pr-3 py-2 rounded-md border border-[#262626] bg-black text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition font-mono text-xs"
               />
             </div>
             <Select
               value={inviteRole}
               onValueChange={(val) => setInviteRole(val as MemberRole)}
             >
-              <SelectTrigger id="invite-role-select" className="w-[150px]">
+              <SelectTrigger id="invite-role-select" className="w-[150px] font-mono text-xs bg-black border-[#262626]">
                 <SelectValue placeholder="Select role...">
                   {ROLE_LABELS[inviteRole]}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {ROLES.filter((r) => r !== 'OWNER').map((r) => (
-                  <SelectItem key={r} value={r}>
+                  <SelectItem key={r} value={r} className="font-mono text-xs">
                     {ROLE_LABELS[r]}
                   </SelectItem>
                 ))}
@@ -247,21 +276,47 @@ export default function MembersPage() {
         </section>
       )}
 
-      {isAdmin && !hasTeamCollaboration && (
+      {/* Member Limit Reached Warning */}
+      {isAdmin && hasTeamAccess && userLimitReached && (
+        <div className="rounded-md border border-[#262626] bg-[#131313] p-4 text-xs font-mono text-[#8e9192] flex flex-wrap items-center justify-between gap-3">
+          <span>
+            Member limit reached ({currentMemberCount} of {userLimit} member slot{userLimit > 1 ? 's' : ''} used on your {entitlement?.planType ?? 'current'} plan).
+          </span>
+          <a
+            href={`${process.env.NEXT_PUBLIC_MARKETING_URL || 'https://domain-name.com'}/pricing`}
+            className="text-white border border-white px-3 py-1.5 rounded text-[11px] font-mono uppercase tracking-wider hover:bg-neutral-200 hover:text-black transition-colors shrink-0"
+          >
+            Upgrade Plan &rarr;
+          </a>
+        </div>
+      )}
+
+      {/* No Team Collaboration Feature */}
+      {isAdmin && !hasTeamAccess && (
         <div className="rounded-md border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
-          Team collaboration starts on the Team plan. Existing membership remains visible, but inviting teammates requires an upgrade.
+          Team collaboration starts on plans with multiple member seats. Existing membership remains visible, but inviting teammates requires an upgrade.
         </div>
       )}
 
       {alert && (
         <div
           className={cn(
-            'flex items-center gap-3 rounded-lg border px-4 py-3 text-sm',
+            'flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm font-mono',
             alert.type === 'success' ? 'border-emerald-900/60 bg-emerald-950/40 text-emerald-300' : 'border-red-900/60 bg-red-950/40 text-red-300',
           )}
         >
-          {alert.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
-          <span>{alert.message}</span>
+          <div className="flex items-center gap-3">
+            {alert.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+            <span>{alert.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAlert(null)}
+            className="text-[#8e9192] hover:text-white transition-colors text-xs font-mono uppercase tracking-wider shrink-0 cursor-pointer"
+            aria-label="Dismiss alert"
+          >
+            [Cancel]
+          </button>
         </div>
       )}
 

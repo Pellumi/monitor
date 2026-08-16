@@ -892,6 +892,7 @@ model ApiKey {
 model Application {
   id             String        @id @default(uuid())
   name           String
+  summary        String?
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 

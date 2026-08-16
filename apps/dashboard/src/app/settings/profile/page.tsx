@@ -107,18 +107,28 @@ export default function ProfileSettingsPage() {
         <div
           role="status"
           className={cn(
-            "flex items-center gap-2.5 rounded-lg border p-3 text-sm transition-colors",
+            "flex items-center justify-between gap-2.5 rounded-lg border p-3 text-sm transition-colors",
             notice.type === "success"
               ? "border-emerald-500/30 bg-emerald-950/40 text-emerald-300"
               : "border-red-900/60 bg-red-950/40 text-red-300"
           )}
         >
-          {notice.type === "success" ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-          ) : (
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-          )}
-          {notice.text}
+          <div className="flex items-center gap-2.5">
+            {notice.type === "success" ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+            ) : (
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+            )}
+            {notice.text}
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="text-[#8e9192] hover:text-white transition-colors text-xs font-mono uppercase tracking-wider shrink-0 cursor-pointer"
+            aria-label="Dismiss"
+          >
+            Cancel
+          </button>
         </div>
       ) : null}
       <form onSubmit={save} className="space-y-6">

@@ -179,7 +179,7 @@ export function renderTemplateHtml(template: BuiltinEmailTemplate, variables: Te
         ${(cta || secondaryCta) ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:32px 0 0;">${cta}${secondaryCta}</div>` : ''}
         <div style="border-top:1px solid #262626;margin-top:40px;padding-top:20px;color:#8e9192;font-size:12px;line-height:1.6;">
           ${variables.organizationName ? `${escapeHtml(variables.organizationName)}${variables.applicationName ? ' &middot; ' : ''}` : ''}${variables.applicationName ? escapeHtml(variables.applicationName) : ''}
-          <br>You received this because of activity in Tellann. <a href="${escapeHtml(appUrl('/settings/profile'))}" style="color:#c4c7c8;">Notification preferences</a><br>Tellann, Lagos, Nigeria
+          <br>You received this because of activity in Tellann. <a href="${escapeHtml(appUrl('/settings/profile'))}" style="color:#c4c7c8;">Notification preferences</a><br>Tellann, Abuja, Nigeria
         </div>
       </section>
     </main>

@@ -39,6 +39,10 @@ const commonEnvironment = {
   AUTH_API_URL: 'http://127.0.0.1:3013',
   BILLING_API_URL: 'http://127.0.0.1:3009',
   BILLING_CATALOG_ENV: 'test',
+  // Deterministic lifecycle tests request the signed MOCK provider explicitly.
+  // Production ignores this override and the checkout API still constrains it
+  // to the providers eligible for the organization's resolved currency.
+  BILLING_ALLOW_TEST_PROVIDER_OVERRIDE: 'true',
   BILLING_ENCRYPTION_KEY: localEnvironment.BILLING_ENCRYPTION_KEY || 'tellann-local-acceptance-encryption-key-do-not-use-in-production',
   BILLING_MOCK_WEBHOOK_SECRET: localEnvironment.BILLING_MOCK_WEBHOOK_SECRET || 'tellann-local-acceptance-mock-webhook-secret',
   COVERAGE_ENGINE_URL: 'http://127.0.0.1:3003',

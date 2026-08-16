@@ -54,7 +54,7 @@ function bearerIdentity(request: FastifyRequest): { client?: string; key?: strin
 }
 
 // Routes that bypass API key authentication
-const PUBLIC_PREFIXES = ['/health', '/auth'];
+const PUBLIC_PREFIXES = ['/health', '/auth', '/internal/app-events', '/v1/desktop/app-events'];
 
 // ─────────────────────────────────────────────────────────────
 // In-memory key cache (TTL: 60s) to avoid DB round-trip per request
@@ -249,6 +249,67 @@ async function main() {
     service: 'api-gateway',
     upstreams: Object.keys(UPSTREAM),
   }));
+
+  // ─────────────────────────────────────────────────────────────
+  // Real-time Application Events (SSE)
+  // ─────────────────────────────────────────────────────────────
+
+  interface SSEClient {
+    id: string;
+    organizationId?: string;
+    res: any;
+  }
+  const sseClients = new Set<SSEClient>();
+
+  fastify.get('/v1/desktop/app-events', async (request, reply) => {
+    const query = request.query as { organizationId?: string };
+    const organizationId = query.organizationId || (request.headers['x-sots-org-id'] as string);
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    const clientId = crypto.randomUUID();
+    const client: SSEClient = { id: clientId, organizationId, res: reply.raw };
+    sseClients.add(client);
+
+    reply.raw.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientId })}\n\n`);
+
+    request.raw.on('close', () => {
+      sseClients.delete(client);
+    });
+
+    return reply.hijack();
+  });
+
+  fastify.post('/internal/app-events/broadcast', async (request) => {
+    const body = request.body as {
+      action: string;
+      applicationId: string;
+      organizationId?: string;
+      name?: string;
+      summary?: string;
+    };
+
+    const payloadStr = JSON.stringify(body);
+    let deliveredCount = 0;
+
+    for (const client of sseClients) {
+      if (!client.organizationId || !body.organizationId || client.organizationId === body.organizationId) {
+        try {
+          client.res.write(`data: ${payloadStr}\n\n`);
+          deliveredCount++;
+        } catch {
+          sseClients.delete(client);
+        }
+      }
+    }
+
+    return { success: true, broadcastCount: deliveredCount };
+  });
 
   // ─────────────────────────────────────────────────────────────
   // OpenAPI 3.1 Spec (Gap 2)

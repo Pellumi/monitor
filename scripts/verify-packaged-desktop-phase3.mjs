@@ -119,7 +119,12 @@ async function main() {
     desktop = await electron.launch({
       executablePath,
       args: [`--user-data-dir=${path.join(workspaceRoot, '.tellann-user-data')}`],
-      env: { ...process.env, TELLANN_API_URL: 'http://127.0.0.1:3000', TELLANN_AUTH_URL: 'http://127.0.0.1:3000' },
+      env: {
+        ...process.env,
+        TELLANN_API_URL: 'http://127.0.0.1:3000',
+        TELLANN_AUTH_URL: 'http://127.0.0.1:3000',
+        TELLANN_BROWSER_HEADLESS: 'true',
+      },
       timeout: 60_000,
     });
     progress('packaged process launched');
@@ -127,13 +132,6 @@ async function main() {
     progress('desktop window ready');
     await page.waitForFunction(() => Boolean(window.tellann), undefined, { timeout: 30_000 });
     progress('preload bridge ready');
-    const managedBrowserAutomation = await desktop.evaluate(() => {
-      const playwright = require('playwright');
-      const launch = playwright.chromium.launch.bind(playwright.chromium);
-      playwright.chromium.launch = (options = {}) => launch({ ...options, headless: true, timeout: 60_000 });
-      return true;
-    });
-    assert(managedBrowserAutomation, 'could not configure deterministic packaged browser automation');
     progress('managed browser automation configured');
     let session = await page.evaluate(() => window.tellann.auth.getSession());
     progress(`session read: ${session.authenticated ? 'authenticated' : 'anonymous'}`);

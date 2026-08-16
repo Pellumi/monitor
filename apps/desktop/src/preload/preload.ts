@@ -13,6 +13,7 @@ const IPC = {
   cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
+  appUpdated: 'tellann:cloud:app-updated',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
@@ -78,6 +79,13 @@ contextBridge.exposeInMainWorld('tellann', {
     chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
     scanWorkspace: (input: { path: string; workspaceId: string; applicationId: string }) =>
       ipcRenderer.invoke(IPC.scanWorkspace, input),
+    onAppUpdated: (callback: (event: any) => void) => {
+      const subscription = (_: unknown, data: any) => callback(data);
+      ipcRenderer.on(IPC.appUpdated, subscription);
+      return () => {
+        ipcRenderer.removeListener(IPC.appUpdated, subscription);
+      };
+    },
   },
   intent: {
     listDeclaredFlows: (applicationId: string) => ipcRenderer.invoke(IPC.getDeclaredFlows, applicationId),

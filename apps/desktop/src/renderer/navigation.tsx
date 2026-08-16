@@ -26,14 +26,14 @@ export const desktopNavigation: DesktopNavItem[] = [
       || pathname === '/projects/new'
       || /^\/projects\/[^/]+(?:\/(?:workspace|environments|activity))?$/.test(pathname),
   },
-  {
-    id: 'sources',
-    label: 'Documents',
-    icon: BookOpenText,
-    projectScoped: true,
-    resolveHref: (projectId) => projectId ? `/projects/${projectId}/sources` : '/projects',
-    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/sources`)),
-  },
+  // {
+  //   id: 'sources',
+  //   label: 'Documents',
+  //   icon: BookOpenText,
+  //   projectScoped: true,
+  //   resolveHref: (projectId) => projectId ? `/projects/${projectId}/sources` : '/projects',
+  //   matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/sources`)),
+  // },
   {
     id: 'intent',
     label: 'Intent',

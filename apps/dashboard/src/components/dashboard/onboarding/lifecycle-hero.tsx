@@ -10,15 +10,20 @@ export function LifecycleHero() {
 
   if (state.lifecycle === "NEW_ACCOUNT") {
     return (
-      <div className="rounded-lg border border-[#2d2d2d] bg-gradient-to-r from-[#171717] via-[#141414] to-[#171717] p-6 text-white space-y-4">
-        <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 font-semibold tracking-wider uppercase">
-          <Sparkles className="w-4 h-4" />
-          Welcome to Tellann Quality Intelligence
+      <div className="rounded-md border border-[#262626] bg-[#131313] p-6 text-white space-y-4">
+        <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-white" />
+            <span className="text-sm font-semibold text-white">Welcome to Tellann</span>
+          </div>
+          <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+            Onboarding // Setup
+          </span>
         </div>
-        <h2 className="text-xl font-bold tracking-tight">
+        <h2 className="text-lg font-semibold tracking-tight text-white">
           Teach Tellann how your application behaves
         </h2>
-        <p className="text-sm text-neutral-300 max-w-2xl leading-relaxed">
+        <p className="text-sm text-[#c4c7c8] max-w-2xl leading-relaxed">
           Connect your application and run one normal walkthrough. Tellann will
           observe the session and turn it into workflows, coverage analysis,
           missing states, missing flows, endpoint intelligence, and a replayable
@@ -27,15 +32,15 @@ export function LifecycleHero() {
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <Link
             href="/onboarding"
-            className="px-4 py-2 bg-white text-black font-semibold rounded text-xs hover:bg-neutral-200 transition-colors shadow-sm"
+            className="px-4 py-2 bg-white text-black font-semibold rounded-sm text-xs uppercase tracking-wider hover:bg-neutral-200 transition-colors"
           >
             Create Your Application
           </Link>
           <a
-            href="https://docs.tellann.io"
+            href="https://docs.tellann.co"
             target="_blank"
             rel="noreferrer"
-            className="px-4 py-2 border border-[#3a3a3a] text-neutral-300 font-medium rounded text-xs hover:bg-[#222] transition-colors"
+            className="px-4 py-2 border border-[#444748] bg-black text-[#8e9192] font-mono text-xs uppercase tracking-wider rounded-sm hover:text-white hover:border-white transition-colors"
           >
             View Quick Start Guide
           </a>
@@ -47,59 +52,61 @@ export function LifecycleHero() {
   if (state.lifecycle === "DEMONSTRATION_IN_PROGRESS") {
     const live = data?.liveDemonstration;
     return (
-      <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/10 p-6 text-white space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 font-semibold uppercase tracking-wider">
+      <div className="rounded-md border border-[#262626] bg-[#131313] p-6 text-white space-y-4">
+        <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+          <div className="flex items-center gap-2">
             <Radio className="w-4 h-4 animate-pulse text-emerald-400" />
-            Live Demonstration Recording Active
+            <span className="text-sm font-semibold text-white">Live Demonstration Recording Active</span>
           </div>
-          <span className="text-xs font-mono text-neutral-400">
-            Started at 08:42
+          <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+            Live // Recording
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-2 border-y border-emerald-500/20 font-mono">
-          <div>
-            <span className="text-[10px] uppercase text-neutral-400 block">
-              Events Captured
-            </span>
-            <span className="text-lg font-bold text-emerald-300">
-              {live?.eventCount ?? 387}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] uppercase text-neutral-400 block">
-              States Observed
-            </span>
-            <span className="text-lg font-bold text-white">
-              {live?.stateCount ?? 14}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] uppercase text-neutral-400 block">
-              Transitions Observed
-            </span>
-            <span className="text-lg font-bold text-white">
-              {live?.transitionCount ?? 22}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] uppercase text-neutral-400 block">
-              API Calls Captured
-            </span>
-            <span className="text-lg font-bold text-white">
-              {live?.apiCallCount ?? 81}
-            </span>
+        <div className="bg-black border border-[#262626] rounded-sm divide-y divide-[#262626] font-mono text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-[#262626]">
+            <div className="p-3">
+              <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+                Events Captured
+              </span>
+              <span className="text-base font-bold text-white mt-1 block">
+                {live?.eventCount ?? 387}
+              </span>
+            </div>
+            <div className="p-3">
+              <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+                States Observed
+              </span>
+              <span className="text-base font-bold text-white mt-1 block">
+                {live?.stateCount ?? 14}
+              </span>
+            </div>
+            <div className="p-3">
+              <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+                Transitions
+              </span>
+              <span className="text-base font-bold text-white mt-1 block">
+                {live?.transitionCount ?? 22}
+              </span>
+            </div>
+            <div className="p-3">
+              <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+                API Calls
+              </span>
+              <span className="text-base font-bold text-white mt-1 block">
+                {live?.apiCallCount ?? 81}
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <div className="text-xs text-neutral-300 font-mono">
+          <div className="text-xs text-[#8e9192] font-mono">
             ● Observing user interactions & network requests...
           </div>
           <Link
             href="/qa-runs"
-            className="px-4 py-2 bg-emerald-500 text-black font-bold text-xs rounded hover:bg-emerald-400 transition-colors shadow-sm"
+            className="px-4 py-2 bg-white text-black font-semibold text-xs rounded-sm uppercase tracking-wider hover:bg-neutral-200 transition-colors"
           >
             Stop & Analyze Session
           </Link>
@@ -110,32 +117,37 @@ export function LifecycleHero() {
 
   if (state.lifecycle === "ANALYSIS_IN_PROGRESS") {
     return (
-      <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-6 text-white space-y-4">
-        <div className="flex items-center gap-2 text-xs font-mono text-amber-400 font-semibold uppercase tracking-wider">
-          <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-          Analyzing Your Demonstration
+      <div className="rounded-md border border-[#262626] bg-[#131313] p-6 text-white space-y-4">
+        <div className="flex items-center justify-between border-b border-[#262626] pb-3">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-white" />
+            <span className="text-sm font-semibold text-white">Analyzing Demonstration</span>
+          </div>
+          <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
+            Analysis // Processing
+          </span>
         </div>
-        <h2 className="text-lg font-bold tracking-tight">
+        <h2 className="text-base font-semibold tracking-tight text-white">
           Constructing behavioral graph & missing state intelligence...
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono py-2">
-          <div className="flex items-center gap-2 text-emerald-400">
-            <CheckCircle2 className="w-4 h-4" /> Session reconstructed
+        <div className="bg-black border border-[#262626] rounded-sm p-4 font-mono text-xs grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex items-center gap-2 text-white">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> Session reconstructed
           </div>
-          <div className="flex items-center gap-2 text-emerald-400">
-            <CheckCircle2 className="w-4 h-4" /> Events ordered & sanitized
+          <div className="flex items-center gap-2 text-white">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> Events ordered & sanitized
           </div>
-          <div className="flex items-center gap-2 text-emerald-400">
-            <CheckCircle2 className="w-4 h-4" /> States & transitions extracted
+          <div className="flex items-center gap-2 text-white">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> States & transitions extracted
           </div>
-          <div className="flex items-center gap-2 text-amber-300 font-bold">
-            <Loader2 className="w-4 h-4 animate-spin" /> Discovering workflows
+          <div className="flex items-center gap-2 text-white font-bold">
+            <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> Discovering workflows
           </div>
-          <div className="flex items-center gap-2 text-neutral-500">
+          <div className="flex items-center gap-2 text-[#8e9192]">
             ○ Calculating workflow coverage
           </div>
-          <div className="flex items-center gap-2 text-neutral-500">
+          <div className="flex items-center gap-2 text-[#8e9192]">
             ○ Generating quality report
           </div>
         </div>
@@ -146,33 +158,50 @@ export function LifecycleHero() {
   if (state.lifecycle === "ACTIVE" && data?.summary) {
     const { summary, coverage } = data;
     return (
-      <div className="rounded-lg border border-[#262626] bg-[#141414] p-4 text-white">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-md border border-[#262626] bg-[#131313] p-5 text-white space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#262626] pb-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-mono font-semibold text-neutral-300 uppercase tracking-wider">
-              Since Your Previous Analysis
-            </span>
+            <TrendingUp className="w-4 h-4 text-white" />
+            <span className="text-sm font-semibold text-white">Analysis Delta</span>
           </div>
-          <span className="text-[11px] font-mono text-neutral-500">
+          <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
             Last analysis: {data.analysis?.lastAnalysisAt ?? "Today"}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-3 pt-3 border-t border-[#262626] text-xs font-mono">
-          <span className="text-emerald-400 font-medium">
-            +{summary.statesObserved.delta ?? 3} states discovered
-          </span>
-          <span className="text-emerald-400 font-medium">
-            +{summary.transitionsObserved.delta ?? 7} transitions observed
-          </span>
-          <span className="text-emerald-400 font-medium">
-            Workflow coverage +
-            {coverage?.workflowCoverage.delta?.toFixed(1) ?? "4.7"}%
-          </span>
-          <span className="text-neutral-400">
-            Findings: {summary.findingsCount.value?.total ?? 12} current
-          </span>
+        <div className="bg-black border border-[#262626] rounded-sm divide-y sm:divide-y-0 sm:divide-x divide-[#262626] grid grid-cols-1 sm:grid-cols-4 font-mono text-xs">
+          <div className="p-3">
+            <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+              States Discovered
+            </span>
+            <span className="text-sm font-bold text-white mt-1 block">
+              +{summary.statesObserved.delta ?? 3} states
+            </span>
+          </div>
+          <div className="p-3">
+            <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+              Transitions
+            </span>
+            <span className="text-sm font-bold text-white mt-1 block">
+              +{summary.transitionsObserved.delta ?? 7} observed
+            </span>
+          </div>
+          <div className="p-3">
+            <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+              Workflow Coverage
+            </span>
+            <span className="text-sm font-bold text-white mt-1 block">
+              +{coverage?.workflowCoverage.delta?.toFixed(1) ?? "4.7"}%
+            </span>
+          </div>
+          <div className="p-3">
+            <span className="text-[#8e9192] text-[10px] uppercase tracking-wider block">
+              Current Findings
+            </span>
+            <span className="text-sm font-bold text-white mt-1 block">
+              {summary.findingsCount.value?.total ?? 12} total
+            </span>
+          </div>
         </div>
       </div>
     );
@@ -180,3 +209,4 @@ export function LifecycleHero() {
 
   return null;
 }
+

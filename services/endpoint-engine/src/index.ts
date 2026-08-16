@@ -14,7 +14,7 @@ import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/ema
 // ─────────────────────────────────────────────────────────────
 
 const ch: ClickHouseClient = createClient({
-  host:     process.env.CLICKHOUSE_HOST     ?? 'http://localhost:8123',
+  url:      process.env.CLICKHOUSE_HOST     ?? 'http://localhost:8123',
   database: process.env.CLICKHOUSE_DATABASE ?? 'sots',
   username: process.env.CLICKHOUSE_USER     ?? 'sots',
   password: process.env.CLICKHOUSE_PASSWORD ?? 'password',
@@ -244,11 +244,14 @@ async function start(): Promise<void> {
   await emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
   await ensureTable();
 
-  // Start Kafka consumer
-  await consumer.connect();
-  await consumer.subscribe({ topic: Topics.TELEMETRY_EVENTS, fromBeginning: true });
-  await consumer.run({ eachMessage: processEvent });
-  console.log(`[EndpointEngine] Consuming ${Topics.TELEMETRY_EVENTS}`);
+  if (process.env.KAFKA_ENABLED !== 'false') {
+    await consumer.connect();
+    await consumer.subscribe({ topic: Topics.TELEMETRY_EVENTS, fromBeginning: true });
+    await consumer.run({ eachMessage: processEvent });
+    console.log(`[EndpointEngine] Consuming ${Topics.TELEMETRY_EVENTS}`);
+  } else {
+    console.log('[EndpointEngine] KAFKA_ENABLED=false — Kafka consumer not started');
+  }
 
   // Start HTTP server
   const PORT = Services.ENDPOINT_ENGINE;

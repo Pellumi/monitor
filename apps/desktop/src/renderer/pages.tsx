@@ -619,19 +619,74 @@ export function WorkspacePage() {
       }
     >
       {!workspace ? (
-        <EmptyState
-          icon={<SearchCode size={36} />}
-          title="No local workspace attached"
-          description="Browser-only QA remains fully available. Attach a folder only when repository context is useful."
-          action={
-            <button
-              className="button primary"
-              onClick={() => void attachWorkspace(projectId)}
-            >
-              Choose project folder
-            </button>
-          }
-        />
+        (application as any)?.projectWorkspaces?.[0] ? (() => {
+          const cloudWs = (application as any).projectWorkspaces[0];
+          const latestSnap = cloudWs.snapshots?.[0];
+          const endpointsRaw = latestSnap?.endpointSummary;
+          const endpointsCount = Array.isArray(endpointsRaw) ? endpointsRaw.length : (endpointsRaw && typeof endpointsRaw === 'object') ? Object.keys(endpointsRaw).length : (typeof endpointsRaw === 'number' ? endpointsRaw : 0);
+          const docsRaw = latestSnap?.documentationSummary;
+          const docsCount = Array.isArray(docsRaw) ? docsRaw.length : (docsRaw && typeof docsRaw === 'object') ? Object.keys(docsRaw).length : (typeof docsRaw === 'number' ? docsRaw : 0);
+          const routesRaw = latestSnap?.routeSummary;
+          const routesCount = Array.isArray(routesRaw) ? routesRaw.length : (routesRaw && typeof routesRaw === 'object') ? Object.keys(routesRaw).length : (typeof routesRaw === 'number' ? routesRaw : 0);
+
+          return (
+            <div className="content-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '18px' }}>Cloud Workspace Connected</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.7, fontFamily: 'var(--font-mono)' }}>
+                    Repository Fingerprint: {cloudWs.repositoryFingerprint ? cloudWs.repositoryFingerprint.slice(0, 12) : cloudWs.opaqueLocalId}
+                  </p>
+                </div>
+                <span className="badge" style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                  {cloudWs.packageManager || 'npm'}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', textAlign: 'center' }}>
+                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{routesCount}</div>
+                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Discovered Routes</div>
+                </div>
+                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{endpointsCount}</div>
+                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Endpoints Mapped</div>
+                </div>
+                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{docsCount}</div>
+                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Doc Manifests</div>
+                </div>
+              </div>
+
+              <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.5, opacity: 0.8 }}>
+                A project workspace is registered in Tellann Cloud for <strong>{application.name}</strong>. Choose the local folder on your computer to connect local file access and enable automated instrumentation.
+              </p>
+
+              <div>
+                <button
+                  className="button primary font-mono text-xs uppercase"
+                  onClick={() => void attachWorkspace(projectId)}
+                >
+                  Choose project folder
+                </button>
+              </div>
+            </div>
+          );
+        })() : (
+          <EmptyState
+            icon={<SearchCode size={36} />}
+            title="No local workspace attached"
+            description="Browser-only QA remains fully available. Attach a folder only when repository context is useful."
+            action={
+              <button
+                className="button primary"
+                onClick={() => void attachWorkspace(projectId)}
+              >
+                Choose project folder
+              </button>
+            }
+          />
+        )
       ) : (
         <div className="two-column">
           <section className="content-card">

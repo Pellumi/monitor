@@ -227,7 +227,7 @@ export function AppShell() {
                 </button>
                 <div className="profile-menu-items">
                   <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); void window.tellann?.system.openProfile(); }}><Settings size={16} /><span>Profile settings</span></button>
-                  <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); void window.tellann?.system.openExternal('https://docs.tellann.io'); }}><BookOpenText size={16} /><span>Documentation</span></button>
+                  <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); void window.tellann?.system.openExternal('https://docs.tellann.co'); }}><BookOpenText size={16} /><span>Documentation</span></button>
                   <button className="profile-signout" type="button" role="menuitem" onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}><LogOut size={16} /><span>Sign out</span></button>
                 </div>
               </div>

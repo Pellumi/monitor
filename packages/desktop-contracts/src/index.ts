@@ -447,6 +447,7 @@ export const IPC = {
   cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
+  appUpdated: 'tellann:cloud:app-updated',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
@@ -517,6 +518,7 @@ export const DesktopEntitlementsSchema = z.object({
 export const DesktopApplicationSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
+  summary: z.string().nullable().optional(),
   organizationId: z.string().uuid(),
   organizationName: z.string(),
   entitlements: DesktopEntitlementsSchema.nullable(),
@@ -526,6 +528,14 @@ export const DesktopApplicationSchema = z.object({
     type: EnvironmentTypeSchema,
     baseUrl: z.string().nullable().optional(),
   })),
+  projectWorkspaces: z.array(z.object({
+    id: z.string().uuid(),
+    opaqueLocalId: z.string(),
+    repositoryFingerprint: z.string(),
+    packageManager: z.string().nullable().optional(),
+    detectedStack: z.any().optional(),
+    snapshots: z.array(z.any()).optional(),
+  })).optional(),
 });
 
 export type DesktopDevice = z.infer<typeof DesktopDeviceSchema>;

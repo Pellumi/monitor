@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Globe2, Loader2, Plus, Save, ShieldCheck } from "lucide-react";
+import { Globe2, Loader2, Plus, Save, ShieldCheck, X } from "lucide-react";
 import { useSession } from "@/components/providers";
 import { SettingsPage, SettingsSection, UpgradeNotice } from "@/components/settings/settings-page";
 import { Button } from "@/components/ui/button";
@@ -173,8 +173,34 @@ function EnvironmentsSettingsContent() {
         </SettingsSection>
       ) : null}
 
-      {error ? <div role="alert" className="rounded-lg border border-red-900/60 bg-red-950/20 px-4 py-3 text-sm text-red-200">{error}</div> : null}
-      {notice ? <div role="status" className="rounded-lg border border-emerald-900/60 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-200">{notice}</div> : null}
+      {error ? (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-red-900/60 bg-red-950/20 px-4 py-3 text-sm text-red-200">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            className="inline-flex items-center gap-1 text-xs font-medium text-red-400 hover:text-white transition-colors shrink-0 cursor-pointer"
+            aria-label="Dismiss error"
+          >
+            <X className="h-4 w-4" />
+            <span>Cancel</span>
+          </button>
+        </div>
+      ) : null}
+      {notice ? (
+        <div role="status" className="flex items-center justify-between gap-3 rounded-lg border border-emerald-900/60 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-200">
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 hover:text-white transition-colors shrink-0 cursor-pointer"
+            aria-label="Dismiss notice"
+          >
+            <X className="h-4 w-4" />
+            <span>Cancel</span>
+          </button>
+        </div>
+      ) : null}
 
       <SettingsSection title="Configured environments" description={`${environments.length} of ${environmentLimit} environment slots used on the ${entitlement?.planType ?? "current"} plan.`}>
         {loading ? <div className="flex items-center gap-2 py-8 text-sm text-neutral-500"><Loader2 className="h-4 w-4 animate-spin" />Loading environment settings…</div> : null}

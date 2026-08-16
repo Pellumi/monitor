@@ -65,7 +65,7 @@ const CORE_FEATURES: PlanFeatureConfig[] = [
 
 const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: false },
-  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: true, tier: FeatureTier.BASIC },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: false },
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: false },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.BASIC },
@@ -73,7 +73,7 @@ const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
 
 const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.DOCUMENT_FLOW_INFERENCE,       enabled: true, tier: FeatureTier.STANDARD },
-  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: true, tier: FeatureTier.BASIC },
+  { feature: Feature.AUTOMATED_INSTRUMENTATION,     enabled: false },
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.STANDARD },
@@ -198,7 +198,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
       { feature: Feature.HISTORICAL_REPORTS,    enabled: true, tier: '30_DAYS' },
       { feature: Feature.ADVANCED_REPORTING,    enabled: false },
       { feature: Feature.MULTIPLE_ENVIRONMENTS, enabled: false },
-      { feature: Feature.TEAM_COLLABORATION,    enabled: false },
+      { feature: Feature.TEAM_COLLABORATION,    enabled: true },
       { feature: Feature.SHARED_DASHBOARDS,     enabled: false },
       { feature: Feature.RBAC,                  enabled: false },
       { feature: Feature.APPLICATION_PERMISSIONS, enabled: false },
