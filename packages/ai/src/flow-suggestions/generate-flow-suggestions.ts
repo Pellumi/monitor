@@ -63,6 +63,8 @@ export async function generateFlowSuggestions(
     graphVersion: input.graphVersion,
     graphHash: input.graphHash,
     latestMutation: input.latestMutation,
+    latestState: input.latestState,
+    mode: input.mode,
   });
 
   const promptHash = crypto.createHash('sha256').update(prompt).digest('hex');

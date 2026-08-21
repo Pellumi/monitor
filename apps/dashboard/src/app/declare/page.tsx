@@ -1,5 +1,7 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { ApplicationRequiredState } from "@/components/application-required-state";
+import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
@@ -13,7 +15,6 @@ import {
   useRef,
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
 import {
   ReactFlow,
   Background,
@@ -89,6 +90,8 @@ interface DeclaredState {
   stateName: string;
   category: string;
   provenance: string;
+  role?: "NORMAL" | "INITIAL" | "TERMINAL";
+  terminalKind?: "SUCCESS" | "FAILURE" | "CANCELLATION" | "ALTERNATE" | null;
   canonicalBehavior?: string;
   suggestions?: DeclaredStateSuggestion[];
 }
@@ -112,6 +115,11 @@ interface DeclaredFlow {
   states: DeclaredState[];
   transitions: DeclaredTransition[];
   graphHash: string;
+  lifecycleStatus?: "DRAFT" | "PUBLISHED" | "ARCHIVED" | "SUPERSEDED";
+  purpose?: string | null;
+  scopeStatement?: string | null;
+  publishedVersionId?: string | null;
+  versions?: Array<{ id: string; version: number }>;
 }
 
 interface FlowSuggestionsResponse {
@@ -163,8 +171,7 @@ interface ReconciliationReport {
 }
 
 function DeclareContent() {
-  const searchParams = useSearchParams();
-  const appId = searchParams.get("appId") ?? "acadai-local";
+  const { appId } = useSelectedApplication();
   const queryClient = useQueryClient();
 
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -181,11 +188,16 @@ function DeclareContent() {
 
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [newFlowName, setNewFlowName] = useState("");
+  const [newFlowPurpose, setNewFlowPurpose] = useState("");
+  const [newFlowScope, setNewFlowScope] = useState("");
   const [newFlowType, setNewFlowType] = useState("CUSTOM");
 
   // State builder inputs
   const [stateName, setStateName] = useState("");
   const [stateCategory, setStateCategory] = useState("BUSINESS");
+  const [stateRole, setStateRole] = useState<"NORMAL" | "INITIAL" | "TERMINAL">("NORMAL");
+  const [terminalKind, setTerminalKind] = useState<"SUCCESS" | "FAILURE" | "CANCELLATION" | "ALTERNATE">("SUCCESS");
+  const [diagramKind, setDiagramKind] = useState<"FLOW" | "SEQUENCE" | "ACTIVITY" | "STATE_MACHINE">("FLOW");
 
   // Transition builder inputs
   const [fromStateId, setFromStateId] = useState("");
@@ -394,15 +406,21 @@ function DeclareContent() {
   // ─────────────────────────────────────────────────────────────
 
   // List flows
-  const { data: flows } = useQuery<DeclaredFlow[]>({
+  const {
+    data: flows,
+    isLoading: flowsLoading,
+    isError: flowsFailed,
+    refetch: refetchFlows,
+  } = useQuery<DeclaredFlow[]>({
     queryKey: ["declared-flows", appId],
     queryFn: async () => {
       const res = await authenticatedFetch(
-        `${FDRS_API}/applications/${appId}/declared-flow`,
+        `${FDRS_API}/v1/applications/${appId}/flows`,
       );
       if (!res.ok) throw new Error("Failed to fetch declared flows");
       return res.json();
     },
+    enabled: !!appId,
   });
 
   // Get selected flow details
@@ -412,13 +430,24 @@ function DeclareContent() {
       queryFn: async () => {
         if (!selectedFlowId) return null as any;
         const res = await authenticatedFetch(
-          `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}`,
+          `${FDRS_API}/v1/applications/${appId}/flows/${selectedFlowId}`,
         );
         if (!res.ok) throw new Error("Failed to fetch flow details");
         return res.json();
       },
       enabled: !!selectedFlowId,
     });
+
+  const publishedVersionId = activeFlow?.publishedVersionId ?? activeFlow?.versions?.[0]?.id;
+  const { data: diagramPayload } = useQuery<{ diagrams: Array<{ kind: string; source: string }> }>({
+    queryKey: ["flow-diagrams", appId, selectedFlowId, publishedVersionId],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`${FDRS_API}/v1/applications/${appId}/flows/${selectedFlowId}/versions/${publishedVersionId}/diagrams`);
+      if (!response.ok) throw new Error("Failed to load Flow diagrams");
+      return response.json();
+    },
+    enabled: Boolean(selectedFlowId && publishedVersionId && activeFlow?.status === "COMPLETE"),
+  });
 
   const { data: suggestionResponse, isFetching: isSuggestionsLoading } =
     useQuery<FlowSuggestionsResponse>({
@@ -543,9 +572,9 @@ function DeclareContent() {
   // ─────────────────────────────────────────────────────────────
 
   const createFlowMutation = useMutation({
-    mutationFn: async (data: { name: string; workflowType: string }) => {
+    mutationFn: async (data: { name: string; workflowType: string; purpose: string; scopeStatement: string }) => {
       const res = await authenticatedFetch(
-        `${FDRS_API}/applications/${appId}/declared-flow`,
+        `${FDRS_API}/v1/applications/${appId}/flows`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -559,6 +588,8 @@ function DeclareContent() {
       queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
       setSelectedFlowId(data.id);
       setNewFlowName("");
+      setNewFlowPurpose("");
+      setNewFlowScope("");
     },
   });
 
@@ -567,6 +598,8 @@ function DeclareContent() {
       stateName: string;
       category: string;
       provenance: string;
+      role: "NORMAL" | "INITIAL" | "TERMINAL";
+      terminalKind?: "SUCCESS" | "FAILURE" | "CANCELLATION" | "ALTERNATE";
     }) => {
       const res = await authenticatedFetch(
         `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/states`,
@@ -704,12 +737,15 @@ function DeclareContent() {
   const completeFlowMutation = useMutation({
     mutationFn: async () => {
       const res = await authenticatedFetch(
-        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/complete`,
+        `${FDRS_API}/v1/applications/${appId}/flows/${selectedFlowId}/publish`,
         {
           method: "POST",
         },
       );
-      if (!res.ok) throw new Error("Failed to complete flow");
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.validation?.issues?.map((issue: { message: string }) => issue.message).join(" ") || "Failed to publish Flow");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -727,7 +763,7 @@ function DeclareContent() {
   const reopenFlowMutation = useMutation({
     mutationFn: async () => {
       const res = await authenticatedFetch(
-        `${FDRS_API}/applications/${appId}/declared-flow/${selectedFlowId}/reopen`,
+        `${FDRS_API}/v1/applications/${appId}/flows/${selectedFlowId}/versions/${activeFlow?.publishedVersionId ?? activeFlow?.versions?.[0]?.id}/revise`,
         {
           method: "POST",
         },
@@ -973,7 +1009,40 @@ function DeclareContent() {
   if (onboardingProgress && !onboardingProgress.completedAt) {
     // Stage 1: Select profile template
     if (!onboardingProgress.templateSelected) {
-      return (
+      if (flowsLoading) {
+        return (
+          <div className="flex min-h-[80vh] items-center justify-center px-4">
+            <p className="text-sm text-neutral-400" role="status">
+              Loading declared flows…
+            </p>
+          </div>
+        );
+      }
+
+      if (flowsFailed) {
+        return (
+          <div className="flex min-h-[80vh] items-center justify-center px-4">
+            <div className="w-full max-w-md space-y-4 rounded-md border border-[#262626] bg-[#131313] p-8 text-center">
+              <h2 className="text-xl font-bold text-white">
+                Declared flows could not be loaded
+              </h2>
+              <p className="text-sm text-neutral-400">
+                Retry before creating a new application profile so existing
+                desktop flows are not hidden.
+              </p>
+              <Button type="button" onClick={() => void refetchFlows()}>
+                Retry
+              </Button>
+            </div>
+          </div>
+        );
+      }
+
+      // A flow created by another client (for example the desktop app) is
+      // authoritative even when legacy onboarding progress was never updated.
+      // Continue to the shared flow builder instead of showing setup again.
+      if (!flows?.length) {
+        return (
         <div className="flex min-h-[80vh] items-center justify-center px-4">
           <div className="w-full max-w-2xl space-y-2 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl">
             <div className="w-full flex justify-between items-start">
@@ -1035,7 +1104,8 @@ function DeclareContent() {
             </div>
           </div>
         </div>
-      );
+        );
+      }
     }
 
     // Stage 3: SDK Connection Check
@@ -1400,9 +1470,15 @@ function DeclareContent() {
     }
   }
 
+  if (!appId) {
+    return <ApplicationRequiredState feature="Flow declaration" />;
+  }
+
   return (
     <div className="flex h-full flex-col space-y-6">
-      {onboardingProgress && !onboardingProgress.expectedFlowsDefined && (
+      {onboardingProgress &&
+        !onboardingProgress.expectedFlowsDefined &&
+        !flows?.some((flow) => flow.status === "COMPLETE") && (
         <div className="rounded-md border border-white/20 bg-white/5 p-4 flex items-start space-x-3 text-white">
           {/* <Info className="h-5 w-5 flex-shrink-0 mt-0.5" /> */}
           <div className="text-sm">
@@ -1465,7 +1541,7 @@ function DeclareContent() {
                   variant="primary"
                 >
                   {!completeFlowMutation.isPending && <Lock className="h-4 w-4" />}
-                  <span>Mark Complete & Compile</span>
+                  <span>Publish Flow</span>
                 </Button>
               ) : (
                 <Button
@@ -1475,7 +1551,7 @@ function DeclareContent() {
                   variant="secondary"
                 >
                   {!reopenFlowMutation.isPending && <Unlock className="h-4 w-4" />}
-                  <span>Reopen Flow for Edit</span>
+                  <span>Create Flow Revision</span>
                 </Button>
               )}
             </>
@@ -1491,11 +1567,11 @@ function DeclareContent() {
             <div className="flex-1 rounded-md border border-[#262626] bg-[#131313] backdrop-blur-xl p-8 flex flex-col items-center justify-center text-center space-y-6">
               <div className="max-w-sm space-y-2">
                 <h3 className="text-lg font-bold text-white">
-                  Create a Declared Flow
+                  Declare Intent as a focused Flow
                 </h3>
                 <p className="text-xs text-neutral-400">
                   Choose an existing flow from the dropdown, or create a new
-                  flow to design your behavioral intent.
+                  Flow to define one bounded functionality. Larger scopes reduce analysis and QA precision.
                 </p>
               </div>
 
@@ -1506,6 +1582,8 @@ function DeclareContent() {
                     createFlowMutation.mutate({
                       name: newFlowName.trim(),
                       workflowType: newFlowType,
+                      purpose: newFlowPurpose.trim(),
+                      scopeStatement: newFlowScope.trim(),
                     });
                   }
                 }}
@@ -1523,6 +1601,17 @@ function DeclareContent() {
                     placeholder="e.g. Checkout Flow"
                     className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-400 mb-1">PURPOSE</label>
+                  <input type="text" value={newFlowPurpose} onChange={(e) => setNewFlowPurpose(e.target.value)} placeholder="What should this functionality achieve?" className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-400 mb-1">SCOPE BOUNDARY</label>
+                  <textarea required value={newFlowScope} onChange={(e) => setNewFlowScope(e.target.value)} placeholder="e.g. Guest opens sign-up through authenticated session" className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none" />
+                  <p className="mt-1 text-[11px] text-amber-300">Do not declare the whole project as one Flow. Prefer authentication, checkout, password reset, or another focused capability.</p>
                 </div>
 
                 <div>
@@ -1556,7 +1645,7 @@ function DeclareContent() {
 
                 <Button
                   type="submit"
-                  disabled={createFlowMutation.isPending || !newFlowName.trim()}
+                  disabled={createFlowMutation.isPending || !newFlowName.trim() || !newFlowScope.trim()}
                   loading={createFlowMutation.isPending}
                   variant="primary"
                   className="w-full"
@@ -1575,6 +1664,13 @@ function DeclareContent() {
           ) : (
             <div className="flex-1 flex flex-col space-y-6 min-h-0">
               {/* Interactive Flow Visualizer */}
+              <div className="flex flex-wrap gap-2">
+                {(["FLOW", "SEQUENCE", "ACTIVITY", "STATE_MACHINE"] as const).map((kind) => (
+                  <button key={kind} type="button" onClick={() => setDiagramKind(kind)} className={`rounded-md border px-3 py-1.5 text-xs ${diagramKind === kind ? "border-white bg-white text-black" : "border-[#262626] bg-[#131313] text-neutral-300"}`}>
+                    {kind.replace("_", " ")}
+                  </button>
+                ))}
+              </div>
               <div className="h-[380px] rounded-md border border-[#262626] bg-black overflow-hidden relative">
                 <div className="absolute top-4 left-4 z-10 bg-[#131313]/80 backdrop-blur px-3 py-1.5 rounded-lg border border-[#262626] flex items-center space-x-2">
                   <span className="h-2 w-2 rounded-full bg-white animate-ping"></span>
@@ -1584,7 +1680,9 @@ function DeclareContent() {
                   </span>
                 </div>
 
-                {nodes.length > 0 ? (
+                {diagramKind !== "FLOW" && diagramPayload ? (
+                  <pre className="h-full overflow-auto whitespace-pre-wrap p-6 text-xs text-neutral-300">{diagramPayload.diagrams.find((diagram) => diagram.kind === diagramKind)?.source ?? "Projection unavailable"}</pre>
+                ) : nodes.length > 0 ? (
                   <ReactFlow
                     nodes={nodes}
                     edges={edges}
@@ -1614,6 +1712,8 @@ function DeclareContent() {
                           stateName: stateName.toUpperCase().trim(),
                           category: stateCategory,
                           provenance: "USER_AUTHORED",
+                          role: stateRole,
+                          terminalKind: stateRole === "TERMINAL" ? terminalKind : undefined,
                         });
                       }
                     }}
@@ -1638,6 +1738,31 @@ function DeclareContent() {
                           className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
                         />
                       </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">BOUNDARY ROLE</label>
+                        <Select value={stateRole} onValueChange={(value) => setStateRole(value as typeof stateRole)}>
+                          <SelectTrigger><SelectValue placeholder="Select boundary role" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="NORMAL">Intermediate</SelectItem>
+                            <SelectItem value="INITIAL">Initial state</SelectItem>
+                            <SelectItem value="TERMINAL">Terminal state</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {stateRole === "TERMINAL" ? (
+                        <div>
+                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">TERMINAL OUTCOME</label>
+                          <Select value={terminalKind} onValueChange={(value) => setTerminalKind(value as typeof terminalKind)}>
+                            <SelectTrigger><SelectValue placeholder="Select terminal outcome" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="SUCCESS">Success</SelectItem>
+                              <SelectItem value="FAILURE">Failure</SelectItem>
+                              <SelectItem value="CANCELLATION">Cancellation</SelectItem>
+                              <SelectItem value="ALTERNATE">Alternate completion</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
 
                       <div>
                         <label className="block text-[10px] font-semibold text-neutral-500 mb-1">

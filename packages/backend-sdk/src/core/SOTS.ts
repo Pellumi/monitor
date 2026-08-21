@@ -59,8 +59,9 @@ export class SOTSBackend {
   }
 
   async verifyInstallation(sessionId?: string): Promise<void> {
-    await this.trackEvent('SOTS_ONBOARDING_TEST', {
+    await this.trackEvent('TELLANN_INITIALIZED', {
       source: 'manual_verification',
+      verificationKind: 'BOOTSTRAP_INITIALIZED',
     }, sessionId);
   }
 

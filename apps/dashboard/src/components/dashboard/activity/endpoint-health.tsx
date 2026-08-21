@@ -42,7 +42,7 @@ export function EndpointHealth() {
             Endpoint Health & Performance
           </h3>
           <p className="text-xs text-neutral-400 font-mono mt-0.5">
-            {renderMeasuredValue(endpoints.observedCount)} endpoints observed • Avg latency: {renderMeasuredValue(endpoints.averageLatencyMs)} ms
+            {renderMeasuredValue(endpoints.observedCount)} endpoints observed / Avg latency: {renderMeasuredValue(endpoints.averageLatencyMs)} ms
           </p>
         </div>
         <Link

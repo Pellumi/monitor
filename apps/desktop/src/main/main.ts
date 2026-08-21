@@ -54,7 +54,37 @@ const observer = new BrowserObserver({
     await relay.stop().catch(() => undefined);
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
+  onObservation: async (runId, observation) => {
+    const boundary = await cloud.boundaryEvent(runId, {
+      eventId: observation.eventId,
+      stateKey: observation.stateName,
+      stateName: observation.stateName,
+      timestamp: observation.timestamp,
+      source: 'DESKTOP_BROWSER',
+    }).catch(() => undefined) as { shouldStop?: boolean } | undefined;
+    if (boundary?.shouldStop) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
+  },
 });
+let runCompletionInProgress = false;
+
+async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'MANUAL_STOP_BEFORE_TERMINAL') {
+  if (runCompletionInProgress || !observer.getState()) return null;
+  runCompletionInProgress = true;
+  try {
+    const state = await observer.end();
+    await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length, completionReason });
+    await applicationLauncher.stop();
+    await relay.stop();
+    await cloud.completeRun({ ...state, completionReason });
+    return state;
+  } catch (error) {
+    const state = observer.getState();
+    if (state) await cloud.failRun(state.runId, error instanceof Error ? error.message : 'Run synchronization failed').catch(() => undefined);
+    throw error;
+  } finally {
+    runCompletionInProgress = false;
+  }
+}
 
 function safeDesktopError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -112,6 +142,9 @@ function parseInstrumentationContext(input: unknown) {
     applicationId: value.applicationId,
     environmentId: value.environmentId,
     environmentType: value.environmentType as 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION',
+    instrumentationPurpose: value.instrumentationPurpose === 'FLOW' ? 'FLOW' as const : 'BOOTSTRAP' as const,
+    flowId: typeof value.flowId === 'string' ? value.flowId : undefined,
+    flowVersionId: typeof value.flowVersionId === 'string' ? value.flowVersionId : undefined,
   };
 }
 
@@ -263,15 +296,27 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.createDeclaredFlow, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { applicationId?: unknown; name?: unknown; workflowType?: unknown };
-    if (typeof value.applicationId !== 'string' || typeof value.name !== 'string' || typeof value.workflowType !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
-    return cloud.createDeclaredFlow(value.applicationId, { name: value.name, workflowType: value.workflowType });
+    const value = input as { applicationId?: unknown; name?: unknown; workflowType?: unknown; purpose?: unknown; scopeStatement?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.name !== 'string' || typeof value.workflowType !== 'string' || typeof value.scopeStatement !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.createDeclaredFlow(value.applicationId, { name: value.name, workflowType: value.workflowType, purpose: typeof value.purpose === 'string' ? value.purpose : undefined, scopeStatement: value.scopeStatement });
   });
   ipcMain.handle(IPC.addDeclaredState, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { applicationId?: unknown; flowId?: unknown; stateName?: unknown; category?: unknown };
+    const value = input as { applicationId?: unknown; flowId?: unknown; stateName?: unknown; category?: unknown; role?: unknown; terminalKind?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.stateName !== 'string' || typeof value.category !== 'string') throw new Error('INVALID_DECLARED_STATE_REQUEST');
-    return cloud.addDeclaredState(value.applicationId, value.flowId, { stateName: value.stateName, category: value.category });
+    return cloud.addDeclaredState(value.applicationId, value.flowId, { stateName: value.stateName, category: value.category, role: typeof value.role === 'string' ? value.role : 'NORMAL', terminalKind: typeof value.terminalKind === 'string' ? value.terminalKind : null });
+  });
+  ipcMain.handle(IPC.updateDeclaredState, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; stateId?: unknown; stateName?: unknown; category?: unknown; role?: unknown; terminalKind?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.stateId !== 'string' || typeof value.stateName !== 'string' || typeof value.category !== 'string') throw new Error('INVALID_DECLARED_STATE_UPDATE_REQUEST');
+    return cloud.updateDeclaredState(value.applicationId, value.flowId, value.stateId, { stateName: value.stateName, category: value.category, role: typeof value.role === 'string' ? value.role : 'NORMAL', terminalKind: typeof value.terminalKind === 'string' ? value.terminalKind : null });
+  });
+  ipcMain.handle(IPC.deleteDeclaredState, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; stateId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.stateId !== 'string') throw new Error('INVALID_DECLARED_STATE_DELETE_REQUEST');
+    return cloud.deleteDeclaredState(value.applicationId, value.flowId, value.stateId);
   });
   ipcMain.handle(IPC.addDeclaredTransition, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -290,6 +335,91 @@ function registerIpc(): void {
     const value = input as { applicationId?: unknown; flowId?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
     return cloud.setDeclaredFlowComplete(value.applicationId, value.flowId, false);
+  });
+  ipcMain.handle(IPC.generateFlowSuggestions, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; input?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || !value.input || typeof value.input !== 'object') throw new Error('INVALID_FLOW_SUGGESTION_REQUEST');
+    return cloud.generateFlowSuggestions(value.applicationId, value.flowId, value.input as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.getFlowSuggestions, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_FLOW_SUGGESTION_REQUEST');
+    return cloud.flowSuggestions(value.applicationId, value.flowId);
+  });
+  for (const [channel, action] of [[IPC.acceptFlowSuggestion, 'accept'], [IPC.rejectFlowSuggestion, 'reject']] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertTrustedSender(event);
+      const value = input as { applicationId?: unknown; flowId?: unknown; suggestionId?: unknown };
+      if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.suggestionId !== 'string') throw new Error('INVALID_FLOW_SUGGESTION_ACTION');
+      return action === 'accept'
+        ? cloud.acceptFlowSuggestion(value.applicationId, value.flowId, value.suggestionId)
+        : cloud.rejectFlowSuggestion(value.applicationId, value.flowId, value.suggestionId);
+    });
+  }
+  for (const [channel, action] of [[IPC.previewFlowReview, 'preview'], [IPC.applyFlowReview, 'apply']] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertTrustedSender(event);
+      const value = input as { applicationId?: unknown; flowId?: unknown; input?: unknown };
+      if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || !value.input || typeof value.input !== 'object') throw new Error('INVALID_FLOW_REVIEW_REQUEST');
+      return action === 'preview'
+        ? cloud.previewFlowReview(value.applicationId, value.flowId, value.input as Record<string, unknown>)
+        : cloud.applyFlowReview(value.applicationId, value.flowId, value.input as Record<string, unknown>);
+    });
+  }
+  ipcMain.handle(IPC.declineFlowReview, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; reviewId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.reviewId !== 'string') throw new Error('INVALID_FLOW_REVIEW_REQUEST');
+    return cloud.declineFlowReview(value.applicationId, value.flowId, value.reviewId);
+  });
+  ipcMain.handle(IPC.getFlowDiagrams, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; versionId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.versionId !== 'string') throw new Error('INVALID_FLOW_DIAGRAM_REQUEST');
+    return cloud.flowDiagrams(value.applicationId, value.flowId, value.versionId);
+  });
+  ipcMain.handle(IPC.initializeFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { flowId?: unknown; applicationId?: unknown; environmentId?: unknown; flowVersionId?: unknown; instrumentationPlanId?: unknown };
+    if (typeof value.flowId !== 'string' || typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string' || typeof value.flowVersionId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_REQUEST');
+    const workspace = selectedWorkspaces.get(value.applicationId);
+    if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
+    return cloud.initializeFlow(value.flowId, {
+      flowVersionId: value.flowVersionId,
+      workspaceId: workspace.cloudId,
+      repositorySnapshotId: workspace.snapshotId,
+      environmentId: value.environmentId,
+      instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
+    });
+  });
+  ipcMain.handle(IPC.rescanFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { bindingId?: unknown; applicationId?: unknown };
+    if (typeof value.bindingId !== 'string' || typeof value.applicationId !== 'string') throw new Error('INVALID_FLOW_RESCAN_REQUEST');
+    const workspace = selectedWorkspaces.get(value.applicationId);
+    if (!workspace?.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
+    return cloud.rescanFlow(value.bindingId, workspace.snapshotId);
+  });
+  ipcMain.handle(IPC.approveFlowInitialization, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; instrumentationPlanId?: unknown };
+    if (typeof value.initializationId !== 'string' || typeof value.instrumentationPlanId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_APPROVAL');
+    return cloud.approveFlowInitialization(value.initializationId, value.instrumentationPlanId);
+  });
+  ipcMain.handle(IPC.applyFlowInitialization, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; patchSetId?: unknown };
+    if (typeof value.initializationId !== 'string' || typeof value.patchSetId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_APPLY');
+    return cloud.applyFlowInitialization(value.initializationId, value.patchSetId);
+  });
+  ipcMain.handle(IPC.validateFlowInitialization, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown } & Record<string, unknown>;
+    if (typeof value.initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    const { initializationId, ...payload } = value;
+    return cloud.validateFlowInitialization(initializationId, payload);
   });
   ipcMain.handle(IPC.listDocuments, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -604,6 +734,13 @@ function registerIpc(): void {
       workspaceId: selectedWorkspace?.cloudId ?? null,
       repositorySnapshotId: selectedWorkspace?.snapshotId ?? null,
       expectedGraphVersionId: parsed.expectedGraphVersionId,
+      flowId: parsed.flowId,
+      flowBindingId: parsed.flowBindingId,
+      flowInitializationId: parsed.flowInitializationId,
+      flowScanId: parsed.flowScanId,
+      flowDriftId: parsed.flowDriftId ?? null,
+      captureTracks: parsed.captureTracks,
+      timeoutSeconds: parsed.timeoutSeconds,
       patchSetId: parsed.patchSetId ?? null,
       mode: parsed.mode,
       targetUrl: parsed.targetUrl,
@@ -668,17 +805,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.endGuidedRun, async (event) => {
     assertTrustedSender(event);
-    const state = await observer.end();
-    try {
-      await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length });
-      await applicationLauncher.stop();
-      await relay.stop();
-      await cloud.completeRun(state);
-    } catch (error) {
-      await cloud.failRun(state.runId, error instanceof Error ? error.message : 'Run synchronization failed').catch(() => undefined);
-      throw error;
-    }
-    return state;
+    return completeActiveRun('MANUAL_STOP_BEFORE_TERMINAL');
   });
   ipcMain.handle(IPC.getRunState, (event) => {
     assertTrustedSender(event);

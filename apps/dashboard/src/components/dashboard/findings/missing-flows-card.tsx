@@ -64,7 +64,7 @@ export function MissingFlowsCard() {
                 Workflow: {flow.workflowName}
               </div>
               <div className="text-[11px] font-mono text-purple-300 bg-[#111] p-2 rounded border border-[#2d2d2d] overflow-x-auto">
-                {flow.path.join(" → ")}
+                {flow.path.join(" -> ")}
               </div>
             </div>
           ))}

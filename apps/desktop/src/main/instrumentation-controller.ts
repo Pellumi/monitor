@@ -41,6 +41,9 @@ type EnvironmentContext = {
   applicationId: string;
   environmentId: string;
   environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
+  instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
+  flowId?: string;
+  flowVersionId?: string;
 };
 
 type LocalApproval = {
@@ -201,8 +204,8 @@ export class InstrumentationController {
     return workspace;
   }
 
-  private context(workspace: SelectedWorkspace, environmentType: EnvironmentContext['environmentType']): LocalProjectContext {
-    return { workspaceRoot: workspace.root, snapshot: workspace.snapshot, environmentType };
+  private context(workspace: SelectedWorkspace, environmentType: EnvironmentContext['environmentType'], flow?: Pick<EnvironmentContext, 'instrumentationPurpose' | 'flowId' | 'flowVersionId'>): LocalProjectContext {
+    return { workspaceRoot: workspace.root, snapshot: workspace.snapshot, environmentType, instrumentationPurpose: flow?.instrumentationPurpose ?? 'BOOTSTRAP', flowId: flow?.flowId, flowVersionId: flow?.flowVersionId };
   }
 
   async detect(input: EnvironmentContext) {
@@ -216,7 +219,7 @@ export class InstrumentationController {
   async propose(input: EnvironmentContext & { adapterId: FrameworkId }) {
     if (input.environmentType === 'PRODUCTION') throw new Error('PRODUCTION_OBSERVATION_ONLY');
     const workspace = this.selected(input.applicationId);
-    const plan = await getAdapter(input.adapterId).propose(this.context(workspace, input.environmentType));
+    const plan = await getAdapter(input.adapterId).propose(this.context(workspace, input.environmentType, input));
     const packageManifest = plan.operations.find((operation) => operation.id === 'package-sdk')?.relativePath ?? 'package.json';
     const packageRoot = path.posix.dirname(packageManifest) === '.' ? '' : path.posix.dirname(packageManifest);
     const envFile = packageRoot ? `${packageRoot}/.env.local` : '.env.local';

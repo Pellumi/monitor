@@ -163,6 +163,10 @@ export function createInstrumentationRouter(input: {
     const environment = await prisma.environment.findFirst({ where: { id: String(req.body.environmentId ?? ''), applicationId: app.id } });
     if (!environment) return res.status(404).json({ error: 'Environment not found' });
     if (environment.type === 'PRODUCTION') return res.status(403).json({ error: 'PRODUCTION_OBSERVATION_ONLY' });
+    if (plan.instrumentationPurpose === 'FLOW') {
+      const version = await prisma.behaviorGraphVersion.findFirst({ where: { id: plan.flowVersionId ?? '', graphId: plan.flowId ?? '', graph: { applicationId: app.id, lifecycleStatus: 'PUBLISHED' } } });
+      if (!version) return res.status(422).json({ error: 'PUBLISHED_FLOW_VERSION_REQUIRED' });
+    }
     if (String(plan.repositoryFingerprint) !== snapshot.repositoryFingerprint || (plan.baseRevision ?? null) !== (snapshot.revision ?? null)) {
       return res.status(409).json({ error: 'STALE_INSTRUMENTATION_PLAN' });
     }
@@ -175,6 +179,9 @@ export function createInstrumentationRouter(input: {
         id: typeof plan.id === 'string' ? plan.id : undefined,
         workspaceId: workspace.id, repositorySnapshotId: snapshot.id, createdByUserId: req.user!.id,
         environmentId: environment.id, deviceSessionId: typeof req.body.deviceSessionId === 'string' ? req.body.deviceSessionId : null,
+        purpose: plan.instrumentationPurpose,
+        flowId: plan.flowId ?? null,
+        flowVersionId: plan.flowVersionId ?? null,
         taskKey, contractVersion: String(plan.contractVersion ?? '1.0'), manifestVersion: String(plan.manifestVersion ?? '1.0'),
         adapterId: String(plan.adapterId), adapterVersion: String(plan.adapterVersion), frameworkVersion: plan.frameworkVersion ?? null,
         supportedVersionRange: plan.supportedVersionRange ?? null, risk: String(plan.risk ?? 'MEDIUM'),

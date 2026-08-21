@@ -221,10 +221,18 @@ export class JsonHttpProvider implements AIProvider {
   }
 
   private async callStructuredPrompt(prompt: string, signal: AbortSignal): Promise<string> {
+    const providerOptions = this.name === 'gemini'
+      ? { reasoning_effort: 'low', max_completion_tokens: 4096 }
+      : {};
     const res = await fetch(this.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' } }),
+      body: JSON.stringify({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        ...providerOptions,
+      }),
       signal,
     });
     if (!res.ok) throw new FetchError(`${this.name} provider failed with ${res.status}`, res.status);

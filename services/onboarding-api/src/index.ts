@@ -15,6 +15,7 @@ import { createDesktopRouter } from './desktop-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
+import { createFlowLifecycleRouter } from './flow-lifecycle-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@sots/storage';
 
@@ -281,6 +282,7 @@ app.use(createDesktopRouter({
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership }));
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
+app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));
 
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {

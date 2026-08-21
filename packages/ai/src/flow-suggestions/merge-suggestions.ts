@@ -104,6 +104,8 @@ export function mergeSuggestions(params: {
       targetNodeId: rs.targetNodeId,
       suggestedState: rs.suggestedState,
       suggestedTransition: rs.suggestedTransition,
+      suggestedStates: rs.suggestedStates,
+      suggestedTransitions: rs.suggestedTransitions,
       ruleConfidence: rs.confidence,
       evidenceStrength,
     });
@@ -141,6 +143,8 @@ export function mergeSuggestions(params: {
           ai.description.length > existing.description.length
             ? ai.description
             : existing.description,
+        suggestedStates: existing.suggestedStates?.length ? existing.suggestedStates : ai.suggestedStates,
+        suggestedTransitions: existing.suggestedTransitions?.length ? existing.suggestedTransitions : ai.suggestedTransitions,
       });
     } else {
       // Pure AI suggestion — cap confidence
@@ -166,6 +170,8 @@ export function mergeSuggestions(params: {
         targetFlowId: ai.targetFlowId,
         suggestedState: ai.suggestedState,
         suggestedTransition: ai.suggestedTransition,
+        suggestedStates: ai.suggestedStates,
+        suggestedTransitions: ai.suggestedTransitions,
         aiConfidence: ai.confidence,
         evidenceStrength,
       });

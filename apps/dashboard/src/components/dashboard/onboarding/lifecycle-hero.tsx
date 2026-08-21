@@ -70,7 +70,7 @@ export function LifecycleHero() {
                 Events Captured
               </span>
               <span className="text-base font-bold text-white mt-1 block">
-                {live?.eventCount ?? 387}
+                {live?.eventCount ?? "Pending"}
               </span>
             </div>
             <div className="p-3">
@@ -78,7 +78,7 @@ export function LifecycleHero() {
                 States Observed
               </span>
               <span className="text-base font-bold text-white mt-1 block">
-                {live?.stateCount ?? 14}
+                {live?.stateCount ?? "Pending"}
               </span>
             </div>
             <div className="p-3">
@@ -86,7 +86,7 @@ export function LifecycleHero() {
                 Transitions
               </span>
               <span className="text-base font-bold text-white mt-1 block">
-                {live?.transitionCount ?? 22}
+                {live?.transitionCount ?? "Pending"}
               </span>
             </div>
             <div className="p-3">
@@ -94,7 +94,7 @@ export function LifecycleHero() {
                 API Calls
               </span>
               <span className="text-base font-bold text-white mt-1 block">
-                {live?.apiCallCount ?? 81}
+                {live?.apiCallCount ?? "Pending"}
               </span>
             </div>
           </div>
@@ -102,7 +102,7 @@ export function LifecycleHero() {
 
         <div className="flex items-center justify-between pt-1">
           <div className="text-xs text-[#8e9192] font-mono">
-            ● Observing user interactions & network requests...
+            Observing user interactions and network requests...
           </div>
           <Link
             href="/qa-runs"
@@ -145,10 +145,10 @@ export function LifecycleHero() {
             <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> Discovering workflows
           </div>
           <div className="flex items-center gap-2 text-[#8e9192]">
-            ○ Calculating workflow coverage
+            Pending: calculating workflow coverage
           </div>
           <div className="flex items-center gap-2 text-[#8e9192]">
-            ○ Generating quality report
+            Pending: generating quality report
           </div>
         </div>
       </div>
@@ -165,7 +165,7 @@ export function LifecycleHero() {
             <span className="text-sm font-semibold text-white">Analysis Delta</span>
           </div>
           <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-            Last analysis: {data.analysis?.lastAnalysisAt ?? "Today"}
+            Last analysis: {data.analysis?.lastAnalysisAt ?? "Pending"}
           </span>
         </div>
 
@@ -175,7 +175,7 @@ export function LifecycleHero() {
               States Discovered
             </span>
             <span className="text-sm font-bold text-white mt-1 block">
-              +{summary.statesObserved.delta ?? 3} states
+              {summary.statesObserved.delta != null ? `${summary.statesObserved.delta >= 0 ? "+" : ""}${summary.statesObserved.delta} states` : "Pending"}
             </span>
           </div>
           <div className="p-3">
@@ -183,7 +183,7 @@ export function LifecycleHero() {
               Transitions
             </span>
             <span className="text-sm font-bold text-white mt-1 block">
-              +{summary.transitionsObserved.delta ?? 7} observed
+              {summary.transitionsObserved.delta != null ? `${summary.transitionsObserved.delta >= 0 ? "+" : ""}${summary.transitionsObserved.delta} observed` : "Pending"}
             </span>
           </div>
           <div className="p-3">
@@ -191,7 +191,7 @@ export function LifecycleHero() {
               Workflow Coverage
             </span>
             <span className="text-sm font-bold text-white mt-1 block">
-              +{coverage?.workflowCoverage.delta?.toFixed(1) ?? "4.7"}%
+              {coverage?.workflowCoverage.delta != null ? `${coverage.workflowCoverage.delta >= 0 ? "+" : ""}${coverage.workflowCoverage.delta.toFixed(1)}%` : "Pending"}
             </span>
           </div>
           <div className="p-3">
@@ -199,7 +199,7 @@ export function LifecycleHero() {
               Current Findings
             </span>
             <span className="text-sm font-bold text-white mt-1 block">
-              {summary.findingsCount.value?.total ?? 12} total
+              {summary.findingsCount.value?.total != null ? `${summary.findingsCount.value.total} total` : "Pending"}
             </span>
           </div>
         </div>
@@ -209,4 +209,3 @@ export function LifecycleHero() {
 
   return null;
 }
-

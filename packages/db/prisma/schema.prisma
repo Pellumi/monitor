@@ -8,15 +8,15 @@ generator client {
 }
 
 model Organization {
-  id              String   @id @default(uuid())
-  name            String
-  slug            String   @unique
-  createdByUserId String?
-  createdAt       DateTime @default(now())
-  deletedAt       DateTime?
+  id                   String    @id @default(uuid())
+  name                 String
+  slug                 String    @unique
+  createdByUserId      String?
+  createdAt            DateTime  @default(now())
+  deletedAt            DateTime?
   deletionScheduledFor DateTime?
-  deletionStatus  String   @default("ACTIVE")
-  deletionLegalHold Boolean @default(false)
+  deletionStatus       String    @default("ACTIVE")
+  deletionLegalHold    Boolean   @default(false)
 
   // ─── Gap 4: Cross-tenant pattern matching ───────────────────────────────
   // Opted IN by default — org contributes anonymized state patterns to the
@@ -896,23 +896,24 @@ model Application {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
-  environments       Environment[]
-  onboardingProgress ApplicationOnboardingProgress?
+  environments         Environment[]
+  onboardingProgress   ApplicationOnboardingProgress?
   desktopSetupHandoffs DesktopSetupHandoff[]
 
-  sessions          Session[]
-  states            State[]
-  transitions       Transition[]
-  candidateStates   CandidateState[]
-  missingStates     MissingState[]
-  missingFlows      MissingFlow[]
-  coverageSnapshots CoverageSnapshot[]
-  workflows         Workflow[]
-  demonstrations    Demonstration[]
-  profile           ApplicationProfile?
-  projectWorkspaces ProjectWorkspace[]
-  qaRuns            QARun[]
-  sourceDocuments   SourceDocument[]
+  sessions           Session[]
+  states             State[]
+  transitions        Transition[]
+  candidateStates    CandidateState[]
+  missingStates      MissingState[]
+  missingFlows       MissingFlow[]
+  coverageSnapshots  CoverageSnapshot[]
+  workflows          Workflow[]
+  demonstrations     Demonstration[]
+  profile            ApplicationProfile?
+  projectWorkspaces  ProjectWorkspace[]
+  qaRuns             QARun[]
+  sourceDocuments    SourceDocument[]
+  projectConnections ProjectConnection[]
 
   // FDRS relations (Section 22)
   behaviorGraphs         BehaviorGraph[]
@@ -1120,6 +1121,58 @@ enum FlowStatus {
   COMPLETE
 }
 
+enum FlowLifecycleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  SUPERSEDED
+}
+
+enum FlowNodeRole {
+  NORMAL
+  INITIAL
+  TERMINAL
+}
+
+enum FlowTerminalKind {
+  SUCCESS
+  FAILURE
+  CANCELLATION
+  ALTERNATE
+}
+
+enum FlowBindingStatus {
+  PENDING_INITIALIZATION
+  INITIALIZING
+  ACTIVE
+  STALE
+  FAILED
+  REQUIRES_REBASE
+}
+
+enum FlowScanKind {
+  INITIALIZATION
+  RESCAN
+}
+
+enum FlowScanStatus {
+  CREATED
+  SCANNING
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+enum FlowInitializationStatus {
+  PROPOSED
+  APPROVED
+  APPLYING
+  VALIDATING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
+
 enum StateCategory {
   NAVIGATION
   UI
@@ -1150,44 +1203,65 @@ enum GraphRelationshipType {
 }
 
 model BehaviorGraph {
-  id            String          @id @default(uuid())
-  applicationId String
-  application   Application     @relation(fields: [applicationId], references: [id])
-  environmentId String?
-  environment   Environment?    @relation(fields: [environmentId], references: [id])
-  isActive      Boolean         @default(true) // Only one active version per app/env at a time
-  name          String
-  status        FlowStatus      @default(DRAFT)
-  version       Int             @default(1)
-  graphType     GraphType       @default(DECLARED)
-  sourceType    GraphSourceType @default(USER_DECLARATION)
-  declaredById  String?
-  workflowType  String          @default("CUSTOM")
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  completedAt   DateTime?
+  id                 String              @id @default(uuid())
+  applicationId      String
+  application        Application         @relation(fields: [applicationId], references: [id])
+  environmentId      String?
+  environment        Environment?        @relation(fields: [environmentId], references: [id])
+  isActive           Boolean             @default(true) // Only one active version per app/env at a time
+  name               String
+  status             FlowStatus          @default(DRAFT)
+  lifecycleStatus    FlowLifecycleStatus @default(DRAFT)
+  version            Int                 @default(1)
+  graphType          GraphType           @default(DECLARED)
+  sourceType         GraphSourceType     @default(USER_DECLARATION)
+  declaredById       String?
+  workflowType       String              @default("CUSTOM")
+  purpose            String?
+  scopeStatement     String?
+  exclusions         String[]            @default([])
+  tags               String[]            @default([])
+  publishedVersionId String?
+  supersededByFlowId String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  completedAt        DateTime?
 
   nodes           BehaviorGraphNode[]
   edges           BehaviorGraphEdge[]
   rulesets        CompiledRuleset[]
   reconciliations ReconciliationReport[]
   versions        BehaviorGraphVersion[]
+  projectBindings FlowProjectBinding[]
+  scans           FlowScan[]
+  drifts          FlowDrift[]
+  initializations FlowInitialization[]
+  qaRuns          QARun[]
 
   @@index([applicationId, environmentId, isActive])
 }
 
 model BehaviorGraphNode {
-  id                String          @id @default(uuid())
+  id                String            @id @default(uuid())
   graphId           String
-  graph             BehaviorGraph   @relation(fields: [graphId], references: [id])
+  graph             BehaviorGraph     @relation(fields: [graphId], references: [id])
   stateName         String
+  role              FlowNodeRole      @default(NORMAL)
+  terminalKind      FlowTerminalKind?
   behaviorKey       String? // Stable semantic identity
-  category          StateCategory   @default(BUSINESS)
-  provenance        StateProvenance @default(USER_AUTHORED)
+  category          StateCategory     @default(BUSINESS)
+  provenance        StateProvenance   @default(USER_AUTHORED)
   declaredById      String?
   canonicalBehavior String?
-  evidenceIds       String[]        @default([])
-  createdAt         DateTime        @default(now())
+  description       String?
+  actor             String?
+  system            String?
+  componentRef      String?
+  endpointRef       String?
+  expectedInput     Json?
+  expectedOutput    Json?
+  evidenceIds       String[]          @default([])
+  createdAt         DateTime          @default(now())
 
   suggestions DeclaredStateSuggestion[]
   edgesFrom   BehaviorGraphEdge[]       @relation("FromNode")
@@ -1195,17 +1269,24 @@ model BehaviorGraphNode {
 }
 
 model BehaviorGraphEdge {
-  id          String            @id @default(uuid())
-  graphId     String
-  graph       BehaviorGraph     @relation(fields: [graphId], references: [id])
-  fromNodeId  String
-  fromNode    BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
-  toNodeId    String
-  toNode      BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
-  action      String?
-  provenance  StateProvenance   @default(USER_AUTHORED)
-  evidenceIds String[]          @default([])
-  createdAt   DateTime          @default(now())
+  id             String            @id @default(uuid())
+  graphId        String
+  graph          BehaviorGraph     @relation(fields: [graphId], references: [id])
+  fromNodeId     String
+  fromNode       BehaviorGraphNode @relation("FromNode", fields: [fromNodeId], references: [id])
+  toNodeId       String
+  toNode         BehaviorGraphNode @relation("ToNode", fields: [toNodeId], references: [id])
+  action         String?
+  condition      String?
+  actor          String?
+  system         String?
+  componentRef   String?
+  endpointRef    String?
+  expectedInput  Json?
+  expectedOutput Json?
+  provenance     StateProvenance   @default(USER_AUTHORED)
+  evidenceIds    String[]          @default([])
+  createdAt      DateTime          @default(now())
 }
 
 model DeclaredStateSuggestion {
@@ -1237,6 +1318,7 @@ model DeclaredStateSuggestion {
   graphHash                String?
   dedupeKey                String?
   generationTrigger        String?
+  reviewId                 String?
   acceptedBy               String?
   acceptedAt               DateTime?
   rejectedBy               String?
@@ -1251,6 +1333,7 @@ model DeclaredStateSuggestion {
   @@index([status])
   @@index([suggestionType])
   @@index([flowId, graphHash, status])
+  @@index([flowId, reviewId])
 }
 
 model CompiledRuleset {
@@ -1275,6 +1358,8 @@ model ReconciliationReport {
   application   Application   @relation(fields: [applicationId], references: [id])
   environmentId String?
   environment   Environment?  @relation(fields: [environmentId], references: [id])
+  flowVersionId String?
+  qaRunId       String?
 
   confirmedCount        Int
   trueGapCount          Int
@@ -1291,21 +1376,34 @@ model ReconciliationReport {
   undeclaredTransitionsList Json  @default("[]")
 
   generatedAt DateTime @default(now())
+
+  @@index([flowId, flowVersionId, generatedAt])
+  @@index([qaRunId])
 }
 
 model BehaviorGraphVersion {
-  id                         String        @id @default(uuid())
+  id                         String               @id @default(uuid())
   graphId                    String
-  graph                      BehaviorGraph @relation(fields: [graphId], references: [id])
+  graph                      BehaviorGraph        @relation(fields: [graphId], references: [id])
   version                    Int
   snapshot                   Json
-  isBaseline                 Boolean       @default(false)
+  lifecycleStatus            FlowLifecycleStatus  @default(PUBLISHED)
+  diagramRendererVersion     String               @default("1.0")
+  diagramProjectionMetadata  Json?
+  publishedAt                DateTime             @default(now())
+  publishedById              String?
+  derivedFromVersionId       String?
+  isBaseline                 Boolean              @default(false)
   expectedStateCount         Int?
   expectedTransitionCount    Int?
   expectedCoverage           Float?
   expectedTransitionCoverage Float?
-  createdAt                  DateTime      @default(now())
+  createdAt                  DateTime             @default(now())
   qaRuns                     QARun[]
+  projectBindings            FlowProjectBinding[]
+  scans                      FlowScan[]
+  initializations            FlowInitialization[]
+  drifts                     FlowDrift[]
 
   @@unique([graphId, version])
 }
@@ -1417,15 +1515,15 @@ enum EnvironmentType {
 }
 
 model Environment {
-  id            String          @id @default(uuid())
-  applicationId String
-  application   Application     @relation(fields: [applicationId], references: [id])
-  name          String // e.g. "Development", "Staging", "Production"
-  type          EnvironmentType @default(DEVELOPMENT)
-  baseUrl       String?
+  id                  String          @id @default(uuid())
+  applicationId       String
+  application         Application     @relation(fields: [applicationId], references: [id])
+  name                String // e.g. "Development", "Staging", "Production"
+  type                EnvironmentType @default(DEVELOPMENT)
+  baseUrl             String?
   telemetryGatewayUrl String?
-  isDefault     Boolean         @default(false)
-  sdkEnabled    Boolean         @default(true)
+  isDefault           Boolean         @default(false)
+  sdkEnabled          Boolean         @default(true)
 
   apiKeys               ApiKey[]
   sessions              Session[]
@@ -1436,6 +1534,8 @@ model Environment {
   reconciliationReports ReconciliationReport[]
   qaRuns                QARun[]
   desktopSetupHandoffs  DesktopSetupHandoff[]
+  projectConnections    ProjectConnection[]
+  flowProjectBindings   FlowProjectBinding[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1444,25 +1544,25 @@ model Environment {
 }
 
 model ApplicationOnboardingProgress {
-  id                     String      @id @default(uuid())
-  applicationId          String      @unique
-  application            Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  organizationCreated    Boolean     @default(true)
-  applicationCreated     Boolean     @default(true)
-  templateSelected       Boolean     @default(false)
-  expectedFlowsDefined   Boolean     @default(false)
+  id                       String      @id @default(uuid())
+  applicationId            String      @unique
+  application              Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  organizationCreated      Boolean     @default(true)
+  applicationCreated       Boolean     @default(true)
+  templateSelected         Boolean     @default(false)
+  expectedFlowsDefined     Boolean     @default(false)
   connectionMethodSelected String?
-  sdkTargetsConfigured   Boolean     @default(false)
-  sessionObserved        Boolean     @default(false)
-  installationTestPassed Boolean     @default(false)
-  sdkConnected           Boolean     @default(false)
-  demonstrationCompleted Boolean     @default(false)
-  analysisGenerated      Boolean     @default(false)
-  firstAnalysisReviewed  Boolean     @default(false)
-  firstReportGenerated   Boolean     @default(false)
-  valueRealized          Boolean     @default(false)
-  valueRealizedReason    String?
-  completedAt            DateTime?
+  sdkTargetsConfigured     Boolean     @default(false)
+  sessionObserved          Boolean     @default(false)
+  installationTestPassed   Boolean     @default(false)
+  sdkConnected             Boolean     @default(false)
+  demonstrationCompleted   Boolean     @default(false)
+  analysisGenerated        Boolean     @default(false)
+  firstAnalysisReviewed    Boolean     @default(false)
+  firstReportGenerated     Boolean     @default(false)
+  valueRealized            Boolean     @default(false)
+  valueRealizedReason      String?
+  completedAt              DateTime?
 }
 
 model DesktopSetupHandoff {
@@ -1521,6 +1621,11 @@ enum InstrumentationPlanStatus {
   ROLLED_BACK
 }
 
+enum InstrumentationPurpose {
+  BOOTSTRAP
+  FLOW
+}
+
 enum PatchSetStatus {
   CHECKPOINTED
   APPLYING
@@ -1543,14 +1648,167 @@ enum QARunMode {
   OBSERVATION_ONLY
 }
 
+enum QACaptureTrack {
+  FRONTEND
+  BACKEND
+}
+
 enum QARunStatus {
   CREATED
+  ARMED
+  WAITING_FOR_INITIAL
+  RECORDING
   RUNNING
   PAUSED
   PROCESSING
   COMPLETED
+  COMPLETED_INCOMPLETE
   FAILED
   CANCELLED
+}
+
+model ProjectConnection {
+  id                          String           @id @default(uuid())
+  organizationId              String
+  applicationId               String
+  application                 Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  workspaceId                 String
+  workspace                   ProjectWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  environmentId               String
+  environment                 Environment      @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdByUserId             String
+  detectedStack               Json?
+  sdkTargets                  Json?
+  initializationEventVerified Boolean          @default(false)
+  initializationEventAt       DateTime?
+  connectedAt                 DateTime?
+  lastVerifiedAt              DateTime?
+  createdAt                   DateTime         @default(now())
+  updatedAt                   DateTime         @updatedAt
+
+  @@unique([workspaceId, environmentId])
+  @@index([organizationId, applicationId])
+}
+
+model FlowProjectBinding {
+  id                String               @id @default(uuid())
+  organizationId    String
+  applicationId     String
+  flowId            String
+  flow              BehaviorGraph        @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId     String
+  flowVersion       BehaviorGraphVersion @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  workspaceId       String
+  workspace         ProjectWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  environmentId     String
+  environment       Environment          @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  status            FlowBindingStatus    @default(PENDING_INITIALIZATION)
+  currentScanId     String?
+  currentPatchSetId String?
+  initializedAt     DateTime?
+  lastRescannedAt   DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  scans           FlowScan[]
+  initializations FlowInitialization[]
+  qaRuns          QARun[]
+
+  @@unique([flowVersionId, workspaceId, environmentId])
+  @@index([applicationId, flowId, status])
+}
+
+model FlowScan {
+  id                   String               @id @default(uuid())
+  organizationId       String
+  applicationId        String
+  flowId               String
+  flow                 BehaviorGraph        @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId        String
+  flowVersion          BehaviorGraphVersion @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  bindingId            String
+  binding              FlowProjectBinding   @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  repositorySnapshotId String
+  repositorySnapshot   RepositorySnapshot   @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  parentScanId         String?
+  parentScan           FlowScan?            @relation("FlowScanParent", fields: [parentScanId], references: [id], onDelete: SetNull)
+  childScans           FlowScan[]           @relation("FlowScanParent")
+  kind                 FlowScanKind
+  status               FlowScanStatus       @default(CREATED)
+  scannerVersion       String
+  detectedRoutes       Json?
+  detectedComponents   Json?
+  detectedEndpoints    Json?
+  conformanceFindings  Json?
+  errorMessageSafe     String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime             @default(now())
+
+  initializations FlowInitialization[]
+  previousDrifts  FlowDrift[]          @relation("FlowDriftPreviousScan")
+  currentDrifts   FlowDrift[]          @relation("FlowDriftCurrentScan")
+  qaRuns          QARun[]
+
+  @@index([bindingId, createdAt])
+  @@index([applicationId, flowId, status])
+}
+
+model FlowInitialization {
+  id                    String                   @id @default(uuid())
+  organizationId        String
+  applicationId         String
+  flowId                String
+  flow                  BehaviorGraph            @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId         String
+  flowVersion           BehaviorGraphVersion     @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  bindingId             String
+  binding               FlowProjectBinding       @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  scanId                String
+  scan                  FlowScan                 @relation(fields: [scanId], references: [id], onDelete: Restrict)
+  instrumentationPlanId String?
+  patchSetId            String?
+  status                FlowInitializationStatus @default(PROPOSED)
+  codeReviewReport      Json?
+  validation            Json?
+  failureReasonSafe     String?
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  qaRuns QARun[]
+
+  @@unique([bindingId, flowVersionId])
+  @@index([applicationId, flowId, status])
+}
+
+model FlowDrift {
+  id                   String               @id @default(uuid())
+  organizationId       String
+  applicationId        String
+  flowId               String
+  flow                 BehaviorGraph        @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId        String
+  flowVersion          BehaviorGraphVersion @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  previousScanId       String
+  previousScan         FlowScan             @relation("FlowDriftPreviousScan", fields: [previousScanId], references: [id], onDelete: Restrict)
+  currentScanId        String
+  currentScan          FlowScan             @relation("FlowDriftCurrentScan", fields: [currentScanId], references: [id], onDelete: Restrict)
+  implementationDiff   Json
+  previousConformance  Json
+  currentConformance   Json
+  remediationAlignment Json?
+  regressions          Json?
+  edgeCases            Json?
+  expectedFlowImpact   Json?
+  createdAt            DateTime             @default(now())
+
+  qaRuns QARun[]
+
+  @@unique([previousScanId, currentScanId])
+  @@index([applicationId, flowId, createdAt])
 }
 
 enum QARunArtifactType {
@@ -1598,7 +1856,7 @@ model DeviceSession {
 
   qaRuns                      QARun[]
   instrumentationCapabilities InstrumentationCapability[]
-  desktopSetupHandoffs         DesktopSetupHandoff[]
+  desktopSetupHandoffs        DesktopSetupHandoff[]
 
   @@unique([userId, deviceIdentifier])
   @@index([userId, revokedAt])
@@ -1648,6 +1906,8 @@ model ProjectWorkspace {
   qaRuns               QARun[]
   instrumentationPlans InstrumentationPlan[]
   patchSets            PatchSet[]
+  projectConnections   ProjectConnection[]
+  flowProjectBindings  FlowProjectBinding[]
 
   @@unique([applicationId, opaqueLocalId])
   @@index([organizationId, applicationId])
@@ -1688,6 +1948,7 @@ model RepositorySnapshot {
 
   qaRuns               QARun[]
   instrumentationPlans InstrumentationPlan[]
+  flowScans            FlowScan[]
 
   @@index([workspaceId, createdAt])
 }
@@ -1800,6 +2061,9 @@ model InstrumentationPlan {
   repositorySnapshot    RepositorySnapshot        @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
   createdByUserId       String
   environmentId         String?
+  purpose               InstrumentationPurpose    @default(BOOTSTRAP)
+  flowId                String?
+  flowVersionId         String?
   deviceSessionId       String?
   taskKey               String
   contractVersion       String                    @default("1.0")
@@ -1837,6 +2101,7 @@ model InstrumentationPlan {
   @@unique([workspaceId, taskKey])
   @@index([workspaceId, status])
   @@index([environmentId, status])
+  @@index([flowId, flowVersionId, status])
 }
 
 model InstrumentationCapability {
@@ -1905,11 +2170,29 @@ model QARun {
   repositorySnapshot     RepositorySnapshot?   @relation(fields: [repositorySnapshotId], references: [id], onDelete: SetNull)
   expectedGraphVersionId String?
   expectedGraphVersion   BehaviorGraphVersion? @relation(fields: [expectedGraphVersionId], references: [id], onDelete: SetNull)
+  flowId                 String?
+  flow                   BehaviorGraph?        @relation(fields: [flowId], references: [id], onDelete: SetNull)
+  flowBindingId          String?
+  flowBinding            FlowProjectBinding?   @relation(fields: [flowBindingId], references: [id], onDelete: SetNull)
+  flowInitializationId   String?
+  flowInitialization     FlowInitialization?   @relation(fields: [flowInitializationId], references: [id], onDelete: SetNull)
+  flowScanId             String?
+  flowScan               FlowScan?             @relation(fields: [flowScanId], references: [id], onDelete: SetNull)
+  flowDriftId            String?
+  flowDrift              FlowDrift?            @relation(fields: [flowDriftId], references: [id], onDelete: SetNull)
   patchSetId             String?
   patchSet               PatchSet?             @relation(fields: [patchSetId], references: [id], onDelete: SetNull)
   createdByUserId        String
   mode                   QARunMode
+  captureTracks          QACaptureTrack[]      @default([FRONTEND])
   status                 QARunStatus           @default(CREATED)
+  initialStateKey        String?
+  terminalStateKeys      String[]              @default([])
+  lastObservedStateKey   String?
+  boundaryStartedAt      DateTime?
+  boundaryCompletedAt    DateTime?
+  completionReason       String?
+  timeoutAt              DateTime?
   targetUrl              String
   browserMetadata        Json?
   artifactManifest       Json?
@@ -1925,10 +2208,28 @@ model QARun {
   artifacts        QARunArtifact[]
   findings         BrowserFinding[]
   observedSessions Session[]
+  progressEvents   QARunProgressEvent[]
 
   @@index([organizationId, applicationId, createdAt])
   @@index([environmentId, status])
   @@index([deviceSessionId])
+  @@index([flowId, expectedGraphVersionId, createdAt])
+  @@index([flowBindingId, status])
+}
+
+model QARunProgressEvent {
+  id         String   @id @default(uuid())
+  runId      String
+  run        QARun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  eventType  String
+  stateKey   String?
+  accepted   Boolean  @default(true)
+  reason     String?
+  metadata   Json?
+  occurredAt DateTime @default(now())
+
+  @@index([runId, occurredAt])
+  @@index([runId, accepted])
 }
 
 model QARunArtifact {
@@ -2097,17 +2398,17 @@ enum AuditAction {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  email             String    @unique
-  displayName       String?
-  avatarUrl         String?
-  passwordHash      String?
-  preferredAuthMode String    @default("OTP")
-  passwordUpdatedAt DateTime?
-  deletedAt          DateTime?
+  id                   String    @id @default(uuid())
+  email                String    @unique
+  displayName          String?
+  avatarUrl            String?
+  passwordHash         String?
+  preferredAuthMode    String    @default("OTP")
+  passwordUpdatedAt    DateTime?
+  deletedAt            DateTime?
   deletionScheduledFor DateTime?
-  deletionStatus     String    @default("ACTIVE")
-  deletionLegalHold  Boolean   @default(false)
+  deletionStatus       String    @default("ACTIVE")
+  deletionLegalHold    Boolean   @default(false)
 
   // ─── Gap 5: TOTP / MFA ──────────────────────────────────────────────────
   // totpSecret is stored AES-256 encrypted using MFA_ENCRYPTION_KEY.
@@ -2133,20 +2434,20 @@ model User {
 }
 
 model AccountDeletionRequest {
-  id                    String   @id @default(uuid())
-  userId                String
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Restrict)
-  status                String   @default("SCHEDULED")
-  confirmationPhrase    String
-  organizationIds       String[]
-  scheduledFor          DateTime
-  requestedAt           DateTime @default(now())
-  purgeStartedAt        DateTime?
-  purgeCompletedAt      DateTime?
-  lastCheckpoint        String?
-  processingError       String?
-  requestedIpHash       String?
-  requestedUserAgent    String?
+  id                 String    @id @default(uuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status             String    @default("SCHEDULED")
+  confirmationPhrase String
+  organizationIds    String[]
+  scheduledFor       DateTime
+  requestedAt        DateTime  @default(now())
+  purgeStartedAt     DateTime?
+  purgeCompletedAt   DateTime?
+  lastCheckpoint     String?
+  processingError    String?
+  requestedIpHash    String?
+  requestedUserAgent String?
 
   @@index([status, scheduledFor])
   @@index([userId, requestedAt])

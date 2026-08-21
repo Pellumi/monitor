@@ -17,7 +17,7 @@ export function PrivacyStatusCard() {
           Privacy Protection
         </span>
         <span className="text-[10px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-          ACTIVE
+          {privacy?.active ? "ACTIVE" : "PENDING"}
         </span>
       </div>
 
@@ -25,17 +25,17 @@ export function PrivacyStatusCard() {
         <div className="flex justify-between">
           <span className="text-neutral-500">Sensitive Fields</span>
           <span className="text-white font-semibold">
-            {privacy?.sensitiveFieldsBlockedCount ?? 14} blocked
+            {privacy?.sensitiveFieldsBlockedCount != null ? `${privacy.sensitiveFieldsBlockedCount} blocked` : "Pending"}
           </span>
         </div>
         <div className="flex justify-between">
           <span className="text-neutral-500">Replay Masking</span>
-          <span className="text-emerald-400 font-semibold">Enabled</span>
+          <span className="text-emerald-400 font-semibold">{privacy ? (privacy.replayMaskingEnabled ? "Enabled" : "Disabled") : "Pending"}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-neutral-500">Custom Privacy Rules</span>
           <span className="text-white font-semibold">
-            {privacy?.customRulesCount ?? 3} active
+            {privacy?.customRulesCount != null ? `${privacy.customRulesCount} active` : "Pending"}
           </span>
         </div>
       </div>

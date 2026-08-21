@@ -5,6 +5,7 @@ import {
   EnvironmentType,
   PrismaClient,
   QARunArtifactType,
+  QACaptureTrack,
   QARunMode,
   QARunStatus,
   PrivacyClassification,
@@ -22,6 +23,7 @@ export function productionRunModeAllowed(environmentType: EnvironmentType, mode:
 
 const TERMINAL_STATUSES = new Set<QARunStatus>([
   QARunStatus.COMPLETED,
+  QARunStatus.COMPLETED_INCOMPLETE,
   QARunStatus.FAILED,
   QARunStatus.CANCELLED,
 ]);
@@ -49,6 +51,11 @@ export function createDesktopRouter(input: {
         workspace: true,
         repositorySnapshot: true,
         expectedGraphVersion: true,
+        flow: true,
+        flowBinding: true,
+        flowInitialization: true,
+        flowScan: true,
+        flowDrift: true,
         artifacts: true,
         findings: { include: { evidence: { include: { artifact: true } } } },
       },
@@ -218,10 +225,11 @@ export function createDesktopRouter(input: {
     async (req: DesktopRequest, res: Response) => {
       const {
         environmentId, workspaceId, deviceSessionId, repositorySnapshotId,
-        expectedGraphVersionId, patchSetId, mode = QARunMode.GUIDED, targetUrl, retryOfRunId,
+        flowId, flowBindingId, flowInitializationId, flowScanId, flowDriftId,
+        expectedGraphVersionId, patchSetId, mode = QARunMode.GUIDED, captureTracks = ['FRONTEND'], targetUrl, retryOfRunId, timeoutSeconds,
       } = req.body ?? {};
-      if (!environmentId || !targetUrl) {
-        return res.status(400).json({ error: 'environmentId and targetUrl are required' });
+      if (!environmentId || !targetUrl || !flowId || !flowBindingId || !flowInitializationId || !flowScanId || !expectedGraphVersionId) {
+        return res.status(400).json({ error: 'FLOW_SCOPED_RUN_CONTEXT_REQUIRED', message: 'environmentId, targetUrl, flowId, flowBindingId, flowInitializationId, flowScanId, and expectedGraphVersionId are required' });
       }
       try {
         const target = new URL(String(targetUrl));
@@ -240,6 +248,10 @@ export function createDesktopRouter(input: {
       if (!Object.values(QARunMode).includes(mode)) {
         return res.status(400).json({ error: 'Invalid QA run mode' });
       }
+      const normalizedTracks = Array.isArray(captureTracks) ? [...new Set(captureTracks)] : [];
+      if (!normalizedTracks.length || normalizedTracks.some((track) => !Object.values(QACaptureTrack).includes(track))) {
+        return res.status(400).json({ error: 'INVALID_QA_CAPTURE_TRACKS' });
+      }
       if (!productionRunModeAllowed(environment.type, mode)) {
         return res.status(403).json({
           error: 'PRODUCTION_ACTIVE_CONTROL_BLOCKED',
@@ -253,7 +265,7 @@ export function createDesktopRouter(input: {
         });
       }
 
-      const [workspace, snapshot, expectedGraphVersion, patchSet] = await Promise.all([
+      const [workspace, snapshot, expectedGraphVersion, patchSet, binding, initialization, flowScan, flowDrift] = await Promise.all([
         workspaceId
           ? prisma.projectWorkspace.findFirst({ where: { id: String(workspaceId), applicationId: req.params.appId } })
           : null,
@@ -270,6 +282,10 @@ export function createDesktopRouter(input: {
           : workspaceId
             ? prisma.patchSet.findFirst({ where: { workspaceId: String(workspaceId), status: 'VALIDATED' }, orderBy: { createdAt: 'desc' } })
             : null,
+        prisma.flowProjectBinding.findFirst({ where: { id: String(flowBindingId), flowId: String(flowId), flowVersionId: String(expectedGraphVersionId), applicationId: req.params.appId, environmentId: environment.id, status: 'ACTIVE' } }),
+        prisma.flowInitialization.findFirst({ where: { id: String(flowInitializationId), bindingId: String(flowBindingId), flowVersionId: String(expectedGraphVersionId), status: 'COMPLETED' } }),
+        prisma.flowScan.findFirst({ where: { id: String(flowScanId), bindingId: String(flowBindingId), flowVersionId: String(expectedGraphVersionId), status: 'COMPLETED' } }),
+        flowDriftId ? prisma.flowDrift.findFirst({ where: { id: String(flowDriftId), flowId: String(flowId), flowVersionId: String(expectedGraphVersionId), currentScanId: String(flowScanId) } }) : null,
       ]);
       if (workspaceId && !workspace) return res.status(404).json({ error: 'Workspace not found' });
       if (repositorySnapshotId && !snapshot) {
@@ -277,6 +293,14 @@ export function createDesktopRouter(input: {
       }
       if (expectedGraphVersionId && !expectedGraphVersion) return res.status(404).json({ error: 'Expected graph version not found' });
       if (patchSetId && !patchSet) return res.status(404).json({ error: 'Validated instrumentation manifest not found' });
+      if (!binding || !initialization || !flowScan || (flowDriftId && !flowDrift)) return res.status(409).json({ error: 'ACTIVE_FLOW_INITIALIZATION_REQUIRED' });
+
+      const versionSnapshot = expectedGraphVersion!.snapshot as any;
+      const expectedStates = Array.isArray(versionSnapshot?.states) ? versionSnapshot.states : [];
+      const initialState = expectedStates.find((state: any) => state.role === 'INITIAL');
+      const terminalStates = expectedStates.filter((state: any) => state.role === 'TERMINAL');
+      if (!initialState || terminalStates.length === 0) return res.status(422).json({ error: 'FLOW_BOUNDARIES_INVALID' });
+      const stateKey = (state: any) => String(state.behaviorKey ?? state.stateName ?? state.name ?? '').trim();
 
       const run = await prisma.qARun.create({
         data: {
@@ -287,9 +311,18 @@ export function createDesktopRouter(input: {
           deviceSessionId: deviceSessionId ? String(deviceSessionId) : undefined,
           repositorySnapshotId: snapshot?.id,
           expectedGraphVersionId: expectedGraphVersion?.id,
+          flowId: String(flowId),
+          flowBindingId: binding.id,
+          flowInitializationId: initialization.id,
+          flowScanId: flowScan.id,
+          flowDriftId: flowDrift?.id,
           patchSetId: patchSet?.id,
           createdByUserId: req.user!.id,
           mode,
+          captureTracks: normalizedTracks,
+          initialStateKey: stateKey(initialState),
+          terminalStateKeys: terminalStates.map(stateKey),
+          timeoutAt: Number(timeoutSeconds) > 0 ? new Date(Date.now() + Math.min(Number(timeoutSeconds), 86_400) * 1_000) : undefined,
           targetUrl: String(targetUrl),
           retryOfRunId: retryOfRunId ? String(retryOfRunId) : undefined,
         },
@@ -335,15 +368,50 @@ export function createDesktopRouter(input: {
     if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
     const updated = await prisma.qARun.update({
       where: { id: run.id },
-      data: { status: QARunStatus.RUNNING, startedAt: run.startedAt ?? new Date() },
+      data: { status: QARunStatus.WAITING_FOR_INITIAL, startedAt: run.startedAt ?? new Date() },
     });
     res.json(updated);
+  });
+
+  router.post('/qa-runs/:runId/boundary-events', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const stateKey = normalize(req.body?.stateKey ?? req.body?.stateName);
+    if (!stateKey) return res.status(400).json({ error: 'STATE_KEY_REQUIRED' });
+    const snapshot = run.expectedGraphVersion?.snapshot as any;
+    const expectedStates = Array.isArray(snapshot?.states) ? snapshot.states : [];
+    const knownKeys = new Set(expectedStates.map((state: any) => normalize(state.behaviorKey ?? state.stateName ?? state.name)));
+    const initialKey = normalize(run.initialStateKey);
+    const terminals = new Set(run.terminalStateKeys.map(normalize));
+    const waiting = !run.boundaryStartedAt && run.status !== QARunStatus.RECORDING;
+    const accepted = knownKeys.has(stateKey) && (!waiting || stateKey === initialKey);
+    const reason = !knownKeys.has(stateKey) ? 'OUTSIDE_FLOW_SCOPE' : waiting && stateKey !== initialKey ? 'BEFORE_INITIAL_BOUNDARY' : null;
+    const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : crypto.randomUUID();
+    await prisma.qARunProgressEvent.upsert({
+      where: { id: eventId },
+      create: { id: eventId, runId: run.id, eventType: String(req.body?.eventType ?? 'STATE_ENTERED'), stateKey, accepted, reason, metadata: req.body?.metadata ?? undefined, occurredAt: req.body?.timestamp ? new Date(String(req.body.timestamp)) : new Date() },
+      update: {},
+    });
+    if (!accepted) return res.status(202).json({ accepted: false, quarantined: true, reason, shouldStop: false });
+
+    const now = new Date();
+    const terminalReached = terminals.has(stateKey);
+    const updated = await prisma.qARun.update({ where: { id: run.id }, data: {
+      status: terminalReached ? QARunStatus.PROCESSING : QARunStatus.RECORDING,
+      boundaryStartedAt: run.boundaryStartedAt ?? now,
+      boundaryCompletedAt: terminalReached ? now : undefined,
+      lastObservedStateKey: stateKey,
+      completionReason: terminalReached ? 'TERMINAL_STATE_REACHED' : undefined,
+    } });
+    return res.json({ accepted: true, shouldStop: terminalReached, run: updated });
   });
 
   router.post('/qa-runs/:runId/pause', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
-    if (run.status !== QARunStatus.RUNNING) return res.status(409).json({ error: 'QA run is not running' });
+    if (!new Set<QARunStatus>([QARunStatus.WAITING_FOR_INITIAL, QARunStatus.RECORDING, QARunStatus.RUNNING]).has(run.status)) return res.status(409).json({ error: 'QA run is not active' });
     res.json(await prisma.qARun.update({
       where: { id: run.id },
       data: { status: QARunStatus.PAUSED },
@@ -356,7 +424,7 @@ export function createDesktopRouter(input: {
     if (run.status !== QARunStatus.PAUSED) return res.status(409).json({ error: 'QA run is not paused' });
     res.json(await prisma.qARun.update({
       where: { id: run.id },
-      data: { status: QARunStatus.RUNNING },
+      data: { status: run.boundaryStartedAt ? QARunStatus.RECORDING : QARunStatus.WAITING_FOR_INITIAL },
     }));
   });
 
@@ -387,9 +455,17 @@ export function createDesktopRouter(input: {
         deviceSessionId: run.deviceSessionId,
         repositorySnapshotId: run.repositorySnapshotId,
         expectedGraphVersionId: run.expectedGraphVersionId,
+        flowId: run.flowId,
+        flowBindingId: run.flowBindingId,
+        flowInitializationId: run.flowInitializationId,
+        flowScanId: run.flowScanId,
+        flowDriftId: run.flowDriftId,
         patchSetId: run.patchSetId,
         createdByUserId: req.user!.id,
         mode: run.mode,
+        captureTracks: run.captureTracks,
+        initialStateKey: run.initialStateKey,
+        terminalStateKeys: run.terminalStateKeys,
         targetUrl: run.targetUrl,
         browserMetadata: run.browserMetadata ?? undefined,
         retryOfRunId: run.id,
@@ -586,13 +662,31 @@ export function createDesktopRouter(input: {
   router.post('/qa-runs/:runId/complete', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
-    if (run.status === QARunStatus.COMPLETED) {
+    if (run.status === QARunStatus.COMPLETED || run.status === QARunStatus.COMPLETED_INCOMPLETE) {
       await markDemonstrationCompleted(run);
       return res.json(run);
     }
     if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
-    const observations = Array.isArray(req.body?.observations) ? req.body.observations : [];
-    const observedTransitions = Array.isArray(req.body?.observedTransitions) ? req.body.observedTransitions : [];
+    const allObservations = Array.isArray(req.body?.observations) ? req.body.observations : [];
+    const allObservedTransitions = Array.isArray(req.body?.observedTransitions) ? req.body.observedTransitions : [];
+    const normalizeBoundaryKey = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const initialKey = normalizeBoundaryKey(run.initialStateKey);
+    const terminalKeys = new Set(run.terminalStateKeys.map(normalizeBoundaryKey));
+    const initialIndex = allObservations.findIndex((item: any) => normalizeBoundaryKey(item?.behaviorKey ?? item?.stateName) === initialKey);
+    const terminalOffset = initialIndex >= 0
+      ? allObservations.slice(initialIndex).findIndex((item: any) => terminalKeys.has(normalizeBoundaryKey(item?.behaviorKey ?? item?.stateName)))
+      : -1;
+    const terminalIndex = terminalOffset >= 0 ? initialIndex + terminalOffset : -1;
+    const observations = initialIndex >= 0 ? allObservations.slice(initialIndex, terminalIndex >= 0 ? terminalIndex + 1 : undefined) : [];
+    const scopedStateNames = new Set(observations.map((item: any) => normalizeBoundaryKey(item?.stateName ?? item?.behaviorKey)));
+    const observedTransitions = allObservedTransitions.filter((item: any) => scopedStateNames.has(normalizeBoundaryKey(item?.fromState)) && scopedStateNames.has(normalizeBoundaryKey(item?.toState)));
+    const terminalBoundaryConfirmed = terminalIndex >= 0 || (run.completionReason === 'TERMINAL_STATE_REACHED' && Boolean(run.boundaryCompletedAt));
+    const completionReason = terminalBoundaryConfirmed
+      ? 'TERMINAL_STATE_REACHED'
+      : req.body?.completionReason === 'TIMEOUT' || (run.timeoutAt && run.timeoutAt.getTime() <= Date.now())
+        ? 'TIMEOUT'
+        : 'MANUAL_STOP_BEFORE_TERMINAL';
+    const completedStatus = terminalBoundaryConfirmed ? QARunStatus.COMPLETED : QARunStatus.COMPLETED_INCOMPLETE;
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : crypto.randomUUID();
     const traceId = typeof req.body?.traceId === 'string' ? req.body.traceId : null;
     const startedAt = run.startedAt ?? new Date();
@@ -710,12 +804,20 @@ export function createDesktopRouter(input: {
     const completed = await prisma.qARun.update({
       where: { id: run.id },
       data: {
-        status: QARunStatus.COMPLETED,
+        status: completedStatus,
         endedAt,
+        boundaryStartedAt: run.boundaryStartedAt ?? (initialIndex >= 0 ? new Date(String(observations[0]?.timestamp ?? endedAt.toISOString())) : null),
+        boundaryCompletedAt: run.boundaryCompletedAt ?? (terminalIndex >= 0 ? new Date(String(observations[observations.length - 1]?.timestamp ?? endedAt.toISOString())) : null),
+        lastObservedStateKey: observations.length ? String((observations[observations.length - 1] as any).behaviorKey ?? (observations[observations.length - 1] as any).stateName ?? '') : null,
+        completionReason,
         browserMetadata: req.body?.browserMetadata ?? undefined,
         artifactManifest: req.body?.artifactManifest ?? undefined,
       },
     });
+    await prisma.notificationEvent.createMany({ data: [
+      { organizationId: completed.organizationId, applicationId: completed.applicationId, eventType: 'QA_RUN_COMPLETED', severity: completedStatus === QARunStatus.COMPLETED ? 'INFO' : 'WARNING', payload: { runId: completed.id, flowId: completed.flowId, flowVersionId: completed.expectedGraphVersionId, completionReason } },
+      { organizationId: completed.organizationId, applicationId: completed.applicationId, eventType: 'FLOW_QA_REPORT_READY', severity: completedStatus === QARunStatus.COMPLETED ? 'INFO' : 'WARNING', payload: { runId: completed.id, flowId: completed.flowId, reportUrl: `/qa-runs/${completed.id}` } },
+    ] });
     await markDemonstrationCompleted(completed);
     res.json(completed);
   });

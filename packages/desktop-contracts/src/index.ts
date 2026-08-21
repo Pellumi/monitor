@@ -17,6 +17,9 @@ export const RunStatusSchema = z.enum([
   'PREPARING',
   'WAITING_FOR_PERMISSION',
   'READY',
+  'ARMED',
+  'WAITING_FOR_INITIAL',
+  'RECORDING',
   'RUNNING',
   'PAUSED',
   'ENDING',
@@ -25,6 +28,7 @@ export const RunStatusSchema = z.enum([
   'RECONCILING',
   'REPORTING',
   'COMPLETED',
+  'COMPLETED_INCOMPLETE',
   'FAILED',
   'CANCELLED',
   'PARTIAL',
@@ -147,6 +151,18 @@ export const QARunSchema = z.object({
   workspaceId: z.string().uuid().nullable(),
   deviceSessionId: z.string().uuid().nullable(),
   expectedGraphVersionId: z.string().uuid().nullable(),
+  flowId: z.string().uuid().nullable(),
+  flowBindingId: z.string().uuid().nullable(),
+  flowInitializationId: z.string().uuid().nullable(),
+  flowScanId: z.string().uuid().nullable(),
+  flowDriftId: z.string().uuid().nullable().optional(),
+  captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).min(1),
+  initialStateKey: z.string().nullable(),
+  terminalStateKeys: z.array(z.string()),
+  lastObservedStateKey: z.string().nullable().optional(),
+  boundaryStartedAt: z.string().datetime().nullable().optional(),
+  boundaryCompletedAt: z.string().datetime().nullable().optional(),
+  completionReason: z.string().nullable().optional(),
   mode: z.enum(['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY']),
   status: RunStatusSchema,
   targetUrl: z.string().url(),
@@ -179,6 +195,16 @@ export const QualityReportSchema = z.object({
     name: z.string(),
     type: EnvironmentTypeSchema,
   }),
+  flow: z.object({
+    id: z.string().uuid(), versionId: z.string().uuid(), version: z.number().int(), name: z.string(),
+    purpose: z.string().nullable(), scopeStatement: z.string().nullable(), initialStateKey: z.string(), terminalStateKeys: z.array(z.string()),
+  }).nullable(),
+  boundary: z.object({
+    status: RunStatusSchema, startedAt: z.string().datetime().or(z.date()).nullable(), completedAt: z.string().datetime().or(z.date()).nullable(),
+    lastObservedStateKey: z.string().nullable(), completionReason: z.string().nullable(), timeoutAt: z.string().datetime().or(z.date()).nullable(),
+    acceptedEvents: z.array(z.unknown()), quarantinedEvents: z.array(z.unknown()),
+  }),
+  captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])),
   correlation: z.object({
     runId: z.string().uuid(),
     sessions: z.array(z.object({
@@ -218,12 +244,18 @@ export const QualityReportSchema = z.object({
     findingCount: z.number().int().nonnegative(),
     criticalOrHighFindings: z.number().int().nonnegative(),
   }),
-});
+}).passthrough();
 
 export const DeclaredFlowSummarySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   status: z.string(),
+  lifecycleStatus: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED', 'SUPERSEDED']).optional(),
+  purpose: z.string().nullable().optional(),
+  scopeStatement: z.string().nullable().optional(),
+  exclusions: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional(),
+  publishedVersionId: z.string().uuid().nullable().optional(),
   version: z.number().int().optional(),
   updatedAt: z.string().datetime().optional(),
   versions: z.array(z.object({ id: z.string().uuid(), version: z.number().int(), isBaseline: z.boolean().optional() })).optional(),
@@ -234,6 +266,8 @@ export const DeclaredStateSchema = z.object({
   stateName: z.string(),
   category: z.string(),
   provenance: z.string(),
+  role: z.enum(['NORMAL', 'INITIAL', 'TERMINAL']).default('NORMAL'),
+  terminalKind: z.enum(['SUCCESS', 'FAILURE', 'CANCELLATION', 'ALTERNATE']).nullable().optional(),
   canonicalBehavior: z.string().nullable().optional(),
 }).passthrough();
 
@@ -242,6 +276,7 @@ export const DeclaredTransitionSchema = z.object({
   fromStateId: z.string().uuid(),
   toStateId: z.string().uuid(),
   action: z.string().nullable().optional(),
+  condition: z.string().nullable().optional(),
   provenance: z.string(),
   fromState: DeclaredStateSchema.optional(),
   toState: DeclaredStateSchema.optional(),
@@ -252,6 +287,57 @@ export const DeclaredFlowDetailSchema = DeclaredFlowSummarySchema.extend({
   states: z.array(DeclaredStateSchema).default([]),
   transitions: z.array(DeclaredTransitionSchema).default([]),
 });
+
+export const DeclaredSuggestionStateSchema = z.object({
+  name: z.string(), category: z.string(), role: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']).optional(),
+  terminalKind: z.enum(['SUCCESS', 'FAILURE', 'CANCELLATION', 'ALTERNATE']).nullable().optional(),
+});
+export const DeclaredSuggestionTransitionSchema = z.object({
+  from: z.string(), to: z.string(), action: z.string().nullable().optional(),
+});
+export const DeclaredStateSuggestionSchema = z.object({
+  id: z.string().uuid(), suggestedStateName: z.string(), category: z.string(), rationale: z.string(),
+  title: z.string().nullable().optional(), description: z.string().nullable().optional(),
+  source: z.enum(['RULE_ENGINE', 'AI', 'HYBRID']).default('RULE_ENGINE'), sourceTier: z.string(),
+  confidence: z.number().min(0).max(1), severity: z.string(), status: z.string(),
+  graphVersion: z.number().int().nullable().optional(), graphHash: z.string().nullable().optional(),
+  reviewId: z.string().uuid().nullable().optional(),
+  suggestedStatesJson: z.array(DeclaredSuggestionStateSchema).nullable().optional(),
+  suggestedTransitionsJson: z.array(DeclaredSuggestionTransitionSchema).nullable().optional(),
+}).passthrough();
+export const FlowSuggestionMetaSchema = z.object({
+  ruleCount: z.number().int().nonnegative().default(0), aiCount: z.number().int().nonnegative().default(0),
+  aiAllowed: z.boolean().default(false), aiAttempted: z.boolean().default(false), fallbackUsed: z.boolean().default(false),
+  mode: z.enum(['RULE_ONLY', 'AI_ASSISTED', 'RULE_FALLBACK']).default('RULE_ONLY'), latencyMs: z.number().nonnegative().optional(),
+  stage: z.enum(['GAP_REVIEW', 'CONNECTION_REPAIR', 'ENRICHMENT']).optional(),
+}).passthrough();
+export const FlowSuggestionsResponseSchema = z.object({
+  graphVersion: z.number().int(), graphHash: z.string(), reviewId: z.string().uuid().nullable().optional(), suggestions: z.array(DeclaredStateSuggestionSchema),
+  meta: FlowSuggestionMetaSchema.optional(),
+}).passthrough();
+export const FlowDiagramSchema = z.object({
+  kind: z.enum(['FLOW', 'SEQUENCE', 'ACTIVITY', 'STATE_MACHINE']),
+  renderer: z.literal('MERMAID'), rendererVersion: z.string(), source: z.string(),
+  semanticNodeIds: z.array(z.string()), semanticEdgeIds: z.array(z.string()),
+});
+
+export const FlowReviewPreviewSchema = z.object({
+  reviewId: z.string().uuid().nullable().optional(), graphVersion: z.number().int(), graphHash: z.string(),
+  validation: z.object({ valid: z.boolean(), issues: z.array(z.object({ code: z.string(), message: z.string() }).passthrough()) }).passthrough(),
+  diagrams: z.array(FlowDiagramSchema), proposedStates: z.array(z.any()), proposedTransitions: z.array(z.any()),
+}).passthrough();
+
+export const FlowProjectBindingSchema = z.object({
+  id: z.string().uuid(), flowId: z.string().uuid(), flowVersionId: z.string().uuid(), workspaceId: z.string().uuid(), environmentId: z.string().uuid(),
+  status: z.enum(['PENDING_INITIALIZATION', 'INITIALIZING', 'ACTIVE', 'STALE', 'FAILED', 'REQUIRES_REBASE']),
+  currentScanId: z.string().uuid().nullable(), initializedAt: z.string().datetime().or(z.date()).nullable(), lastRescannedAt: z.string().datetime().or(z.date()).nullable(),
+}).passthrough();
+
+export const FlowInitializationSchema = z.object({
+  id: z.string().uuid(), flowId: z.string().uuid(), flowVersionId: z.string().uuid(), bindingId: z.string().uuid(), scanId: z.string().uuid(),
+  status: z.enum(['PROPOSED', 'APPROVED', 'APPLYING', 'VALIDATING', 'COMPLETED', 'FAILED', 'ROLLED_BACK']),
+  instrumentationPlanId: z.string().uuid().nullable(), patchSetId: z.string().uuid().nullable(), codeReviewReport: z.unknown().nullable(), validation: z.unknown().nullable(),
+}).passthrough();
 
 export const SourceDocumentManifestSchema = z.object({
   filename: z.string(),
@@ -396,6 +482,9 @@ export const InstrumentationPlanSchema = z.object({
   operations: z.array(InstrumentationOperationSchema), validationCommands: z.array(StructuredInstrumentationCommandSchema),
   networkRequirements: z.array(z.string()), risk: z.enum(['LOW', 'MEDIUM', 'HIGH']), riskReasons: z.array(z.string()),
   evidence: z.any(), createdAt: z.string().datetime(), status: InstrumentationPlanStatusSchema.optional(),
+  instrumentationPurpose: z.enum(['BOOTSTRAP', 'FLOW']).default('BOOTSTRAP'),
+  flowId: z.string().uuid().nullable().optional(),
+  flowVersionId: z.string().uuid().nullable().optional(),
 }).passthrough();
 export const InstrumentationDetectionSchema = z.object({
   adapterId: InstrumentationFrameworkIdSchema, adapterVersion: z.string(), supported: z.boolean(), confidence: z.number().min(0).max(1),
@@ -421,7 +510,14 @@ export const StartGuidedRunInputSchema = z.object({
   applicationId: z.string().uuid(),
   environmentId: z.string().uuid(),
   workspaceId: z.string().uuid().nullable(),
-  expectedGraphVersionId: z.string().uuid().nullable(),
+  flowId: z.string().uuid(),
+  flowBindingId: z.string().uuid(),
+  flowInitializationId: z.string().uuid(),
+  flowScanId: z.string().uuid(),
+  flowDriftId: z.string().uuid().nullable().optional(),
+  expectedGraphVersionId: z.string().uuid(),
+  captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).min(1).default(['FRONTEND']),
+  timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   patchSetId: z.string().uuid().nullable().optional(),
   environmentType: EnvironmentTypeSchema,
   mode: z.enum(['GUIDED', 'OBSERVATION_ONLY']).default('GUIDED'),
@@ -456,9 +552,24 @@ export const IPC = {
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
   addDeclaredState: 'tellann:cloud:intent:state:add',
+  updateDeclaredState: 'tellann:cloud:intent:state:update',
+  deleteDeclaredState: 'tellann:cloud:intent:state:delete',
   addDeclaredTransition: 'tellann:cloud:intent:transition:add',
   completeDeclaredFlow: 'tellann:cloud:intent:complete',
   reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
+  generateFlowSuggestions: 'tellann:cloud:intent:suggestions:generate',
+  getFlowSuggestions: 'tellann:cloud:intent:suggestions:list',
+  acceptFlowSuggestion: 'tellann:cloud:intent:suggestions:accept',
+  rejectFlowSuggestion: 'tellann:cloud:intent:suggestions:reject',
+  previewFlowReview: 'tellann:cloud:intent:review:preview',
+  applyFlowReview: 'tellann:cloud:intent:review:apply',
+  declineFlowReview: 'tellann:cloud:intent:review:decline',
+  getFlowDiagrams: 'tellann:cloud:flow:diagrams',
+  initializeFlow: 'tellann:flow:initialize',
+  rescanFlow: 'tellann:flow:rescan',
+  approveFlowInitialization: 'tellann:flow:initialization:approve',
+  applyFlowInitialization: 'tellann:flow:initialization:apply',
+  validateFlowInitialization: 'tellann:flow:initialization:validate',
   importDocuments: 'tellann:documents:import',
   listDocuments: 'tellann:documents:list',
   getDocumentJob: 'tellann:documents:job:get',
@@ -549,6 +660,13 @@ export type DeclaredFlowSummary = z.infer<typeof DeclaredFlowSummarySchema>;
 export type DeclaredState = z.infer<typeof DeclaredStateSchema>;
 export type DeclaredTransition = z.infer<typeof DeclaredTransitionSchema>;
 export type DeclaredFlowDetail = z.infer<typeof DeclaredFlowDetailSchema>;
+export type DeclaredStateSuggestion = z.infer<typeof DeclaredStateSuggestionSchema>;
+export type FlowSuggestionMeta = z.infer<typeof FlowSuggestionMetaSchema>;
+export type FlowSuggestionsResponse = z.infer<typeof FlowSuggestionsResponseSchema>;
+export type FlowReviewPreview = z.infer<typeof FlowReviewPreviewSchema>;
+export type FlowDiagram = z.infer<typeof FlowDiagramSchema>;
+export type FlowProjectBinding = z.infer<typeof FlowProjectBindingSchema>;
+export type FlowInitialization = z.infer<typeof FlowInitializationSchema>;
 export type SourceDocumentManifest = z.infer<typeof SourceDocumentManifestSchema>;
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
 export type DocumentAccess = z.infer<typeof DocumentAccessSchema>;

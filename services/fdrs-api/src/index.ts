@@ -14,6 +14,7 @@ import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps,
 import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@sots/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { createConnectivityRepairTransitions, createFlowDiagrams, validateFlow } from './flow-domain';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
 
@@ -197,7 +198,7 @@ function normalizedSuggestionType(type: string): SuggestionType {
   return map[type] ?? SuggestionType.BUSINESS_RULE;
 }
 
-function suggestionPatch(item: any): { states: Array<{ name: string; category: string }>; transitions: Array<{ from: string; to: string; action?: string }> } {
+function suggestionPatch(item: any): { states: Array<{ name: string; category: string; role?: string; terminalKind?: string | null }>; transitions: Array<{ from: string; to: string; action?: string }> } {
   const states = Array.isArray(item.suggestedStates)
     ? item.suggestedStates
     : item.suggestedState ? [{ name: item.suggestedState, category: item.severity === 'HIGH' ? 'ERROR' : 'BUSINESS' }] : [];
@@ -207,7 +208,11 @@ function suggestionPatch(item: any): { states: Array<{ name: string; category: s
     if (match) transitions.push({ from: match[1], to: match[2], action: match[3] });
   }
   return {
-    states: states.map((state: any) => ({ name: normalizeKeyForSuggestion(state.name), category: normalizeStateCategory(state.category) })),
+    states: states.map((state: any) => ({
+      name: normalizeKeyForSuggestion(state.name), category: normalizeStateCategory(state.category),
+      role: state.role === 'INITIAL' || state.role === 'TERMINAL' ? state.role : 'NORMAL',
+      terminalKind: state.role === 'TERMINAL' && typeof state.terminalKind === 'string' ? state.terminalKind : null,
+    })),
     transitions: transitions.map((transition: any) => ({
       from: normalizeKeyForSuggestion(transition.from), to: normalizeKeyForSuggestion(transition.to),
       action: transition.action ? normalizeKeyForSuggestion(transition.action) : undefined,
@@ -492,6 +497,193 @@ function requireApplicationFeature(feature: Feature) {
 
 app.use('/applications/:id/declared-flow', requireApplicationFeature(Feature.BEHAVIOR_GRAPH));
 app.use('/applications/:id/reconciliation', requireApplicationFeature(Feature.COVERAGE_ANALYSIS));
+
+function flowSnapshot(flow: any) {
+  return {
+    id: flow.id,
+    name: flow.name,
+    purpose: flow.purpose,
+    scopeStatement: flow.scopeStatement,
+    exclusions: flow.exclusions,
+    tags: flow.tags,
+    workflowType: flow.workflowType,
+    states: flow.nodes,
+    transitions: flow.edges,
+  };
+}
+
+async function loadCanonicalFlow(applicationId: string, flowId: string) {
+  return prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId, graphType: GraphType.DECLARED },
+    include: {
+      nodes: { orderBy: { createdAt: 'asc' } },
+      edges: { orderBy: { createdAt: 'asc' } },
+      versions: { orderBy: { version: 'desc' } },
+      projectBindings: { orderBy: { updatedAt: 'desc' } },
+    },
+  });
+}
+
+async function publishCanonicalFlow(applicationId: string, flowId: string, publishedById?: string) {
+  const flow = await loadCanonicalFlow(applicationId, flowId);
+  if (!flow) return { status: 404 as const, body: { error: 'FLOW_NOT_FOUND' } };
+  if (flow.lifecycleStatus !== 'DRAFT') {
+    return { status: 409 as const, body: { error: 'FLOW_NOT_DRAFT', message: 'Only a draft Flow can be published.' } };
+  }
+
+  const validation = validateFlow(flow.nodes as any, flow.edges as any);
+  if (!validation.valid) {
+    return { status: 422 as const, body: { error: 'FLOW_VALIDATION_FAILED', validation } };
+  }
+
+  const diagrams = createFlowDiagrams(flow.nodes as any, flow.edges as any);
+  const snapshot = flowSnapshot(flow);
+  const version = await prisma.$transaction(async (tx) => {
+    const created = await tx.behaviorGraphVersion.upsert({
+      where: { graphId_version: { graphId: flow.id, version: flow.version } },
+      update: {
+        snapshot: snapshot as any,
+        lifecycleStatus: 'PUBLISHED',
+        diagramRendererVersion: '1.0',
+        diagramProjectionMetadata: diagrams as any,
+        publishedAt: new Date(),
+        publishedById: publishedById ?? null,
+      },
+      create: {
+        graphId: flow.id,
+        version: flow.version,
+        snapshot: snapshot as any,
+        lifecycleStatus: 'PUBLISHED',
+        diagramRendererVersion: '1.0',
+        diagramProjectionMetadata: diagrams as any,
+        publishedById: publishedById ?? null,
+        expectedStateCount: flow.nodes.length,
+        expectedTransitionCount: flow.edges.length,
+      },
+    });
+    await tx.behaviorGraph.update({
+      where: { id: flow.id },
+      data: {
+        status: FlowStatus.COMPLETE,
+        lifecycleStatus: 'PUBLISHED',
+        publishedVersionId: created.id,
+        completedAt: new Date(),
+      },
+    });
+    return created;
+  });
+
+  await compileFlowRuleset(applicationId, flow.id, flow.version);
+  return { status: 200 as const, body: { flowId: flow.id, version, validation, diagrams } };
+}
+
+// Canonical Flow API. The older /declared-flow family remains available as a compatibility alias.
+app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId } = req.params;
+  const { name, purpose, scopeStatement, exclusions, tags, workflowType } = req.body ?? {};
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'FLOW_NAME_REQUIRED' });
+  if (typeof scopeStatement !== 'string' || !scopeStatement.trim()) return res.status(400).json({ error: 'FLOW_SCOPE_REQUIRED' });
+
+  const environment = await prisma.environment.findFirst({ where: { applicationId: appId, isDefault: true } });
+  const flow = await prisma.behaviorGraph.create({ data: {
+    applicationId: appId,
+    environmentId: environment?.id ?? null,
+    name: name.trim(),
+    purpose: typeof purpose === 'string' ? purpose.trim() : null,
+    scopeStatement: scopeStatement.trim(),
+    exclusions: Array.isArray(exclusions) ? exclusions.filter((item): item is string => typeof item === 'string') : [],
+    tags: Array.isArray(tags) ? tags.filter((item): item is string => typeof item === 'string') : [],
+    workflowType: typeof workflowType === 'string' ? workflowType : 'CUSTOM',
+    lifecycleStatus: 'DRAFT',
+    status: FlowStatus.DRAFT,
+    graphType: GraphType.DECLARED,
+    sourceType: GraphSourceType.USER_DECLARATION,
+    declaredById: req.user?.id,
+  } });
+  return res.status(201).json(flow);
+});
+
+app.get('/v1/applications/:appId/flows', async (req: Request, res: Response) => {
+  const flows = await prisma.behaviorGraph.findMany({
+    where: { applicationId: req.params.appId, graphType: GraphType.DECLARED },
+    include: {
+      versions: { orderBy: { version: 'desc' }, take: 1 },
+      projectBindings: {
+        orderBy: { updatedAt: 'desc' }, take: 1,
+        include: {
+          initializations: { orderBy: { updatedAt: 'desc' }, take: 1 },
+          scans: { orderBy: { createdAt: 'desc' }, take: 1 },
+        },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  return res.json(flows);
+});
+
+app.get('/v1/applications/:appId/flows/:flowId', async (req: Request, res: Response) => {
+  const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  return res.json({
+    ...flow,
+    states: flow.nodes,
+    transitions: flow.edges.map((edge) => ({ ...edge, fromStateId: edge.fromNodeId, toStateId: edge.toNodeId })),
+    validation: validateFlow(flow.nodes as any, flow.edges as any),
+  });
+});
+
+app.patch('/v1/applications/:appId/flows/:flowId', async (req: Request, res: Response) => {
+  const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+  const allowed = ['name', 'purpose', 'scopeStatement', 'exclusions', 'tags', 'workflowType'] as const;
+  const data: Record<string, unknown> = {};
+  for (const key of allowed) if (Object.prototype.hasOwnProperty.call(req.body ?? {}, key)) data[key] = req.body[key];
+  return res.json(await prisma.behaviorGraph.update({ where: { id: flow.id }, data }));
+});
+
+app.post('/v1/applications/:appId/flows/:flowId/validate', async (req: Request, res: Response) => {
+  const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  const validation = validateFlow(flow.nodes as any, flow.edges as any);
+  return res.status(validation.valid ? 200 : 422).json(validation);
+});
+
+app.post('/v1/applications/:appId/flows/:flowId/publish', async (req: AuthenticatedRequest, res: Response) => {
+  const result = await publishCanonicalFlow(req.params.appId, req.params.flowId, req.user?.id);
+  return res.status(result.status).json(result.body);
+});
+
+app.post('/v1/applications/:appId/flows/:flowId/versions/:versionId/revise', async (req: AuthenticatedRequest, res: Response) => {
+  const source = await prisma.behaviorGraphVersion.findFirst({
+    where: { id: req.params.versionId, graphId: req.params.flowId, graph: { applicationId: req.params.appId } },
+  });
+  if (!source) return res.status(404).json({ error: 'FLOW_VERSION_NOT_FOUND' });
+  const current = await loadCanonicalFlow(req.params.appId, req.params.flowId);
+  if (!current) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  if (current.lifecycleStatus === 'DRAFT') return res.status(409).json({ error: 'FLOW_DRAFT_ALREADY_EXISTS' });
+  const revised = await prisma.behaviorGraph.update({ where: { id: current.id }, data: {
+    status: FlowStatus.DRAFT,
+    lifecycleStatus: 'DRAFT',
+    version: { increment: 1 },
+    publishedVersionId: null,
+    completedAt: null,
+  } });
+  return res.status(201).json({ ...revised, derivedFromVersionId: source.id, message: 'Draft revision created; published history is unchanged.' });
+});
+
+app.get('/v1/applications/:appId/flows/:flowId/versions/:versionId/diagrams', async (req: Request, res: Response) => {
+  const version = await prisma.behaviorGraphVersion.findFirst({ where: {
+    id: req.params.versionId,
+    graphId: req.params.flowId,
+    graph: { applicationId: req.params.appId },
+  } });
+  if (!version) return res.status(404).json({ error: 'FLOW_VERSION_NOT_FOUND' });
+  const snapshot = version.snapshot as any;
+  const nodes = Array.isArray(snapshot?.states) ? snapshot.states : [];
+  const edges = Array.isArray(snapshot?.transitions) ? snapshot.transitions : [];
+  return res.json({ flowId: req.params.flowId, versionId: version.id, diagrams: createFlowDiagrams(nodes, edges) });
+});
 
 // Dynamic rulesets and experimental flow intelligence.
 app.get('/v1/rules/domains', async (_req: Request, res: Response) => {
@@ -1199,7 +1391,7 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
   const startedAt = Date.now();
   const { appId, flowId } = req.params;
   const trigger = String(req.body.trigger ?? 'MANUAL_REFRESH');
-  const allowedTriggers = new Set(['STATE_ADDED', 'TRANSITION_ADDED', 'SUGGESTION_ACCEPTED', 'MANUAL_REFRESH']);
+  const allowedTriggers = new Set(['STATE_ADDED', 'STATE_UPDATED', 'STATE_DELETED', 'TRANSITION_ADDED', 'SUGGESTION_ACCEPTED', 'MANUAL_REFRESH', 'FLOW_REVIEW_REQUESTED']);
   if (!allowedTriggers.has(trigger)) return res.status(400).json({ error: 'INVALID_TRIGGER' });
   const appContext = await getApplicationContext(appId);
   if (!appContext) return res.status(404).json({ error: 'Application not found' });
@@ -1210,6 +1402,7 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
       include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
     });
     if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+    if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
     const graphHash = graphRevisionHash(graph);
     if ((req.body.graphVersion !== undefined && Number(req.body.graphVersion) !== graph.version) ||
         (req.body.graphHash && req.body.graphHash !== graphHash)) {
@@ -1226,26 +1419,73 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     const organizationId = appContext.organizationId ?? undefined;
     if (!organizationId) return res.status(400).json({ error: 'Application has no organization' });
     const rulesets = await getActiveRulesets({ domainKey, organizationId, applicationId: appId, prisma });
-    const states = graph.nodes.map((node) => ({ key: node.behaviorKey || node.stateName, name: node.stateName, category: node.category }));
+    const states = graph.nodes.map((node) => ({
+      key: node.behaviorKey || node.stateName, name: node.stateName, category: node.category,
+      role: node.role, terminalKind: node.terminalKind,
+    }));
     const transitions = graph.edges.map((edge) => ({ from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action || undefined }));
+    const currentValidation = validateFlow(graph.nodes as any, graph.edges as any);
+    const reviewStage = trigger === 'FLOW_REVIEW_REQUESTED' && !currentValidation.valid ? 'CONNECTION_REPAIR' : trigger === 'FLOW_REVIEW_REQUESTED' ? 'ENRICHMENT' : 'GAP_REVIEW';
     const ruleSuggestions = await suggestFlowGaps({ domainKey, currentGraph: { states, transitions }, rulesets });
     const ruleItems = ruleSuggestions.map((suggestion) => ({
       type: suggestion.type, title: suggestion.title, description: suggestion.rationale, rationale: suggestion.rationale,
       confidence: suggestion.confidence, severity: suggestion.severity,
       targetNodeId: suggestion.suggestedTransitions[0]?.from ?? suggestion.suggestedStates[0]?.name,
       evidence: suggestion.rulePatternIds ?? [], suggestedState: suggestion.suggestedStates[0]?.name,
+      suggestedStates: suggestion.suggestedStates,
+      suggestedTransitions: suggestion.suggestedTransitions,
       suggestedTransition: suggestion.suggestedTransitions[0]
         ? `${suggestion.suggestedTransitions[0].from}->${suggestion.suggestedTransitions[0].to}[${suggestion.suggestedTransitions[0].action ?? ''}]`
         : undefined,
     }));
     const aiAccess = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
     const includeAi = req.body.includeAi !== false && aiAccess.allowed;
+    const reviewId = trigger === 'FLOW_REVIEW_REQUESTED' ? crypto.randomUUID() : undefined;
     const result = await generateFlowSuggestions({
       applicationId: appId, organizationId, applicationDomain: domainKey,
-      declaredFlows: [{ flowId, name: graph.name, states, transitions }], existingRuleSuggestions: ruleItems,
+      declaredFlows: [{
+        flowId, name: graph.name, purpose: graph.purpose, scopeStatement: graph.scopeStatement,
+        workflowType: graph.workflowType, states, transitions,
+      }], existingRuleSuggestions: reviewStage === 'CONNECTION_REPAIR' ? [] : ruleItems,
       userDefinedGoals: Array.isArray(req.body.userDefinedGoals) ? req.body.userDefinedGoals : undefined,
       graphVersion: graph.version, graphHash, latestMutation: trigger,
-    }, { enableAi: includeAi });
+      latestState: req.body.latestState && typeof req.body.latestState.name === 'string'
+        ? {
+            id: typeof req.body.latestState.id === 'string' ? req.body.latestState.id : undefined,
+            name: req.body.latestState.name,
+            category: typeof req.body.latestState.category === 'string' ? req.body.latestState.category : 'BUSINESS',
+            role: typeof req.body.latestState.role === 'string' ? req.body.latestState.role : undefined,
+            terminalKind: typeof req.body.latestState.terminalKind === 'string' ? req.body.latestState.terminalKind : null,
+          }
+        : undefined,
+      mode: reviewStage === 'CONNECTION_REPAIR' ? 'CONNECTION_REPAIR' : trigger === 'FLOW_REVIEW_REQUESTED' ? 'WHOLE_FLOW_REVIEW' : 'GAP_REVIEW',
+    }, {
+      enableAi: includeAi,
+      timeoutMs: Math.max(15_000, Number(process.env.AI_FLOW_SUGGESTIONS_TIMEOUT_MS) || 45_000),
+    });
+
+    let generatedSuggestions = result.suggestions;
+    if (reviewStage === 'CONNECTION_REPAIR') {
+      const existingNames = new Set(states.map((state) => normalizeKeyForSuggestion(state.name)));
+      generatedSuggestions = result.suggestions.flatMap((item) => {
+        const patch = suggestionPatch(item);
+        const validTransitions = patch.transitions.filter((edge) => existingNames.has(edge.from) && existingNames.has(edge.to));
+        if (!validTransitions.length) return [];
+        return [{ ...item, suggestedState: undefined, suggestedStates: [], suggestedTransition: undefined, suggestedTransitions: validTransitions }];
+      });
+      const nameToId = new Map(graph.nodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node.id]));
+      const proposedEdges = generatedSuggestions.flatMap((item, index) => suggestionPatch(item).transitions.map((edge, edgeIndex) => ({
+        id: `review-${index}-${edgeIndex}`, graphId: flowId, fromNodeId: nameToId.get(edge.from)!, toNodeId: nameToId.get(edge.to)!, action: edge.action ?? null,
+      })));
+      const repairs = createConnectivityRepairTransitions(graph.nodes as any, [...graph.edges, ...proposedEdges] as any);
+      if (repairs.length) generatedSuggestions = [...generatedSuggestions, {
+        key: `connection-repair:${graphHash}`, type: 'VALIDATION_CONSTRAINT', title: 'Complete the existing flow connections',
+        description: 'Connect every existing state and terminal outcome to the initial state before suggesting additional states.',
+        severity: 'HIGH', confidence: .95, rationale: 'The current graph contains unreachable states. These transitions complete the existing flow first.',
+        evidence: currentValidation.issues.filter((issue) => issue.code.includes('UNREACHABLE')).map((issue) => issue.code),
+        sources: ['RULE_BASED'], label: 'Rule-based', suggestedStates: [], suggestedTransitions: repairs,
+      }];
+    }
 
     let aiInvocationId: string | undefined;
     if (result.aiCalled) {
@@ -1259,19 +1499,22 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
 
     const existingStateNames = new Set(states.map((state) => normalizeKeyForSuggestion(state.name)));
     const persisted = [];
-    for (const item of result.suggestions) {
+    for (const item of generatedSuggestions) {
       const patch = suggestionPatch(item);
-      if (patch.states.length === 0 || patch.states.every((state) => existingStateNames.has(state.name))) continue;
+      if (patch.states.length === 0 && patch.transitions.length === 0) continue;
+      if (patch.states.length > 0 && patch.transitions.length === 0 && patch.states.every((state) => existingStateNames.has(state.name))) continue;
       const knownNames = new Set([...existingStateNames, ...patch.states.map((state) => state.name)]);
       if (patch.transitions.some((transition) => !knownNames.has(transition.from) || !knownNames.has(transition.to))) continue;
       const dedupeKey = semanticSuggestionKey(item.type, patch, item.targetNodeId);
       const record = await prisma.declaredStateSuggestion.upsert({
-        where: { flowId_graphHash_dedupeKey: { flowId, graphHash, dedupeKey } }, update: {},
+        where: { flowId_graphHash_dedupeKey: { flowId, graphHash, dedupeKey } },
+        update: reviewId ? { reviewId, generationTrigger: trigger, status: 'PENDING' } : {},
         create: {
           parentStateId: graph.nodes.find((node) => node.stateName === normalizeKeyForSuggestion(item.targetNodeId))?.id ?? null,
           organizationId, applicationId: appId, flowId, suggestionType: normalizedSuggestionType(item.type),
-          title: item.title, description: item.description, suggestedStateName: patch.states[0].name,
-          category: patch.states[0].category, severity: item.severity as any,
+          title: item.title, description: item.description,
+          suggestedStateName: patch.states[0]?.name ?? patch.transitions[0]?.to ?? patch.transitions[0]?.from ?? 'FLOW_TRANSITION',
+          category: patch.states[0]?.category ?? 'BUSINESS', severity: item.severity as any,
           sourceTier: item.sources.join('+'), rationale: item.rationale,
           suggestedStatesJson: patch.states as any, suggestedTransitionsJson: patch.transitions as any,
           evidenceJson: item.evidence as any,
@@ -1279,15 +1522,17 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
             ? SuggestionSource.HYBRID
             : item.sources.includes('AI_ASSISTED') ? SuggestionSource.AI : SuggestionSource.RULE_ENGINE,
           confidence: item.confidence, status: 'PENDING', graphVersion: graph.version, graphHash, dedupeKey,
-          generationTrigger: trigger, aiInvocationId,
+          generationTrigger: trigger, aiInvocationId, reviewId,
         },
       });
       persisted.push(record);
     }
-    const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
-    res.status(201).json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions, meta: {
+    const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, ...(reviewId ? { reviewId } : { reviewId: null }), status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+    res.status(201).json({ success: true, data: { graphVersion: graph.version, graphHash, reviewId, suggestions, meta: {
       ruleCount: ruleItems.length, aiCount: suggestions.filter((item) => item.source !== SuggestionSource.RULE_ENGINE).length,
-      aiAttempted: result.aiCalled, fallbackUsed: result.fallbackUsed, stale: false, latencyMs: Date.now() - startedAt,
+      aiAllowed: aiAccess.allowed, aiAttempted: result.aiCalled, fallbackUsed: result.fallbackUsed,
+      mode: includeAi ? (result.fallbackUsed ? 'RULE_FALLBACK' : 'AI_ASSISTED') : 'RULE_ONLY',
+      stale: false, latencyMs: Date.now() - startedAt, stage: reviewStage,
     } } });
   } catch (err) {
     console.error('[FDRS] Generate flow suggestions error:', err);
@@ -1300,8 +1545,159 @@ app.get('/v1/applications/:appId/declared-flows/:flowId/suggestions', async (req
   const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId: appId }, include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } } });
   if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
   const graphHash = graphRevisionHash(graph);
-  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
-  res.json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions } });
+  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+  const aiAccess = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
+  const aiCount = suggestions.filter((item) => item.source !== SuggestionSource.RULE_ENGINE).length;
+  res.json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions, meta: {
+    ruleCount: suggestions.length - aiCount, aiCount, aiAllowed: aiAccess.allowed, aiAttempted: false,
+    fallbackUsed: false, mode: aiAccess.allowed && aiCount > 0 ? 'AI_ASSISTED' : 'RULE_ONLY',
+  } } });
+});
+
+async function buildSelectedFlowReview(appId: string, flowId: string, suggestionIds: string[], graphVersion?: number, graphHash?: string) {
+  const graph = await prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED },
+    include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+  });
+  if (!graph) return { error: { status: 404, body: { error: 'FLOW_NOT_FOUND' } } } as const;
+  if (graph.lifecycleStatus !== 'DRAFT') return { error: { status: 409, body: { error: 'PUBLISHED_FLOW_IMMUTABLE' } } } as const;
+  const currentHash = graphRevisionHash(graph);
+  if ((graphVersion !== undefined && graphVersion !== graph.version) || (graphHash && graphHash !== currentHash)) {
+    return { error: { status: 409, body: { error: 'GRAPH_REVISION_STALE', graphVersion: graph.version, graphHash: currentHash } } } as const;
+  }
+  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: {
+    id: { in: suggestionIds }, applicationId: appId, flowId, graphHash: currentHash,
+    status: { in: ['PENDING', 'EDITED'] },
+  } });
+  if (suggestions.length !== new Set(suggestionIds).size) return { error: { status: 409, body: { error: 'SUGGESTION_SELECTION_STALE' } } } as const;
+  const reviewIds = new Set(suggestions.map((item) => item.reviewId).filter(Boolean));
+  if (reviewIds.size > 1) return { error: { status: 400, body: { error: 'MIXED_FLOW_REVIEWS' } } } as const;
+
+  const prospectiveNodes = graph.nodes.map((node) => ({ ...node }));
+  const nodeByName = new Map(prospectiveNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
+  const proposedNodeIds = new Set<string>();
+  const proposedEdgeIds = new Set<string>();
+  const patches = suggestions.map((suggestion) => ({ suggestion, patch: suggestionPatch({
+    suggestedStates: suggestion.suggestedStatesJson, suggestedTransitions: suggestion.suggestedTransitionsJson,
+    suggestedState: suggestion.suggestedStatesJson ? undefined : suggestion.suggestedStateName, severity: suggestion.severity,
+  }) }));
+  for (const { patch } of patches) for (const state of patch.states) {
+    const existing = nodeByName.get(state.name);
+    if (existing) {
+      if (String(existing.category) !== String(state.category)) return { error: { status: 422, body: { error: 'CONFLICTING_STATE_DEFINITION', stateName: state.name } } } as const;
+      continue;
+    }
+    const id = `proposed-${hashJson(state).slice(0, 12)}`;
+    const node = { id, stateName: state.name, behaviorKey: state.name, category: state.category, role: state.role ?? 'NORMAL', terminalKind: state.terminalKind ?? null } as any;
+    prospectiveNodes.push(node); nodeByName.set(state.name, node); proposedNodeIds.add(id);
+  }
+  const prospectiveEdges = graph.edges.map((edge) => ({ ...edge }));
+  const edgeKeys = new Set(prospectiveEdges.map((edge) => `${edge.fromNodeId}:${edge.toNodeId}:${edge.action ?? ''}`));
+  for (const { patch } of patches) for (const transition of patch.transitions) {
+    const from = nodeByName.get(transition.from); const to = nodeByName.get(transition.to);
+    if (!from || !to) return { error: { status: 422, body: { error: 'INVALID_SUGGESTION_PATCH_ENDPOINT', transition } } } as const;
+    const key = `${from.id}:${to.id}:${transition.action ?? ''}`;
+    if (edgeKeys.has(key)) continue;
+    const id = `proposed-${hashJson({ key }).slice(0, 12)}`;
+    prospectiveEdges.push({ id, graphId: flowId, fromNodeId: from.id, toNodeId: to.id, action: transition.action ?? null } as any);
+    edgeKeys.add(key); proposedEdgeIds.add(id);
+  }
+  const validation = validateFlow(prospectiveNodes as any, prospectiveEdges as any);
+  const diagrams = createFlowDiagrams(prospectiveNodes as any, prospectiveEdges as any).map((diagram) => {
+    if (diagram.kind !== 'FLOW') return diagram;
+    const proposedNodeClasses = [...proposedNodeIds].map((id) => `  class n_${id.replace(/[^a-zA-Z0-9_]/g, '_')} proposed`).join('\n');
+    const proposedEdgeIndexes = prospectiveEdges.flatMap((edge, index) => proposedEdgeIds.has(edge.id) ? [index] : []);
+    return { ...diagram, source: [diagram.source, '  classDef proposed fill:#2a1f05,stroke:#f5b942,stroke-width:3px,stroke-dasharray: 6 4', proposedNodeClasses, proposedEdgeIndexes.length ? `  linkStyle ${proposedEdgeIndexes.join(',')} stroke:#f5b942,stroke-width:3px,stroke-dasharray:6 4` : ''].filter(Boolean).join('\n') };
+  });
+  return { graph, currentHash, suggestions, patches, prospectiveNodes, prospectiveEdges, proposedNodeIds, proposedEdgeIds, validation, diagrams, reviewId: [...reviewIds][0] ?? null } as const;
+}
+
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/preview', async (req: Request, res: Response) => {
+  const suggestionIds = Array.isArray(req.body.suggestionIds) ? req.body.suggestionIds.filter((id: unknown): id is string => typeof id === 'string') : [];
+  if (!suggestionIds.length) return res.status(400).json({ error: 'SUGGESTION_SELECTION_REQUIRED' });
+  const result = await buildSelectedFlowReview(req.params.appId, req.params.flowId, suggestionIds, req.body.graphVersion, req.body.graphHash);
+  if (result.error) return res.status(result.error.status).json(result.error.body);
+  return res.json({ success: true, data: {
+    reviewId: result.reviewId, graphVersion: result.graph.version, graphHash: result.currentHash,
+    validation: result.validation, diagrams: result.diagrams,
+    proposedStates: result.prospectiveNodes.filter((node) => result.proposedNodeIds.has(node.id)),
+    proposedTransitions: result.prospectiveEdges.filter((edge) => result.proposedEdgeIds.has(edge.id)),
+  } });
+});
+
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/apply-selected', async (req: AuthenticatedRequest, res: Response) => {
+  const suggestionIds = Array.isArray(req.body.suggestionIds) ? req.body.suggestionIds.filter((id: unknown): id is string => typeof id === 'string') : [];
+  if (!suggestionIds.length) return res.status(400).json({ error: 'SUGGESTION_SELECTION_REQUIRED' });
+  const review = await buildSelectedFlowReview(req.params.appId, req.params.flowId, suggestionIds, req.body.graphVersion, req.body.graphHash);
+  if (review.error) return res.status(review.error.status).json(review.error.body);
+  if (!review.validation.valid) return res.status(422).json({ error: 'INVALID_SELECTED_FLOW_REVIEW', validation: review.validation });
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const lockedGraph = await tx.behaviorGraph.findFirst({ where: { id: req.params.flowId, applicationId: req.params.appId }, select: { version: true, lifecycleStatus: true } });
+      if (!lockedGraph || lockedGraph.lifecycleStatus !== 'DRAFT') throw new Error('GRAPH_REVISION_STALE');
+      if (lockedGraph.version !== review.graph.version) throw new Error('GRAPH_REVISION_STALE');
+      const currentNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: req.params.flowId } });
+      const nodesByName = new Map(currentNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
+      const createdNodes = [];
+      for (const { patch } of review.patches) for (const state of patch.states) {
+        if (nodesByName.has(state.name)) continue;
+        const canonicalBehavior = await normalizeIntent(state.name, req.params.appId);
+        const node = await tx.behaviorGraphNode.create({ data: {
+          graphId: req.params.flowId, stateName: state.name, category: normalizeStateCategory(state.category),
+          role: state.role === 'INITIAL' || state.role === 'TERMINAL' ? state.role : 'NORMAL',
+          terminalKind: state.role === 'TERMINAL' ? state.terminalKind as any : null,
+          behaviorKey: canonicalBehavior, canonicalBehavior, provenance: StateProvenance.SUGGESTED_ACCEPTED,
+        } });
+        nodesByName.set(state.name, node); createdNodes.push(node);
+      }
+      const currentEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId: req.params.flowId } });
+      const edgeKeys = new Set(currentEdges.map((edge) => `${edge.fromNodeId}:${edge.toNodeId}:${edge.action ?? ''}`));
+      const createdEdges = [];
+      for (const { patch } of review.patches) for (const transition of patch.transitions) {
+        const from = nodesByName.get(transition.from); const to = nodesByName.get(transition.to);
+        if (!from || !to) throw new Error('INVALID_SUGGESTION_PATCH_ENDPOINT');
+        const key = `${from.id}:${to.id}:${transition.action ?? ''}`;
+        if (edgeKeys.has(key)) continue;
+        const edge = await tx.behaviorGraphEdge.create({ data: { graphId: req.params.flowId, fromNodeId: from.id, toNodeId: to.id, action: transition.action ?? null, provenance: StateProvenance.SUGGESTED_ACCEPTED } });
+        edgeKeys.add(key); createdEdges.push(edge);
+      }
+      await tx.declaredStateSuggestion.updateMany({ where: { id: { in: suggestionIds }, applicationId: req.params.appId, flowId: req.params.flowId, status: { in: ['PENDING', 'EDITED'] } }, data: { status: 'ACCEPTED', acceptedAt: new Date(), acceptedBy: req.user?.id ?? null } });
+      for (const suggestion of review.suggestions) if (suggestion.organizationId) await tx.ruleFeedback.create({ data: {
+        organizationId: suggestion.organizationId, applicationId: req.params.appId, suggestionId: suggestion.id,
+        feedbackType: 'ACCEPTED', beforeJson: suggestion as any,
+        afterJson: { reviewId: review.reviewId, createdNodeIds: createdNodes.map((node) => node.id), createdEdgeIds: createdEdges.map((edge) => edge.id) } as any,
+        createdBy: req.user?.id ?? null,
+      } });
+      if (review.reviewId) await tx.declaredStateSuggestion.updateMany({ where: { flowId: req.params.flowId, reviewId: review.reviewId, id: { notIn: suggestionIds }, status: { in: ['PENDING', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
+      const updated = await tx.behaviorGraph.updateMany({ where: { id: req.params.flowId, version: review.graph.version }, data: { version: { increment: 1 } } });
+      if (updated.count !== 1) throw new Error('GRAPH_REVISION_STALE');
+      return { createdNodes, createdEdges, graphVersion: review.graph.version + 1 };
+    });
+    const refreshed = await prisma.behaviorGraph.findUnique({ where: { id: req.params.flowId }, include: { nodes: true, edges: true } });
+    const validation = validateFlow(refreshed!.nodes as any, refreshed!.edges as any);
+    const diagrams = createFlowDiagrams(refreshed!.nodes as any, refreshed!.edges as any);
+    return res.json({ success: true, data: { ...result, validation, diagrams } });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'GRAPH_REVISION_STALE') return res.status(409).json({ error: 'GRAPH_REVISION_STALE' });
+    console.error('[FDRS] Apply selected flow review failed:', error);
+    return res.status(500).json({ error: 'FLOW_REVIEW_APPLY_FAILED' });
+  }
+});
+
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/decline-review', async (req: AuthenticatedRequest, res: Response) => {
+  if (typeof req.body.reviewId !== 'string') return res.status(400).json({ error: 'FLOW_REVIEW_ID_REQUIRED' });
+  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: {
+    applicationId: req.params.appId, flowId: req.params.flowId, reviewId: req.body.reviewId, status: { in: ['PENDING', 'EDITED'] },
+  } });
+  const rejectedCount = await prisma.$transaction(async (tx) => {
+    const updated = await tx.declaredStateSuggestion.updateMany({ where: { id: { in: suggestions.map((item) => item.id) } }, data: { status: 'REJECTED', rejectedAt: new Date(), rejectedBy: req.user?.id ?? null } });
+    for (const suggestion of suggestions) if (suggestion.organizationId) await tx.ruleFeedback.create({ data: {
+      organizationId: suggestion.organizationId, applicationId: req.params.appId, suggestionId: suggestion.id,
+      feedbackType: 'REJECTED', beforeJson: suggestion as any, afterJson: { reviewId: req.body.reviewId } as any, createdBy: req.user?.id ?? null,
+    } });
+    return updated.count;
+  });
+  return res.json({ success: true, data: { rejectedCount } });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -1639,7 +2035,7 @@ app.get('/applications/:id/declared-flow/:flowId/versions/diff', async (req: Req
 /** POST /applications/:id/declared-flow/:flowId/states - Add state node */
 app.post('/applications/:id/declared-flow/:flowId/states', async (req: Request, res: Response) => {
   const { id: applicationId, flowId } = req.params;
-  const { stateName, category, provenance, declaredById } = req.body;
+  const { stateName, category, provenance, declaredById, role, terminalKind, description, actor, system, componentRef, endpointRef, expectedInput, expectedOutput } = req.body;
 
   if (!stateName || typeof stateName !== 'string') {
     return res.status(400).json({ error: '`stateName` is required' });
@@ -1652,6 +2048,14 @@ app.post('/applications/:id/declared-flow/:flowId/states', async (req: Request, 
   }
 
   try {
+    const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    if (role === 'INITIAL') {
+      const existingInitial = await prisma.behaviorGraphNode.findFirst({ where: { graphId: flowId, role: 'INITIAL' } });
+      if (existingInitial) return res.status(409).json({ error: 'FLOW_INITIAL_STATE_EXISTS', existingStateId: existingInitial.id });
+    }
+    if (role === 'TERMINAL' && !terminalKind) return res.status(400).json({ error: 'FLOW_TERMINAL_KIND_REQUIRED' });
     const canonicalBehavior = await normalizeIntent(stateName, applicationId);
 
     // Save BehaviorGraphNode
@@ -1659,61 +2063,119 @@ app.post('/applications/:id/declared-flow/:flowId/states', async (req: Request, 
       data: {
         graphId: flowId,
         stateName: stateName.toUpperCase().trim(),
+        role: role === 'INITIAL' || role === 'TERMINAL' ? role : 'NORMAL',
+        terminalKind: role === 'TERMINAL' ? terminalKind : null,
         behaviorKey: canonicalBehavior,
         category: normalizeStateCategory(category),
         provenance: normalizeProvenance(provenance),
         declaredById: declaredById || null,
         canonicalBehavior,
+        description: typeof description === 'string' ? description : null,
+        actor: typeof actor === 'string' ? actor : null,
+        system: typeof system === 'string' ? system : null,
+        componentRef: typeof componentRef === 'string' ? componentRef : null,
+        endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
+        expectedInput: expectedInput ?? undefined,
+        expectedOutput: expectedOutput ?? undefined,
       },
     });
 
-    // Generate Suggestions from Derivation Engine
-    const suggestionsList = await getSuggestions(stateName, applicationId);
-
-    // Write DeclaredStateSuggestion rows
-    const suggestions = [];
-    for (const sug of suggestionsList) {
-      const dbSug = await prisma.declaredStateSuggestion.create({
-        data: {
-          parentStateId: node.id,
-          suggestedStateName: sug.suggestedStateName,
-          category: sug.category,
-          sourceTier: sug.sourceTier,
-          rationale: sug.rationale,
-          confidence: sug.confidence,
-          patternId: sug.patternId,
-          status: 'PENDING',
-          applicationId,
-          flowId,
-        },
-      });
-      suggestions.push(dbSug);
-    }
-
     const updatedGraph = await prisma.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-    res.status(201).json({ state: node, suggestions, graphVersion: updatedGraph.version });
+    res.status(201).json({ state: node, suggestions: [], graphVersion: updatedGraph.version });
   } catch (err) {
     console.error('[FDRS] Add state node error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+app.patch('/applications/:id/declared-flow/:flowId/states/:stateId', async (req: Request, res: Response) => {
+  const { id: applicationId, flowId, stateId } = req.params;
+  const { stateName, category, role, terminalKind } = req.body ?? {};
+  if (typeof stateName !== 'string' || !stateName.trim()) return res.status(400).json({ error: 'FLOW_STATE_NAME_REQUIRED' });
+  try {
+    const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!graph) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    const current = await prisma.behaviorGraphNode.findFirst({ where: { id: stateId, graphId: flowId } });
+    if (!current) return res.status(404).json({ error: 'FLOW_STATE_NOT_FOUND' });
+    const normalizedName = normalizeKeyForSuggestion(stateName);
+    const duplicate = await prisma.behaviorGraphNode.findFirst({ where: { graphId: flowId, stateName: normalizedName, NOT: { id: stateId } } });
+    if (duplicate) return res.status(409).json({ error: 'FLOW_STATE_NAME_EXISTS' });
+    const nextRole = role === 'INITIAL' || role === 'TERMINAL' ? role : 'NORMAL';
+    if (nextRole === 'INITIAL') {
+      const existingInitial = await prisma.behaviorGraphNode.findFirst({ where: { graphId: flowId, role: 'INITIAL', NOT: { id: stateId } } });
+      if (existingInitial) return res.status(409).json({ error: 'FLOW_INITIAL_STATE_EXISTS', existingStateId: existingInitial.id });
+    }
+    if (nextRole === 'TERMINAL' && !terminalKind) return res.status(400).json({ error: 'FLOW_TERMINAL_KIND_REQUIRED' });
+    const canonicalBehavior = await normalizeIntent(normalizedName, applicationId);
+    const result = await prisma.$transaction(async (tx) => {
+      const state = await tx.behaviorGraphNode.update({ where: { id: stateId }, data: {
+        stateName: normalizedName, category: normalizeStateCategory(category), role: nextRole,
+        terminalKind: nextRole === 'TERMINAL' ? terminalKind : null,
+        behaviorKey: canonicalBehavior, canonicalBehavior,
+      } });
+      await tx.declaredStateSuggestion.updateMany({ where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+      return { state, graphVersion: updatedGraph.version };
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('[FDRS] Edit state error:', error);
+    return res.status(500).json({ error: 'FLOW_STATE_UPDATE_FAILED' });
+  }
+});
+
+app.delete('/applications/:id/declared-flow/:flowId/states/:stateId', async (req: Request, res: Response) => {
+  const { id: applicationId, flowId, stateId } = req.params;
+  try {
+    const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!graph) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    const state = await prisma.behaviorGraphNode.findFirst({ where: { id: stateId, graphId: flowId } });
+    if (!state) return res.status(404).json({ error: 'FLOW_STATE_NOT_FOUND' });
+    const result = await prisma.$transaction(async (tx) => {
+      const deletedTransitions = await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flowId, OR: [{ fromNodeId: stateId }, { toNodeId: stateId }] } });
+      await tx.declaredStateSuggestion.updateMany({ where: { parentStateId: stateId }, data: { parentStateId: null } });
+      await tx.declaredStateSuggestion.updateMany({ where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
+      await tx.behaviorGraphNode.delete({ where: { id: stateId } });
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+      return { deletedStateId: stateId, deletedTransitionCount: deletedTransitions.count, graphVersion: updatedGraph.version };
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('[FDRS] Delete state error:', error);
+    return res.status(500).json({ error: 'FLOW_STATE_DELETE_FAILED' });
+  }
+});
+
 /** POST /applications/:id/declared-flow/:flowId/transitions - Add transition edge */
 app.post('/applications/:id/declared-flow/:flowId/transitions', async (req: Request, res: Response) => {
-  const { flowId } = req.params;
-  const { fromStateId, toStateId, action, provenance } = req.body;
+  const { id: applicationId, flowId } = req.params;
+  const { fromStateId, toStateId, action, condition, actor, system, componentRef, endpointRef, expectedInput, expectedOutput, provenance } = req.body;
 
   if (!fromStateId || !toStateId || !provenance) {
     return res.status(400).json({ error: '`fromStateId`, `toStateId`, and `provenance` are required' });
   }
 
   try {
+    const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    const endpoints = await prisma.behaviorGraphNode.count({ where: { graphId: flowId, id: { in: [fromStateId, toStateId] } } });
+    if (endpoints !== new Set([fromStateId, toStateId]).size) return res.status(400).json({ error: 'FLOW_INVALID_TRANSITION_REFERENCE' });
     const edge = await prisma.behaviorGraphEdge.create({
       data: {
         graphId: flowId,
         fromNodeId: fromStateId,
         toNodeId: toStateId,
         action: action || null,
+        condition: typeof condition === 'string' ? condition : null,
+        actor: typeof actor === 'string' ? actor : null,
+        system: typeof system === 'string' ? system : null,
+        componentRef: typeof componentRef === 'string' ? componentRef : null,
+        endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
+        expectedInput: expectedInput ?? undefined,
+        expectedOutput: expectedOutput ?? undefined,
         provenance: normalizeProvenance(provenance),
       },
       include: {
@@ -2094,9 +2556,10 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
       include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
     });
     if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+    if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
     const currentHash = graphRevisionHash(graph);
     if ((suggestion.graphVersion != null && suggestion.graphVersion !== graph.version) || (suggestion.graphHash && suggestion.graphHash !== currentHash)) {
-      return res.status(409).json({ error: 'SUGGESTION_STALE', graphVersion: graph.version, graphHash: currentHash });
+      return res.status(409).json({ error: 'GRAPH_REVISION_STALE', graphVersion: graph.version, graphHash: currentHash });
     }
 
     const patch = suggestionPatch({
@@ -2172,6 +2635,24 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
   }
 });
 
+app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestionId/reject', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId, suggestionId } = req.params;
+  const suggestion = await prisma.declaredStateSuggestion.findFirst({ where: { id: suggestionId, applicationId: appId, flowId } });
+  if (!suggestion) return res.status(404).json({ error: 'Suggestion not found' });
+  if (!SUGGESTION_STATUS_PENDING.has(suggestion.status)) return res.status(409).json({ error: 'SUGGESTION_NOT_ACTIONABLE' });
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.declaredStateSuggestion.update({ where: { id: suggestionId }, data: {
+      status: 'REJECTED', rejectedAt: new Date(), rejectedBy: req.user?.id ?? null,
+    } });
+    if (suggestion.organizationId) await tx.ruleFeedback.create({ data: {
+      organizationId: suggestion.organizationId, applicationId: appId, suggestionId,
+      feedbackType: 'REJECTED', beforeJson: suggestion as any, afterJson: record as any, createdBy: req.user?.id ?? null,
+    } });
+    return record;
+  });
+  return res.json({ success: true, data: updated });
+});
+
 app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestionId/:action', async (req: Request, res: Response) => {
   const action = req.params.action;
   const target = `/applications/${req.params.appId}/declared-flow/${req.params.flowId}/suggestions/${req.params.suggestionId}${action === 'edit' ? '' : `/${action}`}`;
@@ -2189,62 +2670,8 @@ app.post('/applications/:id/declared-flow/:flowId/complete', async (req: Request
   const { id: applicationId, flowId } = req.params;
 
   try {
-    const flow = await prisma.behaviorGraph.findUnique({
-      where: { id: flowId },
-      include: { nodes: true, edges: true },
-    });
-
-    if (!flow) {
-      return res.status(404).json({ error: 'Behavior graph not found' });
-    }
-    if (flow.status === FlowStatus.COMPLETE) {
-      return res.json(flow);
-    }
-
-    // Mark complete
-    const updatedFlow = await prisma.behaviorGraph.update({
-      where: { id: flowId },
-      data: {
-        status: FlowStatus.COMPLETE,
-        completedAt: new Date(),
-      },
-    });
-
-    // Save BehaviorGraphVersion snapshot (Gap #4)
-    const snapshotJson = {
-      states: flow.nodes,
-      transitions: flow.edges,
-    };
-
-    await prisma.behaviorGraphVersion.upsert({
-      where: {
-        graphId_version: {
-          graphId: flowId,
-          version: flow.version,
-        },
-      },
-      update: {
-        snapshot: snapshotJson as any,
-      },
-      create: {
-        graphId: flowId,
-        version: flow.version,
-        snapshot: snapshotJson as any,
-        isBaseline: false, // will be populated and set to true on first reconciliation
-      },
-    });
-
-    // Compile Ruleset
-    await compileFlowRuleset(applicationId, flowId, flow.version);
-
-    // Trigger Reconciliation immediately
-    try {
-      await runReconciliation(applicationId, flow.environmentId || undefined);
-    } catch (recErr) {
-      console.error('[FDRS] Auto-reconciliation trigger failed, will run on demand', recErr);
-    }
-
-    res.json(updatedFlow);
+    const result = await publishCanonicalFlow(applicationId, flowId, (req as AuthenticatedRequest).user?.id);
+    res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[FDRS] Complete behavior graph error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2271,7 +2698,10 @@ app.post('/applications/:id/declared-flow/:flowId/reopen', async (req: Request, 
       where: { id: flowId },
       data: {
         status: FlowStatus.DRAFT,
+        lifecycleStatus: 'DRAFT',
         version: flow.version + 1,
+        publishedVersionId: null,
+        completedAt: null,
       },
     });
 

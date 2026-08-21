@@ -4,6 +4,8 @@ import { app, shell } from 'electron';
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
+  FlowReviewPreview,
+  FlowSuggestionsResponse,
   DesktopApplication,
   DesktopEntitlements,
   QARunSummary,
@@ -53,10 +55,25 @@ function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
 
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
+
+  let requestBody = init.body;
+  if (requestBody !== undefined) {
+    if (!headers['content-type'] && !headers['Content-Type']) {
+      headers['content-type'] = 'application/json';
+    }
+  } else if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+    headers['content-type'] = 'application/json';
+    requestBody = JSON.stringify({});
+  }
+
   try {
     response = await fetch(url, {
       ...init,
-      headers: { 'content-type': 'application/json', ...init.headers },
+      method,
+      headers,
+      body: requestBody,
     });
   } catch (cause) {
     const endpoint = new URL(url).origin;
@@ -306,6 +323,18 @@ export class DesktopCloudClient {
         workspaceId: typeof run.workspaceId === 'string' ? run.workspaceId : null,
         deviceSessionId: typeof run.deviceSessionId === 'string' ? run.deviceSessionId : null,
         expectedGraphVersionId: typeof run.expectedGraphVersionId === 'string' ? run.expectedGraphVersionId : null,
+        flowId: typeof run.flowId === 'string' ? run.flowId : null,
+        flowBindingId: typeof run.flowBindingId === 'string' ? run.flowBindingId : null,
+        flowInitializationId: typeof run.flowInitializationId === 'string' ? run.flowInitializationId : null,
+        flowScanId: typeof run.flowScanId === 'string' ? run.flowScanId : null,
+        flowDriftId: typeof run.flowDriftId === 'string' ? run.flowDriftId : null,
+        captureTracks: Array.isArray(run.captureTracks) ? run.captureTracks as QARunSummary['captureTracks'] : ['FRONTEND'],
+        initialStateKey: typeof run.initialStateKey === 'string' ? run.initialStateKey : null,
+        terminalStateKeys: Array.isArray(run.terminalStateKeys) ? run.terminalStateKeys.map(String) : [],
+        lastObservedStateKey: typeof run.lastObservedStateKey === 'string' ? run.lastObservedStateKey : null,
+        boundaryStartedAt: run.boundaryStartedAt ? new Date(String(run.boundaryStartedAt)).toISOString() : null,
+        boundaryCompletedAt: run.boundaryCompletedAt ? new Date(String(run.boundaryCompletedAt)).toISOString() : null,
+        completionReason: typeof run.completionReason === 'string' ? run.completionReason : null,
         mode: run.mode as QARunSummary['mode'],
         status: run.status as QARunSummary['status'],
         targetUrl: String(run.targetUrl),
@@ -339,24 +368,32 @@ export class DesktopCloudClient {
   }
 
   async declaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]> {
-    const flows = await this.request<DeclaredFlowSummary[]>(`/applications/${applicationId}/declared-flow`);
+    const flows = await this.request<DeclaredFlowSummary[]>(`/v1/applications/${applicationId}/flows`);
     return Array.isArray(flows) ? flows : [];
   }
 
   async declaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail> {
-    return this.request<DeclaredFlowDetail>(`/applications/${applicationId}/declared-flow/${flowId}`);
+    return this.request<DeclaredFlowDetail>(`/v1/applications/${applicationId}/flows/${flowId}`);
   }
 
-  async createDeclaredFlow(applicationId: string, input: { name: string; workflowType: string }): Promise<DeclaredFlowSummary> {
-    return this.request<DeclaredFlowSummary>(`/applications/${applicationId}/declared-flow`, {
+  async createDeclaredFlow(applicationId: string, input: { name: string; workflowType: string; purpose?: string; scopeStatement: string; exclusions?: string[]; tags?: string[] }): Promise<DeclaredFlowSummary> {
+    return this.request<DeclaredFlowSummary>(`/v1/applications/${applicationId}/flows`, {
       method: 'POST', body: JSON.stringify(input),
     });
   }
 
-  async addDeclaredState(applicationId: string, flowId: string, input: { stateName: string; category: string }): Promise<Json> {
+  async addDeclaredState(applicationId: string, flowId: string, input: { stateName: string; category: string; role?: string; terminalKind?: string | null }): Promise<Json> {
     return this.request<Json>(`/applications/${applicationId}/declared-flow/${flowId}/states`, {
       method: 'POST', body: JSON.stringify({ ...input, provenance: 'USER_DECLARED' }),
     });
+  }
+
+  async updateDeclaredState(applicationId: string, flowId: string, stateId: string, input: { stateName: string; category: string; role?: string; terminalKind?: string | null }): Promise<Json> {
+    return this.request(`/applications/${applicationId}/declared-flow/${flowId}/states/${stateId}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
+  async deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Json> {
+    return this.request(`/applications/${applicationId}/declared-flow/${flowId}/states/${stateId}`, { method: 'DELETE' });
   }
 
   async addDeclaredTransition(applicationId: string, flowId: string, input: { fromStateId: string; toStateId: string; action?: string }): Promise<Json> {
@@ -365,9 +402,75 @@ export class DesktopCloudClient {
     });
   }
 
+  async generateFlowSuggestions(applicationId: string, flowId: string, input: Json): Promise<FlowSuggestionsResponse> {
+    const response = await this.request<{ success: boolean; data: FlowSuggestionsResponse }>(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/generate`, {
+      method: 'POST', body: JSON.stringify(input),
+    });
+    return response.data;
+  }
+
+  async flowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse> {
+    const response = await this.request<{ success: boolean; data: FlowSuggestionsResponse }>(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions`);
+    return response.data;
+  }
+
+  async acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/${suggestionId}/accept`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async rejectFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/${suggestionId}/reject`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async previewFlowReview(applicationId: string, flowId: string, input: Json): Promise<FlowReviewPreview> {
+    const response = await this.request<{ success: boolean; data: FlowReviewPreview }>(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/preview`, { method: 'POST', body: JSON.stringify(input) });
+    return response.data;
+  }
+
+  async applyFlowReview(applicationId: string, flowId: string, input: Json): Promise<Json> {
+    const response = await this.request<{ success: boolean; data: Json }>(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/apply-selected`, { method: 'POST', body: JSON.stringify(input) });
+    return response.data;
+  }
+
+  async declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Json> {
+    const response = await this.request<{ success: boolean; data: Json }>(`/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/decline-review`, { method: 'POST', body: JSON.stringify({ reviewId }) });
+    return response.data;
+  }
+
   async setDeclaredFlowComplete(applicationId: string, flowId: string, complete: boolean): Promise<Json> {
-    const action = complete ? 'complete' : 'reopen';
-    return this.request<Json>(`/applications/${applicationId}/declared-flow/${flowId}/${action}`, { method: 'POST' });
+    if (complete) return this.request<Json>(`/v1/applications/${applicationId}/flows/${flowId}/publish`, { method: 'POST', body: JSON.stringify({}) });
+    const flow = await this.declaredFlow(applicationId, flowId);
+    const versionId = flow.publishedVersionId ?? flow.versions?.[0]?.id;
+    if (!versionId) throw new Error('PUBLISHED_FLOW_VERSION_REQUIRED');
+    return this.request<Json>(`/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}/revise`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async flowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Json> {
+    return this.request(`/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}/diagrams`);
+  }
+
+  async initializeFlow(flowId: string, input: Json): Promise<Json> {
+    return this.request(`/flows/${flowId}/initializations`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/approve`, { method: 'POST', body: JSON.stringify({ instrumentationPlanId }) });
+  }
+
+  async applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/apply`, { method: 'POST', body: JSON.stringify({ patchSetId }) });
+  }
+
+  async validateFlowInitialization(initializationId: string, input: Json): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/validate`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async rescanFlow(bindingId: string, repositorySnapshotId: string): Promise<Json> {
+    return this.request(`/flow-bindings/${bindingId}/rescans`, { method: 'POST', body: JSON.stringify({ repositorySnapshotId }) });
+  }
+
+  async boundaryEvent(runId: string, input: Json): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/boundary-events`, { method: 'POST', body: JSON.stringify(input) });
   }
 
   async documents(applicationId: string): Promise<SourceDocumentSummary[]> {
@@ -597,7 +700,7 @@ export class DesktopCloudClient {
     return { run, credential };
   }
 
-  async completeRun(state: GuidedRunState) {
+  async completeRun(state: GuidedRunState & { completionReason?: string }) {
     const artifacts = await this.readManifest(state);
     const uploadedArtifacts: Json[] = [];
     for (const artifact of artifacts) {
@@ -619,6 +722,7 @@ export class DesktopCloudClient {
         traceId: state.traceId,
         observations: state.observations,
         observedTransitions: state.observedTransitions,
+        completionReason: state.completionReason,
       }),
     });
     await this.request(`/applications/${completed.applicationId}/reconciliation/run`, {

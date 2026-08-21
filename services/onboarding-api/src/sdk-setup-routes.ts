@@ -70,7 +70,7 @@ async function readiness(prisma: PrismaClient, applicationId: string, environmen
   }
   const buildTarget = (targetId: string, kind: 'FRONTEND' | 'BACKEND', sources: string[]) => {
     const targetEvents = events.filter((event) => sources.includes(event.source));
-    const test = targetEvents.some((event) => event.eventType === 'SOTS_ONBOARDING_TEST');
+    const test = targetEvents.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST');
     return {
       targetId, kind, source: sources[0], configured: configuredKinds.has(kind), processHealthy: targetEvents.length > 0,
       sessionObserved: targetEvents.length > 0, eventObserved: targetEvents.length > 0,
@@ -79,7 +79,7 @@ async function readiness(prisma: PrismaClient, applicationId: string, environmen
     };
   };
   const targets = [buildTarget('frontend', 'FRONTEND', FRONTEND_SOURCES), buildTarget('backend', 'BACKEND', BACKEND_SOURCES)];
-  const installationTestPassed = events.some((event) => event.eventType === 'SOTS_ONBOARDING_TEST');
+  const installationTestPassed = events.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST');
   const codeConfigured = targets.some((target) => target.configured);
   return {
     applicationId, environmentId, connected: sessions.length > 0 && installationTestPassed,

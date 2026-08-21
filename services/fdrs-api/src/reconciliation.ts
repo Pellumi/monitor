@@ -24,6 +24,10 @@ export interface ReconciliationReportResult {
  * Runs reconciliation for all completed flows of an application.
  */
 export async function runReconciliation(applicationId: string, environmentId?: string, expectedGraphId?: string, runId?: string): Promise<ReconciliationReportResult[]> {
+  const expectedVersion = expectedGraphId ? await prisma.behaviorGraphVersion.findFirst({
+    where: { id: expectedGraphId, graph: { applicationId } },
+    select: { id: true, graphId: true, snapshot: true },
+  }) : null;
   let targetEnvId = environmentId;
   if (!targetEnvId) {
     const devEnv = await prisma.environment.findFirst({
@@ -38,10 +42,7 @@ export async function runReconciliation(applicationId: string, environmentId?: s
     graphType: 'DECLARED',
   };
   if (expectedGraphId) {
-    const version = await prisma.behaviorGraphVersion.findFirst({
-      where: { id: expectedGraphId, graph: { applicationId } }, select: { graphId: true },
-    });
-    completedFlowWhere.id = version?.graphId ?? expectedGraphId;
+    completedFlowWhere.id = expectedVersion?.graphId ?? expectedGraphId;
   } else if (targetEnvId) {
     completedFlowWhere.OR = [
       { environmentId: targetEnvId },
@@ -162,6 +163,9 @@ export async function runReconciliation(applicationId: string, environmentId?: s
   }
 
   for (const flow of completedFlows) {
+    const versionSnapshot = expectedVersion?.graphId === flow.id ? expectedVersion.snapshot as any : null;
+    const declaredNodes: any[] = Array.isArray(versionSnapshot?.states) ? versionSnapshot.states : flow.nodes;
+    const declaredEdges: any[] = Array.isArray(versionSnapshot?.transitions) ? versionSnapshot.transitions : flow.edges;
     // 1. Delete previous reconciliation evidence for this flow
     await prisma.recommendationEvidence.deleteMany({
       where: {
@@ -170,14 +174,14 @@ export async function runReconciliation(applicationId: string, environmentId?: s
       },
     });
 
-    const declaredStateNames = new Set(flow.nodes.map((n) => n.stateName));
+    const declaredStateNames = new Set(declaredNodes.map((n) => n.stateName));
 
     // ── State Reconciliation ──────────────────────────────────────────────────
     const confirmedStates: string[] = [];
     const trueGaps: any[] = [];
     const undeclaredStates: any[] = [];
 
-    for (const node of flow.nodes) {
+    for (const node of declaredNodes) {
       if (observedStateNames.has(node.stateName)) {
         confirmedStates.push(node.stateName);
       } else {
@@ -246,16 +250,19 @@ export async function runReconciliation(applicationId: string, environmentId?: s
     );
 
     // Declared transitions reconciliation
-    for (const dt of flow.edges) {
-      const key = `${dt.fromNode.stateName}->${dt.toNode.stateName}`;
+    for (const dt of declaredEdges) {
+      const fromNode = dt.fromNode ?? declaredNodes.find((node) => node.id === (dt.fromNodeId ?? dt.fromStateId));
+      const toNode = dt.toNode ?? declaredNodes.find((node) => node.id === (dt.toNodeId ?? dt.toStateId));
+      if (!fromNode || !toNode) continue;
+      const key = `${fromNode.stateName}->${toNode.stateName}`;
       if (observedTransSet.has(key)) {
         confirmedTrans++;
       } else {
         trueGapTransitionsList.push({
           fromStateId: dt.fromNodeId,
           toStateId: dt.toNodeId,
-          fromStateName: dt.fromNode.stateName,
-          toStateName: dt.toNode.stateName,
+          fromStateName: fromNode.stateName,
+          toStateName: toNode.stateName,
           action: dt.action ?? null,
         });
 
@@ -269,8 +276,8 @@ export async function runReconciliation(applicationId: string, environmentId?: s
             confidence: 1.0,
             payload: {
               type: 'TRANSITION',
-              fromStateName: dt.fromNode.stateName,
-              toStateName: dt.toNode.stateName,
+              fromStateName: fromNode.stateName,
+              toStateName: toNode.stateName,
               action: dt.action ?? null,
             } as any,
           },
@@ -280,7 +287,11 @@ export async function runReconciliation(applicationId: string, environmentId?: s
 
     // Map declared transitions to simple strings for quick lookup
     const declaredTransSet = new Set(
-      flow.edges.map((t) => `${t.fromNode.stateName}->${t.toNode.stateName}`)
+      declaredEdges.flatMap((transition) => {
+        const fromNode = transition.fromNode ?? declaredNodes.find((node) => node.id === (transition.fromNodeId ?? transition.fromStateId));
+        const toNode = transition.toNode ?? declaredNodes.find((node) => node.id === (transition.toNodeId ?? transition.toStateId));
+        return fromNode && toNode ? [`${fromNode.stateName}->${toNode.stateName}`] : [];
+      })
     );
 
     // Observed transitions reconciliation
@@ -329,6 +340,8 @@ export async function runReconciliation(applicationId: string, environmentId?: s
       flowId: flow.id,
       applicationId,
       environmentId: targetEnvId || null,
+      flowVersionId: expectedVersion?.id ?? null,
+      qaRunId: runId ?? null,
       confirmedCount,
       trueGapCount,
       undeclaredCount,
@@ -344,21 +357,7 @@ export async function runReconciliation(applicationId: string, environmentId?: s
       generatedAt: new Date(),
     };
 
-    // Find if a report already exists for this flow
-    const existingReport = await prisma.reconciliationReport.findFirst({
-      where: { flowId: flow.id },
-    });
-
-    if (existingReport) {
-      await prisma.reconciliationReport.update({
-        where: { id: existingReport.id },
-        data: reportData,
-      });
-    } else {
-      await prisma.reconciliationReport.create({
-        data: reportData,
-      });
-    }
+    await prisma.reconciliationReport.create({ data: reportData });
 
     // Trigger value realization check webhook asynchronously (fire-and-forget)
     fetch(`http://localhost:${Services.ONBOARDING_API}/internal/applications/${applicationId}/reconcile-value`, {
@@ -370,8 +369,8 @@ export async function runReconciliation(applicationId: string, environmentId?: s
     // ── Behavior Graph Baseline ───────────────────────────────────────────────
     try {
       const snapshotJson = {
-        states: flow.nodes,
-        transitions: flow.edges,
+        states: declaredNodes,
+        transitions: declaredEdges,
       };
 
       await prisma.behaviorGraphVersion.upsert({
@@ -383,8 +382,8 @@ export async function runReconciliation(applicationId: string, environmentId?: s
         },
         update: {
           isBaseline: true,
-          expectedStateCount: flow.nodes.length,
-          expectedTransitionCount: flow.edges.length,
+          expectedStateCount: declaredNodes.length,
+          expectedTransitionCount: declaredEdges.length,
           expectedCoverage: expectedCoverageScore,
           expectedTransitionCoverage: transitionCoverageScore,
         },
@@ -393,8 +392,8 @@ export async function runReconciliation(applicationId: string, environmentId?: s
           version: flow.version,
           snapshot: snapshotJson as any,
           isBaseline: true,
-          expectedStateCount: flow.nodes.length,
-          expectedTransitionCount: flow.edges.length,
+          expectedStateCount: declaredNodes.length,
+          expectedTransitionCount: declaredEdges.length,
           expectedCoverage: expectedCoverageScore,
           expectedTransitionCoverage: transitionCoverageScore,
         },

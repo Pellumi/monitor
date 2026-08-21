@@ -11,6 +11,8 @@ import {
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
+  FlowReviewPreview,
+  FlowSuggestionsResponse,
   DocumentAccess,
   DesktopApplication,
   DesktopSession,
@@ -60,11 +62,26 @@ type DesktopContextValue = {
   getReport(runId: string): Promise<QualityReport>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-  createDeclaredFlow(applicationId: string, name: string, workflowType: string): Promise<DeclaredFlowSummary>;
-  addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string): Promise<Record<string, unknown>>;
+  createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+  addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
+  updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
+  deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
   addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
   completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+  generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
+  getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
+  acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+  rejectFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+  previewFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowReviewPreview>;
+  applyFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
+  getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
+  initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
+  approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
+  applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Record<string, unknown>>;
+  validateFlowInitialization(initializationId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getDocuments(applicationId: string): Promise<DocumentAccess>;
   importDocuments(applicationId: string): Promise<DocumentImportResult[]>;
   getDocumentJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
@@ -97,6 +114,9 @@ type InstrumentationEnvironmentInput = {
   applicationId: string;
   environmentId: string;
   environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
+  instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
+  flowId?: string;
+  flowVersionId?: string;
 };
 
 const DesktopContext = createContext<DesktopContextValue | null>(null);
@@ -305,11 +325,26 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getReport: (runId) => bridge().runs.getReport(runId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
-    createDeclaredFlow: (applicationId, name, workflowType) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType)),
-    addDeclaredState: (applicationId, flowId, stateName, category) => perform(() => bridge().intent.addDeclaredState(applicationId, flowId, stateName, category)),
+    createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement)),
+    addDeclaredState: (applicationId, flowId, stateName, category, role, terminalKind) => perform(() => bridge().intent.addDeclaredState(applicationId, flowId, stateName, category, role, terminalKind)),
+    updateDeclaredState: (applicationId, flowId, stateId, stateName, category, role, terminalKind) => perform(() => bridge().intent.updateDeclaredState(applicationId, flowId, stateId, stateName, category, role, terminalKind)),
+    deleteDeclaredState: (applicationId, flowId, stateId) => perform(() => bridge().intent.deleteDeclaredState(applicationId, flowId, stateId)),
     addDeclaredTransition: (applicationId, flowId, fromStateId, toStateId, action) => perform(() => bridge().intent.addDeclaredTransition(applicationId, flowId, fromStateId, toStateId, action)),
     completeDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.completeDeclaredFlow(applicationId, flowId)),
     reopenDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.reopenDeclaredFlow(applicationId, flowId)),
+    generateFlowSuggestions: (applicationId, flowId, input) => bridge().intent.generateFlowSuggestions(applicationId, flowId, input),
+    getFlowSuggestions: (applicationId, flowId) => bridge().intent.getFlowSuggestions(applicationId, flowId),
+    acceptFlowSuggestion: (applicationId, flowId, suggestionId) => bridge().intent.acceptFlowSuggestion(applicationId, flowId, suggestionId),
+    rejectFlowSuggestion: (applicationId, flowId, suggestionId) => bridge().intent.rejectFlowSuggestion(applicationId, flowId, suggestionId),
+    previewFlowReview: (applicationId, flowId, input) => bridge().intent.previewFlowReview(applicationId, flowId, input),
+    applyFlowReview: (applicationId, flowId, input) => perform(() => bridge().intent.applyFlowReview(applicationId, flowId, input)),
+    declineFlowReview: (applicationId, flowId, reviewId) => bridge().intent.declineFlowReview(applicationId, flowId, reviewId),
+    getFlowDiagrams: (applicationId, flowId, versionId) => bridge().intent.getFlowDiagrams(applicationId, flowId, versionId),
+    initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
+    rescanFlow: (bindingId, applicationId) => perform(() => bridge().intent.rescanFlow(bindingId, applicationId)),
+    approveFlowInitialization: (initializationId, instrumentationPlanId) => perform(() => bridge().intent.approveFlowInitialization(initializationId, instrumentationPlanId)),
+    applyFlowInitialization: (initializationId, patchSetId) => perform(() => bridge().intent.applyFlowInitialization(initializationId, patchSetId)),
+    validateFlowInitialization: (initializationId, input) => perform(() => bridge().intent.validateFlowInitialization(initializationId, input)),
     getDocuments: (applicationId) => bridge().documents.list(applicationId),
     importDocuments: (applicationId) => perform(() => bridge().documents.import(applicationId)),
     getDocumentJob: (applicationId, jobId) => bridge().documents.getJob(applicationId, jobId),

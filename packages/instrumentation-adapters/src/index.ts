@@ -38,6 +38,9 @@ export type LocalProjectContext = {
   workspaceRoot: string;
   environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
   snapshot: RepositorySnapshotSummary;
+  instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
+  flowId?: string;
+  flowVersionId?: string;
 };
 
 export type DetectionResult = {
@@ -96,6 +99,9 @@ export type InstrumentationPlan = {
   risk: Risk;
   riskReasons: string[];
   evidence: AdapterEvidence;
+  instrumentationPurpose: 'BOOTSTRAP' | 'FLOW';
+  flowId: string | null;
+  flowVersionId: string | null;
   createdAt: string;
 };
 
@@ -748,7 +754,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
         id: 'generated-config', kind: fs.existsSync(resolveWithinWorkspace(input.workspaceRoot, generatedFile)) ? 'UPDATE_SOURCE' : 'CREATE_FILE',
         relativePath: generatedFile, symbol: null, transformId: 'tellann.generated.config', transformVersion: this.version,
         expectedHash: fileHash(input.workspaceRoot, generatedFile), description: 'Create the Tellann SDK configuration and correlation module',
-        eventMappings: [{ eventType: 'SOTS_ONBOARDING_TEST', expectedState: null }], content: generated,
+        eventMappings: [{ eventType: 'TELLANN_INITIALIZED', expectedState: null }], content: generated,
       },
       {
         id: 'entry-import', kind: 'UPDATE_SOURCE', relativePath: entry.file, symbol: entry.symbol,
@@ -757,7 +763,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
         importModule: relativeImport(entry.file, generatedFile),
       },
     ];
-    for (const boundary of (this.id === 'nextjs' ? [] : evidence.semanticBoundaries)
+    for (const boundary of (input.instrumentationPurpose === 'FLOW' && this.id !== 'nextjs' ? evidence.semanticBoundaries : [])
       .filter((item) => item.confidence >= 0.75 && item.symbol && (!detectedPackage.relativeRoot || item.file.startsWith(`${detectedPackage.relativeRoot}/`)))
       .slice(0, 12)) {
       operations.push({
@@ -786,6 +792,9 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     return {
       contractVersion: INSTRUMENTATION_CONTRACT_VERSION, manifestVersion: INSTRUMENTATION_MANIFEST_VERSION,
       id: crypto.randomUUID(), taskKey, adapterId: this.id, adapterVersion: this.version,
+      instrumentationPurpose: input.instrumentationPurpose ?? 'BOOTSTRAP',
+      flowId: input.flowId ?? null,
+      flowVersionId: input.flowVersionId ?? null,
       frameworkVersion: detection.frameworkVersion, supportedVersionRange: this.supportedVersionRange,
       baseRevision: input.snapshot.revision, repositoryFingerprint: input.snapshot.repositoryFingerprint,
       approvedFileScopes: [...new Set(operations.map((operation) => operation.relativePath))],

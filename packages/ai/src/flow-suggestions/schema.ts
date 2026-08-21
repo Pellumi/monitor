@@ -36,6 +36,8 @@ export const AIFlowSuggestionItemSchema = z.object({
   targetFlowId: z.string().optional(),
   suggestedState: z.string().optional(),
   suggestedTransition: z.string().optional(),
+  suggestedStates: z.array(z.object({ name: z.string(), category: z.string(), role: z.enum(['NORMAL', 'INITIAL', 'TERMINAL']).optional(), terminalKind: z.string().nullable().optional() })).max(20).optional(),
+  suggestedTransitions: z.array(z.object({ from: z.string(), to: z.string(), action: z.string().optional() })).max(40).optional(),
   severity: SuggestionSeveritySchema,
   confidence: z.number().min(0).max(1),
   rationale: z.string().max(500),
@@ -75,6 +77,8 @@ export interface UnifiedSuggestion {
   targetFlowId?: string;
   suggestedState?: string;
   suggestedTransition?: string;
+  suggestedStates?: Array<{ name: string; category: string; role?: string; terminalKind?: string | null }>;
+  suggestedTransitions?: Array<{ from: string; to: string; action?: string }>;
 
   ruleConfidence?: number;
   aiConfidence?: number;
@@ -88,7 +92,10 @@ export interface UnifiedSuggestion {
 export interface DeclaredFlowSummary {
   flowId: string;
   name: string;
-  states: Array<{ name: string; category: string }>;
+  purpose?: string | null;
+  scopeStatement?: string | null;
+  workflowType?: string | null;
+  states: Array<{ name: string; category: string; role?: string; terminalKind?: string | null }>;
   transitions: Array<{ from: string; to: string; action?: string }>;
   validations?: string[];
   endpoints?: string[];
@@ -106,6 +113,8 @@ export interface RuleBasedSuggestionItem {
   evidence?: string[];
   suggestedState?: string;
   suggestedTransition?: string;
+  suggestedStates?: Array<{ name: string; category: string; role?: string; terminalKind?: string | null }>;
+  suggestedTransitions?: Array<{ from: string; to: string; action?: string }>;
 }
 
 export interface FlowSuggestionsInput {
@@ -123,6 +132,8 @@ export interface FlowSuggestionsInput {
   graphVersion?: number;
   graphHash?: string;
   latestMutation?: string;
+  latestState?: { id?: string; name: string; category: string; role?: string; terminalKind?: string | null };
+  mode?: 'GAP_REVIEW' | 'CONNECTION_REPAIR' | 'WHOLE_FLOW_REVIEW';
 }
 
 export interface FlowSuggestionsResult {

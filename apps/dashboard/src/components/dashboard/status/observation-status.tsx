@@ -46,7 +46,9 @@ export function ObservationStatusCard() {
         <div className="flex justify-between">
           <span className="text-neutral-500">Last Event</span>
           <span className="text-neutral-300">
-            {telemetry?.lastEventAt ? "12 secs ago" : "—"}
+            {telemetry?.lastEventAt
+              ? new Date(telemetry.lastEventAt).toLocaleString()
+              : "Pending"}
           </span>
         </div>
       </div>

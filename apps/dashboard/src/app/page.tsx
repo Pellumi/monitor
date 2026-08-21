@@ -10,7 +10,6 @@ import { useSelectedApplication } from "@/hooks/use-selected-application";
 
 // Core Providers & Data
 import { DashboardProvider, useDashboard } from "@/components/dashboard/core/dashboard-provider";
-import { MOCK_MATURE_DASHBOARD_DATA } from "@/components/dashboard/core/fixtures";
 import {
   DashboardOverviewResponse,
   MissingStateFinding,
@@ -76,12 +75,6 @@ async function fetchDashboardOverview(
   appId: string,
   range: string,
 ): Promise<DashboardOverviewResponse> {
-  const useMockMode = process.env.NEXT_PUBLIC_DASHBOARD_DATA_MODE === "mock";
-
-  if (useMockMode) {
-    return MOCK_MATURE_DASHBOARD_DATA;
-  }
-
   // 1. Try unified GET /api-gateway/dashboard/overview?appId=${appId} if available
   try {
     const res = await authenticatedFetch(
@@ -135,8 +128,11 @@ async function fetchDashboardOverview(
   // Build telemetry and session counts from DB
   const rawSessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [];
   const sessionCount = sessionsData?.total ?? rawSessions.length ?? reportData?.summary?.sessionCount ?? 0;
-  const workflowList = Array.isArray(workflowsData) ? workflowsData : Array.isArray(reportData?.observedWorkflows) ? reportData.observedWorkflows : [];
-  const workflowCount = workflowList.length || reportData?.summary?.workflowCount || 0;
+  const hasWorkflowResponse = Array.isArray(workflowsData);
+  const workflowList = hasWorkflowResponse ? workflowsData : Array.isArray(reportData?.observedWorkflows) ? reportData.observedWorkflows : [];
+  const workflowCount = hasWorkflowResponse
+    ? workflowList.length
+    : (reportData?.summary?.workflowCount ?? workflowList.length);
 
   // Build missing states & flows from DB
   const rawMissingStates = Array.isArray(reportData?.missingStates) ? reportData.missingStates : [];
@@ -169,7 +165,7 @@ async function fetchDashboardOverview(
     workflowId: `wf-${idx}`,
     workflowName: mf.workflowName,
     title: `Demonstrate ${mf.flowName}`,
-    description: `Workflow missing unobserved path: ${mf.path.join(" → ")}`,
+    description: `Workflow missing unobserved path: ${mf.path.join(" -> ")}`,
     unobservedPathsCount: mf.path.length,
     suggestedSteps: [
       `Execute steps leading to ${mf.path[0] || "start"}`,
@@ -183,14 +179,14 @@ async function fetchDashboardOverview(
   const mappedWorkflows: DiscoveredWorkflow[] = workflowList.map((wf: any, idx: number) => {
     const name = wf.name || `Workflow #${idx + 1}`;
     const pathArr = Array.isArray(wf.path) ? wf.path : [];
-    const executionCount = wf.executionCount || wf.count || 1;
-    const coverage = Math.min(100, Math.max(10, Math.round(75 + (idx % 3) * 10 - idx * 5)));
+    const executionCount = wf.executionCount ?? wf.count ?? 0;
+    const coverage = wf.coverage ?? wf.coveragePercentage ?? 0;
     return {
       id: wf.id || `wf-real-${idx}`,
       name,
       coverage,
-      stateCount: pathArr.length || 5,
-      missingPathCount: Math.max(0, 3 - idx),
+      stateCount: wf.stateCount ?? pathArr.length,
+      missingPathCount: wf.missingPathCount ?? 0,
       demonstrationCount: executionCount,
       severity: coverage < 65 ? "HIGH" : coverage < 85 ? "MEDIUM" : "LOW",
     };
@@ -205,7 +201,7 @@ async function fetchDashboardOverview(
         id: s.id || String(idx + 1),
         label: s.name || s.label || `STATE_${idx + 1}`,
         type: idx === 0 ? "entry" : idx === graphStates.length - 1 ? "exit" : "state",
-        visitCount: s.visitCount || 1,
+        visitCount: s.visitCount ?? 0,
       }))
     : [];
 
@@ -216,18 +212,13 @@ async function fetchDashboardOverview(
         target: t.toStateId || String(idx + 2),
         label: t.action || "transition",
       }))
-    : graphNodes.slice(0, -1).map((n: { id: string }, idx: number) => ({
-        id: `e-${idx}`,
-        source: n.id,
-        target: graphNodes[idx + 1].id,
-        label: "next",
-      }));
+    : [];
 
   // Build Endpoint Performance from DB
   const rawEndpoints = Array.isArray(endpointsData?.endpoints) ? endpointsData.endpoints : [];
-  const totalEp = endpointsData?.totalEndpoints || rawEndpoints.length || 0;
-  const slowEpCount = endpointsData?.slowEndpoints || rawEndpoints.filter((e: any) => e.avgMs > 500).length || 0;
-  const errorEpCount = endpointsData?.errorEndpoints || rawEndpoints.filter((e: any) => e.errorRate > 0.05).length || 0;
+  const totalEp = endpointsData?.totalEndpoints ?? rawEndpoints.length;
+  const slowEpCount = endpointsData?.slowEndpoints ?? rawEndpoints.filter((e: any) => e.avgMs > 500).length;
+  const errorEpCount = endpointsData?.errorEndpoints ?? rawEndpoints.filter((e: any) => e.errorRate > 0.05).length;
   const avgLatency = rawEndpoints.length > 0
     ? Math.round(rawEndpoints.reduce((sum: number, e: any) => sum + (e.avgMs || 0), 0) / rawEndpoints.length)
     : 0;
@@ -239,8 +230,8 @@ async function fetchDashboardOverview(
       id: `ep-slow-${idx}`,
       method: e.method || "GET",
       path: e.endpoint || e.path || "/api",
-      averageLatencyMs: e.avgMs || 450,
-      callCount: e.requestCount || 100,
+      averageLatencyMs: e.avgMs ?? 0,
+      callCount: e.requestCount ?? 0,
     }));
 
   const errorEndpointsList = rawEndpoints
@@ -250,20 +241,20 @@ async function fetchDashboardOverview(
       id: `ep-err-${idx}`,
       method: e.method || "POST",
       path: e.endpoint || e.path || "/api/action",
-      errorRatePercentage: Number(((e.errorRate || 0.02) * 100).toFixed(1)),
-      errorCount: Math.round((e.requestCount || 100) * (e.errorRate || 0.02)),
+      errorRatePercentage: Number(((e.errorRate ?? 0) * 100).toFixed(1)),
+      errorCount: Math.round((e.requestCount ?? 0) * (e.errorRate ?? 0)),
     }));
 
   // Build Sessions from DB
   const mappedSessions: RecentSession[] = rawSessions.slice(0, 5).map((s: any, idx: number) => ({
     id: s.id,
     type: idx % 2 === 0 ? "Guided" : "Exploratory",
-    durationSeconds: s.durationMs ? Math.round(s.durationMs / 1000) : 300,
-    eventCount: s.eventCount || 50,
-    workflowCount: Math.max(1, Math.min(workflowCount, 3)),
-    findingsCount: s.errorCount || 0,
-    timestamp: s.startTime ? new Date(s.startTime).toLocaleTimeString() : "Recently",
-    completenessPercentage: 100,
+    durationSeconds: s.durationMs != null ? Math.round(s.durationMs / 1000) : 0,
+    eventCount: s.eventCount ?? 0,
+    workflowCount: s.workflowCount ?? 0,
+    findingsCount: s.errorCount ?? s.findingsCount ?? 0,
+    timestamp: s.startTime ? new Date(s.startTime).toLocaleTimeString() : "Time unavailable",
+    completenessPercentage: s.completenessPercentage ?? 0,
   }));
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -271,9 +262,9 @@ async function fetchDashboardOverview(
   const cov = reportData?.coverage || {};
   const hasCoverageData = cov.stateCoverage != null || cov.flowCoverage != null || cov.transitionCoverage != null;
 
-  const stateCoverageVal = cov.stateCoverage ?? (graphStates.length > 0 ? 80 : null);
-  const transitionCoverageVal = cov.transitionCoverage ?? (graphTransitions.length > 0 ? 70 : null);
-  const workflowCoverageVal = cov.flowCoverage ?? (workflowCount > 0 ? 75 : null);
+  const stateCoverageVal = cov.stateCoverage ?? null;
+  const transitionCoverageVal = cov.transitionCoverage ?? null;
+  const workflowCoverageVal = cov.flowCoverage ?? null;
 
   const isMeasured = sessionCount > 0 || hasCoverageData;
   const firstAnalysisGenerated = Boolean(
@@ -320,7 +311,7 @@ async function fetchDashboardOverview(
     analysis: {
       status: sessionCount > 0 ? "COMPLETED" : "NOT_STARTED",
       analysisCount: firstAnalysisGenerated ? Math.max(1, sessionCount) : 0,
-      latestAnalysisId: `analysis-db-${appId}`,
+      latestAnalysisId: reportData?.analysisId ?? reportData?.id ?? reportData?.reportId,
       lastAnalysisAt: rawSessions[0]?.startTime ? new Date(rawSessions[0].startTime).toLocaleDateString() : undefined,
     },
     summary: {
@@ -383,8 +374,8 @@ async function fetchDashboardOverview(
       nodeCount: graphNodes.length,
       edgeCount: graphEdges.length,
       workflowCount: workflowCount,
-      entryPointCount: graphNodes.filter((n: { type: string }) => n.type === "entry").length || 1,
-      exitPointCount: graphNodes.filter((n: { type: string }) => n.type === "exit").length || 1,
+      entryPointCount: graphNodes.filter((n: { type: string }) => n.type === "entry").length,
+      exitPointCount: graphNodes.filter((n: { type: string }) => n.type === "exit").length,
       nodes: graphNodes,
       edges: graphEdges,
     },
@@ -395,30 +386,8 @@ async function fetchDashboardOverview(
       slowEndpoints: slowEndpointsList,
       errorProneEndpoints: errorEndpointsList,
     } : undefined,
-    reports: [
-      { id: "rep-db-1", title: "Executive Quality Report", type: "Executive", generatedAt: "Latest Analysis" },
-      { id: "rep-db-[#2]", title: "Flow Coverage Report", type: "Coverage", generatedAt: "Latest Analysis" },
-      { id: "rep-db-3", title: "Missing State Report", type: "Gaps", generatedAt: "Latest Analysis" },
-      { id: "rep-db-4", title: "Endpoint Intelligence Report", type: "Endpoints", generatedAt: "Latest Analysis" },
-    ],
-    coverageHistory: isMeasured ? [
-      { analysisId: "a1", label: "Initial Analysis", timestamp: "First Run", workflow: Math.max(20, (workflowCoverageVal || 50) - 15), state: Math.max(25, (stateCoverageVal || 60) - 10), transition: Math.max(20, (transitionCoverageVal || 50) - 12) },
-      { analysisId: "a2", label: "Latest Analysis", timestamp: "Current", workflow: workflowCoverageVal || 75, state: stateCoverageVal || 80, transition: transitionCoverageVal || 70 },
-    ] : [],
-    privacy: {
-      active: true,
-      sensitiveFieldsBlockedCount: 14,
-      replayMaskingEnabled: true,
-      customRulesCount: 3,
-    },
-    usage: {
-      planName: `${appPlan.toUpperCase()} Plan`,
-      applicationsUsed: 1,
-      applicationsLimit: appPlan === "free" ? 1 : appPlan === "solo" ? 3 : 10,
-      storageUsedMb: 450,
-      storageLimitMb: 2048,
-      retentionDays: 30,
-    },
+    reports: [],
+    coverageHistory: [],
     liveDemonstration: null,
     healthIssues: [],
   };

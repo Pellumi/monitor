@@ -96,6 +96,7 @@ export class BrowserObserver {
     executablePath?: string;
     headless?: boolean;
     onUnexpectedTermination?: (state: GuidedRunState) => Promise<void> | void;
+    onObservation?: (runId: string, observation: BrowserObservation) => Promise<void> | void;
   } = {}) {}
 
   private async handleUnexpectedTermination(): Promise<void> {
@@ -201,6 +202,7 @@ export class BrowserObserver {
         timestamp: new Date().toISOString(),
       };
       state.observations.push(observation);
+      void this.options.onObservation?.(runId, observation);
       if (previous) {
         state.observedTransitions.push({
           fromEventId: previous.eventId,

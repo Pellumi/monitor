@@ -68,7 +68,7 @@ export function resolveAiProvider(env: NodeJS.ProcessEnv = process.env): AIProvi
   if (provider === 'gemini' && env.GEMINI_API_KEY) {
     return new JsonHttpProvider(
       'gemini',
-      env.GEMINI_MODEL || 'gemini-2.5-flash',
+      env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
       env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       env.GEMINI_API_KEY,
     );
@@ -97,7 +97,7 @@ export function buildProviderChain(env: NodeJS.ProcessEnv = process.env): AIProv
     if (name === 'gemini' && env.GEMINI_API_KEY) {
       return new JsonHttpProvider(
         'gemini',
-        env.GEMINI_MODEL || 'gemini-2.5-flash',
+        env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
         env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         env.GEMINI_API_KEY!,
       );

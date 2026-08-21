@@ -22,6 +22,7 @@ import {
   FileSearch,
   Folder,
   Globe2,
+  HelpCircle,
   KeyRound,
   Lock,
   Network,
@@ -31,6 +32,7 @@ import {
   RefreshCw,
   SearchCode,
   ShieldCheck,
+  Sparkles,
   TerminalSquare,
   Trash2,
   Unlock,
@@ -48,6 +50,9 @@ import {
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
+  DeclaredStateSuggestion,
+  FlowReviewPreview,
+  FlowSuggestionMeta,
   InstrumentationDetection,
   InstrumentationPlan,
   IntentDraft,
@@ -60,6 +65,7 @@ import type {
 import type { LiveEvidence } from "@sots/browser-observer";
 import { useDesktop } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
+import { FlowDiagram } from "./components/flow-diagram";
 import { Switch } from "./components/ui/switch";
 import {
   Accordion,
@@ -248,7 +254,9 @@ export function ProjectsPage() {
                   </div>
                   <div>
                     <dt>Findings</dt>
-                    <dd>{latestRun?.findingCount ?? 0}</dd>
+                    <dd>
+                      {latestRun ? latestRun.findingCount : "No run data"}
+                    </dd>
                   </div>
                 </dl>
                 <div className="card-actions">
@@ -314,7 +322,7 @@ export function NewProjectPage() {
       description="Start with read-only workspace access or continue without a repository."
     >
       <section className="wizard-card">
-        <div className="step-label">Step 1 of 3 · Cloud application</div>
+        <div className="step-label">Step 1 of 3 / Cloud application</div>
         <label>
           Application
           <SelectField
@@ -327,7 +335,7 @@ export function NewProjectPage() {
             placeholder="Select application"
           />
         </label>
-        <div className="step-label">Step 2 of 3 · Working mode</div>
+        <div className="step-label">Step 2 of 3 / Working mode</div>
         <div className="choice-grid">
           <button
             className={mode === "folder" ? "choice selected" : "choice"}
@@ -346,7 +354,7 @@ export function NewProjectPage() {
             <span>No SDK, source, write, or command permission required.</span>
           </button>
         </div>
-        <div className="step-label">Step 3 of 3 · Permission summary</div>
+        <div className="step-label">Step 3 of 3 / Permission summary</div>
         <div className="permission-summary">
           <ShieldCheck />
           <div>
@@ -403,7 +411,7 @@ export function ProjectOverviewPage() {
   return (
     <Page
       title={application.name}
-      description={`${application.organizationName} · Desktop project overview`}
+      description={`${application.organizationName} / Desktop project overview`}
     >
       <div className="metric-grid">
         <Metric
@@ -619,60 +627,200 @@ export function WorkspacePage() {
       }
     >
       {!workspace ? (
-        (application as any)?.projectWorkspaces?.[0] ? (() => {
-          const cloudWs = (application as any).projectWorkspaces[0];
-          const latestSnap = cloudWs.snapshots?.[0];
-          const endpointsRaw = latestSnap?.endpointSummary;
-          const endpointsCount = Array.isArray(endpointsRaw) ? endpointsRaw.length : (endpointsRaw && typeof endpointsRaw === 'object') ? Object.keys(endpointsRaw).length : (typeof endpointsRaw === 'number' ? endpointsRaw : 0);
-          const docsRaw = latestSnap?.documentationSummary;
-          const docsCount = Array.isArray(docsRaw) ? docsRaw.length : (docsRaw && typeof docsRaw === 'object') ? Object.keys(docsRaw).length : (typeof docsRaw === 'number' ? docsRaw : 0);
-          const routesRaw = latestSnap?.routeSummary;
-          const routesCount = Array.isArray(routesRaw) ? routesRaw.length : (routesRaw && typeof routesRaw === 'object') ? Object.keys(routesRaw).length : (typeof routesRaw === 'number' ? routesRaw : 0);
+        (application as any)?.projectWorkspaces?.[0] ? (
+          (() => {
+            const cloudWs = (application as any).projectWorkspaces[0];
+            const latestSnap = cloudWs.snapshots?.[0];
+            const endpointsRaw = latestSnap?.endpointSummary;
+            const endpointsCount = Array.isArray(endpointsRaw)
+              ? endpointsRaw.length
+              : endpointsRaw && typeof endpointsRaw === "object"
+                ? Object.keys(endpointsRaw).length
+                : typeof endpointsRaw === "number"
+                  ? endpointsRaw
+                  : 0;
+            const docsRaw = latestSnap?.documentationSummary;
+            const docsCount = Array.isArray(docsRaw)
+              ? docsRaw.length
+              : docsRaw && typeof docsRaw === "object"
+                ? Object.keys(docsRaw).length
+                : typeof docsRaw === "number"
+                  ? docsRaw
+                  : 0;
+            const routesRaw = latestSnap?.routeSummary;
+            const routesCount = Array.isArray(routesRaw)
+              ? routesRaw.length
+              : routesRaw && typeof routesRaw === "object"
+                ? Object.keys(routesRaw).length
+                : typeof routesRaw === "number"
+                  ? routesRaw
+                  : 0;
 
-          return (
-            <div className="content-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '18px' }}>Cloud Workspace Connected</h2>
-                  <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.7, fontFamily: 'var(--font-mono)' }}>
-                    Repository Fingerprint: {cloudWs.repositoryFingerprint ? cloudWs.repositoryFingerprint.slice(0, 12) : cloudWs.opaqueLocalId}
-                  </p>
-                </div>
-                <span className="badge" style={{ textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                  {cloudWs.packageManager || 'npm'}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', textAlign: 'center' }}>
-                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{routesCount}</div>
-                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Discovered Routes</div>
-                </div>
-                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{endpointsCount}</div>
-                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Endpoints Mapped</div>
-                </div>
-                <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{docsCount}</div>
-                  <div style={{ fontSize: '11px', opacity: 0.7, textTransform: 'uppercase' }}>Doc Manifests</div>
-                </div>
-              </div>
-
-              <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.5, opacity: 0.8 }}>
-                A project workspace is registered in Tellann Cloud for <strong>{application.name}</strong>. Choose the local folder on your computer to connect local file access and enable automated instrumentation.
-              </p>
-
-              <div>
-                <button
-                  className="button primary font-mono text-xs uppercase"
-                  onClick={() => void attachWorkspace(projectId)}
+            return (
+              <div
+                className="content-card"
+                style={{
+                  padding: "24px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    borderBottom: "1px solid var(--border-color)",
+                    paddingBottom: "12px",
+                  }}
                 >
-                  Choose project folder
-                </button>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: "18px" }}>
+                      Cloud Workspace Connected
+                    </h2>
+                    <p
+                      style={{
+                        margin: "4px 0 0",
+                        fontSize: "12px",
+                        opacity: 0.7,
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      Repository Fingerprint:{" "}
+                      {cloudWs.repositoryFingerprint
+                        ? cloudWs.repositoryFingerprint.slice(0, 12)
+                        : cloudWs.opaqueLocalId}
+                    </p>
+                  </div>
+                  <span
+                    className="badge"
+                    style={{
+                      textTransform: "uppercase",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    {cloudWs.packageManager || "npm"}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "12px",
+                    textAlign: "center",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "12px",
+                      background: "var(--bg-tertiary)",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border-color)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: "bold",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      {routesCount}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        opacity: 0.7,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Discovered Routes
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "12px",
+                      background: "var(--bg-tertiary)",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border-color)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: "bold",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      {endpointsCount}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        opacity: 0.7,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Endpoints Mapped
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "12px",
+                      background: "var(--bg-tertiary)",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border-color)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: "bold",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      {docsCount}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        opacity: 0.7,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Doc Manifests
+                    </div>
+                  </div>
+                </div>
+
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "13px",
+                    lineHeight: 1.5,
+                    opacity: 0.8,
+                  }}
+                >
+                  A project workspace is registered in Tellann Cloud for{" "}
+                  <strong>{application.name}</strong>. Choose the local folder
+                  on your computer to connect local file access and enable
+                  automated instrumentation.
+                </p>
+
+                <div>
+                  <button
+                    className="button primary font-mono text-xs uppercase"
+                    onClick={() => void attachWorkspace(projectId)}
+                  >
+                    Choose project folder
+                  </button>
+                </div>
               </div>
-            </div>
-          );
-        })() : (
+            );
+          })()
+        ) : (
           <EmptyState
             icon={<SearchCode size={36} />}
             title="No local workspace attached"
@@ -721,7 +869,7 @@ export function WorkspacePage() {
             <div className="tag-list">
               {workspace.snapshot.frameworks.map((item) => (
                 <span key={item.framework}>
-                  {item.framework} · {Math.round(item.confidence * 100)}%
+                  {item.framework} / {Math.round(item.confidence * 100)}%
                 </span>
               ))}
             </div>
@@ -871,7 +1019,7 @@ export function SourcesPage() {
                   <h2>{document.filename}</h2>
                   <p>
                     {version
-                      ? `Version ${version.version} · ${version.processorVersion}`
+                      ? `Version ${version.version} / ${version.processorVersion}`
                       : "Derived summary queued for processing"}
                   </p>
                 </div>
@@ -958,6 +1106,463 @@ export function ActivityPage() {
   );
 }
 
+function ConfirmModal({
+  isOpen,
+  title,
+  description,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  variant = "danger",
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  isOpen: boolean;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "danger" | "primary";
+  busy?: boolean;
+  onConfirm(): void;
+  onCancel(): void;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <div
+        className="desktop-modal auth-otp-theme"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+      >
+        <button
+          type="button"
+          className="desktop-modal-close"
+          aria-label="Close"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          <X size={16} />
+        </button>
+
+        <div className="confirm-modal-topbar">
+          <span className="confirm-modal-brand">TELLANN</span>
+          <span className="confirm-modal-tag">ACTION // CONFIRMATION</span>
+        </div>
+
+        <h2 id="confirm-modal-title" className="confirm-modal-heading">
+          {title}
+        </h2>
+
+        <div className="confirm-modal-body-box">
+          <p>{description}</p>
+        </div>
+
+        <div className="confirm-modal-actions">
+          <button
+            type="button"
+            className="button confirm-modal-btn-cancel"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            className={`button confirm-modal-btn-action flex-1 ${variant === "danger" ? "danger" : ""}`}
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuidedSuggestionsPanel({
+  suggestions,
+  meta,
+  loading,
+  error,
+  actionId,
+  editable,
+  onRefresh,
+  onAccept,
+  onReject,
+}: {
+  suggestions: DeclaredStateSuggestion[];
+  meta: FlowSuggestionMeta | null;
+  loading: boolean;
+  error: string | null;
+  actionId: string | null;
+  editable: boolean;
+  onRefresh(): void;
+  onAccept(id: string): void;
+  onReject(id: string): void;
+}) {
+  const modeLabel =
+    meta?.mode === "AI_ASSISTED"
+      ? "AI + rules"
+      : meta?.mode === "RULE_FALLBACK"
+        ? "Rule fallback"
+        : "Rule-guided";
+  return (
+    <section
+      className="guided-suggestions"
+      aria-labelledby="guided-suggestions-title"
+    >
+      <div className="guided-suggestions-heading">
+        <div>
+          <small>{modeLabel}</small>
+          <h3 id="guided-suggestions-title">Guided suggestions</h3>
+          <p>
+            Review proposed additions based on this flow&apos;s purpose, scope
+            boundary, and current states.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="button"
+          disabled={loading || !editable}
+          onClick={onRefresh}
+        >
+          <RefreshCw size={14} className={loading ? "spin" : undefined} />{" "}
+          Refresh suggestions
+        </button>
+      </div>
+      <div role="status" aria-live="polite" className="suggestion-status">
+        {loading
+          ? "Analyzing the current flow…"
+          : error
+            ? `Suggestions could not be refreshed: ${error}`
+            : suggestions.length
+              ? `${suggestions.length} suggestion${suggestions.length === 1 ? "" : "s"} ready for review.`
+              : "No additional states are recommended right now."}
+      </div>
+      {meta?.mode === "RULE_ONLY" && !meta.aiAllowed ? (
+        <p className="suggestion-upgrade-note">
+          Free includes deterministic guidance. Local or Solo adds AI-enhanced
+          analysis.
+        </p>
+      ) : null}
+      {meta?.mode === "RULE_FALLBACK" ? (
+        <p className="suggestion-upgrade-note">
+          AI was unavailable, so Tellann kept the review moving with
+          deterministic guidance.
+        </p>
+      ) : null}
+      {suggestions.length ? (
+        <div className="suggestion-card-list">
+          {suggestions.map((suggestion) => {
+            const proposedStates = suggestion.suggestedStatesJson?.length
+              ? suggestion.suggestedStatesJson
+              : [
+                  {
+                    name: suggestion.suggestedStateName,
+                    category: suggestion.category,
+                  },
+                ];
+            const sourceLabel =
+              suggestion.source === "AI"
+                ? "AI-assisted"
+                : suggestion.source === "HYBRID"
+                  ? "Hybrid"
+                  : "Rule-based";
+            const processing = actionId === suggestion.id;
+            return (
+              <article className="suggestion-card" key={suggestion.id}>
+                <div className="suggestion-card-heading">
+                  <div>
+                    <strong>
+                      {suggestion.title ||
+                        `Add ${suggestion.suggestedStateName}`}
+                    </strong>
+                    <span>
+                      {sourceLabel} · {suggestion.severity} ·{" "}
+                      {Math.round(suggestion.confidence * 100)}% confidence
+                    </span>
+                  </div>
+                </div>
+                <div className="suggested-state-chips">
+                  {proposedStates.map((state) => (
+                    <span key={`${suggestion.id}-${state.name}`}>
+                      {state.name} <small>{state.category}</small>
+                    </span>
+                  ))}
+                </div>
+                {suggestion.suggestedTransitionsJson?.length ? (
+                  <ul className="suggested-transition-list">
+                    {suggestion.suggestedTransitionsJson.map(
+                      (transition, index) => (
+                        <li key={`${suggestion.id}-transition-${index}`}>
+                          {transition.from} → {transition.to}
+                          {transition.action ? ` · ${transition.action}` : ""}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                ) : null}
+                <p>{suggestion.rationale}</p>
+                <div className="suggestion-actions">
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={!editable || processing}
+                    onClick={() => onAccept(suggestion.id)}
+                  >
+                    <Check size={14} /> Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={!editable || processing}
+                    onClick={() => onReject(suggestion.id)}
+                  >
+                    <X size={14} /> Decline
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WholeFlowReviewPanel({
+  suggestions,
+  meta,
+  selectedIds,
+  preview,
+  loading,
+  previewLoading,
+  applying,
+  error,
+  editable,
+  stateCount,
+  onReview,
+  onToggle,
+  onApply,
+  onDecline,
+}: {
+  suggestions: DeclaredStateSuggestion[];
+  meta: FlowSuggestionMeta | null;
+  selectedIds: Set<string>;
+  preview: FlowReviewPreview | null;
+  loading: boolean;
+  previewLoading: boolean;
+  applying: boolean;
+  error: string | null;
+  editable: boolean;
+  stateCount: number;
+  onReview(): void;
+  onToggle(id: string): void;
+  onApply(): void;
+  onDecline(): void;
+}) {
+  const flowDiagram = preview?.diagrams.find((item) => item.kind === "FLOW");
+  const selectedCount = selectedIds.size;
+  return (
+    <section
+      className="flow-review-panel"
+      aria-labelledby="flow-review-heading"
+    >
+      <div className="flow-review-heading-row">
+        <div>
+          <small>Tellann guided review</small>
+          <h3 id="flow-review-heading">Review and connect states</h3>
+        </div>
+        <button
+          type="button"
+          className="button"
+          disabled={!editable || stateCount < 2 || loading || applying}
+          onClick={onReview}
+        >
+          <Sparkles size={15} />
+          {suggestions.length ? "Review again" : "Ask Tellann to review flow"}
+        </button>
+      </div>
+      <p>
+        Reviewable guidance only. Your graph changes only after you select
+        proposals and confirm them.
+      </p>
+      {stateCount < 2 ? (
+        <p className="muted-callout">
+          Add at least two states before requesting a whole-flow review.
+        </p>
+      ) : null}
+      <div role="status" aria-live="polite">
+        {loading ? (
+          <p className="flow-review-status">
+            <RefreshCw className="spin" size={15} /> Analyzing purpose, scope,
+            states, and transitions…
+          </p>
+        ) : null}
+        {!loading && meta?.stage === "CONNECTION_REPAIR" ? (
+          <p className="flow-review-status warning">
+            <Network size={15} /> Completing the existing flow first. Tellann
+            will suggest new states only after every current state and terminal
+            is reachable.
+          </p>
+        ) : null}
+        {!loading && meta?.stage === "ENRICHMENT" ? (
+          <p className="flow-review-status">
+            <Check size={15} /> The existing flow is connected. Tellann is now
+            reviewing optional missing states and alternate paths.
+          </p>
+        ) : null}
+        {!loading && meta?.mode === "RULE_ONLY" ? (
+          <p className="flow-review-status">
+            Rule-guided review. Local and Solo plans add Gemini semantic
+            analysis.
+          </p>
+        ) : null}
+        {!loading && meta?.mode === "RULE_FALLBACK" ? (
+          <p className="flow-review-status warning">
+            Gemini was unavailable; deterministic validation guidance is shown.
+          </p>
+        ) : null}
+        {error ? (
+          <p className="flow-review-status error">
+            <AlertTriangle size={15} /> {error}
+          </p>
+        ) : null}
+      </div>
+      {!loading && suggestions.length === 0 && meta ? (
+        <p className="flow-review-complete">
+          <Check size={16} /> No additional states or transitions were
+          recommended.
+        </p>
+      ) : null}
+      {suggestions.length ? (
+        <div className="flow-review-proposals">
+          {suggestions.map((suggestion) => {
+            const states = suggestion.suggestedStatesJson ?? [];
+            const transitions = suggestion.suggestedTransitionsJson ?? [];
+            return (
+              <label
+                key={suggestion.id}
+                className={`flow-review-proposal ${selectedIds.has(suggestion.id) ? "selected" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(suggestion.id)}
+                  onChange={() => onToggle(suggestion.id)}
+                  disabled={applying}
+                />
+                <span className="flow-review-proposal-body">
+                  <span className="flow-review-badges">
+                    <strong>
+                      {suggestion.title ||
+                        (states.length
+                          ? "Missing state"
+                          : "Recommended transition")}
+                    </strong>
+                    <Status>
+                      {suggestion.source === "AI"
+                        ? "AI-assisted"
+                        : suggestion.source === "HYBRID"
+                          ? "Hybrid"
+                          : "Rule-based"}
+                    </Status>
+                    <small>
+                      {suggestion.severity} ·{" "}
+                      {Math.round(suggestion.confidence * 100)}%
+                    </small>
+                  </span>
+                  {states.map((state) => (
+                    <span
+                      key={`${suggestion.id}-${state.name}`}
+                      className="flow-review-patch"
+                    >
+                      <Plus size={12} /> State: {state.name} · {state.category}
+                    </span>
+                  ))}
+                  {transitions.map((edge, index) => (
+                    <span
+                      key={`${suggestion.id}-edge-${index}`}
+                      className="flow-review-patch"
+                    >
+                      <ArrowRight size={12} /> {edge.from} → {edge.to}
+                      {edge.action ? ` · ${edge.action}` : ""}
+                    </span>
+                  ))}
+                  <small>{suggestion.rationale}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {selectedCount ? (
+        <div className="flow-review-preview">
+          <div className="flow-review-preview-heading">
+            <strong>Selected graph preview</strong>
+            {previewLoading ? (
+              <small>Updating…</small>
+            ) : (
+              <Status>
+                {preview?.validation.valid ? "Valid" : "Needs attention"}
+              </Status>
+            )}
+          </div>
+          {preview?.validation.issues.length ? (
+            <ul>
+              {preview.validation.issues.map((issue, index) => (
+                <li key={`${issue.code}-${index}`}>
+                  <strong>{issue.code}</strong>: {issue.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {flowDiagram ? (
+            <FlowDiagram
+              source={flowDiagram.source}
+              label="Selected graph preview"
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {suggestions.length ? (
+        <div className="flow-review-actions">
+          <button
+            type="button"
+            className="button primary"
+            disabled={
+              !selectedCount ||
+              previewLoading ||
+              applying ||
+              !preview?.validation.valid
+            }
+            onClick={onApply}
+          >
+            {applying ? "Applying…" : `Apply selected (${selectedCount})`}
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={applying}
+            onClick={onDecline}
+          >
+            Decline review
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ManualIntentBuilder({
   projectId,
   flows,
@@ -971,25 +1576,85 @@ function ManualIntentBuilder({
   initialFlowId?: string;
   showPlanBanner?: boolean;
 }) {
+  const navigate = useNavigate();
   const {
     getDeclaredFlow,
     createDeclaredFlow,
     addDeclaredState,
+    updateDeclaredState,
+    deleteDeclaredState,
     addDeclaredTransition,
     completeDeclaredFlow,
     reopenDeclaredFlow,
+    getFlowDiagrams,
+    initializeFlow,
+    rescanFlow,
+    generateFlowSuggestions,
+    getFlowSuggestions,
+    acceptFlowSuggestion,
+    rejectFlowSuggestion,
+    previewFlowReview,
+    applyFlowReview,
+    declineFlowReview,
+    applications,
+    workspaces,
     busy,
   } = useDesktop();
   const [selectedFlowId, setSelectedFlowId] = useState(initialFlowId ?? "");
+  const [flowMode, setFlowMode] = useState<"existing" | "create">(
+    initialFlowId || flows.length > 0 ? "existing" : "create",
+  );
   const [activeFlow, setActiveFlow] = useState<DeclaredFlowDetail | null>(null);
   const [newFlowName, setNewFlowName] = useState("");
+  const [newFlowPurpose, setNewFlowPurpose] = useState("");
+  const [newFlowScope, setNewFlowScope] = useState("");
   const [workflowType, setWorkflowType] = useState("CUSTOM");
   const [stateName, setStateName] = useState("");
   const [stateCategory, setStateCategory] = useState("BUSINESS");
+  const [stateRole, setStateRole] = useState("NORMAL");
+  const [terminalKind, setTerminalKind] = useState("SUCCESS");
+  const [editingStateId, setEditingStateId] = useState<string | null>(null);
   const [fromStateId, setFromStateId] = useState("");
   const [toStateId, setToStateId] = useState("");
   const [transitionAction, setTransitionAction] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [diagrams, setDiagrams] = useState<
+    Array<{ kind: string; source: string }>
+  >([]);
+  const [activeDiagramKind, setActiveDiagramKind] = useState("FLOW");
+  const [suggestions, setSuggestions] = useState<DeclaredStateSuggestion[]>([]);
+  const [suggestionMeta, setSuggestionMeta] =
+    useState<FlowSuggestionMeta | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+  const [suggestionActionId, setSuggestionActionId] = useState<string | null>(
+    null,
+  );
+  const [stateToDelete, setStateToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [flowReviewSuggestions, setFlowReviewSuggestions] = useState<
+    DeclaredStateSuggestion[]
+  >([]);
+  const [flowReviewMeta, setFlowReviewMeta] =
+    useState<FlowSuggestionMeta | null>(null);
+  const [flowReviewId, setFlowReviewId] = useState<string | null>(null);
+  const [flowReviewRevision, setFlowReviewRevision] = useState<{
+    graphVersion: number;
+    graphHash: string;
+  } | null>(null);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [flowReviewPreview, setFlowReviewPreview] =
+    useState<FlowReviewPreview | null>(null);
+  const [flowReviewLoading, setFlowReviewLoading] = useState(false);
+  const [flowReviewPreviewLoading, setFlowReviewPreviewLoading] =
+    useState(false);
+  const [flowReviewApplying, setFlowReviewApplying] = useState(false);
+  const [flowReviewError, setFlowReviewError] = useState<string | null>(null);
+  const flowReviewPreviewSequence = useRef(0);
 
   useEffect(() => {
     if (selectedFlowId || !flows.length) return;
@@ -1010,14 +1675,284 @@ function ManualIntentBuilder({
     );
   }, [projectId, selectedFlowId]);
 
+  useEffect(() => {
+    if (!selectedFlowId) {
+      setSuggestions([]);
+      setSuggestionMeta(null);
+      return;
+    }
+    let cancelled = false;
+    void getFlowSuggestions(projectId, selectedFlowId)
+      .then((payload) => {
+        if (!cancelled) {
+          const latestReviewId =
+            payload.suggestions.find((item) => item.reviewId)?.reviewId ?? null;
+          const reviewSuggestions = latestReviewId
+            ? payload.suggestions.filter(
+                (item) => item.reviewId === latestReviewId,
+              )
+            : [];
+          setSuggestions(payload.suggestions.filter((item) => !item.reviewId));
+          setSuggestionMeta(payload.meta ?? null);
+          setSuggestionsError(null);
+          if (latestReviewId) {
+            setFlowReviewId(latestReviewId);
+            setFlowReviewSuggestions(reviewSuggestions);
+            setFlowReviewMeta(payload.meta ?? null);
+            setFlowReviewRevision({
+              graphVersion: payload.graphVersion,
+              graphHash: payload.graphHash,
+            });
+            setSelectedReviewIds(
+              new Set(reviewSuggestions.map((item) => item.id)),
+            );
+          }
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setSuggestionsError(String(error?.message ?? error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [getFlowSuggestions, projectId, selectedFlowId]);
+
+  useEffect(() => {
+    setFlowReviewSuggestions([]);
+    setFlowReviewMeta(null);
+    setFlowReviewId(null);
+    setFlowReviewRevision(null);
+    setSelectedReviewIds(new Set());
+    setFlowReviewPreview(null);
+    setFlowReviewError(null);
+  }, [selectedFlowId]);
+
+  useEffect(() => {
+    if (
+      !selectedFlowId ||
+      !flowReviewRevision ||
+      selectedReviewIds.size === 0
+    ) {
+      setFlowReviewPreview(null);
+      return;
+    }
+    const sequence = ++flowReviewPreviewSequence.current;
+    const timer = window.setTimeout(() => {
+      setFlowReviewPreviewLoading(true);
+      void previewFlowReview(projectId, selectedFlowId, {
+        suggestionIds: [...selectedReviewIds],
+        ...flowReviewRevision,
+      })
+        .then((payload) => {
+          if (sequence === flowReviewPreviewSequence.current) {
+            setFlowReviewPreview(payload);
+            setFlowReviewError(null);
+          }
+        })
+        .catch((error) => {
+          if (sequence === flowReviewPreviewSequence.current) {
+            setFlowReviewPreview(null);
+            setFlowReviewError(String(error?.message ?? error));
+          }
+        })
+        .finally(() => {
+          if (sequence === flowReviewPreviewSequence.current)
+            setFlowReviewPreviewLoading(false);
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    previewFlowReview,
+    projectId,
+    selectedFlowId,
+    selectedReviewIds,
+    flowReviewRevision,
+  ]);
+
+  const requestFlowReview = async () => {
+    if (!selectedFlowId || !activeFlow || activeFlow.states.length < 2) return;
+    setFlowReviewLoading(true);
+    setFlowReviewError(null);
+    setFlowReviewPreview(null);
+    try {
+      const payload = await generateFlowSuggestions(projectId, selectedFlowId, {
+        trigger: "FLOW_REVIEW_REQUESTED",
+        graphVersion: activeFlow.version,
+      });
+      setFlowReviewSuggestions(payload.suggestions);
+      setFlowReviewMeta(payload.meta ?? null);
+      setFlowReviewId(payload.reviewId ?? null);
+      setFlowReviewRevision({
+        graphVersion: payload.graphVersion,
+        graphHash: payload.graphHash,
+      });
+      setSelectedReviewIds(new Set(payload.suggestions.map((item) => item.id)));
+    } catch (error: any) {
+      setFlowReviewError(String(error?.message ?? error));
+    } finally {
+      setFlowReviewLoading(false);
+    }
+  };
+
+  const applySelectedFlowReview = async () => {
+    if (
+      !selectedFlowId ||
+      !flowReviewRevision ||
+      !selectedReviewIds.size ||
+      !flowReviewPreview?.validation.valid
+    )
+      return;
+    setFlowReviewApplying(true);
+    setFlowReviewError(null);
+    try {
+      const result = (await applyFlowReview(projectId, selectedFlowId, {
+        suggestionIds: [...selectedReviewIds],
+        ...flowReviewRevision,
+      })) as {
+        graphVersion?: number;
+        diagrams?: Array<{ kind: string; source: string }>;
+        validation?: { valid: boolean };
+      };
+      await Promise.all([refreshActiveFlow(), refreshFlows()]);
+      if (result.diagrams) setDiagrams(result.diagrams);
+      setFlowReviewSuggestions([]);
+      setSelectedReviewIds(new Set());
+      setFlowReviewPreview(null);
+      setFlowReviewId(null);
+      setFlowReviewRevision(null);
+      setMessage(
+        "The existing flow is now connected. Tellann is checking for useful missing states and alternate paths…",
+      );
+      if (result.validation?.valid && result.graphVersion !== undefined) {
+        setFlowReviewLoading(true);
+        try {
+          const next = await generateFlowSuggestions(
+            projectId,
+            selectedFlowId,
+            {
+              trigger: "FLOW_REVIEW_REQUESTED",
+              graphVersion: result.graphVersion,
+            },
+          );
+          setFlowReviewSuggestions(next.suggestions);
+          setFlowReviewMeta(next.meta ?? null);
+          setFlowReviewId(next.reviewId ?? null);
+          setFlowReviewRevision({
+            graphVersion: next.graphVersion,
+            graphHash: next.graphHash,
+          });
+          setSelectedReviewIds(
+            new Set(next.suggestions.map((item) => item.id)),
+          );
+          setMessage(
+            next.suggestions.length
+              ? "The core flow is complete. Optional state and path suggestions are ready for review."
+              : "The flow is complete and Tellann found no additional states to recommend.",
+          );
+        } catch (followUpError: any) {
+          setFlowReviewError(String(followUpError?.message ?? followUpError));
+        } finally {
+          setFlowReviewLoading(false);
+        }
+      }
+    } catch (error: any) {
+      setFlowReviewError(String(error?.message ?? error));
+    } finally {
+      setFlowReviewApplying(false);
+    }
+  };
+
+  const declineCurrentFlowReview = async () => {
+    if (!selectedFlowId || !flowReviewId) return;
+    setFlowReviewApplying(true);
+    setFlowReviewError(null);
+    try {
+      await declineFlowReview(projectId, selectedFlowId, flowReviewId);
+      setFlowReviewSuggestions([]);
+      setSelectedReviewIds(new Set());
+      setFlowReviewPreview(null);
+      setFlowReviewId(null);
+      setFlowReviewRevision(null);
+      setMessage("Flow review declined. No graph changes were made.");
+    } catch (error: any) {
+      setFlowReviewError(String(error?.message ?? error));
+    } finally {
+      setFlowReviewApplying(false);
+    }
+  };
+
+  const refreshSuggestions = async (
+    trigger:
+      | "STATE_ADDED"
+      | "STATE_UPDATED"
+      | "STATE_DELETED"
+      | "TRANSITION_ADDED"
+      | "SUGGESTION_ACCEPTED"
+      | "MANUAL_REFRESH",
+    latestState?: Record<string, unknown>,
+    graphVersion?: number,
+  ) => {
+    if (!selectedFlowId) return;
+    setSuggestionsLoading(true);
+    setSuggestionsError(null);
+    try {
+      const payload = await generateFlowSuggestions(projectId, selectedFlowId, {
+        trigger,
+        graphVersion,
+        latestState,
+      });
+      setSuggestions(payload.suggestions);
+      setSuggestionMeta(payload.meta ?? null);
+    } catch (error: any) {
+      setSuggestionsError(String(error?.message ?? error));
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const versionId =
+      activeFlow?.publishedVersionId ?? activeFlow?.versions?.[0]?.id;
+    if (!activeFlow || activeFlow.status !== "COMPLETE" || !versionId) {
+      setDiagrams([]);
+      return;
+    }
+    void getFlowDiagrams(projectId, activeFlow.id, versionId)
+      .then((payload) =>
+        setDiagrams(
+          Array.isArray(payload.diagrams)
+            ? (payload.diagrams as Array<{ kind: string; source: string }>)
+            : [],
+        ),
+      )
+      .catch((error) => setMessage(String(error?.message ?? error)));
+  }, [
+    activeFlow?.id,
+    activeFlow?.publishedVersionId,
+    activeFlow?.status,
+    getFlowDiagrams,
+    projectId,
+  ]);
+
   const createFlow = async () => {
     const name = newFlowName.trim();
-    if (!name) return;
+    if (!name || !newFlowScope.trim()) return;
     try {
-      const flow = await createDeclaredFlow(projectId, name, workflowType);
+      const flow = await createDeclaredFlow(
+        projectId,
+        name,
+        workflowType,
+        newFlowPurpose.trim(),
+        newFlowScope.trim(),
+      );
       await refreshFlows();
       setNewFlowName("");
+      setNewFlowPurpose("");
+      setNewFlowScope("");
       setSelectedFlowId(flow.id);
+      setFlowMode("existing");
       setMessage("Flow created. Add the states users should move through.");
     } catch (err: any) {
       setMessage(String(err?.message ?? err));
@@ -1028,13 +1963,126 @@ function ManualIntentBuilder({
     const name = stateName.trim();
     if (!selectedFlowId || !name) return;
     try {
-      await addDeclaredState(projectId, selectedFlowId, name, stateCategory);
+      const result = (await addDeclaredState(
+        projectId,
+        selectedFlowId,
+        name,
+        stateCategory,
+        stateRole,
+        stateRole === "TERMINAL" ? terminalKind : null,
+      )) as { state?: Record<string, unknown>; graphVersion?: number };
       setStateName("");
+      setStateRole("NORMAL");
       await refreshActiveFlow();
       await refreshFlows();
-      setMessage("State added.");
+      setMessage("State added. Reviewing the flow for useful next states…");
+      void refreshSuggestions("STATE_ADDED", result.state, result.graphVersion);
     } catch (err: any) {
       setMessage(String(err?.message ?? err));
+    }
+  };
+
+  const beginEditState = (state: DeclaredFlowDetail["states"][number]) => {
+    setEditingStateId(state.id);
+    setStateName(state.stateName);
+    setStateCategory(state.category || "BUSINESS");
+    setStateRole(state.role ?? "NORMAL");
+    setTerminalKind(state.terminalKind ?? "SUCCESS");
+  };
+
+  const cancelEditState = () => {
+    setEditingStateId(null);
+    setStateName("");
+    setStateCategory("BUSINESS");
+    setStateRole("NORMAL");
+    setTerminalKind("SUCCESS");
+  };
+
+  const saveEditedState = async () => {
+    const name = stateName.trim();
+    const category = stateCategory?.trim() || "BUSINESS";
+    if (!selectedFlowId || !editingStateId || !name) return;
+    try {
+      const result = (await updateDeclaredState(
+        projectId,
+        selectedFlowId,
+        editingStateId,
+        name,
+        category,
+        stateRole,
+        stateRole === "TERMINAL" ? terminalKind : null,
+      )) as { state?: Record<string, unknown>; graphVersion?: number };
+      cancelEditState();
+      await Promise.all([refreshActiveFlow(), refreshFlows()]);
+      setMessage(
+        "State updated. Reviewing suggestions against the new graph revision…",
+      );
+      void refreshSuggestions(
+        "STATE_UPDATED",
+        result?.state,
+        result?.graphVersion,
+      );
+    } catch (error: any) {
+      setMessage(String(error?.message ?? error));
+    }
+  };
+
+  const removeState = async (stateId: string, stateNameToDelete: string) => {
+    if (!selectedFlowId) return;
+    try {
+      const result = (await deleteDeclaredState(
+        projectId,
+        selectedFlowId,
+        stateId,
+      )) as { graphVersion?: number; deletedTransitionCount?: number };
+      if (editingStateId === stateId) cancelEditState();
+      setFromStateId((current) => (current === stateId ? "" : current));
+      setToStateId((current) => (current === stateId ? "" : current));
+      await Promise.all([refreshActiveFlow(), refreshFlows()]);
+      setMessage(
+        `State deleted${result.deletedTransitionCount ? ` with ${result.deletedTransitionCount} connected transition${result.deletedTransitionCount === 1 ? "" : "s"}` : ""}.`,
+      );
+      void refreshSuggestions("STATE_DELETED", undefined, result.graphVersion);
+    } catch (error: any) {
+      setMessage(String(error?.message ?? error));
+    }
+  };
+
+  const actOnSuggestion = async (
+    suggestionId: string,
+    action: "accept" | "reject",
+  ) => {
+    if (!selectedFlowId) return;
+    setSuggestionActionId(suggestionId);
+    setSuggestionsError(null);
+    try {
+      if (action === "accept") {
+        const response = (await acceptFlowSuggestion(
+          projectId,
+          selectedFlowId,
+          suggestionId,
+        )) as { data?: { graphVersion?: number } };
+        await Promise.all([refreshActiveFlow(), refreshFlows()]);
+        setMessage("Suggestion accepted and added to the flow.");
+        await refreshSuggestions(
+          "SUGGESTION_ACCEPTED",
+          undefined,
+          response.data?.graphVersion,
+        );
+      } else {
+        await rejectFlowSuggestion(projectId, selectedFlowId, suggestionId);
+        setSuggestions((current) =>
+          current.filter((item) => item.id !== suggestionId),
+        );
+        setMessage("Suggestion declined.");
+      }
+    } catch (error: any) {
+      const detail = String(error?.message ?? error);
+      setSuggestionsError(detail);
+      if (detail.includes("GRAPH_REVISION_STALE"))
+        await refreshSuggestions("MANUAL_REFRESH");
+    } finally {
+      setSuggestionActionId(null);
     }
   };
 
@@ -1047,19 +2095,24 @@ function ManualIntentBuilder({
     )
       return;
     try {
-      await addDeclaredTransition(
+      const result = (await addDeclaredTransition(
         projectId,
         selectedFlowId,
         fromStateId,
         toStateId,
         transitionAction.trim() || undefined,
-      );
+      )) as { graphVersion?: number };
       setFromStateId("");
       setToStateId("");
       setTransitionAction("");
       await refreshActiveFlow();
       await refreshFlows();
       setMessage("Transition added.");
+      void refreshSuggestions(
+        "TRANSITION_ADDED",
+        undefined,
+        result.graphVersion,
+      );
     } catch (err: any) {
       setMessage(String(err?.message ?? err));
     }
@@ -1084,6 +2137,11 @@ function ManualIntentBuilder({
   };
 
   const editable = activeFlow?.status !== "COMPLETE";
+  const application = applications.find((item) => item.id === projectId);
+  const workspaceAttached = Boolean(workspaces[projectId]);
+  const activeBinding = (activeFlow as any)?.projectBindings?.[0] as
+    | { id: string; status: string }
+    | undefined;
   const stateNameById = new Map(
     activeFlow?.states.map((state) => [state.id, state.stateName]) ?? [],
   );
@@ -1093,7 +2151,7 @@ function ManualIntentBuilder({
       {showPlanBanner ? (
         <section className="content-card upgrade-card">
           <div>
-            <Status>Free plan · Manual declaration</Status>
+            <Status>Free plan / Manual declaration</Status>
             <h2>Declare your intended behavior directly</h2>
             <p>
               Manual flow declaration is included on Free. Upgrade to Local or
@@ -1105,59 +2163,195 @@ function ManualIntentBuilder({
         </section>
       ) : null}
 
+      <section className="context-banner" role="note">
+        <strong>Keep every Flow focused.</strong> Declaring an entire project as
+        one Flow reduces precision. Prefer one bounded capability such as
+        authentication, checkout, password reset, or account deletion.
+      </section>
+
       <section className="content-card manual-flow-create">
         <div className="card-heading">
           <div>
             <small>Step 1</small>
-            <h2>Create or choose a flow</h2>
+            <h2>Choose or create a flow</h2>
           </div>
+          {flows.length > 0 ? (
+            <div className="flow-mode-tabs">
+              <button
+                type="button"
+                className={`button ${flowMode === "existing" ? "primary" : ""}`}
+                onClick={() => setFlowMode("existing")}
+              >
+                <Folder size={14} />
+                Select existing flow ({flows.length})
+              </button>
+              <button
+                type="button"
+                className={`button ${flowMode === "create" ? "primary" : ""}`}
+                onClick={() => setFlowMode("create")}
+              >
+                <Plus size={14} />
+                Create new flow
+              </button>
+            </div>
+          ) : null}
         </div>
-        <div className="manual-flow-controls">
-          <label>
-            <span>Existing flow</span>
-            <SelectField
-              value={selectedFlowId}
-              onValueChange={setSelectedFlowId}
-              options={[
-                { value: "", label: "Select a flow" },
-                ...flows.map((flow) => ({
-                  value: flow.id,
-                  label: `${flow.name} (${flow.status})`,
-                })),
-              ]}
-              placeholder="Select a flow"
-            />
-          </label>
-          <label>
-            <span>New flow name</span>
-            <input
-              value={newFlowName}
-              onChange={(event) => setNewFlowName(event.target.value)}
-              placeholder="e.g. Customer checkout"
-            />
-          </label>
-          <label>
-            <span>Flow type</span>
-            <SelectField
-              value={workflowType}
-              onValueChange={setWorkflowType}
-              options={[
-                { value: "CUSTOM", label: "Custom" },
-                { value: "AUTHENTICATION", label: "Authentication" },
-                { value: "CHECKOUT", label: "Checkout" },
-                { value: "ONBOARDING", label: "Onboarding" },
-              ]}
-            />
-          </label>
-          <button
-            className="button primary"
-            disabled={busy || !newFlowName.trim()}
-            onClick={() => void createFlow()}
-          >
-            <Plus size={15} />
-            Create flow
-          </button>
-        </div>
+
+        {flows.length > 0 && flowMode === "existing" ? (
+          <div className="flow-selection-mode">
+            <p className="flow-section-guide">
+              Select an existing flow from this project to review, edit, or
+              publish its states and transitions.
+            </p>
+            <div className="flow-select-row">
+              <label>
+                <span>Existing flow</span>
+                <SelectField
+                  value={selectedFlowId}
+                  onValueChange={setSelectedFlowId}
+                  options={[
+                    { value: "", label: "Select a flow" },
+                    ...flows.map((flow) => ({
+                      value: flow.id,
+                      label: `${flow.name} (${flow.status})`,
+                    })),
+                  ]}
+                  placeholder="Select a flow"
+                />
+              </label>
+            </div>
+
+            {activeFlow ? (
+              <div className="active-flow-summary-card">
+                <div className="active-flow-header">
+                  <div>
+                    <strong>{activeFlow.name}</strong>
+                    <span className="flow-type-badge">
+                      {activeFlow.workflowType}
+                    </span>
+                    <Status>{activeFlow.status}</Status>
+                  </div>
+                  <span className="state-count-tag">
+                    {activeFlow.states.length} states
+                  </span>
+                </div>
+                {activeFlow.purpose ? (
+                  <div className="active-flow-detail">
+                    <small>Purpose</small>
+                    <p>{activeFlow.purpose}</p>
+                  </div>
+                ) : null}
+                {activeFlow.scopeStatement ? (
+                  <div className="active-flow-detail">
+                    <small>Scope Boundary</small>
+                    <p>{activeFlow.scopeStatement}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="flow-selection-empty-hint">
+                Please choose a flow from the dropdown above to continue.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="flow-create-mode">
+            {flows.length === 0 ? (
+              <p className="flow-section-guide">
+                No flows have been created for this project yet. Fill out the
+                details below to define your first flow.
+              </p>
+            ) : (
+              <p className="flow-section-guide">
+                Define a new capability flow by specifying its name, type,
+                purpose, and scope boundary.
+              </p>
+            )}
+            <div className="create-flow-form">
+              <div className="create-flow-row">
+                <label>
+                  <span>New flow name</span>
+                  <input
+                    value={newFlowName}
+                    onChange={(event) => setNewFlowName(event.target.value)}
+                    placeholder="e.g. Customer checkout"
+                  />
+                </label>
+                <label>
+                  <span>Flow type</span>
+                  <SelectField
+                    value={workflowType}
+                    onValueChange={setWorkflowType}
+                    options={[
+                      { value: "CUSTOM", label: "Custom" },
+                      { value: "AUTHENTICATION", label: "Authentication" },
+                      { value: "CHECKOUT", label: "Checkout" },
+                      { value: "ONBOARDING", label: "Onboarding" },
+                    ]}
+                  />
+                </label>
+              </div>
+
+              <label className="full-width">
+                <span className="field-label-with-tooltip">
+                  Purpose
+                  <span
+                    className="tooltip-trigger"
+                    tabIndex={0}
+                    title="Describe what this capability achieves (e.g. Allow customers to browse items, add to cart, enter shipping info, and place order)."
+                  >
+                    <HelpCircle size={13} />
+                    <span className="tooltip-bubble">
+                      Describe what this capability achieves (e.g. Allow
+                      customers to browse items, add to cart, enter shipping
+                      info, and place order).
+                    </span>
+                  </span>
+                </span>
+                <textarea
+                  rows={3}
+                  value={newFlowPurpose}
+                  onChange={(event) => setNewFlowPurpose(event.target.value)}
+                  placeholder="What should this functionality achieve? (e.g. Allow customers to add items to cart, enter shipping info, and place order)"
+                />
+              </label>
+
+              <label className="full-width">
+                <span className="field-label-with-tooltip">
+                  Scope boundary
+                  <span
+                    className="tooltip-trigger"
+                    tabIndex={0}
+                    title="Define the starting and ending boundaries of this flow (e.g. Guest sign-up screen through authenticated session)."
+                  >
+                    <HelpCircle size={13} />
+                    <span className="tooltip-bubble">
+                      Define the starting and ending boundaries of this flow
+                      (e.g. Guest sign-up screen through authenticated session).
+                    </span>
+                  </span>
+                </span>
+                <textarea
+                  rows={2}
+                  value={newFlowScope}
+                  onChange={(event) => setNewFlowScope(event.target.value)}
+                  placeholder="e.g. Guest sign-up through authenticated session"
+                />
+              </label>
+
+              <div className="create-flow-actions">
+                <button
+                  className="button primary"
+                  disabled={busy || !newFlowName.trim() || !newFlowScope.trim()}
+                  onClick={() => void createFlow()}
+                >
+                  <Plus size={15} />
+                  Create flow
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {activeFlow ? (
@@ -1174,6 +2368,40 @@ function ManualIntentBuilder({
               States are meaningful moments in the workflow, such as
               CART_REVIEWED, PAYMENT_SUBMITTED, or ORDER_CONFIRMED.
             </p>
+            {editingStateId ? (
+              <div
+                className="state-editing-banner"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  background: "#1c1c1c",
+                  border: "1px solid #333",
+                  borderRadius: "4px",
+                  marginTop: "12px",
+                  marginBottom: "-4px",
+                }}
+              >
+                <span
+                  style={{ color: "#fff", fontSize: "12px", fontWeight: 600 }}
+                >
+                  Editing state: {stateName || "Untitled"}
+                </span>
+                <button
+                  type="button"
+                  className="button"
+                  style={{
+                    minHeight: "26px",
+                    fontSize: "11px",
+                    padding: "0 10px",
+                  }}
+                  onClick={cancelEditState}
+                >
+                  Cancel editing
+                </button>
+              </div>
+            ) : null}
             <div className="manual-flow-controls">
               <label>
                 <span>State name</span>
@@ -1198,14 +2426,55 @@ function ManualIntentBuilder({
                   ]}
                 />
               </label>
+              <label>
+                <span>Boundary role</span>
+                <SelectField
+                  disabled={!editable}
+                  value={stateRole}
+                  onValueChange={setStateRole}
+                  options={[
+                    { value: "NORMAL", label: "Intermediate" },
+                    { value: "INITIAL", label: "Initial state" },
+                    { value: "TERMINAL", label: "Terminal state" },
+                  ]}
+                />
+              </label>
+              {stateRole === "TERMINAL" ? (
+                <label>
+                  <span>Terminal outcome</span>
+                  <SelectField
+                    value={terminalKind}
+                    onValueChange={setTerminalKind}
+                    options={[
+                      { value: "SUCCESS", label: "Success" },
+                      { value: "FAILURE", label: "Failure" },
+                      { value: "CANCELLATION", label: "Cancellation" },
+                      { value: "ALTERNATE", label: "Alternate completion" },
+                    ]}
+                  />
+                </label>
+              ) : null}
               <button
+                type="button"
                 className="button primary"
                 disabled={busy || !editable || !stateName.trim()}
-                onClick={() => void addState()}
+                onClick={() =>
+                  void (editingStateId ? saveEditedState() : addState())
+                }
               >
-                <Plus size={15} />
-                Add state
+                {editingStateId ? <Check size={15} /> : <Plus size={15} />}
+                {editingStateId ? "Save state" : "Add state"}
               </button>
+              {editingStateId ? (
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy}
+                  onClick={cancelEditState}
+                >
+                  <X size={15} /> Cancel
+                </button>
+              ) : null}
             </div>
             {activeFlow.states.length ? (
               <div className="manual-state-list">
@@ -1214,6 +2483,40 @@ function ManualIntentBuilder({
                     <span>{index + 1}</span>
                     <strong>{state.stateName}</strong>
                     <small>{state.category}</small>
+                    <div className="manual-state-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={`Edit ${state.stateName}`}
+                        aria-label={`Edit ${state.stateName}`}
+                        disabled={!editable || busy}
+                        onClick={() => beginEditState(state)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title={`Delete ${state.stateName}`}
+                        aria-label={`Delete ${state.stateName}`}
+                        disabled={!editable || busy}
+                        onClick={() =>
+                          setStateToDelete({
+                            id: state.id,
+                            name: state.stateName,
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <small>
+                      {state.role === "INITIAL"
+                        ? "Initial"
+                        : state.role === "TERMINAL"
+                          ? `Terminal · ${state.terminalKind}`
+                          : "Intermediate"}
+                    </small>
                   </div>
                 ))}
               </div>
@@ -1222,7 +2525,36 @@ function ManualIntentBuilder({
                 No states yet. Add the first expected behavior above.
               </p>
             )}
+            <GuidedSuggestionsPanel
+              suggestions={suggestions}
+              meta={suggestionMeta}
+              loading={suggestionsLoading}
+              error={suggestionsError}
+              actionId={suggestionActionId}
+              editable={editable}
+              onRefresh={() => void refreshSuggestions("MANUAL_REFRESH")}
+              onAccept={(id) => void actOnSuggestion(id, "accept")}
+              onReject={(id) => void actOnSuggestion(id, "reject")}
+            />
           </section>
+
+          <ConfirmModal
+            isOpen={Boolean(stateToDelete)}
+            title={`Delete state "${stateToDelete?.name}"?`}
+            description="Are you sure you want to delete this state? Any transitions connected to this state will also be deleted."
+            confirmLabel="Delete state"
+            cancelLabel="Cancel"
+            variant="danger"
+            busy={busy}
+            onCancel={() => setStateToDelete(null)}
+            onConfirm={() => {
+              if (stateToDelete) {
+                const { id, name } = stateToDelete;
+                setStateToDelete(null);
+                void removeState(id, name);
+              }
+            }}
+          />
 
           <section className="content-card">
             <div className="card-heading">
@@ -1286,17 +2618,21 @@ function ManualIntentBuilder({
             {activeFlow.transitions.length ? (
               <div className="manual-transition-list">
                 {activeFlow.transitions.map((transition) => (
-                  <div key={transition.id}>
-                    <strong>
-                      {stateNameById.get(transition.fromStateId) ??
-                        transition.fromState?.stateName}
-                    </strong>
-                    <ArrowRight size={14} />
-                    <strong>
-                      {stateNameById.get(transition.toStateId) ??
-                        transition.toState?.stateName}
-                    </strong>
-                    <small>{transition.action || "Transition"}</small>
+                  <div key={transition.id} className="manual-transition-item">
+                    <div className="manual-transition-flow">
+                      <strong className="state-tag">
+                        {stateNameById.get(transition.fromStateId) ??
+                          transition.fromState?.stateName}
+                      </strong>
+                      <ArrowRight size={14} className="transition-arrow" />
+                      <strong className="state-tag">
+                        {stateNameById.get(transition.toStateId) ??
+                          transition.toState?.stateName}
+                      </strong>
+                    </div>
+                    <small className="manual-transition-action">
+                      {transition.action || "Transition"}
+                    </small>
                   </div>
                 ))}
               </div>
@@ -1306,6 +2642,29 @@ function ManualIntentBuilder({
                 them.
               </p>
             )}
+            <WholeFlowReviewPanel
+              suggestions={flowReviewSuggestions}
+              meta={flowReviewMeta}
+              selectedIds={selectedReviewIds}
+              preview={flowReviewPreview}
+              loading={flowReviewLoading}
+              previewLoading={flowReviewPreviewLoading}
+              applying={flowReviewApplying}
+              error={flowReviewError}
+              editable={editable}
+              stateCount={activeFlow.states.length}
+              onReview={() => void requestFlowReview()}
+              onToggle={(id) =>
+                setSelectedReviewIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })
+              }
+              onApply={() => void applySelectedFlowReview()}
+              onDecline={() => void declineCurrentFlowReview()}
+            />
           </section>
 
           <section className="content-card manual-flow-finish">
@@ -1313,13 +2672,13 @@ function ManualIntentBuilder({
               <small>Step 4</small>
               <h2>
                 {activeFlow.status === "COMPLETE"
-                  ? "Flow is complete"
-                  : "Finish the declaration"}
+                  ? "Flow is published"
+                  : "Publish the declaration"}
               </h2>
               <p>
                 {activeFlow.status === "COMPLETE"
-                  ? "This flow can now be used as expected behavior during QA runs."
-                  : "Completing locks this version and makes it available for reconciliation. You can reopen it later."}
+                  ? "This immutable Flow version is now the source of truth for initialization, rescans, QA runs, drift, and reports."
+                  : "Publishing validates one initial state, one or more reachable terminal states, and all transitions before locking this version."}
               </p>
             </div>
             <button
@@ -1333,10 +2692,147 @@ function ManualIntentBuilder({
                 <Lock size={15} />
               )}
               {activeFlow.status === "COMPLETE"
-                ? "Reopen flow"
-                : "Complete flow"}
+                ? "Create revision"
+                : "Publish flow"}
             </button>
           </section>
+          {diagrams.length ? (
+            <section className="content-card">
+              <div className="card-heading">
+                <div>
+                  <small>Synchronized projections</small>
+                  <h2>Flow diagrams</h2>
+                </div>
+                <Status>Derived from this published version</Status>
+              </div>
+              <div
+                className="button-row diagram-tabs"
+                role="tablist"
+                aria-label="Flow diagram projections"
+              >
+                {diagrams.map((diagram) => (
+                  <button
+                    key={diagram.kind}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDiagramKind === diagram.kind}
+                    aria-controls="published-flow-diagram"
+                    className={
+                      activeDiagramKind === diagram.kind
+                        ? "button primary mr-2"
+                        : "button secondary mr-2"
+                    }
+                    onClick={() => setActiveDiagramKind(diagram.kind)}
+                  >
+                    {diagram.kind.replace("_", " ")}
+                  </button>
+                ))}
+              </div>
+              {diagrams
+                .filter((diagram) => diagram.kind === activeDiagramKind)
+                .map((diagram) => {
+                  const diagramLabel = `${diagram.kind.replaceAll("_", " ")} diagram`;
+                  return (
+                    <div
+                      id="published-flow-diagram"
+                      key={`${diagram.kind}-${diagram.source}`}
+                      role="tabpanel"
+                      className="published-flow-diagram"
+                      aria-label={diagramLabel}
+                    >
+                      <FlowDiagram
+                        source={diagram.source}
+                        label={diagramLabel}
+                      />
+                    </div>
+                  );
+                })}
+              <p className="muted-callout">
+                All four views are generated from the same states and
+                transitions. Edit the Flow—not the projection—to keep every
+                diagram synchronized.
+              </p>
+            </section>
+          ) : null}
+          {activeFlow.status === "COMPLETE" ? (
+            <section className="content-card">
+              <div className="card-heading">
+                <div>
+                  <small>Project lifecycle</small>
+                  <h2>
+                    {activeBinding?.status === "ACTIVE"
+                      ? "Rescan Flow"
+                      : "Initialize Flow in project"}
+                  </h2>
+                </div>
+                <Status>{activeBinding?.status ?? "Not initialized"}</Status>
+              </div>
+              <p className="mb-4">
+                {activeBinding?.status === "ACTIVE"
+                  ? "Create a new immutable scan, compare it with the previous implementation, and assess both against this published Flow."
+                  : "Run the first Flow-scoped repository analysis, generate the code-review report, then review and approve the checkpoint instrumentation proposal."}
+              </p>
+              {!workspaceAttached ? (
+                <p className="muted-callout">
+                  Attach and scan a local workspace before initializing this
+                  Flow.
+                </p>
+              ) : null}
+              <button
+                className="button primary"
+                disabled={
+                  busy ||
+                  !workspaceAttached ||
+                  !application?.environments[0]?.id ||
+                  !activeFlow.publishedVersionId
+                }
+                onClick={() =>
+                  void (
+                    activeBinding?.status === "ACTIVE"
+                      ? rescanFlow(activeBinding.id, projectId).then(() =>
+                          refreshActiveFlow(),
+                        )
+                      : initializeFlow({
+                          flowId: activeFlow.id,
+                          applicationId: projectId,
+                          environmentId: application!.environments[0].id,
+                          flowVersionId: activeFlow.publishedVersionId,
+                        }).then((created) => {
+                          const initialization = created.initialization as
+                            | Record<string, unknown>
+                            | undefined;
+                          const initializationId = String(
+                            initialization?.id ?? "",
+                          );
+                          if (!initializationId)
+                            throw new Error(
+                              "Flow initialization was created without an identifier.",
+                            );
+                          navigate(
+                            `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(String(activeFlow.publishedVersionId))}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(application!.environments[0].id)}`,
+                          );
+                        })
+                  )
+                    .then(() =>
+                      activeBinding?.status === "ACTIVE"
+                        ? refreshActiveFlow().then(() =>
+                            setMessage(
+                              "Flow rescan completed and drift was generated.",
+                            ),
+                          )
+                        : undefined,
+                    )
+                    .catch((error) =>
+                      setMessage(String(error?.message ?? error)),
+                    )
+                }
+              >
+                {activeBinding?.status === "ACTIVE"
+                  ? "Rescan Flow"
+                  : "Initialize Flow"}
+              </button>
+            </section>
+          ) : null}
         </>
       ) : (
         <EmptyState
@@ -2998,6 +4494,9 @@ export function InstrumentationPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const setupMode = searchParams.get("setup") === "connect";
+  const flowId = searchParams.get("flowId") ?? undefined;
+  const flowVersionId = searchParams.get("flowVersionId") ?? undefined;
+  const initializationId = searchParams.get("initializationId") ?? undefined;
   const requestedEnvironmentId = searchParams.get("environmentId");
   const editableEnvironments =
     application?.environments.filter((item) => item.type !== "PRODUCTION") ??
@@ -3070,6 +4569,9 @@ export function InstrumentationPage() {
       applicationId: projectId,
       environmentId: environment.id,
       environmentType: environment.type,
+      instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
+      flowId,
+      flowVersionId,
     });
     setDetections(result.detections);
     const supported = result.detections.filter((item) => item.supported);
@@ -3105,7 +4607,7 @@ export function InstrumentationPage() {
             : `This setup already has a ${String(record.status).toLowerCase().replaceAll("_", " ")} task. Opening it now.`,
         );
         navigate(
-          `/projects/${projectId}/instrumentation/plans/${returnedPlanId}`,
+          `/projects/${projectId}/instrumentation/plans/${returnedPlanId}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`,
         );
         return;
       }
@@ -3151,6 +4653,9 @@ export function InstrumentationPage() {
       environmentId: environment.id,
       environmentType: environment.type,
       adapterId,
+      instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
+      flowId,
+      flowVersionId,
     });
   };
 
@@ -3551,6 +5056,8 @@ export function InstrumentationPage() {
 
 export function InstrumentationDetailPage() {
   const { projectId, planId } = useParams();
+  const [searchParams] = useSearchParams();
+  const initializationId = searchParams.get("initializationId");
   const {
     application,
     busy,
@@ -3561,6 +5068,9 @@ export function InstrumentationDetailPage() {
     applyInstrumentation,
     validateInstrumentation,
     rollbackInstrumentation,
+    approveFlowInitialization,
+    applyFlowInitialization,
+    validateFlowInitialization,
   } = useProject();
   const [record, setRecord] = useState<Record<string, any> | null>(null);
   const [localResult, setLocalResult] = useState<Record<string, any> | null>(
@@ -3691,10 +5201,15 @@ export function InstrumentationDetailPage() {
   const approve = async () => {
     if (!environment)
       throw new Error("INSTRUMENTATION_ENVIRONMENT_UNAVAILABLE");
+    if (initializationId)
+      await approveFlowInitialization(initializationId, planId);
     await approveInstrumentation({
       applicationId: projectId,
       environmentId: environment.id,
       environmentType: environment.type,
+      instrumentationPurpose: plan.instrumentationPurpose,
+      flowId: plan.flowId ?? undefined,
+      flowVersionId: plan.flowVersionId ?? undefined,
       planId,
       approvedFileScopes: files,
       approvedCommandIds: commands,
@@ -3704,23 +5219,53 @@ export function InstrumentationDetailPage() {
   const approveAndApply = async () => {
     if (!environment)
       throw new Error("INSTRUMENTATION_ENVIRONMENT_UNAVAILABLE");
+    if (initializationId)
+      await approveFlowInitialization(initializationId, planId);
     await approveInstrumentation({
       applicationId: projectId,
       environmentId: environment.id,
       environmentType: environment.type,
+      instrumentationPurpose: plan.instrumentationPurpose,
+      flowId: plan.flowId ?? undefined,
+      flowVersionId: plan.flowVersionId ?? undefined,
       planId,
       approvedFileScopes: files,
       approvedCommandIds: commands,
     });
-    await applyInstrumentation(projectId, planId);
+    const result = await applyInstrumentation(projectId, planId);
+    const patchSetId = String(
+      (result.cloud as Record<string, unknown> | undefined)?.id ?? "",
+    );
+    if (initializationId) {
+      if (!patchSetId)
+        throw new Error(
+          "Flow instrumentation was applied without a cloud patch identifier.",
+        );
+      await applyFlowInitialization(initializationId, patchSetId);
+    }
     await refresh();
   };
   const apply = async () => {
-    await applyInstrumentation(projectId, planId);
+    const result = await applyInstrumentation(projectId, planId);
+    const patchSetId = String(
+      (result.cloud as Record<string, unknown> | undefined)?.id ?? "",
+    );
+    if (initializationId) {
+      if (!patchSetId)
+        throw new Error(
+          "Flow instrumentation was applied without a cloud patch identifier.",
+        );
+      await applyFlowInitialization(initializationId, patchSetId);
+    }
     await refresh();
   };
   const validate = async () => {
-    await validateInstrumentation(projectId, planId);
+    const validation = await validateInstrumentation(projectId, planId);
+    if (initializationId && validation.valid) {
+      await validateFlowInitialization(initializationId, {
+        checkpointReachability: validation.checks,
+      });
+    }
     await refresh();
   };
   const copyBuildDiagnostics = async () => {
@@ -4434,7 +5979,7 @@ function RunTable({
             <Status>{run.status}</Status>
           </span>
           <span>
-            {run.artifactCount} artifacts · {run.findingCount} findings
+            {run.artifactCount} artifacts / {run.findingCount} findings
           </span>
           <span>
             {run.startedAt
@@ -4479,7 +6024,11 @@ export function NewRunPage() {
   const [productionObservationApproved, setProductionObservationApproved] =
     useState(false);
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
+  const [selectedFlowId, setSelectedFlowId] = useState("");
   const [expectedGraphVersionId, setExpectedGraphVersionId] = useState("");
+  const [captureMode, setCaptureMode] = useState<
+    "FRONTEND" | "BACKEND" | "COMBINED"
+  >("FRONTEND");
   const [instrumentationManifests, setInstrumentationManifests] = useState<
     Array<{ id: string; label: string }>
   >([]);
@@ -4516,6 +6065,11 @@ export function NewRunPage() {
           (item) => item.status === "COMPLETE" || item.status === "COMPLETED",
         )?.versions?.[0]?.id ?? "",
       );
+      setSelectedFlowId(
+        items.find(
+          (item) => item.status === "COMPLETE" || item.status === "COMPLETED",
+        )?.id ?? "",
+      );
     });
   }, [getDeclaredFlows, projectId]);
   useEffect(() => {
@@ -4544,11 +6098,35 @@ export function NewRunPage() {
       />
     );
   const begin = async () => {
+    const selectedFlow = flows.find(
+      (flow) => flow.id === selectedFlowId,
+    ) as any;
+    const binding = selectedFlow?.projectBindings?.[0];
+    const initialization = binding?.initializations?.[0];
+    const scan = binding?.scans?.[0];
+    if (
+      !selectedFlow ||
+      !binding ||
+      binding.status !== "ACTIVE" ||
+      initialization?.status !== "COMPLETED" ||
+      !scan
+    ) {
+      throw new Error(
+        "Initialize this published Flow in the selected project and environment before starting a QA run.",
+      );
+    }
     const run = await startRun({
       applicationId: projectId,
       environmentId,
       workspaceId: workspace?.id ?? null,
-      expectedGraphVersionId: expectedGraphVersionId || null,
+      flowId: selectedFlow.id,
+      flowBindingId: binding.id,
+      flowInitializationId: initialization.id,
+      flowScanId: scan.id,
+      flowDriftId: binding.latestDriftId ?? null,
+      expectedGraphVersionId,
+      captureTracks:
+        captureMode === "COMBINED" ? ["FRONTEND", "BACKEND"] : [captureMode],
       patchSetId: patchSetId || null,
       environmentType: environment?.type ?? "STAGING",
       mode,
@@ -4563,7 +6141,7 @@ export function NewRunPage() {
   return (
     <Page
       title="New QA run"
-      description="Configure a managed-browser run. Browser-only mode requires no SDK."
+      description="Choose an initialized Flow and capture frontend, backend, or correlated evidence within its initial and terminal boundaries."
     >
       <section className="wizard-card">
         <div className="form-grid">
@@ -4629,22 +6207,42 @@ export function NewRunPage() {
             ) : null}
           </label>
           <label className="full">
-            Expected intent
+            Flow source of truth
             <SelectField
-              value={expectedGraphVersionId}
-              onValueChange={setExpectedGraphVersionId}
+              value={selectedFlowId}
+              onValueChange={(flowId) => {
+                setSelectedFlowId(flowId);
+                setExpectedGraphVersionId(
+                  flows.find((flow) => flow.id === flowId)?.versions?.[0]?.id ??
+                    "",
+                );
+              }}
               options={[
-                { value: "", label: "Observational run (no expected graph)" },
+                { value: "", label: "Select an initialized published Flow" },
                 ...flows.flatMap((flow) =>
                   flow.versions?.[0]
                     ? [
                         {
-                          value: flow.versions[0].id,
-                          label: `${flow.name} · version ${flow.versions[0].version}`,
+                          value: flow.id,
+                          label: `${flow.name} / version ${flow.versions[0].version}`,
                         },
                       ]
                     : [],
                 ),
+              ]}
+            />
+          </label>
+          <label className="full">
+            Capture tracks
+            <SelectField
+              value={captureMode}
+              onValueChange={(value) =>
+                setCaptureMode(value as typeof captureMode)
+              }
+              options={[
+                { value: "FRONTEND", label: "Frontend browser" },
+                { value: "BACKEND", label: "Backend requests" },
+                { value: "COMBINED", label: "Combined frontend + backend" },
               ]}
             />
           </label>
@@ -4746,6 +6344,8 @@ export function NewRunPage() {
             busy ||
             !targetUrl ||
             !environmentId ||
+            !selectedFlowId ||
+            !expectedGraphVersionId ||
             Boolean(launchCommandId && !launchApproved) ||
             Boolean(
               environment?.type === "PRODUCTION" &&

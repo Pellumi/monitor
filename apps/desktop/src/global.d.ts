@@ -1,6 +1,8 @@
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
+  FlowReviewPreview,
+  FlowSuggestionsResponse,
   DocumentAccess,
   DesktopApplication,
   DesktopSession,
@@ -50,11 +52,26 @@ declare global {
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
         getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-        createDeclaredFlow(applicationId: string, name: string, workflowType: string): Promise<DeclaredFlowSummary>;
-        addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string): Promise<Record<string, unknown>>;
+        createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+        addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
+        updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
+        deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
         addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
         completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
+        getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
+        acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+        rejectFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+        previewFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowReviewPreview>;
+        applyFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+        declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
+        getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
+        initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+        rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
+        approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
+        applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Record<string, unknown>>;
+        validateFlowInitialization(initializationId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
         listDrafts(applicationId: string): Promise<IntentDraft[]>;
         getDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
         createDraft(applicationId: string, documentVersionIds: string[]): Promise<IntentDraftJobCreated>;

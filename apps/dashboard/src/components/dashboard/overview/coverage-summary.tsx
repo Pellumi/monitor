@@ -62,7 +62,9 @@ export function CoverageSummary() {
           </p>
         </div>
         <span className="text-xs font-mono text-neutral-500">
-          Derived from {data?.summary?.workflowsDiscovered.value ?? 12} discovered workflows
+          {data?.summary?.workflowsDiscovered.value != null
+            ? `Derived from ${data.summary.workflowsDiscovered.value} discovered workflows`
+            : "Coverage evidence pending"}
         </span>
       </div>
 

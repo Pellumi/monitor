@@ -686,10 +686,14 @@ async function main() {
 
   fastify.all('/v1/rules/*', forwardToFdrs);
   fastify.all('/v1/admin/rules/*', forwardToFdrs);
+  fastify.all('/v1/applications/:id/flows', forwardToFdrs);
   fastify.all('/v1/applications/:id/flows/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/intent-drafts', forwardToFdrs);
   fastify.all('/v1/applications/:id/intent-drafts/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/instrumentation/*', forwardToOnboarding);
+  fastify.all('/flows/:flowId/initializations', forwardToOnboarding);
+  fastify.all('/flow-initializations/:initializationId/*', forwardToOnboarding);
+  fastify.all('/flow-bindings/:bindingId/rescans', forwardToOnboarding);
   fastify.all('/desktop/setup-handoffs/*', forwardToOnboarding);
   fastify.all('/v1/applications/:id/declared-flows/*', forwardToFdrs);
   fastify.all('/applications/:id/declared-flow', forwardToFdrs);

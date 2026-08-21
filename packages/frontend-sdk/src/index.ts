@@ -146,12 +146,9 @@ class SotsFrontendSDK {
   }
 
   async verifyInstallation(): Promise<void> {
-    // Keep the established onboarding event contract so existing collectors and
-    // installation checks continue to work. Phase 3 correlation fields make
-    // the same event usable as the instrumentation verification signal.
-    this.trackEvent('SOTS_ONBOARDING_TEST', {
+    this.trackEvent('TELLANN_INITIALIZED', {
       source: 'manual_verification',
-      verificationKind: 'INSTRUMENTATION_VERIFIED',
+      verificationKind: 'BOOTSTRAP_INITIALIZED',
       instrumentationManifestVersion: this.config?.instrumentationManifestVersion ?? null,
       agentVersion: this.config?.agentVersion ?? null,
     });

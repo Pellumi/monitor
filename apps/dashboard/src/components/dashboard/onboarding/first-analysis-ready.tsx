@@ -40,7 +40,7 @@ export function FirstAnalysisReady() {
             Workflows Discovered
           </span>
           <span className="text-xl font-bold text-white block mt-0.5">
-            {summary?.workflowsDiscovered.value ?? 5}
+            {summary?.workflowsDiscovered.value ?? "Pending"}
           </span>
         </div>
         <div>
@@ -48,7 +48,7 @@ export function FirstAnalysisReady() {
             States Observed
           </span>
           <span className="text-xl font-bold text-white block mt-0.5">
-            {summary?.statesObserved.value ?? 21}
+            {summary?.statesObserved.value ?? "Pending"}
           </span>
         </div>
         <div>
@@ -56,7 +56,7 @@ export function FirstAnalysisReady() {
             Workflow Coverage
           </span>
           <span className="text-xl font-bold text-emerald-400 block mt-0.5">
-            {coverage?.workflowCoverage.value?.toFixed(1) ?? "67.0"}%
+            {coverage?.workflowCoverage.value != null ? `${coverage.workflowCoverage.value.toFixed(1)}%` : "Pending"}
           </span>
         </div>
         <div>
@@ -64,7 +64,9 @@ export function FirstAnalysisReady() {
             Detected Gaps
           </span>
           <span className="text-xl font-bold text-amber-400 block mt-0.5">
-            {(data?.missingStates?.length ?? 7) + (data?.missingFlows?.length ?? 5)}
+            {data?.missingStates && data?.missingFlows
+              ? data.missingStates.length + data.missingFlows.length
+              : "Pending"}
           </span>
         </div>
       </div>
