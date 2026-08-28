@@ -453,6 +453,30 @@ export class DesktopCloudClient {
     return this.request(`/flows/${flowId}/initializations`, { method: 'POST', body: JSON.stringify(input) });
   }
 
+  async flowInitialization(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}`);
+  }
+
+  async analyzeFlowInitialization(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/analyze`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/mode`, { method: 'POST', body: JSON.stringify({ mode }) });
+  }
+
+  async updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/roadmap/${encodeURIComponent(stepId)}/progress`, { method: 'POST', body: JSON.stringify({ completed }) });
+  }
+
+  async startFlowVerification(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/verification/start`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async flowVerification(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/verification`);
+  }
+
   async approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Json> {
     return this.request(`/flow-initializations/${initializationId}/approve`, { method: 'POST', body: JSON.stringify({ instrumentationPlanId }) });
   }
@@ -862,6 +886,12 @@ export class DesktopCloudClient {
       if (retry && (error as { status?: number }).status === 401) {
         await this.refresh();
         return this.requestOnce<T>(pathName, init, false);
+      }
+      if ((error as { status?: number }).status === 401) {
+        clearDesktopSession();
+        const expired = new Error('Your Tellann Desktop session expired or was revoked. Sign in again.');
+        Object.assign(expired, { status: 401, code: 'DESKTOP_SESSION_INVALID', cause: error });
+        throw expired;
       }
       throw error;
     }

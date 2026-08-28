@@ -1,237 +1,302 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+import { ProductPreviewCarousel } from '@/components/product-preview-carousel';
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.domain-name.com';
 const docsUrl = process.env.NEXT_PUBLIC_DOCS_URL || 'https://docs.domain-name.com';
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://domain-name.com';
 
-const loop = [
-  ['Declare', 'Model the states, transitions, and critical journeys your product is expected to support.'],
-  ['Observe', 'Install the SDKs and let Tellann capture frontend sessions, backend APIs, errors, and workflows.'],
-  ['Reconcile', 'Compare declared behavior with observed behavior to separate confirmed paths from true gaps.'],
-  ['Report', 'Export coverage, missing states, missing flows, endpoint findings, and release evidence.'],
+export const metadata: Metadata = {
+  title: 'Behavioral Quality Intelligence for Software Teams',
+  description:
+    'Tellann observes application behavior, discovers workflows, measures coverage, identifies missing states and flows, replays sessions, and generates QA intelligence.',
+  alternates: { canonical: '/' },
+};
+
+const problems = [
+  ['Missing paths', 'The happy path passes. The failure path was never demonstrated.', ['Payment failure', 'Session timeout', 'Out of stock', 'Password reset']],
+  ['Missing states', 'Your workflow exists. Its edge states do not.', ['Loading', 'Empty', 'Error', 'Recovery', '404']],
+  ['Unknown coverage', 'You know code coverage—but not how much real application behavior you validated.', ['Workflow', 'State', 'Transition', 'Endpoint']],
+  ['Expensive investigation', 'A failure happens. Your team reconstructs the journey manually.', ['Logs', 'Screenshots', 'Requests', 'Reproduction']],
 ];
 
-const audiences = [
-  ['QA teams', 'Turn exploratory and automated test runs into concrete behavioral coverage evidence.'],
-  ['Developers', 'Find hidden flows, broken transitions, missing telemetry, and endpoint regressions faster.'],
-  ['Project managers', 'Review expected coverage and release readiness without reading raw test logs.'],
-  ['Engineering leaders', 'Use one source of truth for behavioral quality, gaps, and product risk.'],
+const steps = [
+  ['01', 'Connect', 'Create an application, install the Tellann SDK, and configure your application key.'],
+  ['02', 'Demonstrate', 'Start a session and use your application normally—from registration through checkout.'],
+  ['03', 'Model behavior', 'Events become sessions, states, transitions, workflows, and a Behavior Graph.'],
+  ['04', 'Review intelligence', 'Inspect coverage, missing flows, replays, endpoints, and QA reports.'],
 ];
 
-const features = [
-  ['Behavioral graph', 'Visualize how users and tests actually move through the application.'],
-  ['Flow declaration', 'Capture expected product behavior without forcing QA to write brittle rule packs.'],
-  ['SDK telemetry', 'Collect frontend and backend evidence through environment-scoped API keys.'],
-  ['Reconciliation', 'Classify confirmed behavior, true gaps, and undeclared states or transitions.'],
-  ['Endpoint analysis', 'Review route latency, error rates, request volume, and performance recommendations.'],
-  ['Report exports', 'Share JSON, CSV, HTML, or PDF evidence according to plan entitlements.'],
+const personas = [
+  ['Developers', 'Understand workflows, inspect sessions, and find behavior you never accounted for.', '/solutions/developers'],
+  ['QA engineers', 'Measure workflow coverage and surface missing states, flows, and failure scenarios.', '/solutions/qa-engineers'],
+  ['Engineering leaders', 'See what your team has actually demonstrated and validated.', '/solutions/engineering-leaders'],
+  ['Startup teams', 'Build stronger QA visibility without first building a large QA operation.', '/solutions/startups'],
 ];
+
+const plans = [
+  ['Free', '$0', ['1 application', '1 user', '14-day retention', 'Core Tellann workflow']],
+  ['Solo', '$29', ['3 applications', '3 users', '90-day retention', 'Advanced reports']],
+  ['Team', '$99', ['10 applications', '10 users', '180-day retention', 'Collaboration + RBAC']],
+];
+
+const resources = [
+  ['What is behavioral testing?', 'A practical introduction to testing software through observed states, actions, and workflows.', '/guides'],
+  ['Workflow coverage vs code coverage', 'Why executed code and validated user behavior answer different quality questions.', '/product/coverage'],
+  ['How to identify missing user flows', 'A structured approach to finding failure, recovery, and edge-case paths.', '/product/missing-flows'],
+];
+
+function VisualPlaceholder({ label, dimensions, className = '' }: { label: string; dimensions: string; className?: string }) {
+  const [width, height] = dimensions.match(/\d+/g)?.map(Number) ?? [1200, 640];
+
+  return (
+    <div
+      className={`home-visual-placeholder ${className}`}
+      role="img"
+      aria-label={`${label} placeholder, intended size ${dimensions}`}
+      data-placeholder-width={width}
+      data-placeholder-height={height}
+      style={{ width: `min(100%, ${width}px)`, aspectRatio: `${width} / ${height}` }}
+    >
+      <span>Visual placeholder</span>
+      <strong>{label}</strong>
+      <code>{dimensions}</code>
+    </div>
+  );
+}
+
+function SectionHeading({ eyebrow, title, copy }: { eyebrow: string; title: string; copy?: string }) {
+  return (
+    <div className="home-section-heading">
+      <p>{eyebrow}</p>
+      <h2>{title}</h2>
+      {copy ? <span>{copy}</span> : null}
+    </div>
+  );
+}
+
+function TextLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return <Link href={href} className="home-text-link">{children}<span aria-hidden="true">→</span></Link>;
+}
 
 export default function MarketingHome() {
-  const jsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'Tellann',
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'Web',
-    url: siteUrl,
-    description:
-      'Self-observing testing system for behavioral QA intelligence, workflow coverage, reconciliation, and release reporting.',
-    offers: {
-      '@type': 'Offer',
-      price: '0',
-      priceCurrency: 'USD',
+  const jsonLd = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      name: 'Tellann',
+      url: siteUrl,
     },
-  };
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'Tellann',
+      url: siteUrl,
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'Tellann',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Web',
+      url: siteUrl,
+      description: metadata.description,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    },
+  ];
 
   return (
-    <main>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
-      <Header />
-      <section className="mx-auto grid min-h-[760px] max-w-7xl grid-cols-1 items-center gap-14 px-6 pb-20 pt-16 lg:grid-cols-[1fr_0.95fr] lg:px-10">
-        <div>
-          <h1 className="max-w-3xl text-5xl font-semibold tracking-tight text-slate-950 sm:text-6xl lg:text-7xl">
-            Self-observing QA intelligence for modern software teams
-          </h1>
-          <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-600">
-            Tellann watches how your application behaves during real QA runs, reconciles that behavior against expected flows, and turns the gaps into release-ready evidence.
-          </p>
-          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Link href={`${appUrl}/auth/login`} className="rounded-md bg-blue-600 px-5 py-3 text-center text-sm font-semibold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
-              Start reviewing your system
-            </Link>
-            <Link href={docsUrl} className="rounded-md border border-slate-300 px-5 py-3 text-center text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50">
-              Read the docs
-            </Link>
-          </div>
-          <div className="mt-10 grid max-w-xl grid-cols-3 gap-5 border-t border-slate-200 pt-7 text-sm">
-            <Metric value="4-step" label="review loop" />
-            <Metric value="SDK" label="frontend + backend" />
-            <Metric value="QA" label="evidence exports" />
-          </div>
-        </div>
-        <ProductMockup />
-      </section>
+    <main className="home-page">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
 
-      <section id="product" className="border-y border-slate-200 bg-slate-50">
-        <div className="mx-auto max-w-7xl px-6 py-20 lg:px-10">
-          <div className="max-w-2xl">
-            <h2 className="text-3xl font-semibold tracking-tight text-slate-950">The review loop</h2>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              Tellann connects product expectations to observed behavior so QA, development, and delivery teams can discuss the same evidence.
+      <section className="home-hero" aria-labelledby="home-hero-heading">
+        <div className="home-hero-copy">
+          <div className="home-hero-title-block">
+            <p className="home-eyebrow">Behavioral quality intelligence</p>
+            <h1 id="home-hero-heading">Understand how your <span>software actually behaves.</span></h1>
+          </div>
+          <div className="home-hero-body-block">
+            <p className="home-hero-lede">
+              Connect Tellann, demonstrate your application, and map its workflows, measure coverage,
+              uncover missing states and flows, replay sessions, and inspect API behavior.
             </p>
-          </div>
-          <div className="mt-12 grid gap-4 md:grid-cols-4">
-            {loop.map(([title, body], index) => (
-              <article key={title} className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-sm font-semibold text-blue-700">
-                  {index + 1}
-                </div>
-                <h3 className="mt-6 text-lg font-semibold text-slate-950">{title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-600">{body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-6 py-20 lg:px-10">
-        <div className="grid gap-12 lg:grid-cols-[0.8fr_1fr]">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Built for the people responsible for quality</h2>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              The system is designed around the handoff between test evidence, implementation behavior, and release decisions.
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {audiences.map(([title, body]) => (
-              <article key={title} className="rounded-lg border border-slate-200 p-6">
-                <h3 className="font-semibold text-slate-950">{title}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-slate-950 text-white">
-        <div className="mx-auto max-w-7xl px-6 py-20 lg:px-10">
-          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight">From raw telemetry to useful QA findings</h2>
-          <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {features.map(([title, body]) => (
-              <article key={title} className="rounded-lg border border-white/10 bg-white/[0.03] p-6">
-                <h3 className="font-semibold">{title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-300">{body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-6 py-20 lg:px-10">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 md:flex md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-950">Ready to review a real system?</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Create an app, install the SDK, declare your first flow, then run reconciliation against real usage.
-            </p>
-          </div>
-          <Link href={`${appUrl}/auth/login`} className="mt-6 inline-flex rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 md:mt-0">
-            Open Tellann
-          </Link>
-        </div>
-      </section>
-      <Footer />
-    </main>
-  );
-}
-
-function Header() {
-  return (
-    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 lg:px-10">
-        <Link href="/" className="text-lg font-semibold tracking-tight text-slate-950">Tellann</Link>
-        <nav className="hidden items-center gap-8 text-sm font-medium text-slate-600 md:flex">
-          <a href="#product">Product</a>
-          <Link href="/pricing">Pricing</Link>
-          <Link href="/security">Security</Link>
-          <a href={docsUrl}>Docs</a>
-        </nav>
-        <div className="flex items-center gap-3 text-sm font-semibold">
-          <a href={`${appUrl}/auth/login`} className="hidden text-slate-700 sm:inline">Login</a>
-          <a href={`${appUrl}/auth/login`} className="rounded-md bg-slate-950 px-4 py-2 text-white">Get started</a>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function Metric({ value, label }: { value: string; label: string }) {
-  return (
-    <div>
-      <div className="font-semibold text-slate-950">{value}</div>
-      <div className="mt-1 text-slate-500">{label}</div>
-    </div>
-  );
-}
-
-function ProductMockup() {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xl shadow-slate-200">
-      <div className="rounded-lg border border-slate-200 bg-slate-950 p-4 text-white">
-        <div className="flex items-center justify-between border-b border-white/10 pb-4">
-          <div>
-            <div className="text-sm font-semibold">Reconciliation report</div>
-            <div className="mt-1 text-xs text-slate-400">Acme Checkout / staging</div>
-          </div>
-          <div className="rounded-md bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">82.4% expected coverage</div>
-        </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-[1fr_0.9fr]">
-          <div className="rounded-lg bg-white/[0.04] p-4">
-            <div className="mb-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Behavioral graph</div>
-            <div className="space-y-4">
-              {['Home', 'Product detail', 'Cart', 'Checkout', 'Payment success'].map((node, index) => (
-                <div key={node} className="flex items-center gap-3">
-                  <div className="h-3 w-3 rounded-full bg-blue-400" />
-                  <div className="flex-1 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm">{node}</div>
-                  {index < 4 && <div className="text-slate-500">-&gt;</div>}
-                </div>
-              ))}
+            <div className="home-actions">
+              <a href={`${appUrl}/auth/login`} className="home-button home-button-primary">Start free <span aria-hidden="true">→</span></a>
+              <Link href="/product/how-it-works" className="home-button home-button-secondary">See how it works <span aria-hidden="true">→</span></Link>
             </div>
-          </div>
-          <div className="space-y-3">
-            {[
-              ['Confirmed', '18 states', 'text-emerald-300'],
-              ['True gaps', '3 states', 'text-amber-300'],
-              ['Undeclared', '2 states', 'text-sky-300'],
-              ['Endpoint risk', '1 route', 'text-rose-300'],
-            ].map(([label, value, color]) => (
-              <div key={label} className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-                <div className="text-xs text-slate-400">{label}</div>
-                <div className={`mt-2 text-xl font-semibold ${color}`}>{value}</div>
-              </div>
-            ))}
+            <p className="home-proof-note">No production traffic required. Start from a single demonstration session.</p>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
 
-function Footer() {
-  return (
-    <footer className="border-t border-slate-200">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between lg:px-10">
-        <div>(c) {new Date().getFullYear()} Tellann. Domain name pending.</div>
-        <div className="flex gap-5">
-          <Link href="/privacy">Privacy</Link>
-          <Link href="/terms">Terms</Link>
-          <Link href="/contact">Contact</Link>
+        <div
+          className="home-hero-video"
+          role="img"
+          aria-label="Placeholder for the Tellann demonstration video, intended size 240 by 656 pixels"
+          data-placeholder-width="240"
+          data-placeholder-height="656"
+        >
+          <span>Video placeholder</span>
+          <button type="button" aria-label="Play demonstration video placeholder">Play</button>
+          <code>240 × 656 px</code>
         </div>
-      </div>
-    </footer>
+
+        <aside className="home-hero-audiences" aria-label="Teams Tellann is built for">
+          <p>Built for the teams responsible for software quality.</p>
+          <div>
+            {['Developers', 'QA teams', 'Product', 'Startups', 'Platform', 'Engineering'].map((audience) => <strong key={audience}>{audience}</strong>)}
+          </div>
+        </aside>
+
+        <div className="home-transform-line" aria-label="Observe, model, analyze, understand">
+          {['Observe', 'Model', 'Analyze', 'Understand'].map((item, index) => <span key={item}>{item}{index < 3 ? <b aria-hidden="true">→</b> : null}</span>)}
+        </div>
+      </section>
+
+      <section className="home-section home-product-preview" aria-labelledby="preview-heading">
+        <SectionHeading eyebrow="Product preview" title="Demonstrate once. See what you missed." copy="Tellann turns a developer walkthrough into a structured model of application behavior." />
+        <ProductPreviewCarousel />
+      </section>
+
+      <section className="home-positioning" aria-labelledby="positioning-heading">
+        <h2 id="positioning-heading">Testing tells you what you planned. Monitoring tells you what broke. <span>Tellann models what your software actually did.</span></h2>
+        <div className="home-positioning-grid">
+          {[['Testing', 'What did we test?'], ['Monitoring', 'What failed?'], ['Analytics', 'What did users do?'], ['Tellann', 'How is the software behaving?']].map(([title, copy]) => (
+            <article key={title}><p>{title}</p><strong>“{copy}”</strong></article>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-section" aria-labelledby="problem-heading">
+        <SectionHeading eyebrow="The problem" title="Software quality hides between the test cases." />
+        <div className="home-card-grid home-problem-grid">
+          {problems.map(([title, copy, tags], index) => (
+            <article key={title as string} className="home-card">
+              <span className="home-card-index">0{index + 1}</span>
+              <h3>{title as string}</h3><p>{copy as string}</p>
+              <div className="home-tag-list">{(tags as string[]).map((tag) => <span key={tag}>{tag}</span>)}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-section home-process" aria-labelledby="process-heading">
+        <SectionHeading eyebrow="How Tellann works" title="From walkthrough to quality intelligence." />
+        <div className="home-step-grid">
+          {steps.map(([number, title, copy]) => <article key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></article>)}
+        </div>
+        <TextLink href="/product/how-it-works">Explore how Tellann works</TextLink>
+      </section>
+
+      <section className="home-section home-feature-split home-behavior-section" aria-labelledby="graph-heading">
+        <div className="home-feature-copy">
+          <SectionHeading eyebrow="Behavior Graph" title="See your application as a living behavior graph." copy="Tellann converts observed states, actions, transitions, and workflows into a visual map of how your application behaves." />
+          <TextLink href="/product/behavior-graphs">Explore Behavior Graphs</TextLink>
+        </div>
+        <div className="home-behavior-visual">
+          <VisualPlaceholder label="Behavior Graph product view" dimensions="960 × 576 px" />
+          <div className="home-behavior-rail" aria-label="Behavior Graph summary">
+            <p><span>Observed path</span><strong>Product view → Cart → Checkout → Payment success</strong></p>
+            <p><span>Missing paths</span><strong>Payment failure · Session timeout</strong></p>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-section home-feature-split" aria-labelledby="coverage-heading">
+        <div className="home-feature-copy">
+          <SectionHeading eyebrow="Coverage analysis" title="Know what you covered—and what you didn’t." copy="Measure workflow, state, transition, endpoint, and error coverage from behavior your team actually demonstrated." />
+          <div className="home-metric-row">{[['Workflow', '72%'], ['State', '81%'], ['Transition', '67%'], ['Endpoint', '91%'], ['Error', '38%']].map(([label, value]) => <span key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
+          <TextLink href="/product/coverage">Learn about coverage</TextLink>
+        </div>
+        <VisualPlaceholder label="Coverage dashboard" dimensions="640 × 520 px" />
+      </section>
+
+      <section className="home-section" aria-labelledby="missing-heading">
+        <SectionHeading eyebrow="Missing intelligence" title="Find the parts of the experience nobody showed you." />
+        <div className="home-two-column">
+          <article className="home-result-panel"><p>Missing states</p><h3>States the interface needs but no session reached.</h3><div className="home-result-list">{['EMPTY_CART', 'LOADING_PRODUCTS', 'NO_RESULTS', '404_PAGE', 'AUTHENTICATION_ERROR'].map((item) => <span key={item}>{item}</span>)}</div><TextLink href="/product/missing-states">Explore missing states</TextLink></article>
+          <article className="home-result-panel"><p>Missing flows</p><h3>Alternative and recovery journeys nobody demonstrated.</h3><div className="home-result-list">{['PAYMENT_FAILURE', 'RETRY_PAYMENT', 'PASSWORD_RESET', 'SESSION_EXPIRATION', 'OUT_OF_STOCK'].map((item) => <span key={item}>{item}</span>)}</div><TextLink href="/product/missing-flows">Explore missing flows</TextLink></article>
+        </div>
+      </section>
+
+      <section className="home-section home-feature-split home-reverse" aria-labelledby="replay-heading">
+        <div className="home-feature-copy">
+          <SectionHeading eyebrow="Session replay" title="Replay the behavior, not just the screen." copy="Reconstruct sessions from meaningful events and inspect the workflow, API calls, errors, and state changes together." />
+          <TextLink href="/product/session-replay">Explore Session Replay</TextLink>
+        </div>
+        <VisualPlaceholder label="Behavioral session replay" dimensions="1200 × 640 px" />
+      </section>
+
+      <section className="home-section" aria-labelledby="endpoint-heading">
+        <SectionHeading eyebrow="Endpoint intelligence" title="Connect frontend behavior to backend performance." copy="See request volume, latency, and error rates in the context of the workflows that produced them." />
+        <VisualPlaceholder label="Endpoint intelligence table" dimensions="1200 × 520 px" />
+        <div className="home-insight-row"><span><small>Slow endpoint</small><strong>GET /search · 942 ms</strong></span><span><small>Error-prone endpoint</small><strong>POST /payment · 3.8%</strong></span></div>
+        <TextLink href="/product/endpoint-intelligence">Explore Endpoint Intelligence</TextLink>
+      </section>
+
+      <section className="home-section home-feature-split" aria-labelledby="reports-heading">
+        <div className="home-feature-copy">
+          <SectionHeading eyebrow="QA reports" title="Turn observed behavior into something your team can act on." copy="Share workflow coverage, missing states and flows, session findings, and endpoint intelligence in the format your team needs." />
+          <div className="home-tag-list">{['PDF', 'CSV', 'JSON', 'HTML'].map((tag) => <span key={tag}>{tag}</span>)}</div>
+          <TextLink href="/product/qa-reports">Explore QA Reports</TextLink>
+        </div>
+        <VisualPlaceholder label="Application Quality Report" dimensions="1200 × 680 px" />
+      </section>
+
+      <section className="home-section" aria-labelledby="personas-heading">
+        <SectionHeading eyebrow="Who it’s for" title="Built for teams responsible for software quality." />
+        <div className="home-card-grid">
+          {personas.map(([title, copy, href]) => <article key={title} className="home-card"><h3>{title}</h3><p>{copy}</p><TextLink href={href}>{`Tellann for ${title}`}</TextLink></article>)}
+        </div>
+      </section>
+
+      <section className="home-security" aria-labelledby="security-heading">
+        <div className="home-section">
+          <SectionHeading eyebrow="Security and privacy" title="Observe behavior without collecting what you shouldn’t." copy="Privacy filtering happens before sensitive information enters Tellann’s analytics pipeline." />
+          <div className="home-security-grid">
+            {[['Observes', ['Routes', 'Clicks', 'State transitions', 'API metadata', 'Latency', 'Errors']], ['Masks', ['Emails', 'Names', 'User identifiers', 'IP addresses', 'Phone numbers']], ['Excludes', ['Passwords', 'Card details', 'CVVs', 'JWTs', 'Access tokens', 'API secrets']]].map(([title, items]) => <article key={title as string}><p>Tellann {String(title).toLowerCase()}</p>{(items as string[]).map((item) => <span key={item}>{item}</span>)}</article>)}
+          </div>
+          <div className="home-trust-row">{['Filtering before transmission', 'Tenant isolation', 'Encryption in transit', 'Encryption at rest', 'Role-based access'].map((item) => <span key={item}>✓ {item}</span>)}</div>
+          <TextLink href="/security">Read about Tellann Security</TextLink>
+        </div>
+      </section>
+
+      <section className="home-section home-developer" aria-labelledby="developer-heading">
+        <div className="home-feature-copy">
+          <SectionHeading eyebrow="Developer experience" title="A few lines to start observing behavior." copy="Install the SDK, initialize Tellann for your application, then begin a demonstration session." />
+          <div className="home-sdk-list">{['React', 'Next.js', 'Node.js', 'Express', 'NestJS', 'Fastify'].map((sdk) => <span key={sdk}>{sdk}</span>)}</div>
+          <div className="home-actions"><Link href="/developers/quickstart" className="home-button home-button-primary">Read quickstart</Link><a href={docsUrl} className="home-button home-button-secondary">View documentation</a></div>
+        </div>
+        <pre className="home-code"><code><span>$ npm install @tellann/react</span>{`\n\n`}Tellann.initialize({'{'}{`\n  `}applicationId: &quot;...&quot;,{`\n  `}apiKey: &quot;...&quot;,{`\n  `}environment: &quot;development&quot;{`\n`}{'}'});</code></pre>
+        <div className="home-architecture" aria-label="Tellann architecture overview">{['Your application', 'Tellann SDK', 'Behavior events', 'Session', 'Behavior Graph', 'Quality analysis'].map((item) => <span key={item}>{item}</span>)}</div>
+      </section>
+
+      <section className="home-section" aria-labelledby="pricing-heading">
+        <SectionHeading eyebrow="Pricing" title="Start with one application. Scale when you need to." />
+        <div className="home-pricing-grid">
+          {plans.map(([name, price, features], index) => <article key={name as string} className={index === 2 ? 'is-featured' : ''}><p>{name as string}</p><h3>{price as string}<small>{index ? ' / month' : ''}</small></h3><ul>{(features as string[]).map((feature) => <li key={feature}>{feature}</li>)}</ul><Link href={index === 0 ? `${appUrl}/auth/login` : '/pricing'}>{index === 0 ? 'Start free' : 'View plan'} <span aria-hidden="true">→</span></Link></article>)}
+        </div>
+        <p className="home-pricing-note">Business and Enterprise plans are also available.</p>
+        <TextLink href="/pricing">Compare all plans</TextLink>
+      </section>
+
+      <section className="home-section" aria-labelledby="resources-heading">
+        <SectionHeading eyebrow="Resources" title="Learn about behavioral quality." />
+        <div className="home-resource-grid">{resources.map(([title, copy, href]) => <article key={title}><span>Guide</span><h3>{title}</h3><p>{copy}</p><TextLink href={href}>Read guide</TextLink></article>)}</div>
+        <TextLink href="/resources">View all resources</TextLink>
+      </section>
+
+      <section className="home-roadmap" aria-labelledby="roadmap-heading">
+        <div><p className="home-eyebrow">Product direction</p><h2 id="roadmap-heading">Behavior is only the beginning.</h2><p>Tellann begins with demonstrated application behavior. That foundation can later support production intelligence, release comparison, and autonomous validation.</p><TextLink href="/roadmap">View roadmap</TextLink></div>
+        <div className="home-roadmap-stages"><span><small>Now</small><strong>Behavioral QA</strong></span><span><small>Next</small><strong>Production intelligence</strong></span><span><small>Future</small><strong>Autonomous validation</strong></span></div>
+      </section>
+
+      <section className="home-final-cta" aria-labelledby="final-cta-heading">
+        <p className="home-eyebrow">Start with one session</p>
+        <h2 id="final-cta-heading">Show Tellann how your application works.</h2>
+        <p>Start with a demonstration session and turn what happened into workflows, coverage, and QA insight.</p>
+        <div className="home-actions"><a href={`${appUrl}/auth/login`} className="home-button home-button-primary">Start free <span aria-hidden="true">→</span></a><Link href="/developers/quickstart" className="home-button home-button-secondary">Read the quickstart</Link></div>
+        <small>No production traffic required.</small>
+      </section>
+    </main>
   );
 }

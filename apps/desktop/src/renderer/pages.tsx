@@ -47,12 +47,15 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { EntitlementModal } from "./components/entitlement-modal";
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   DeclaredStateSuggestion,
   FlowReviewPreview,
   FlowSuggestionMeta,
+  FlowInitialization,
+  ManualRoadmap,
   InstrumentationDetection,
   InstrumentationPlan,
   IntentDraft,
@@ -124,7 +127,7 @@ function EmptyState({
 function Status({ children }: { children: ReactNode }) {
   return (
     <span className="status-pill">
-      <span aria-hidden="true" />
+      {/* <span aria-hidden="true" /> */}
       {children}
     </span>
   );
@@ -906,6 +909,7 @@ export function SourcesPage() {
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [unentitled, setUnentitled] = useState(false);
+  const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
 
   const refresh = async () => {
     if (!projectId) return;
@@ -921,6 +925,7 @@ export function SourcesPage() {
       }
       setDocuments(access.documents);
       setUnentitled(!access.entitled);
+      if (!access.entitled) setEntitlementModalOpen(true);
     } catch {
       setDocuments([]);
     } finally {
@@ -956,6 +961,15 @@ export function SourcesPage() {
       <Page
         title="Sources"
         description="Local document extraction with approved, redacted evidence synchronized to Tellann."
+        actions={
+          <button
+            className="button primary"
+            onClick={() => setEntitlementModalOpen(true)}
+          >
+            <Sparkles size={15} />
+            Upgrade plan
+          </button>
+        }
       >
         <section className="guarded-card">
           <ShieldCheck size={32} />
@@ -969,8 +983,22 @@ export function SourcesPage() {
               Team plan to enable product document upload and workflow
               inference.
             </p>
+            <div style={{ marginTop: "16px" }}>
+              <button
+                className="button primary"
+                onClick={() => setEntitlementModalOpen(true)}
+              >
+                Upgrade Plan
+              </button>
+            </div>
           </div>
         </section>
+        <EntitlementModal
+          isOpen={entitlementModalOpen}
+          feature="DOCUMENT_FLOW_INFERENCE"
+          currentPlan="Free"
+          onClose={() => setEntitlementModalOpen(false)}
+        />
       </Page>
     );
   }
@@ -982,6 +1010,7 @@ export function SourcesPage() {
     } catch (err: any) {
       if (String(err?.message ?? err).includes("FEATURE_NOT_ENTITLED")) {
         setUnentitled(true);
+        setEntitlementModalOpen(true);
       }
     }
   };
@@ -2146,6 +2175,36 @@ function ManualIntentBuilder({
     activeFlow?.states.map((state) => [state.id, state.stateName]) ?? [],
   );
 
+  const initializeActiveFlow = async () => {
+    if (!activeFlow?.publishedVersionId || !application?.environments[0]?.id)
+      return;
+    const environmentId = application.environments[0].id;
+    const setup = await window.tellann?.setup.getSdkSetup(
+      projectId,
+      environmentId,
+    );
+    if (!(setup?.readiness as any)?.connected) {
+      navigate(
+        `/projects/${projectId}/instrumentation?setup=connect&flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&environmentId=${encodeURIComponent(environmentId)}`,
+      );
+      return;
+    }
+    const created = await initializeFlow({
+      flowId: activeFlow.id,
+      applicationId: projectId,
+      environmentId,
+      flowVersionId: activeFlow.publishedVersionId,
+    });
+    const initializationId = String(
+      (created.initialization as Record<string, unknown> | undefined)?.id ?? "",
+    );
+    if (!initializationId)
+      throw new Error("Flow initialization was created without an identifier.");
+    navigate(
+      `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(environmentId)}`,
+    );
+  };
+
   return (
     <div className="stack">
       {showPlanBanner ? (
@@ -2792,26 +2851,7 @@ function ManualIntentBuilder({
                       ? rescanFlow(activeBinding.id, projectId).then(() =>
                           refreshActiveFlow(),
                         )
-                      : initializeFlow({
-                          flowId: activeFlow.id,
-                          applicationId: projectId,
-                          environmentId: application!.environments[0].id,
-                          flowVersionId: activeFlow.publishedVersionId,
-                        }).then((created) => {
-                          const initialization = created.initialization as
-                            | Record<string, unknown>
-                            | undefined;
-                          const initializationId = String(
-                            initialization?.id ?? "",
-                          );
-                          if (!initializationId)
-                            throw new Error(
-                              "Flow initialization was created without an identifier.",
-                            );
-                          navigate(
-                            `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(String(activeFlow.publishedVersionId))}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(application!.environments[0].id)}`,
-                          );
-                        })
+                      : initializeActiveFlow()
                   )
                     .then(() =>
                       activeBinding?.status === "ACTIVE"
@@ -3060,6 +3100,7 @@ export function IntentPage() {
   >(null);
   const [documentAutomationAvailable, setDocumentAutomationAvailable] =
     useState<boolean | null>(null);
+  const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const operationRef = useRef(0);
 
@@ -3429,7 +3470,11 @@ export function IntentPage() {
       await generateVersions(readyVersionIds, operation);
     } catch (error) {
       setStage("FAILED");
-      setAutomationMessage(intentErrorMessage(error));
+      const msg = intentErrorMessage(error);
+      if (String(error).includes("FEATURE_NOT_ENTITLED") || msg.includes("FEATURE_NOT_ENTITLED")) {
+        setEntitlementModalOpen(true);
+      }
+      setAutomationMessage(msg);
     }
   };
 
@@ -3440,7 +3485,11 @@ export function IntentPage() {
       setStage("GENERATING_DRAFT");
       void pollDraftJob(activeDraftJobId, operation).catch((error) => {
         setStage("FAILED");
-        setAutomationMessage(intentErrorMessage(error));
+        const msg = intentErrorMessage(error);
+        if (String(error).includes("FEATURE_NOT_ENTITLED") || msg.includes("FEATURE_NOT_ENTITLED")) {
+          setEntitlementModalOpen(true);
+        }
+        setAutomationMessage(msg);
       });
     } else if (
       batch.some(
@@ -3482,6 +3531,14 @@ export function IntentPage() {
       }
       actions={
         <>
+          {documentAutomationAvailable === false ? (
+            <button
+              className="button primary"
+              onClick={() => setEntitlementModalOpen(true)}
+            >
+              <Sparkles size={15} /> Upgrade plan
+            </button>
+          ) : null}
           <Link className="button" to={`/projects/${projectId}/sources`}>
             <BookOpenText size={15} /> View documents
           </Link>
@@ -3494,6 +3551,12 @@ export function IntentPage() {
         </>
       }
     >
+      <EntitlementModal
+        isOpen={entitlementModalOpen}
+        feature="DOCUMENT_FLOW_INFERENCE"
+        currentPlan="Free"
+        onClose={() => setEntitlementModalOpen(false)}
+      />
       {loading ? (
         <LoadingState />
       ) : documentAutomationAvailable === false ? (
@@ -4478,6 +4541,385 @@ export function IntentDetailPage() {
   );
 }
 
+function FlowReviewPanel({
+  initialization,
+}: {
+  initialization: FlowInitialization;
+}) {
+  const report = initialization.codeReviewReport;
+  if (!report) return <LoadingState />;
+  const groups = [
+    ["Missing states", report.missingStates],
+    ["Incomplete transitions", report.incompleteTransitions],
+    ["Edge cases", report.edgeCases],
+    ["Terminal outcomes", report.uncoveredTerminalOutcomes],
+  ] as const;
+  return (
+    <section className="content-card flow-review-panel">
+      <div className="card-heading">
+        <div>
+          <small>First code review</small>
+          <h2>Declared intent against the repository</h2>
+        </div>
+        <Status>{report.engine.replace("_", " ")}</Status>
+      </div>
+      <div className="flow-review-metrics">
+        <Metric
+          label="States mapped"
+          value={`${report.summary.mappedStates}/${report.summary.totalStates}`}
+        />
+        <Metric
+          label="Transitions mapped"
+          value={`${report.summary.mappedTransitions}/${report.summary.totalTransitions}`}
+        />
+        <Metric
+          label="Terminals"
+          value={String(initialization.manifest?.terminalStateIds.length ?? 0)}
+        />
+      </div>
+      <div className="flow-review-findings">
+        {groups.map(([title, findings]) => (
+          <article key={title}>
+            <strong>{title}</strong>
+            <span>{findings.length}</span>
+            <p>
+              {findings.length
+                ? "Review the evidence before choosing an initialization path."
+                : "No blocking finding detected."}
+            </p>
+          </article>
+        ))}
+      </div>
+      <AccordionItem value="flow-review-evidence">
+        <AccordionTrigger>Review evidence and recommendations</AccordionTrigger>
+        <AccordionContent>
+          <div className="stack">
+            {report.recommendations.length ? (
+              report.recommendations.map((item: any, index: number) => (
+                <div
+                  className="muted-callout"
+                  key={`${item.checkpointId ?? "recommendation"}-${index}`}
+                >
+                  <strong>{String(item.action ?? "Review mapping")}</strong>
+                  <p>
+                    {String(item.mapping?.file ?? "No confident file mapping")}{" "}
+                    {item.mapping?.symbol ? `· ${item.mapping.symbol}` : ""}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <p className="muted">
+                No remediation is required by the static review.
+              </p>
+            )}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </section>
+  );
+}
+
+function FlowRoadmap({
+  roadmap,
+  verification,
+  busy,
+  onToggle,
+  onVerify,
+}: {
+  roadmap: ManualRoadmap;
+  verification: any;
+  busy: boolean;
+  onToggle(stepId: string, completed: boolean): void;
+  onVerify(): void;
+}) {
+  return (
+    <section className="content-card flow-roadmap-shell">
+      <div className="card-heading">
+        <div>
+          <small>Manual initialization · revision {roadmap.revision}</small>
+          <h2>Build the declared path into your project</h2>
+        </div>
+        <Status>
+          {String(verification?.status ?? "ROADMAP READY").replaceAll("_", " ")}
+        </Status>
+      </div>
+      <p className="muted">
+        Checklist progress helps you resume. Only live, ordered checkpoint
+        telemetry verifies this Flow.
+      </p>
+      <div className="flow-roadmap" aria-label="Flow initialization roadmap">
+        {roadmap.groups.map((group) => {
+          const steps = roadmap.steps.filter(
+            (step) => step.groupId === group.id,
+          );
+          if (!steps.length) return null;
+          return (
+            <section
+              className={`flow-roadmap-lane ${group.id === "spine" ? "is-spine" : "is-branch"}`}
+              key={group.id}
+            >
+              <header>{group.title}</header>
+              <div className="flow-roadmap-track">
+                {steps.map((step) => {
+                  const completed = ["DONE", "VERIFIED"].includes(step.status);
+                  return (
+                    <article
+                      className={`flow-roadmap-step is-${step.status.toLowerCase()}`}
+                      key={step.id}
+                    >
+                      <span className="flow-roadmap-node" aria-hidden="true">
+                        {step.status === "VERIFIED" ? (
+                          <Check size={13} />
+                        ) : step.status === "BLOCKED" ? (
+                          <Lock size={12} />
+                        ) : null}
+                      </span>
+                      <div>
+                        <small>{step.kind.replace("_", " ")}</small>
+                        <h3>{step.title}</h3>
+                        <p>{step.description}</p>
+                        {step.file ? (
+                          <code>
+                            {step.file}
+                            {step.symbol ? ` · ${step.symbol}` : ""}
+                          </code>
+                        ) : null}
+                        {step.snippet ? (
+                          <pre className="code-block">{step.snippet}</pre>
+                        ) : null}
+                        {step.status !== "VERIFIED" &&
+                        step.kind !== "VERIFY" ? (
+                          <label className="check-row">
+                            <input
+                              type="checkbox"
+                              checked={completed}
+                              disabled={busy || step.status === "BLOCKED"}
+                              onChange={(event) =>
+                                onToggle(step.id, event.target.checked)
+                              }
+                            />
+                            <span>
+                              <strong>I added this checkpoint</strong>
+                            </span>
+                          </label>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      <div className="card-actions">
+        <button
+          className="button primary"
+          disabled={busy || verification?.status === "COMPLETED"}
+          onClick={onVerify}
+        >
+          <Play size={15} />
+          {verification?.startedAt
+            ? "Restart verification"
+            : "Start telemetry verification"}
+        </button>
+      </div>
+      {verification?.missingCheckpointIds?.length ? (
+        <p className="muted-callout">
+          Still unobserved: {verification.missingCheckpointIds.join(", ")}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function CopyableCodeBlock({
+  label,
+  code,
+}: {
+  label: ReactNode;
+  code: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (!code) return;
+    try {
+      if (typeof window.tellann?.system?.copyText === "function") {
+        await window.tellann.system.copyText(code);
+      } else {
+        await navigator.clipboard.writeText(code);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      // Fallback if clipboard API fails
+    }
+  };
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "4px",
+        }}
+      >
+        <small>{label}</small>
+        <button
+          type="button"
+          className="button"
+          onClick={() => void handleCopy()}
+          style={{
+            padding: "3px 8px",
+            fontSize: "11px",
+            height: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            background: copied ? "rgba(34, 197, 94, 0.15)" : undefined,
+            color: copied ? "#4ade80" : undefined,
+            borderColor: copied ? "#22c55e" : undefined,
+            transition: "all 0.15s ease",
+            cursor: "pointer",
+          }}
+          title="Copy code to clipboard"
+        >
+          {copied ? (
+            <>
+              <Check size={12} />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy size={12} />
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="code-block" style={{ margin: 0 }}>
+        {code}
+      </pre>
+    </div>
+  );
+}
+
+function formatSdkSetupTarget(
+  target: any,
+  workspace: any,
+  detections: InstrumentationDetection[],
+  applicationId: string,
+  environmentId: string,
+  gatewayEndpoint?: string,
+) {
+  const isFrontend = target.kind === "FRONTEND" || target.id === "frontend";
+  const detectedFrameworkNames = (workspace?.snapshot?.frameworks ?? []).map(
+    (framework: any) =>
+      String(
+        framework.framework ?? framework.name ?? framework.id ?? "",
+      ).toLowerCase(),
+  );
+  const detectedAdapterIds = (detections ?? []).map((d) =>
+    String(d.adapterId ?? "").toLowerCase(),
+  );
+
+  const hasFramework = (name: string) =>
+    detectedFrameworkNames.some((framework: string) =>
+      framework.includes(name),
+    ) || detectedAdapterIds.some((adapter: string) => adapter.includes(name));
+
+  const isNextJs = hasFramework("next");
+
+  const isReact = hasFramework("react");
+  const isVite = hasFramework("vite");
+  const isReactVite = isReact && isVite;
+
+  const rawWorkspacePath = workspace?.path ?? workspace?.root ?? "";
+  const workspaceName =
+    workspace?.name ??
+    (rawWorkspacePath ? rawWorkspacePath.split(/[/\\]/).pop() : "");
+
+  const packageName =
+    target.packageName ??
+    (isFrontend ? "@sots/frontend-sdk" : "@sots/backend-sdk");
+
+  const detectedPackageManager = String(
+    workspace?.snapshot?.packageManager ?? "npm",
+  ).toLowerCase();
+  const packageManager = ["npm", "pnpm", "yarn", "bun"].includes(
+    detectedPackageManager,
+  )
+    ? detectedPackageManager
+    : "npm";
+  const installCommand =
+    target.installCommands?.[packageManager] ??
+    target.installCommands?.npm ??
+    `${packageManager} ${packageManager === "npm" ? "install" : "add"} ${packageName}`;
+
+  let stackLabel = isFrontend ? "Browser Application" : "Node.js Server";
+  if (isFrontend) {
+    if (isNextJs) stackLabel = "Next.js (App / Pages Router)";
+    else if (isReactVite) stackLabel = "React + Vite";
+    else if (isReact) stackLabel = "React";
+    else if (isVite) stackLabel = "Vite";
+  }
+
+  const endpointStr = gatewayEndpoint ?? "http://localhost:3000";
+
+  let snippet = String(target.snippet ?? "");
+
+  if (isFrontend) {
+    if (isVite && !isNextJs) {
+      snippet = `import { SOTS } from '${packageName}';
+
+// IMPORTANT: Initialize at top-level file scope (e.g. in main.tsx or top of App.tsx OUTSIDE React components)
+SOTS.initialize({
+    endpoint: import.meta.env.VITE_TELLANN_GATEWAY_URL || '${endpointStr}',
+    apiKey: import.meta.env.VITE_TELLANN_INGESTION_KEY,
+    applicationId: '${applicationId}',
+    environmentId: '${environmentId}'
+});
+
+void SOTS.verifyInstallation();`;
+    } else if (isReact && !isNextJs) {
+      snippet = `import { SOTS } from '${packageName}';
+
+// IMPORTANT: Initialize at top-level file scope (e.g. in index.tsx or top of App.tsx OUTSIDE React components)
+SOTS.initialize({
+    endpoint: process.env.REACT_APP_TELLANN_GATEWAY_URL || '${endpointStr}',
+    apiKey: process.env.REACT_APP_TELLANN_INGESTION_KEY,
+    applicationId: '${applicationId}',
+    environmentId: '${environmentId}'
+});
+
+void SOTS.verifyInstallation();`;
+    } else if (isNextJs) {
+      snippet = `import { SOTS } from '${packageName}';
+
+// Initialize Tellann browser telemetry for Next.js (e.g. in app/layout.tsx or _app.tsx)
+SOTS.initialize({
+    endpoint: process.env.NEXT_PUBLIC_TELLANN_GATEWAY_URL || '${endpointStr}',
+    apiKey: process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY,
+    applicationId: '${applicationId}',
+    environmentId: '${environmentId}'
+});
+
+void SOTS.verifyInstallation();`;
+    }
+  }
+
+  return {
+    stackLabel,
+    installCommand,
+    snippet,
+    packageManager,
+    workspaceName: workspaceName !== "monitor" ? workspaceName : "",
+  };
+}
+
 export function InstrumentationPage() {
   const {
     projectId,
@@ -4490,6 +4932,13 @@ export function InstrumentationPage() {
     listInstrumentationPlans,
     approveInstrumentation,
     applyInstrumentation,
+    initializeFlow,
+    getFlowInitialization,
+    analyzeFlowInitialization,
+    setFlowInitializationMode,
+    updateFlowRoadmapStep,
+    startFlowVerification,
+    getFlowVerification,
   } = useProject();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -4518,6 +4967,7 @@ export function InstrumentationPage() {
   >([]);
   const [plans, setPlans] = useState<Record<string, any>[]>([]);
   const [loading, setLoading] = useState(true);
+  const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [manualSetupOpen, setManualSetupOpen] = useState(false);
   const [manualSetup, setManualSetup] = useState<Record<string, any> | null>(
     null,
@@ -4527,6 +4977,9 @@ export function InstrumentationPage() {
   const [creatingProposal, setCreatingProposal] = useState(false);
   const [proposalMessage, setProposalMessage] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
+  const [flowInitialization, setFlowInitialization] =
+    useState<FlowInitialization | null>(null);
+  const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
 
   const refreshPlans = async () => {
     if (!projectId) return;
@@ -4538,6 +4991,30 @@ export function InstrumentationPage() {
     void refreshPlans().finally(() => setLoading(false));
   }, [projectId]);
 
+  const refreshFlowInitialization = useCallback(async () => {
+    if (!initializationId) return;
+    const value = await getFlowInitialization(initializationId);
+    setFlowInitialization(value as FlowInitialization);
+  }, [getFlowInitialization, initializationId]);
+
+  useEffect(() => {
+    if (!initializationId) return;
+    void refreshFlowInitialization().catch((cause) =>
+      setFlowLoadError(
+        cause instanceof Error ? cause.message : "Initialization unavailable.",
+      ),
+    );
+  }, [initializationId, refreshFlowInitialization]);
+
+  useEffect(() => {
+    if (flowInitialization?.stage !== "SCANNING") return;
+    const timer = window.setInterval(
+      () => void refreshFlowInitialization().catch(() => undefined),
+      document.hidden ? 10_000 : 2_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [flowInitialization?.stage, refreshFlowInitialization]);
+
   useEffect(() => {
     if (!projectId || !environmentId || !window.tellann) return;
     const refreshSetup = () =>
@@ -4546,13 +5023,23 @@ export function InstrumentationPage() {
         .then(setManualSetup)
         .catch(() => setManualSetup(null));
     refreshSetup();
-    if (!manualSetupOpen || (manualSetup?.readiness as any)?.connected) return;
+    if (
+      (!manualSetupOpen && !flowId) ||
+      (manualSetup?.readiness as any)?.connected
+    )
+      return;
     const timer = window.setInterval(
       refreshSetup,
       document.hidden ? 15_000 : 3_000,
     );
     return () => window.clearInterval(timer);
-  }, [environmentId, manualSetup?.readiness, manualSetupOpen, projectId]);
+  }, [
+    environmentId,
+    flowId,
+    manualSetup?.readiness,
+    manualSetupOpen,
+    projectId,
+  ]);
 
   if (!projectId) return <ProjectRequired />;
   if (!application)
@@ -4572,6 +5059,7 @@ export function InstrumentationPage() {
       instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
       flowId,
       flowVersionId,
+      flowInitializationId: initializationId,
     });
     setDetections(result.detections);
     const supported = result.detections.filter((item) => item.supported);
@@ -4624,7 +5112,26 @@ export function InstrumentationPage() {
       setCreatingProposal(false);
     }
   };
-  const proposedPlans = plans.filter(
+  const visiblePlans = flowId
+    ? plans.filter(
+        (record) =>
+          String(record.flowId ?? (record.planJson as any)?.flowId ?? "") ===
+            flowId &&
+          String(
+            record.flowVersionId ??
+              (record.planJson as any)?.flowVersionId ??
+              "",
+          ) === flowVersionId,
+      )
+    : plans.filter(
+        (record) =>
+          String(
+            record.purpose ??
+              (record.planJson as any)?.instrumentationPurpose ??
+              "BOOTSTRAP",
+          ) === "BOOTSTRAP",
+      );
+  const proposedPlans = visiblePlans.filter(
     (plan) => String(plan.status) === "PROPOSED",
   );
   const applyReviewedSetup = async () => {
@@ -4656,19 +5163,250 @@ export function InstrumentationPage() {
       instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
       flowId,
       flowVersionId,
+      flowInitializationId: initializationId,
     });
   };
+
+  const continueFlowInitialization = async () => {
+    if (!flowId || !flowVersionId || !environmentId) return;
+    const created = await initializeFlow({
+      flowId,
+      applicationId: projectId,
+      environmentId,
+      flowVersionId,
+    });
+    const nextId = String((created.initialization as any)?.id ?? "");
+    if (!nextId)
+      throw new Error("Flow initialization was created without an identifier.");
+    navigate(
+      `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(flowId)}&flowVersionId=${encodeURIComponent(flowVersionId)}&initializationId=${encodeURIComponent(nextId)}&environmentId=${encodeURIComponent(environmentId)}`,
+      { replace: true },
+    );
+  };
+
+  const chooseInitializationMode = async (mode: "AUTOMATED" | "MANUAL") => {
+    if (!initializationId) return;
+    await setFlowInitializationMode(initializationId, mode);
+    await refreshFlowInitialization();
+  };
+
+  const toggleRoadmapStep = async (stepId: string, completed: boolean) => {
+    if (!initializationId) return;
+    await updateFlowRoadmapStep(initializationId, stepId, completed);
+    await refreshFlowInitialization();
+  };
+
+  const beginVerification = async () => {
+    if (!initializationId) return;
+    await startFlowVerification(initializationId);
+    await refreshFlowInitialization();
+  };
+
+  useEffect(() => {
+    if (!initializationId || flowInitialization?.stage !== "AWAITING_TELEMETRY")
+      return;
+    const poll = () =>
+      void getFlowVerification(initializationId).then((result) => {
+        if (result.roadmap)
+          setFlowInitialization((current) =>
+            current
+              ? ({
+                  ...current,
+                  roadmap: result.roadmap,
+                  manualRoadmap: result.roadmap,
+                  verification: result.verification,
+                  ...(result.verification?.status === "COMPLETED"
+                    ? { stage: "COMPLETED", status: "COMPLETED" }
+                    : {}),
+                } as FlowInitialization)
+              : current,
+          );
+      });
+    poll();
+    const timer = window.setInterval(poll, document.hidden ? 15_000 : 3_000);
+    return () => window.clearInterval(timer);
+  }, [flowInitialization?.stage, getFlowVerification, initializationId]);
 
   return (
     <Page
       title="Instrumentation"
       description="Detect the project stack, review a bounded task, and approve every file and command before Tellann writes."
     >
+      {flowId && !(manualSetup?.readiness as any)?.connected ? (
+        <section className="content-card flow-prerequisite mb-4 ">
+          <div className="card-heading">
+            <div>
+              <small>Required before Flow initialization</small>
+              <h2>Connect Tellann to this project</h2>
+            </div>
+            <Status>Waiting for telemetry</Status>
+          </div>
+          <p className="mb-4">
+            Install and initialize a Tellann SDK, start this environment, and
+            send <code>TELLANN_INITIALIZED</code> or{" "}
+            <code>SOTS_ONBOARDING_TEST</code>. Finding package files alone does
+            not unlock the Flow.
+          </p>
+          <div className="card-actions">
+            <button
+              className="button primary"
+              disabled={busy || !workspace}
+              onClick={() => void detect()}
+            >
+              <ShieldCheck size={15} />
+              Set up automatically
+            </button>
+            <button className="button" onClick={() => setManualSetupOpen(true)}>
+              <Code2 size={15} />
+              Set up manually
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                window.tellann?.setup
+                  .getSdkSetup(projectId, environmentId)
+                  .then(setManualSetup)
+              }
+            >
+              <RefreshCw size={15} />
+              Check connection
+            </button>
+          </div>
+        </section>
+      ) : null}
+      {flowId &&
+      (manualSetup?.readiness as any)?.connected &&
+      !initializationId ? (
+        <section className="content-card flow-prerequisite is-ready">
+          <div className="card-heading">
+            <div>
+              <small>SDK verified</small>
+              <h2>Tellann can now analyze this Flow</h2>
+            </div>
+            <Status>Connected</Status>
+          </div>
+          <p>
+            Continue to create an immutable Flow-scoped repository review. No
+            source files change during analysis.
+          </p>
+          <button
+            className="button primary"
+            disabled={busy}
+            onClick={() =>
+              void continueFlowInitialization().catch((cause) =>
+                setFlowLoadError(String(cause?.message ?? cause)),
+              )
+            }
+          >
+            <ArrowRight size={15} />
+            Analyze declared Flow
+          </button>
+        </section>
+      ) : null}
+      {flowLoadError ? (
+        <div className="context-banner" role="alert">
+          <AlertTriangle size={15} />
+          {flowLoadError}
+          {initializationId ? (
+            <button
+              className="button"
+              onClick={() =>
+                void analyzeFlowInitialization(initializationId).then(
+                  refreshFlowInitialization,
+                )
+              }
+            >
+              Retry analysis
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {flowInitialization ? (
+        <>
+          <FlowReviewPanel initialization={flowInitialization} />
+          {!flowInitialization.mode &&
+          flowInitialization.stage === "REVIEW_READY" ? (
+            <section className="content-card flow-mode-choice mt-4">
+              <div className="card-heading">
+                <div>
+                  <small>Choose how to initialize</small>
+                  <h2>Use the same checkpoint contract in either path</h2>
+                </div>
+                <Status>Review ready</Status>
+              </div>
+              <div className="two-column">
+                <article className="mode-card">
+                  <Status>All plans</Status>
+                  <h2>Guide me manually</h2>
+                  <p className="mb-4">
+                    Follow a persisted code roadmap, make the changes yourself,
+                    then prove the path with live telemetry.
+                  </p>
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => void chooseInitializationMode("MANUAL")}
+                  >
+                    <Workflow size={15} />
+                    Open manual roadmap
+                  </button>
+                </article>
+                <article className="mode-card featured">
+                  <Status>
+                    {instrumentationEntitled
+                      ? "Available"
+                      : "Solo plan and above"}
+                  </Status>
+                  <h2>Instrument automatically</h2>
+                  <p>
+                    Generate a bounded AST proposal from confident mappings,
+                    approve every file, and keep rollback available.
+                  </p>
+                  <button
+                    className="button primary"
+                    disabled={busy || !instrumentationEntitled}
+                    onClick={() => void chooseInitializationMode("AUTOMATED")}
+                  >
+                    <Sparkles size={15} />
+                    Create automated proposal
+                  </button>
+                </article>
+              </div>
+            </section>
+          ) : null}
+          {flowInitialization.stage === "SCANNING" ? (
+            <div className="context-banner">
+              <Activity size={15} />
+              Tellann is enriching the deterministic review. The evidence-backed
+              fallback remains available if the AI provider cannot respond.
+            </div>
+          ) : null}
+          {flowInitialization.mode === "MANUAL" &&
+          flowInitialization.manualRoadmap ? (
+            <FlowRoadmap
+              roadmap={flowInitialization.manualRoadmap}
+              verification={flowInitialization.verification}
+              busy={busy}
+              onToggle={(stepId, completed) =>
+                void toggleRoadmapStep(stepId, completed)
+              }
+              onVerify={() => void beginVerification()}
+            />
+          ) : null}
+          {flowInitialization.stage === "COMPLETED" ? (
+            <div className="context-banner">
+              <Check size={15} />
+              Flow initialized. Tellann observed an ordered path from the
+              declared initial state to a terminal state.
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {setupMode ? (
-        <section className="content-card setup-connection-banner">
+        <section className="content-card setup-connection-banner mb-4">
           <Status>SDK connection</Status>
           <h2>Connect this project automatically</h2>
-          <p>
+          <p className="mb-4">
             Attach the project folder, select every frontend and backend target
             you want Tellann to configure, then review the bounded files and
             commands before one approved task writes locally.
@@ -4694,12 +5432,12 @@ export function InstrumentationPage() {
           </div>
         </section>
       ) : null}
-      {setupMode && manualSetupOpen && manualSetup ? (
+      {(setupMode || flowId) && manualSetupOpen && manualSetup ? (
         <section className="content-card stack">
           <div className="card-heading">
             <div>
               <small>Manual SDK setup</small>
-              <h2>Copy the same setup used on the web</h2>
+              <h2>Copy the setup for your project</h2>
             </div>
             <Status>
               {String(
@@ -4727,29 +5465,55 @@ export function InstrumentationPage() {
               (candidate) => candidate.id === manualTargetId,
             );
             if (!target) return null;
+            const formatted = formatSdkSetupTarget(
+              target,
+              workspace,
+              detections,
+              projectId ?? "",
+              environmentId,
+              (manualSetup as any)?.gatewayEndpoint,
+            );
             return (
               <div className="stack">
-                <div>
-                  <small>Install package</small>
-                  <pre className="code-block">
-                    {String(
-                      target.installCommands?.pnpm ??
-                        target.installCommands?.npm ??
-                        "",
-                    )}
-                  </pre>
+                <div
+                  className="context-banner"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>
+                    <strong>Detected Stack:</strong> {formatted.stackLabel}
+                  </span>
+                  {formatted.workspaceName ? (
+                    <small className="muted">
+                      Project: <code>{formatted.workspaceName}</code>
+                      {" · "}Package manager: <code>{formatted.packageManager}</code>
+                    </small>
+                  ) : (
+                    <small className="muted">
+                      Package manager: <code>{formatted.packageManager}</code>
+                    </small>
+                  )}
                 </div>
-                <div>
-                  <small>Environment and initialization</small>
-                  <pre className="code-block">
-                    {String(target.snippet ?? "")}
-                  </pre>
-                </div>
+                <CopyableCodeBlock
+                  label={`Install package ${
+                    formatted.workspaceName
+                      ? `(in ${formatted.workspaceName})`
+                      : "in project"
+                  }`}
+                  code={formatted.installCommand}
+                />
+                <CopyableCodeBlock
+                  label={`Environment and initialization (${formatted.stackLabel})`}
+                  code={formatted.snippet}
+                />
                 {manualRawKey ? (
-                  <div>
-                    <small>One-time Development key · copy now</small>
-                    <pre className="code-block">{manualRawKey}</pre>
-                  </div>
+                  <CopyableCodeBlock
+                    label="One-time Development key · copy now"
+                    code={manualRawKey}
+                  />
                 ) : (
                   <button
                     className="button primary"
@@ -4770,12 +5534,331 @@ export function InstrumentationPage() {
                   application after initialization; this screen and the web
                   dashboard use the same live readiness endpoint.
                 </p>
+
+                <div
+                  className="stack mt-4"
+                  style={{
+                    background: "#0c0c0c",
+                    border: "1px solid #222",
+                    borderRadius: "6px",
+                    padding: "16px",
+                    marginTop: "16px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      borderBottom: "1px solid #222",
+                      paddingBottom: "12px",
+                      marginBottom: "12px",
+                    }}
+                  >
+                    <div>
+                      <small
+                        style={{
+                          textTransform: "uppercase",
+                          letterSpacing: "0.08em",
+                          color: "#8e9192",
+                          fontSize: "10px",
+                          fontFamily: "ui-monospace, monospace",
+                        }}
+                      >
+                        Guide & Next Steps
+                      </small>
+                      <h3
+                        style={{
+                          margin: "2px 0 0",
+                          fontSize: "15px",
+                          fontWeight: 600,
+                        }}
+                      >
+                        What to do after adding the code
+                      </h3>
+                    </div>
+                    <Status>
+                      {(manualSetup.readiness as any)?.connected
+                        ? "Verified"
+                        : "Waiting for telemetry"}
+                    </Status>
+                  </div>
+
+                  <div className="stack" style={{ gap: "14px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "12px",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: "#181818",
+                          border: "1px solid #333",
+                          borderRadius: "50%",
+                          width: "22px",
+                          height: "22px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 700,
+                          fontSize: "11px",
+                          color: "#fff",
+                          flexShrink: 0,
+                        }}
+                      >
+                        1
+                      </div>
+                      <div>
+                        <strong style={{ fontSize: "13px", color: "#fff" }}>
+                          Start your local dev server
+                        </strong>
+                        <p
+                          className="muted"
+                          style={{
+                            margin: "2px 0 0",
+                            fontSize: "12px",
+                            lineHeight: "1.5",
+                          }}
+                        >
+                          Run your application (e.g. <code>npm run dev</code> or{" "}
+                          <code>pnpm dev</code>) and load it in your browser.
+                          The Tellann SDK will send its initial telemetry
+                          handshake automatically.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "12px",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: (manualSetup.readiness as any)?.connected
+                            ? "#14532d"
+                            : "#181818",
+                          border: `1px solid ${
+                            (manualSetup.readiness as any)?.connected
+                              ? "#22c55e"
+                              : "#333"
+                          }`,
+                          borderRadius: "50%",
+                          width: "22px",
+                          height: "22px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 700,
+                          fontSize: "11px",
+                          color: "#fff",
+                          flexShrink: 0,
+                        }}
+                      >
+                        2
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "13px", color: "#fff" }}>
+                          Verify connection status
+                        </strong>
+                        <p
+                          className="muted"
+                          style={{
+                            margin: "2px 0 8px",
+                            fontSize: "12px",
+                            lineHeight: "1.5",
+                          }}
+                        >
+                          {(manualSetup.readiness as any)?.connected ? (
+                            <span
+                              style={{
+                                color: "#4ade80",
+                                fontWeight: 600,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                              }}
+                            >
+                              <Check size={13} /> Connection verified! Tellann is
+                              receiving live telemetry from your app.
+                            </span>
+                          ) : (
+                            <span>
+                              Waiting for live telemetry... This screen updates
+                              automatically when your app sends its first event.
+                            </span>
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={busy}
+                          onClick={() => {
+                            if (projectId && environmentId) {
+                              void window.tellann?.setup
+                                .getSdkSetup(projectId, environmentId)
+                                .then(setManualSetup);
+                            }
+                          }}
+                          style={{
+                            fontSize: "11px",
+                            padding: "4px 10px",
+                            height: "auto",
+                          }}
+                        >
+                          <RefreshCw size={12} /> Check connection now
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "12px",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: "#181818",
+                          border: "1px solid #333",
+                          borderRadius: "50%",
+                          width: "22px",
+                          height: "22px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 700,
+                          fontSize: "11px",
+                          color: "#fff",
+                          flexShrink: 0,
+                        }}
+                      >
+                        3
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "13px", color: "#fff" }}>
+                          Continue to next action
+                        </strong>
+                        <p
+                          className="muted"
+                          style={{
+                            margin: "2px 0 10px",
+                            fontSize: "12px",
+                            lineHeight: "1.5",
+                          }}
+                        >
+                          Once your application is running, choose what you want to
+                          do next:
+                        </p>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "8px",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          {flowId ? (
+                            <button
+                              type="button"
+                              className="button primary"
+                              disabled={busy}
+                              onClick={() =>
+                                void continueFlowInitialization().catch(
+                                  (cause) =>
+                                    setFlowLoadError(
+                                      String(cause?.message ?? cause),
+                                    ),
+                                )
+                              }
+                            >
+                              <ArrowRight size={14} /> Analyze declared Flow
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="button primary"
+                                disabled={
+                                  busy ||
+                                  !workspace ||
+                                  environment?.type === "PRODUCTION"
+                                }
+                                onClick={() => void detect()}
+                              >
+                                <SearchCode size={14} /> Detect framework & create proposal
+                              </button>
+                              <Link
+                                className="button"
+                                to={`/projects/${projectId}/intent`}
+                              >
+                                <Workflow size={14} /> View Behavior Graph
+                              </Link>
+                              <Link
+                                className="button"
+                                to={`/projects/${projectId}/qa-runs/new`}
+                              >
+                                <Play size={14} /> New QA Run
+                              </Link>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "16px",
+                      paddingTop: "14px",
+                      borderTop: "1px solid #222",
+                    }}
+                  >
+                    <strong
+                      style={{
+                        fontSize: "12px",
+                        color: "#f59e0b",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <AlertTriangle size={14} /> Troubleshooting — Why isn't my app connecting?
+                    </strong>
+                    <ul
+                      style={{
+                        margin: 0,
+                        paddingLeft: "18px",
+                        fontSize: "12px",
+                        color: "#9ca3af",
+                        lineHeight: "1.6",
+                      }}
+                    >
+                      <li>
+                        <strong>Place initialization at top-level module scope:</strong>{" "}
+                        Call <code>SOTS.initialize(...)</code> in <code>main.tsx</code> or top of <code>App.tsx</code> <em>outside</em> component functions (e.g. outside <code>{"const App = () => ..."}</code>). Calling it inside a component function resets the SDK session on every React render.
+                      </li>
+                      <li>
+                        <strong>Set environment key & restart dev server:</strong> Put{" "}
+                        <code>VITE_TELLANN_INGESTION_KEY={manualRawKey || "sots_..."}</code> in your <code>.env.local</code> file and restart your Vite server (<code>npm run dev</code>).
+                      </li>
+                      <li>
+                        <strong>Check browser console & network tab:</strong> Press F12 in your browser to check if <code>/v1/events/batch</code> requests are failing or blocked by CORS.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
               </div>
             );
           })()}
         </section>
       ) : null}
-      <div className="mode-grid mb-4">
+      <div className="mode-grid my-4">
         <section className="mode-card featured">
           <Status>Available</Status>
           {/* <Globe2 /> */}
@@ -4854,10 +5937,39 @@ export function InstrumentationPage() {
           </div>
         ) : null}
         {!instrumentationEntitled ? (
-          <div className="context-banner">
-            <Lock size={15} /> Automated instrumentation is not included on the{" "}
-            {application.entitlements?.planType ?? "current"} plan. Browser-only
-            QA remains available.
+          <div
+            className="context-banner"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>
+              <Lock
+                size={15}
+                style={{ display: "inline-block", marginRight: "8px" }}
+              />{" "}
+              Automated instrumentation is not included on the{" "}
+              {application?.entitlements?.planType ?? "current"} plan. Browser-only
+              QA remains available.
+            </span>
+            <button
+              className="button primary"
+              style={{
+                background: "#ffffff",
+                color: "#000000",
+                border: "none",
+                fontSize: "11px",
+                fontWeight: 700,
+                padding: "6px 14px",
+                cursor: "pointer",
+                textTransform: "uppercase",
+              }}
+              onClick={() => setEntitlementModalOpen(true)}
+            >
+              Upgrade plan
+            </button>
           </div>
         ) : null}
         {detections.length ? (
@@ -4933,7 +6045,7 @@ export function InstrumentationPage() {
           </>
         ) : null}
       </section>
-      <section className="content-card">
+      <section className="content-card mt-4">
         <div className="card-heading">
           <div>
             <small>Step 2</small>
@@ -4950,7 +6062,7 @@ export function InstrumentationPage() {
         </div>
         {loading ? (
           <LoadingState />
-        ) : plans.length ? (
+        ) : visiblePlans.length ? (
           <div className="stack">
             {setupMode && proposedPlans.length ? (
               <section className="content-card stack">
@@ -5017,11 +6129,11 @@ export function InstrumentationPage() {
                 <span>Status</span>
                 <span>Created</span>
               </div>
-              {plans.map((plan) => (
+              {visiblePlans.map((plan) => (
                 <Link
                   className="table-row"
                   key={String(plan.id)}
-                  to={`/projects/${projectId}/instrumentation/plans/${plan.id}`}
+                  to={`/projects/${projectId}/instrumentation/plans/${plan.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
                 >
                   <span>
                     <strong>{String(plan.adapterId)}</strong>
@@ -5050,6 +6162,12 @@ export function InstrumentationPage() {
           />
         )}
       </section>
+      <EntitlementModal
+        isOpen={entitlementModalOpen}
+        feature="AUTOMATED_INSTRUMENTATION"
+        currentPlan={application?.entitlements?.planType}
+        onClose={() => setEntitlementModalOpen(false)}
+      />
     </Page>
   );
 }
@@ -5071,7 +6189,9 @@ export function InstrumentationDetailPage() {
     approveFlowInitialization,
     applyFlowInitialization,
     validateFlowInitialization,
+    startFlowVerification,
   } = useProject();
+  const navigate = useNavigate();
   const [record, setRecord] = useState<Record<string, any> | null>(null);
   const [localResult, setLocalResult] = useState<Record<string, any> | null>(
     null,
@@ -5079,6 +6199,7 @@ export function InstrumentationDetailPage() {
   const [files, setFiles] = useState<string[]>([]);
   const [commands, setCommands] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
@@ -5265,6 +6386,11 @@ export function InstrumentationDetailPage() {
       await validateFlowInitialization(initializationId, {
         checkpointReachability: validation.checks,
       });
+      await startFlowVerification(initializationId);
+      navigate(
+        `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(String(plan.flowId ?? ""))}&flowVersionId=${encodeURIComponent(String(plan.flowVersionId ?? ""))}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(String(record.environmentId ?? ""))}`,
+      );
+      return;
     }
     await refresh();
   };
@@ -5582,9 +6708,38 @@ export function InstrumentationDetailPage() {
             </div>
           ) : null}
           {!instrumentationEntitled ? (
-            <div className="context-banner">
-              <Lock size={15} /> This plan cannot approve or apply automated
-              instrumentation. Browser-only QA remains available.
+            <div
+              className="context-banner"
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span>
+                <Lock
+                  size={15}
+                  style={{ display: "inline-block", marginRight: "8px" }}
+                />{" "}
+                This plan cannot approve or apply automated instrumentation.
+                Browser-only QA remains available.
+              </span>
+              <button
+                className="button primary"
+                style={{
+                  background: "#ffffff",
+                  color: "#000000",
+                  border: "none",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  padding: "6px 14px",
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+                onClick={() => setEntitlementModalOpen(true)}
+              >
+                Upgrade plan
+              </button>
             </div>
           ) : null}
           {record.status === "PROPOSED" ? (
@@ -5884,6 +7039,12 @@ export function InstrumentationDetailPage() {
           </AccordionItem>
         </div>
       ) : null}
+      <EntitlementModal
+        isOpen={entitlementModalOpen}
+        feature="AUTOMATED_INSTRUMENTATION"
+        currentPlan={application?.entitlements?.planType}
+        onClose={() => setEntitlementModalOpen(false)}
+      />
     </Page>
   );
 }

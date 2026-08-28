@@ -7,7 +7,7 @@ import semver from 'semver';
 import { Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
 import { z } from 'zod';
 import { resolveWithinWorkspace } from '@sots/agent-policy';
-import type { RepositorySnapshotSummary } from '@sots/desktop-contracts';
+import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@sots/desktop-contracts';
 
 export const INSTRUMENTATION_CONTRACT_VERSION = '1.0';
 export const INSTRUMENTATION_MANIFEST_VERSION = '1.0';
@@ -41,6 +41,8 @@ export type LocalProjectContext = {
   instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
   flowId?: string;
   flowVersionId?: string;
+  flowInitializationId?: string;
+  flowManifest?: FlowInitializationManifest;
 };
 
 export type DetectionResult = {
@@ -75,9 +77,10 @@ export type PatchOperation = {
   transformVersion: string;
   expectedHash: string | null;
   description: string;
-  eventMappings: Array<{ eventType: string; expectedState: string | null }>;
+  eventMappings: Array<{ eventType: string; expectedState: string | null; checkpointId?: string; stateId?: string | null; transitionId?: string | null; terminalKind?: string | null }>;
   content?: string;
   importModule?: string;
+  flowInitializationId?: string;
 };
 
 export type InstrumentationPlan = {
@@ -102,6 +105,8 @@ export type InstrumentationPlan = {
   instrumentationPurpose: 'BOOTSTRAP' | 'FLOW';
   flowId: string | null;
   flowVersionId: string | null;
+  flowInitializationId?: string | null;
+  flowManifest?: FlowInitializationManifest | null;
   createdAt: string;
 };
 
@@ -171,8 +176,8 @@ const PLAN_SCHEMA = z.object({
   operations: z.array(z.object({
     id: z.string(), kind: OperationKindSchema, relativePath: z.string(), symbol: z.string().nullable(), transformId: z.string(),
     transformVersion: z.string(), expectedHash: z.string().nullable(), description: z.string(),
-    eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable() })),
-    content: z.string().optional(), importModule: z.string().optional(),
+    eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable(), checkpointId: z.string().optional(), stateId: z.string().nullable().optional(), transitionId: z.string().nullable().optional(), terminalKind: z.string().nullable().optional() })),
+    content: z.string().optional(), importModule: z.string().optional(), flowInitializationId: z.string().uuid().optional(),
   })),
   validationCommands: z.array(z.object({
     id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
@@ -182,6 +187,11 @@ const PLAN_SCHEMA = z.object({
   risk: RiskSchema,
   riskReasons: z.array(z.string()),
   evidence: z.any(),
+  instrumentationPurpose: z.enum(['BOOTSTRAP', 'FLOW']).default('BOOTSTRAP'),
+  flowId: z.string().uuid().nullable().optional(),
+  flowVersionId: z.string().uuid().nullable().optional(),
+  flowInitializationId: z.string().uuid().nullable().optional(),
+  flowManifest: z.any().nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -573,8 +583,9 @@ function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, 
     ?? methodDeclaration?.getBody()
     ?? variableDeclaration?.getInitializer()?.getFirstChildByKind(SyntaxKind.Block);
   if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
+  const mapping = operation.eventMappings[0];
   (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0,
-    `/* ${marker} */\nvoid TellannSOTS.trackEvent('WORKFLOW_STARTED', { workflowId: ${JSON.stringify(operation.symbol)}, checkpointId: ${JSON.stringify(operation.id)}, source: 'tellann-adapter' });`);
+    `/* ${marker} */\nvoid TellannSOTS.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify((operation as any).flowInitializationId ?? null)}, source: 'tellann-adapter' });`);
 }
 
 function frameworkVariable(source: SourceFile, matcher: RegExp): string | null {
@@ -763,17 +774,29 @@ class TypeScriptAdapter implements InstrumentationAdapter {
         importModule: relativeImport(entry.file, generatedFile),
       },
     ];
-    for (const boundary of (input.instrumentationPurpose === 'FLOW' && this.id !== 'nextjs' ? evidence.semanticBoundaries : [])
-      .filter((item) => item.confidence >= 0.75 && item.symbol && (!detectedPackage.relativeRoot || item.file.startsWith(`${detectedPackage.relativeRoot}/`)))
-      .slice(0, 12)) {
+    const manifestCheckpoints = input.instrumentationPurpose === 'FLOW' ? input.flowManifest?.checkpoints ?? [] : [];
+    const unresolvedRequired = manifestCheckpoints.filter((checkpoint) => checkpoint.required && (checkpoint.mapping.confidence < 0.65 || !checkpoint.mapping.file || !checkpoint.mapping.symbol));
+    if (input.instrumentationPurpose === 'FLOW' && !input.flowManifest) throw new Error('FLOW_INITIALIZATION_MANIFEST_REQUIRED');
+    if (unresolvedRequired.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolvedRequired.map((item) => item.id).join(',')}`);
+    const selectedBoundaries = manifestCheckpoints.length
+      ? manifestCheckpoints.flatMap((checkpoint) => {
+          const boundary = evidence.semanticBoundaries.find((item) => item.file === checkpoint.mapping.file && item.symbol === checkpoint.mapping.symbol);
+          return boundary ? [{ boundary, checkpoint }] : [];
+        })
+      : (input.instrumentationPurpose === 'FLOW' && this.id !== 'nextjs' ? evidence.semanticBoundaries : [])
+          .filter((item) => item.confidence >= 0.75 && item.symbol && (!detectedPackage.relativeRoot || item.file.startsWith(`${detectedPackage.relativeRoot}/`)))
+          .slice(0, 12)
+          .map((boundary) => ({ boundary, checkpoint: null }));
+    for (const { boundary, checkpoint } of selectedBoundaries) {
       operations.push({
-        id: `semantic-${hash(`${boundary.file}:${boundary.symbol}`).slice(0, 12)}`,
+        id: checkpoint?.id ?? `semantic-${hash(`${boundary.file}:${boundary.symbol}`).slice(0, 12)}`,
         kind: 'UPDATE_SOURCE', relativePath: boundary.file, symbol: boundary.symbol,
         transformId: 'tellann.semantic.function-entry', transformVersion: this.version,
         expectedHash: fileHash(input.workspaceRoot, boundary.file),
-        description: `Add an explicit workflow-entry checkpoint to ${boundary.symbol}`,
-        eventMappings: [{ eventType: boundary.eventType, expectedState: boundary.symbol }],
+        description: checkpoint ? `Add declared Flow checkpoint ${checkpoint.id} to ${boundary.symbol}` : `Add an explicit workflow-entry checkpoint to ${boundary.symbol}`,
+        eventMappings: checkpoint ? [{ eventType: checkpoint.eventType, expectedState: checkpoint.expectedState, checkpointId: checkpoint.id, stateId: checkpoint.stateId, transitionId: checkpoint.transitionId, terminalKind: checkpoint.terminalKind }] : [{ eventType: boundary.eventType, expectedState: boundary.symbol }],
         importModule: relativeImport(boundary.file, generatedFile),
+        flowInitializationId: input.flowInitializationId,
       });
     }
     const lockfile = packageManagerLockfile(input.workspaceRoot, detectedPackage.root, input.snapshot.packageManager);
@@ -795,6 +818,8 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       instrumentationPurpose: input.instrumentationPurpose ?? 'BOOTSTRAP',
       flowId: input.flowId ?? null,
       flowVersionId: input.flowVersionId ?? null,
+      flowInitializationId: input.flowInitializationId ?? null,
+      flowManifest: input.flowManifest ?? null,
       frameworkVersion: detection.frameworkVersion, supportedVersionRange: this.supportedVersionRange,
       baseRevision: input.snapshot.revision, repositoryFingerprint: input.snapshot.repositoryFingerprint,
       approvedFileScopes: [...new Set(operations.map((operation) => operation.relativePath))],

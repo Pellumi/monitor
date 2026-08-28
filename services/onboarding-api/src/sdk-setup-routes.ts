@@ -40,7 +40,7 @@ function validateGatewayEndpoint(value: unknown): { value: string | null } | { e
   }
 }
 
-async function readiness(prisma: PrismaClient, applicationId: string, environmentId: string) {
+export async function sdkReadiness(prisma: PrismaClient, applicationId: string, environmentId: string) {
   const [sessions, configuredPlans] = await Promise.all([
     prisma.session.findMany({
       where: { applicationId, environmentId },
@@ -96,7 +96,7 @@ function snippets(endpoint: string, applicationId: string, environmentId: string
       id: 'frontend', kind: 'FRONTEND', label: 'Browser application', packageName: '@sots/frontend-sdk', packageVersion: '^0.1.0',
       installCommands: { npm: 'npm install @sots/frontend-sdk', pnpm: 'pnpm add @sots/frontend-sdk', yarn: 'yarn add @sots/frontend-sdk', bun: 'bun add @sots/frontend-sdk' },
       environmentVariables: { endpoint: 'NEXT_PUBLIC_TELLANN_GATEWAY_URL or VITE_TELLANN_GATEWAY_URL', key: 'NEXT_PUBLIC_TELLANN_INGESTION_KEY or VITE_TELLANN_INGESTION_KEY' },
-      snippet: `import { SOTS } from '@sots/frontend-sdk';\n\nSOTS.initialize({\n    ${shared.replace('process.env.TELLANN_INGESTION_KEY', 'process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY')}\n});\nvoid SOTS.verifyInstallation();`,
+      snippet: `import { SOTS } from '@sots/frontend-sdk';\n\n// Initialize Tellann browser telemetry\nSOTS.initialize({\n    endpoint: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_GATEWAY_URL) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_GATEWAY_URL) || '${endpoint}',\n    apiKey: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_INGESTION_KEY) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_INGESTION_KEY),\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'\n});\nvoid SOTS.verifyInstallation();`,
     },
     {
       id: 'backend', kind: 'BACKEND', label: 'Node.js server', packageName: '@sots/backend-sdk', packageVersion: '^0.1.0',
@@ -118,7 +118,7 @@ export function createSdkSetupRouter(input: { prisma: PrismaClient; verifyJwt: M
       ? application.environments.find((item) => item.id === req.query.environmentId)
       : application.environments.find((item) => item.isDefault) ?? application.environments[0];
     if (!environment) return res.status(404).json({ error: 'Environment not found' });
-    const status = await readiness(prisma, application.id, environment.id);
+    const status = await sdkReadiness(prisma, application.id, environment.id);
     const endpoint = environment.telemetryGatewayUrl ?? defaultGatewayEndpoint();
     if (status.codeConfigured || status.sessionObserved || status.installationTestPassed) {
       await prisma.applicationOnboardingProgress.updateMany({ where: { applicationId: application.id }, data: {

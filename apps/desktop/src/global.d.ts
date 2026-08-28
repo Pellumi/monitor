@@ -68,6 +68,12 @@ declare global {
         declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
         getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
         initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+        getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
+        updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
+        startFlowVerification(initializationId: string): Promise<Record<string, any>>;
+        getFlowVerification(initializationId: string): Promise<Record<string, any>>;
         rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
         approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
         applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Record<string, unknown>>;

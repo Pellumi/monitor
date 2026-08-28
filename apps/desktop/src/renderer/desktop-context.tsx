@@ -78,6 +78,12 @@ type DesktopContextValue = {
   declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
   getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
   initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
+  updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
+  startFlowVerification(initializationId: string): Promise<Record<string, any>>;
+  getFlowVerification(initializationId: string): Promise<Record<string, any>>;
   rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
   approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
   applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Record<string, unknown>>;
@@ -117,6 +123,7 @@ type InstrumentationEnvironmentInput = {
   instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
   flowId?: string;
   flowVersionId?: string;
+  flowInitializationId?: string;
 };
 
 const DesktopContext = createContext<DesktopContextValue | null>(null);
@@ -201,19 +208,33 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(timer);
   }, [activeRun?.status]);
 
+  const handleAuthRequired = useCallback(async () => {
+    const nextSession = await window.tellann?.auth.getSession().catch(() => null);
+    if (nextSession) {
+      setSession(nextSession);
+      if (!nextSession.authenticated) {
+        setApplications([]);
+      }
+    }
+  }, []);
+
   const perform = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     setBusy(true);
     setError(null);
     try {
       return await operation();
     } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      if (/AUTHENTICATION_REQUIRED/.test(raw)) {
+        void handleAuthRequired();
+      }
       const message = normalizeDesktopError(cause);
       setError(message);
       throw cause;
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [handleAuthRequired]);
 
   const signIn = useCallback(async () => {
     const attemptId = ++authAttemptRef.current;
@@ -226,7 +247,15 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
       setCloudAvailable(true);
     } catch (cause) {
       const raw = cause instanceof Error ? cause.message : String(cause);
-      if (!/DESKTOP_AUTH_CANCELLED/.test(raw)) setError(normalizeDesktopError(cause));
+      if (!/DESKTOP_AUTH_CANCELLED/.test(raw)) {
+        const currentSession = await bridge().auth.getSession().catch(() => null);
+        if (currentSession && !currentSession.authenticated) {
+          setSession(currentSession);
+          setApplications([]);
+          setCloudAvailable(true);
+        }
+        setError(normalizeDesktopError(cause));
+      }
     } finally {
       if (authAttemptRef.current === attemptId) setAuthPending(false);
     }
@@ -252,7 +281,15 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     setApplications(nextApplications);
     setCloudAvailable(true);
     return nextApplications;
-  }).catch((cause) => {
+  }).catch(async (cause) => {
+    const nextSession = await bridge().auth.getSession().catch(() => null);
+    if (nextSession && !nextSession.authenticated) {
+      setSession(nextSession);
+      setApplications([]);
+      setCloudAvailable(true);
+      setError('Your Tellann Desktop session expired or was revoked. Sign in again.');
+      throw cause;
+    }
     setCloudAvailable(false);
     throw cause;
   }), [perform]);
@@ -341,6 +378,12 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     declineFlowReview: (applicationId, flowId, reviewId) => bridge().intent.declineFlowReview(applicationId, flowId, reviewId),
     getFlowDiagrams: (applicationId, flowId, versionId) => bridge().intent.getFlowDiagrams(applicationId, flowId, versionId),
     initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
+    getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
+    analyzeFlowInitialization: (initializationId) => perform(() => bridge().intent.analyzeFlowInitialization(initializationId)),
+    setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
+    updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
+    startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),
+    getFlowVerification: (initializationId) => bridge().intent.getFlowVerification(initializationId),
     rescanFlow: (bindingId, applicationId) => perform(() => bridge().intent.rescanFlow(bindingId, applicationId)),
     approveFlowInitialization: (initializationId, instrumentationPlanId) => perform(() => bridge().intent.approveFlowInitialization(initializationId, instrumentationPlanId)),
     applyFlowInitialization: (initializationId, patchSetId) => perform(() => bridge().intent.applyFlowInitialization(initializationId, patchSetId)),
@@ -394,6 +437,9 @@ function normalizeDesktopError(cause: unknown): string {
   }
   if (/DESKTOP_AUTH_REQUEST_EXPIRED/.test(raw)) {
     return 'The sign-in request expired. Try again to open a new secure browser session.';
+  }
+  if (/AUTHENTICATION_REQUIRED/.test(raw)) {
+    return 'Your Tellann Desktop session has expired or is not authenticated. Please sign in to reconnect.';
   }
   if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
     return 'That sign-in request is no longer active. Cancel it and try again.';

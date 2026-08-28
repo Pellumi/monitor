@@ -91,7 +91,7 @@ function safeDesktopError(error: unknown): string {
   if (message.includes('UNSUPPORTED_DOCUMENT_TYPE')) return 'This file type is not supported.';
   if (message.includes('INVALID_DOCUMENT_SIZE')) return 'The file is empty or larger than 25 MB.';
   if (message.includes('STRUCTURED_DOCUMENT_IS_NOT_OPENAPI')) return 'JSON and YAML uploads must contain an OpenAPI document.';
-  if (message.includes('FEATURE_NOT_ENTITLED')) return 'Document flow inference is not included on this plan.';
+  if (message.includes('FEATURE_NOT_ENTITLED')) return 'FEATURE_NOT_ENTITLED: Document flow inference is not included on this plan.';
   return message.replace(/^Error invoking remote method '[^']+':\s*/i, '').slice(0, 240) || 'Document import failed.';
 }
 
@@ -145,6 +145,7 @@ function parseInstrumentationContext(input: unknown) {
     instrumentationPurpose: value.instrumentationPurpose === 'FLOW' ? 'FLOW' as const : 'BOOTSTRAP' as const,
     flowId: typeof value.flowId === 'string' ? value.flowId : undefined,
     flowVersionId: typeof value.flowVersionId === 'string' ? value.flowVersionId : undefined,
+    flowInitializationId: typeof value.flowInitializationId === 'string' ? value.flowInitializationId : undefined,
   };
 }
 
@@ -393,6 +394,38 @@ function registerIpc(): void {
       environmentId: value.environmentId,
       instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
     });
+  });
+  ipcMain.handle(IPC.getFlowInitialization, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.flowInitialization(initializationId);
+  });
+  ipcMain.handle(IPC.analyzeFlowInitialization, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.analyzeFlowInitialization(initializationId);
+  });
+  ipcMain.handle(IPC.setFlowInitializationMode, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; mode?: unknown };
+    if (typeof value.initializationId !== 'string' || !['AUTOMATED', 'MANUAL'].includes(String(value.mode))) throw new Error('INVALID_FLOW_INITIALIZATION_MODE');
+    return cloud.setFlowInitializationMode(value.initializationId, value.mode as 'AUTOMATED' | 'MANUAL');
+  });
+  ipcMain.handle(IPC.updateFlowRoadmapStep, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; stepId?: unknown; completed?: unknown };
+    if (typeof value.initializationId !== 'string' || typeof value.stepId !== 'string') throw new Error('INVALID_FLOW_ROADMAP_STEP');
+    return cloud.updateFlowRoadmapStep(value.initializationId, value.stepId, value.completed !== false);
+  });
+  ipcMain.handle(IPC.startFlowVerification, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.startFlowVerification(initializationId);
+  });
+  ipcMain.handle(IPC.getFlowVerification, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.flowVerification(initializationId);
   });
   ipcMain.handle(IPC.rescanFlow, async (event, input: unknown) => {
     assertTrustedSender(event);

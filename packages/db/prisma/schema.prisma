@@ -1173,6 +1173,23 @@ enum FlowInitializationStatus {
   ROLLED_BACK
 }
 
+enum FlowInitializationMode {
+  AUTOMATED
+  MANUAL
+}
+
+enum FlowInitializationStage {
+  SDK_REQUIRED
+  SCANNING
+  REVIEW_READY
+  ROADMAP_READY
+  AWAITING_APPROVAL
+  APPLYING
+  AWAITING_TELEMETRY
+  COMPLETED
+  FAILED
+}
+
 enum StateCategory {
   NAVIGATION
   UI
@@ -1769,6 +1786,15 @@ model FlowInitialization {
   instrumentationPlanId String?
   patchSetId            String?
   status                FlowInitializationStatus @default(PROPOSED)
+  mode                  FlowInitializationMode?
+  stage                 FlowInitializationStage  @default(SCANNING)
+  manifestVersion       String                   @default("1.0")
+  manifest              Json?
+  reportProvenance      Json?
+  selectedTargetAdapters String[]                @default([])
+  roadmapRevision       Int                      @default(1)
+  manualRoadmap         Json?
+  verification          Json?
   codeReviewReport      Json?
   validation            Json?
   failureReasonSafe     String?

@@ -221,7 +221,7 @@ test('re-proposing and applying instrumentation is idempotent', async () => {
   assert.equal((entry.match(/from ['"]\.\/tellann['"]/g) ?? []).length, 1);
 });
 
-test('semantic workflow checkpoints are proposed, bounded, and idempotent', async () => {
+test('bootstrap instrumentation does not add Flow checkpoints', async () => {
   const context = fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content: `import express from 'express';
 const app = express();
 async function createOrder() { return { id: 'one' }; }
@@ -231,17 +231,41 @@ app.listen(3000);
   const adapter = getAdapter('express');
   const plan = await adapter.propose(context);
   const checkpoint = plan.operations.find((operation) => operation.transformId === 'tellann.semantic.function-entry');
-  assert.equal(checkpoint?.symbol, 'createOrder');
+  assert.equal(checkpoint, undefined);
   const result = await adapter.apply(context, {
     plan, approvedFileScopes: plan.approvedFileScopes, approvedCommandIds: [],
     approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []),
     checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')),
   });
   const source = fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8');
-  assert.match(source, /tellann:checkpoint:semantic-/);
-  assert.match(source, /TellannSOTS\.trackEvent\('WORKFLOW_STARTED'/);
-  assert.equal((source.match(/tellann:checkpoint:/g) ?? []).length, 1);
+  assert.doesNotMatch(source, /tellann:checkpoint:/);
+  assert.doesNotMatch(source, /WORKFLOW_STARTED/);
   assert.equal((await adapter.validate(context, result)).valid, true);
+});
+
+test('Flow proposals use the initialization manifest and reject uncertain mappings', async () => {
+  const context = fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content: `import express from 'express';
+const app = express();
+async function createOrder() { return { id: 'one' }; }
+app.post('/orders', async (_req, res) => res.json(await createOrder()));
+app.listen(3000);
+` });
+  const baseManifest = {
+    version: '1.0' as const,
+    graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64), repositorySnapshotId: '00000000-0000-4000-8000-000000000021',
+    initialStateId: 'order', terminalStateIds: ['order'], paths: [['order']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+    checkpoints: [{ id: 'state:order', kind: 'STATE' as const, stateId: 'order', transitionId: null, stateRole: 'INITIAL' as const, terminalKind: null, eventType: 'FLOW_INITIAL_STATE', expectedState: 'order', fromCheckpointId: null, toCheckpointId: null, required: true, mapping: { file: 'src/index.ts', symbol: 'createOrder', confidence: 0.92, rationale: 'Matched handler' } }],
+  };
+  const flowContext = { ...context, instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022', flowVersionId: baseManifest.graphVersionId, flowInitializationId: '00000000-0000-4000-8000-000000000023', flowManifest: baseManifest };
+  const adapter = getAdapter('express');
+  const plan = await adapter.propose(flowContext);
+  const checkpoint = plan.operations.find((operation) => operation.id === 'state:order');
+  assert.equal(checkpoint?.eventMappings[0]?.checkpointId, 'state:order');
+  const result = await adapter.apply(flowContext, { plan, approvedFileScopes: plan.approvedFileScopes, approvedCommandIds: [], approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []), checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')) });
+  assert.match(fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8'), /FLOW_INITIAL_STATE/);
+  assert.match(fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8'), /state:order/);
+  assert.equal((await adapter.validate(flowContext, result)).valid, true);
+  await assert.rejects(adapter.propose({ ...flowContext, flowManifest: { ...baseManifest, checkpoints: [{ ...baseManifest.checkpoints[0], mapping: { file: null, symbol: null, confidence: 0.2, rationale: 'Unmapped' } }] } }), /FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED/);
 });
 
 test('stale target hashes and production application are rejected before writes', async () => {

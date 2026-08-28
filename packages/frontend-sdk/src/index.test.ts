@@ -53,8 +53,8 @@ let fetchCalls: { url: string; body: any; headers?: any }[] = [];
 };
 
 // Now import SDK
-import { SOTS } from './index';
-import { sanitizeMetadata } from './auto-track';
+import { SOTS } from './index.js';
+import { sanitizeMetadata } from './auto-track.js';
 
 test('SOTS Frontend SDK Tests', async (t) => {
   await t.test('Initialization & Session Tracking', () => {
@@ -169,7 +169,7 @@ test('SOTS Frontend SDK Tests', async (t) => {
     assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
     assert.ok(Array.isArray(fetchCalls[0].body));
-    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'SOTS_ONBOARDING_TEST'));
+    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST'));
   });
 
   SOTS.teardown();

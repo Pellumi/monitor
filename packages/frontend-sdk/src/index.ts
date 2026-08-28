@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { EventType, SotsEvent } from './event-types';
 export type { EventType, SotsEvent } from './event-types';
-import { WorkflowTracker } from './workflow-tracker';
-import { setupAutoTrack, sanitizeMetadata } from './auto-track';
+import { WorkflowTracker } from './workflow-tracker.js';
+import { setupAutoTrack, sanitizeMetadata } from './auto-track.js';
 
 export interface SotsConfig {
   endpoint: string;

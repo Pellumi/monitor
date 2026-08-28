@@ -3869,3 +3869,180 @@ button:disabled {
     grid-template-columns: 1fr 1fr;
   }
 }
+.flow-prerequisite {
+  border-left: 3px solid #d9a441;
+}
+
+.flow-prerequisite.is-ready {
+  border-left-color: #5fa06a;
+}
+
+.flow-review-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.flow-review-findings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.flow-review-findings article {
+  position: relative;
+  min-height: 118px;
+  padding: 16px;
+  border: 1px solid #2b2b2b;
+  background: #0d0d0d;
+}
+
+.flow-review-findings article > span {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font: 600 12px/1 monospace;
+  color: #0b0b0b;
+  background: #e8c56e;
+  padding: 5px 7px;
+}
+
+.flow-review-findings p {
+  margin: 28px 0 0;
+  color: #8e9192;
+  font-size: 12px;
+}
+
+.flow-roadmap-shell {
+  overflow: hidden;
+}
+
+.flow-roadmap {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(280px, 1.2fr) repeat(2, minmax(240px, 1fr));
+  gap: 28px;
+  margin: 28px 0;
+  padding: 22px;
+  border: 1px solid #262626;
+  background-color: #090909;
+  background-image: radial-gradient(#292929 1px, transparent 1px);
+  background-size: 18px 18px;
+  overflow-x: auto;
+}
+
+.flow-roadmap-lane {
+  min-width: 240px;
+}
+
+.flow-roadmap-lane > header {
+  width: fit-content;
+  margin: 0 auto 22px;
+  padding: 8px 13px;
+  border: 1px solid #555;
+  background: #181818;
+  color: #f2f2f2;
+  font: 600 11px/1.2 monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.flow-roadmap-lane.is-spine > header {
+  border-color: #d4b35f;
+  color: #ffe6a2;
+}
+
+.flow-roadmap-track {
+  position: relative;
+  display: grid;
+  gap: 18px;
+}
+
+.flow-roadmap-track::before {
+  content: "";
+  position: absolute;
+  top: -22px;
+  bottom: -18px;
+  left: 16px;
+  width: 2px;
+  background: #3d78c5;
+}
+
+.flow-roadmap-lane.is-branch .flow-roadmap-track::before {
+  background: repeating-linear-gradient(to bottom, #3d78c5 0 5px, transparent 5px 10px);
+}
+
+.flow-roadmap-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.flow-roadmap-step > div {
+  padding: 14px;
+  border: 1px solid #353535;
+  background: #111;
+}
+
+.flow-roadmap-step h3 {
+  margin: 3px 0 6px;
+  font-size: 14px;
+}
+
+.flow-roadmap-step p,
+.flow-roadmap-step code {
+  font-size: 11px;
+  color: #9fa2a3;
+}
+
+.flow-roadmap-step .code-block {
+  max-height: 150px;
+  margin-top: 10px;
+  font-size: 10px;
+}
+
+.flow-roadmap-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 2px solid #3d78c5;
+  border-radius: 50%;
+  background: #090909;
+}
+
+.flow-roadmap-step.is-verified .flow-roadmap-node,
+.flow-roadmap-step.is-done .flow-roadmap-node {
+  border-color: #6ca86c;
+  background: #335d38;
+}
+
+.flow-roadmap-step.is-current .flow-roadmap-node {
+  border-color: #9b72ff;
+  box-shadow: 0 0 0 4px rgb(155 114 255 / 14%);
+}
+
+.flow-roadmap-step.is-blocked .flow-roadmap-node {
+  border-color: #745d2c;
+  color: #e8c56e;
+}
+
+@media (max-width: 1050px) {
+  .flow-review-findings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flow-roadmap { grid-template-columns: minmax(280px, 1fr); }
+}
+
+@media (max-width: 680px) {
+  .flow-review-metrics,
+  .flow-review-findings { grid-template-columns: 1fr; }
+  .flow-roadmap { margin-inline: -12px; padding: 16px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-roadmap-step.is-current .flow-roadmap-node { box-shadow: none; }
+}

@@ -1,5 +1,5 @@
-import type { EventType } from './event-types';
-import { SOTS } from './index';
+import type { EventType } from './event-types.js';
+import { SOTS } from './index.js';
 
 interface AutoTrackConfig {
   autoTrackClicks?: boolean;

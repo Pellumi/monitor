@@ -75,19 +75,11 @@ interface CachedKeyEntry {
 const keyCache = new Map<string, CachedKeyEntry>();
 const KEY_CACHE_TTL_MS = 60_000;
 
-async function resolveApiKey(
-  rawKey: string
-): Promise<CachedKeyEntry | null> {
-  const cleanKey = rawKey.startsWith('sots_') ? rawKey.slice(5) : rawKey;
-  const keyHash = crypto.createHash('sha256').update(cleanKey).digest('hex');
-
-  // Check cache
+async function validateKeyHashWithOnboardingApi(keyHash: string): Promise<CachedKeyEntry | null> {
   const cached = keyCache.get(keyHash);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
   }
-
-  // Validate against Onboarding API
   try {
     const res = await fetch(ONBOARDING_VALIDATE_URL, {
       method: 'POST',
@@ -119,6 +111,23 @@ async function resolveApiKey(
   } catch {
     return null;
   }
+}
+
+async function resolveApiKey(
+  rawKey: string
+): Promise<CachedKeyEntry | null> {
+  // Primary lookup: hash rawKey directly matching stored DB keyHash (sha256("sots_..."))
+  const primaryHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  let entry = await validateKeyHashWithOnboardingApi(primaryHash);
+
+  // Fallback lookup: if rawKey has 'sots_' prefix or missing prefix, try alternate format for legacy keys
+  if (!entry) {
+    const altKey = rawKey.startsWith('sots_') ? rawKey.slice(5) : `sots_${rawKey}`;
+    const altHash = crypto.createHash('sha256').update(altKey).digest('hex');
+    entry = await validateKeyHashWithOnboardingApi(altHash);
+  }
+
+  return entry;
 }
 
 function requiredProgrammaticScope(url: string, method: string): string | null {
@@ -192,7 +201,11 @@ async function main() {
 
     const rawKey = authHeader.slice(7).trim();
     if (!rawKey) {
-      return reply.code(401).send({ error: 'Empty API key' });
+      return reply.code(401).send({
+        error: 'EMPTY_API_KEY',
+        message: 'The Authorization header was provided as Bearer but contains no token value.',
+        actionRequired: 'Provide a valid ingestion API key in the Authorization header: Bearer sots_...',
+      });
     }
 
     if (rawKey.startsWith('sots_pat_')) {
@@ -207,25 +220,35 @@ async function main() {
       return;
     }
 
-    // Desktop and user access tokens are JWTs, not ingestion keys. Preserve
-    // the bearer token for the owning service to revalidate and authorize.
-    try {
-      const decoded = jwt.verify(rawKey, JWT_SECRET) as {
-        sub?: string; client?: string; deviceSessionId?: string;
-      };
-      if (decoded.sub) {
-        request.headers['x-sots-user-id'] = decoded.sub;
-        request.headers['x-sots-auth-mode'] = decoded.client === 'desktop' ? 'DESKTOP_SESSION' : 'USER_JWT';
-        if (decoded.deviceSessionId) request.headers['x-sots-device-session-id'] = decoded.deviceSessionId;
-        return;
+    // Desktop and user access tokens are JWTs (starting with 'ey'), not ingestion keys.
+    if (rawKey.startsWith('ey')) {
+      try {
+        const decoded = jwt.verify(rawKey, JWT_SECRET) as {
+          sub?: string; client?: string; deviceSessionId?: string;
+        };
+        if (decoded.sub) {
+          request.headers['x-sots-user-id'] = decoded.sub;
+          request.headers['x-sots-auth-mode'] = decoded.client === 'desktop' ? 'DESKTOP_SESSION' : 'USER_JWT';
+          if (decoded.deviceSessionId) request.headers['x-sots-device-session-id'] = decoded.deviceSessionId;
+          return;
+        }
+      } catch (err: any) {
+        return reply.code(401).send({
+          error: 'DESKTOP_SESSION_EXPIRED',
+          message: err?.name === 'TokenExpiredError'
+            ? 'Your desktop session access token has expired. Automatic refresh required.'
+            : 'Invalid or expired user session JWT.',
+        });
       }
-    } catch {
-      // Not a JWT; continue with ingestion-key validation.
     }
 
     const keyEntry = await resolveApiKey(rawKey);
     if (!keyEntry) {
-      return reply.code(401).send({ error: 'Invalid or revoked API key' });
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED_INGESTION_KEY',
+        message: `The Tellann Ingestion API Key provided in your Authorization header ("${rawKey.slice(0, 13)}...") was invalid, unassigned, or revoked.`,
+        actionRequired: 'Copy an active key from your Dashboard (Settings -> Ingestion Keys) or Desktop ("Generate one-time setup key"), set it as VITE_TELLANN_INGESTION_KEY (or TELLANN_INGESTION_KEY) in your project .env.local file, and restart your local dev server.',
+      });
     }
 
     // Inject resolved identity headers for upstream services
@@ -692,6 +715,7 @@ async function main() {
   fastify.all('/v1/applications/:id/intent-drafts/*', forwardToFdrs);
   fastify.all('/v1/applications/:id/instrumentation/*', forwardToOnboarding);
   fastify.all('/flows/:flowId/initializations', forwardToOnboarding);
+  fastify.all('/flow-initializations/:initializationId', forwardToOnboarding);
   fastify.all('/flow-initializations/:initializationId/*', forwardToOnboarding);
   fastify.all('/flow-bindings/:bindingId/rescans', forwardToOnboarding);
   fastify.all('/desktop/setup-handoffs/*', forwardToOnboarding);

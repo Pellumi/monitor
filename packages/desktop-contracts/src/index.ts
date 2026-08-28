@@ -333,10 +333,52 @@ export const FlowProjectBindingSchema = z.object({
   currentScanId: z.string().uuid().nullable(), initializedAt: z.string().datetime().or(z.date()).nullable(), lastRescannedAt: z.string().datetime().or(z.date()).nullable(),
 }).passthrough();
 
+export const FlowCheckpointSchema = z.object({
+  id: z.string(), kind: z.enum(['STATE', 'TRANSITION']), stateId: z.string().nullable(), transitionId: z.string().nullable(),
+  stateRole: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']).nullable(), terminalKind: z.string().nullable(), eventType: z.string(),
+  expectedState: z.string().nullable(), fromCheckpointId: z.string().nullable(), toCheckpointId: z.string().nullable(), required: z.boolean(),
+  mapping: z.object({ file: z.string().nullable(), symbol: z.string().nullable(), confidence: z.number().min(0).max(1), rationale: z.string() }),
+});
+export const FlowInitializationManifestSchema = z.object({
+  version: z.literal('1.0'), graphVersionId: z.string().uuid(), graphHash: z.string(), repositorySnapshotId: z.string().uuid(),
+  initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
+  unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointSchema), generatedAt: z.string().datetime(),
+});
+export const FlowCodeReviewReportSchema = z.object({
+  version: z.literal('1.0'), kind: z.literal('FLOW_CODE_REVIEW'), generatedAt: z.string().datetime(), engine: z.enum(['HYBRID', 'RULES_FALLBACK']),
+  summary: z.object({ mappedStates: z.number().int(), totalStates: z.number().int(), mappedTransitions: z.number().int(), totalTransitions: z.number().int() }),
+  stateFindings: z.array(z.any()), transitionFindings: z.array(z.any()), missingStates: z.array(z.any()), incompleteTransitions: z.array(z.any()),
+  edgeCases: z.array(z.any()), uncoveredTerminalOutcomes: z.array(z.any()), evidence: z.array(z.any()), recommendations: z.array(z.any()), limitations: z.array(z.string()),
+});
+export const FlowReviewEnrichmentSchema = z.object({
+  recommendations: z.array(z.object({ checkpointId: z.string(), explanation: z.string(), priority: z.enum(['BLOCKING', 'HIGH', 'MEDIUM', 'LOW']) })),
+  edgeCaseExplanations: z.array(z.object({ code: z.string(), explanation: z.string() })),
+  summary: z.string(),
+});
+export const ManualRoadmapStepSchema = z.object({
+  id: z.string(), groupId: z.string(), kind: z.enum(['PREREQUISITE', 'STATE', 'TRANSITION', 'TERMINAL', 'VERIFY']), title: z.string(),
+  description: z.string(), status: z.enum(['PENDING', 'CURRENT', 'DONE', 'VERIFIED', 'BLOCKED']), dependencies: z.array(z.string()),
+  file: z.string().nullable(), symbol: z.string().nullable(), snippet: z.string(), eventType: z.string().nullable(), checkpointId: z.string().nullable(),
+  userCompletedAt: z.string().datetime().nullable(), verificationEvidence: z.array(z.any()),
+});
+export const ManualRoadmapSchema = z.object({
+  version: z.literal('1.0'), revision: z.number().int().positive(), groups: z.array(z.object({ id: z.string(), title: z.string(), terminalKind: z.string().nullable() })),
+  steps: z.array(ManualRoadmapStepSchema), generatedAt: z.string().datetime(),
+});
+export const CheckpointCoverageSchema = z.object({
+  status: z.enum(['NOT_STARTED', 'WAITING_FOR_INITIAL', 'RECORDING', 'COMPLETED', 'INCOMPLETE']), startedAt: z.string().datetime().nullable(),
+  observedCheckpointIds: z.array(z.string()), missingCheckpointIds: z.array(z.string()), reachedTerminalStateIds: z.array(z.string()),
+  orderingErrors: z.array(z.any()), verifiedPath: z.array(z.string()), lastEventAt: z.string().datetime().nullable(),
+});
+
 export const FlowInitializationSchema = z.object({
   id: z.string().uuid(), flowId: z.string().uuid(), flowVersionId: z.string().uuid(), bindingId: z.string().uuid(), scanId: z.string().uuid(),
   status: z.enum(['PROPOSED', 'APPROVED', 'APPLYING', 'VALIDATING', 'COMPLETED', 'FAILED', 'ROLLED_BACK']),
-  instrumentationPlanId: z.string().uuid().nullable(), patchSetId: z.string().uuid().nullable(), codeReviewReport: z.unknown().nullable(), validation: z.unknown().nullable(),
+  mode: z.enum(['AUTOMATED', 'MANUAL']).nullable(),
+  stage: z.enum(['SDK_REQUIRED', 'SCANNING', 'REVIEW_READY', 'ROADMAP_READY', 'AWAITING_APPROVAL', 'APPLYING', 'AWAITING_TELEMETRY', 'COMPLETED', 'FAILED']),
+  manifestVersion: z.string(), manifest: FlowInitializationManifestSchema.nullable(), reportProvenance: z.unknown().nullable(),
+  selectedTargetAdapters: z.array(z.string()), roadmapRevision: z.number().int(), manualRoadmap: ManualRoadmapSchema.nullable(), verification: CheckpointCoverageSchema.nullable(),
+  instrumentationPlanId: z.string().uuid().nullable(), patchSetId: z.string().uuid().nullable(), codeReviewReport: FlowCodeReviewReportSchema.nullable(), validation: z.unknown().nullable(),
 }).passthrough();
 
 export const SourceDocumentManifestSchema = z.object({
@@ -472,7 +514,8 @@ export const StructuredInstrumentationCommandSchema = z.object({
 export const InstrumentationOperationSchema = z.object({
   id: z.string(), kind: z.enum(['CREATE_FILE', 'UPDATE_SOURCE', 'UPDATE_PACKAGE']), relativePath: z.string(),
   symbol: z.string().nullable(), transformId: z.string(), transformVersion: z.string(), expectedHash: z.string().nullable(),
-  description: z.string(), eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable() })),
+  description: z.string(), eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable(), checkpointId: z.string().optional(), stateId: z.string().nullable().optional(), transitionId: z.string().nullable().optional(), terminalKind: z.string().nullable().optional() })),
+  flowInitializationId: z.string().uuid().optional(),
 }).passthrough();
 export const InstrumentationPlanSchema = z.object({
   contractVersion: z.string(), manifestVersion: z.string(), id: z.string().uuid(), taskKey: z.string(),
@@ -485,6 +528,8 @@ export const InstrumentationPlanSchema = z.object({
   instrumentationPurpose: z.enum(['BOOTSTRAP', 'FLOW']).default('BOOTSTRAP'),
   flowId: z.string().uuid().nullable().optional(),
   flowVersionId: z.string().uuid().nullable().optional(),
+  flowInitializationId: z.string().uuid().nullable().optional(),
+  flowManifest: FlowInitializationManifestSchema.nullable().optional(),
 }).passthrough();
 export const InstrumentationDetectionSchema = z.object({
   adapterId: InstrumentationFrameworkIdSchema, adapterVersion: z.string(), supported: z.boolean(), confidence: z.number().min(0).max(1),
@@ -566,6 +611,12 @@ export const IPC = {
   declineFlowReview: 'tellann:cloud:intent:review:decline',
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
   initializeFlow: 'tellann:flow:initialize',
+  getFlowInitialization: 'tellann:flow:initialization:get',
+  analyzeFlowInitialization: 'tellann:flow:initialization:analyze',
+  setFlowInitializationMode: 'tellann:flow:initialization:mode',
+  updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
+  startFlowVerification: 'tellann:flow:initialization:verification:start',
+  getFlowVerification: 'tellann:flow:initialization:verification:get',
   rescanFlow: 'tellann:flow:rescan',
   approveFlowInitialization: 'tellann:flow:initialization:approve',
   applyFlowInitialization: 'tellann:flow:initialization:apply',
@@ -667,6 +718,12 @@ export type FlowReviewPreview = z.infer<typeof FlowReviewPreviewSchema>;
 export type FlowDiagram = z.infer<typeof FlowDiagramSchema>;
 export type FlowProjectBinding = z.infer<typeof FlowProjectBindingSchema>;
 export type FlowInitialization = z.infer<typeof FlowInitializationSchema>;
+export type FlowCheckpoint = z.infer<typeof FlowCheckpointSchema>;
+export type FlowInitializationManifest = z.infer<typeof FlowInitializationManifestSchema>;
+export type FlowCodeReviewReport = z.infer<typeof FlowCodeReviewReportSchema>;
+export type ManualRoadmap = z.infer<typeof ManualRoadmapSchema>;
+export type ManualRoadmapStep = z.infer<typeof ManualRoadmapStepSchema>;
+export type CheckpointCoverage = z.infer<typeof CheckpointCoverageSchema>;
 export type SourceDocumentManifest = z.infer<typeof SourceDocumentManifestSchema>;
 export type SourceDocumentSummary = z.infer<typeof SourceDocumentSummarySchema>;
 export type DocumentAccess = z.infer<typeof DocumentAccessSchema>;

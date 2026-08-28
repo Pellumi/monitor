@@ -1,10 +1,30 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { SiteFooter } from '@/components/site-footer';
+import { SiteHeader } from '@/components/site-header';
+import { logoHex } from '@/lib/image';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://domain-name.com';
+
+const themeScript = `
+  (() => {
+    try {
+      const storedTheme = localStorage.getItem('tellann-theme');
+      const theme = storedTheme === 'light' ? 'light' : 'dark';
+      const root = document.documentElement;
+      root.classList.toggle('dark', theme === 'dark');
+      root.classList.toggle('light', theme === 'light');
+      root.dataset.theme = theme;
+      root.style.colorScheme = theme;
+    } catch {
+      document.documentElement.classList.add('dark');
+      document.documentElement.dataset.theme = 'dark';
+    }
+  })();
+`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -32,16 +52,23 @@ export const metadata: Metadata = {
       'Declare, observe, reconcile, and report on real software behavior.',
   },
   icons: {
-    icon: '/logo_hex.svg',
-    shortcut: '/logo_hex.svg',
-    apple: '/logo_hex.svg',
+    icon: logoHex.src,
+    shortcut: logoHex.src,
+    apple: logoHex.src,
   },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className="dark" data-theme="dark" data-scroll-behavior="smooth" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className={inter.className}>
+        <SiteHeader />
+        {children}
+        <SiteFooter />
+      </body>
     </html>
   );
 }
