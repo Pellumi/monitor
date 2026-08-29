@@ -12,12 +12,12 @@ const docsUrl =
   process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Contact Tellann — Sales, Support & General Enquiries",
+  title: "Contact Tellann | Sales, Support & General Enquiries",
   description:
     "Contact Tellann for product questions, enterprise requirements, technical support, partnerships, media enquiries, security concerns or privacy requests.",
   alternates: { canonical: "/contact" },
   openGraph: {
-    title: "Contact Tellann — Talk to the right team",
+    title: "Contact Tellann | Talk to the right team",
     description:
       "Route your Tellann question to sales, support, security, privacy, or the team best placed to help.",
     url: `${siteUrl}/contact`,

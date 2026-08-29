@@ -4,12 +4,12 @@ import Link from "next/link";
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Careers at Tellann — Build Behavioral Quality Intelligence",
+  title: "Careers at Tellann | Build Behavioral Quality Intelligence",
   description:
     "Explore careers at Tellann and help build behavioral intelligence systems for software quality, workflow modeling, session analysis, developer tooling, and distributed infrastructure.",
   alternates: { canonical: "/careers" },
   openGraph: {
-    title: "Careers at Tellann — Build Behavioral Quality Intelligence",
+    title: "Careers at Tellann | Build Behavioral Quality Intelligence",
     description: "Help build software that can understand its own behavior.",
     url: `${siteUrl}/careers`,
     type: "website",

@@ -6,12 +6,12 @@ import { BrandCopyButton } from "@/components/brand-copy-button";
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Tellann Brand — Logos, Colors & Brand Guidelines",
+  title: "Tellann Brand | Logos, Colors & Brand Guidelines",
   description:
     "Official Tellann brand resources, including logo usage, colors, typography, product imagery, approved messaging, and downloadable media assets.",
   alternates: { canonical: "/brand" },
   openGraph: {
-    title: "Tellann Brand — Logos, Colors & Brand Guidelines",
+    title: "Tellann Brand | Logos, Colors & Brand Guidelines",
     description:
       "The public reference for representing Tellann clearly and consistently.",
     url: `${siteUrl}/brand`,
@@ -699,7 +699,10 @@ export default function BrandPage() {
             >
               Press enquiry <span>→</span>
             </Link>
-            <Link className="brand-button" href="/contact?reason=partnership#contact-form">
+            <Link
+              className="brand-button"
+              href="/contact?reason=partnership#contact-form"
+            >
               Partnership enquiry <span>→</span>
             </Link>
           </div>

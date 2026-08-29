@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import styles from "./product-placeholder.module.css";
 
 const views = [
   {
@@ -91,23 +92,42 @@ export function ProductTour() {
 export function ProductPlaceholder({
   label,
   dimensions,
+  displayDimensions,
   className = "",
 }: {
   label: string;
   dimensions: string;
+  displayDimensions?: string;
   className?: string;
 }) {
   const ratio = dimensions.replaceAll(" ", "").split("×").map(Number);
+  const displayRatio = displayDimensions
+    ?.replaceAll(" ", "")
+    .split("×")
+    .map(Number);
   return (
     <div
-      className={`product-placeholder ${className}`}
-      style={{ aspectRatio: `${ratio[0]} / ${ratio[1]}` }}
+      className={`${styles.placeholder} product-placeholder ${className}`}
+      style={{
+        aspectRatio: displayRatio
+          ? `${displayRatio[0]} / ${displayRatio[1]}`
+          : `${ratio[0]} / ${ratio[1]}`,
+        width: displayRatio ? `min(100%, ${displayRatio[0]}px)` : undefined,
+      }}
       role="img"
-      aria-label={`${label}, ${dimensions} pixels`}
+      aria-label={`${label}, ${dimensions} pixel master${displayDimensions ? `, displayed at ${displayDimensions} pixels` : ""}`}
     >
-      <span>Visual placeholder</span>
-      <b>{label}</b>
-      <small>{dimensions} px</small>
+      <i className={styles.guideForward} aria-hidden="true" />
+      <i className={styles.guideBackward} aria-hidden="true" />
+      <span className={styles.eyebrow}>Visual placeholder</span>
+      <b className={styles.label}>{label}</b>
+      <small className={styles.dimensions}>
+        {displayDimensions === dimensions
+          ? `${dimensions} px · Master-size preview`
+          : displayDimensions
+            ? `Preview ${displayDimensions} px · Master ${dimensions} px`
+            : `${dimensions} px`}
+      </small>
     </div>
   );
 }

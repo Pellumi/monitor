@@ -330,25 +330,56 @@ export default function CompanyPage() {
         className="company-mission"
         aria-label="Tellann mission and vision"
       >
-        <article className="company-mission-card company-mission-card-left" tabIndex={0}>
-          <Image src="/tellann-developer-demo.png" alt="" fill loading="eager" sizes="(max-width: 700px) 100vw, 50vw" className="company-mission-image" />
+        <article
+          className="company-mission-card company-mission-card-left"
+          tabIndex={0}
+        >
+          <Image
+            src="/tellann-developer-demo.png"
+            alt=""
+            fill
+            loading="eager"
+            sizes="(max-width: 700px) 100vw, 50vw"
+            className="company-mission-image"
+          />
           <span className="company-mission-shade" aria-hidden="true" />
           <div className="company-mission-topline">
             <p className="company-eyebrow">Mission</p>
             <span aria-hidden="true">→</span>
           </div>
-          <h2>Help software teams discover, understand, and resolve quality issues before they impact users.</h2>
-          <p className="company-mission-detail">Transform application behavior into continuously evolving quality intelligence.</p>
+          <h2>
+            Help software teams discover, understand, and resolve quality issues
+            before they impact users.
+          </h2>
+          <p className="company-mission-detail">
+            Transform application behavior into continuously evolving quality
+            intelligence.
+          </p>
         </article>
-        <article className="company-mission-card company-mission-card-right" tabIndex={0}>
-          <Image src="/tellann-developer-demo.png" alt="" fill loading="eager" sizes="(max-width: 700px) 100vw, 50vw" className="company-mission-image" />
+        <article
+          className="company-mission-card company-mission-card-right"
+          tabIndex={0}
+        >
+          <Image
+            src="/tellann-developer-demo.png"
+            alt=""
+            fill
+            loading="eager"
+            sizes="(max-width: 700px) 100vw, 50vw"
+            className="company-mission-image"
+          />
           <span className="company-mission-shade" aria-hidden="true" />
           <div className="company-mission-topline">
             <p className="company-eyebrow">Vision</p>
             <span aria-hidden="true">→</span>
           </div>
-          <h2>Become the intelligence layer that enables software applications to understand their own quality.</h2>
-          <p className="company-mission-detail">Enable software to evaluate and communicate its operational quality.</p>
+          <h2>
+            Become the intelligence layer that enables software applications to
+            understand their own quality.
+          </h2>
+          <p className="company-mission-detail">
+            Enable software to evaluate and communicate its operational quality.
+          </p>
         </article>
       </section>
 
@@ -479,7 +510,9 @@ export default function CompanyPage() {
       >
         <article>
           <p className="company-eyebrow">Careers</p>
-          <h2 className="mt-2!">Help build the intelligence layer for software quality.</h2>
+          <h2 className="mt-2!">
+            Help build the intelligence layer for software quality.
+          </h2>
           <p>
             We are not currently listing open roles, but you can follow our
             progress and future opportunities.
