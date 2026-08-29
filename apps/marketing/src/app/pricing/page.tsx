@@ -338,7 +338,7 @@ export default function PricingPage() {
               <span>{plan}</span>
               <p>“{reason}”</p>
               {index < upgradePath.length - 1 ? (
-                <b aria-hidden="true">↓</b>
+                <b aria-hidden="true">→</b>
               ) : null}
             </article>
           ))}

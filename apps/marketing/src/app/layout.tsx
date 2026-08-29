@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { SiteFooter } from '@/components/site-footer';
 import { SiteHeader } from '@/components/site-header';
-import { logoHex } from '@/lib/image';
+import { logoIconSvg } from '@/lib/image';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -52,9 +52,9 @@ export const metadata: Metadata = {
       'Declare, observe, reconcile, and report on real software behavior.',
   },
   icons: {
-    icon: logoHex.src,
-    shortcut: logoHex.src,
-    apple: logoHex.src,
+    icon: logoIconSvg.src,
+    shortcut: logoIconSvg.src,
+    apple: logoIconSvg.src,
   },
 };
 
