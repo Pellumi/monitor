@@ -26,6 +26,15 @@ export default function SecurityPage() {
             <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
           </section>
         ))}
+        <section className="rounded-lg border border-slate-200 p-6">
+          <h2 className="font-semibold text-slate-950">Desktop application security</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Understand how Tellann handles local repositories, filesystem permissions, instrumentation changes, and installer integrity.
+          </p>
+          <Link href="/desktop/security" className="mt-5 inline-flex text-sm font-semibold text-slate-950 underline underline-offset-4">
+            Desktop security →
+          </Link>
+        </section>
       </div>
     </main>
   );

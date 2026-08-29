@@ -25,6 +25,13 @@ export const productGroups: RouteGroup[] = [
     ],
   },
   {
+    label: 'Desktop',
+    routes: [
+      route('/desktop', 'Desktop app', 'Connect and prepare local projects with Tellann.'),
+      route('/desktop/security', 'Desktop security', 'Understand local access and permission boundaries.'),
+    ],
+  },
+  {
     label: 'Understand behavior',
     routes: [
       route('/product/behavior-graphs', 'Behavior graphs', 'See states, actions, and transitions.'),
@@ -86,6 +93,7 @@ export const developerGroups: RouteGroup[] = [
     routes: [
       route('/developers', 'Developer hub', 'Integrate Tellann into your stack.'),
       route('/developers/quickstart', 'Quickstart', 'Capture your first demonstration.'),
+      route('/desktop/download', 'Download Desktop', 'Get the Tellann desktop application.'),
       route('/developers/sdk', 'SDKs', 'Explore Tellann SDK capabilities.'),
       route('/developers/api', 'API reference', 'Build against the Tellann API.'),
     ],
@@ -100,6 +108,14 @@ export const developerGroups: RouteGroup[] = [
       route('/developers/nestjs', 'NestJS', 'Instrument a NestJS service.'),
     ],
   },
+];
+
+export const desktopRoutes: SiteRoute[] = [
+  route('/desktop', 'Tellann Desktop', 'Explore Tellann\'s local project connection layer.'),
+  route('/desktop/download', 'Download Tellann Desktop', 'Download the desktop application for a supported computer.'),
+  route('/desktop/releases', 'Desktop releases', 'Follow Tellann Desktop versions and release notes.'),
+  route('/desktop/security', 'Desktop security', 'Understand local repository access, permissions, and installer integrity.'),
+  route('/desktop/requirements', 'Desktop requirements', 'Review operating system, hardware, and development-tool compatibility.'),
 ];
 
 export const resourceGroups: RouteGroup[] = [
@@ -167,6 +183,7 @@ export const placeholderRoutes = [
   ...comparisonRoutes,
   ...securityRoutes,
   ...legalRoutes,
+  ...desktopRoutes,
 ].filter((item, index, routes) => routes.findIndex(({ href }) => href === item.href) === index);
 
 export const placeholderRouteMap = new Map(placeholderRoutes.map((item) => [item.href, item]));

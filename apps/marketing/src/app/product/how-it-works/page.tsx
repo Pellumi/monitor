@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 import { ArchitectureAccordion } from "@/components/architecture-accordion";
 import { HowItWorksSandbox } from "@/components/how-it-works-sandbox";
 import { HowItWorksProgress } from "@/components/how-it-works-progress";
@@ -586,6 +587,14 @@ export default function HowItWorksPage() {
             <HowItWorksSandbox />
           </div>
         </section>
+
+        <DesktopRouteCallout
+          eyebrow="Choose your setup"
+          title="Manual SDK or Desktop-assisted."
+          description="Install and configure the SDK manually, or open Tellann Desktop, attach a project, review the detected setup, and continue to the same demonstration workflow."
+          items={["Create application", "Choose setup", "Run demonstration", "Tellann analysis"]}
+          linkLabel="Explore the Desktop setup"
+        />
 
         <section className="hiw-faq">
           <div className="hiw-shell hiw-faq-grid">

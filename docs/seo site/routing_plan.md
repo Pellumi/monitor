@@ -92,6 +92,13 @@ My recommended public sitemap is:
 │   ├── /product/endpoint-intelligence
 │   └── /product/qa-reports
 │
+├── /desktop
+│   ├── /desktop/download
+│   ├── /desktop/releases
+│   │   └── /desktop/releases/[version]
+│   ├── /desktop/security
+│   └── /desktop/requirements
+│
 ├── /solutions
 │   ├── /solutions/developers
 │   ├── /solutions/qa-engineers

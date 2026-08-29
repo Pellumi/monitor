@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ProductPreviewCarousel } from "@/components/product-preview-carousel";
+import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
 const docsUrl =
@@ -754,6 +755,13 @@ export default function MarketingHome() {
         </div>
         <TextLink href="/resources">View all resources</TextLink>
       </section>
+
+      <DesktopRouteCallout
+        eyebrow="Local connection layer"
+        title="Connect Tellann to the environment where you build."
+        description="Use Tellann Desktop to connect a local project and review the setup path from your machine. Manual SDK setup remains available."
+        items={["Local project", "Tellann Desktop", "Demonstrate", "Behavioral intelligence"]}
+      />
 
       <section className="home-roadmap" aria-labelledby="roadmap-heading">
         <div>

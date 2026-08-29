@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 import { ProductPlaceholder, ProductTour } from "@/components/product-tour";
 import "./product.css";
 
@@ -579,6 +580,13 @@ export default function ProductPage() {
           </Link>
         </div>
       </section>
+
+      <DesktopRouteCallout
+        eyebrow="Connect"
+        title="Tellann Desktop + SDKs"
+        description="Connect local projects, inspect the development environment, and prepare Tellann from your machine while keeping the SDK available as a manual integration path."
+        items={["Connect", "Observe", "Understand", "Analyze", "Communicate"]}
+      />
 
       <section className="product-feature-directory">
         <div className="product-shell">

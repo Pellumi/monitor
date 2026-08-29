@@ -684,6 +684,21 @@ export default function RoadmapPage() {
         </div>
       </section>
 
+      <section className="roadmap-desktop">
+        <div className="roadmap-shell roadmap-desktop-grid">
+          <div>
+            <p className="roadmap-kicker">Tellann Desktop</p>
+            <h2>A local connection layer for Tellann.</h2>
+          </div>
+          <div>
+            <span><b>Available</b> Windows desktop application</span>
+            <span><b>In progress</b> Expanded adapter coverage</span>
+            <span><b>Planned</b> Additional operating systems</span>
+            <Link href="/desktop">Explore Tellann Desktop <b>→</b></Link>
+          </div>
+        </div>
+      </section>
+
       <section className="roadmap-priorities">
         <div className="roadmap-shell">
           <header className="roadmap-section-head">

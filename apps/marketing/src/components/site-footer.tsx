@@ -3,6 +3,7 @@ import Link from "next/link";
 import { logoIconText, logoIconTextBlack } from "@/lib/image";
 import {
   companyRoutes,
+  desktopRoutes,
   developerGroups,
   legalRoutes,
   productGroups,
@@ -41,13 +42,15 @@ const allResourceRoutes = resourceGroups.flatMap((group) => group.routes);
 const footerNavigation: FooterGroup[] = [
   {
     title: "Product",
-    links: productGroups.flatMap((group) =>
-      group.routes.map((route, index) => ({
+    links: [
+      ...productGroups.flatMap((group) =>
+        group.routes.map((route, index) => ({
         href: route.href,
         label: route.label,
         sublabel: index === 0 ? group.label : undefined,
-      })),
-    ),
+        })),
+      ),
+    ].filter((link, index, links) => links.findIndex(({ href }) => href === link.href) === index),
   },
   {
     title: "Solutions",
@@ -76,25 +79,31 @@ const footerNavigation: FooterGroup[] = [
       ...selectRoutes(allDeveloperRoutes, [
         "/developers",
         "/developers/quickstart",
+        "/desktop/download",
         "/developers/sdk",
         "/developers/api",
         "/developers/react",
         "/developers/nextjs",
         "/developers/nodejs",
       ]),
+      ...selectRoutes(desktopRoutes, ["/desktop/requirements"]),
       { label: "Documentation", href: docsUrl, external: true },
       { label: "System status", href: statusUrl, external: true },
     ],
   },
   {
     title: "Resources",
-    links: selectRoutes(allResourceRoutes, [
-      "/blog",
-      "/guides",
-      "/glossary",
-      "/changelog",
-      "/roadmap",
-    ]),
+    links: [
+      ...selectRoutes(allResourceRoutes, [
+        "/blog",
+        "/guides",
+        "/case-studies",
+        "/glossary",
+        "/changelog",
+      ]),
+      ...selectRoutes(desktopRoutes, ["/desktop/releases"]),
+      ...selectRoutes(allResourceRoutes, ["/roadmap"]),
+    ],
   },
   {
     title: "Company",
@@ -113,6 +122,7 @@ const footerNavigation: FooterGroup[] = [
         "/security/session-replay",
         "/security/enterprise",
       ]),
+      ...selectRoutes(desktopRoutes, ["/desktop/security"]),
       ...selectRoutes(legalRoutes, [
         "/terms",
         "/privacy",
