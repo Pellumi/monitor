@@ -1,12 +1,12 @@
 # ──────────────────────────────────────────────────────────────
-# SOTS Platform — Alertmanager Configuration
+# TELLANN Platform — Alertmanager Configuration
 # ──────────────────────────────────────────────────────────────
 
 global:
   resolve_timeout: 5m
   # smtp_smarthost: 'smtp.example.com:587'
-  # smtp_from: 'alertmanager@sots.dev'
-  # smtp_auth_username: 'alerts@sots.dev'
+  # smtp_from: 'alertmanager@tellann.dev'
+  # smtp_auth_username: 'alerts@tellann.dev'
   # smtp_auth_password: ''
 
 # ── Inhibition rules ─────────────────────────────────────────
@@ -54,7 +54,7 @@ receivers:
         send_resolved: true
     # Uncomment to add email notifications:
     # email_configs:
-    #   - to: 'ops-team@sots.dev'
+    #   - to: 'ops-team@tellann.dev'
     #     send_resolved: true
 
   - name: 'workers-webhook'

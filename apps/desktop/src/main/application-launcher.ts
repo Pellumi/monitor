@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { resolveWithinWorkspace } from '@sots/agent-policy';
+import { resolveWithinWorkspace } from '@tellann/agent-policy';
 
 export type LocalLaunchCommand = {
   id: string;

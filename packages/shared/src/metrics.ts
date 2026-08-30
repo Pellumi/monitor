@@ -1,13 +1,13 @@
 /**
- * @sots/shared — Prometheus metrics helpers
+ * @tellann/shared — Prometheus metrics helpers
  *
- * Creates a per-service metrics registry with standard SOTS metrics.
+ * Creates a per-service metrics registry with standard TELLANN metrics.
  * Each service imports this and mounts GET /metrics using the returned
  * `metricsHandler`. All counters and histograms are pre-labelled with
  * the service name so dashboards can filter per-service easily.
  *
  * Usage:
- *   import { createMetricsRegistry } from '@sots/shared/metrics';
+ *   import { createMetricsRegistry } from '@tellann/shared/metrics';
  *   const { register, metricsHandler, http } = createMetricsRegistry('auth-api');
  *   app.get('/metrics', metricsHandler);
  *   // In your middleware: http.requestDuration.observe(...)
@@ -21,7 +21,7 @@ import {
   collectDefaultMetrics,
 } from 'prom-client';
 
-export interface SotsMetrics {
+export interface TellannMetrics {
   register: Registry;
   metricsHandler: (req: any, res: any) => Promise<void>;
 
@@ -52,7 +52,7 @@ export interface SotsMetrics {
   };
 }
 
-export function createMetricsRegistry(serviceName: string): SotsMetrics {
+export function createMetricsRegistry(serviceName: string): TellannMetrics {
   const register = new Registry();
 
   // Default Node.js process metrics (CPU, memory, event loop lag)
@@ -202,7 +202,7 @@ export function createMetricsRegistry(serviceName: string): SotsMetrics {
  * increments the request counter for each completed request.
  */
 export function createHttpMetricsMiddleware(
-  metrics: SotsMetrics,
+  metrics: TellannMetrics,
   serviceName: string,
 ) {
   return (req: any, res: any, next: any) => {

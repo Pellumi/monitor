@@ -23,7 +23,7 @@ export const EventTypeSchema = z.enum([
   'WORKFLOW_STARTED',
   'WORKFLOW_COMPLETED',
   'WORKFLOW_FAILED',
-  'SOTS_ONBOARDING_TEST',
+  'TELLANN_ONBOARDING_TEST',
   'TELLANN_INITIALIZED',
   'QA_RUN_STARTED',
   'QA_RUN_COMPLETED',
@@ -38,7 +38,7 @@ export const EventTypeSchema = z.enum([
   'EXPECTED_FLOW_VERSION_SELECTED'
 ]);
 
-export const SotsEventSchema = z.object({
+export const TellannEventSchema = z.object({
   eventId: z.string().uuid(),
   sessionId: z.string().uuid(),
   tenantId: z.string(),
@@ -53,7 +53,7 @@ export const SotsEventSchema = z.object({
   metadata: z.record(z.any()).default({}),
 });
 
-export const ApiRequestEventSchema = SotsEventSchema.extend({
+export const ApiRequestEventSchema = TellannEventSchema.extend({
   eventType: z.literal('API_REQUEST'),
   metadata: z.object({
     requestId: z.string().uuid().optional(),
@@ -64,4 +64,4 @@ export const ApiRequestEventSchema = SotsEventSchema.extend({
   }),
 });
 
-export const EventBatchSchema = z.array(SotsEventSchema);
+export const EventBatchSchema = z.array(TellannEventSchema);

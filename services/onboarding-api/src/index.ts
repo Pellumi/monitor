@@ -1,14 +1,14 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
-import { Feature, Services } from '@sots/shared';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@sots/email';
-import { generateAiFlowDraft } from '@sots/ai';
-import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@sots/rules';
-import { writeAuditLog, extractAuditContext } from '@sots/authz';
+import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
+import { Feature, Services } from '@tellann/shared';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@tellann/email';
+import { generateAiFlowDraft } from '@tellann/ai';
+import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@tellann/rules';
+import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createDesktopRouter } from './desktop-routes';
@@ -17,9 +17,9 @@ import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
 import { createFlowLifecycleRouter } from './flow-lifecycle-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
-import { createStorageClient } from '@sots/storage';
+import { createStorageClient } from '@tellann/storage';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -287,7 +287,7 @@ app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-sots-user-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tellann-user-id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -302,7 +302,7 @@ app.use((req, res, next) => {
 function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: string } {
   const rawKey = crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
-  const keyPrefix = `sots_${rawKey.slice(0, 8)}`;
+  const keyPrefix = `tellann_${rawKey.slice(0, 8)}`;
   return { rawKey, keyHash, keyPrefix };
 }
 
@@ -1650,7 +1650,7 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
       });
 
       // Privacy: sanitize the description before storing or sending to AI
-      const { sanitizeAiInputFull } = await import('@sots/ai').then((m) => ({ sanitizeAiInputFull: m.sanitizeAiInputFull })).catch(() => ({ sanitizeAiInputFull: (s: string) => ({ sanitizedText: s, redactions: [], riskLevel: 'LOW' as const, promptInjectionRisk: false, injectionPatterns: [], originalHash: '' }) }));
+      const { sanitizeAiInputFull } = await import('@tellann/ai').then((m) => ({ sanitizeAiInputFull: m.sanitizeAiInputFull })).catch(() => ({ sanitizeAiInputFull: (s: string) => ({ sanitizedText: s, redactions: [], riskLevel: 'LOW' as const, promptInjectionRisk: false, injectionPatterns: [], originalHash: '' }) }));
       const sanitized = sanitizeAiInputFull(String(description ?? ''));
 
       const startedAt = Date.now();
@@ -2085,7 +2085,7 @@ app.get('/applications/:appId/environments/:envId/sdk-readiness', async (req: Re
 
     const testEvent = await prisma.sessionEvent.findFirst({
       where: {
-        eventType: 'SOTS_ONBOARDING_TEST',
+        eventType: 'TELLANN_ONBOARDING_TEST',
         session: { environmentId: envId }
       }
     });
@@ -2489,7 +2489,7 @@ app.post('/organizations/:orgId/programmatic-tokens', verifyJwt, verifyOrgMember
   if (scopes.length === 0 || scopes.some((scope: string) => !PROGRAMMATIC_TOKEN_SCOPES.has(scope))) {
     return res.status(400).json({ error: 'INVALID_SCOPES', allowedScopes: [...PROGRAMMATIC_TOKEN_SCOPES] });
   }
-  const rawToken = `sots_pat_${crypto.randomBytes(32).toString('base64url')}`;
+  const rawToken = `tellann_pat_${crypto.randomBytes(32).toString('base64url')}`;
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
   const token = await prisma.programmaticAccessToken.create({
     data: {

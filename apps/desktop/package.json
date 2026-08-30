@@ -1,5 +1,5 @@
 {
-  "name": "@sots/desktop",
+  "name": "@tellann/desktop",
   "version": "0.1.0",
   "description": "Tellann desktop agent for guided browser QA, expected-flow inference, and bounded instrumentation.",
   "author": "Tellann",
@@ -17,13 +17,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.main.json"
   },
   "dependencies": {
-    "@sots/agent-policy": "workspace:*",
-    "@sots/browser-observer": "workspace:*",
-    "@sots/desktop-contracts": "workspace:*",
-    "@sots/document-intelligence": "workspace:*",
-    "@sots/instrumentation-adapters": "workspace:*",
-    "@sots/local-relay": "workspace:*",
-    "@sots/project-intelligence": "workspace:*",
+    "@tellann/agent-policy": "workspace:*",
+    "@tellann/browser-observer": "workspace:*",
+    "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/document-intelligence": "workspace:*",
+    "@tellann/instrumentation-adapters": "workspace:*",
+    "@tellann/local-relay": "workspace:*",
+    "@tellann/project-intelligence": "workspace:*",
     "electron-updater": "^6.6.2",
     "lucide-react": "^1.18.0",
     "mermaid": "11.12.0",

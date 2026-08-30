@@ -21,9 +21,9 @@ import type {
   InstrumentationPlan,
   InstrumentationApplyResult,
   InstrumentationValidationResult,
-} from '@sots/desktop-contracts';
+} from '@tellann/desktop-contracts';
 import type { InstrumentationCheckpoint } from './git-checkpoint';
-import type { GuidedRunState } from '@sots/browser-observer';
+import type { GuidedRunState } from '@tellann/browser-observer';
 import { clearDesktopSession, loadDesktopSession, saveDesktopSession, type StoredDesktopSession } from './secure-store';
 
 const API_URL = (process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');

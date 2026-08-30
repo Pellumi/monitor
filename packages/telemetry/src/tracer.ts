@@ -1,5 +1,5 @@
 /**
- * @sots/telemetry — NodeSDK tracer bootstrap
+ * @tellann/telemetry — NodeSDK tracer bootstrap
  *
  * Sets up the OpenTelemetry NodeSDK with:
  *   - Auto-instrumentation for HTTP, Express, Fastify, Prisma, Redis
@@ -21,14 +21,14 @@ import { resolveConfig } from './config';
 let sdk: NodeSDK | null = null;
 
 /**
- * Initialize OpenTelemetry tracing for a SOTS service.
+ * Initialize OpenTelemetry tracing for a TELLANN service.
  *
  * @param serviceName — short lowercase name (e.g. 'api-gateway', 'event-collector')
  *
  * @example
  * ```ts
  * // At the very top of src/index.ts, BEFORE other imports:
- * import { initTracing } from '@sots/telemetry';
+ * import { initTracing } from '@tellann/telemetry';
  * initTracing('api-gateway');
  * ```
  */

@@ -9,10 +9,10 @@ import {
   QARunMode,
   QARunStatus,
   PrivacyClassification,
-} from '@sots/db';
-import { Feature } from '@sots/shared';
-import type { EntitlementChecker } from '@sots/entitlement-checker';
-import type { StorageClient } from '@sots/storage';
+} from '@tellann/db';
+import { Feature } from '@tellann/shared';
+import type { EntitlementChecker } from '@tellann/entitlement-checker';
+import type { StorageClient } from '@tellann/storage';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
@@ -491,7 +491,7 @@ export function createDesktopRouter(input: {
     }, jwtSecret, {
       subject: req.user!.id,
       expiresIn: '1h',
-      issuer: 'sots-onboarding-api',
+      issuer: 'tellann-onboarding-api',
       audience: 'event-collector',
     });
     res.json({ credential, expiresInSeconds: 3600, runId: run.id });

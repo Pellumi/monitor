@@ -1,5 +1,5 @@
 {
-  "name": "@sots/backend-sdk",
+  "name": "@tellann/backend-sdk",
   "version": "0.1.0",
   "description": "Tellann server telemetry and QA-run correlation SDK",
   "license": "UNLICENSED",
@@ -24,6 +24,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "@tellann/shared": "workspace:*",
     "@types/express": "^4.17.21",
     "@types/uuid": "^9.0.8",
     "express": "^4.18.2",

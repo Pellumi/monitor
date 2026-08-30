@@ -10,7 +10,7 @@ export interface TryItPanelProps {
   defaultBody?: string;
 }
 
-const DEFAULT_API_KEY = 'sots_dev_key_12345';
+const DEFAULT_API_KEY = 'tellann_dev_key_12345';
 const DEFAULT_GATEWAY_URL = 'http://localhost:3000';
 
 export function TryItPanel({ method, path, pathParams = [], defaultBody = '' }: TryItPanelProps) {

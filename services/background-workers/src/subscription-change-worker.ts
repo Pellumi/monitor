@@ -1,5 +1,5 @@
-import { PrismaClient, SubscriptionStatus } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
+import { PrismaClient, SubscriptionStatus } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
 
 export async function applyScheduledSubscriptionChanges(prisma: PrismaClient, now = new Date()): Promise<number> {
   const pending = await prisma.subscription.findMany({

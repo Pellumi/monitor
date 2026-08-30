@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import { validateGeneratedGraph } from '@sots/graph-validation';
-import { CompiledRuleset } from '@sots/rules';
+import { validateGeneratedGraph } from '@tellann/graph-validation';
+import { CompiledRuleset } from '@tellann/rules';
 import { buildFlowGenerationPrompt } from './prompts/flow-generation.prompt';
 import { sanitizeAiInputFull } from './privacy/sanitize-ai-input';
 import { FlowDraftSchema, AIFlowDraft } from './schemas';

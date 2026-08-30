@@ -101,7 +101,7 @@ npx pnpm install
 Apply the Prisma migrations to configure PostgreSQL:
 
 ```bash
-npx pnpm --filter @sots/db run push
+npx pnpm --filter @tellann/db run push
 ```
 
 ### Step 4: Run the Compilation Build
@@ -138,7 +138,7 @@ The services will listen on their mapped ports (e.g., API Gateway on port `3000`
 Verify system behavior against the integrated Golden-Master E2E scenarios:
 
 ```bash
-npx pnpm --filter @sots/e2e-tests run test:e2e
+npx pnpm --filter @tellann/e2e-tests run test:e2e
 ```
 
 ---
@@ -147,13 +147,13 @@ npx pnpm --filter @sots/e2e-tests run test:e2e
 
 Tellann supports unified tracking across client and server environments. Both SDKs point to the **API Gateway** (`http://localhost:3000`) and require your API key in the `Authorization: Bearer <key>` header (automatically handled by the initialization config).
 
-### A. Frontend SDK (`@sots/frontend-sdk`)
+### A. Frontend SDK (`@tellann/frontend-sdk`)
 
 #### 1. Initialization
 ```typescript
-import { SOTS } from '@sots/frontend-sdk';
+import { TELLANN } from '@tellann/frontend-sdk';
 
-SOTS.initialize({
+TELLANN.initialize({
   endpoint: 'http://localhost:3000',
   tenantId: 'your-org-uuid',
   applicationId: 'your-app-uuid'
@@ -164,10 +164,10 @@ SOTS.initialize({
 Page visits are tracked automatically on start. Track clicks or forms using:
 ```typescript
 // Generic Event
-SOTS.trackEvent('BUTTON_CLICK', { elementId: 'checkout-btn' });
+TELLANN.trackEvent('BUTTON_CLICK', { elementId: 'checkout-btn' });
 
 // Business/Domain Event
-SOTS.trackBusinessEvent({
+TELLANN.trackBusinessEvent({
   type: 'CHECKOUT_START',
   payload: { cartValue: 149.99 }
 });
@@ -175,13 +175,13 @@ SOTS.trackBusinessEvent({
 
 ---
 
-### B. Backend SDK (`@sots/backend-sdk`)
+### B. Backend SDK (`@tellann/backend-sdk`)
 
 #### 1. Initialization
 ```typescript
-import { SOTS } from '@sots/backend-sdk';
+import { TELLANN } from '@tellann/backend-sdk';
 
-SOTS.initialize({
+TELLANN.initialize({
   endpoint: 'http://localhost:3000',
   tenantId: 'your-org-uuid',
   applicationId: 'your-app-uuid'
@@ -192,24 +192,24 @@ SOTS.initialize({
 Integrate the automatic API logger middleware to track route latency and status codes:
 ```typescript
 import express from 'express';
-import { sotsExpressMiddleware } from '@sots/backend-sdk';
+import { tellannExpressMiddleware } from '@tellann/backend-sdk';
 
 const app = express();
-app.use(sotsExpressMiddleware());
+app.use(tellannExpressMiddleware());
 ```
 
 #### 3. Fastify Plugin Integration
 ```typescript
 import Fastify from 'fastify';
-import { sotsFastifyPlugin } from '@sots/backend-sdk';
+import { tellannFastifyPlugin } from '@tellann/backend-sdk';
 
 const fastify = Fastify();
-fastify.register(sotsFastifyPlugin);
+fastify.register(tellannFastifyPlugin);
 ```
 
 #### 4. Manual Metric Captures
 ```typescript
-import { trackApi, captureError } from '@sots/backend-sdk';
+import { trackApi, captureError } from '@tellann/backend-sdk';
 
 // Manual API Request Log
 await trackApi({

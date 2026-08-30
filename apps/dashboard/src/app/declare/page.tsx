@@ -1126,8 +1126,8 @@ function DeclareContent() {
       const environmentId = activeEnv?.id || "YOUR_ENVIRONMENT_ID";
       const sdkCode =
         selectedTab === "react"
-          ? `'use client';\n\nimport { useEffect, type ReactNode } from 'react';\nimport { SOTS } from '@sots/frontend-sdk';\n\nexport function SotsProvider({ children }: { children: ReactNode }) {\n  useEffect(() => {\n    SOTS.initialize({\n      endpoint: 'http://localhost:3000',\n      apiKey: '${apiKeyToShow}',\n      applicationId: '${appId}',\n      environmentId: '${environmentId}'\n    });\n\n    void SOTS.verifyInstallation();\n\n    return () => SOTS.teardown();\n  }, []);\n\n  return children;\n}`
-          : `const { SOTS } = require('@sots/backend-sdk');\n\nasync function verifySotsInstall() {\n  SOTS.initialize({\n    endpoint: 'http://localhost:3000',\n    apiKey: '${apiKeyToShow}',\n    applicationId: '${appId}',\n    environmentId: '${environmentId}'\n  });\n\n  await SOTS.verifyInstallation();\n}\n\nverifySotsInstall().catch(console.error);`;
+          ? `'use client';\n\nimport { useEffect, type ReactNode } from 'react';\nimport { TELLANN } from '@tellann/frontend-sdk';\n\nexport function TellannProvider({ children }: { children: ReactNode }) {\n  useEffect(() => {\n    TELLANN.initialize({\n      endpoint: 'http://localhost:3000',\n      apiKey: '${apiKeyToShow}',\n      applicationId: '${appId}',\n      environmentId: '${environmentId}'\n    });\n\n    void TELLANN.verifyInstallation();\n\n    return () => TELLANN.teardown();\n  }, []);\n\n  return children;\n}`
+          : `const { TELLANN } = require('@tellann/backend-sdk');\n\nasync function verifyTellannInstall() {\n  TELLANN.initialize({\n    endpoint: 'http://localhost:3000',\n    apiKey: '${apiKeyToShow}',\n    applicationId: '${appId}',\n    environmentId: '${environmentId}'\n  });\n\n  await TELLANN.verifyInstallation();\n}\n\nverifyTellannInstall().catch(console.error);`;
 
       return (
         <div className="flex min-h-[85vh] items-center justify-center px-4">
@@ -1221,7 +1221,7 @@ function DeclareContent() {
                     {
                       stage: 3,
                       label: "Onboarding test event pass",
-                      desc: "SOTS_ONBOARDING_TEST event successfully received.",
+                      desc: "TELLANN_ONBOARDING_TEST event successfully received.",
                     },
                   ].map((s) => {
                     const isPassed =

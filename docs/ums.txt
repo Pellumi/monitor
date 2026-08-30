@@ -1,6 +1,6 @@
-﻿Usage Metering Specification (UMS)
+Usage Metering Specification (UMS)
 1. Purpose
-This document defines how usage is measured, tracked, enforced, reported, and monetized across the SOTS platform.
+This document defines how usage is measured, tracked, enforced, reported, and monetized across the TELLANN platform.
 The Usage Metering Specification establishes:
 * Usage metrics
 * Billable units
@@ -12,7 +12,7 @@ The Usage Metering Specification establishes:
 * Billing data requirements
 The UMS serves as the authoritative source for all platform metering decisions.
 2. Metering Philosophy
-SOTS measures significantly more than it bills.
+TELLANN measures significantly more than it bills.
 The platform captures:
 * Events
 * Sessions

@@ -1,6 +1,6 @@
-import { PrismaClient } from '@sots/db';
-import { normalizeIntent } from '@sots/derivation-engine';
-import { Services } from '@sots/shared';
+import { PrismaClient } from '@tellann/db';
+import { normalizeIntent } from '@tellann/derivation-engine';
+import { Services } from '@tellann/shared';
 
 const prisma = new PrismaClient();
 

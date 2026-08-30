@@ -1,6 +1,6 @@
-﻿Entitlement Specification (ES)
+Entitlement Specification (ES)
 1. Purpose
-This document defines all plan-based feature access, usage rights, resource limits, governance capabilities, and future intelligence capabilities within SOTS.
+This document defines all plan-based feature access, usage rights, resource limits, governance capabilities, and future intelligence capabilities within TELLANN.
 The Entitlement Specification establishes:
 * Feature entitlements
 * Resource entitlements
@@ -24,7 +24,7 @@ and paying for:
 * Local Plan
 The entitlement system must support future platform evolution without redesign.
 3. Entitlement Categories
-SOTS entitlements are grouped into four categories.
+TELLANN entitlements are grouped into four categories.
 Category A
 Feature Entitlements
 Examples:
@@ -488,7 +488,7 @@ The Entitlement System shall be considered successful when:
 8. Customers clearly understand what they can access.
 
 
-One additional improvement I would make for SOTS specifically:
+One additional improvement I would make for TELLANN specifically:
 Create a dedicated entitlement object in the database rather than deriving permissions directly from the plan.
 {
  "plan": "TEAM",

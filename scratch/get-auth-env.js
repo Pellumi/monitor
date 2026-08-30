@@ -1,7 +1,7 @@
 const { PrismaClient } = require('../packages/db/dist/index.js');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
 async function main() {
   const prisma = new PrismaClient();

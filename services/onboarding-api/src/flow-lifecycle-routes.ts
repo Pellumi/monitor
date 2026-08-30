@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import type { PrismaClient } from '@sots/db';
+import type { PrismaClient } from '@tellann/db';
 import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage } from './flow-initialization-analysis';
 import { sdkReadiness } from './sdk-setup-routes';
 import { enrichFlowCodeReview } from './flow-review-enrichment';

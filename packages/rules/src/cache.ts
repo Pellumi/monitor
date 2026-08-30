@@ -81,7 +81,7 @@ class MemoryCacheAdapter implements CacheAdapter {
 // ─────────────────────────────────────────────────────────────
 // Redis adapter (production, multi-instance safe)
 // Uses ioredis. Key-space: all entries are prefixed with
-// "sots:rulesets:" so they can be flushed independently.
+// "tellann:rulesets:" so they can be flushed independently.
 // ─────────────────────────────────────────────────────────────
 
 class RedisCacheAdapter implements CacheAdapter {
@@ -144,7 +144,7 @@ class RedisCacheAdapter implements CacheAdapter {
 
   async clear(): Promise<void> {
     try {
-      const keys: string[] = await this.redis.keys('sots:rulesets:*');
+      const keys: string[] = await this.redis.keys('tellann:rulesets:*');
       if (keys.length > 0) await this.redis.del(...keys);
     } catch (err: any) {
       console.warn('[RulesetCache:Redis] clear failed', err?.message);
@@ -153,7 +153,7 @@ class RedisCacheAdapter implements CacheAdapter {
 
   async size(): Promise<number> {
     try {
-      const keys: string[] = await this.redis.keys('sots:rulesets:*');
+      const keys: string[] = await this.redis.keys('tellann:rulesets:*');
       return keys.length;
     } catch {
       return 0;
@@ -171,7 +171,7 @@ function buildCacheKey(key: CacheKey): string {
   const org    = key.organizationId ?? 'global';
   const domain = key.domainKey      ?? 'all';
   const env    = key.environment    ?? 'default';
-  return `sots:rulesets:${org}:${domain}:${env}`;
+  return `tellann:rulesets:${org}:${domain}:${env}`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ export async function invalidateRulesetCache(params: {
   organizationId?: string | null;
   rulesetId?: string;
 }): Promise<void> {
-  const prefix = `sots:rulesets:${params.organizationId ?? 'global'}`;
+  const prefix = `tellann:rulesets:${params.organizationId ?? 'global'}`;
   const count  = await getAdapter().invalidatePrefix(prefix);
   if (count > 0) {
     console.log(`[RulesetCache] Invalidated ${count} entries for prefix: ${prefix}`);

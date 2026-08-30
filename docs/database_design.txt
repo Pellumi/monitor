@@ -1,6 +1,6 @@
 DATABASE DESIGN DOCUMENT (DDD)
 1. Purpose
-This document defines the complete database architecture for SOTS.
+This document defines the complete database architecture for TELLANN.
 The document includes:
 * Database technologies
 * Data ownership
@@ -12,7 +12,7 @@ The document includes:
 * Scalability strategy
 * Multi-tenancy strategy
 2. Database Architecture Overview
-SOTS uses a polyglot persistence architecture.
+TELLANN uses a polyglot persistence architecture.
 ┌────────────────────────────┐
 │ PostgreSQL                │
 │ Operational Data          │

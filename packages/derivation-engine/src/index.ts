@@ -1,4 +1,4 @@
-import { PrismaClient, PatternLibraryEntry } from '@sots/db';
+import { PrismaClient, PatternLibraryEntry } from '@tellann/db';
 import { getCrossTenantSuggestions, CrossTenantSuggestion } from './cross-tenant';
 
 const prisma = new PrismaClient();

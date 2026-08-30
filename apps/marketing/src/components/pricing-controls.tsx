@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { PlanDefinition, PlanTypeKey } from "@sots/shared";
+import type { PlanDefinition, PlanTypeKey } from "@tellann/shared";
 import {
   Select,
   SelectContent,

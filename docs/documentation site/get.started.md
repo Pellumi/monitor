@@ -1,10 +1,10 @@
 For the **Get Started** section, I would avoid making these pages feel like specifications. They should read like a guided product journey.
 
-A new user should be able to read only these pages, install the SDK, run one demonstration, and understand why SOTS matters.
+A new user should be able to read only these pages, install the SDK, run one demonstration, and understand why TELLANN matters.
 
 ---
 
-# Page 1: What is SOTS?
+# Page 1: What is TELLANN?
 
 ## Goal
 
@@ -16,13 +16,13 @@ Answer:
 
 ### Hero
 
-# What is SOTS?
+# What is TELLANN?
 
-SOTS is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it.
+TELLANN is a Behavioral Quality Intelligence Platform that learns how your software behaves by observing it.
 
-Instead of relying only on test suites, logs, metrics, or analytics, SOTS builds a behavioral model of your application from real interactions.
+Instead of relying only on test suites, logs, metrics, or analytics, TELLANN builds a behavioral model of your application from real interactions.
 
-Install the SDK, demonstrate your application once, and SOTS automatically generates:
+Install the SDK, demonstrate your application once, and TELLANN automatically generates:
 
 * Behavioral Graphs
 * Workflow Maps
@@ -34,9 +34,9 @@ Install the SDK, demonstrate your application once, and SOTS automatically gener
 
 ---
 
-### Traditional QA vs SOTS
+### Traditional QA vs TELLANN
 
-| Traditional Approach        | SOTS                             |
+| Traditional Approach        | TELLANN                             |
 | --------------------------- | -------------------------------- |
 | Write tests first           | Demonstrate behavior first       |
 | Manually document workflows | Automatically discover workflows |
@@ -45,7 +45,7 @@ Install the SDK, demonstrate your application once, and SOTS automatically gener
 
 ---
 
-### What SOTS Produces
+### What TELLANN Produces
 
 #### Behavioral Graph
 
@@ -81,11 +81,11 @@ Replay exactly what happened during a demonstration.
 
 ### Next Step
 
-→ Why SOTS Exists
+→ Why TELLANN Exists
 
 ---
 
-# Page 2: Why SOTS Exists
+# Page 2: Why TELLANN Exists
 
 ## Goal
 
@@ -93,7 +93,7 @@ Explain the problem.
 
 ---
 
-# Why SOTS Exists
+# Why TELLANN Exists
 
 Modern software teams have plenty of tools.
 
@@ -136,7 +136,7 @@ What happened?
 
 ---
 
-## SOTS Answers
+## TELLANN Answers
 
 * What behavior exists?
 * What behavior is missing?
@@ -182,7 +182,7 @@ Prepare the user.
 
 # Getting Started
 
-SOTS can be integrated into any application using the Frontend SDK, Backend SDK, or both.
+TELLANN can be integrated into any application using the Frontend SDK, Backend SDK, or both.
 
 ---
 
@@ -190,7 +190,7 @@ SOTS can be integrated into any application using the Frontend SDK, Backend SDK,
 
 You'll need:
 
-* A SOTS account
+* A TELLANN account
 * An organization
 * An application
 * An environment
@@ -259,13 +259,13 @@ This is arguably the most important page in the entire documentation.
 Frontend
 
 ```bash
-npm install @sots/react
+npm install @tellann/react
 ```
 
 Backend
 
 ```bash
-npm install @sots/node
+npm install @tellann/node
 ```
 
 ---
@@ -273,9 +273,9 @@ npm install @sots/node
 ## Step 2 — Initialize SDK
 
 ```ts
-import { SOTS } from "@sots/react";
+import { TELLANN } from "@tellann/react";
 
-SOTS.initialize({
+TELLANN.initialize({
   apiKey: "YOUR_API_KEY",
   applicationId: "YOUR_APP_ID",
   environment: "development"
@@ -296,7 +296,7 @@ npm run dev
 
 ## Step 4 — Start Demonstration
 
-Inside SOTS:
+Inside TELLANN:
 
 ```text
 Applications
@@ -336,7 +336,7 @@ Stop Demonstration
 
 ## Step 7 — View Results
 
-SOTS generates:
+TELLANN generates:
 
 * Behavioral Graph
 * Coverage Report
@@ -494,7 +494,7 @@ Show users how to perform a good demo.
 
 # Your First Demonstration Session
 
-A demonstration session teaches SOTS how your application behaves.
+A demonstration session teaches TELLANN how your application behaves.
 
 You are not testing.
 
@@ -581,7 +581,7 @@ Teach users how to interpret results.
 
 # Understanding Your First Report
 
-After processing a demonstration session, SOTS generates several reports.
+After processing a demonstration session, TELLANN generates several reports.
 
 ---
 
@@ -667,4 +667,4 @@ Allows you to inspect exactly what happened during the demonstration.
 
 ---
 
-After these seven pages, a user should completely understand the core MVP value proposition without reading a single architecture document, SDK reference page, or API specification. That is exactly the onboarding experience you want for SOTS.
+After these seven pages, a user should completely understand the core MVP value proposition without reading a single architecture document, SDK reference page, or API specification. That is exactly the onboarding experience you want for TELLANN.

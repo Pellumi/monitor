@@ -1,6 +1,6 @@
-﻿Billing & Subscription Specification (BSS)
+Billing & Subscription Specification (BSS)
 1. Purpose
-This document defines how subscriptions, billing, invoicing, payments, renewals, upgrades, downgrades, plan enforcement, taxation, and subscription lifecycle management operate within SOTS.
+This document defines how subscriptions, billing, invoicing, payments, renewals, upgrades, downgrades, plan enforcement, taxation, and subscription lifecycle management operate within TELLANN.
 The Billing & Subscription Specification establishes:
 * Subscription models
 * Billing rules
@@ -13,7 +13,7 @@ The Billing & Subscription Specification establishes:
 * Enterprise billing procedures
 This document is the authoritative source for all commercial billing behavior.
 2. Billing Philosophy
-SOTS bills customers based on value received.
+TELLANN bills customers based on value received.
 Phase 1 customers purchase:
 * Applications
 * User seats
@@ -26,7 +26,7 @@ Customers do not purchase:
 * Internal platform compute
 Billing shall remain simple, transparent, and predictable.
 No hidden billing mechanisms are permitted.
-To support local adoption in Nigeria, SOTS provides a Nigeria-only Local plan with reduced limits and localized pricing.
+To support local adoption in Nigeria, TELLANN provides a Nigeria-only Local plan with reduced limits and localized pricing.
 3. Supported Billing Models
 Phase 1
 Subscription Billing

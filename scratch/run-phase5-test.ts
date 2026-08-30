@@ -2,7 +2,7 @@ import { PrismaClient } from '../packages/db/node_modules/@prisma/client/index.j
 import crypto from 'crypto';
 
 const prisma = new PrismaClient({
-  datasources: { db: { url: "postgresql://sots:password@127.0.0.1:5433/sots?schema=public" } }
+  datasources: { db: { url: "postgresql://tellann:password@127.0.0.1:5433/tellann?schema=public" } }
 });
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));

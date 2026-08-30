@@ -1,5 +1,5 @@
 {
-  "name": "@sots/document-intelligence",
+  "name": "@tellann/document-intelligence",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
     "test": "node --test dist/index.test.js"
   },
   "dependencies": {
-    "@sots/ai": "workspace:*",
+    "@tellann/ai": "workspace:*",
     "js-yaml": "^4.1.0",
     "mammoth": "^1.10.0",
     "pdf-parse": "^2.4.5"

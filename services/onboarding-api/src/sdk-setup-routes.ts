@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import { EnvironmentType, type PrismaClient } from '@sots/db';
+import { EnvironmentType, type PrismaClient } from '@tellann/db';
 
 type SetupRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: SetupRequest, res: Response, next: NextFunction) => unknown;
@@ -15,7 +15,7 @@ function digest(value: string): string {
 
 function issueKey() {
   const secret = crypto.randomBytes(32).toString('hex');
-  return { rawKey: `sots_${secret}`, keyHash: digest(`sots_${secret}`), keyPrefix: `sots_${secret.slice(0, 8)}` };
+  return { rawKey: `tellann_${secret}`, keyHash: digest(`tellann_${secret}`), keyPrefix: `tellann_${secret.slice(0, 8)}` };
 }
 
 function defaultGatewayEndpoint(): string {
@@ -62,15 +62,15 @@ export async function sdkReadiness(prisma: PrismaClient, applicationId: string, 
     const packageChanges = Array.isArray((plan.planJson as { packageChanges?: unknown[] } | null)?.packageChanges)
       ? (plan.planJson as { packageChanges: Array<{ packageName?: string }> }).packageChanges
       : [];
-    if (packageChanges.some((change) => change.packageName === '@sots/frontend-sdk')) configuredKinds.add('FRONTEND');
-    if (packageChanges.some((change) => change.packageName === '@sots/backend-sdk')) configuredKinds.add('BACKEND');
+    if (packageChanges.some((change) => change.packageName === '@tellann/frontend-sdk')) configuredKinds.add('FRONTEND');
+    if (packageChanges.some((change) => change.packageName === '@tellann/backend-sdk')) configuredKinds.add('BACKEND');
     if (packageChanges.length === 0) {
       configuredKinds.add(['react-vite', 'nextjs'].includes(plan.adapterId) ? 'FRONTEND' : 'BACKEND');
     }
   }
   const buildTarget = (targetId: string, kind: 'FRONTEND' | 'BACKEND', sources: string[]) => {
     const targetEvents = events.filter((event) => sources.includes(event.source));
-    const test = targetEvents.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST');
+    const test = targetEvents.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST');
     return {
       targetId, kind, source: sources[0], configured: configuredKinds.has(kind), processHealthy: targetEvents.length > 0,
       sessionObserved: targetEvents.length > 0, eventObserved: targetEvents.length > 0,
@@ -79,7 +79,7 @@ export async function sdkReadiness(prisma: PrismaClient, applicationId: string, 
     };
   };
   const targets = [buildTarget('frontend', 'FRONTEND', FRONTEND_SOURCES), buildTarget('backend', 'BACKEND', BACKEND_SOURCES)];
-  const installationTestPassed = events.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST');
+  const installationTestPassed = events.some((event) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST');
   const codeConfigured = targets.some((target) => target.configured);
   return {
     applicationId, environmentId, connected: sessions.length > 0 && installationTestPassed,
@@ -93,16 +93,16 @@ function snippets(endpoint: string, applicationId: string, environmentId: string
   const shared = `endpoint: '${endpoint}',\n    apiKey: process.env.TELLANN_INGESTION_KEY,\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'`;
   return [
     {
-      id: 'frontend', kind: 'FRONTEND', label: 'Browser application', packageName: '@sots/frontend-sdk', packageVersion: '^0.1.0',
-      installCommands: { npm: 'npm install @sots/frontend-sdk', pnpm: 'pnpm add @sots/frontend-sdk', yarn: 'yarn add @sots/frontend-sdk', bun: 'bun add @sots/frontend-sdk' },
+      id: 'frontend', kind: 'FRONTEND', label: 'Browser application', packageName: '@tellann/frontend-sdk', packageVersion: '^0.1.0',
+      installCommands: { npm: 'npm install @tellann/frontend-sdk', pnpm: 'pnpm add @tellann/frontend-sdk', yarn: 'yarn add @tellann/frontend-sdk', bun: 'bun add @tellann/frontend-sdk' },
       environmentVariables: { endpoint: 'NEXT_PUBLIC_TELLANN_GATEWAY_URL or VITE_TELLANN_GATEWAY_URL', key: 'NEXT_PUBLIC_TELLANN_INGESTION_KEY or VITE_TELLANN_INGESTION_KEY' },
-      snippet: `import { SOTS } from '@sots/frontend-sdk';\n\n// Initialize Tellann browser telemetry\nSOTS.initialize({\n    endpoint: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_GATEWAY_URL) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_GATEWAY_URL) || '${endpoint}',\n    apiKey: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_INGESTION_KEY) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_INGESTION_KEY),\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'\n});\nvoid SOTS.verifyInstallation();`,
+      snippet: `import { TELLANN } from '@tellann/frontend-sdk';\n\n// Initialize Tellann browser telemetry\nTELLANN.initialize({\n    endpoint: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_GATEWAY_URL) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_GATEWAY_URL) || '${endpoint}',\n    apiKey: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_INGESTION_KEY) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_INGESTION_KEY),\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'\n});\nvoid TELLANN.verifyInstallation();`,
     },
     {
-      id: 'backend', kind: 'BACKEND', label: 'Node.js server', packageName: '@sots/backend-sdk', packageVersion: '^0.1.0',
-      installCommands: { npm: 'npm install @sots/backend-sdk', pnpm: 'pnpm add @sots/backend-sdk', yarn: 'yarn add @sots/backend-sdk', bun: 'bun add @sots/backend-sdk' },
+      id: 'backend', kind: 'BACKEND', label: 'Node.js server', packageName: '@tellann/backend-sdk', packageVersion: '^0.1.0',
+      installCommands: { npm: 'npm install @tellann/backend-sdk', pnpm: 'pnpm add @tellann/backend-sdk', yarn: 'yarn add @tellann/backend-sdk', bun: 'bun add @tellann/backend-sdk' },
       environmentVariables: { endpoint: 'TELLANN_GATEWAY_URL', key: 'TELLANN_INGESTION_KEY' },
-      snippet: `import { SOTS } from '@sots/backend-sdk';\n\nSOTS.initialize({\n    ${shared}\n});\nawait SOTS.verifyInstallation();`,
+      snippet: `import { TELLANN } from '@tellann/backend-sdk';\n\nTELLANN.initialize({\n    ${shared}\n});\nawait TELLANN.verifyInstallation();`,
     },
   ];
 }

@@ -1,5 +1,5 @@
 import type { EventType } from './event-types.js';
-import { SOTS } from './index.js';
+import { TELLANN } from './index.js';
 
 interface AutoTrackConfig {
   autoTrackClicks?: boolean;
@@ -12,7 +12,7 @@ interface AutoTrackConfig {
 function shouldIgnore(element: HTMLElement | null): boolean {
   let curr = element;
   while (curr) {
-    if (curr.hasAttribute && curr.hasAttribute('data-sots-ignore')) {
+    if (curr.hasAttribute && curr.hasAttribute('data-tellann-ignore')) {
       return true;
     }
     // Ignore password inputs completely

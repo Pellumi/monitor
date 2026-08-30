@@ -8,7 +8,7 @@ Local development uses provider test mode and hosted checkout. It never activate
 4. Start the dashboard (`3010`), API gateway (`3000`), and billing API (`3009`).
 5. Expose `http://localhost:3009/billing/webhooks/paystack` and `/flutterwave` through ngrok or Cloudflare Tunnel. Configure the resulting HTTPS URLs in both provider dashboards.
 6. For Stripe, run `stripe listen --forward-to localhost:3009/billing/webhooks/stripe` and copy its signing secret to `STRIPE_WEBHOOK_SECRET`.
-7. Run `pnpm --filter @sots/billing-api billing:verify-local` before checkout.
+7. Run `pnpm --filter @tellann/billing-api billing:verify-local` before checkout.
 
 Set `BILLING_ALLOW_TEST_PROVIDER_OVERRIDE=true` only when deliberately comparing providers locally. The API constrains overrides by currency: Paystack for NGN, Flutterwave/Stripe for USD, while `MOCK` remains only for deterministic automated tests. Production ignores all overrides.
 

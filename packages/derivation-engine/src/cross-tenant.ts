@@ -1,4 +1,4 @@
-import { PrismaClient } from '@sots/db';
+import { PrismaClient } from '@tellann/db';
 
 export interface CrossTenantSuggestion {
   suggestedStateName: string;

@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { Prisma, type PrismaClient } from '@sots/db';
-import { Feature } from '@sots/shared';
-import type { EntitlementChecker } from '@sots/entitlement-checker';
-import { InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@sots/desktop-contracts';
+import { Prisma, type PrismaClient } from '@tellann/db';
+import { Feature } from '@tellann/shared';
+import type { EntitlementChecker } from '@tellann/entitlement-checker';
+import { InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
 
 type InstrumentationRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: InstrumentationRequest, res: Response, next: NextFunction) => unknown;
@@ -22,7 +22,7 @@ type CapabilityClaims = {
 
 const PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED', 'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK']);
 const ADAPTERS = new Set(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
-const SDK_PACKAGES = new Set(['@sots/frontend-sdk', '@sots/backend-sdk']);
+const SDK_PACKAGES = new Set(['@tellann/frontend-sdk', '@tellann/backend-sdk']);
 const PACKAGE_MANAGERS = new Set(['pnpm', 'pnpm.cmd', 'npm', 'npm.cmd', 'yarn', 'yarn.cmd', 'bun', 'bun.exe']);
 const COMMAND_ENVIRONMENT_KEYS = new Set(['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
 
@@ -49,7 +49,7 @@ function validatePlanPolicy(plan: InstrumentationPlan): string | null {
     if (!PACKAGE_MANAGERS.has(command.executable) || (command.cwd !== '.' && !boundedRelativePath(command.cwd))) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
     if (command.allowedEnvironmentKeys.some((key) => !COMMAND_ENVIRONMENT_KEYS.has(key))) return 'UNAPPROVED_INSTRUMENTATION_ENVIRONMENT';
     const allowed = command.id === 'install-sdk'
-      ? ['add', 'install'].includes(command.args[0] ?? '') && command.args.length === 2 && /^@sots\/(frontend|backend)-sdk@/.test(command.args[1] ?? '')
+      ? ['add', 'install'].includes(command.args[0] ?? '') && command.args.length === 2 && /^@tellann\/(frontend|backend)-sdk@/.test(command.args[1] ?? '')
       : command.id === 'validate-build' && command.args.length === 2 && command.args[0] === 'run' && command.args[1] === 'build';
     if (!allowed) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
   }

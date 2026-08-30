@@ -1,4 +1,4 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('api-gateway');
 
 import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
@@ -7,7 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import httpProxy from '@fastify/http-proxy';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { Services } from '@sots/shared';
+import { Services } from '@tellann/shared';
 
 // ─────────────────────────────────────────────────────────────
 // Configuration
@@ -31,7 +31,7 @@ const UPSTREAM = {
 
 const ONBOARDING_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-key`;
 const PROGRAMMATIC_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-programmatic-token`;
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 const isProduction = process.env.NODE_ENV === 'production';
 const API_RATE_LIMIT_MAX = Number(process.env.API_GATEWAY_API_RATE_LIMIT_MAX || (isProduction ? 100 : 10_000));
 const DESKTOP_RATE_LIMIT_MAX = Number(
@@ -116,13 +116,13 @@ async function validateKeyHashWithOnboardingApi(keyHash: string): Promise<Cached
 async function resolveApiKey(
   rawKey: string
 ): Promise<CachedKeyEntry | null> {
-  // Primary lookup: hash rawKey directly matching stored DB keyHash (sha256("sots_..."))
+  // Primary lookup: hash rawKey directly matching stored DB keyHash (sha256("tellann_..."))
   const primaryHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   let entry = await validateKeyHashWithOnboardingApi(primaryHash);
 
-  // Fallback lookup: if rawKey has 'sots_' prefix or missing prefix, try alternate format for legacy keys
+  // Fallback lookup: if rawKey has 'tellann_' prefix or missing prefix, try alternate format for legacy keys
   if (!entry) {
-    const altKey = rawKey.startsWith('sots_') ? rawKey.slice(5) : `sots_${rawKey}`;
+    const altKey = rawKey.startsWith('tellann_') ? rawKey.slice(5) : `tellann_${rawKey}`;
     const altHash = crypto.createHash('sha256').update(altKey).digest('hex');
     entry = await validateKeyHashWithOnboardingApi(altHash);
   }
@@ -204,19 +204,19 @@ async function main() {
       return reply.code(401).send({
         error: 'EMPTY_API_KEY',
         message: 'The Authorization header was provided as Bearer but contains no token value.',
-        actionRequired: 'Provide a valid ingestion API key in the Authorization header: Bearer sots_...',
+        actionRequired: 'Provide a valid ingestion API key in the Authorization header: Bearer tellann_...',
       });
     }
 
-    if (rawKey.startsWith('sots_pat_')) {
+    if (rawKey.startsWith('tellann_pat_')) {
       const token = await resolveProgrammaticToken(rawKey);
       if (!token) return reply.code(401).send({ error: 'Invalid, revoked, or unentitled programmatic token' });
       const requiredScope = requiredProgrammaticScope(url, request.method);
       if (!requiredScope || !token.scopes.includes(requiredScope)) {
         return reply.code(403).send({ error: 'PROGRAMMATIC_SCOPE_REQUIRED', requiredScope });
       }
-      request.headers['x-sots-org-id'] = token.organizationId;
-      request.headers['x-sots-auth-mode'] = 'PROGRAMMATIC_TOKEN';
+      request.headers['x-tellann-org-id'] = token.organizationId;
+      request.headers['x-tellann-auth-mode'] = 'PROGRAMMATIC_TOKEN';
       return;
     }
 
@@ -227,9 +227,9 @@ async function main() {
           sub?: string; client?: string; deviceSessionId?: string;
         };
         if (decoded.sub) {
-          request.headers['x-sots-user-id'] = decoded.sub;
-          request.headers['x-sots-auth-mode'] = decoded.client === 'desktop' ? 'DESKTOP_SESSION' : 'USER_JWT';
-          if (decoded.deviceSessionId) request.headers['x-sots-device-session-id'] = decoded.deviceSessionId;
+          request.headers['x-tellann-user-id'] = decoded.sub;
+          request.headers['x-tellann-auth-mode'] = decoded.client === 'desktop' ? 'DESKTOP_SESSION' : 'USER_JWT';
+          if (decoded.deviceSessionId) request.headers['x-tellann-device-session-id'] = decoded.deviceSessionId;
           return;
         }
       } catch (err: any) {
@@ -252,14 +252,14 @@ async function main() {
     }
 
     // Inject resolved identity headers for upstream services
-    request.headers['x-sots-org-id'] = keyEntry.organizationId;
-    request.headers['x-sots-plan-type'] = keyEntry.planType;
+    request.headers['x-tellann-org-id'] = keyEntry.organizationId;
+    request.headers['x-tellann-plan-type'] = keyEntry.planType;
     if (keyEntry.applicationId) {
-      request.headers['x-sots-application-id'] = keyEntry.applicationId;
+      request.headers['x-tellann-application-id'] = keyEntry.applicationId;
     }
     if (keyEntry.environment) {
-      request.headers['x-sots-environment-id'] = keyEntry.environment.id;
-      request.headers['x-sots-environment-type'] = keyEntry.environment.type;
+      request.headers['x-tellann-environment-id'] = keyEntry.environment.id;
+      request.headers['x-tellann-environment-type'] = keyEntry.environment.type;
     }
   });
 
@@ -286,7 +286,7 @@ async function main() {
 
   fastify.get('/v1/desktop/app-events', async (request, reply) => {
     const query = request.query as { organizationId?: string };
-    const organizationId = query.organizationId || (request.headers['x-sots-org-id'] as string);
+    const organizationId = query.organizationId || (request.headers['x-tellann-org-id'] as string);
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -351,7 +351,7 @@ async function main() {
     servers: [{ url: process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000', description: 'API Gateway' }],
     components: {
       securitySchemes: {
-        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'API Key (sots_...)' },
+        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'API Key (tellann_...)' },
         cookieAuth: { type: 'apiKey', in: 'cookie', name: 'access_token', description: 'Dashboard JWT cookie' },
       },
     },

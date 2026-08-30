@@ -1,6 +1,6 @@
-﻿EVENT TAXONOMY DOCUMENT (ETD)
+EVENT TAXONOMY DOCUMENT (ETD)
 1. Purpose
-This document defines the official event taxonomy for SOTS.
+This document defines the official event taxonomy for TELLANN.
 The objectives are:
 * Standardize all event definitions
 * Ensure consistency across SDKs
@@ -89,7 +89,7 @@ SYSTEM EVENTS
 
 
 4. Canonical Event Structure
-Every event in SOTS shall inherit from the canonical event model.
+Every event in TELLANN shall inherit from the canonical event model.
 {
   "eventId": "uuid",
   "eventType": "PAGE_VISIT",
@@ -611,4 +611,4 @@ Any new event type must:
 6. Define privacy classification.
 7. Define versioning strategy.
 8. Be approved through architecture review.
-This ensures SOTS maintains a consistent behavioral language across SDKs, collectors, analytics engines, workflow intelligence systems, production monitoring, and future autonomous quality intelligence capabilities.
+This ensures TELLANN maintains a consistent behavioral language across SDKs, collectors, analytics engines, workflow intelligence systems, production monitoring, and future autonomous quality intelligence capabilities.

@@ -1,4 +1,4 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('billing-api');
 
 import express, { NextFunction, Request, Response } from 'express';
@@ -13,11 +13,11 @@ import {
   PlanType,
   PrismaClient,
   SubscriptionStatus,
-} from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { PLAN_DEFINITIONS, Services, type PlanTypeKey } from '@sots/shared';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
-import { writeAuditLog, extractAuditContext } from '@sots/authz';
+} from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { PLAN_DEFINITIONS, Services, type PlanTypeKey } from '@tellann/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
+import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import { createCheckoutSession, verifyStripeWebhook, ensureStripeCustomer, setStripeCancellation } from './providers/stripe';
 import {
   chargeAuthorization,
@@ -51,7 +51,7 @@ const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
 // Capture raw body for webhook signature verification BEFORE json parsing
 // The rawBody buffer is attached to req so the webhook handler can verify HMAC
@@ -79,7 +79,7 @@ app.use((req: any, res, next) => {
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-sots-org-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tellann-org-id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -125,7 +125,7 @@ async function verifyJwt(req: AuthenticatedRequest, res: Response, next: NextFun
 }
 
 function requestOrganizationId(req: Request): string | null {
-  const headerOrgId = req.headers['x-sots-org-id'];
+  const headerOrgId = req.headers['x-tellann-org-id'];
   const orgId = req.params.orgId
     ?? req.body?.organizationId
     ?? (Array.isArray(headerOrgId) ? headerOrgId[0] : headerOrgId);
@@ -914,7 +914,7 @@ app.get('/billing/organizations/:orgId/invoices', verifyJwt, requireBillingViewe
 });
 
 app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, requireBillingManager, async (req: Request, res: Response) => {
-  const organizationId = req.body.organizationId || req.headers['x-sots-org-id'];
+  const organizationId = req.body.organizationId || req.headers['x-tellann-org-id'];
   const planType = assertEnumValue(PlanType, req.body.planType);
   const interval = assertEnumValue(BillingInterval, req.body.billingInterval) ?? BillingInterval.MONTHLY;
   let currency: BillingCurrency = BillingCurrency.USD;

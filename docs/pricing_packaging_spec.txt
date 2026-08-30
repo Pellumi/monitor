@@ -1,6 +1,6 @@
-﻿Pricing & Packaging Specification (PPS)
+Pricing & Packaging Specification (PPS)
 1. Purpose
-This document defines the commercial packaging structure for SOTS.
+This document defines the commercial packaging structure for TELLANN.
 The Pricing & Packaging Specification establishes:
 * Subscription plans
 * Included capabilities
@@ -10,7 +10,7 @@ The Pricing & Packaging Specification establishes:
 * Packaging evolution strategy
 This document serves as the authoritative source for all customer-facing plans.
 2. Packaging Philosophy
-SOTS pricing is designed around customer value.
+TELLANN pricing is designed around customer value.
 Customers purchase:
 * Behavioral visibility
 * Workflow understanding
@@ -26,7 +26,7 @@ During Phase 1, packaging shall be based primarily on:
 * Storage
 * Retention
 3. Plan Structure
-SOTS provides six commercial plans.
+TELLANN provides six commercial plans.
 1. Free
 2. Local (Nigeria Only)
 3. Solo
@@ -36,7 +36,7 @@ SOTS provides six commercial plans.
 Each plan is designed for a distinct customer maturity level.
 4. Free Plan
 Purpose
-Allow developers to experience the complete SOTS workflow.
+Allow developers to experience the complete TELLANN workflow.
 Target Audience:
 * Individual developers
 * Students

@@ -1,13 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
-import type { SotsEvent } from '../event-types';
-import { SotsBackendConfig } from './SOTS';
+import type { TellannEvent } from '../event-types';
+import { TellannBackendConfig } from './TELLANN';
 
 export interface TrackApiOptions {
   endpoint: string;
   method: string;
   statusCode: number;
   durationMs: number;
-  /** Optional: correlate with a frontend session via X-SOTS-Session-ID header */
+  /** Optional: correlate with a frontend session via X-TELLANN-Session-ID header */
   sessionId?: string;
   /** Optional: idempotency / tracing */
   requestId?: string;
@@ -18,10 +18,10 @@ export interface TrackApiOptions {
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit
 
 export async function trackApiEvent(
-  config: SotsBackendConfig,
+  config: TellannBackendConfig,
   options: TrackApiOptions
 ): Promise<void> {
-  const event: SotsEvent = {
+  const event: TellannEvent = {
     eventId: uuidv4(),
     sessionId: options.sessionId ?? config.sessionId ?? uuidv4(),
     tenantId: config.tenantId ?? 'unknown',
@@ -65,7 +65,7 @@ export async function trackApiEvent(
       headers.Authorization = `Bearer ${config.apiKey}`;
     }
     if (config.environmentId) {
-      headers['x-sots-environment-id'] = config.environmentId;
+      headers['x-tellann-environment-id'] = config.environmentId;
     }
     if (config.runId) headers['x-tellann-run-id'] = config.runId;
     if (config.traceId) headers['x-tellann-trace-id'] = config.traceId;

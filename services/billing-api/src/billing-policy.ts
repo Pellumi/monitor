@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { BillingCurrency, BillingInterval, PlanType, PrismaClient } from '@sots/db';
+import { BillingCurrency, BillingInterval, PlanType, PrismaClient } from '@tellann/db';
 
 export type LiveBillingProvider = 'PAYSTACK' | 'FLUTTERWAVE' | 'STRIPE';
 

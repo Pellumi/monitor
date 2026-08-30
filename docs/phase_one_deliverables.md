@@ -1,6 +1,6 @@
 Phase 1 is actually much more focused than the architecture documents make it appear. The MVP scope is centered around a single promise:
 
-> Demonstrate your application once, and SOTS automatically discovers workflows, measures coverage, identifies missing states, identifies missing flows, and generates QA intelligence. 
+> Demonstrate your application once, and TELLANN automatically discovers workflows, measures coverage, identifies missing states, identifies missing flows, and generates QA intelligence. 
 
 Everything in Phase 1 should support that outcome.
 
@@ -16,7 +16,7 @@ A developer can:
 * Create an application
 * Generate API keys
 * Configure SDKs
-* Connect an application to SOTS
+* Connect an application to TELLANN
 
 APIs:
 
@@ -48,19 +48,19 @@ Captures:
 Current SDK interfaces:
 
 ```ts
-SOTS.initialize()
+TELLANN.initialize()
 
-SOTS.trackEvent()
+TELLANN.trackEvent()
 
-SOTS.trackState()
+TELLANN.trackState()
 
-SOTS.trackTransition()
+TELLANN.trackTransition()
 
-SOTS.startWorkflow()
+TELLANN.startWorkflow()
 
-SOTS.completeWorkflow()
+TELLANN.completeWorkflow()
 
-SOTS.captureException()
+TELLANN.captureException()
 ```
 
 ### Phase 1.5B Extension
@@ -68,7 +68,7 @@ SOTS.captureException()
 You have effectively added:
 
 ```ts
-Sots.trackBusinessEvent()
+Tellann.trackBusinessEvent()
 ```
 
 although the SDK specification still needs updating. 
@@ -90,7 +90,7 @@ Captures:
 Example:
 
 ```ts
-SOTS.trackApi({
+TELLANN.trackApi({
   endpoint: "/api/orders",
   method: "POST",
   statusCode: 200,
@@ -132,7 +132,7 @@ Browse
 Checkout
 ```
 
-SOTS learns application behavior from the walkthrough.
+TELLANN learns application behavior from the walkthrough.
 
 ---
 

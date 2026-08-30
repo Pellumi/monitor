@@ -1,5 +1,5 @@
 {
-  "name": "@sots/email",
+  "name": "@tellann/email",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -7,7 +7,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@sots/db": "workspace:*"
+    "@tellann/db": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

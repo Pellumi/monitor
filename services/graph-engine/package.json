@@ -1,5 +1,5 @@
 {
-  "name": "@sots/graph-engine",
+  "name": "@tellann/graph-engine",
   "version": "0.1.0",
   "main": "dist/index.js",
   "scripts": {
@@ -8,10 +8,10 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
   },
   "dependencies": {
-    "@sots/shared": "workspace:*",
-    "@sots/telemetry": "workspace:*",
-    "@sots/db": "workspace:*",
-    "@sots/rules": "workspace:*",
+    "@tellann/shared": "workspace:*",
+    "@tellann/telemetry": "workspace:*",
+    "@tellann/db": "workspace:*",
+    "@tellann/rules": "workspace:*",
     "kafkajs": "^2.2.4"
   },
   "devDependencies": {

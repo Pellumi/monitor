@@ -101,7 +101,7 @@ export function buildManualRoadmap(manifest: ReturnType<typeof analyzeFlowInitia
     title: checkpoint.kind === 'TRANSITION' ? `Track transition ${checkpoint.transitionId}` : `Track ${checkpoint.expectedState}`,
     description: checkpoint.mapping.rationale, status: index === 0 ? 'CURRENT' : checkpoint.mapping.confidence < 0.65 ? 'BLOCKED' : 'PENDING', dependencies: checkpoint.fromCheckpointId ? [checkpoint.fromCheckpointId] : [],
     file: checkpoint.mapping.file, symbol: checkpoint.mapping.symbol,
-    snippet: `SOTS.trackEvent('${checkpoint.eventType}', { checkpointId: '${checkpoint.id}', stateId: ${JSON.stringify(checkpoint.stateId)}, transitionId: ${JSON.stringify(checkpoint.transitionId)} });`,
+    snippet: `TELLANN.trackEvent('${checkpoint.eventType}', { checkpointId: '${checkpoint.id}', stateId: ${JSON.stringify(checkpoint.stateId)}, transitionId: ${JSON.stringify(checkpoint.transitionId)} });`,
     eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
   }));
   steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Run the initial-to-terminal walkthrough', description: 'Start the project and demonstrate one correlated path from the declared initial state to a terminal state.', status: 'PENDING', dependencies: manifest.checkpoints.filter((item) => item.required).map((item) => item.id), file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });

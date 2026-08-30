@@ -1,5 +1,5 @@
 {
-  "name": "@sots/session-engine",
+  "name": "@tellann/session-engine",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,11 +8,11 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@sots/shared": "workspace:*",
-    "@sots/telemetry": "workspace:*",
-    "@sots/db": "workspace:*",
-    "@sots/entitlement-checker": "workspace:*",
-    "@sots/storage": "workspace:*",
+    "@tellann/shared": "workspace:*",
+    "@tellann/telemetry": "workspace:*",
+    "@tellann/db": "workspace:*",
+    "@tellann/entitlement-checker": "workspace:*",
+    "@tellann/storage": "workspace:*",
     "kafkajs": "^2.2.4"
   },
   "devDependencies": {

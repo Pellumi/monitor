@@ -1,4 +1,4 @@
-import { PrismaClient } from '@sots/db';
+import { PrismaClient } from '@tellann/db';
 
 /**
  * Gap 4 — Cross-Tenant Structural Pattern Matching (Derivation Engine Tier 1.5)

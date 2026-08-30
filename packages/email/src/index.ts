@@ -6,7 +6,7 @@ import {
   NotificationEventStatus,
   NotificationFrequency,
   PrismaClient,
-} from '@sots/db';
+} from '@tellann/db';
 import { builtinTemplates, BuiltinEmailTemplate, EmailTemplateKey, getBuiltinTemplate, SenderKey } from './templates';
 
 export { builtinTemplates, EmailTemplateKey };

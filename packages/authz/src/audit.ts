@@ -1,4 +1,4 @@
-import { AuditAction, PrismaClient } from '@sots/db';
+import { AuditAction, PrismaClient } from '@tellann/db';
 
 /**
  * Writes a single entry to the AuditLog table.

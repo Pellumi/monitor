@@ -78,7 +78,7 @@ Login
 Admin Dashboard
 ```
 
-SOTS reports:
+TELLANN reports:
 
 ```text
 UNDECLARED
@@ -381,7 +381,7 @@ Subscription Checkout
 
 was added.
 
-Now SOTS can report:
+Now TELLANN can report:
 
 ```text
 Behavior Drift
@@ -453,6 +453,6 @@ Overall:
 
 This extension successfully solves the biggest weakness we identified earlier:
 
-> "How does SOTS know what is missing without me manually writing rule packs forever?"
+> "How does TELLANN know what is missing without me manually writing rule packs forever?"
 
 By introducing the Declared Intent Graph, the system now has a human-defined source of truth that can be enriched, reconciled, evolved, and converted into application-specific rules. That's a much stronger foundation than relying exclusively on hardcoded domain rule packs. 

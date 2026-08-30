@@ -234,7 +234,7 @@ export function createStorageClient(env: NodeJS.ProcessEnv = process.env): Stora
         typeof firebaseServiceAccountJson === 'string'
           ? JSON.parse(firebaseServiceAccountJson)
           : firebaseServiceAccountJson;
-      const appName = 'sots-storage';
+      const appName = 'tellann-storage';
       const existingApp = admin.apps.find((a: any) => a?.name === appName);
       const firebaseApp =
         existingApp ||

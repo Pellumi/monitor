@@ -1,5 +1,5 @@
 {
-  "name": "@sots/browser-observer",
+  "name": "@tellann/browser-observer",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,8 +8,8 @@
     "test": "node --test dist/index.test.js"
   },
   "dependencies": {
-    "@sots/agent-policy": "workspace:*",
-    "@sots/desktop-contracts": "workspace:*",
+    "@tellann/agent-policy": "workspace:*",
+    "@tellann/desktop-contracts": "workspace:*",
     "playwright": "^1.58.0"
   },
   "devDependencies": {

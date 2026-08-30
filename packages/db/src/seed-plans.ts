@@ -1,10 +1,10 @@
 import { PrismaClient, PlanType } from '@prisma/client';
-import { PLAN_DEFINITIONS, type PlanTypeKey } from '@sots/shared';
+import { PLAN_DEFINITIONS, type PlanTypeKey } from '@tellann/shared';
 
 const prisma = new PrismaClient();
 
 export async function seedPlans() {
-  console.log('Starting SOTS Plans and Feature Flags seeding...');
+  console.log('Starting TELLANN Plans and Feature Flags seeding...');
 
   const planKeys = Object.keys(PLAN_DEFINITIONS) as PlanTypeKey[];
 

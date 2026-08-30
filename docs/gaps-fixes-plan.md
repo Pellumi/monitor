@@ -1013,7 +1013,7 @@ model AIFlowDraftJob {
 
 ### 11.1 Keep Rule-Based Suggestions as Baseline
 
-Current `/ai-suggestions` uses `suggestFlowGaps` from `@sots/rules`.
+Current `/ai-suggestions` uses `suggestFlowGaps` from `@tellann/rules`.
 
 Do not remove it.
 

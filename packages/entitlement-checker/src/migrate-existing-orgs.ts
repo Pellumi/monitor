@@ -1,4 +1,4 @@
-import { PrismaClient, PlanType, SubscriptionStatus } from '@sots/db';
+import { PrismaClient, PlanType, SubscriptionStatus } from '@tellann/db';
 import { EntitlementChecker } from './index';
 
 const prisma = new PrismaClient();

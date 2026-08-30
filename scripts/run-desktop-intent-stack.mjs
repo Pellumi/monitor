@@ -46,9 +46,9 @@ await Promise.all([requirePort('PostgreSQL', 5433), requirePort('Redis', 6379)])
 const local = loadEnvironment(path.join(root, '.env'));
 const env = {
   ...process.env, ...local, NODE_ENV: 'development',
-  DATABASE_URL: local.DATABASE_URL ?? 'postgresql://sots:password@127.0.0.1:5433/sots?schema=public',
+  DATABASE_URL: local.DATABASE_URL ?? 'postgresql://tellann:password@127.0.0.1:5433/tellann?schema=public',
   REDIS_URL: local.REDIS_URL ?? 'redis://127.0.0.1:6379',
-  JWT_SECRET: local.JWT_SECRET ?? 'sots-default-jwt-secret-change-in-production',
+  JWT_SECRET: local.JWT_SECRET ?? 'tellann-default-jwt-secret-change-in-production',
   AUTH_API_URL: 'http://127.0.0.1:3013', ONBOARDING_API_URL: 'http://127.0.0.1:3006',
   FDRS_API_URL: 'http://127.0.0.1:3008', API_GATEWAY_INTERNAL_URL: 'http://127.0.0.1:3000',
   TELLANN_API_URL: 'http://127.0.0.1:3000', TELLANN_AUTH_URL: 'http://127.0.0.1:3000',
@@ -57,9 +57,9 @@ const env = {
 };
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const services = [
-  ['auth-api', '@sots/auth-api'], ['onboarding-api', '@sots/onboarding-api'],
-  ['fdrs-api', '@sots/fdrs-api'], ['api-gateway', '@sots/api-gateway'],
-  ['background-workers', '@sots/background-workers'], ['desktop', '@sots/desktop'],
+  ['auth-api', '@tellann/auth-api'], ['onboarding-api', '@tellann/onboarding-api'],
+  ['fdrs-api', '@tellann/fdrs-api'], ['api-gateway', '@tellann/api-gateway'],
+  ['background-workers', '@tellann/background-workers'], ['desktop', '@tellann/desktop'],
 ];
 const children = [];
 let stopping = false;

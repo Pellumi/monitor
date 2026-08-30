@@ -1,4 +1,4 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('auth-api');
 
 import express, { Request, Response, NextFunction } from 'express';
@@ -7,11 +7,11 @@ import cors from 'cors';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
-import { PrismaClient, OtpPurpose, AuditAction, MemberRole, SubscriptionStatus } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature } from '@sots/shared';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
-import { permissionsForRole } from '@sots/authz';
+import { PrismaClient, OtpPurpose, AuditAction, MemberRole, SubscriptionStatus } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature } from '@tellann/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
+import { permissionsForRole } from '@tellann/authz';
 import {
   createOIDCProvider,
   deleteOIDCProvider,
@@ -26,7 +26,7 @@ const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
 
 const PORT = process.env.PORT || 3013;
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
 // Helpers
 export function sha256(text: string): string {
@@ -959,7 +959,7 @@ app.post('/auth/account/deletion', verifyAuth, async (req: AuthenticatedRequest,
   for (const organizationId of organizationIds) {
     const subscription = await prisma.subscription.findUnique({ where: { organizationId }, include: { plan: true } });
     if (subscription && subscription.plan.type !== 'FREE' && !subscription.cancelAtPeriodEnd) {
-      const response = await fetch(`${billingBase}/billing/organizations/${organizationId}/subscription/cancel`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', 'x-sots-org-id': organizationId }, body: JSON.stringify({ organizationId }) });
+      const response = await fetch(`${billingBase}/billing/organizations/${organizationId}/subscription/cancel`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', 'x-tellann-org-id': organizationId }, body: JSON.stringify({ organizationId }) });
       if (!response.ok) return res.status(409).json({ error: 'PROVIDER_CANCELLATION_FAILED', organizationId, message: 'Account deletion was not scheduled because the active subscription could not be cancelled.' });
     }
   }

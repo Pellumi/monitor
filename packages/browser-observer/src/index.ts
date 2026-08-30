@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { assertEnvironmentActionAllowed } from '@sots/agent-policy';
-import type { BrowserFinding, StartGuidedRunInput } from '@sots/desktop-contracts';
+import { assertEnvironmentActionAllowed } from '@tellann/agent-policy';
+import type { BrowserFinding, StartGuidedRunInput } from '@tellann/desktop-contracts';
 
 export type LiveEvidence = {
   id: string;

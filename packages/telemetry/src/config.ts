@@ -1,5 +1,5 @@
 /**
- * @sots/telemetry — OpenTelemetry tracing configuration
+ * @tellann/telemetry — OpenTelemetry tracing configuration
  *
  * Environment-based configuration for the OTel NodeSDK.
  * Services control tracing through these environment variables:
@@ -20,7 +20,7 @@ export interface TracingConfig {
 
 export function resolveConfig(serviceNameHint: string): TracingConfig {
   return {
-    serviceName: process.env.OTEL_SERVICE_NAME || `sots-${serviceNameHint}`,
+    serviceName: process.env.OTEL_SERVICE_NAME || `tellann-${serviceNameHint}`,
     endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318',
     enabled: process.env.OTEL_TRACES_ENABLED === 'true',
   };

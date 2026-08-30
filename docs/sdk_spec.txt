@@ -1,8 +1,8 @@
-﻿SDK Specification Document (SDKS)
+SDK Specification Document (SDKS)
 1. Document Overview
 Purpose
-The SOTS SDK enables applications to integrate with the Self-Observing Testing System (SOTS) for behavioral capture, telemetry collection, session replay, workflow discovery, quality intelligence generation, production monitoring, anomaly detection, and autonomous validation.
-The SDK serves as the primary observation layer of the SOTS platform and is responsible for transforming application behavior into structured telemetry that powers:
+The TELLANN SDK enables applications to integrate with the Self-Observing Testing System (TELLANN) for behavioral capture, telemetry collection, session replay, workflow discovery, quality intelligence generation, production monitoring, anomaly detection, and autonomous validation.
+The SDK serves as the primary observation layer of the TELLANN platform and is responsible for transforming application behavior into structured telemetry that powers:
 * Behavioral Graph Generation
 * Session Replay
 * Workflow Discovery
@@ -170,10 +170,10 @@ Platform
 	Future
 	4. SDK Initialization Specification
 React SDK
-import { SOTS } from "@sots/react";
+import { TELLANN } from "@tellann/react";
 
 
-SOTS.initialize({
+TELLANN.initialize({
     apiKey: "",
     applicationId: "",
     environment: "production"
@@ -181,10 +181,10 @@ SOTS.initialize({
 
 
 Node SDK
-import { SOTS } from "@sots/node";
+import { TELLANN } from "@tellann/node";
 
 
-SOTS.initialize({
+TELLANN.initialize({
     apiKey: "",
     applicationId: "",
     environment: "production"
@@ -259,19 +259,19 @@ CONFIG_VALIDATION_FAILED
 
 5. Core SDK Interfaces
 initialize()
-SOTS.initialize(config)
+TELLANN.initialize(config)
 
 
 Bootstraps SDK.
 trackEvent()
-SOTS.trackEvent(
+TELLANN.trackEvent(
     eventType,
     metadata
 );
 
 
 Example:
-SOTS.trackEvent(
+TELLANN.trackEvent(
     "BUTTON_CLICK",
     {
         buttonId: "checkout-btn"
@@ -281,14 +281,14 @@ SOTS.trackEvent(
 
 Supports Event Taxonomy events.
 trackState()
-SOTS.trackState(
+TELLANN.trackState(
     stateName,
     category
 );
 
 
 Example:
-SOTS.trackState(
+TELLANN.trackState(
     "CHECKOUT",
     "BUSINESS"
 );
@@ -296,7 +296,7 @@ SOTS.trackState(
 
 Supports Behavior Graph generation.
 trackTransition()
-SOTS.trackTransition(
+TELLANN.trackTransition(
     fromState,
     toState,
     action
@@ -304,7 +304,7 @@ SOTS.trackTransition(
 
 
 Example:
-SOTS.trackTransition(
+TELLANN.trackTransition(
     "CART",
     "CHECKOUT",
     "CHECKOUT_CLICK"
@@ -312,7 +312,7 @@ SOTS.trackTransition(
 
 
 trackApi()
-SOTS.trackApi({
+TELLANN.trackApi({
     endpoint: "/api/orders",
     method: "POST",
     statusCode: 200,
@@ -322,45 +322,45 @@ SOTS.trackApi({
 
 Supports Endpoint Intelligence.
 identifyUser()
-SOTS.identifyUser(
+TELLANN.identifyUser(
     userId,
     traits
 );
 
 
 startSession()
-SOTS.startSession()
+TELLANN.startSession()
 
 
 endSession()
-SOTS.endSession()
+TELLANN.endSession()
 
 
 startWorkflow()
-SOTS.startWorkflow(
+TELLANN.startWorkflow(
     workflowName
 );
 
 
 completeWorkflow()
-SOTS.completeWorkflow(
+TELLANN.completeWorkflow(
     workflowId
 );
 
 
 failWorkflow()
-SOTS.failWorkflow(
+TELLANN.failWorkflow(
     workflowId,
     reason
 );
 
 
 captureException()
-SOTS.captureException(error)
+TELLANN.captureException(error)
 
 
 captureMessage()
-SOTS.captureMessage(
+TELLANN.captureMessage(
     message,
     severity
 )
@@ -567,7 +567,7 @@ Tamper Detection
 * Signature verification
 12. Plugin Architecture
 Registration
-SOTS.use(plugin);
+TELLANN.use(plugin);
 
 
 Plugin Lifecycle
@@ -617,7 +617,7 @@ Error
 
 
 14. Logging Specification
-SOTS.setLogLevel("INFO");
+TELLANN.setLogLevel("INFO");
 
 
 Levels:
@@ -630,7 +630,7 @@ FATAL
 
 
 15. Configuration Specification
-SOTS.initialize({
+TELLANN.initialize({
     autoTrack: true,
     replayEnabled: true,
     errorTracking: true,
@@ -687,9 +687,9 @@ Contract Tests
 * API compatibility
 18. SDK Distribution Specification
 NPM Packages
-@sots/react
-@sots/node
-@sots/core
+@tellann/react
+@tellann/node
+@tellann/core
 
 
 Bundle Formats
@@ -699,7 +699,7 @@ UMD
 
 
 CDN Distribution
-<script src="https://cdn.sots.io/sdk/latest/sots.min.js"></script>
+<script src="https://cdn.tellann.io/sdk/latest/tellann.min.js"></script>
 
 
 Integrity Verification

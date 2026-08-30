@@ -49,7 +49,7 @@ async function main() {
   assert(user, 'A local member account is required');
   const browserAccessToken = jwt.sign(
     { sub: user.id, email: user.email },
-    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
     { expiresIn: '10m' },
   );
 
@@ -271,7 +271,7 @@ async function main() {
   }
   const foreignToken = jwt.sign(
     { sub: foreignUser.id, email: foreignUser.email },
-    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
     { expiresIn: '10m' },
   );
   const denied = await fetch(`${gateway}/qa-runs/${run.id}`, {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EnvironmentType } from '@sots/db';
+import { EnvironmentType } from '@tellann/db';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 
 test('normalizes safe environment base URLs', () => {

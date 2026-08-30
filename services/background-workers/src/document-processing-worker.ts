@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@sots/db';
+import type { PrismaClient } from '@tellann/db';
 
 type DerivedManifest = {
   checksum: string;

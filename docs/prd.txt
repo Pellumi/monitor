@@ -1,9 +1,9 @@
-﻿Product Requirements Document (PRD)
+Product Requirements Document (PRD)
 1. Product Overview
 Product Vision
 Software should be capable of explaining its own quality.
-The Self-Observing Testing System (SOTS) is a software quality intelligence platform that continuously observes how applications behave, learns expected workflows, identifies deviations, and provides actionable insights into product health.
-Rather than relying solely on manually written test cases, predefined monitoring rules, or user-reported bugs, SOTS seeks to create a living understanding of how software is actually used and how that behavior evolves over time.
+The Self-Observing Testing System (TELLANN) is a software quality intelligence platform that continuously observes how applications behave, learns expected workflows, identifies deviations, and provides actionable insights into product health.
+Rather than relying solely on manually written test cases, predefined monitoring rules, or user-reported bugs, TELLANN seeks to create a living understanding of how software is actually used and how that behavior evolves over time.
 The long-term vision is a future in which software systems can continuously observe themselves, understand when something is wrong, explain why it happened, and assist engineering teams in maintaining reliability at scale.
 2. Vision Statement
 To become the intelligence layer that enables software applications to understand, evaluate, and communicate their own operational quality.
@@ -13,7 +13,7 @@ Help software teams discover, understand, and resolve quality issues before they
 Traditional quality assurance focuses on creating tests.
 Traditional monitoring focuses on detecting failures.
 Traditional analytics focuses on measuring usage.
-SOTS sits at the intersection of all three disciplines.
+TELLANN sits at the intersection of all three disciplines.
 The platform is built around a core belief:
 Applications generate enough behavioral data to reveal their own quality state.
 If user behavior, workflow completion, failures, and system responses are continuously observed and analyzed, software can develop a dynamic understanding of what "normal" behavior looks like and identify when that behavior changes.
@@ -70,9 +70,9 @@ This slows issue resolution and increases operational costs.
 Desired Outcome
 Every significant issue should include sufficient context for rapid investigation and resolution.
 6. Proposed Solution
-SOTS introduces a new category of software quality intelligence.
+TELLANN introduces a new category of software quality intelligence.
 The platform continuously observes application behavior and transforms raw interaction data into actionable quality insights.
-Instead of relying solely on predefined rules, SOTS develops an understanding of application workflows and monitors their health over time.
+Instead of relying solely on predefined rules, TELLANN develops an understanding of application workflows and monitors their health over time.
 The platform enables teams to:
 * Understand how software is actually used
 * Discover important workflows automatically
@@ -81,7 +81,7 @@ The platform enables teams to:
 * Analyze user journeys
 * Investigate failures quickly
 * Understand quality trends over time
-SOTS serves as a continuously learning quality observer embedded within software systems.
+TELLANN serves as a continuously learning quality observer embedded within software systems.
 7. Target Users
 Primary Users
 Software Engineers
@@ -105,7 +105,7 @@ Scenario
 A software team wants to know whether critical workflows are functioning correctly after a deployment.
 Current Reality
 The team waits for users to report issues.
-With SOTS
+With TELLANN
 The platform identifies workflow degradation automatically and highlights impacted user journeys.
 Outcome
 Faster issue detection and reduced customer impact.
@@ -114,7 +114,7 @@ Scenario
 A production issue is reported.
 Current Reality
 Engineers manually attempt to reproduce the problem.
-With SOTS
+With TELLANN
 The platform provides behavioral context and workflow history surrounding the failure.
 Outcome
 Faster diagnosis and resolution.
@@ -123,7 +123,7 @@ Scenario
 A team is preparing to deploy a new release.
 Current Reality
 Confidence depends largely on existing test coverage.
-With SOTS
+With TELLANN
 Teams can compare workflow health before and after deployment.
 Outcome
 Higher confidence in software releases.
@@ -132,7 +132,7 @@ Scenario
 A business wants to understand where users struggle.
 Current Reality
 The organization relies on fragmented analytics data.
-With SOTS
+With TELLANN
 Workflow paths, abandonment points, and unusual user behaviors become visible.
 Outcome
 Improved product decisions and user experience.
@@ -141,15 +141,15 @@ Scenario
 Leadership wants visibility into software quality over time.
 Current Reality
 Quality data is scattered across multiple tools.
-With SOTS
+With TELLANN
 Historical workflow health and quality trends are centralized.
 Outcome
 Improved strategic decision-making.
 9. User Flows
 User Flow A: Initial Adoption
-1. Organization adopts SOTS.
+1. Organization adopts TELLANN.
 2. Application begins transmitting behavioral data.
-3. SOTS observes application activity.
+3. TELLANN observes application activity.
 4. Workflow patterns begin to emerge.
 5. Teams gain visibility into user journeys.
 6. Quality insights become available.
@@ -159,14 +159,14 @@ ________________
 User Flow B: Workflow Failure Detection
 1. Users interact with an application.
 2. A workflow begins behaving unexpectedly.
-3. SOTS detects deviation from established behavior.
+3. TELLANN detects deviation from established behavior.
 4. Quality insight is generated.
 5. Engineering teams are notified.
 6. Investigation begins.
 7. Issue is resolved.
 User Flow C: Quality Investigation
 1. Team identifies an issue.
-2. Team opens SOTS dashboard.
+2. Team opens TELLANN dashboard.
 3. Relevant workflow is selected.
 4. User behavior surrounding the issue is reviewed.
 5. Root causes are investigated.
@@ -174,7 +174,7 @@ User Flow C: Quality Investigation
 7. Workflow health returns to normal.
 User Flow D: Release Validation
 1. New release is deployed.
-2. SOTS monitors post-release behavior.
+2. TELLANN monitors post-release behavior.
 3. Workflow health is evaluated.
 4. Deviations are identified.
 5. Teams assess release quality.
@@ -196,7 +196,7 @@ The product will be considered successful when organizations can:
 * Improve confidence in software releases
 * Gain meaningful visibility into user behavior and workflow performance
 12. Future Product Direction
-SOTS begins as a workflow intelligence platform.
+TELLANN begins as a workflow intelligence platform.
 Over time it evolves into a comprehensive quality intelligence system capable of:
 * Understanding application behavior
 * Identifying risks automatically

@@ -75,7 +75,7 @@ async function main() {
     console.log('\n╔══════════════════════════════════════════════════╗');
     console.log('║  API KEY CREATED (save this, shown once only!)  ║');
     console.log('╠══════════════════════════════════════════════════╣');
-    console.log(`║  Key:    sots_${keyData.rawKey}`);
+    console.log(`║  Key:    tellann_${keyData.rawKey}`);
     console.log(`║  Prefix: ${keyData.keyPrefix}`);
     console.log(`║  App ID: ${APP_ID}`);
     console.log('╚══════════════════════════════════════════════════╝');

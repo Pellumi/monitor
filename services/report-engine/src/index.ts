@@ -1,14 +1,14 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('report-engine');
 
 import express, { Request, Response } from 'express';
-import { PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature, FeatureTier, Services } from '@sots/shared';
-import { getRuleSet } from '@sots/rules';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature, FeatureTier, Services } from '@tellann/shared';
+import { getRuleSet } from '@tellann/rules';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import PDFDocument from 'pdfkit';
-import { createStorageClient } from '@sots/storage';
+import { createStorageClient } from '@tellann/storage';
 
 const storage = createStorageClient();
 const app = express();
@@ -38,7 +38,7 @@ app.use(express.json());
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-sots-user-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tellann-user-id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -374,7 +374,7 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
 
       if (ruleSet) {
         for (const event of session.events) {
-          const sotsEvent = {
+          const tellannEvent = {
             eventId:       event.id,
             sessionId:     event.sessionId,
             tenantId:      session.tenantId,
@@ -389,15 +389,15 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
           // Simple state extraction: check each extractor type
           for (const rule of ruleSet.stateExtractors) {
             let matched = false;
-            if (rule.type === 'exactRoute' && sotsEvent.eventType === 'PAGE_VIEW') {
-              const url = (sotsEvent.metadata.url as string) ?? '';
+            if (rule.type === 'exactRoute' && tellannEvent.eventType === 'PAGE_VIEW') {
+              const url = (tellannEvent.metadata.url as string) ?? '';
               if (url.includes(rule.route)) {
                 const last = workflowPath[workflowPath.length - 1];
                 if (last !== rule.state) workflowPath.push(rule.state);
                 matched = true;
               }
-            } else if (rule.type === 'event' && sotsEvent.eventType === 'BUSINESS_EVENT') {
-              if (sotsEvent.metadata.businessEventType === rule.eventType) {
+            } else if (rule.type === 'event' && tellannEvent.eventType === 'BUSINESS_EVENT') {
+              if (tellannEvent.metadata.businessEventType === rule.eventType) {
                 const last = workflowPath[workflowPath.length - 1];
                 if (last !== rule.state) workflowPath.push(rule.state);
                 matched = true;
@@ -782,10 +782,10 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     };
 
     const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `sots-report-${applicationId}-${dateStr}`;
+    const filename = `tellann-report-${applicationId}-${dateStr}`;
 
     if (req.query.notifyEmail === 'true') {
-      const userId = req.headers['x-sots-user-id'] as string | undefined;
+      const userId = req.headers['x-tellann-user-id'] as string | undefined;
       if (userId && application.organizationId) {
         void prisma.user.findUnique({ where: { id: userId } }).then((user) => {
           if (!user) return;

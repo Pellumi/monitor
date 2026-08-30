@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EntitlementChecker } from './index';
-import { Feature } from '@sots/shared';
-import { PlanType, SubscriptionStatus } from '@sots/db';
+import { Feature } from '@tellann/shared';
+import { PlanType, SubscriptionStatus } from '@tellann/db';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

@@ -4,9 +4,9 @@
 
 ```powershell
 docker compose up -d postgres redis
-pnpm.cmd --filter @sots/db exec prisma migrate deploy
-pnpm.cmd --filter @sots/db build
-pnpm.cmd --filter @sots/db exec tsx src/seed-plans.ts
+pnpm.cmd --filter @tellann/db exec prisma migrate deploy
+pnpm.cmd --filter @tellann/db build
+pnpm.cmd --filter @tellann/db exec tsx src/seed-plans.ts
 pnpm.cmd dev:desktop-intent
 ```
 
@@ -19,7 +19,7 @@ In Tellann, sign in, select an entitled project, open **Intent**, and choose **U
 With the stack healthy, run:
 
 ```powershell
-pnpm.cmd --filter @sots/desktop-contracts build
+pnpm.cmd --filter @tellann/desktop-contracts build
 pnpm.cmd verify:desktop:intent
 ```
 

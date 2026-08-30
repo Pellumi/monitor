@@ -3,7 +3,7 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
-import { sanitizeAiInputFull } from '@sots/ai';
+import { sanitizeAiInputFull } from '@tellann/ai';
 
 export const DOCUMENT_PROCESSOR_VERSION = 'document-intelligence/1.0.0';
 export const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(['.pdf', '.docx', '.md', '.markdown', '.txt', '.html', '.htm', '.json', '.yaml', '.yml']);

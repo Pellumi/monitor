@@ -3,8 +3,8 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { PrismaClient } from '@sots/db';
-import type { EntitlementChecker } from '@sots/entitlement-checker';
+import { PrismaClient } from '@tellann/db';
+import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import { createInstrumentationRouter } from './instrumentation-routes';
 
 const prisma = new PrismaClient();
@@ -50,14 +50,14 @@ function plan(seedValue: Seed, id = crypto.randomUUID(), taskKey = crypto.random
     adapterId: 'react-vite', adapterVersion: '1.0.0', frameworkVersion: '7.0.0', supportedVersionRange: '>=4 <9',
     baseRevision: null, repositoryFingerprint: seedValue.snapshot.repositoryFingerprint,
     approvedFileScopes: ['package.json', 'src/tellann.ts', 'src/main.tsx'],
-    packageChanges: [{ packageName: '@sots/frontend-sdk', version: '^0.1.0', kind: 'dependency' }],
+    packageChanges: [{ packageName: '@tellann/frontend-sdk', version: '^0.1.0', kind: 'dependency' }],
     operations: [
-      { id: 'package-sdk', kind: 'UPDATE_PACKAGE', relativePath: 'package.json', symbol: '@sots/frontend-sdk', transformId: 'tellann.package-json.dependency', transformVersion: '1.0.0', expectedHash: 'b'.repeat(64), description: 'Add SDK', eventMappings: [] },
+      { id: 'package-sdk', kind: 'UPDATE_PACKAGE', relativePath: 'package.json', symbol: '@tellann/frontend-sdk', transformId: 'tellann.package-json.dependency', transformVersion: '1.0.0', expectedHash: 'b'.repeat(64), description: 'Add SDK', eventMappings: [] },
       { id: 'generated-config', kind: 'CREATE_FILE', relativePath: 'src/tellann.ts', symbol: null, transformId: 'tellann.generated.config', transformVersion: '1.0.0', expectedHash: null, description: 'Create config', eventMappings: [] },
       { id: 'entry-import', kind: 'UPDATE_SOURCE', relativePath: 'src/main.tsx', symbol: 'createRoot', transformId: 'tellann.entry.import', transformVersion: '1.0.0', expectedHash: 'c'.repeat(64), description: 'Import SDK', eventMappings: [] },
     ],
     validationCommands: [
-      { id: 'install-sdk', executable: 'npm.cmd', args: ['install', '@sots/frontend-sdk@^0.1.0'], cwd: '.', timeoutMs: 60_000, allowedEnvironmentKeys: ['PATH', 'SystemRoot'], purpose: 'Install SDK', networkRequired: true },
+      { id: 'install-sdk', executable: 'npm.cmd', args: ['install', '@tellann/frontend-sdk@^0.1.0'], cwd: '.', timeoutMs: 60_000, allowedEnvironmentKeys: ['PATH', 'SystemRoot'], purpose: 'Install SDK', networkRequired: true },
       { id: 'validate-build', executable: 'npm.cmd', args: ['run', 'build'], cwd: '.', timeoutMs: 60_000, allowedEnvironmentKeys: ['PATH', 'SystemRoot'], purpose: 'Build', networkRequired: false },
     ],
     networkRequirements: ['Package registry'], risk: 'LOW', riskReasons: ['Bounded test task'],

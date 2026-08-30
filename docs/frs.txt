@@ -1,6 +1,6 @@
-﻿Functional Requirements Specification (FRS)
+Functional Requirements Specification (FRS)
 1. Purpose
-This document defines the functional requirements for the Self-Observing Testing System (SOTS).
+This document defines the functional requirements for the Self-Observing Testing System (TELLANN).
 The purpose of this specification is to describe the behaviors, capabilities, and expected functionality of the platform across all planned product phases.
 This document serves as the authoritative reference for product implementation and feature validation.
 2. Product Scope
@@ -11,7 +11,7 @@ Phase 3 — Autonomous Validation Engine
 Each phase builds upon the capabilities introduced in previous phases.
 3. User Roles
 UR-001 Developer
-A user responsible for integrating applications with SOTS and reviewing quality insights.
+A user responsible for integrating applications with TELLANN and reviewing quality insights.
 UR-002 QA Engineer
 A user responsible for validating application quality and reviewing testing coverage.
 UR-003 Engineering Manager

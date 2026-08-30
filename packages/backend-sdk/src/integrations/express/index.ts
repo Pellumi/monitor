@@ -1,10 +1,10 @@
 import type { Request, Response, NextFunction, ErrorRequestHandler, RequestHandler } from 'express';
-import { SOTS } from '../../core/SOTS';
+import { TELLANN } from '../../core/TELLANN';
 
 declare global {
   namespace Express {
     interface Request {
-      sots?: {
+      tellann?: {
         sessionId?: string;
         runId?: string;
         traceId?: string;
@@ -14,8 +14,8 @@ declare global {
 }
 
 export function extractSessionId(headers: Record<string, any>): string | undefined {
-  if (headers['x-tellann-session-id'] || headers['x-sots-session-id']) {
-    return (headers['x-tellann-session-id'] || headers['x-sots-session-id']) as string;
+  if (headers['x-tellann-session-id'] || headers['x-tellann-session-id']) {
+    return (headers['x-tellann-session-id'] || headers['x-tellann-session-id']) as string;
   }
   const traceparent = headers['traceparent'] as string | undefined;
   if (traceparent) {
@@ -39,12 +39,12 @@ export function extractCorrelationContext(headers: Record<string, any>): { sessi
 }
 
 /**
- * Express middleware that automatically tracks every API request and hydrates req.sots context.
+ * Express middleware that automatically tracks every API request and hydrates req.tellann context.
  *
- * The middleware reads the `X-SOTS-Session-ID` or W3C `traceparent` header to correlate
+ * The middleware reads the `X-TELLANN-Session-ID` or W3C `traceparent` header to correlate
  * backend API calls with the originating frontend session.
  */
-export function sotsExpressMiddleware(): RequestHandler {
+export function tellannExpressMiddleware(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
     const correlation = extractCorrelationContext(req.headers);
@@ -52,10 +52,10 @@ export function sotsExpressMiddleware(): RequestHandler {
     const requestId = req.headers['x-request-id'] as string | undefined;
 
     // Decorate request object
-    req.sots = correlation;
+    req.tellann = correlation;
 
     res.on('finish', () => {
-      SOTS.trackApi({
+      TELLANN.trackApi({
         endpoint: req.path,
         method: req.method,
         statusCode: res.statusCode,
@@ -74,15 +74,15 @@ export function sotsExpressMiddleware(): RequestHandler {
 /**
  * Global Express error-handling middleware that automatically captures unhandled errors.
  */
-export function sotsExpressErrorHandler(): ErrorRequestHandler {
+export function tellannExpressErrorHandler(): ErrorRequestHandler {
   return (err: any, req: Request, res: Response, next: NextFunction) => {
-    const sessionId = req.sots?.sessionId;
-    SOTS.captureError({
+    const sessionId = req.tellann?.sessionId;
+    TELLANN.captureError({
       error: err,
       sessionId,
       eventType: 'SERVER_ERROR',
-      runId: req.sots?.runId,
-      traceId: req.sots?.traceId,
+      runId: req.tellann?.runId,
+      traceId: req.tellann?.traceId,
       context: {
         path: req.path,
         method: req.method,
@@ -93,5 +93,5 @@ export function sotsExpressErrorHandler(): ErrorRequestHandler {
   };
 }
 
-/** @deprecated Use sotsExpressMiddleware() */
-export const expressMiddleware = sotsExpressMiddleware;
+/** @deprecated Use tellannExpressMiddleware() */
+export const expressMiddleware = tellannExpressMiddleware;

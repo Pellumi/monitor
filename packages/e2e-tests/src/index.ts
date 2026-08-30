@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import assert from 'assert';
-import { PrismaClient } from '@sots/db';
+import { PrismaClient } from '@tellann/db';
 
 const prisma = new PrismaClient();
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));

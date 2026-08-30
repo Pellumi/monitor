@@ -1,5 +1,5 @@
 {
-  "name": "@sots/e2e-tests",
+  "name": "@tellann/e2e-tests",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -13,7 +13,7 @@
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.9",
-    "@sots/db": "workspace:*",
-    "@sots/shared": "workspace:*"
+    "@tellann/db": "workspace:*",
+    "@tellann/shared": "workspace:*"
   }
 }

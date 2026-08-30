@@ -2,7 +2,7 @@ import { PrismaClient } from '../packages/db/node_modules/@prisma/client/index.j
 
 const prisma = new PrismaClient({
   datasources: {
-    db: { url: "postgresql://sots:password@127.0.0.1:5433/sots?schema=public" }
+    db: { url: "postgresql://tellann:password@127.0.0.1:5433/tellann?schema=public" }
   }
 });
 

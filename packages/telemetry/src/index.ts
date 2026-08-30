@@ -1,12 +1,12 @@
 /**
- * @sots/telemetry
+ * @tellann/telemetry
  *
- * Shared OpenTelemetry tracing bootstrap for SOTS services.
+ * Shared OpenTelemetry tracing bootstrap for TELLANN services.
  *
  * Usage — add to the very top of your service's src/index.ts:
  *
  * ```ts
- * import { initTracing } from '@sots/telemetry';
+ * import { initTracing } from '@tellann/telemetry';
  * initTracing('api-gateway');
  * ```
  *

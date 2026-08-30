@@ -1,6 +1,6 @@
-﻿MVP Scope Document (MSD)
+MVP Scope Document (MSD)
 1. Purpose
-This document defines the exact scope of the SOTS Minimum Viable Product (MVP).
+This document defines the exact scope of the TELLANN Minimum Viable Product (MVP).
 The objective is to:
 * Prevent feature creep
 * Establish implementation boundaries
@@ -26,7 +26,7 @@ Positioning Statement
 Demonstrate your application once.
 Automatically generate QA coverage reports and identify missing user flows.
 What We Do NOT Market
-Do not market SOTS as:
+Do not market TELLANN as:
 * AI-powered testing
 * Autonomous QA
 * Self-healing software
@@ -132,7 +132,7 @@ Included
 * Exploratory workflow recording
 * Session processing
 Purpose
-Teach SOTS how an application behaves.
+Teach TELLANN how an application behaves.
 Feature Group D — Session Recording
 Included
 * Session creation

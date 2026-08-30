@@ -1,4 +1,4 @@
-# SOTS System Completeness Review
+# TELLANN System Completeness Review
 
 > **Reviewed against all 33 documentation files in `/docs` and the full codebase structure.**
 > Rating scale: ✅ Complete · 🟡 Partially Complete · ❌ Missing / Not Implemented
@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The SOTS platform has a **strong architectural foundation** and impressive depth in its AI/ruleset/FDRS layers. However, several critical MVP-blocking gaps remain — most severely in billing, entitlement enforcement, ClickHouse/Kafka infrastructure, Neo4j graph storage, observability/metrics, and the test harness. The documentation is well ahead of the implementation in multiple areas.
+The TELLANN platform has a **strong architectural foundation** and impressive depth in its AI/ruleset/FDRS layers. However, several critical MVP-blocking gaps remain — most severely in billing, entitlement enforcement, ClickHouse/Kafka infrastructure, Neo4j graph storage, observability/metrics, and the test harness. The documentation is well ahead of the implementation in multiple areas.
 
 **Overall completeness estimate: ~62% toward an MVP-ready system.**
 
@@ -77,7 +77,7 @@ The SOTS platform has a **strong architectural foundation** and impressive depth
 | Buffering + async transport | 🟡 Unknown — single transport call pattern |
 | **Tests** | ✅ `index.test.ts` exists |
 
-**Gap from MVP plan:** The docs note that SDK snippets shown in the dashboard need to match the actual package names (`@sots/frontend-sdk`, not placeholders). This is flagged as launch-blocking in `mvp_implementation_plan.md`.
+**Gap from MVP plan:** The docs note that SDK snippets shown in the dashboard need to match the actual package names (`@tellann/frontend-sdk`, not placeholders). This is flagged as launch-blocking in `mvp_implementation_plan.md`.
 
 ### 2.2 Backend SDK (`packages/backend-sdk`)
 

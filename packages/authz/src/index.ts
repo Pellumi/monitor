@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { MemberRole, PrismaClient } from '@sots/db';
+import { MemberRole, PrismaClient } from '@tellann/db';
 
 // ─────────────────────────────────────────────────────────────
 // Permission constants

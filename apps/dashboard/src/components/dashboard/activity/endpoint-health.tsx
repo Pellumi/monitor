@@ -21,7 +21,7 @@ export function EndpointHealth() {
       <div className="rounded-lg border border-[#262626] bg-[#141414] p-6 text-center text-xs font-mono text-neutral-400 space-y-2">
         <span className="font-semibold text-white block">Backend Telemetry Unconnected</span>
         <p className="text-neutral-500">
-          Connect the @sots/backend-sdk package to include API performance and endpoint health in your quality analysis.
+          Connect the @tellann/backend-sdk package to include API performance and endpoint health in your quality analysis.
         </p>
         <Link
           href={connectAppId ? `/applications/${connectAppId}/connect?appId=${connectAppId}` : "/onboarding"}

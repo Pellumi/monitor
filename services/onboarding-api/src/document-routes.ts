@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import type { PrismaClient } from '@sots/db';
-import { Feature } from '@sots/shared';
-import type { EntitlementChecker } from '@sots/entitlement-checker';
+import type { PrismaClient } from '@tellann/db';
+import { Feature } from '@tellann/shared';
+import type { EntitlementChecker } from '@tellann/entitlement-checker';
 
 type AuthenticatedRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => unknown;

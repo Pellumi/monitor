@@ -30,14 +30,14 @@ Status: implemented and service-level acceptance verified on 2026-08-01.
 Run:
 
 ```powershell
-npx.cmd pnpm --filter @sots/document-intelligence build
-npx.cmd pnpm --filter @sots/document-intelligence test
-npx.cmd pnpm --filter @sots/background-workers typecheck
-npx.cmd pnpm --filter @sots/onboarding-api build
-npx.cmd pnpm --filter @sots/fdrs-api build
-npx.cmd pnpm --filter @sots/report-engine build
-npx.cmd pnpm --filter @sots/api-gateway build
-npx.cmd pnpm --filter @sots/desktop typecheck
+npx.cmd pnpm --filter @tellann/document-intelligence build
+npx.cmd pnpm --filter @tellann/document-intelligence test
+npx.cmd pnpm --filter @tellann/background-workers typecheck
+npx.cmd pnpm --filter @tellann/onboarding-api build
+npx.cmd pnpm --filter @tellann/fdrs-api build
+npx.cmd pnpm --filter @tellann/report-engine build
+npx.cmd pnpm --filter @tellann/api-gateway build
+npx.cmd pnpm --filter @tellann/desktop typecheck
 node scripts/verify-desktop-phase2.mjs
 ```
 

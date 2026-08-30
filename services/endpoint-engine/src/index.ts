@@ -1,13 +1,13 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('endpoint-engine');
 
 import express, { Request, Response } from 'express';
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { MemberRole, PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature, SotsEvent, Topics, Services } from '@sots/shared';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { MemberRole, PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature, TellannEvent, Topics, Services } from '@tellann/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 
 // ─────────────────────────────────────────────────────────────
 // ClickHouse setup
@@ -15,8 +15,8 @@ import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/ema
 
 const ch: ClickHouseClient = createClient({
   url:      process.env.CLICKHOUSE_HOST     ?? 'http://localhost:8123',
-  database: process.env.CLICKHOUSE_DATABASE ?? 'sots',
-  username: process.env.CLICKHOUSE_USER     ?? 'sots',
+  database: process.env.CLICKHOUSE_DATABASE ?? 'tellann',
+  username: process.env.CLICKHOUSE_USER     ?? 'tellann',
   password: process.env.CLICKHOUSE_PASSWORD ?? 'password',
 });
 const prisma = new PrismaClient();
@@ -47,7 +47,7 @@ async function ensureTable(): Promise<void> {
 // ─────────────────────────────────────────────────────────────
 
 const kafka = new Kafka({
-  clientId: 'sots-endpoint-engine',
+  clientId: 'tellann-endpoint-engine',
   brokers: [process.env.KAFKA_BROKERS ?? 'localhost:9092'],
 });
 
@@ -57,7 +57,7 @@ async function processEvent({ message }: EachMessagePayload): Promise<void> {
   if (!message.value) return;
 
   try {
-    const event: SotsEvent = JSON.parse(message.value.toString());
+    const event: TellannEvent = JSON.parse(message.value.toString());
 
     if (event.eventType !== 'API_REQUEST') return; // only care about API events
 

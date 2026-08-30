@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getOrderedPlans } from "@sots/shared";
+import { getOrderedPlans } from "@tellann/shared";
 import { PricingControls } from "@/components/pricing-controls";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://tellann.co";

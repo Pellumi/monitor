@@ -1,6 +1,6 @@
-﻿COMPONENT DESIGN DOCUMENT (CDD)
+COMPONENT DESIGN DOCUMENT (CDD)
 1. Purpose
-This document defines the detailed design of all system components within the Self-Observing Testing System (SOTS).
+This document defines the detailed design of all system components within the Self-Observing Testing System (TELLANN).
 The purpose of this document is to:
 * Define service responsibilities
 * Define internal component structures
@@ -90,19 +90,19 @@ Frontend SDK
 
 Public API
 Initialize SDK
-SOTS.init(config)
+TELLANN.init(config)
 
 
 Track Custom Event
-SOTS.track(event)
+TELLANN.track(event)
 
 
 Start Session
-SOTS.startSession()
+TELLANN.startSession()
 
 
 End Session
-SOTS.endSession()
+TELLANN.endSession()
 
 
 ________________
@@ -151,7 +151,7 @@ Output Schema
 Service ID
 CDD-GW-001
 Purpose
-Single ingress point into SOTS.
+Single ingress point into TELLANN.
 Responsibilities
 * Authentication
 * Authorization

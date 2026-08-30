@@ -3,7 +3,7 @@ const APP_ID = 'f45af0e1-3bfa-47c1-885d-d19622495b38';
 const GATEWAY = 'http://localhost:3000';
 const jwt = require('C:\\Users\\pellu\\dev\\monitor\\node_modules\\.pnpm\\node_modules\\jsonwebtoken');
 const { PrismaClient } = require('C:\\Users\\pellu\\dev\\monitor\\node_modules\\.pnpm\\@prisma+client@5.22.0_prisma@5.22.0\\node_modules\\@prisma\\client');
-const JWT_SECRET = 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = 'tellann-default-jwt-secret-change-in-production';
 
 async function main() {
   const prisma = new PrismaClient();

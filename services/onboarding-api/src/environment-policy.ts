@@ -1,4 +1,4 @@
-import { EnvironmentType } from '@sots/db';
+import { EnvironmentType } from '@tellann/db';
 
 export function normalizeEnvironmentBaseUrl(value: unknown, type: EnvironmentType): string | null {
   if (value === undefined || value === null || String(value).trim() === '') return null;

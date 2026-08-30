@@ -92,7 +92,7 @@ function AuthenticatedApp() {
 
           {/* {!bridgeAvailable ? (
             <div className="context-banner">
-              Run <code>npx pnpm --filter @sots/desktop dev</code> and use the Electron window.
+              Run <code>npx pnpm --filter @tellann/desktop dev</code> and use the Electron window.
             </div>
           ) : null} */}
           {error ? <div className="global-error">{error}</div> : null}

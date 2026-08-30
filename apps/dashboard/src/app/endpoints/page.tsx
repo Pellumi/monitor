@@ -240,7 +240,7 @@ function EndpointsContent() {
             {endpointsList.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-neutral-500">
-                  No endpoint data yet. Integrate <code className="font-mono text-xs">sotsExpressMiddleware()</code> and generate some traffic.
+                  No endpoint data yet. Integrate <code className="font-mono text-xs">tellannExpressMiddleware()</code> and generate some traffic.
                 </td>
               </tr>
             )}

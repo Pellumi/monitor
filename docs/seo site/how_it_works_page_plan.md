@@ -356,7 +356,7 @@ Tellann.initialize({
 });
 ```
 
-Use Tellann branding publicly, even if internal documentation still uses historical SOTS package naming.
+Use Tellann branding publicly, even if internal documentation still uses historical TELLANN package naming.
 
 ---
 

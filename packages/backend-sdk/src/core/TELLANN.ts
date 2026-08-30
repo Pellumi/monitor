@@ -3,9 +3,9 @@ import { captureErrorEvent, CaptureErrorOptions } from './captureError';
 import { trackStateEvent, TrackStateOptions } from './trackState';
 import { BackendWorkflowTracker } from './workflowTracker';
 import { v4 as uuidv4 } from 'uuid';
-import type { EventType, SotsEvent } from '../event-types';
+import type { EventType, TellannEvent } from '../event-types';
 
-export interface SotsBackendConfig {
+export interface TellannBackendConfig {
   endpoint: string;
   tenantId?: string;
   applicationId: string;
@@ -18,16 +18,16 @@ export interface SotsBackendConfig {
   instrumentationManifestVersion?: string;
 }
 
-export class SOTSBackend {
-  private config: SotsBackendConfig | null = null;
+export class TELLANNBackend {
+  private config: TellannBackendConfig | null = null;
   private workflowTracker = new BackendWorkflowTracker();
 
-  initialize(config: SotsBackendConfig) {
+  initialize(config: TellannBackendConfig) {
     this.config = config;
     console.log('[Tellann Backend] Initialized');
   }
 
-  getConfig(): SotsBackendConfig | null {
+  getConfig(): TellannBackendConfig | null {
     return this.config;
   }
 
@@ -126,7 +126,7 @@ export class SOTSBackend {
     metadata: Record<string, any>
   ): Promise<void> {
     if (!this.config) return;
-    const event: SotsEvent = {
+    const event: TellannEvent = {
       eventId: uuidv4(),
       sessionId: sessionId ?? this.config.sessionId ?? uuidv4(),
       tenantId: this.config.tenantId ?? 'unknown',
@@ -163,7 +163,7 @@ export class SOTSBackend {
         headers.Authorization = `Bearer ${this.config.apiKey}`;
       }
       if (this.config.environmentId) {
-        headers['x-sots-environment-id'] = this.config.environmentId;
+        headers['x-tellann-environment-id'] = this.config.environmentId;
       }
       if (this.config.runId) headers['x-tellann-run-id'] = this.config.runId;
       if (sessionId ?? this.config.sessionId) headers['x-tellann-session-id'] = sessionId ?? this.config.sessionId!;
@@ -186,5 +186,5 @@ export class SOTSBackend {
   }
 }
 
-export const SOTS = new SOTSBackend();
+export const TELLANN = new TELLANNBackend();
 export { BackendWorkflowTracker };

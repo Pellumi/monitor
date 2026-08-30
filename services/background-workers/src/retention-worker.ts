@@ -1,5 +1,5 @@
-import { AuditAction, PrismaClient } from '@sots/db';
-import { createStorageClient } from '@sots/storage';
+import { AuditAction, PrismaClient } from '@tellann/db';
+import { createStorageClient } from '@tellann/storage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

@@ -12,7 +12,7 @@ function assert(value: unknown, message: string): asserts value {
 }
 
 function token(user: { id: string; email: string }) {
-  return jwt.sign({ sub: user.id, email: user.email }, process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production', { expiresIn: '20m' });
+  return jwt.sign({ sub: user.id, email: user.email }, process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production', { expiresIn: '20m' });
 }
 
 async function request(pathname: string, bearer: string, init: RequestInit = {}, expectedStatus?: number) {

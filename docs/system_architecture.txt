@@ -1,7 +1,7 @@
-﻿SYSTEM ARCHITECTURE DOCUMENT (SAD)
+SYSTEM ARCHITECTURE DOCUMENT (SAD)
 1. Introduction
 1.1 Purpose
-This System Architecture Document defines the architecture of the Self-Observing Testing System (SOTS).
+This System Architecture Document defines the architecture of the Self-Observing Testing System (TELLANN).
 The document describes:
 * Architectural principles
 * System structure
@@ -15,7 +15,7 @@ The document describes:
 * Evolution roadmap across all product phases
 The purpose of this document is to provide a blueprint for implementation and future system growth.
 2. Architectural Vision
-SOTS is designed as a distributed behavioral intelligence platform that continuously:
+TELLANN is designed as a distributed behavioral intelligence platform that continuously:
 Observe Applications
 ↓
 Capture Behavioral Data

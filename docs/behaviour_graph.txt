@@ -1,6 +1,6 @@
-﻿Behavior Graph Specification (BGS)
+Behavior Graph Specification (BGS)
 1. Purpose
-The Behavior Graph Specification (BGS) defines the complete behavioral modeling framework for the Self-Observing Testing System (SOTS).
+The Behavior Graph Specification (BGS) defines the complete behavioral modeling framework for the Self-Observing Testing System (TELLANN).
 This document establishes:
 * Behavioral graph architecture
 * State modeling standards
@@ -12,7 +12,7 @@ This document establishes:
 * Graph analytics capabilities
 * Phase-based graph evolution
 * Behavioral intelligence foundations
-The Behavior Graph is the central intelligence model of SOTS and serves as the primary representation of how software behaves in practice. It transforms raw events, sessions, and workflows into a continuously evolving behavioral map of an application.
+The Behavior Graph is the central intelligence model of TELLANN and serves as the primary representation of how software behaves in practice. It transforms raw events, sessions, and workflows into a continuously evolving behavioral map of an application.
 2. Scope
 This specification applies to:
 Phase 1 — Behavioral QA Platform
@@ -34,7 +34,7 @@ Behavior graphs used for:
 * Quality intelligence generation
 The graph model must support all present and future intelligence capabilities without redesign.
 3. Objectives
-The Behavior Graph shall enable SOTS to:
+The Behavior Graph shall enable TELLANN to:
 BG-OBJ-001
 Discover application workflows automatically.
 BG-OBJ-002
@@ -69,7 +69,7 @@ Workflow
 These elements collectively describe the observable behavior of an application.
 5. State Specification
 5.1 Definition
-A State represents a meaningful condition of an application observed by SOTS.
+A State represents a meaningful condition of an application observed by TELLANN.
 A state answers:
 "Where is the user or system right now?"
 Examples:

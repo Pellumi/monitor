@@ -1,6 +1,6 @@
-﻿API Specification Document (ASD)
+API Specification Document (ASD)
 1. Purpose
-The API Specification Document (ASD) defines all external and internal API contracts for the Self-Observing Testing System (SOTS).
+The API Specification Document (ASD) defines all external and internal API contracts for the Self-Observing Testing System (TELLANN).
 This document serves as the authoritative reference for:
 * SDK communication
 * Telemetry ingestion
@@ -44,11 +44,11 @@ Every request shall support:
 }
 3. Base URL Structure
 Production
-https://api.sots.io/v1
+https://api.tellann.io/v1
 
 
 Staging
-https://staging-api.sots.io/v1
+https://staging-api.tellann.io/v1
 
 
 Local
@@ -111,7 +111,7 @@ POST /api-keys
 Generate key.
 Response
 {
-  "apiKey": "sots_xxxxxxxxx"
+  "apiKey": "tellann_xxxxxxxxx"
 }
 DELETE /api-keys/{keyId}
 Revoke key.

@@ -1,6 +1,6 @@
-﻿Deployment Architecture Specification (DAS)
+Deployment Architecture Specification (DAS)
 1. Purpose
-The Deployment Architecture Specification (DAS) defines how the Self-Observing Testing System (SOTS) is deployed, operated, scaled, secured, upgraded, and maintained across all supported environments.
+The Deployment Architecture Specification (DAS) defines how the Self-Observing Testing System (TELLANN) is deployed, operated, scaled, secured, upgraded, and maintained across all supported environments.
 This document establishes:
 * Deployment models
 * Infrastructure architecture
@@ -18,7 +18,7 @@ This document establishes:
 * CI/CD architecture
 * Observability architecture
 * Phase-based deployment evolution
-The objective of this specification is to ensure SOTS can operate reliably from early-stage MVP deployments through large-scale enterprise installations while maintaining architectural consistency across all phases of the product lifecycle.
+The objective of this specification is to ensure TELLANN can operate reliably from early-stage MVP deployments through large-scale enterprise installations while maintaining architectural consistency across all phases of the product lifecycle.
 2. Scope
 This specification applies to:
 Phase 1 — Behavioral QA Platform
@@ -65,11 +65,11 @@ All service communication shall be authenticated and encrypted.
 DAS-007 Deployment Independence
 Services shall be independently deployable.
 4. Supported Deployment Models
-SOTS supports two primary deployment models.
+TELLANN supports two primary deployment models.
 5. SaaS Deployment Architecture
 Overview
-SOTS-hosted deployment.
-Customer applications send telemetry to the managed SOTS cloud platform.
+TELLANN-hosted deployment.
+Customer applications send telemetry to the managed TELLANN cloud platform.
 Customer Application
         │
         ▼
@@ -80,7 +80,7 @@ Backend SDK
 Internet
         │
         ▼
-SOTS Cloud Platform
+TELLANN Cloud Platform
         │
         ▼
 Dashboard
@@ -88,9 +88,9 @@ Dashboard
 
 SaaS Characteristics
 Managed By
-SOTS Operations Team
+TELLANN Operations Team
 Infrastructure Ownership
-SOTS
+TELLANN
 Upgrades
 Automatic
 Scaling
@@ -150,7 +150,7 @@ Backend SDK
 Customer Infrastructure
         │
         ▼
-SOTS Platform
+TELLANN Platform
 
 
 Self-Hosted Characteristics
@@ -267,16 +267,16 @@ CRI-O
 
 12. Kubernetes Architecture
 Namespace Strategy
-sots-system
+tellann-system
 
 
-sots-platform
+tellann-platform
 
 
-sots-data
+tellann-data
 
 
-sots-monitoring
+tellann-monitoring
 
 
 tenant-services

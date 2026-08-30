@@ -1467,7 +1467,7 @@ unless those become actual product names.
 I would discourage external use of old internal naming such as:
 
 ```text
-SOTS
+TELLANN
 ```
 
 The public brand is Tellann.

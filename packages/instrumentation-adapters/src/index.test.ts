@@ -102,12 +102,12 @@ test('framework-specific transforms install runtime integrations at safe boundar
     {
       id: 'express' as const,
       context: fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content: `import express from 'express';\nconst app = express();\napp.get('/health', (_req, res) => res.send('ok'));\napp.listen(3000);\n` }),
-      entry: 'src/index.ts', expected: /app\.use\(sotsExpressMiddleware\(\)\);[\s\S]*app\.use\(sotsExpressErrorHandler\(\)\);[\s\S]*app\.listen/,
+      entry: 'src/index.ts', expected: /app\.use\(tellannExpressMiddleware\(\)\);[\s\S]*app\.use\(tellannExpressErrorHandler\(\)\);[\s\S]*app\.listen/,
     },
     {
       id: 'fastify' as const,
       context: fixture({ dependencies: { fastify: '^5.0.0' }, entry: 'src/server.ts', content: `import fastify from 'fastify';\nconst app = fastify();\napp.listen({ port: 3000 });\n` }),
-      entry: 'src/server.ts', expected: /app\.register\(sotsFastifyPlugin\);/,
+      entry: 'src/server.ts', expected: /app\.register\(tellannFastifyPlugin\);/,
     },
     {
       id: 'nestjs' as const,
@@ -146,12 +146,12 @@ test('JavaScript, JSX, Next Pages Router, and CommonJS fixtures receive runnable
     {
       id: 'express' as const,
       context: fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.js', content: `const express = require('express');\n// preserve-express-comment\nconst app = express();\napp.listen(3000);\n` }),
-      generated: 'src/tellann.js', entry: 'src/index.js', expectedEntry: /const \{ sotsExpressErrorHandler, sotsExpressMiddleware \} = require\("\.\/tellann"\);/, expectedGenerated: /module\.exports = \{ SOTS, sotsExpressErrorHandler, sotsExpressMiddleware \}/,
+      generated: 'src/tellann.js', entry: 'src/index.js', expectedEntry: /const \{ tellannExpressErrorHandler, tellannExpressMiddleware \} = require\("\.\/tellann"\);/, expectedGenerated: /module\.exports = \{ TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware \}/,
     },
     {
       id: 'fastify' as const,
       context: fixture({ dependencies: { fastify: '^5.0.0' }, entry: 'src/server.js', content: `const fastify = require('fastify');\nconst app = fastify();\napp.listen({ port: 3000 });\n` }),
-      generated: 'src/tellann.js', entry: 'src/server.js', expectedEntry: /const \{ sotsFastifyPlugin \} = require\("\.\/tellann"\);/, expectedGenerated: /module\.exports = \{ SOTS, sotsFastifyPlugin \}/,
+      generated: 'src/tellann.js', entry: 'src/server.js', expectedEntry: /const \{ tellannFastifyPlugin \} = require\("\.\/tellann"\);/, expectedGenerated: /module\.exports = \{ TELLANN, tellannFastifyPlugin \}/,
     },
   ];
   for (const item of cases) {
@@ -199,7 +199,7 @@ test('a monorepo plan is scoped to the detected application package and root loc
     checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')),
   });
   assert.equal(fs.readFileSync(path.join(root, 'package.json'), 'utf8'), rootPackageBefore);
-  assert.match(fs.readFileSync(path.join(root, 'apps', 'web', 'package.json'), 'utf8'), /@sots\/frontend-sdk/);
+  assert.match(fs.readFileSync(path.join(root, 'apps', 'web', 'package.json'), 'utf8'), /@tellann\/frontend-sdk/);
 });
 
 test('re-proposing and applying instrumentation is idempotent', async () => {
@@ -216,8 +216,8 @@ test('re-proposing and applying instrumentation is idempotent', async () => {
   await apply();
   await apply();
   const entry = fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8');
-  assert.equal((entry.match(/sotsExpressMiddleware\(\)/g) ?? []).length, 1);
-  assert.equal((entry.match(/sotsExpressErrorHandler\(\)/g) ?? []).length, 1);
+  assert.equal((entry.match(/tellannExpressMiddleware\(\)/g) ?? []).length, 1);
+  assert.equal((entry.match(/tellannExpressErrorHandler\(\)/g) ?? []).length, 1);
   assert.equal((entry.match(/from ['"]\.\/tellann['"]/g) ?? []).length, 1);
 });
 
@@ -308,10 +308,10 @@ test('a transform failure restores every Tellann-authored write automatically', 
 
 test('an already installed SDK does not request registry access or redundant installation approval', async () => {
   const context = fixture({ dependencies: { react: '^18.0.0', vite: '^5.0.0' }, entry: 'src/main.tsx', content: 'createRoot(root).render(null);' });
-  const sdkRoot = path.join(context.workspaceRoot, 'node_modules', '@sots', 'frontend-sdk');
+  const sdkRoot = path.join(context.workspaceRoot, 'node_modules', '@tellann', 'frontend-sdk');
   fs.mkdirSync(sdkRoot, { recursive: true });
-  fs.writeFileSync(path.join(sdkRoot, 'package.json'), JSON.stringify({ name: '@sots/frontend-sdk', version: '0.1.0', main: 'index.js' }));
-  fs.writeFileSync(path.join(sdkRoot, 'index.js'), 'exports.SOTS = {};');
+  fs.writeFileSync(path.join(sdkRoot, 'package.json'), JSON.stringify({ name: '@tellann/frontend-sdk', version: '0.1.0', main: 'index.js' }));
+  fs.writeFileSync(path.join(sdkRoot, 'index.js'), 'exports.TELLANN = {};');
 
   const plan = await getAdapter('react-vite').propose(context);
 

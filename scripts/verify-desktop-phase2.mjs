@@ -67,7 +67,7 @@ async function main() {
   });
   const token = jwt.sign(
     { sub: membership.user.id, email: membership.user.email },
-    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
     { expiresIn: '10m' },
   );
 

@@ -1,8 +1,8 @@
 import assert from 'node:assert';
 import test from 'node:test';
-import { SOTS, trackApi, captureError, trackState } from './index';
+import { TELLANN, trackApi, captureError, trackState } from './index';
 import { extractSessionId } from './integrations/express';
-import { SotsEventSchema } from '@sots/shared';
+import { TellannEventSchema } from '@tellann/shared';
 
 // Mock fetch
 let fetchCalls: { url: string; body: any }[] = [];
@@ -11,16 +11,16 @@ let fetchCalls: { url: string; body: any }[] = [];
   return { ok: true } as any;
 };
 
-test('SOTS Backend SDK Tests', async (t) => {
+test('TELLANN Backend SDK Tests', async (t) => {
   await t.test('Initialization & Config Singleton', () => {
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: 'http://collector-backend',
       tenantId: 'tenant-b1',
       applicationId: 'app-b1',
     });
 
-    assert.ok(SOTS.isInitialized());
-    assert.strictEqual(SOTS.getConfig()?.tenantId, 'tenant-b1');
+    assert.ok(TELLANN.isInitialized());
+    assert.strictEqual(TELLANN.getConfig()?.tenantId, 'tenant-b1');
   });
 
   await t.test('trackApi & captureError promoted methods and free functions', async () => {
@@ -64,7 +64,7 @@ test('SOTS Backend SDK Tests', async (t) => {
 
     assert.strictEqual(fetchCalls.length, 3);
     for (const call of fetchCalls) {
-      assert.doesNotThrow(() => SotsEventSchema.parse(call.body));
+      assert.doesNotThrow(() => TellannEventSchema.parse(call.body));
       assert.match(call.body.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     }
   });
@@ -80,9 +80,9 @@ test('SOTS Backend SDK Tests', async (t) => {
     // formatted: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
     assert.strictEqual(sessionId, '4bf92f35-77b3-4da6-a3ce-929d0e0e4736');
 
-    // Prefer x-sots-session-id if present
+    // Prefer x-tellann-session-id if present
     const headersBoth = {
-      'x-sots-session-id': '77c8e763-71bd-4217-a06b-3bc7a1a09d3b',
+      'x-tellann-session-id': '77c8e763-71bd-4217-a06b-3bc7a1a09d3b',
       traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
     };
     assert.strictEqual(extractSessionId(headersBoth), '77c8e763-71bd-4217-a06b-3bc7a1a09d3b');
@@ -90,40 +90,40 @@ test('SOTS Backend SDK Tests', async (t) => {
 
   await t.test('Workflow tracking on backend with memory TTL safety', async () => {
     fetchCalls = [];
-    const wId = SOTS.startWorkflow('payment-gateway', 'sess-123');
+    const wId = TELLANN.startWorkflow('payment-gateway', 'sess-123');
     assert.ok(wId);
     assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].body.eventType, 'WORKFLOW_STARTED');
 
     fetchCalls = [];
-    await SOTS.completeWorkflow(wId, 'sess-123');
+    await TELLANN.completeWorkflow(wId, 'sess-123');
     assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].body.eventType, 'WORKFLOW_COMPLETED');
     assert.ok(fetchCalls[0].body.metadata.durationMs >= 0);
 
     // After completion, it shouldn't exist in map anymore
     fetchCalls = [];
-    await SOTS.completeWorkflow(wId, 'sess-123');
+    await TELLANN.completeWorkflow(wId, 'sess-123');
     assert.strictEqual(fetchCalls.length, 0); // No event because workflow was already completed/cleared
   });
 
   await t.test('generic trackEvent sends onboarding test events', async () => {
     fetchCalls = [];
-    await SOTS.trackEvent('SOTS_ONBOARDING_TEST');
+    await TELLANN.trackEvent('TELLANN_ONBOARDING_TEST');
 
     assert.strictEqual(fetchCalls.length, 1);
-    assert.strictEqual(fetchCalls[0].body.eventType, 'SOTS_ONBOARDING_TEST');
-    assert.doesNotThrow(() => SotsEventSchema.parse(fetchCalls[0].body));
+    assert.strictEqual(fetchCalls[0].body.eventType, 'TELLANN_ONBOARDING_TEST');
+    assert.doesNotThrow(() => TellannEventSchema.parse(fetchCalls[0].body));
   });
 
   await t.test('verifyInstallation sends onboarding test events', async () => {
     fetchCalls = [];
-    await SOTS.verifyInstallation();
+    await TELLANN.verifyInstallation();
 
     assert.strictEqual(fetchCalls.length, 1);
-    assert.strictEqual(fetchCalls[0].body.eventType, 'SOTS_ONBOARDING_TEST');
+    assert.strictEqual(fetchCalls[0].body.eventType, 'TELLANN_INITIALIZED');
     assert.strictEqual(fetchCalls[0].body.metadata.source, 'manual_verification');
-    assert.doesNotThrow(() => SotsEventSchema.parse(fetchCalls[0].body));
+    assert.doesNotThrow(() => TellannEventSchema.parse(fetchCalls[0].body));
   });
 
   await t.test('trackState method works', async () => {
@@ -139,5 +139,5 @@ test('SOTS Backend SDK Tests', async (t) => {
     assert.strictEqual(fetchCalls[0].body.metadata.stateName, 'ORDER_PLACED');
   });
 
-  SOTS.teardown();
+  TELLANN.teardown();
 });

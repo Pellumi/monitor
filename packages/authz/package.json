@@ -1,5 +1,5 @@
 {
-  "name": "@sots/authz",
+  "name": "@tellann/authz",
   "version": "0.0.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,9 +9,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sots/db": "workspace:*",
-    "@sots/entitlement-checker": "workspace:*",
-    "@sots/shared": "workspace:*"
+    "@tellann/db": "workspace:*",
+    "@tellann/entitlement-checker": "workspace:*",
+    "@tellann/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

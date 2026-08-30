@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { PrismaClient } from '@sots/db';
+import { PrismaClient } from '@tellann/db';
 import { createSdkSetupRouter } from './sdk-setup-routes';
 
 const prisma = new PrismaClient();
@@ -115,7 +115,7 @@ test('SDK setup enforces tenancy, environment policy, safe gateway URLs, atomic 
     });
     assert.equal(key.status, 201);
     const keyBody = await key.json() as { rawKey: string; keyPrefix: string };
-    assert.match(keyBody.rawKey, /^sots_[a-f0-9]{64}$/);
+    assert.match(keyBody.rawKey, /^tellann_[a-f0-9]{64}$/);
     assert.ok(keyBody.rawKey.startsWith(keyBody.keyPrefix));
     const storedKey = await prisma.apiKey.findFirstOrThrow({ where: { environmentId: data.development.id, keyPrefix: keyBody.keyPrefix } });
     assert.notEqual(storedKey.keyHash, keyBody.rawKey);

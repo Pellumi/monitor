@@ -1,4 +1,4 @@
-Below is the email system I would design for **Tellann / SOTS**. Treat email as a product layer, not just a notification tool. The goal is simple: move users from **signup → SDK installed → first demo → first report → habit formation → upgrade**.
+Below is the email system I would design for **Tellann / TELLANN**. Treat email as a product layer, not just a notification tool. The goal is simple: move users from **signup → SDK installed → first demo → first report → habit formation → upgrade**.
 
 ## 1. Email categories
 

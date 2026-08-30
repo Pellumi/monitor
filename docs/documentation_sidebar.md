@@ -1,4 +1,4 @@
-Yes. The structure is good, but it is still organized like a traditional product documentation site. SOTS is unusual because it has three distinct audiences:
+Yes. The structure is good, but it is still organized like a traditional product documentation site. TELLANN is unusual because it has three distinct audiences:
 
 1. Developers (SDK integration)
 2. QA/Product teams (behavior modeling and analysis)
@@ -14,8 +14,8 @@ Your documentation should optimize for the user's journey rather than the system
 
 This should be the first experience.
 
-* What is SOTS?
-* Why SOTS Exists
+* What is TELLANN?
+* Why TELLANN Exists
 * Getting Started
 * Quick Start (5 Minutes)
 * Core Concepts
@@ -52,7 +52,7 @@ This section should explain the entire:
 
 Expected Graph → Observed Graph → Gap Detection
 
-model that makes SOTS unique. 
+model that makes TELLANN unique. 
 
 ---
 
@@ -105,10 +105,10 @@ Pages:
 * Guided Demonstrations
 * Exploratory Demonstrations
 * Validation Demonstrations
-* How SOTS Learns Behavior
+* How TELLANN Learns Behavior
 * Demonstration Best Practices
 
-Many customers will buy SOTS because of this feature alone.
+Many customers will buy TELLANN because of this feature alone.
 
 ---
 
@@ -296,21 +296,21 @@ This is where technical evaluators and enterprise prospects go.
 * Deployment Models
 * Self Hosted Deployment
 
-Most SaaS products hide this section, but SOTS is highly technical and benefits from architectural transparency.
+Most SaaS products hide this section, but TELLANN is highly technical and benefits from architectural transparency.
 
 ---
 
-## 🆚 Why SOTS?
+## 🆚 Why TELLANN?
 
 This is the section almost every documentation site forgets.
 
 Pages:
 
-* Why SOTS?
-* SOTS vs Datadog
-* SOTS vs Sentry
-* SOTS vs PostHog
-* SOTS vs Replay.io
+* Why TELLANN?
+* TELLANN vs Datadog
+* TELLANN vs Sentry
+* TELLANN vs PostHog
+* TELLANN vs Replay.io
 * Behavioral Quality Intelligence
 
 The competitive analysis already provides the content. 
@@ -331,7 +331,7 @@ The competitive analysis already provides the content.
 
 # One More Section I Would Add
 
-For a product like SOTS, I would add:
+For a product like TELLANN, I would add:
 
 ## 🎓 Tutorials
 

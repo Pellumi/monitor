@@ -64,8 +64,8 @@ import type {
   SourceDocumentSummary,
   DocumentImportResult,
   IntentDraftJob,
-} from "@sots/desktop-contracts";
-import type { LiveEvidence } from "@sots/browser-observer";
+} from "@tellann/desktop-contracts";
+import type { LiveEvidence } from "@tellann/browser-observer";
 import { useDesktop } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
 import { FlowDiagram } from "./components/flow-diagram";
@@ -4844,7 +4844,7 @@ function formatSdkSetupTarget(
 
   const packageName =
     target.packageName ??
-    (isFrontend ? "@sots/frontend-sdk" : "@sots/backend-sdk");
+    (isFrontend ? "@tellann/frontend-sdk" : "@tellann/backend-sdk");
 
   const detectedPackageManager = String(
     workspace?.snapshot?.packageManager ?? "npm",
@@ -4873,41 +4873,41 @@ function formatSdkSetupTarget(
 
   if (isFrontend) {
     if (isVite && !isNextJs) {
-      snippet = `import { SOTS } from '${packageName}';
+      snippet = `import { TELLANN } from '${packageName}';
 
 // IMPORTANT: Initialize at top-level file scope (e.g. in main.tsx or top of App.tsx OUTSIDE React components)
-SOTS.initialize({
+TELLANN.initialize({
     endpoint: import.meta.env.VITE_TELLANN_GATEWAY_URL || '${endpointStr}',
     apiKey: import.meta.env.VITE_TELLANN_INGESTION_KEY,
     applicationId: '${applicationId}',
     environmentId: '${environmentId}'
 });
 
-void SOTS.verifyInstallation();`;
+void TELLANN.verifyInstallation();`;
     } else if (isReact && !isNextJs) {
-      snippet = `import { SOTS } from '${packageName}';
+      snippet = `import { TELLANN } from '${packageName}';
 
 // IMPORTANT: Initialize at top-level file scope (e.g. in index.tsx or top of App.tsx OUTSIDE React components)
-SOTS.initialize({
+TELLANN.initialize({
     endpoint: process.env.REACT_APP_TELLANN_GATEWAY_URL || '${endpointStr}',
     apiKey: process.env.REACT_APP_TELLANN_INGESTION_KEY,
     applicationId: '${applicationId}',
     environmentId: '${environmentId}'
 });
 
-void SOTS.verifyInstallation();`;
+void TELLANN.verifyInstallation();`;
     } else if (isNextJs) {
-      snippet = `import { SOTS } from '${packageName}';
+      snippet = `import { TELLANN } from '${packageName}';
 
 // Initialize Tellann browser telemetry for Next.js (e.g. in app/layout.tsx or _app.tsx)
-SOTS.initialize({
+TELLANN.initialize({
     endpoint: process.env.NEXT_PUBLIC_TELLANN_GATEWAY_URL || '${endpointStr}',
     apiKey: process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY,
     applicationId: '${applicationId}',
     environmentId: '${environmentId}'
 });
 
-void SOTS.verifyInstallation();`;
+void TELLANN.verifyInstallation();`;
     }
   }
 
@@ -5244,7 +5244,7 @@ export function InstrumentationPage() {
           <p className="mb-4">
             Install and initialize a Tellann SDK, start this environment, and
             send <code>TELLANN_INITIALIZED</code> or{" "}
-            <code>SOTS_ONBOARDING_TEST</code>. Finding package files alone does
+            <code>TELLANN_ONBOARDING_TEST</code>. Finding package files alone does
             not unlock the Flow.
           </p>
           <div className="card-actions">
@@ -5841,11 +5841,11 @@ export function InstrumentationPage() {
                     >
                       <li>
                         <strong>Place initialization at top-level module scope:</strong>{" "}
-                        Call <code>SOTS.initialize(...)</code> in <code>main.tsx</code> or top of <code>App.tsx</code> <em>outside</em> component functions (e.g. outside <code>{"const App = () => ..."}</code>). Calling it inside a component function resets the SDK session on every React render.
+                        Call <code>TELLANN.initialize(...)</code> in <code>main.tsx</code> or top of <code>App.tsx</code> <em>outside</em> component functions (e.g. outside <code>{"const App = () => ..."}</code>). Calling it inside a component function resets the SDK session on every React render.
                       </li>
                       <li>
                         <strong>Set environment key & restart dev server:</strong> Put{" "}
-                        <code>VITE_TELLANN_INGESTION_KEY={manualRawKey || "sots_..."}</code> in your <code>.env.local</code> file and restart your Vite server (<code>npm run dev</code>).
+                        <code>VITE_TELLANN_INGESTION_KEY={manualRawKey || "tellann_..."}</code> in your <code>.env.local</code> file and restart your Vite server (<code>npm run dev</code>).
                       </li>
                       <li>
                         <strong>Check browser console & network tab:</strong> Press F12 in your browser to check if <code>/v1/events/batch</code> requests are failing or blocked by CORS.

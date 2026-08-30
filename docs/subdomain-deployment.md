@@ -7,7 +7,7 @@ This repo now separates the public marketing site, authenticated product app, an
 | Production host | Workspace app | Local dev | Purpose |
 | --- | --- | --- | --- |
 | `domain-name.com` | `apps/marketing` | `http://localhost:3020` | Public SEO and conversion site |
-| `app.domain-name.com` | `apps/dashboard` | `http://localhost:3010` | Authenticated SOTS product |
+| `app.domain-name.com` | `apps/dashboard` | `http://localhost:3010` | Authenticated TELLANN product |
 | `docs.domain-name.com` | `apps/docs` | `http://localhost:3021` | Public user documentation |
 
 The dashboard remains rooted at `/` because it is deployed to the app subdomain. Do not move dashboard routes under `/app` unless the product is later collapsed back onto a single domain.
@@ -80,9 +80,9 @@ Create one Vercel project per app:
 
 | Vercel project | Root directory | Domain |
 | --- | --- | --- |
-| `sots-marketing` | `apps/marketing` | `domain-name.com` |
-| `sots-dashboard` | `apps/dashboard` | `app.domain-name.com` |
-| `sots-docs` | `apps/docs` | `docs.domain-name.com` |
+| `tellann-marketing` | `apps/marketing` | `domain-name.com` |
+| `tellann-dashboard` | `apps/dashboard` | `app.domain-name.com` |
+| `tellann-docs` | `apps/docs` | `docs.domain-name.com` |
 
 Each project can use:
 
@@ -94,9 +94,9 @@ pnpm build
 If the deployment platform supports filtered builds, use:
 
 ```bash
-pnpm --filter @sots/marketing build
+pnpm --filter @tellann/marketing build
 pnpm --filter dashboard build
-pnpm --filter @sots/docs build
+pnpm --filter @tellann/docs build
 ```
 
 ## DNS

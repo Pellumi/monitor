@@ -1,10 +1,10 @@
 {
-  "name": "@sots/derivation-engine",
+  "name": "@tellann/derivation-engine",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@sots/db": "workspace:*"
+    "@tellann/db": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

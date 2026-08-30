@@ -12,7 +12,7 @@ The `database_design.txt` and `security_architecture.txt` documentation both ref
 
 1. All behavioral graph data (states, transitions, `BehaviorGraph`, `BehaviorGraphNode`, `BehaviorGraphEdge`, `BehaviorGraphVersion`, `PatternLibraryEntry`, `DeclaredStateSuggestion`, etc.) is stored **exclusively in PostgreSQL** via Prisma.
 2. No Neo4j client library, Bolt driver, or Cypher query exists anywhere in `services/` or `packages/`.
-3. The derivation engine (`@sots/derivation-engine`) performs all graph traversal and pattern matching through Prisma against PostgreSQL.
+3. The derivation engine (`@tellann/derivation-engine`) performs all graph traversal and pattern matching through Prisma against PostgreSQL.
 4. The graph engine (`services/graph-engine`) constructs and queries behavioral graphs entirely via PostgreSQL.
 
 The original architecture documents placed Neo4j in Phase 3 under the "Autonomous Validation Engine," but the introductory sections implied it might be used earlier.

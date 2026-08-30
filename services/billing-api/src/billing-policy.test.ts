@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BillingCurrency, PlanType } from '@sots/db';
+import { BillingCurrency, PlanType } from '@tellann/db';
 import { currencyForCountry, proratedDifference, validateProviderPayment } from './billing-policy';
 
 test('currencyForCountry resolves only Nigerian organizations to NGN', () => {

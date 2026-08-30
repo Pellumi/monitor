@@ -1,20 +1,20 @@
-﻿Competitive Analysis Document (CAD)
+Competitive Analysis Document (CAD)
 1. Purpose
-This document analyzes the competitive landscape surrounding the Self-Observing Testing System (SOTS).
+This document analyzes the competitive landscape surrounding the Self-Observing Testing System (TELLANN).
 The objective is to:
 * Identify direct and indirect competitors
 * Understand competitor strengths
 * Understand competitor weaknesses
 * Identify market gaps
-* Define SOTS differentiation
+* Define TELLANN differentiation
 * Define positioning strategies
 * Identify opportunities for market expansion
 * Analyze competitor marketing approaches
 * Establish long-term competitive advantages
 2. Competitive Landscape
-SOTS operates across multiple software categories simultaneously.
+TELLANN operates across multiple software categories simultaneously.
 Traditional vendors focus on only one domain.
-SOTS combines:
+TELLANN combines:
 Domain
 	Traditional Vendors
 	Monitoring
@@ -80,7 +80,7 @@ Focus:
 * Developer debugging
 Core Question:
 What exactly happened?
-SOTS Position
+TELLANN Position
 Behavioral Quality Intelligence
 Focus:
 * Behavioral modeling
@@ -137,10 +137,10 @@ No QA Intelligence
 Cannot answer:
 * What parts of the application were never tested?
 * Which business workflows lack coverage?
-SOTS Advantage
-SOTS transforms technical telemetry into business workflow intelligence.
+TELLANN Advantage
+TELLANN transforms technical telemetry into business workflow intelligence.
 Datadog understands systems.
-SOTS understands software behavior.
+TELLANN understands software behavior.
 5. Competitor Analysis — New Relic
 New Relic
 What New Relic Does Well
@@ -171,10 +171,10 @@ Cannot calculate:
 * Transition coverage
 No Autonomous Validation
 No behavioral intelligence layer.
-SOTS Advantage
+TELLANN Advantage
 New Relic tells you:
 Something slowed down.
-SOTS tells you:
+TELLANN tells you:
 The checkout workflow degraded after Release 2.5 and abandonment increased by 17%.
 6. Competitor Analysis — Sentry
 Sentry
@@ -207,9 +207,9 @@ Cannot model:
 * States
 * Transitions
 * Workflow evolution
-SOTS Advantage
+TELLANN Advantage
 Sentry investigates failures.
-SOTS attempts to identify quality risks before failures become incidents.
+TELLANN attempts to identify quality risks before failures become incidents.
 7. Competitor Analysis — PostHog
 PostHog
 What PostHog Does Well
@@ -236,9 +236,9 @@ Cannot generate:
 * Coverage Reports
 No Release Validation
 Cannot compare behavior before and after deployment at a quality level.
-SOTS Advantage
+TELLANN Advantage
 PostHog optimizes growth.
-SOTS optimizes software quality.
+TELLANN optimizes software quality.
 8. Competitor Analysis — Replay.io
 Replay.io
 What Replay.io Does Well
@@ -259,9 +259,9 @@ No Coverage Analysis
 No workflow coverage model.
 No Autonomous Validation
 No path toward intelligent quality systems.
-SOTS Advantage
+TELLANN Advantage
 Replay.io records behavior.
-SOTS learns from behavior.
+TELLANN learns from behavior.
 9. Feature Comparison Matrix
 Capability
 	Datadog
@@ -269,7 +269,7 @@ Capability
 	Sentry
 	PostHog
 	Replay.io
-	SOTS
+	TELLANN
 	Logs
 	✓
 	✓
@@ -382,16 +382,16 @@ Capability
 	✗
 	✗
 	Phase 3
-	10. Competitive Gaps SOTS Exploits
+	10. Competitive Gaps TELLANN Exploits
 Gap 1 — Nobody Models Software Behavior
 Competitors collect telemetry.
-SOTS constructs behavioral graphs.
+TELLANN constructs behavioral graphs.
 Gap 2 — Nobody Measures QA Coverage From Reality
 Competitors rely on:
 * Tests
 * Metrics
 * Analytics
-SOTS measures observed workflow coverage directly from behavior.
+TELLANN measures observed workflow coverage directly from behavior.
 Gap 3 — Nobody Detects Missing States
 Examples:
 * Empty Cart
@@ -408,7 +408,7 @@ A developer walkthrough becomes:
 This is a unique onboarding model.
 Gap 5 — Nobody Connects QA + Analytics + Observability
 Competitors occupy separate silos.
-SOTS intentionally merges:
+TELLANN intentionally merges:
 QA
 +
 Observability
@@ -424,11 +424,11 @@ Competitors require:
 * Production traffic
 * Existing telemetry
 * Manual instrumentation
-SOTS requires:
+TELLANN requires:
 * One guided walkthrough
 Phase 2 Moat
 Behavioral Knowledge Base
-Over time SOTS accumulates:
+Over time TELLANN accumulates:
 * Workflow graphs
 * Journey models
 * Quality baselines
@@ -504,21 +504,21 @@ New Relic observes performance.
 Sentry observes failures.
 PostHog observes users.
 Replay.io observes sessions.
-SOTS observes software behavior itself, converts behavior into workflows, transforms workflows into quality intelligence, and ultimately enables software to understand and communicate its own quality state.
+TELLANN observes software behavior itself, converts behavior into workflows, transforms workflows into quality intelligence, and ultimately enables software to understand and communicate its own quality state.
 15. Strategic Conclusion
-Today, SOTS is not competing head-to-head with Datadog, New Relic, Sentry, PostHog, or Replay.io.
+Today, TELLANN is not competing head-to-head with Datadog, New Relic, Sentry, PostHog, or Replay.io.
 Instead, it sits above them.
 Those platforms answer:
 * What happened?
 * Where did it happen?
 * How often did it happen?
-SOTS answers:
+TELLANN answers:
 * What behavior exists?
 * What behavior is missing?
 * What workflows are degrading?
 * What quality risks are emerging?
 * What should be tested next?
 * How confident should we be in this release?
-This positions SOTS as a new category:
+This positions TELLANN as a new category:
 Behavioral Quality Intelligence Platform (BQIP)
 A category that bridges QA, observability, analytics, release validation, and autonomous software quality management.

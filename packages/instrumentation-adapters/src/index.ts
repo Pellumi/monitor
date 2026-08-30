@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process';
 import semver from 'semver';
 import { Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
 import { z } from 'zod';
-import { resolveWithinWorkspace } from '@sots/agent-policy';
-import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@sots/desktop-contracts';
+import { resolveWithinWorkspace } from '@tellann/agent-policy';
+import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 
 export const INSTRUMENTATION_CONTRACT_VERSION = '1.0';
 export const INSTRUMENTATION_MANIFEST_VERSION = '1.0';
@@ -239,7 +239,7 @@ function generatedFileFor(definition: AdapterDefinition, entryFile: string): str
   const extension = path.extname(entryFile).toLowerCase();
   const typed = ['.ts', '.tsx', '.mts', '.cts'].includes(extension);
   if (definition.id === 'nextjs') return typed ? 'src/tellann.tsx' : 'src/tellann.js';
-  if (definition.sdkPackage === '@sots/frontend-sdk') return typed ? 'src/tellann.ts' : 'src/tellann.js';
+  if (definition.sdkPackage === '@tellann/frontend-sdk') return typed ? 'src/tellann.ts' : 'src/tellann.js';
   if (extension === '.cjs') return 'src/tellann.cjs';
   if (extension === '.mjs') return 'src/tellann.mjs';
   return typed ? 'src/tellann.ts' : 'src/tellann.js';
@@ -409,11 +409,11 @@ function generatedFrontendModule(typed: boolean): string {
   const runDeclaration = typed
     ? `const run = (globalThis as typeof globalThis & { __TELLANN_RUN__?: Record<string, string> }).__TELLANN_RUN__ ?? {};`
     : `const run = globalThis.__TELLANN_RUN__ ?? {};`;
-  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { SOTS } from '@sots/frontend-sdk';\n\n${runDeclaration}\nconst configured = import.meta.env ?? {};\n\nSOTS.initialize({\n  endpoint: run.relayEndpoint ?? configured.VITE_TELLANN_GATEWAY_URL ?? '/tellann-relay',\n  applicationId: run.applicationId ?? configured.VITE_TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? configured.VITE_TELLANN_ENVIRONMENT_ID,\n  apiKey: run.relayToken ?? configured.VITE_TELLANN_INGESTION_KEY,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid SOTS.verifyInstallation();\n\nexport { SOTS };\n/* tellann:generated:end */\n`;
+  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { TELLANN } from '@tellann/frontend-sdk';\n\n${runDeclaration}\nconst configured = import.meta.env ?? {};\n\nTELLANN.initialize({\n  endpoint: run.relayEndpoint ?? configured.VITE_TELLANN_GATEWAY_URL ?? '/tellann-relay',\n  applicationId: run.applicationId ?? configured.VITE_TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? configured.VITE_TELLANN_ENVIRONMENT_ID,\n  apiKey: run.relayToken ?? configured.VITE_TELLANN_INGESTION_KEY,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid TELLANN.verifyInstallation();\n\nexport { TELLANN };\n/* tellann:generated:end */\n`;
 }
 
 function backendInitialization(): string {
-  return `SOTS.initialize({
+  return `TELLANN.initialize({
   endpoint: process.env.TELLANN_RELAY_ENDPOINT ?? process.env.TELLANN_GATEWAY_URL ?? process.env.TELLANN_ENDPOINT ?? 'http://127.0.0.1:43117',
   applicationId: process.env.TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',
   environmentId: process.env.TELLANN_ENVIRONMENT_ID,
@@ -424,16 +424,16 @@ function backendInitialization(): string {
   agentVersion: process.env.TELLANN_AGENT_VERSION,
   instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',
 });
-void SOTS.verifyInstallation();`;
+void TELLANN.verifyInstallation();`;
 }
 
 function generatedBackendModule(adapterId: FrameworkId, commonJs: boolean): string {
   if (commonJs) {
-    const names = adapterId === 'express' ? 'SOTS, sotsExpressErrorHandler, sotsExpressMiddleware'
-      : adapterId === 'fastify' ? 'SOTS, sotsFastifyPlugin'
-        : 'SOTS';
+    const names = adapterId === 'express' ? 'TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware'
+      : adapterId === 'fastify' ? 'TELLANN, tellannFastifyPlugin'
+        : 'TELLANN';
     return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */
-const { ${names} } = require('@sots/backend-sdk');
+const { ${names} } = require('@tellann/backend-sdk');
 
 ${backendInitialization()}
 
@@ -442,13 +442,13 @@ module.exports = { ${names} };
 `;
   }
   const integration = adapterId === 'express'
-    ? `import { SOTS, sotsExpressErrorHandler, sotsExpressMiddleware } from '@sots/backend-sdk';\n\n${backendInitialization()}\n\nexport { SOTS, sotsExpressErrorHandler, sotsExpressMiddleware };`
+    ? `import { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware };`
     : adapterId === 'fastify'
-      ? `import { SOTS, sotsFastifyPlugin } from '@sots/backend-sdk';\n\n${backendInitialization()}\n\nexport { SOTS, sotsFastifyPlugin };`
+      ? `import { TELLANN, tellannFastifyPlugin } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannFastifyPlugin };`
       : adapterId === 'nestjs'
         ? `import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable, catchError, tap, throwError } from 'rxjs';
-import { SOTS, extractCorrelationContext } from '@sots/backend-sdk';
+import { TELLANN, extractCorrelationContext } from '@tellann/backend-sdk';
 
 ${backendInitialization()}
 
@@ -459,7 +459,7 @@ export class TellannInterceptor implements NestInterceptor {
     const response = context.switchToHttp().getResponse();
     const correlation = extractCorrelationContext(request.headers ?? {});
     const startedAt = Date.now();
-    const track = () => SOTS.trackApi({
+    const track = () => TELLANN.trackApi({
       endpoint: request.route?.path ?? request.url ?? 'unknown',
       method: request.method ?? 'UNKNOWN',
       statusCode: response.statusCode ?? 200,
@@ -471,15 +471,15 @@ export class TellannInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap(() => void track()),
       catchError((error) => {
-        void SOTS.captureError({ error, sessionId: correlation.sessionId, runId: correlation.runId, traceId: correlation.traceId, eventType: 'SERVER_ERROR' });
+        void TELLANN.captureError({ error, sessionId: correlation.sessionId, runId: correlation.runId, traceId: correlation.traceId, eventType: 'SERVER_ERROR' });
         return throwError(() => error);
       }),
     );
   }
 }
 
-export { SOTS };`
-        : `import { SOTS } from '@sots/backend-sdk';\n\n${backendInitialization()}\n\nexport { SOTS };`;
+export { TELLANN };`
+        : `import { TELLANN } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN };`;
   return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\n${integration}\n/* tellann:generated:end */\n`;
 }
 
@@ -493,7 +493,7 @@ function generatedNextProvider(typed: boolean): string {
 'use client';
 
 ${reactImport}
-import { SOTS } from '@sots/frontend-sdk';
+import { TELLANN } from '@tellann/frontend-sdk';
 
 ${signature}
   useEffect(() => {
@@ -504,7 +504,7 @@ ${signature}
       environmentId: process.env.NEXT_PUBLIC_TELLANN_ENVIRONMENT_ID,
       apiKey: process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY,
     };
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: run.relayEndpoint ?? configured.endpoint ?? '/tellann-relay',
       applicationId: run.applicationId ?? configured.applicationId ?? 'configure-in-tellann-desktop',
       environmentId: run.environmentId ?? configured.environmentId,
@@ -515,11 +515,11 @@ ${signature}
       agentVersion: run.agentVersion,
       instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',
     });
-    void SOTS.verifyInstallation();
+    void TELLANN.verifyInstallation();
   }, []);
   return children;
 }
-export { SOTS };
+export { TELLANN };
 /* tellann:generated:end */
 `;
 }
@@ -529,18 +529,18 @@ type AdapterDefinition = {
   packageNames: string[];
   versionPackage: string;
   supportedVersionRange: string;
-  sdkPackage: '@sots/frontend-sdk' | '@sots/backend-sdk';
+  sdkPackage: '@tellann/frontend-sdk' | '@tellann/backend-sdk';
   generatedFile: string;
   entryMatchers: RegExp[];
   symbolMatchers: RegExp[];
 };
 
 const DEFINITIONS: AdapterDefinition[] = [
-  { id: 'react-vite', packageNames: ['react', 'vite'], versionPackage: 'vite', supportedVersionRange: '>=4 <9', sdkPackage: '@sots/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/(main|index)\.[jt]sx?$/], symbolMatchers: [/createRoot\s*\(/, /ReactDOM\.render\s*\(/] },
-  { id: 'nextjs', packageNames: ['next'], versionPackage: 'next', supportedVersionRange: '>=12 <17', sdkPackage: '@sots/frontend-sdk', generatedFile: 'src/tellann.tsx', entryMatchers: [/(^|\/)(src\/)?pages\/_app\.[jt]sx?$/, /(^|\/)(src\/)?app\/layout\.[jt]sx?$/], symbolMatchers: [/function\s+App\b/, /function\s+RootLayout\b/, /export\s+default/] },
-  { id: 'express', packageNames: ['express'], versionPackage: 'express', supportedVersionRange: '>=4 <6', sdkPackage: '@sots/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/\.listen\s*\(/, /express\s*\(/] },
-  { id: 'fastify', packageNames: ['fastify'], versionPackage: 'fastify', supportedVersionRange: '>=4 <6', sdkPackage: '@sots/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/fastify\s*\(/i, /\.listen\s*\(/] },
-  { id: 'nestjs', packageNames: ['@nestjs/core'], versionPackage: '@nestjs/core', supportedVersionRange: '>=9 <12', sdkPackage: '@sots/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/NestFactory\.create\s*\(/, /bootstrap\s*\(/] },
+  { id: 'react-vite', packageNames: ['react', 'vite'], versionPackage: 'vite', supportedVersionRange: '>=4 <9', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/(main|index)\.[jt]sx?$/], symbolMatchers: [/createRoot\s*\(/, /ReactDOM\.render\s*\(/] },
+  { id: 'nextjs', packageNames: ['next'], versionPackage: 'next', supportedVersionRange: '>=12 <17', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.tsx', entryMatchers: [/(^|\/)(src\/)?pages\/_app\.[jt]sx?$/, /(^|\/)(src\/)?app\/layout\.[jt]sx?$/], symbolMatchers: [/function\s+App\b/, /function\s+RootLayout\b/, /export\s+default/] },
+  { id: 'express', packageNames: ['express'], versionPackage: 'express', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/\.listen\s*\(/, /express\s*\(/] },
+  { id: 'fastify', packageNames: ['fastify'], versionPackage: 'fastify', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/fastify\s*\(/i, /\.listen\s*\(/] },
+  { id: 'nestjs', packageNames: ['@nestjs/core'], versionPackage: '@nestjs/core', supportedVersionRange: '>=9 <12', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/NestFactory\.create\s*\(/, /bootstrap\s*\(/] },
 ];
 
 function addNamedImport(source: SourceFile, moduleSpecifier: string, names: string[]): void {
@@ -560,15 +560,15 @@ function addCommonJsBindings(source: SourceFile, moduleSpecifier: string, names:
 
 function addCheckpointImport(source: SourceFile, moduleSpecifier: string, commonJs: boolean): void {
   if (commonJs) {
-    const statement = `const { SOTS: TellannSOTS } = require(${JSON.stringify(moduleSpecifier)});`;
+    const statement = `const { TELLANN: TellannTELLANN } = require(${JSON.stringify(moduleSpecifier)});`;
     if (!source.getFullText().includes(statement)) source.insertStatements(0, statement);
     return;
   }
   const existing = source.getImportDeclaration((declaration) => declaration.getModuleSpecifierValue() === moduleSpecifier);
-  const alreadyImported = existing?.getNamedImports().some((item) => item.getName() === 'SOTS' && item.getAliasNode()?.getText() === 'TellannSOTS');
+  const alreadyImported = existing?.getNamedImports().some((item) => item.getName() === 'TELLANN' && item.getAliasNode()?.getText() === 'TellannTELLANN');
   if (alreadyImported) return;
-  if (existing) existing.addNamedImport({ name: 'SOTS', alias: 'TellannSOTS' });
-  else source.insertImportDeclaration(0, { moduleSpecifier, namedImports: [{ name: 'SOTS', alias: 'TellannSOTS' }] });
+  if (existing) existing.addNamedImport({ name: 'TELLANN', alias: 'TellannTELLANN' });
+  else source.insertImportDeclaration(0, { moduleSpecifier, namedImports: [{ name: 'TELLANN', alias: 'TellannTELLANN' }] });
 }
 
 function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, commonJs: boolean): void {
@@ -585,7 +585,7 @@ function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, 
   if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
   const mapping = operation.eventMappings[0];
   (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0,
-    `/* ${marker} */\nvoid TellannSOTS.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify((operation as any).flowInitializationId ?? null)}, source: 'tellann-adapter' });`);
+    `/* ${marker} */\nvoid TellannTELLANN.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify((operation as any).flowInitializationId ?? null)}, source: 'tellann-adapter' });`);
 }
 
 function frameworkVariable(source: SourceFile, matcher: RegExp): string | null {
@@ -639,20 +639,20 @@ function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, 
     throw new Error('SAFE_NEXT_RENDER_BOUNDARY_NOT_FOUND');
   }
   if (definition.id === 'express') {
-    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['sotsExpressErrorHandler', 'sotsExpressMiddleware']);
-    else addNamedImport(source, moduleSpecifier, ['sotsExpressErrorHandler', 'sotsExpressMiddleware']);
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannExpressErrorHandler', 'tellannExpressMiddleware']);
+    else addNamedImport(source, moduleSpecifier, ['tellannExpressErrorHandler', 'tellannExpressMiddleware']);
     const application = frameworkVariable(source, /\bexpress\s*\(/);
     if (!application) throw new Error('SAFE_EXPRESS_APP_NOT_FOUND');
-    appendAfterVariable(source, application, `${application}.use(sotsExpressMiddleware());`);
-    insertBeforeListen(source, application, `${application}.use(sotsExpressErrorHandler());`);
+    appendAfterVariable(source, application, `${application}.use(tellannExpressMiddleware());`);
+    insertBeforeListen(source, application, `${application}.use(tellannExpressErrorHandler());`);
     return;
   }
   if (definition.id === 'fastify') {
-    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['sotsFastifyPlugin']);
-    else addNamedImport(source, moduleSpecifier, ['sotsFastifyPlugin']);
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannFastifyPlugin']);
+    else addNamedImport(source, moduleSpecifier, ['tellannFastifyPlugin']);
     const application = frameworkVariable(source, /\bfastify\s*\(/i);
     if (!application) throw new Error('SAFE_FASTIFY_APP_NOT_FOUND');
-    appendAfterVariable(source, application, `${application}.register(sotsFastifyPlugin);`);
+    appendAfterVariable(source, application, `${application}.register(tellannFastifyPlugin);`);
     return;
   }
   if (definition.id === 'nestjs') {
@@ -702,7 +702,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     const semanticBoundaries: AdapterEvidence['semanticBoundaries'] = [];
     for (const relativePath of files) {
       const content = fs.readFileSync(resolveWithinWorkspace(input.workspaceRoot, relativePath), 'utf8');
-      if (content.includes('tellann:generated:start') || /@sots\/(frontend|backend)-sdk/.test(content)) {
+      if (content.includes('tellann:generated:start') || /@tellann\/(frontend|backend)-sdk/.test(content)) {
         existingInstrumentation.push({ file: relativePath, marker: content.includes('tellann:generated:start') ? 'generated-block' : 'sdk-import' });
       }
       if (this.definition.entryMatchers.some((matcher) => matcher.test(relativePath)) && this.definition.symbolMatchers.some((matcher) => matcher.test(content))) {
@@ -752,7 +752,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     const typed = /\.[cm]?tsx?$/.test(entry.file);
     const generated = this.id === 'nextjs'
       ? generatedNextProvider(typed)
-      : this.definition.sdkPackage === '@sots/frontend-sdk'
+      : this.definition.sdkPackage === '@tellann/frontend-sdk'
         ? generatedFrontendModule(typed)
         : generatedBackendModule(this.id, commonJs);
     const operations: PatchOperation[] = [

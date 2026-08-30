@@ -27,7 +27,7 @@ async function main() {
     });
   }
 
-  console.log('Successfully registered AcadAI in SOTS database!');
+  console.log('Successfully registered AcadAI in TELLANN database!');
 
   // Seed FDRS tables
   await seedFDRS();

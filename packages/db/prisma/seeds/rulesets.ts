@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from '@prisma/client';
-import { domainTemplates } from '@sots/rules';
+import { domainTemplates } from '@tellann/rules';
 
 const prisma = new PrismaClient();
 

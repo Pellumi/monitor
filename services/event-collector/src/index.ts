@@ -1,10 +1,10 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('event-collector');
 
 import express, { Request, Response } from 'express';
-import { SotsEventSchema, EventBatchSchema, Topics, Feature } from '@sots/shared';
-import { PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
+import { TellannEventSchema, EventBatchSchema, Topics, Feature } from '@tellann/shared';
+import { PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
 
 const app = express();
@@ -25,7 +25,7 @@ let prisma: PrismaClient | null = null;
 if (KAFKA_ENABLED) {
   const { Kafka } = require('kafkajs');
   const kafka = new Kafka({
-    clientId: 'sots-event-collector',
+    clientId: 'tellann-event-collector',
     brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
     retry: {
       retries: 5,
@@ -54,7 +54,7 @@ const entitlementChecker = new EntitlementChecker(entitlementPrisma);
  * Returns null = allowed, string = error message to send 402.
  */
 async function checkSessionRecordingEntitlement(req: Request): Promise<string | null> {
-  const orgId = req.headers['x-sots-org-id'] as string | undefined;
+  const orgId = req.headers['x-tellann-org-id'] as string | undefined;
   if (!orgId) return null; // no org context — fail open (SDK call without resolved key)
 
   try {
@@ -80,9 +80,9 @@ function applyGatewayIdentity<T extends { tenantId: string; applicationId: strin
   event: T,
   req: Request,
 ): T & { environmentId: string | null } {
-  const orgId = req.headers['x-sots-org-id'] as string | undefined;
-  const applicationId = req.headers['x-sots-application-id'] as string | undefined;
-  const environmentId = req.headers['x-sots-environment-id'] as string | undefined;
+  const orgId = req.headers['x-tellann-org-id'] as string | undefined;
+  const applicationId = req.headers['x-tellann-application-id'] as string | undefined;
+  const environmentId = req.headers['x-tellann-environment-id'] as string | undefined;
 
   return {
     ...event,
@@ -101,8 +101,8 @@ function runCredential(req: Request): {
   try {
     const claims = jwt.verify(
       authorization.slice(7),
-      process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
-      { audience: 'event-collector', issuer: 'sots-onboarding-api' },
+      process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
+      { audience: 'event-collector', issuer: 'tellann-onboarding-api' },
     ) as Record<string, unknown>;
     if (claims.kind !== 'tellann-run-ingestion' || typeof claims.runId !== 'string') return null;
     return claims as ReturnType<typeof runCredential>;
@@ -228,7 +228,7 @@ app.post('/v1/events', async (req: Request, res: Response) => {
       });
     }
 
-    const event = SotsEventSchema.parse(req.body);
+    const event = TellannEventSchema.parse(req.body);
     const enriched = applyRunCorrelation(applyGatewayIdentity(event, req), req);
 
     await publishEvents([enriched], event.sessionId);

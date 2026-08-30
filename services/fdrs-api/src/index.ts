@@ -1,22 +1,22 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('fdrs-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction, SuggestionType, SuggestionSource, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature, Services } from '@sots/shared';
-import { normalizeIntent, getSuggestions } from '@sots/derivation-engine';
+import { PrismaClient, FlowStatus, StateCategory, StateProvenance, GraphType, GraphSourceType, AuditAction, SuggestionType, SuggestionSource, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature, Services } from '@tellann/shared';
+import { normalizeIntent, getSuggestions } from '@tellann/derivation-engine';
 import { compileFlowRuleset } from './compiler';
 import { runReconciliation } from './reconciliation';
-import { generateAiFlowDraft, generateFlowSuggestions } from '@sots/ai';
-import { validateGeneratedGraph } from '@sots/graph-validation';
-import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet } from '@sots/rules';
-import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@sots/authz';
+import { generateAiFlowDraft, generateFlowSuggestions } from '@tellann/ai';
+import { validateGeneratedGraph } from '@tellann/graph-validation';
+import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet } from '@tellann/rules';
+import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createConnectivityRepairTransitions, createFlowDiagrams, validateFlow } from './flow-domain';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
 /** Map legacy/alias provenance values to valid StateProvenance enum members */
 function normalizeProvenance(raw: string): StateProvenance {
@@ -62,7 +62,7 @@ const requireSystemAdmin = makeRequireSystemAdmin(prisma);
 app.use(express.json());
 
 async function verifyJwt(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  // NOTE: x-sots-org-id is a gateway hint header, not an auth bypass.
+  // NOTE: x-tellann-org-id is a gateway hint header, not an auth bypass.
   // JWT is ALWAYS required regardless of internal headers.
   let token = req.headers['authorization']?.replace('Bearer ', '');
   if (!token && req.headers['cookie']) {
@@ -98,10 +98,10 @@ async function verifyJwt(req: AuthenticatedRequest, res: Response, next: NextFun
 
 
 async function verifyAppOwnership(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  // x-sots-org-id is a gateway context header — it does NOT bypass ownership checks.
-  // If the gateway supplies x-sots-application-id, validate against the route param only.
-  if (req.headers['x-sots-org-id']) {
-    const gatewayAppId = req.headers['x-sots-application-id'] as string | undefined;
+  // x-tellann-org-id is a gateway context header — it does NOT bypass ownership checks.
+  // If the gateway supplies x-tellann-application-id, validate against the route param only.
+  if (req.headers['x-tellann-org-id']) {
+    const gatewayAppId = req.headers['x-tellann-application-id'] as string | undefined;
     // The appId is resolved from route params only — never from the request body.
     const appId = req.params.appId || req.params.id;
     if (gatewayAppId && appId && gatewayAppId !== appId) {
@@ -453,7 +453,7 @@ async function recordSuggestionOutcome(params: {
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-sots-user-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tellann-user-id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -802,7 +802,7 @@ app.post('/v1/applications/:appId/flows/ai-drafts', async (req: Request, res: Re
   if (!organizationId) return res.status(400).json({ error: 'Application has no organization' });
 
   // Gap 4: Always sanitize before any storage or processing
-  const { sanitizeAiInputFull } = await import('@sots/ai');
+  const { sanitizeAiInputFull } = await import('@tellann/ai');
   const sanitized = sanitizeAiInputFull(productDescription);
   const redactedDescription = sanitized.sanitizedText;
   const descriptionHash = sanitized.originalHash;
@@ -1181,7 +1181,7 @@ app.post('/v1/applications/:appId/intent-drafts', async (req: AuthenticatedReque
       ...versions.map((version) => `${version.document.filename}: ${String((version.extractedSummary as any)?.summary ?? '')}`),
       ...(repository ? [`Repository routes: ${JSON.stringify(repository.routeSummary)}\nRepository endpoints: ${JSON.stringify(repository.endpointSummary)}`] : []),
     ].join('\n\n').slice(0, 100_000);
-    const sanitized = (await import('@sots/ai')).sanitizeAiInputFull(approvedSummary);
+    const sanitized = (await import('@tellann/ai')).sanitizeAiInputFull(approvedSummary);
     if (sanitized.promptInjectionRisk) return res.status(422).json({ error: 'DERIVED_SUMMARY_PROMPT_INJECTION_RISK' });
     const inference = await inferDomain({
       description: sanitized.sanitizedText, selectedDomainKey: req.body.selectedDomainKey,
@@ -1313,7 +1313,7 @@ app.post('/v1/applications/:appId/intent-drafts/:draftId/correct', async (req: A
   if (draft.status !== 'PENDING_REVIEW') return res.status(409).json({ error: 'REVIEWED_DRAFT_IS_IMMUTABLE' });
   const correction = typeof req.body.correction === 'string' ? req.body.correction.trim() : '';
   if (!correction) return res.status(400).json({ error: 'CORRECTION_REQUIRED' });
-  const sanitized = (await import('@sots/ai')).sanitizeAiInputFull(correction);
+  const sanitized = (await import('@tellann/ai')).sanitizeAiInputFull(correction);
   if (sanitized.promptInjectionRisk || sanitized.riskLevel === 'HIGH') return res.status(422).json({ error: 'CORRECTION_BLOCKED_BY_PRIVACY_POLICY' });
   const job = await prisma.aIFlowDraftJob.create({
     data: {
@@ -2872,7 +2872,7 @@ app.get('/applications/:id/reconciliation/export', async (req: Request, res: Res
     };
 
     const date = new Date().toISOString().slice(0, 10);
-    const filename = `sots-reconciliation-${applicationId}-${date}`;
+    const filename = `tellann-reconciliation-${applicationId}-${date}`;
 
     if (format === 'json') {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);

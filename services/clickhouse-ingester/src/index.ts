@@ -1,15 +1,15 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('clickhouse-ingester');
 
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, Consumer, EachBatchPayload } from 'kafkajs';
-import { Topics, ConsumerGroups } from '@sots/shared';
+import { Topics, ConsumerGroups } from '@tellann/shared';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',');
 const CLICKHOUSE_HOST = process.env.CLICKHOUSE_HOST || 'http://localhost:8123';
-const CLICKHOUSE_DB = process.env.CLICKHOUSE_DATABASE || 'sots';
-const CLICKHOUSE_USER = process.env.CLICKHOUSE_USER || 'sots';
+const CLICKHOUSE_DB = process.env.CLICKHOUSE_DATABASE || 'tellann';
+const CLICKHOUSE_USER = process.env.CLICKHOUSE_USER || 'tellann';
 const CLICKHOUSE_PASSWORD = process.env.CLICKHOUSE_PASSWORD || 'password';
 
 // Batch configuration
@@ -188,7 +188,7 @@ class BatchFlusher {
 // ─── Kafka consumer ───────────────────────────────────────────────────────────
 async function createKafkaConsumer(): Promise<Consumer> {
   const kafka = new Kafka({
-    clientId: 'sots-clickhouse-ingester',
+    clientId: 'tellann-clickhouse-ingester',
     brokers: KAFKA_BROKERS,
     retry: {
       retries: 10,

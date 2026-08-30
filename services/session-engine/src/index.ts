@@ -1,15 +1,15 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('session-engine');
 
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { SotsEvent, Topics, ConsumerGroups, Feature } from '@sots/shared';
-import { PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { createStorageClient, buildReplayKey } from '@sots/storage';
+import { TellannEvent, Topics, ConsumerGroups, Feature } from '@tellann/shared';
+import { PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { createStorageClient, buildReplayKey } from '@tellann/storage';
 
 interface SessionRepository {
-  save(sessionId: string, event: SotsEvent): Promise<void>;
-  load(sessionId: string): Promise<SotsEvent[]>;
+  save(sessionId: string, event: TellannEvent): Promise<void>;
+  load(sessionId: string): Promise<TellannEvent[]>;
   complete(sessionId: string): Promise<void>;
 }
 
@@ -44,7 +44,7 @@ async function isSessionRecordingAllowed(applicationId: string): Promise<boolean
 }
 
 class PostgresSessionRepository implements SessionRepository {
-  async save(sessionId: string, event: SotsEvent): Promise<void> {
+  async save(sessionId: string, event: TellannEvent): Promise<void> {
     await prisma.application.upsert({
       where: { id: event.applicationId },
       update: {},
@@ -109,7 +109,7 @@ class PostgresSessionRepository implements SessionRepository {
           });
         }
 
-        if (event.eventType === 'SOTS_ONBOARDING_TEST') {
+        if (event.eventType === 'TELLANN_ONBOARDING_TEST') {
           if (progress && !progress.installationTestPassed) {
             await prisma.applicationOnboardingProgress.update({
               where: { applicationId: event.applicationId },
@@ -130,7 +130,7 @@ class PostgresSessionRepository implements SessionRepository {
     }
   }
 
-  async load(sessionId: string): Promise<SotsEvent[]> {
+  async load(sessionId: string): Promise<TellannEvent[]> {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
       include: { events: { orderBy: { timestamp: 'asc' } } }
@@ -175,7 +175,7 @@ class PostgresSessionRepository implements SessionRepository {
 
 
 const kafka = new Kafka({
-  clientId: 'sots-session-engine',
+  clientId: 'tellann-session-engine',
   brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
   retry: { retries: 5, initialRetryTime: 300 },
 });
@@ -188,7 +188,7 @@ async function processEvent({ message }: EachMessagePayload) {
   if (!message.value) return;
 
   try {
-    const event: SotsEvent = JSON.parse(message.value.toString());
+    const event: TellannEvent = JSON.parse(message.value.toString());
     const { sessionId } = event;
 
     // ── Entitlement gate: SESSION_RECORDING ──────────────────────

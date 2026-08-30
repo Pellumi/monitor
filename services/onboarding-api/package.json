@@ -1,5 +1,5 @@
 {
-  "name": "@sots/onboarding-api",
+  "name": "@tellann/onboarding-api",
   "version": "0.1.0",
   "main": "dist/index.js",
   "scripts": {
@@ -9,16 +9,16 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@sots/authz": "workspace:*",
-    "@sots/db": "workspace:*",
-    "@sots/desktop-contracts": "workspace:*",
-    "@sots/email": "workspace:*",
-    "@sots/shared": "workspace:*",
-    "@sots/storage": "workspace:*",
-    "@sots/telemetry": "workspace:*",
-    "@sots/rules": "workspace:*",
-    "@sots/ai": "workspace:*",
-    "@sots/entitlement-checker": "workspace:*",
+    "@tellann/authz": "workspace:*",
+    "@tellann/db": "workspace:*",
+    "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/email": "workspace:*",
+    "@tellann/shared": "workspace:*",
+    "@tellann/storage": "workspace:*",
+    "@tellann/telemetry": "workspace:*",
+    "@tellann/rules": "workspace:*",
+    "@tellann/ai": "workspace:*",
+    "@tellann/entitlement-checker": "workspace:*",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2"
   },

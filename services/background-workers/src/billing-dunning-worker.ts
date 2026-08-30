@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import { PrismaClient, SubscriptionStatus } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
+import { PrismaClient, SubscriptionStatus } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
 
 function openPaymentReference(value: string): string {
   const keyMaterial = process.env.BILLING_ENCRYPTION_KEY;

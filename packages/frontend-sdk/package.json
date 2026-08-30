@@ -1,5 +1,5 @@
 {
-  "name": "@sots/frontend-sdk",
+  "name": "@tellann/frontend-sdk",
   "version": "0.1.0",
   "type": "module",
   "description": "Tellann browser telemetry and QA-run correlation SDK",

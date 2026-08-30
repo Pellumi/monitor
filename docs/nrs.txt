@@ -1,6 +1,6 @@
-﻿Non-Functional Requirements Specification (NFRS)
+Non-Functional Requirements Specification (NFRS)
 1. Purpose
-This document defines the non-functional requirements for the Self-Observing Testing System (SOTS).
+This document defines the non-functional requirements for the Self-Observing Testing System (TELLANN).
 These requirements establish the quality attributes, operational constraints, service expectations, and performance standards that govern the platform across all phases of development.
 The requirements contained herein apply to all system components including SDKs, ingestion services, processing pipelines, analytics engines, dashboards, reporting systems, intelligence engines, and future autonomous validation capabilities.
 2. Scope

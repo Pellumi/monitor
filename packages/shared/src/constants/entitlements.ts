@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Every gated capability in SOTS.
+ * Every gated capability in TELLANN.
  * Used by FeatureFlag rows in the Plan table and by EntitlementChecker at runtime.
  */
 export enum Feature {

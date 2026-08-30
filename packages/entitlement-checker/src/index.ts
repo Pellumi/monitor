@@ -1,5 +1,5 @@
-import { PrismaClient, PlanType, SubscriptionStatus } from '@sots/db';
-import { Feature, PLAN_DEFINITIONS, type ResourceLimits, type SupportEntitlements, type PlanTypeKey } from '@sots/shared';
+import { PrismaClient, PlanType, SubscriptionStatus } from '@tellann/db';
+import { Feature, PLAN_DEFINITIONS, type ResourceLimits, type SupportEntitlements, type PlanTypeKey } from '@tellann/shared';
 
 export interface ResolvedEntitlement {
   planType: PlanType;
@@ -29,7 +29,7 @@ export class EntitlementChecker {
     });
 
     if (subscription) {
-      // SOTS BSS Section 15: Restrict specific activities for suspended/cancelled/expired subscriptions
+      // TELLANN BSS Section 15: Restrict specific activities for suspended/cancelled/expired subscriptions
       if (
         subscription.status === SubscriptionStatus.SUSPENDED ||
         subscription.status === SubscriptionStatus.CANCELLED ||

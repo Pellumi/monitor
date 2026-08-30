@@ -1,8 +1,8 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('background-workers');
 
-import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@sots/db';
-import { generateAiFlowDraft, resolveAiProvider, sanitizeAiInputFull } from '@sots/ai';
+import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@tellann/db';
+import { generateAiFlowDraft, resolveAiProvider, sanitizeAiInputFull } from '@tellann/ai';
 import { runRuleCandidatePromoter } from './rule-candidate-promoter';
 import {
   runWeeklyReportDigest,
@@ -14,10 +14,10 @@ import { runRetentionSweep } from './retention-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
 import { processDocumentJobs } from './document-processing-worker';
-import { createMetricsRegistry, createHttpMetricsMiddleware } from '@sots/shared';
+import { createMetricsRegistry, createHttpMetricsMiddleware } from '@tellann/shared';
 import http from 'http';
 import { createHash } from 'crypto';
-import { validateGeneratedGraph } from '@sots/graph-validation';
+import { validateGeneratedGraph } from '@tellann/graph-validation';
 
 const prisma = new PrismaClient();
 
@@ -71,7 +71,7 @@ export async function runAiDraftJobProcessor(): Promise<void> {
 
       try {
         // Load rulesets for the domain
-        const { getActiveRulesets, generateRuleBasedFlow } = await import('@sots/rules');
+        const { getActiveRulesets, generateRuleBasedFlow } = await import('@tellann/rules');
         const rulesets = await getActiveRulesets({
           organizationId: job.organizationId,
           applicationId: job.applicationId,
@@ -243,8 +243,8 @@ export async function runRulesetFeedbackAnalyzer(): Promise<void> {
 
 export async function runRulesetCacheWarmer(): Promise<void> {
   try {
-    const { getActiveRulesets } = await import('@sots/rules');
-    const { setCachedRulesets } = await import('@sots/rules');
+    const { getActiveRulesets } = await import('@tellann/rules');
+    const { setCachedRulesets } = await import('@tellann/rules');
 
     const activeDomains = await prisma.domain.findMany({
       where: { isActive: true },

@@ -217,8 +217,8 @@ An ingestion key authorizes telemetry upload. It is not the same as the manageme
 
 The current repository contains two SDK packages:
 
-- `@sots/frontend-sdk`
-- `@sots/backend-sdk`
+- `@tellann/frontend-sdk`
+- `@tellann/backend-sdk`
 
 Use the frontend SDK for browser navigation, interactions, forms, client errors, business states, and frontend workflows. Use the backend SDK for server APIs, server errors, backend states, and backend workflows. A full-stack application can use both, provided events use the same Tellann application and environment.
 
@@ -234,11 +234,11 @@ For a Next.js client provider:
 'use client';
 
 import { useEffect, type ReactNode } from 'react';
-import { SOTS } from '@sots/frontend-sdk';
+import { TELLANN } from '@tellann/frontend-sdk';
 
 export function TellannProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: process.env.NEXT_PUBLIC_TELLANN_GATEWAY_URL!,
       apiKey: process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY!,
       applicationId: process.env.NEXT_PUBLIC_TELLANN_APPLICATION_ID!,
@@ -246,9 +246,9 @@ export function TellannProvider({ children }: { children: ReactNode }) {
       debug: process.env.NODE_ENV !== 'production',
     });
 
-    void SOTS.verifyInstallation();
+    void TELLANN.verifyInstallation();
 
-    return () => SOTS.teardown();
+    return () => TELLANN.teardown();
   }, []);
 
   return children;
@@ -266,16 +266,16 @@ Because browser-side values can be inspected by end users, the ingestion key mus
 Initialize the backend singleton once during server startup:
 
 ```ts
-import { SOTS } from '@sots/backend-sdk';
+import { TELLANN } from '@tellann/backend-sdk';
 
-SOTS.initialize({
+TELLANN.initialize({
   endpoint: process.env.TELLANN_GATEWAY_URL!,
   apiKey: process.env.TELLANN_INGESTION_KEY!,
   applicationId: process.env.TELLANN_APPLICATION_ID!,
   environmentId: process.env.TELLANN_ENVIRONMENT_ID!,
 });
 
-await SOTS.verifyInstallation();
+await TELLANN.verifyInstallation();
 ```
 
 The backend package also exports Express middleware, a Fastify integration, and helpers for API calls, errors, states, and workflows. Use the framework integration where possible and manual calls for business-level meaning that middleware cannot infer.
@@ -285,8 +285,8 @@ The backend package also exports Express middleware, a Fastify integration, and 
 Auto-tracking supplies interaction evidence, but explicit state events make expected-vs-observed reconciliation much more reliable:
 
 ```ts
-SOTS.trackState('CHECKOUT', 'BUSINESS');
-SOTS.trackTransition('CART_WITH_ITEMS', 'CHECKOUT', 'CLICK_CHECKOUT');
+TELLANN.trackState('CHECKOUT', 'BUSINESS');
+TELLANN.trackTransition('CART_WITH_ITEMS', 'CHECKOUT', 'CLICK_CHECKOUT');
 ```
 
 The names should match the declared states. A spelling or naming mismatch is treated as undeclared observed behavior rather than as confirmation of the expected state.
@@ -294,14 +294,14 @@ The names should match the declared states. A spelling or naming mismatch is tre
 ### 7.4 Track workflows
 
 ```ts
-const workflowId = SOTS.startWorkflow('Checkout');
+const workflowId = TELLANN.startWorkflow('Checkout');
 
 try {
   await submitOrder();
-  SOTS.completeWorkflow(workflowId);
+  TELLANN.completeWorkflow(workflowId);
 } catch (error) {
-  SOTS.failWorkflow(workflowId, 'Order submission failed');
-  SOTS.captureException(error, { workflow: 'Checkout' });
+  TELLANN.failWorkflow(workflowId, 'Order submission failed');
+  TELLANN.captureException(error, { workflow: 'Checkout' });
 }
 ```
 
@@ -330,9 +330,9 @@ The onboarding screen checks three conditions:
 
 1. **Initialize SDK in code**.
 2. **Establish session connection**: at least one telemetry session is observed.
-3. **Onboarding test event pass**: `SOTS_ONBOARDING_TEST` is received.
+3. **Onboarding test event pass**: `TELLANN_ONBOARDING_TEST` is received.
 
-Calling `SOTS.verifyInstallation()` sends the test event. The onboarding page polls readiness and also provides **Force check**.
+Calling `TELLANN.verifyInstallation()` sends the test event. The onboarding page polls readiness and also provides **Force check**.
 
 If verification does not pass:
 
@@ -568,8 +568,8 @@ Run this loop for major features, risky releases, authorization changes, payment
 
 These points are important when training users or publishing external documentation:
 
-1. **Tellann and SOTS names coexist.** The UI and logs use Tellann, while package names, event names, and some docs still use `SOTS`.
-2. **Older docs contain stale package names.** The current packages are `@sots/frontend-sdk` and `@sots/backend-sdk`, not `@sots/react` and `@sots/node`.
+1. **Tellann and TELLANN names coexist.** The UI and logs use Tellann, while package names, event names, and some docs still use `TELLANN`.
+2. **Older docs contain stale package names.** The current packages are `@tellann/frontend-sdk` and `@tellann/backend-sdk`, not `@tellann/react` and `@tellann/node`.
 3. **The onboarding snippet is local-development oriented.** It hardcodes `http://localhost:3000`; production documentation must substitute the deployed gateway.
 4. **SDK packages are repository workspace packages.** Public package distribution should be verified before telling external users to run a public npm install.
 5. **The wizard does not explicitly start and stop a named demonstration session.** It observes telemetry for the application/environment, waits for the state threshold, and then triggers reconciliation.
@@ -591,7 +591,7 @@ A user has completed a meaningful Tellann setup when:
 - [ ] At least one useful flow is declared and compiled.
 - [ ] The ingestion key is stored safely.
 - [ ] The appropriate SDK is initialized against the correct gateway.
-- [ ] `SOTS_ONBOARDING_TEST` passes.
+- [ ] `TELLANN_ONBOARDING_TEST` passes.
 - [ ] Domain states and transitions are emitted with declaration-matching names.
 - [ ] A representative success path and failure/recovery path have been demonstrated.
 - [ ] Reconciliation has been generated and reviewed.

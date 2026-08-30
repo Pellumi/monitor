@@ -1,5 +1,5 @@
 {
-  "name": "@sots/local-relay",
+  "name": "@tellann/local-relay",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

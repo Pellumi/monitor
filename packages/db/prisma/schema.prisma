@@ -879,7 +879,7 @@ model ApiKey {
   environment     Environment @relation(fields: [environmentId], references: [id])
   /// SHA-256 hex digest of the raw key — never store plaintext
   keyHash         String      @unique
-  /// First 8 hex chars prefixed with "sots_" for safe display (e.g. sots_a1b2c3d4)
+  /// First 8 hex chars prefixed with "tellann_" for safe display (e.g. tellann_a1b2c3d4)
   keyPrefix       String
   label           String?
   createdAt       DateTime    @default(now())

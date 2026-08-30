@@ -1,6 +1,6 @@
-﻿DATA FLOW DOCUMENT (DFD)
+DATA FLOW DOCUMENT (DFD)
 1. Purpose
-This document defines how information moves throughout the Self-Observing Testing System (SOTS).
+This document defines how information moves throughout the Self-Observing Testing System (TELLANN).
 The document describes:
 * Data producers
 * Data consumers

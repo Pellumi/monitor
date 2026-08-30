@@ -18,11 +18,11 @@ MVP launch means a paying customer can:
 Target: move Billing, Entitlements, SDK, Gateway, and onboarding from risky to usable.
 
 1. **Fix SDK integration**
-   - Replace dashboard snippets with actual packages: `@sots/frontend-sdk`, `@sots/backend-sdk`.
-   - Replace `SOTS.init()` with `SOTS.initialize()`.
+   - Replace dashboard snippets with actual packages: `@tellann/frontend-sdk`, `@tellann/backend-sdk`.
+   - Replace `TELLANN.init()` with `TELLANN.initialize()`.
    - Add API key support or update docs/UI to match current `tenantId/applicationId` config.
    - Fix backend SDK default `sessionId`; generate a UUID when none is supplied, or relax collector schema safely.
-   - Add tests proving backend SDK events pass `SotsEventSchema`.
+   - Add tests proving backend SDK events pass `TellannEventSchema`.
 
    Acceptance:
    - Frontend SDK install snippet works copy-paste.

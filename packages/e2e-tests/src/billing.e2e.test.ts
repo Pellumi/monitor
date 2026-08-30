@@ -4,7 +4,7 @@
  * Verifies the full checkout → webhook → subscription activation → receipt lifecycle
  * using the billing-api and onboarding-api services.
  *
- * Run with: pnpm --filter @sots/e2e-tests test:billing
+ * Run with: pnpm --filter @tellann/e2e-tests test:billing
  *
  * Prerequisites:
  *   - BILLING_API_URL pointing to running billing-api
@@ -92,8 +92,8 @@ describe('Billing API — Checkout validation', () => {
       organizationId: ORG_A_ID || 'dummy-org',
       planType: 'SOLO',
       provider: 'stripe',
-      successUrl: 'https://app.sots.io/billing/success',
-      cancelUrl: 'https://app.sots.io/billing/cancel',
+      successUrl: 'https://app.tellann.io/billing/success',
+      cancelUrl: 'https://app.tellann.io/billing/cancel',
     });
     expect([401, 403]).toContain(r.status);
   }, TIMEOUT_MS);
@@ -119,8 +119,8 @@ describe('Billing API — MOCK provider E2E checkout activation flow', () => {
           provider: 'MOCK',
           billingInterval: 'MONTHLY',
           billingCurrency: 'USD',
-          successUrl: 'https://app.sots.io/billing/success',
-          cancelUrl: 'https://app.sots.io/billing/cancel',
+          successUrl: 'https://app.tellann.io/billing/success',
+          cancelUrl: 'https://app.tellann.io/billing/cancel',
         },
         { Authorization: `Bearer ${ORG_A_TOKEN}` },
       );
@@ -204,8 +204,8 @@ describe('Billing API — Real provider checkout session creation', () => {
           planType: 'SOLO',
           priceId,
           provider: 'stripe',
-          successUrl: 'https://app.sots.io/billing/success?session_id={CHECKOUT_SESSION_ID}',
-          cancelUrl: 'https://app.sots.io/billing/cancel',
+          successUrl: 'https://app.tellann.io/billing/success?session_id={CHECKOUT_SESSION_ID}',
+          cancelUrl: 'https://app.tellann.io/billing/cancel',
         },
         { Authorization: `Bearer ${ORG_A_TOKEN}` },
       );
@@ -225,9 +225,9 @@ describe('Billing API — Real provider checkout session creation', () => {
           planType: 'SOLO',
           planCode: paystackPlan,
           provider: 'paystack',
-          email: `test+${Date.now()}@sots.io`,
-          successUrl: 'https://app.sots.io/billing/success',
-          cancelUrl: 'https://app.sots.io/billing/cancel',
+          email: `test+${Date.now()}@tellann.io`,
+          successUrl: 'https://app.tellann.io/billing/success',
+          cancelUrl: 'https://app.tellann.io/billing/cancel',
         },
         { Authorization: `Bearer ${ORG_A_TOKEN}` },
       );

@@ -90,25 +90,25 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@sots/agent-policy':
+      '@tellann/agent-policy':
         specifier: workspace:*
         version: link:../../packages/agent-policy
-      '@sots/browser-observer':
+      '@tellann/browser-observer':
         specifier: workspace:*
         version: link:../../packages/browser-observer
-      '@sots/desktop-contracts':
+      '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../../packages/desktop-contracts
-      '@sots/document-intelligence':
+      '@tellann/document-intelligence':
         specifier: workspace:*
         version: link:../../packages/document-intelligence
-      '@sots/instrumentation-adapters':
+      '@tellann/instrumentation-adapters':
         specifier: workspace:*
         version: link:../../packages/instrumentation-adapters
-      '@sots/local-relay':
+      '@tellann/local-relay':
         specifier: workspace:*
         version: link:../../packages/local-relay
-      '@sots/project-intelligence':
+      '@tellann/project-intelligence':
         specifier: workspace:*
         version: link:../../packages/project-intelligence
       electron-updater:
@@ -221,7 +221,7 @@ importers:
 
   apps/marketing:
     dependencies:
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       clsx:
@@ -282,10 +282,10 @@ importers:
 
   packages/ai:
     dependencies:
-      '@sots/graph-validation':
+      '@tellann/graph-validation':
         specifier: workspace:*
         version: link:../graph-validation
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../rules
       zod:
@@ -304,13 +304,13 @@ importers:
 
   packages/authz:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../db
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
@@ -333,6 +333,9 @@ importers:
         specifier: ^9.0.1
         version: 9.0.1
     devDependencies:
+      '@tellann/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -351,10 +354,10 @@ importers:
 
   packages/browser-observer:
     dependencies:
-      '@sots/agent-policy':
+      '@tellann/agent-policy':
         specifier: workspace:*
         version: link:../agent-policy
-      '@sots/desktop-contracts':
+      '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
       playwright:
@@ -373,10 +376,10 @@ importers:
       '@prisma/client':
         specifier: ^5.20.0
         version: 5.22.0(prisma@5.22.0)
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
@@ -389,7 +392,7 @@ importers:
 
   packages/derivation-engine:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -415,7 +418,7 @@ importers:
 
   packages/document-intelligence:
     dependencies:
-      '@sots/ai':
+      '@tellann/ai':
         specifier: workspace:*
         version: link:../ai
       js-yaml:
@@ -446,10 +449,10 @@ importers:
 
   packages/e2e-tests:
     devDependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../db
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../shared
       tsx:
@@ -464,7 +467,7 @@ importers:
 
   packages/email:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../db
     devDependencies:
@@ -474,10 +477,10 @@ importers:
 
   packages/entitlement-checker:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../db
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
@@ -512,10 +515,10 @@ importers:
 
   packages/instrumentation-adapters:
     dependencies:
-      '@sots/agent-policy':
+      '@tellann/agent-policy':
         specifier: workspace:*
         version: link:../agent-policy
-      '@sots/desktop-contracts':
+      '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
       semver:
@@ -549,7 +552,7 @@ importers:
 
   packages/project-intelligence:
     dependencies:
-      '@sots/desktop-contracts':
+      '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
     devDependencies:
@@ -644,10 +647,10 @@ importers:
       '@fastify/rate-limit':
         specifier: ^9.1.0
         version: 9.1.0
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       fastify:
@@ -672,22 +675,22 @@ importers:
 
   services/auth-api:
     dependencies:
-      '@sots/authz':
+      '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       bcryptjs:
@@ -745,31 +748,31 @@ importers:
       '@bull-board/express':
         specifier: ^6.0.0
         version: 6.21.3
-      '@sots/ai':
+      '@tellann/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/document-intelligence':
+      '@tellann/document-intelligence':
         specifier: workspace:*
         version: link:../../packages/document-intelligence
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/graph-validation':
+      '@tellann/graph-validation':
         specifier: workspace:*
         version: link:../../packages/graph-validation
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/storage':
+      '@tellann/storage':
         specifier: workspace:*
         version: link:../../packages/storage
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       bullmq:
@@ -791,22 +794,22 @@ importers:
 
   services/billing-api:
     dependencies:
-      '@sots/authz':
+      '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       axios:
@@ -849,10 +852,10 @@ importers:
       '@clickhouse/client':
         specifier: ^1.0.0
         version: 1.20.0
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       kafkajs:
@@ -871,22 +874,22 @@ importers:
 
   services/coverage-engine:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -908,19 +911,19 @@ importers:
 
   services/demonstration-api:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -945,19 +948,19 @@ importers:
       '@clickhouse/client':
         specifier: ^1.5.0
         version: 1.20.0
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -982,16 +985,16 @@ importers:
 
   services/event-collector:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -1025,31 +1028,31 @@ importers:
 
   services/fdrs-api:
     dependencies:
-      '@sots/ai':
+      '@tellann/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@sots/authz':
+      '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/derivation-engine':
+      '@tellann/derivation-engine':
         specifier: workspace:*
         version: link:../../packages/derivation-engine
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/graph-validation':
+      '@tellann/graph-validation':
         specifier: workspace:*
         version: link:../../packages/graph-validation
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -1077,16 +1080,16 @@ importers:
 
   services/graph-engine:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       kafkajs:
@@ -1105,34 +1108,34 @@ importers:
 
   services/onboarding-api:
     dependencies:
-      '@sots/ai':
+      '@tellann/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@sots/authz':
+      '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/desktop-contracts':
+      '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../../packages/desktop-contracts
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/storage':
+      '@tellann/storage':
         specifier: workspace:*
         version: link:../../packages/storage
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:
@@ -1160,25 +1163,25 @@ importers:
 
   services/report-engine:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/rules':
+      '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/storage':
+      '@tellann/storage':
         specifier: workspace:*
         version: link:../../packages/storage
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       '@types/pdfkit':
@@ -1206,19 +1209,19 @@ importers:
 
   services/session-engine:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/entitlement-checker':
+      '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/storage':
+      '@tellann/storage':
         specifier: workspace:*
         version: link:../../packages/storage
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       kafkajs:
@@ -1237,16 +1240,16 @@ importers:
 
   services/usage-tracker:
     dependencies:
-      '@sots/db':
+      '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@sots/email':
+      '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email
-      '@sots/shared':
+      '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@sots/telemetry':
+      '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
       express:

@@ -1,6 +1,6 @@
-﻿Session Replay Specification (SRS)
+Session Replay Specification (SRS)
 1. Purpose
-This document defines the Session Replay capabilities of the Self-Observing Testing System (SOTS).
+This document defines the Session Replay capabilities of the Self-Observing Testing System (TELLANN).
 The Session Replay System provides the ability to reconstruct, visualize, and analyze observed application behavior from captured telemetry.
 Its purpose is not merely to replay user interactions visually, but to provide behavioral context for:
 * Workflow analysis
@@ -12,7 +12,7 @@ Its purpose is not merely to replay user interactions visually, but to provide b
 * Error correlation
 * Regression analysis
 * Quality intelligence
-Session Replay serves as one of the foundational intelligence assets of SOTS and acts as the bridge between raw behavioral events and explainable quality insights.
+Session Replay serves as one of the foundational intelligence assets of TELLANN and acts as the bridge between raw behavioral events and explainable quality insights.
 2. Scope
 This specification applies to:
 Phase 1
@@ -80,7 +80,7 @@ Replay Asset Store
 Dashboard Viewer
 
 
-Based on the Session Replay architecture defined within SOTS.
+Based on the Session Replay architecture defined within TELLANN.
 6. Session Replay Lifecycle
 Stage 1
 Capture Events
@@ -412,7 +412,7 @@ Based on the canonical event model.
 
 16. Storage Architecture
 Session replay assets shall be stored separately from telemetry.
-Storage architecture aligns with SOTS storage design.
+Storage architecture aligns with TELLANN storage design.
 17. Replay Storage Format
 Timeline Store
 {

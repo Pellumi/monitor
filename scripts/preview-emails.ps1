@@ -7,8 +7,8 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repositoryRoot
 
-Write-Host "Building @sots/email..." -ForegroundColor Cyan
-& pnpm.cmd --filter '@sots/email' build
+Write-Host "Building @tellann/email..." -ForegroundColor Cyan
+& pnpm.cmd --filter '@tellann/email' build
 if ($LASTEXITCODE -ne 0) {
   throw "The email package build failed with exit code $LASTEXITCODE."
 }

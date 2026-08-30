@@ -2,7 +2,7 @@ Yes. With the cleaner setup, we should treat the three surfaces as three separat
 
 ```txt
 domain-name.com          Marketing / SEO site
-app.domain-name.com      Authenticated SOTS product
+app.domain-name.com      Authenticated TELLANN product
 docs.domain-name.com     Documentation
 ```
 
@@ -42,9 +42,9 @@ services/
 Recommended package names:
 
 ```txt
-apps/marketing   -> @sots/marketing
-apps/dashboard   -> dashboard or @sots/dashboard
-apps/docs        -> @sots/docs
+apps/marketing   -> @tellann/marketing
+apps/dashboard   -> dashboard or @tellann/dashboard
+apps/docs        -> @tellann/docs
 ```
 
 **Domain Responsibility**
@@ -83,13 +83,13 @@ For MVP, the dashboard can keep proxying API calls through `/api-gateway`, but f
 {
   "scripts": {
     "dev": "turbo run dev --concurrency=20",
-    "dev:marketing": "pnpm --filter @sots/marketing dev",
+    "dev:marketing": "pnpm --filter @tellann/marketing dev",
     "dev:app": "pnpm --filter dashboard dev",
-    "dev:docs": "pnpm --filter @sots/docs dev",
+    "dev:docs": "pnpm --filter @tellann/docs dev",
     "build": "turbo run build",
-    "build:marketing": "pnpm --filter @sots/marketing build",
+    "build:marketing": "pnpm --filter @tellann/marketing build",
     "build:app": "pnpm --filter dashboard build",
-    "build:docs": "pnpm --filter @sots/docs build"
+    "build:docs": "pnpm --filter @tellann/docs build"
   }
 }
 ```
@@ -126,7 +126,7 @@ Recommended routes:
  /sitemap.xml
 ```
 
-The homepage should explain SOTS clearly:
+The homepage should explain TELLANN clearly:
 
 ```txt
 Hero:
@@ -435,17 +435,17 @@ If using Vercel:
 
 ```txt
 Project 1:
-  Name: sots-marketing
+  Name: tellann-marketing
   Root Directory: apps/marketing
   Domain: domain-name.com
 
 Project 2:
-  Name: sots-dashboard
+  Name: tellann-dashboard
   Root Directory: apps/dashboard
   Domain: app.domain-name.com
 
 Project 3:
-  Name: sots-docs
+  Name: tellann-docs
   Root Directory: apps/docs
   Domain: docs.domain-name.com
 ```
@@ -460,9 +460,9 @@ pnpm build
 Or filtered:
 
 ```bash
-pnpm --filter @sots/marketing build
+pnpm --filter @tellann/marketing build
 pnpm --filter dashboard build
-pnpm --filter @sots/docs build
+pnpm --filter @tellann/docs build
 ```
 
 Output:
@@ -574,8 +574,8 @@ pnpm test
 Optional filtered CI jobs:
 
 ```bash
-pnpm --filter @sots/marketing build
-pnpm --filter @sots/docs build
+pnpm --filter @tellann/marketing build
+pnpm --filter @tellann/docs build
 pnpm --filter dashboard build
 ```
 
@@ -648,7 +648,7 @@ App: dense, operational, dashboard-focused
 
 Marketing is ready when:
 
-- `domain-name.com` explains SOTS clearly
+- `domain-name.com` explains TELLANN clearly
 - metadata, sitemap, robots, canonical URLs exist
 - CTA links to app and docs work
 - mobile and desktop layouts are polished

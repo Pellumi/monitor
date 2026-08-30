@@ -1,12 +1,12 @@
 {
-  "name": "@sots/db",
+  "name": "@tellann/db",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
     "@prisma/client": "^5.20.0",
-    "@sots/shared": "workspace:*",
-    "@sots/rules": "workspace:*"
+    "@tellann/shared": "workspace:*",
+    "@tellann/rules": "workspace:*"
   },
   "devDependencies": {
     "prisma": "^5.20.0",

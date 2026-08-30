@@ -1,15 +1,15 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('graph-engine');
 
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { Services, Topics, ConsumerGroups, SotsEvent } from '@sots/shared';
-import { PrismaClient } from '@sots/db';
-import { getRuleSet, ApplicationRuleSet, reconstructRuleSet } from '@sots/rules';
+import { Services, Topics, ConsumerGroups, TellannEvent } from '@tellann/shared';
+import { PrismaClient } from '@tellann/db';
+import { getRuleSet, ApplicationRuleSet, reconstructRuleSet } from '@tellann/rules';
 
 const prisma = new PrismaClient();
 
 const kafka = new Kafka({
-  clientId: 'sots-graph-engine',
+  clientId: 'tellann-graph-engine',
   brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
   retry: { retries: 5, initialRetryTime: 300 },
 });
@@ -17,7 +17,7 @@ const kafka = new Kafka({
 const consumer = kafka.consumer({ groupId: ConsumerGroups.GRAPH_ENGINE });
 
 // Phase 1.5A: Config-driven State Extraction
-function extractState(event: SotsEvent, ruleSet: ApplicationRuleSet | null): { name: string, category: string } | null {
+function extractState(event: TellannEvent, ruleSet: ApplicationRuleSet | null): { name: string, category: string } | null {
   if (event.eventType === 'STATE_ENTERED') {
     const stateName = typeof event.metadata.stateName === 'string'
       ? event.metadata.stateName.trim()
@@ -76,7 +76,7 @@ function extractState(event: SotsEvent, ruleSet: ApplicationRuleSet | null): { n
   return null;
 }
 
-function extractExplicitTransition(event: SotsEvent): { fromState: string, toState: string, action: string } | null {
+function extractExplicitTransition(event: TellannEvent): { fromState: string, toState: string, action: string } | null {
   if (event.eventType !== 'STATE_TRANSITION') return null;
 
   const fromState = typeof event.metadata.fromState === 'string'
@@ -97,7 +97,7 @@ function extractExplicitTransition(event: SotsEvent): { fromState: string, toSta
   };
 }
 
-async function upsertObservedState(applicationId: string, name: string, category: string, sessionId: string, event: SotsEvent) {
+async function upsertObservedState(applicationId: string, name: string, category: string, sessionId: string, event: TellannEvent) {
   let state = await prisma.state.findFirst({
     where: { applicationId, name }
   });
@@ -179,7 +179,7 @@ async function upsertObservedTransition(
   return transition;
 }
 
-function extractAction(event: SotsEvent): string {
+function extractAction(event: TellannEvent): string {
   if (event.eventType === 'BUTTON_CLICK') {
     return event.metadata.buttonName || event.metadata.elementId || event.metadata.id || 'BUTTON_CLICK';
   }
@@ -194,7 +194,7 @@ async function processCompletedSession({ message }: EachMessagePayload) {
 
   try {
     const sessionData = JSON.parse(message.value.toString());
-    const events: SotsEvent[] = sessionData.events;
+    const events: TellannEvent[] = sessionData.events;
     const applicationId = sessionData.applicationId;
 
     const profile = await prisma.applicationProfile.findUnique({ where: { applicationId } });

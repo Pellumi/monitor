@@ -11,7 +11,7 @@ process.loadEnvFile?.('.env');
 const prisma = new PrismaClient();
 const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-packaged-phase3-'));
 const executablePath = path.resolve('apps/desktop/release/phase1/win-unpacked/Tellann.exe');
-const sdkTarball = path.resolve('release/sdk/sots-frontend-sdk-0.1.0.tgz');
+const sdkTarball = path.resolve('release/sdk/tellann-frontend-sdk-0.1.0.tgz');
 const authorizationHandoffPath = path.join(os.tmpdir(), 'tellann-packaged-phase3-authorize-url.txt');
 const progressPath = path.join(os.tmpdir(), 'tellann-packaged-phase3-progress.txt');
 const acceptancePassword = 'PackagedAcceptance42!';
@@ -60,12 +60,12 @@ function createFixture() {
       react: '^19.0.0',
       'react-dom': '^19.0.0',
       vite: '^7.0.0',
-      '@sots/frontend-sdk': `file:${sdkTarball.replace(/\\/g, '/')}`,
+      '@tellann/frontend-sdk': `file:${sdkTarball.replace(/\\/g, '/')}`,
     },
   }, null, 2));
   fs.writeFileSync(path.join(workspaceRoot, 'src', 'main.tsx'), `import { createRoot } from 'react-dom/client';\nasync function checkout() { return { ok: true }; }\ncreateRoot(document.body).render(null);\nvoid checkout();\n`);
   fs.writeFileSync(path.join(workspaceRoot, '.gitignore'), 'node_modules/\n');
-  const sdkDirectory = path.join(workspaceRoot, 'node_modules', '@sots', 'frontend-sdk');
+  const sdkDirectory = path.join(workspaceRoot, 'node_modules', '@tellann', 'frontend-sdk');
   fs.mkdirSync(sdkDirectory, { recursive: true });
   command('tar.exe', ['-xf', sdkTarball, '-C', sdkDirectory, '--strip-components=1']);
   command('git', ['init']);

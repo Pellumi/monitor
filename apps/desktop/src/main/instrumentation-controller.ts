@@ -5,8 +5,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { app, shell } from 'electron';
-import { resolveWithinWorkspace, validateStructuredCommand } from '@sots/agent-policy';
-import type { RepositorySnapshotSummary } from '@sots/desktop-contracts';
+import { resolveWithinWorkspace, validateStructuredCommand } from '@tellann/agent-policy';
+import type { RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import {
   createApprovalHash,
   detectAdapters,
@@ -20,7 +20,7 @@ import {
   type PatchResult,
   type StructuredCommand,
   type ValidationResult,
-} from '@sots/instrumentation-adapters';
+} from '@tellann/instrumentation-adapters';
 import type { DesktopCloudClient } from './cloud-client';
 import { readLocalState, writeLocalState } from './local-store';
 import { createInstrumentationCheckpoint, type InstrumentationCheckpoint } from './git-checkpoint';
@@ -87,10 +87,10 @@ function safeOutput(value: unknown, workspaceRoot?: string): string {
 
 function isTellannRelatedBuildFailure(output: string): boolean {
   return [
-    /(?:cannot find module|failed to resolve).*@sots\/(?:frontend|backend)-sdk/i,
+    /(?:cannot find module|failed to resolve).*@tellann\/(?:frontend|backend)-sdk/i,
     /(?:src[\\/])?tellann\.[cm]?[jt]sx?/i,
     /tellann:generated/i,
-    /\bSOTS(?:\.|\s|$)/,
+    /\bTELLANN(?:\.|\s|$)/,
     /TELLANN_(?:GATEWAY|INGESTION|APPLICATION|ENVIRONMENT)/,
   ].some((pattern) => pattern.test(output));
 }
@@ -361,7 +361,7 @@ export class InstrumentationController {
       } finally {
         await this.launcher.stop();
       }
-      validation.checks.push({ name: 'telemetry-verification', passed: telemetryVerified, output: telemetryVerified ? 'SOTS_ONBOARDING_TEST received' : 'Application started but no onboarding test event was observed before timeout' });
+      validation.checks.push({ name: 'telemetry-verification', passed: telemetryVerified, output: telemetryVerified ? 'TELLANN_ONBOARDING_TEST received' : 'Application started but no onboarding test event was observed before timeout' });
       validation.valid = validation.checks.every((check) => check.passed);
     }
     const localResult = {

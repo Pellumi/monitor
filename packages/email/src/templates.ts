@@ -1,4 +1,4 @@
-import { EmailCategory } from '@sots/db';
+import { EmailCategory } from '@tellann/db';
 
 export type EmailTemplateKey =
   | 'auth-otp'

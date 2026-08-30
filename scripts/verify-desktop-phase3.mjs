@@ -83,7 +83,7 @@ async function checkout() { return { ok: true }; }
 createRoot(document.body).render(null);
 void checkout();
 `);
-  const sdkTarball = path.resolve('release/sdk/sots-frontend-sdk-0.1.0.tgz');
+  const sdkTarball = path.resolve('release/sdk/tellann-frontend-sdk-0.1.0.tgz');
   assert(fs.existsSync(sdkTarball), 'Packed frontend SDK artifact is missing; run pnpm pack:sdks');
   run('npm.cmd', ['install', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', sdkTarball]);
   run('git', ['init']);
@@ -124,7 +124,7 @@ async function main() {
   } });
   const token = jwt.sign(
     { sub: user.id, email: user.email },
-    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+    process.env.ACCEPTANCE_JWT_SECRET || process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
     { expiresIn: '15m' },
   );
 
@@ -199,8 +199,8 @@ async function main() {
   });
   const refreshedPatch = refreshPatchResult(context, patch);
   const validation = await adapter.validate(context, refreshedPatch);
-  const sdkResolves = Boolean(createRequire(path.join(fixtureRoot, 'package.json')).resolve('@sots/frontend-sdk/package.json'));
-  validation.checks.push({ name: 'sdk-installed', passed: sdkResolves, output: '@sots/frontend-sdk resolves from the external fixture' });
+  const sdkResolves = Boolean(createRequire(path.join(fixtureRoot, 'package.json')).resolve('@tellann/frontend-sdk/package.json'));
+  validation.checks.push({ name: 'sdk-installed', passed: sdkResolves, output: '@tellann/frontend-sdk resolves from the external fixture' });
   for (const result of commandResults) validation.checks.push({ name: `command:${result.id}`, passed: result.passed, output: result.output });
   validation.valid = validation.checks.every((check) => check.passed);
   assert(validation.valid, `Instrumentation validation failed: ${JSON.stringify(validation.checks)}`);

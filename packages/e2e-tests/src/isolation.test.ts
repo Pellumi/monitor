@@ -4,7 +4,7 @@
  * Verifies that one organization's data is never visible to another.
  * These are security-critical tests that must pass before production launch.
  *
- * Run with: pnpm --filter @sots/e2e-tests test:e2e
+ * Run with: pnpm --filter @tellann/e2e-tests test:e2e
  *
  * Prerequisites:
  *   - All services running

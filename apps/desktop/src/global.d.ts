@@ -18,8 +18,8 @@ import type {
   IntentDraftJobCreated,
   InstrumentationDetection,
   InstrumentationValidationResult,
-} from '@sots/desktop-contracts';
-import type { GuidedRunState } from '@sots/browser-observer';
+} from '@tellann/desktop-contracts';
+import type { GuidedRunState } from '@tellann/browser-observer';
 
 declare global {
   interface Window {

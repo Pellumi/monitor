@@ -12,7 +12,7 @@
  */
 
 import crypto from 'crypto';
-import { PrismaClient } from '@sots/db';
+import { PrismaClient } from '@tellann/db';
 import * as OTPAuth from 'otpauth';
 import * as bcrypt from 'bcryptjs';
 

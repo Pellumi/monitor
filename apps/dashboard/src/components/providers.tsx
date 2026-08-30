@@ -64,14 +64,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setMemberships(data.memberships);
         
         // Restore selected org from localStorage or default to first
-        const savedOrgId = localStorage.getItem('sots_selected_org_id');
+        const savedOrgId = localStorage.getItem('tellann_selected_org_id');
         const validOrg = data.memberships.find((m: Membership) => m.organization.id === savedOrgId);
         if (validOrg) {
           setSelectedOrgIdState(savedOrgId);
         } else if (data.memberships.length > 0) {
           const defaultId = data.memberships[0].organization.id;
           setSelectedOrgIdState(defaultId);
-          localStorage.setItem('sots_selected_org_id', defaultId);
+          localStorage.setItem('tellann_selected_org_id', defaultId);
         }
       } else {
         setUser(null);
@@ -96,7 +96,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const setSelectedOrgId = (id: string) => {
     setSelectedOrgIdState(id);
-    localStorage.setItem('sots_selected_org_id', id);
+    localStorage.setItem('tellann_selected_org_id', id);
   };
 
   const selectedOrg = memberships.find((m) => m.organization.id === selectedOrgId)?.organization || null;

@@ -1,5 +1,5 @@
 {
-  "name": "@sots/fdrs-api",
+  "name": "@tellann/fdrs-api",
   "version": "0.1.0",
   "main": "dist/index.js",
   "scripts": {
@@ -8,15 +8,15 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@sots/authz": "workspace:*",
-    "@sots/db": "workspace:*",
-    "@sots/entitlement-checker": "workspace:*",
-    "@sots/shared": "workspace:*",
-    "@sots/telemetry": "workspace:*",
-    "@sots/derivation-engine": "workspace:*",
-    "@sots/rules": "workspace:*",
-    "@sots/ai": "workspace:*",
-    "@sots/graph-validation": "workspace:*",
+    "@tellann/authz": "workspace:*",
+    "@tellann/db": "workspace:*",
+    "@tellann/entitlement-checker": "workspace:*",
+    "@tellann/shared": "workspace:*",
+    "@tellann/telemetry": "workspace:*",
+    "@tellann/derivation-engine": "workspace:*",
+    "@tellann/rules": "workspace:*",
+    "@tellann/ai": "workspace:*",
+    "@tellann/graph-validation": "workspace:*",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2"
   },

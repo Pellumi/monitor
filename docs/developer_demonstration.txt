@@ -1,7 +1,7 @@
-﻿Developer Demonstration Mode Specification (DDMS)
+Developer Demonstration Mode Specification (DDMS)
 1. Purpose
-This document defines the Developer Demonstration Mode (DDM) for the Self-Observing Testing System (SOTS).
-Developer Demonstration Mode is the primary workflow through which developers introduce an application to SOTS and obtain immediate quality intelligence without requiring production traffic, historical telemetry, or AI training.
+This document defines the Developer Demonstration Mode (DDM) for the Self-Observing Testing System (TELLANN).
+Developer Demonstration Mode is the primary workflow through which developers introduce an application to TELLANN and obtain immediate quality intelligence without requiring production traffic, historical telemetry, or AI training.
 Developer Demonstration Mode is the foundational capability of the Behavioral QA Platform and serves as the entry point for all future intelligence capabilities.
 The purpose of DDM is to transform a developer-recorded application walkthrough into:
 * Behavioral Graphs
@@ -51,15 +51,15 @@ Generate future autonomous validation assets.
 Developer Demonstration Mode follows a simple principle:
 Developer Demonstrates Application
                 ↓
-SOTS Observes Behavior
+TELLANN Observes Behavior
                 ↓
-SOTS Builds Workflow Model
+TELLANN Builds Workflow Model
                 ↓
-SOTS Identifies Coverage
+TELLANN Identifies Coverage
                 ↓
-SOTS Identifies Missing Paths
+TELLANN Identifies Missing Paths
                 ↓
-SOTS Generates QA Intelligence
+TELLANN Generates QA Intelligence
 
 
 The developer is not writing tests.
@@ -120,7 +120,7 @@ Behavior Graph
 
 Supports behavioral graph generation architecture.
 Stage 4 — Intelligence Generation
-SOTS automatically generates:
+TELLANN automatically generates:
 * Workflow Graphs
 * Coverage Reports
 * Missing States
@@ -129,7 +129,7 @@ SOTS automatically generates:
 * QA Reports
 6. Demonstration Session Model
 Definition
-A Demonstration Session is a recorded developer walkthrough used to teach SOTS how the application behaves.
+A Demonstration Session is a recorded developer walkthrough used to teach TELLANN how the application behaves.
 Session Structure
 {
   "sessionId": "uuid",
@@ -574,7 +574,7 @@ Outputs:
 * Endpoint Analysis
 * Session Replay
 Primary goal:
-Teach SOTS Application Behavior
+Teach TELLANN Application Behavior
 
 
 Phase 2

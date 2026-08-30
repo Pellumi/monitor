@@ -1,4 +1,4 @@
-import { generateRuleBasedFlow, getFallbackCompiledRuleset } from '@sots/rules';
+import { generateRuleBasedFlow, getFallbackCompiledRuleset } from '@tellann/rules';
 import { AIProvider, GenerateFlowInput, GenerateStructuredInput, StructuredGenerationResult } from './base';
 
 export class MockProvider implements AIProvider {

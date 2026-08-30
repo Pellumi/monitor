@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function inspectPlans() {
-  console.log('Fetching SOTS plans from database...\n');
+  console.log('Fetching TELLANN plans from database...\n');
 
   const plans = await prisma.plan.findMany({
     include: {

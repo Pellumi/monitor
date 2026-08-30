@@ -1,5 +1,5 @@
 {
-  "name": "@sots/project-intelligence",
+  "name": "@tellann/project-intelligence",
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
     "test": "node --test dist/index.test.js"
   },
   "dependencies": {
-    "@sots/desktop-contracts": "workspace:*"
+    "@tellann/desktop-contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

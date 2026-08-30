@@ -383,7 +383,7 @@ The Developer Demonstration specification explicitly describes this process as:
 ```text
 Developer Demonstrates Application
         ↓
-SOTS Observes Behavior
+TELLANN Observes Behavior
         ↓
 Builds Workflow Model
         ↓

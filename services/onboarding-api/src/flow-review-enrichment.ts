@@ -1,5 +1,5 @@
-import { resolveAiProvider } from '@sots/ai';
-import { FlowReviewEnrichmentSchema } from '@sots/desktop-contracts';
+import { resolveAiProvider } from '@tellann/ai';
+import { FlowReviewEnrichmentSchema } from '@tellann/desktop-contracts';
 
 export async function enrichFlowCodeReview(report: Record<string, any>) {
   const provider = resolveAiProvider();

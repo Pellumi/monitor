@@ -22,7 +22,7 @@ export type EventType =
   | 'WORKFLOW_COMPLETED'
   | 'WORKFLOW_FAILED'
   | 'WORKFLOW_CANCELLED'
-  | 'SOTS_ONBOARDING_TEST'
+  | 'TELLANN_ONBOARDING_TEST'
   | 'TELLANN_INITIALIZED'
   | 'QA_RUN_STARTED'
   | 'QA_RUN_COMPLETED'
@@ -36,7 +36,7 @@ export type EventType =
   | 'REPOSITORY_SNAPSHOT_CREATED'
   | 'EXPECTED_FLOW_VERSION_SELECTED';
 
-export interface SotsEvent {
+export interface TellannEvent {
   eventId: string;
   sessionId: string;
   tenantId: string;
@@ -53,7 +53,7 @@ export interface SotsEvent {
   metadata: Record<string, any>;
 }
 
-export interface ApiRequestEvent extends SotsEvent {
+export interface ApiRequestEvent extends TellannEvent {
   eventType: 'API_REQUEST';
   metadata: {
     requestId: string;

@@ -474,7 +474,7 @@ export const SdkSetupTargetSchema = z.object({
   id: z.string(),
   kind: SdkTargetKindSchema,
   label: z.string(),
-  packageName: z.enum(['@sots/frontend-sdk', '@sots/backend-sdk']),
+  packageName: z.enum(['@tellann/frontend-sdk', '@tellann/backend-sdk']),
   packageVersion: z.string(),
   installCommands: z.record(z.string()),
   environmentVariables: z.record(z.string()),

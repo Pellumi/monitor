@@ -53,12 +53,12 @@ let fetchCalls: { url: string; body: any; headers?: any }[] = [];
 };
 
 // Now import SDK
-import { SOTS } from './index.js';
+import { TELLANN } from './index.js';
 import { sanitizeMetadata } from './auto-track.js';
 
-test('SOTS Frontend SDK Tests', async (t) => {
+test('TELLANN Frontend SDK Tests', async (t) => {
   await t.test('Initialization & Session Tracking', () => {
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: 'http://collector',
       tenantId: 't1',
       applicationId: 'app1',
@@ -68,21 +68,21 @@ test('SOTS Frontend SDK Tests', async (t) => {
       errorTracking: false,
     });
 
-    const config = (SOTS as any).config;
+    const config = (TELLANN as any).config;
     assert.strictEqual(config.tenantId, 't1');
     assert.strictEqual(config.applicationId, 'app1');
-    assert.ok((SOTS as any).sessionId);
+    assert.ok((TELLANN as any).sessionId);
   });
 
   await t.test('Workflow tracking and completion durations', () => {
-    const wId = SOTS.startWorkflow('order-checkout');
+    const wId = TELLANN.startWorkflow('order-checkout');
     assert.ok(wId);
 
     // Complete workflow should emit WORKFLOW_COMPLETED
-    SOTS.completeWorkflow(wId);
+    TELLANN.completeWorkflow(wId);
     
     // Check that we captured the events in the buffer
-    const buffer = (SOTS as any).eventBuffer;
+    const buffer = (TELLANN as any).eventBuffer;
     const startedEvent = buffer.find((e: any) => e.eventType === 'WORKFLOW_STARTED');
     const completedEvent = buffer.find((e: any) => e.eventType === 'WORKFLOW_COMPLETED');
     
@@ -95,16 +95,16 @@ test('SOTS Frontend SDK Tests', async (t) => {
 
   await t.test('Size limit enforcement drops large events (>32KB)', () => {
     // Clear buffer
-    (SOTS as any).eventBuffer = [];
+    (TELLANN as any).eventBuffer = [];
 
     // Small event should pass
-    SOTS.trackEvent('PAGE_VIEW', { msg: 'short' });
-    assert.strictEqual((SOTS as any).eventBuffer.length, 1);
+    TELLANN.trackEvent('PAGE_VIEW', { msg: 'short' });
+    assert.strictEqual((TELLANN as any).eventBuffer.length, 1);
 
     // Large event should be discarded
     const hugeMetadata = { data: 'x'.repeat(40 * 1024) }; // 40KB
-    SOTS.trackEvent('PAGE_VIEW', hugeMetadata);
-    assert.strictEqual((SOTS as any).eventBuffer.length, 1); // still 1!
+    TELLANN.trackEvent('PAGE_VIEW', hugeMetadata);
+    assert.strictEqual((TELLANN as any).eventBuffer.length, 1); // still 1!
   });
 
   await t.test('Privacy sanitization of metadata', () => {
@@ -121,17 +121,17 @@ test('SOTS Frontend SDK Tests', async (t) => {
   });
 
   await t.test('authenticated flush uses fetch with gateway headers', async () => {
-    SOTS.teardown();
+    TELLANN.teardown();
     fetchCalls = [];
     navigatorMock.sendBeacon = () => {
       throw new Error('sendBeacon should not be used when gateway headers are required');
     };
 
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: 'http://gateway',
       tenantId: 'tenant-auth',
       applicationId: 'app-auth',
-      apiKey: 'sots_test_key',
+      apiKey: 'tellann_test_key',
       environmentId: 'env-auth',
       autoTrackClicks: false,
       autoTrackForms: false,
@@ -139,23 +139,23 @@ test('SOTS Frontend SDK Tests', async (t) => {
       errorTracking: false,
     });
 
-    await (SOTS as any).flush();
+    await (TELLANN as any).flush();
 
     assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
-    assert.strictEqual(fetchCalls[0].headers.Authorization, 'Bearer sots_test_key');
-    assert.strictEqual(fetchCalls[0].headers['x-sots-environment-id'], 'env-auth');
+    assert.strictEqual(fetchCalls[0].headers.Authorization, 'Bearer tellann_test_key');
+    assert.strictEqual(fetchCalls[0].headers['x-tellann-environment-id'], 'env-auth');
   });
 
   await t.test('verifyInstallation sends onboarding test event immediately', async () => {
-    SOTS.teardown();
+    TELLANN.teardown();
     fetchCalls = [];
 
-    SOTS.initialize({
+    TELLANN.initialize({
       endpoint: 'http://gateway',
       tenantId: 'tenant-auth',
       applicationId: 'app-auth',
-      apiKey: 'sots_test_key',
+      apiKey: 'tellann_test_key',
       environmentId: 'env-auth',
       autoTrackClicks: false,
       autoTrackForms: false,
@@ -164,13 +164,13 @@ test('SOTS Frontend SDK Tests', async (t) => {
     });
 
     fetchCalls = [];
-    await SOTS.verifyInstallation();
+    await TELLANN.verifyInstallation();
 
     assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
     assert.ok(Array.isArray(fetchCalls[0].body));
-    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'SOTS_ONBOARDING_TEST'));
+    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST'));
   });
 
-  SOTS.teardown();
+  TELLANN.teardown();
 });

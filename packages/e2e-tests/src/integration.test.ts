@@ -4,7 +4,7 @@
  * These tests verify the full event → graph → coverage → report pipeline
  * using real HTTP requests against locally running services.
  *
- * Run with: pnpm --filter @sots/e2e-tests test:e2e
+ * Run with: pnpm --filter @tellann/e2e-tests test:e2e
  *
  * Prerequisites:
  *   - All services running (see: pnpm dev from workspace root)
@@ -129,7 +129,7 @@ describe('Event Ingestion — /v1/events', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Event Collector — SESSION_RECORDING entitlement gate', () => {
-  it('fails open when no org ID in headers (no x-sots-org-id)', async () => {
+  it('fails open when no org ID in headers (no x-tellann-org-id)', async () => {
     // No org ID header → fail open, events accepted
     const r = await post(`${EVENT}/v1/events`, makeEvent());
     expect(r.status).toBe(202);
@@ -143,7 +143,7 @@ describe('Event Collector — SESSION_RECORDING entitlement gate', () => {
     const r = await post(
       `${EVENT}/v1/events`,
       makeEvent({ tenantId: orgId }),
-      { 'x-sots-org-id': orgId },
+      { 'x-tellann-org-id': orgId },
     );
     expect(r.status).toBe(402);
     expect(r.body?.error).toBe('FEATURE_NOT_ENTITLED');

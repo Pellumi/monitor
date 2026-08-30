@@ -482,7 +482,7 @@ export default function LegacySettingsPage() {
     if (!user?.id) return;
     const timer = window.setTimeout(() => {
       try {
-        const saved = localStorage.getItem(`sots_settings_${user.id}`);
+        const saved = localStorage.getItem(`tellann_settings_${user.id}`);
         if (!saved) return;
         const parsed = JSON.parse(saved) as {
           jobTitle?: string;
@@ -503,7 +503,7 @@ export default function LegacySettingsPage() {
         setNotifySecurity(parsed.notifySecurity ?? true);
         setCompactMode(Boolean(parsed.compactMode));
       } catch {
-        localStorage.removeItem(`sots_settings_${user.id}`);
+        localStorage.removeItem(`tellann_settings_${user.id}`);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -539,7 +539,7 @@ export default function LegacySettingsPage() {
 
       if (user?.id) {
         localStorage.setItem(
-          `sots_settings_${user.id}`,
+          `tellann_settings_${user.id}`,
           JSON.stringify({
             jobTitle,
             phone,
@@ -713,7 +713,7 @@ export default function LegacySettingsPage() {
   function handleSavePreferences() {
     if (!user?.id) return;
     localStorage.setItem(
-      `sots_settings_${user.id}`,
+      `tellann_settings_${user.id}`,
       JSON.stringify({
         jobTitle,
         phone,
@@ -742,13 +742,13 @@ export default function LegacySettingsPage() {
     setMfaSetupCode('');
     
     if (user?.id) {
-      const saved = localStorage.getItem(`sots_settings_${user.id}`);
+      const saved = localStorage.getItem(`tellann_settings_${user.id}`);
       let parsed = {};
       if (saved) {
         try { parsed = JSON.parse(saved); } catch {}
       }
       localStorage.setItem(
-        `sots_settings_${user.id}`,
+        `tellann_settings_${user.id}`,
         JSON.stringify({
           ...parsed,
           mfaEnabled: true,
@@ -765,13 +765,13 @@ export default function LegacySettingsPage() {
     setShowMfaSetup(false);
     
     if (user?.id) {
-      const saved = localStorage.getItem(`sots_settings_${user.id}`);
+      const saved = localStorage.getItem(`tellann_settings_${user.id}`);
       let parsed = {};
       if (saved) {
         try { parsed = JSON.parse(saved); } catch {}
       }
       localStorage.setItem(
-        `sots_settings_${user.id}`,
+        `tellann_settings_${user.id}`,
         JSON.stringify({
           ...parsed,
           mfaEnabled: false,

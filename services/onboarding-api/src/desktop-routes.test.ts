@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EnvironmentType, QARunMode } from '@sots/db';
+import { EnvironmentType, QARunMode } from '@tellann/db';
 import { productionRunModeAllowed } from './desktop-routes';
 
 test('cloud policy permits only observation-only QA runs in production', () => {

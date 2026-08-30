@@ -1,10 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
-import type { EventType, SotsEvent } from './event-types';
-export type { EventType, SotsEvent } from './event-types';
+import type { EventType, TellannEvent } from './event-types';
+export type { EventType, TellannEvent } from './event-types';
 import { WorkflowTracker } from './workflow-tracker.js';
 import { setupAutoTrack, sanitizeMetadata } from './auto-track.js';
 
-export interface SotsConfig {
+export interface TellannConfig {
   endpoint: string;
   tenantId?: string;
   applicationId: string;
@@ -27,15 +27,15 @@ export interface SotsConfig {
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit for standard events
 const MAX_REPLAY_SIZE_BYTES = 128 * 1024; // 128 KB limit for replay events (e.g. if eventType is a replay event)
 
-class SotsFrontendSDK {
-  private config: SotsConfig | null = null;
+class TellannFrontendSDK {
+  private config: TellannConfig | null = null;
   private sessionId: string | null = null;
-  private eventBuffer: SotsEvent[] = [];
+  private eventBuffer: TellannEvent[] = [];
   private flushInterval: number | null = null;
   private workflowTracker = new WorkflowTracker();
   private teardownAutoTrack: (() => void) | null = null;
 
-  initialize(config: SotsConfig) {
+  initialize(config: TellannConfig) {
     this.config = {
       autoTrackClicks: true,
       autoTrackForms: true,
@@ -100,7 +100,7 @@ class SotsFrontendSDK {
     // Apply privacy-by-default metadata sanitization
     const sanitizedMetadata = sanitizeMetadata(metadata);
 
-    const event: SotsEvent = {
+    const event: TellannEvent = {
       eventId: uuidv4(),
       sessionId: this.sessionId,
       tenantId: this.config.tenantId ?? 'unknown',
@@ -285,7 +285,7 @@ class SotsFrontendSDK {
         headers.Authorization = `Bearer ${this.config.apiKey}`;
       }
       if (this.config.environmentId) {
-        headers['x-sots-environment-id'] = this.config.environmentId;
+        headers['x-tellann-environment-id'] = this.config.environmentId;
       }
       if (this.config.runId) headers['x-tellann-run-id'] = this.config.runId;
       if (this.sessionId) headers['x-tellann-session-id'] = this.sessionId;
@@ -317,5 +317,5 @@ class SotsFrontendSDK {
   }
 }
 
-export const SOTS = new SotsFrontendSDK();
-export { SotsFrontendSDK };
+export const TELLANN = new TellannFrontendSDK();
+export { TellannFrontendSDK };

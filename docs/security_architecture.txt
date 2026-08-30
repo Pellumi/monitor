@@ -1,6 +1,6 @@
 Security Architecture Document (SEAD)
 1. Purpose
-This document defines the complete Security Architecture for the Self-Observing Testing System (SOTS).
+This document defines the complete Security Architecture for the Self-Observing Testing System (TELLANN).
 The Security Architecture establishes:
 * Security principles
 * Security domains
@@ -14,9 +14,9 @@ The Security Architecture establishes:
 * Audit and compliance controls
 * Security monitoring architecture
 * Phase-based security evolution
-The purpose of this document is to ensure that SOTS can securely capture, process, analyze, store, and expose behavioral intelligence while protecting customer data, maintaining tenant isolation, and supporting future autonomous quality intelligence capabilities. This architecture aligns with the product vision, functional requirements, non-functional requirements, system architecture, database architecture, data flow architecture, and event governance specifications.
+The purpose of this document is to ensure that TELLANN can securely capture, process, analyze, store, and expose behavioral intelligence while protecting customer data, maintaining tenant isolation, and supporting future autonomous quality intelligence capabilities. This architecture aligns with the product vision, functional requirements, non-functional requirements, system architecture, database architecture, data flow architecture, and event governance specifications.
 2. Scope
-This specification applies to all SOTS components:
+This specification applies to all TELLANN components:
 Phase 1 — Behavioral QA Platform
 Secures:
 * Frontend SDK

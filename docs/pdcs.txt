@@ -1,6 +1,6 @@
-﻿Privacy & Data Collection Specification (PDCS)
+Privacy & Data Collection Specification (PDCS)
 1. Purpose
-This document defines the Privacy and Data Collection framework for the Self-Observing Testing System (SOTS).
+This document defines the Privacy and Data Collection framework for the Self-Observing Testing System (TELLANN).
 The Privacy & Data Collection Specification establishes:
 * Data collection principles
 * Data classification standards
@@ -15,7 +15,7 @@ The Privacy & Data Collection Specification establishes:
 * Data retention policies
 * Compliance requirements
 * Phase-based privacy evolution
-The objective of this specification is to ensure that SOTS can generate behavioral intelligence while protecting user privacy, preventing unauthorized collection of sensitive information, and maintaining enterprise trust.
+The objective of this specification is to ensure that TELLANN can generate behavioral intelligence while protecting user privacy, preventing unauthorized collection of sensitive information, and maintaining enterprise trust.
 This specification governs all data collected, processed, stored, analyzed, transmitted, exported, or displayed throughout the platform lifecycle. It applies across SDKs, ingestion systems, analytics engines, behavioral graphs, session replay, reporting systems, production monitoring systems, and autonomous intelligence systems.
 2. Scope
 This specification applies to:
@@ -135,7 +135,7 @@ IGNORED DATA
 
 
 7. Collected Data Specification
-The following data may be collected by SOTS.
+The following data may be collected by TELLANN.
 7.1 Frontend Behavioral Data
 Collected by Frontend SDK.
 Examples:

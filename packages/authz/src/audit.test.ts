@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, type MockedFunction } from 'vitest';
 import { writeAuditLog, extractAuditContext } from './audit';
-import { AuditAction } from '@sots/db';
+import { AuditAction } from '@tellann/db';
 
 // ─── Mock PrismaClient ─────────────────────────────────────────────────────────
 const mockCreate = vi.fn().mockResolvedValue({});

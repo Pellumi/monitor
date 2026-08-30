@@ -33,7 +33,7 @@ const isWindows = process.platform === 'win32';
 const cmd = isWindows ? 'pnpm.cmd' : 'pnpm';
 const args = ['exec', 'turbo', 'run', 'dev', '--concurrency=50', '--env-mode=loose'];
 if (process.env.DEV_EXCLUDE_DESKTOP === 'true') {
-  args.push('--filter=!@sots/desktop');
+  args.push('--filter=!@tellann/desktop');
 }
 
 console.log('[DevLauncher] Starting Turborepo dev server...');

@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature } from '@sots/shared';
+import { PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature } from '@tellann/shared';
 
 /**
  * Resolves the organizationId for a request.
@@ -9,7 +9,7 @@ import { Feature } from '@sots/shared';
  * Priority:
  * 1. req.params.orgId (direct org route)
  * 2. org resolved from applicationId (app-scoped route)
- * 3. x-sots-org-id header (gateway hint, validated not trusted)
+ * 3. x-tellann-org-id header (gateway hint, validated not trusted)
  *
  * NEVER reads organizationId from req.body per security policy.
  */
@@ -31,7 +31,7 @@ async function resolveOrgId(
   }
 
   // Gateway hint header (treated as advisory, validated via DB)
-  const headerOrgId = req.headers['x-sots-org-id'] as string | undefined;
+  const headerOrgId = req.headers['x-tellann-org-id'] as string | undefined;
   return headerOrgId ?? null;
 }
 

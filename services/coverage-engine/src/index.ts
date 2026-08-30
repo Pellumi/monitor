@@ -1,12 +1,12 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('coverage-engine');
 
 import express, { Request, Response } from 'express';
-import { MemberRole, PrismaClient } from '@sots/db';
-import { getRuleSet, reconstructRuleSet, ApplicationRuleSet } from '@sots/rules';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature } from '@sots/shared';
+import { MemberRole, PrismaClient } from '@tellann/db';
+import { getRuleSet, reconstructRuleSet, ApplicationRuleSet } from '@tellann/rules';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature } from '@tellann/shared';
 
 const app = express();
 const prisma = new PrismaClient();

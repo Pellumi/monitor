@@ -1,9 +1,9 @@
 apiVersion: 1
 
 providers:
-  - name: SOTS Dashboards
+  - name: TELLANN Dashboards
     orgId: 1
-    folder: SOTS
+    folder: TELLANN
     type: file
     disableDeletion: false
     editable: true

@@ -1,16 +1,16 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('usage-tracker');
 
 import express, { NextFunction, Request, Response } from 'express';
-import { MemberRole, PrismaClient, UsageMetric } from '@sots/db';
-import { Services } from '@sots/shared';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { MemberRole, PrismaClient, UsageMetric } from '@tellann/db';
+import { Services } from '@tellann/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import jwt from 'jsonwebtoken';
 
 const app = express();
 const prisma = new PrismaClient();
 const emailService = new NotificationEmailService(prisma);
-const JWT_SECRET = process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 app.use(express.json());
 
 interface AuthenticatedRequest extends Request {
@@ -48,7 +48,7 @@ async function requireOrganizationMembership(req: AuthenticatedRequest, res: Res
 // CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-sots-user-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tellann-user-id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();

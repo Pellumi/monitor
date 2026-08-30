@@ -137,13 +137,13 @@ export const docs: DocPage[] = [
       {
         title: 'Step 1 — Install SDK',
         body: 'Add Tellann to your project dependencies.',
-        code: 'npm install @sots/frontend-sdk',
+        code: 'npm install @tellann/frontend-sdk',
         language: 'bash'
       },
       {
         title: 'Step 2 — Initialize SDK',
         body: 'Initialize Tellann at the entry point of your application:',
-        code: 'import { SOTS } from "@sots/frontend-sdk";\n\nSOTS.initialize({\n  apiKey: "YOUR_API_KEY",\n  applicationId: "YOUR_APP_ID",\n  environment: "development"\n});',
+        code: 'import { TELLANN } from "@tellann/frontend-sdk";\n\nTELLANN.initialize({\n  apiKey: "YOUR_API_KEY",\n  applicationId: "YOUR_APP_ID",\n  environment: "development"\n});',
         language: 'typescript'
       },
       {
@@ -717,13 +717,13 @@ export const docs: DocPage[] = [
       {
         title: 'NPM Installation',
         body: 'Install the frontend SDK package:',
-        code: `npm install @sots/frontend-sdk`,
+        code: `npm install @tellann/frontend-sdk`,
         language: 'bash',
       },
       {
         title: 'Initialization and State Tracking',
         body: 'Point the client to your API Gateway and track custom user states:',
-        code: `import { SOTS } from '@sots/frontend-sdk';\n\nSOTS.initialize({\n  endpoint: 'http://localhost:3000',\n  apiKey: 'YOUR_API_KEY',\n  applicationId: 'YOUR_APP_ID',\n  environmentId: 'YOUR_ENV_ID'\n});\n\n// Track navigation state\nSOTS.trackState('DASHBOARD_VIEW');\n\n// Track custom UI interaction\nSOTS.trackEvent('CLICK_UPGRADE_PLAN');`,
+        code: `import { TELLANN } from '@tellann/frontend-sdk';\n\nTELLANN.initialize({\n  endpoint: 'http://localhost:3000',\n  apiKey: 'YOUR_API_KEY',\n  applicationId: 'YOUR_APP_ID',\n  environmentId: 'YOUR_ENV_ID'\n});\n\n// Track navigation state\nTELLANN.trackState('DASHBOARD_VIEW');\n\n// Track custom UI interaction\nTELLANN.trackEvent('CLICK_UPGRADE_PLAN');`,
         language: 'typescript',
       },
     ],
@@ -737,13 +737,13 @@ export const docs: DocPage[] = [
       {
         title: 'Node Installation',
         body: 'Install the backend SDK package:',
-        code: `npm install @sots/backend-sdk`,
+        code: `npm install @tellann/backend-sdk`,
         language: 'bash',
       },
       {
         title: 'Express Middleware Setup',
         body: 'Use Express middleware to automatically track endpoints, response codes, and errors:',
-        code: `import { SOTS, sotsExpressMiddleware } from '@sots/backend-sdk';\nimport express from 'express';\n\nconst app = express();\n\nSOTS.initialize({\n  endpoint: 'http://localhost:3000',\n  apiKey: 'YOUR_API_KEY',\n  applicationId: 'YOUR_APP_ID',\n  environmentId: 'YOUR_ENV_ID'\n});\n\n// Intercept requests\napp.use(sotsExpressMiddleware());`,
+        code: `import { TELLANN, tellannExpressMiddleware } from '@tellann/backend-sdk';\nimport express from 'express';\n\nconst app = express();\n\nTELLANN.initialize({\n  endpoint: 'http://localhost:3000',\n  apiKey: 'YOUR_API_KEY',\n  applicationId: 'YOUR_APP_ID',\n  environmentId: 'YOUR_ENV_ID'\n});\n\n// Intercept requests\napp.use(tellannExpressMiddleware());`,
         language: 'typescript',
       },
     ],
@@ -778,7 +778,7 @@ export const docs: DocPage[] = [
       {
         title: 'Bearer Header',
         body: 'Include your environment-scoped API Key in the Authorization header:',
-        code: 'Authorization: Bearer sots_dev_key_12345',
+        code: 'Authorization: Bearer tellann_dev_key_12345',
         language: 'bash',
       },
       {
@@ -1368,7 +1368,7 @@ export const docs: DocPage[] = [
     sections: [
       {
         title: 'API Key Validation',
-        body: 'Gateway keys must be prefixed with `sots_` or map to the active organization hash. Revoke and re-generate key credentials if authentication fails.',
+        body: 'Gateway keys must be prefixed with `tellann_` or map to the active organization hash. Revoke and re-generate key credentials if authentication fails.',
       },
     ],
   },

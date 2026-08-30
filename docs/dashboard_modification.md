@@ -1993,7 +1993,7 @@ POST /demonstrations/{id}/stop
 POST /demonstrations/{id}/analyze
 ```
 
-These endpoints are already defined by the Tellann/SOTS API specification.
+These endpoints are already defined by the Tellann/TELLANN API specification.
 
 ---
 

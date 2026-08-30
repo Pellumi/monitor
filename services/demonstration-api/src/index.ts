@@ -1,11 +1,11 @@
-import { initTracing } from '@sots/telemetry';
+import { initTracing } from '@tellann/telemetry';
 initTracing('demonstration-api');
 
 import express, { Request, Response } from 'express';
-import { MemberRole, PrismaClient } from '@sots/db';
-import { EntitlementChecker } from '@sots/entitlement-checker';
-import { Feature, Services } from '@sots/shared';
-import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@sots/email';
+import { MemberRole, PrismaClient } from '@tellann/db';
+import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { Feature, Services } from '@tellann/shared';
+import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import crypto from 'crypto';
 
 const app = express();
@@ -68,7 +68,7 @@ async function analyzeDemonstration(req: Request, res: Response, id: string, exp
     data: { reportId: coverageReport.snapshotId }
   });
 
-  const orgId = (req.headers['x-sots-org-id'] as string) || demo.application.organizationId;
+  const orgId = (req.headers['x-tellann-org-id'] as string) || demo.application.organizationId;
   if (orgId) {
     void emailService.sendToOrganizationMembers({
       templateKey: 'demo-report-ready',
@@ -99,9 +99,9 @@ async function analyzeDemonstration(req: Request, res: Response, id: string, exp
 
 // 1. Start Demonstration
 app.post('/demonstrations/start', async (req: Request, res: Response) => {
-  const orgId = req.headers['x-sots-org-id'] as string;
-  const environmentId = req.headers['x-sots-environment-id'] as string;
-  const applicationId = (req.headers['x-sots-application-id'] as string) || req.body.applicationId;
+  const orgId = req.headers['x-tellann-org-id'] as string;
+  const environmentId = req.headers['x-tellann-environment-id'] as string;
+  const applicationId = (req.headers['x-tellann-application-id'] as string) || req.body.applicationId;
   
   if (!applicationId) {
     return res.status(400).json({ error: 'applicationId is required' });
@@ -189,7 +189,7 @@ app.post('/demonstrations/stop', async (req: Request, res: Response) => {
       create: { applicationId: demo.applicationId, demonstrationCompleted: true }
     });
 
-    const orgId = (req.headers['x-sots-org-id'] as string) || demo.application.organizationId;
+    const orgId = (req.headers['x-tellann-org-id'] as string) || demo.application.organizationId;
     if (orgId) {
       await prisma.activationEvent.create({
         data: {
@@ -236,7 +236,7 @@ app.post('/demonstrations/analyze', async (req: Request, res: Response) => {
         where: { id: req.body.id },
         include: { application: true },
       }).then((demo) => {
-        const orgId = (req.headers['x-sots-org-id'] as string) || demo?.application.organizationId;
+        const orgId = (req.headers['x-tellann-org-id'] as string) || demo?.application.organizationId;
         if (!demo || !orgId) return;
         return emailService.sendToOrganizationMembers({
           templateKey: 'demo-analysis-failed',

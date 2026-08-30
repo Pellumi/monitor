@@ -41,7 +41,7 @@ async function mockWebhook(payload: Record<string, unknown>, expectedStatus = 20
 function accessToken(user: { id: string; email: string }) {
   return jwt.sign(
     { sub: user.id, email: user.email },
-    process.env.JWT_SECRET || 'sots-default-jwt-secret-change-in-production',
+    process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production',
     { expiresIn: '20m' },
   );
 }

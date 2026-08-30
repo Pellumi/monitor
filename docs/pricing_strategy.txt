@@ -1,6 +1,6 @@
-﻿Pricing Strategy Document (PSD)
+Pricing Strategy Document (PSD)
 1. Purpose
-This document defines the pricing philosophy, monetization strategy, value metrics, pricing evolution model, and long-term revenue strategy for the Self-Observing Testing System (SOTS).
+This document defines the pricing philosophy, monetization strategy, value metrics, pricing evolution model, and long-term revenue strategy for the Self-Observing Testing System (TELLANN).
 The purpose of this document is to ensure that pricing remains aligned with:
 * Product value
 * Customer outcomes
@@ -9,7 +9,7 @@ The purpose of this document is to ensure that pricing remains aligned with:
 * Market positioning
 This document serves as the authoritative source for all future pricing, packaging, metering, and billing decisions.
 2. Pricing Vision
-The objective of SOTS pricing is not to charge customers for telemetry.
+The objective of TELLANN pricing is not to charge customers for telemetry.
 The objective is to charge customers for confidence in software behavior.
 Customers do not purchase:
 * Events
@@ -66,9 +66,9 @@ Pricing is commonly based on:
 * Logs
 * Traces
 * Hosts
-SOTS Position
-SOTS is not primarily an observability platform.
-SOTS is a Behavioral Quality Intelligence Platform.
+TELLANN Position
+TELLANN is not primarily an observability platform.
+TELLANN is a Behavioral Quality Intelligence Platform.
 Customers purchase:
 * Workflow understanding
 * Missing flow detection
@@ -77,7 +77,7 @@ Customers purchase:
 * Quality visibility
 The primary value is behavioral intelligence rather than telemetry collection.
 5. Pricing Evolution Framework
-SOTS pricing evolves through three eras.
+TELLANN pricing evolves through three eras.
 Era 1 — Behavioral QA Platform (Phase 1)
 Pricing Objective
 Maximize adoption and category creation.
@@ -220,4 +220,4 @@ Any pricing change must:
 4. Avoid hidden billing mechanisms.
 5. Maintain compatibility with existing customer contracts.
 6. Be documented in the Pricing & Packaging Specification.
-This document is the authoritative source for pricing philosophy and pricing evolution across all phases of SOTS.
+This document is the authoritative source for pricing philosophy and pricing evolution across all phases of TELLANN.

@@ -1,9 +1,9 @@
 # ──────────────────────────────────────────────────────────────
-# SOTS Platform — Prometheus Alert Rules
+# TELLANN Platform — Prometheus Alert Rules
 # ──────────────────────────────────────────────────────────────
 
 groups:
-  - name: sots_service_health
+  - name: tellann_service_health
     interval: 30s
     rules:
       # ── Service availability ─────────────────────────────────
@@ -73,12 +73,12 @@ groups:
           summary: "High P95 latency on {{ $labels.job }}"
           description: "{{ $labels.job }} p95 latency is {{ $value }}s (threshold: 1s)."
 
-  - name: sots_event_pipeline
+  - name: tellann_event_pipeline
     interval: 60s
     rules:
       # ── Event collector backpressure ─────────────────────────
       - alert: EventCollectorBackpressure
-        expr: sots_event_queue_depth > 10000
+        expr: tellann_event_queue_depth > 10000
         for: 5m
         labels:
           severity: warning
@@ -87,7 +87,7 @@ groups:
           description: "Event queue depth is {{ $value }} (threshold: 10,000). Events may be backing up."
 
       - alert: EventIngestionStalled
-        expr: rate(sots_events_ingested_total[5m]) == 0 and up{job="event-collector"} == 1
+        expr: rate(tellann_events_ingested_total[5m]) == 0 and up{job="event-collector"} == 1
         for: 10m
         labels:
           severity: warning
@@ -95,12 +95,12 @@ groups:
           summary: "Event ingestion has stalled"
           description: "The event collector is up but has ingested zero events in 10 minutes."
 
-  - name: sots_ai_workers
+  - name: tellann_ai_workers
     interval: 60s
     rules:
       # ── AI draft processing ──────────────────────────────────
       - alert: AiDraftQueueBacklog
-        expr: sots_ai_draft_queue_pending > 50
+        expr: tellann_ai_draft_queue_pending > 50
         for: 5m
         labels:
           severity: warning
@@ -111,9 +111,9 @@ groups:
       - alert: AiDraftHighFailureRate
         expr: |
           (
-            sum(rate(sots_ai_draft_jobs_failed_total[30m]))
+            sum(rate(tellann_ai_draft_jobs_failed_total[30m]))
             /
-            sum(rate(sots_ai_draft_jobs_total[30m]))
+            sum(rate(tellann_ai_draft_jobs_total[30m]))
           ) > 0.2
         for: 15m
         labels:
@@ -122,7 +122,7 @@ groups:
           summary: "AI draft jobs have high failure rate"
           description: "AI draft failure rate is {{ $value | humanizePercentage }} (threshold: 20%)."
 
-  - name: sots_infrastructure
+  - name: tellann_infrastructure
     interval: 60s
     rules:
       # ── Resource usage (when node-exporter is available) ─────
