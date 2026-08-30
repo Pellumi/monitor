@@ -118,6 +118,11 @@ export class DesktopCloudClient {
       : { authenticated: false, deviceSessionId: null, user: null };
   }
 
+  localWorkspaceScope(): string | null {
+    const session = loadDesktopSession();
+    return session ? `${session.user.id}:${this.deviceIdentifier()}` : null;
+  }
+
   async signIn(): Promise<ReturnType<DesktopCloudClient['getSession']>> {
     this.cancelSignIn();
     const controller = new AbortController();
@@ -562,6 +567,8 @@ export class DesktopCloudClient {
       body: JSON.stringify({
         opaqueLocalId,
         repositoryFingerprint: snapshot.repositoryFingerprint,
+        repositoryOriginHash: snapshot.repositoryOriginHash,
+        repositoryCloneUrl: snapshot.repositoryCloneUrl,
         detectedStack: snapshot.frameworks,
         packageManager: snapshot.packageManager,
       }),

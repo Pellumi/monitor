@@ -1,6 +1,8 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
 import { IPC, StartGuidedRunInputSchema, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
@@ -23,6 +25,7 @@ const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
 let pendingSetupHandoffToken: string | null = null;
+const execFileAsync = promisify(execFile);
 const instrumentation = new InstrumentationController(
   cloud,
   (applicationId) => selectedWorkspaces.get(applicationId) ?? null,
@@ -93,6 +96,32 @@ function safeDesktopError(error: unknown): string {
   if (message.includes('STRUCTURED_DOCUMENT_IS_NOT_OPENAPI')) return 'JSON and YAML uploads must contain an OpenAPI document.';
   if (message.includes('FEATURE_NOT_ENTITLED')) return 'FEATURE_NOT_ENTITLED: Document flow inference is not included on this plan.';
   return message.replace(/^Error invoking remote method '[^']+':\s*/i, '').slice(0, 240) || 'Document import failed.';
+}
+
+function localWorkspaceKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  return `workspace:${scope}:${applicationId}`;
+}
+
+async function registerSelectedWorkspace(applicationId: string, selectedPath: string, workspaceId: string) {
+  resolveWithinWorkspace(selectedPath, '.');
+  const snapshot = await scanWorkspace(selectedPath, { workspaceId });
+  const registered = await cloud.registerWorkspace(applicationId, workspaceId, snapshot);
+  selectedWorkspaces.set(applicationId, {
+    applicationId, localId: workspaceId, cloudId: registered.workspaceId,
+    snapshotId: registered.repositorySnapshotId, root: selectedPath, snapshot,
+  });
+  const workspace = {
+    id: workspaceId,
+    path: selectedPath,
+    name: path.basename(selectedPath),
+    snapshot,
+    cloudId: registered.workspaceId,
+    snapshotId: registered.repositorySnapshotId,
+  };
+  writeLocalState(localWorkspaceKey(applicationId), workspace);
+  return workspace;
 }
 
 // Some Windows GPU/driver combinations render packaged transparent/composited
@@ -569,6 +598,16 @@ function registerIpc(): void {
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('EXTERNAL_URL_BLOCKED');
     await shell.openExternal(parsed.toString());
   });
+  ipcMain.handle(IPC.openPath, async (event, targetPath: unknown) => {
+    assertTrustedSender(event);
+    if (typeof targetPath !== 'string' || !targetPath.trim()) throw new Error('INVALID_PATH');
+    const normalized = path.normalize(targetPath.trim());
+    const errString = await shell.openPath(normalized);
+    if (errString) {
+      shell.showItemInFolder(normalized);
+    }
+    return { success: true };
+  });
   ipcMain.handle(IPC.openProfile, async (event) => {
     assertTrustedSender(event);
     const dashboardUrl = (process.env.TELLANN_DASHBOARD_URL ?? 'http://localhost:3010').replace(/\/$/, '');
@@ -596,7 +635,7 @@ function registerIpc(): void {
       snapshot: RepositorySnapshotSummary;
       cloudId?: string;
       snapshotId?: string;
-    }>(`workspace:${applicationId}`);
+    }>(localWorkspaceKey(applicationId));
     if (stored && !stored.snapshot.suggestedApplicationUrls) {
       try {
         stored = {
@@ -606,7 +645,7 @@ function registerIpc(): void {
             scannerVersion: stored.snapshot.scannerVersion,
           }),
         };
-        writeLocalState(`workspace:${applicationId}`, stored);
+        writeLocalState(localWorkspaceKey(applicationId), stored);
       } catch {
         // Keep the last valid snapshot when a previously attached folder is
         // temporarily unavailable. The UI can still use the environment URL.
@@ -628,25 +667,44 @@ function registerIpc(): void {
     if (typeof parsed.path !== 'string' || typeof parsed.workspaceId !== 'string') {
       throw new Error('INVALID_SCAN_INPUT');
     }
-    resolveWithinWorkspace(parsed.path, '.');
-    const snapshot = await scanWorkspace(parsed.path, { workspaceId: parsed.workspaceId });
     const applicationId = typeof (parsed as { applicationId?: unknown }).applicationId === 'string'
       ? String((parsed as { applicationId: string }).applicationId) : null;
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
-    const registered = await cloud.registerWorkspace(applicationId, parsed.workspaceId, snapshot);
-    selectedWorkspaces.set(applicationId, {
-      applicationId, localId: parsed.workspaceId, cloudId: registered.workspaceId,
-      snapshotId: registered.repositorySnapshotId, root: parsed.path, snapshot,
+    return (await registerSelectedWorkspace(applicationId, parsed.path, parsed.workspaceId)).snapshot;
+  });
+  ipcMain.handle(IPC.cloneWorkspace, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; cloneUrl?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.cloneUrl !== 'string') {
+      throw new Error('INVALID_CLONE_INPUT');
+    }
+    const cloneUrl = new URL(value.cloneUrl);
+    if (cloneUrl.protocol !== 'https:' || cloneUrl.hostname.toLowerCase() !== 'github.com' || cloneUrl.username || cloneUrl.password) {
+      throw new Error('UNTRUSTED_CLONE_URL');
+    }
+    const repositoryName = path.basename(cloneUrl.pathname).replace(/\.git$/i, '');
+    if (!/^[a-z0-9._-]+$/i.test(repositoryName)) throw new Error('INVALID_REPOSITORY_NAME');
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: `Choose where to clone ${repositoryName}`,
+      buttonLabel: 'Clone here',
+      properties: ['openDirectory', 'createDirectory'],
     });
-    writeLocalState(`workspace:${applicationId}`, {
-      id: parsed.workspaceId,
-      path: parsed.path,
-      name: path.basename(parsed.path),
-      snapshot,
-      cloudId: registered.workspaceId,
-      snapshotId: registered.repositorySnapshotId,
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const destination = path.join(result.filePaths[0], repositoryName);
+    try {
+      await fs.access(destination);
+      throw new Error('CLONE_DESTINATION_ALREADY_EXISTS');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await execFileAsync('git', ['clone', '--', cloneUrl.toString(), destination], {
+      windowsHide: true,
+      timeout: 10 * 60_000,
+      maxBuffer: 2 * 1024 * 1024,
     });
-    return snapshot;
+    const workspace = await registerSelectedWorkspace(value.applicationId, destination, crypto.randomUUID());
+    const { cloudId: _cloudId, snapshotId: _snapshotId, ...rendererSafe } = workspace;
+    return rendererSafe;
   });
   ipcMain.handle(IPC.detectInstrumentation, async (event, input: unknown) => {
     assertTrustedSender(event);

@@ -19,8 +19,13 @@ import {
   ReactFlow,
   Background,
   Controls,
+  ControlButton,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Node,
   Edge,
+  type EdgeProps,
   applyNodeChanges,
   applyEdgeChanges,
   type OnNodesChange,
@@ -49,6 +54,10 @@ import {
   CheckCircle2,
   RefreshCw,
   Pencil,
+  Download,
+  FileText,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 const FDRS_API = "/api-gateway";
@@ -85,6 +94,99 @@ interface DeclaredStateSuggestion {
   patternId?: string;
 }
 
+const truncateGraphLabel = (value: string, maxLength: number) =>
+  value.length > maxLength ? `${value.slice(0, maxLength - 1)}â€¦` : value;
+
+function CopyableGraphLabel({
+  value,
+  maxLength,
+  kind,
+}: {
+  value: string;
+  maxLength: number;
+  kind: "state" | "transition";
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copyValue = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="nodrag nopan flex max-w-[180px] items-center gap-1.5">
+      <span className="min-w-0 flex-1 truncate" title={value}>
+        {truncateGraphLabel(value, maxLength)}
+      </span>
+      <button
+        type="button"
+        className="shrink-0 rounded p-1 text-neutral-500 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-1 focus:ring-white"
+        aria-label={`Copy full ${kind} label: ${value}`}
+        title={copied ? "Copied" : `Copy full ${kind} label`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void copyValue();
+        }}
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
+
+function CopyableTransitionEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerStart,
+  markerEnd,
+  style,
+  interactionWidth,
+  data,
+  label,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+  const value = String(data?.fullLabel ?? label ?? "Transition");
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+        style={style}
+        interactionWidth={interactionWidth}
+      />
+      <EdgeLabelRenderer>
+        <div
+          className="nodrag nopan absolute rounded border border-[#262626] bg-[#0a0a0a] px-1.5 py-1 font-mono text-[9px] text-neutral-400"
+          style={{
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: "all",
+          }}
+        >
+          <CopyableGraphLabel value={value} maxLength={36} kind="transition" />
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+const declarationEdgeTypes = { copyableTransition: CopyableTransitionEdge };
+
 interface DeclaredState {
   id: string;
   stateName: string;
@@ -120,6 +222,89 @@ interface DeclaredFlow {
   scopeStatement?: string | null;
   publishedVersionId?: string | null;
   versions?: Array<{ id: string; version: number }>;
+}
+
+function safeExportName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "tellann-flow";
+}
+
+function downloadTextFile(filename: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+function flowAsMermaid(flow: DeclaredFlow) {
+  const nodeIds = new Map(flow.states.map((state, index) => [state.id, `state${index}`]));
+  const escapeLabel = (value: string) => value.replace(/"/g, "'").replace(/\r?\n/g, " ");
+  const lines = ["flowchart TD"];
+
+  for (const state of flow.states) {
+    lines.push(`  ${nodeIds.get(state.id)}["${escapeLabel(state.stateName)}"]`);
+  }
+  for (const transition of flow.transitions) {
+    const from = nodeIds.get(transition.fromStateId);
+    const to = nodeIds.get(transition.toStateId);
+    if (!from || !to) continue;
+    const action = transition.action
+      ? `|"${escapeLabel(transition.action)}"|`
+      : "";
+    lines.push(`  ${from} -->${action} ${to}`);
+  }
+
+  return lines.join("\n");
+}
+
+function flowAsMarkdown(flow: DeclaredFlow, diagramKind: string, diagramSource: string) {
+  const stateNames = new Map(flow.states.map((state) => [state.id, state.stateName]));
+  const rows = flow.transitions.map(
+    (transition) => {
+      const fromStateName = transition.fromState?.stateName
+        ?? stateNames.get(transition.fromStateId)
+        ?? transition.fromStateId;
+      const toStateName = transition.toState?.stateName
+        ?? stateNames.get(transition.toStateId)
+        ?? transition.toStateId;
+      return `| ${fromStateName.replace(/\|/g, "\\|")} | ${transition.action?.replace(/\|/g, "\\|") || "Transition"} | ${toStateName.replace(/\|/g, "\\|")} |`;
+    },
+  );
+
+  return [
+    `# ${flow.name}`,
+    "",
+    `- Version: ${flow.version}`,
+    `- Status: ${flow.status}`,
+    `- Diagram: ${diagramKind.replace("_", " ")}`,
+    "",
+    "## Diagram",
+    "",
+    "```mermaid",
+    diagramSource,
+    "```",
+    "",
+    "## States",
+    "",
+    ...flow.states.map((state) => `- ${state.stateName} (${state.category})`),
+    "",
+    "## Transitions",
+    "",
+    "| From | Action | To |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+  ].join("\n");
 }
 
 interface FlowSuggestionsResponse {
@@ -198,6 +383,9 @@ function DeclareContent() {
   const [stateRole, setStateRole] = useState<"NORMAL" | "INITIAL" | "TERMINAL">("NORMAL");
   const [terminalKind, setTerminalKind] = useState<"SUCCESS" | "FAILURE" | "CANCELLATION" | "ALTERNATE">("SUCCESS");
   const [diagramKind, setDiagramKind] = useState<"FLOW" | "SEQUENCE" | "ACTIVITY" | "STATE_MACHINE">("FLOW");
+  const [diagramFullscreen, setDiagramFullscreen] = useState(false);
+  const [exportingDiagram, setExportingDiagram] = useState<"pdf" | "markdown" | null>(null);
+  const diagramCaptureRef = useRef<HTMLDivElement>(null);
 
   // Transition builder inputs
   const [fromStateId, setFromStateId] = useState("");
@@ -232,6 +420,20 @@ function DeclareContent() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3000);
   }, []);
+
+  useEffect(() => {
+    if (!diagramFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDiagramFullscreen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [diagramFullscreen]);
 
   // ─────────────────────────────────────────────────────────────
   // Onboarding / Environment Queries
@@ -448,6 +650,93 @@ function DeclareContent() {
     },
     enabled: Boolean(selectedFlowId && publishedVersionId && activeFlow?.status === "COMPLETE"),
   });
+
+  const selectedDiagramSource = useMemo(() => {
+    if (!activeFlow) return "";
+    if (diagramKind === "FLOW") return flowAsMermaid(activeFlow);
+    return (
+      diagramPayload?.diagrams.find((diagram) => diagram.kind === diagramKind)
+        ?.source ?? ""
+    );
+  }, [activeFlow, diagramKind, diagramPayload]);
+
+  const exportDiagramMarkdown = async () => {
+    if (!activeFlow || !selectedDiagramSource) {
+      showToast("Diagram data is still loading. Please try again.");
+      return;
+    }
+    setExportingDiagram("markdown");
+    try {
+      downloadTextFile(
+        `${safeExportName(activeFlow.name)}-${diagramKind.toLowerCase()}.md`,
+        flowAsMarkdown(activeFlow, diagramKind, selectedDiagramSource),
+        "text/markdown;charset=utf-8",
+      );
+      showToast("Markdown diagram exported");
+    } catch (error) {
+      console.error("Failed to export diagram Markdown", error);
+      showToast("Markdown export failed. Please try again.");
+    } finally {
+      setExportingDiagram(null);
+    }
+  };
+
+  const exportDiagramPdf = async () => {
+    if (!activeFlow) {
+      showToast("Diagram data is still loading. Please try again.");
+      return;
+    }
+    const captureTarget = diagramCaptureRef.current
+      ?? document.getElementById("flow-diagram-capture");
+    if (!captureTarget) {
+      showToast("Diagram preview is not ready. Please try again.");
+      return;
+    }
+    setExportingDiagram("pdf");
+    try {
+      const [{ toPng }, { jsPDF }] = await Promise.all([
+        import("html-to-image"),
+        import("jspdf"),
+      ]);
+      const image = await toPng(captureTarget, {
+        backgroundColor: "#050505",
+        pixelRatio: 2,
+        filter: (node) =>
+          !(node instanceof HTMLElement && node.dataset.exportIgnore === "true"),
+      });
+      const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 36;
+      const titleHeight = 42;
+      const imageProperties = pdf.getImageProperties(image);
+      const scale = Math.min(
+        (pageWidth - margin * 2) / imageProperties.width,
+        (pageHeight - margin * 2 - titleHeight) / imageProperties.height,
+      );
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(16);
+      pdf.text(`${activeFlow.name} - ${diagramKind.replace("_", " ")}`, margin, margin);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.text(`Version ${activeFlow.version} | ${activeFlow.status}`, margin, margin + 16);
+      pdf.addImage(
+        image,
+        "PNG",
+        margin,
+        margin + titleHeight,
+        imageProperties.width * scale,
+        imageProperties.height * scale,
+      );
+      pdf.save(`${safeExportName(activeFlow.name)}-${diagramKind.toLowerCase()}.pdf`);
+      showToast("PDF diagram exported");
+    } catch (error) {
+      console.error("Failed to export diagram PDF", error);
+      showToast("PDF export failed. Please try again.");
+    } finally {
+      setExportingDiagram(null);
+    }
+  };
 
   const { data: suggestionResponse, isFetching: isSuggestionsLoading } =
     useQuery<FlowSuggestionsResponse>({
@@ -824,8 +1113,9 @@ function DeclareContent() {
       id: t.id,
       source: t.fromStateId,
       target: t.toStateId,
-      label: t.action ?? "",
-      type: "smoothstep",
+      label: t.action || "Transition",
+      data: { fullLabel: t.action || "Transition" },
+      type: "copyableTransition",
       animated: activeFlow.status === "DRAFT",
       style: { stroke: "#404040" },
       labelStyle: { fill: "#737373", fontSize: 9, fontFamily: "monospace" },
@@ -841,7 +1131,15 @@ function DeclareContent() {
         return {
           id: s.id,
           position: { x: col * 220 + 50, y: row * 150 + 50 },
-          data: { label: s.stateName },
+          data: {
+            label: (
+              <CopyableGraphLabel
+                value={s.stateName}
+                maxLength={28}
+                kind="state"
+              />
+            ),
+          },
           style: {
             background: "#0a0a0a",
             color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
@@ -874,7 +1172,15 @@ function DeclareContent() {
             updatedNodes.push({
               id: s.id,
               position: { x: col * 220 + 50, y: row * 150 + 50 },
-              data: { label: s.stateName },
+              data: {
+                label: (
+                  <CopyableGraphLabel
+                    value={s.stateName}
+                    maxLength={28}
+                    kind="state"
+                  />
+                ),
+              },
               style: {
                 background: "#0a0a0a",
                 color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
@@ -901,7 +1207,15 @@ function DeclareContent() {
           if (s) {
             return {
               ...n,
-              data: { label: s.stateName },
+              data: {
+                label: (
+                  <CopyableGraphLabel
+                    value={s.stateName}
+                    maxLength={28}
+                    kind="state"
+                  />
+                ),
+              },
               style: {
                 ...n.style,
                 color: s.category === "ERROR" ? "#f87171" : "#e5e5e5",
@@ -1005,8 +1319,42 @@ function DeclareContent() {
     }
   }, [onboardingProgress]);
 
-  // If onboarding is active, render the onboarding wizard stages
-  if (onboardingProgress && !onboardingProgress.completedAt) {
+  const onboardingIsActive =
+    onboardingProgress && !onboardingProgress.completedAt;
+
+  if (onboardingIsActive && flowsLoading) {
+    return (
+      <div className="flex min-h-[80vh] items-center justify-center px-4">
+        <p className="text-sm text-neutral-400" role="status">
+          Loading declared flowsâ€¦
+        </p>
+      </div>
+    );
+  }
+
+  if (onboardingIsActive && flowsFailed) {
+    return (
+      <div className="flex min-h-[80vh] items-center justify-center px-4">
+        <div className="w-full max-w-md space-y-4 rounded-md border border-[#262626] bg-[#131313] p-8 text-center">
+          <h2 className="text-xl font-bold text-white">
+            Declared flows could not be loaded
+          </h2>
+          <p className="text-sm text-neutral-400">
+            Retry before continuing onboarding so existing desktop flows are
+            not hidden.
+          </p>
+          <Button type="button" onClick={() => void refetchFlows()}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // A Flow created by another client is authoritative. Onboarding progress is
+  // client-local guidance and must not hide the shared Flow builder, even when
+  // legacy demonstration flags were not synchronized by the desktop app.
+  if (onboardingIsActive && !flows?.length) {
     // Stage 1: Select profile template
     if (!onboardingProgress.templateSelected) {
       if (flowsLoading) {
@@ -1664,40 +2012,99 @@ function DeclareContent() {
           ) : (
             <div className="flex-1 flex flex-col space-y-6 min-h-0">
               {/* Interactive Flow Visualizer */}
-              <div className="flex flex-wrap gap-2">
-                {(["FLOW", "SEQUENCE", "ACTIVITY", "STATE_MACHINE"] as const).map((kind) => (
-                  <button key={kind} type="button" onClick={() => setDiagramKind(kind)} className={`rounded-md border px-3 py-1.5 text-xs ${diagramKind === kind ? "border-white bg-white text-black" : "border-[#262626] bg-[#131313] text-neutral-300"}`}>
-                    {kind.replace("_", " ")}
-                  </button>
-                ))}
-              </div>
-              <div className="h-[380px] rounded-md border border-[#262626] bg-black overflow-hidden relative">
-                <div className="absolute top-4 left-4 z-10 bg-[#131313]/80 backdrop-blur px-3 py-1.5 rounded-lg border border-[#262626] flex items-center space-x-2">
-                  <span className="h-2 w-2 rounded-full bg-white animate-ping"></span>
-                  <span className="text-xs font-semibold text-neutral-300">
-                    {activeFlow.name} (v{activeFlow.version}) -{" "}
-                    {activeFlow.status}
-                  </span>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#262626] bg-[#0d0d0d] p-2">
+                <div className="flex flex-wrap gap-2" aria-label="Diagram type">
+                  {(["FLOW", "SEQUENCE", "ACTIVITY", "STATE_MACHINE"] as const).map((kind) => (
+                    <button key={kind} type="button" onClick={() => setDiagramKind(kind)} className={`rounded-md border px-3 py-1.5 text-xs ${diagramKind === kind ? "border-white bg-white text-black" : "border-[#262626] bg-[#131313] text-neutral-300 hover:border-neutral-500"}`}>
+                      {kind.replace("_", " ")}
+                    </button>
+                  ))}
                 </div>
-
-                {diagramKind !== "FLOW" && diagramPayload ? (
-                  <pre className="h-full overflow-auto whitespace-pre-wrap p-6 text-xs text-neutral-300">{diagramPayload.diagrams.find((diagram) => diagram.kind === diagramKind)?.source ?? "Projection unavailable"}</pre>
-                ) : nodes.length > 0 ? (
-                  <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    fitView
+                <div className="flex flex-wrap items-center gap-2" aria-label="Diagram actions">
+                  <button
+                    type="button"
+                    onClick={() => void exportDiagramMarkdown()}
+                    disabled={Boolean(exportingDiagram) || !selectedDiagramSource}
+                    className="inline-flex items-center gap-2 rounded-md border border-[#262626] bg-[#131313] px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
                   >
-                    <Background color="#222" />
-                    <Controls />
-                  </ReactFlow>
-                ) : (
-                  <div className="h-full w-full flex items-center justify-center text-xs text-neutral-500 font-mono">
-                    [No nodes in diagram. Add states below to begin]
+                    <FileText className="h-3.5 w-3.5" />
+                    {exportingDiagram === "markdown" ? "Exporting..." : "Markdown"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void exportDiagramPdf()}
+                    disabled={Boolean(exportingDiagram)}
+                    className="inline-flex items-center gap-2 rounded-md border border-[#262626] bg-[#131313] px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {exportingDiagram === "pdf" ? "Exporting..." : "PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiagramFullscreen(true)}
+                    className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-neutral-200"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    Full screen
+                  </button>
+                </div>
+              </div>
+              <div
+                className={diagramFullscreen
+                  ? "fixed inset-0 z-[100] flex flex-col bg-[#050505] p-4"
+                  : "flex h-[460px] flex-col overflow-hidden rounded-md border border-[#262626] bg-black"}
+                role={diagramFullscreen ? "dialog" : undefined}
+                aria-modal={diagramFullscreen ? true : undefined}
+                aria-label={diagramFullscreen ? `${activeFlow.name} diagram full screen` : undefined}
+              >
+                {diagramFullscreen ? (
+                  <div className="mb-3 flex items-center justify-between border-b border-[#262626] pb-3" data-export-ignore="true">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{activeFlow.name}</p>
+                      <p className="text-xs text-neutral-500">{diagramKind.replace("_", " ")} diagram - version {activeFlow.version}</p>
+                    </div>
+                    <button type="button" onClick={() => setDiagramFullscreen(false)} className="inline-flex items-center gap-2 rounded-md border border-[#262626] px-3 py-2 text-xs text-white hover:bg-white/10">
+                      <Minimize2 className="h-4 w-4" /> Exit full screen
+                    </button>
                   </div>
-                )}
+                ) : null}
+                <div id="flow-diagram-capture" ref={diagramCaptureRef} className="relative min-h-0 flex-1 overflow-hidden bg-black">
+                  <div className="absolute left-4 top-4 z-10 flex items-center space-x-2 rounded-lg border border-[#262626] bg-[#131313]/80 px-3 py-1.5 backdrop-blur">
+                    <span className="h-2 w-2 rounded-full bg-white"></span>
+                    <span className="text-xs font-semibold text-neutral-300">
+                      {activeFlow.name} (v{activeFlow.version}) - {activeFlow.status}
+                    </span>
+                  </div>
+
+                  {diagramKind !== "FLOW" && selectedDiagramSource ? (
+                    <>
+                      <pre className="h-full overflow-auto whitespace-pre-wrap p-16 text-xs text-neutral-300">{selectedDiagramSource}</pre>
+                      <button type="button" data-export-ignore="true" onClick={() => setDiagramFullscreen((value) => !value)} className="absolute bottom-4 left-4 rounded border border-[#262626] bg-[#131313] p-2 text-neutral-300 hover:text-white" aria-label={diagramFullscreen ? "Exit diagram full screen" : "Open diagram full screen"} title={diagramFullscreen ? "Exit full screen" : "Open full screen"}>
+                        {diagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                      </button>
+                    </>
+                  ) : nodes.length > 0 ? (
+                    <ReactFlow
+                      nodes={nodes}
+                      edges={edges}
+                      edgeTypes={declarationEdgeTypes}
+                      onNodesChange={onNodesChange}
+                      onEdgesChange={onEdgesChange}
+                      fitView
+                    >
+                      <Background color="#222" />
+                      <Controls data-export-ignore="true">
+                        <ControlButton onClick={() => setDiagramFullscreen((value) => !value)} title={diagramFullscreen ? "Exit full screen" : "Open full screen"} aria-label={diagramFullscreen ? "Exit diagram full screen" : "Open diagram full screen"}>
+                          {diagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                        </ControlButton>
+                      </Controls>
+                    </ReactFlow>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500 font-mono">
+                      [No nodes in diagram. Add states below to begin]
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Builder Controls */}

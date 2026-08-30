@@ -21,6 +21,7 @@ import {
   Copy,
   FileSearch,
   Folder,
+  FolderOpen,
   Globe2,
   HelpCircle,
   KeyRound,
@@ -77,6 +78,46 @@ import {
   AccordionContent,
 } from "./components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+
+function ActionTooltip({ content, children }: { content: string; children: ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div
+      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <div
+          role="tooltip"
+          style={{
+            position: "absolute",
+            bottom: "100%",
+            left: "50%",
+            transform: "translateX(-50%) translateY(-6px)",
+            backgroundColor: "#000000",
+            color: "#ffffff",
+            border: "1px solid #333333",
+            padding: "4px 8px",
+            borderRadius: "4px",
+            fontSize: "11px",
+            fontWeight: 500,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 50,
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.6)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Page({
   title,
@@ -604,8 +645,9 @@ function InstrumentationDiffViewer({ diff }: { diff: unknown }) {
 }
 
 export function WorkspacePage() {
-  const { projectId, application, workspace, attachWorkspace, busy } =
+  const { projectId, application, workspace, attachWorkspace, cloneWorkspace, busy } =
     useProject();
+  const [pathCopied, setPathCopied] = useState(false);
   if (!projectId) return <ProjectRequired />;
   if (!application)
     return (
@@ -680,7 +722,7 @@ export function WorkspacePage() {
                 >
                   <div>
                     <h2 style={{ margin: 0, fontSize: "18px" }}>
-                      Cloud Workspace Connected
+                      Team repository available
                     </h2>
                     <p
                       style={{
@@ -806,19 +848,28 @@ export function WorkspacePage() {
                     opacity: 0.8,
                   }}
                 >
-                  A project workspace is registered in Tellann Cloud for{" "}
-                  <strong>{application.name}</strong>. Choose the local folder
-                  on your computer to connect local file access and enable
-                  automated instrumentation.
+                  Repository context is registered for <strong>{application.name}</strong>,
+                  but no folder is connected on this device. Attach an existing
+                  checkout or clone the team repository to begin local review.
                 </p>
 
-                <div>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                   <button
                     className="button primary font-mono text-xs uppercase"
                     onClick={() => void attachWorkspace(projectId)}
+                    disabled={busy}
                   >
-                    Choose project folder
+                    Attach existing folder
                   </button>
+                  {cloudWs.repositoryCloneUrl ? (
+                    <button
+                      className="button font-mono text-xs uppercase"
+                      onClick={() => void cloneWorkspace(projectId, cloudWs.repositoryCloneUrl)}
+                      disabled={busy}
+                    >
+                      Clone from GitHub
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
@@ -842,7 +893,128 @@ export function WorkspacePage() {
         <div className="two-column">
           <section className="content-card">
             <h2>{workspace.name}</h2>
-            <p className="local-path">{workspace.path}</p>
+            <div style={{ marginBottom: "16px" }}>
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  color: "var(--muted, #8e9192)",
+                  display: "block",
+                  marginBottom: "6px",
+                }}
+              >
+                Local folder on this device
+              </span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  background: "#090909",
+                  border: "1px solid #262626",
+                  borderRadius: "6px",
+                  padding: "8px 12px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    overflow: "hidden",
+                    flex: 1,
+                  }}
+                >
+                  <Folder size={15} style={{ color: "#ffffff", flexShrink: 0 }} />
+                  <span
+                    style={{
+                      fontFamily: "ui-monospace, monospace",
+                      fontSize: "12px",
+                      color: "#ffffff",
+                      wordBreak: "break-all",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {workspace.path}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                  <ActionTooltip content="Open in File Explorer">
+                    <button
+                      type="button"
+                      style={{
+                        background: "#131313",
+                        border: "1px solid #262626",
+                        color: "#ffffff",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                      onClick={async () => {
+                        if (workspace.path) {
+                          try {
+                            if (typeof window.tellann?.system?.openPath === "function") {
+                              await window.tellann.system.openPath(workspace.path);
+                            } else if (typeof window.tellann?.system?.copyText === "function") {
+                              await window.tellann.system.copyText(workspace.path);
+                            } else {
+                              await navigator.clipboard.writeText(workspace.path);
+                            }
+                          } catch (err) {
+                            console.error("Could not open folder path", err);
+                          }
+                        }
+                      }}
+                      aria-label={`Open folder in file explorer: ${workspace.path}`}
+                    >
+                      <FolderOpen size={14} />
+                      <span style={{ fontSize: "11px", fontWeight: 500 }}>Open</span>
+                    </button>
+                  </ActionTooltip>
+                  <ActionTooltip content={pathCopied ? "Copied!" : "Copy path to clipboard"}>
+                    <button
+                      type="button"
+                      style={{
+                        background: "#131313",
+                        border: "1px solid #262626",
+                        color: "#ffffff",
+                        padding: "6px 8px",
+                        borderRadius: "4px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                      onClick={async () => {
+                        if (workspace.path) {
+                          if (typeof window.tellann?.system?.copyText === "function") {
+                            await window.tellann.system.copyText(workspace.path);
+                          } else {
+                            await navigator.clipboard.writeText(workspace.path);
+                          }
+                          setPathCopied(true);
+                          setTimeout(() => setPathCopied(false), 1500);
+                        }
+                      }}
+                      aria-label="Copy folder path"
+                    >
+                      {pathCopied ? <Check size={14} style={{ color: "#ffffff" }} /> : <Copy size={14} />}
+                    </button>
+                  </ActionTooltip>
+                </div>
+              </div>
+            </div>
             <dl className="detail-list">
               <div>
                 <dt>Branch</dt>
@@ -1647,6 +1819,7 @@ function ManualIntentBuilder({
   const [toStateId, setToStateId] = useState("");
   const [transitionAction, setTransitionAction] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [copiedFlowLabel, setCopiedFlowLabel] = useState<string | null>(null);
   const [diagrams, setDiagrams] = useState<
     Array<{ kind: string; source: string }>
   >([]);
@@ -2175,6 +2348,23 @@ function ManualIntentBuilder({
     activeFlow?.states.map((state) => [state.id, state.stateName]) ?? [],
   );
 
+  const copyFlowLabel = async (key: string, value: string) => {
+    try {
+      if (typeof window.tellann?.system?.copyText === "function") {
+        await window.tellann.system.copyText(value);
+      } else {
+        await navigator.clipboard.writeText(value);
+      }
+      setCopiedFlowLabel(key);
+      window.setTimeout(
+        () => setCopiedFlowLabel((current) => (current === key ? null : current)),
+        1500,
+      );
+    } catch {
+      setMessage("Could not copy the label. Select the text and copy it manually.");
+    }
+  };
+
   const initializeActiveFlow = async () => {
     if (!activeFlow?.publishedVersionId || !application?.environments[0]?.id)
       return;
@@ -2540,9 +2730,26 @@ function ManualIntentBuilder({
                 {activeFlow.states.map((state, index) => (
                   <div key={state.id}>
                     <span>{index + 1}</span>
-                    <strong>{state.stateName}</strong>
+                    <strong className="manual-truncated-label" title={state.stateName}>
+                      {state.stateName}
+                    </strong>
                     <small>{state.category}</small>
                     <div className="manual-state-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={copiedFlowLabel === `state:${state.id}` ? "Copied" : "Copy full state name"}
+                        aria-label={`Copy full state name: ${state.stateName}`}
+                        onClick={() =>
+                          void copyFlowLabel(`state:${state.id}`, state.stateName)
+                        }
+                      >
+                        {copiedFlowLabel === `state:${state.id}` ? (
+                          <Check size={14} />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                      </button>
                       <button
                         type="button"
                         className="icon-button"
@@ -2679,19 +2886,56 @@ function ManualIntentBuilder({
                 {activeFlow.transitions.map((transition) => (
                   <div key={transition.id} className="manual-transition-item">
                     <div className="manual-transition-flow">
-                      <strong className="state-tag">
+                      <strong
+                        className="state-tag manual-truncated-label"
+                        title={stateNameById.get(transition.fromStateId) ?? transition.fromState?.stateName}
+                      >
                         {stateNameById.get(transition.fromStateId) ??
                           transition.fromState?.stateName}
                       </strong>
                       <ArrowRight size={14} className="transition-arrow" />
-                      <strong className="state-tag">
+                      <strong
+                        className="state-tag manual-truncated-label"
+                        title={stateNameById.get(transition.toStateId) ?? transition.toState?.stateName}
+                      >
                         {stateNameById.get(transition.toStateId) ??
                           transition.toState?.stateName}
                       </strong>
                     </div>
-                    <small className="manual-transition-action">
-                      {transition.action || "Transition"}
-                    </small>
+                    <div className="manual-transition-action-group">
+                      <small
+                        className="manual-transition-action manual-truncated-label"
+                        title={transition.action || "Transition"}
+                      >
+                        {transition.action || "Transition"}
+                      </small>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={copiedFlowLabel === `transition:${transition.id}` ? "Copied" : "Copy full transition"}
+                        aria-label={`Copy full transition: ${transition.action || "Transition"}`}
+                        onClick={() => {
+                          const from =
+                            stateNameById.get(transition.fromStateId) ??
+                            transition.fromState?.stateName ??
+                            "Start";
+                          const to =
+                            stateNameById.get(transition.toStateId) ??
+                            transition.toState?.stateName ??
+                            "End";
+                          void copyFlowLabel(
+                            `transition:${transition.id}`,
+                            `${from} -> ${to} - ${transition.action || "Transition"}`,
+                          );
+                        }}
+                      >
+                        {copiedFlowLabel === `transition:${transition.id}` ? (
+                          <Check size={14} />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2756,7 +3000,7 @@ function ManualIntentBuilder({
             </button>
           </section>
           {diagrams.length ? (
-            <section className="content-card">
+            <section className="content-card published-flow-diagram-card">
               <div className="card-heading">
                 <div>
                   <small>Synchronized projections</small>

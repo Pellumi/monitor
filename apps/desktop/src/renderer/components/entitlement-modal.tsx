@@ -73,8 +73,8 @@ export function EntitlementModal({
 
   const handleUpgrade = () => {
     const dashboardBillingUrl = "http://localhost:3000/settings/billing";
-    if (window.tellann?.shell?.openExternal) {
-      window.tellann.shell.openExternal(dashboardBillingUrl);
+    if (window.tellann?.system?.openExternal) {
+      void window.tellann.system.openExternal(dashboardBillingUrl);
     } else {
       window.open(dashboardBillingUrl, "_blank");
     }

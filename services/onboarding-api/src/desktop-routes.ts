@@ -98,12 +98,22 @@ export function createDesktopRouter(input: {
     verifyAppOwnership,
     async (req: DesktopRequest, res: Response) => {
       const { appId } = req.params;
-      const { opaqueLocalId, repositoryFingerprint, detectedStack, packageManager } = req.body ?? {};
+      const { opaqueLocalId, repositoryFingerprint, repositoryOriginHash, repositoryCloneUrl, detectedStack, packageManager } = req.body ?? {};
       if (!opaqueLocalId || !repositoryFingerprint) {
         return res.status(400).json({ error: 'opaqueLocalId and repositoryFingerprint are required' });
       }
       if (req.body.absolutePath || req.body.path || req.body.workspaceRoot) {
         return res.status(400).json({ error: 'Absolute local paths must not be uploaded' });
+      }
+      if (repositoryCloneUrl) {
+        try {
+          const cloneUrl = new URL(String(repositoryCloneUrl));
+          if (cloneUrl.protocol !== 'https:' || cloneUrl.hostname.toLowerCase() !== 'github.com' || cloneUrl.username || cloneUrl.password) {
+            return res.status(400).json({ error: 'Only credential-free GitHub HTTPS clone URLs are accepted' });
+          }
+        } catch {
+          return res.status(400).json({ error: 'Invalid repository clone URL' });
+        }
       }
 
       const application = await prisma.application.findUnique({
@@ -120,6 +130,8 @@ export function createDesktopRouter(input: {
           createdByUserId: req.user!.id,
           opaqueLocalId: String(opaqueLocalId),
           repositoryFingerprint: String(repositoryFingerprint),
+          repositoryOriginHash: repositoryOriginHash ? String(repositoryOriginHash) : undefined,
+          repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : undefined,
           detectedStack: detectedStack ?? undefined,
           packageManager: packageManager ? String(packageManager) : undefined,
           trustStatus: 'READ_ONLY',
@@ -127,6 +139,8 @@ export function createDesktopRouter(input: {
         },
         update: {
           repositoryFingerprint: String(repositoryFingerprint),
+          repositoryOriginHash: repositoryOriginHash ? String(repositoryOriginHash) : undefined,
+          repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : undefined,
           detectedStack: detectedStack ?? undefined,
           packageManager: packageManager ? String(packageManager) : undefined,
           lastScannedAt: new Date(),
@@ -194,6 +208,8 @@ export function createDesktopRouter(input: {
         id: workspace.id,
         opaqueLocalId: workspace.opaqueLocalId,
         repositoryFingerprint: workspace.repositoryFingerprint,
+        repositoryOriginHash: workspace.repositoryOriginHash,
+        repositoryCloneUrl: workspace.repositoryCloneUrl,
         detectedStack: workspace.detectedStack,
         packageManager: workspace.packageManager,
         trustStatus: workspace.trustStatus,

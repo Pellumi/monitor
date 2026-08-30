@@ -9,7 +9,7 @@ const docsUrl =
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Behavioral Quality Intelligence for Software Teams",
+  title: "Tellann | Behavioral Quality Intelligence for Software Teams",
   description:
     "Tellann observes application behavior, discovers workflows, measures coverage, identifies missing states and flows, replays sessions, and generates QA intelligence.",
   alternates: { canonical: "/" },

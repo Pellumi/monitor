@@ -1920,6 +1920,7 @@ model ProjectWorkspace {
   opaqueLocalId         String
   repositoryFingerprint String
   repositoryOriginHash  String?
+  repositoryCloneUrl    String?
   detectedStack         Json?
   packageManager        String?
   trustStatus           WorkspaceTrustStatus @default(UNTRUSTED)
@@ -1937,6 +1938,7 @@ model ProjectWorkspace {
 
   @@unique([applicationId, opaqueLocalId])
   @@index([organizationId, applicationId])
+  @@index([applicationId, repositoryOriginHash])
 }
 
 model PermissionGrant {

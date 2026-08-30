@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ReactFlow, Background, Controls, Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 import { Suspense } from 'react';
 import { useSelectedApplication } from '@/hooks/use-selected-application';
@@ -22,6 +23,13 @@ interface BehaviorGraphResponse {
     action: string;
     frequency: number;
   }>;
+}
+
+interface SdkSetupResponse {
+  readiness?: {
+    connected?: boolean;
+    readyForDemonstration?: boolean;
+  };
 }
 
 async function fetchGraph(appId: string) {
@@ -53,6 +61,8 @@ function GraphSkeleton() {
 }
 
 function GraphContent() {
+  const searchParams = useSearchParams();
+  const environmentId = searchParams.get('envId');
   const {
     appId,
     selectedOrgId,
@@ -64,6 +74,27 @@ function GraphContent() {
     queryKey: ['graph', appId],
     queryFn: () => fetchGraph(appId),
     enabled: !!appId,
+  });
+
+  const {
+    data: setup,
+    isLoading: isSetupLoading,
+    error: setupError,
+  } = useQuery<SdkSetupResponse>({
+    queryKey: ['sdk-setup', appId, environmentId],
+    queryFn: async () => {
+      const query = environmentId
+        ? `?environmentId=${encodeURIComponent(environmentId)}`
+        : '';
+      const response = await authenticatedFetch(
+        `/api-gateway/applications/${appId}/sdk-setup${query}`,
+      );
+      if (!response.ok) throw new Error('Failed to load SDK readiness');
+      return response.json();
+    },
+    enabled: !!appId,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: 'always',
   });
 
   const { nodes, edges } = useMemo(() => {
@@ -112,14 +143,20 @@ function GraphContent() {
   if (isLoading) return <GraphSkeleton />;
   if (error) return <div className="text-red-400">Error: {(error as Error).message}</div>;
   if (nodes.length === 0) {
+    if (isSetupLoading) return <GraphSkeleton />;
+
+    const sdkConnected = setup?.readiness?.connected === true;
+
     return (
       <EmptyState
         variant="activation"
         illustration="telemetry"
-        eyebrow="Graph not observed"
-        title="Connect the SDK to map real behavior"
-        description="Tellann turns captured state transitions into a behavioral graph. Once telemetry arrives, nodes and paths will assemble here."
-        primaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
+        eyebrow={sdkConnected ? 'SDK connected' : setupError ? 'Connection status unavailable' : 'Graph not observed'}
+        title={sdkConnected ? 'Record a demonstration to map real behavior' : setupError ? 'We could not verify the SDK connection' : 'Connect the SDK to map real behavior'}
+        description={sdkConnected ? 'Tellann is receiving telemetry for this application. Return to Overview to start a demonstration, then navigate complete user journeys so graph nodes and paths can be assembled.' : setupError ? 'The graph is still empty, but the SDK readiness check failed. Open SDK setup to review the current connection status.' : 'Tellann turns captured state transitions into a behavioral graph. Once telemetry arrives, nodes and paths will assemble here.'}
+        primaryAction={sdkConnected
+          ? { label: 'Return to Overview', href: `/?appId=${encodeURIComponent(appId)}${environmentId ? `&envId=${encodeURIComponent(environmentId)}` : ''}` }
+          : { label: setupError ? 'Review SDK status' : 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
         secondaryAction={{ label: 'Declare expected behavior', href: `/declare?appId=${encodeURIComponent(appId)}` }}
       />
     );

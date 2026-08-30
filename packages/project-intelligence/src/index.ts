@@ -72,6 +72,25 @@ function git(root: string, args: string[]): string | null {
   }
 }
 
+function githubRemote(remote: string | null): { originHash: string; cloneUrl: string } | null {
+  if (!remote) return null;
+  const scpMatch = remote.match(/^git@github\.com:([^/\s]+)\/([^\s]+?)(?:\.git)?$/i);
+  if (scpMatch) {
+    const identity = `github.com/${scpMatch[1].toLowerCase()}/${scpMatch[2].toLowerCase()}`;
+    return { originHash: hash(identity), cloneUrl: `https://${identity}.git` };
+  }
+  try {
+    const parsed = new URL(remote);
+    if (parsed.hostname.toLowerCase() !== 'github.com') return null;
+    const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
+    if (parts.length !== 2 || parts.some((part) => !part)) return null;
+    const identity = `github.com/${parts[0].toLowerCase()}/${parts[1].toLowerCase()}`;
+    return { originHash: hash(identity), cloneUrl: `https://${identity}.git` };
+  } catch {
+    return null;
+  }
+}
+
 export function scanWorkspace(root: string, options: ScanOptions): RepositorySnapshotSummary {
   const resolvedRoot = fs.realpathSync.native(root);
   const files: string[] = [];
@@ -181,13 +200,20 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   const revision = git(resolvedRoot, ['rev-parse', 'HEAD']);
   const branch = git(resolvedRoot, ['branch', '--show-current']);
   const status = git(resolvedRoot, ['status', '--porcelain']);
+  const remote = githubRemote(git(resolvedRoot, ['remote', 'get-url', 'origin']));
+  const portableManifestIdentity = Object.entries(manifestHashes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, digest]) => `${name}:${digest}`)
+    .join('\0');
 
   return {
     workspaceId: options.workspaceId,
     revision,
     branch,
     dirty: Boolean(status),
-    repositoryFingerprint: hash(`${resolvedRoot}\0${revision ?? ''}\0${Object.values(manifestHashes).join(':')}`),
+    repositoryFingerprint: hash(`${revision ?? ''}\0${portableManifestIdentity}`),
+    repositoryOriginHash: remote?.originHash ?? null,
+    repositoryCloneUrl: remote?.cloneUrl ?? null,
     languages: [...languages].sort(),
     packageManager,
     launchCommands,

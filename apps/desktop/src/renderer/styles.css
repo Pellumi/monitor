@@ -1836,6 +1836,7 @@ button:disabled {
 }
 .stack {
   display: grid;
+  min-width: 0;
   gap: 10px;
 }
 .check-row {
@@ -3221,6 +3222,13 @@ button:disabled {
   display: flex;
   gap: 6px;
 }
+.manual-truncated-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .manual-state-actions .icon-button {
   display: grid;
   place-content: center;
@@ -3500,7 +3508,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem 150px 0.85rem 1rem;
   border-bottom: 1px solid #27272a;
 }
 .flow-diagram-modal-header h2 {
@@ -3511,6 +3519,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  -webkit-app-region: no-drag;
 }
 .flow-diagram-modal-close {
   margin-left: 0.45rem;
@@ -3549,6 +3558,11 @@ button:disabled {
 }
 .published-flow-diagram {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.published-flow-diagram-card {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -3693,10 +3707,31 @@ button:disabled {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   max-width: 60%;
   text-align: right;
   line-height: 1.4;
+}
+.manual-transition-action-group {
+  display: flex;
+  min-width: 0;
+  max-width: 60%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.manual-transition-action-group .manual-transition-action {
+  max-width: 100%;
+}
+.manual-transition-action-group .icon-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-content: center;
+  padding: 0;
 }
 @media (max-width: 960px) {
   .manual-transition-item,
@@ -3708,6 +3743,11 @@ button:disabled {
   .manual-transition-list small {
     max-width: 100%;
     text-align: left;
+  }
+  .manual-transition-action-group {
+    width: 100%;
+    max-width: 100%;
+    justify-content: space-between;
   }
 }
 .muted-callout {

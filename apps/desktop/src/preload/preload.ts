@@ -59,10 +59,12 @@ const IPC = {
   deleteIntentDraft: 'tellann:intent:draft:delete',
   correctIntentDraft: 'tellann:intent:draft:correct',
   openExternal: 'tellann:system:open-external',
+  openPath: 'tellann:system:open-path',
   openProfile: 'tellann:system:open-profile',
   chooseWorkspace: 'tellann:workspace:choose',
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
+  cloneWorkspace: 'tellann:workspace:clone',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
@@ -100,6 +102,8 @@ contextBridge.exposeInMainWorld('tellann', {
     chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
     scanWorkspace: (input: { path: string; workspaceId: string; applicationId: string }) =>
       ipcRenderer.invoke(IPC.scanWorkspace, input),
+    cloneWorkspace: (input: { applicationId: string; cloneUrl: string }) =>
+      ipcRenderer.invoke(IPC.cloneWorkspace, input),
     onAppUpdated: (callback: (event: any) => void) => {
       const subscription = (_: unknown, data: any) => callback(data);
       ipcRenderer.on(IPC.appUpdated, subscription);
@@ -179,6 +183,7 @@ contextBridge.exposeInMainWorld('tellann', {
     getVersion: () => ipcRenderer.invoke(IPC.getVersion),
     copyText: (value: string) => ipcRenderer.invoke(IPC.copyText, value),
     openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
+    openPath: (path: string) => ipcRenderer.invoke(IPC.openPath, path),
     openProfile: () => ipcRenderer.invoke(IPC.openProfile),
   },
 });

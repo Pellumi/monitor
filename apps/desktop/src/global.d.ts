@@ -47,6 +47,12 @@ declare global {
         } | null>;
         chooseWorkspace(): Promise<{ path: string; name: string } | null>;
         scanWorkspace(input: { path: string; workspaceId: string; applicationId: string }): Promise<RepositorySnapshotSummary>;
+        cloneWorkspace(input: { applicationId: string; cloneUrl: string }): Promise<{
+          id: string;
+          path: string;
+          name: string;
+          snapshot: RepositorySnapshotSummary;
+        } | null>;
         onAppUpdated(callback: (event: { action: string; applicationId: string; name?: string; summary?: string }) => void): () => void;
       };
       intent: {
@@ -124,6 +130,7 @@ declare global {
         getVersion(): Promise<string>;
         copyText(value: string): Promise<{ copied: true }>;
         openExternal(url: string): Promise<void>;
+        openPath(path: string): Promise<string>;
         openProfile(): Promise<void>;
       };
     };

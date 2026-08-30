@@ -56,6 +56,7 @@ type DesktopContextValue = {
   signOut(): Promise<void>;
   refreshApplications(): Promise<DesktopApplication[]>;
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
+  cloneWorkspace(applicationId: string, cloneUrl: string): Promise<LocalWorkspace | null>;
   refreshRuns(applicationId: string): Promise<QARunSummary[]>;
   getRun(runId: string): Promise<Record<string, unknown>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
@@ -314,6 +315,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return workspace;
   }), [perform]);
 
+  const cloneWorkspace = useCallback(async (applicationId: string, cloneUrl: string) => perform(async () => {
+    const workspace = await bridge().projects.cloneWorkspace({ applicationId, cloneUrl });
+    if (!workspace) return null;
+    setWorkspaces((current) => ({ ...current, [applicationId]: workspace }));
+    return workspace;
+  }), [perform]);
+
   const refreshRuns = useCallback(async (applicationId: string) => {
     const result = await bridge().runs.list(applicationId);
     setRuns((current) => ({ ...current, [applicationId]: result }));
@@ -356,6 +364,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     signOut,
     refreshApplications,
     attachWorkspace,
+    cloneWorkspace,
     refreshRuns,
     getRun: (runId) => bridge().runs.get(runId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
@@ -416,7 +425,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces,
+    pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;
