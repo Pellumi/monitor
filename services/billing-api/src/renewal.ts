@@ -349,6 +349,32 @@ async function enterGracePeriod(
   console.warn(`[Renewal] ${subscription.organizationId} entered grace until ${graceEndsAt.toISOString()}: ${reason}`);
 }
 
+/**
+ * How long a claimed subscription is hidden from other cycle runs. Long enough
+ * for a processor call to finish, short enough that a crashed run retries soon.
+ */
+const CLAIM_LEASE_MINUTES = positiveInt(process.env.BILLING_CLAIM_LEASE_MINUTES, 15);
+
+/**
+ * Takes exclusive ownership of a subscription for this cycle run.
+ *
+ * The scheduler is a plain interval per process unless Redis is configured, so
+ * two worker replicas would otherwise both find the same due subscription and
+ * both charge the card. The conditional update makes the claim atomic: it only
+ * matches while nextBillingAt still holds the value this run read, so exactly
+ * one run can win. The loser sees count 0 and skips.
+ */
+async function claimForBilling(prisma: PrismaClient, subscription: Subscription): Promise<boolean> {
+  const claimed = await prisma.subscription.updateMany({
+    where: { organizationId: subscription.organizationId, nextBillingAt: subscription.nextBillingAt },
+    data: {
+      nextBillingAt: new Date(Date.now() + CLAIM_LEASE_MINUTES * 60_000),
+      lastBillingAttemptAt: new Date(),
+    },
+  });
+  return claimed.count === 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cycle passes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -358,12 +384,14 @@ async function convertDueTrials(deps: BillingCycleDeps, result: BillingCycleResu
     where: {
       status: SubscriptionStatus.TRIAL,
       trialEndsAt: { lte: new Date() },
+      nextBillingAt: { lte: new Date() },
       cancelAtPeriodEnd: false,
     },
     include: { plan: true, pendingPlan: true },
     take: 50,
   });
   for (const subscription of due) {
+    if (!(await claimForBilling(deps.prisma, subscription))) continue;
     await billSubscription(deps, subscription, 'TRIAL_CONVERSION', result)
       .catch((err) => console.error(`[Renewal] Trial conversion failed for ${subscription.organizationId}`, err));
   }
@@ -425,6 +453,7 @@ async function chargeDueRenewals(deps: BillingCycleDeps, result: BillingCycleRes
   });
 
   for (const subscription of due) {
+    if (!(await claimForBilling(deps.prisma, subscription))) continue;
     // A cancellation scheduled for period end simply lapses to Free; never
     // charge a payer who already asked to stop.
     if (subscription.cancelAtPeriodEnd) {
@@ -443,6 +472,13 @@ async function expireGracePeriods(deps: BillingCycleDeps, result: BillingCycleRe
     take: 50,
   });
   for (const subscription of lapsed) {
+    // Claim on graceEndsAt for the same reason charges claim on nextBillingAt:
+    // two runs must not both send the "moved to Free" email.
+    const claimed = await deps.prisma.subscription.updateMany({
+      where: { organizationId: subscription.organizationId, graceEndsAt: subscription.graceEndsAt },
+      data: { graceEndsAt: new Date(Date.now() + CLAIM_LEASE_MINUTES * 60_000) },
+    });
+    if (claimed.count !== 1) continue;
     await lapseToFree(deps, subscription, result, 'Grace period elapsed without payment')
       .catch((err) => console.error(`[Renewal] Lapse failed for ${subscription.organizationId}`, err));
   }

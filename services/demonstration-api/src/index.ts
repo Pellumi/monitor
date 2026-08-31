@@ -297,7 +297,7 @@ app.get('/demonstrations/:id/results', async (req: Request, res: Response) => {
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
-const PORT = Services.DEMONSTRATION_API || 3005;
+const PORT = Number(process.env.PORT || Services.DEMONSTRATION_API);
 
 app.listen(PORT, () => {
   console.log(`Demonstration API running on port ${PORT}`);

@@ -2579,7 +2579,9 @@ app.post('/billing/subscriptions/retry', verifyJwt, requireBillingManager, async
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
-const PORT = Services.BILLING_API;
+// Platforms that assign a port (Railway, Fly, Heroku) inject PORT and route
+// only to that port. The constant is the local-development default.
+const PORT = Number(process.env.PORT || Services.BILLING_API);
 app.listen(PORT, () => {
   console.log(`[BillingAPI] Running on port ${PORT}`);
 });

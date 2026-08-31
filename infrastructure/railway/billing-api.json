@@ -1,0 +1,15 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @tellann/billing-api... build"
+  },
+  "deploy": {
+    "startCommand": "pnpm --filter @tellann/billing-api start",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "preDeployCommand": "pnpm --filter @tellann/db exec prisma migrate deploy",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 60
+  }
+}

@@ -254,7 +254,7 @@ async function start(): Promise<void> {
   }
 
   // Start HTTP server
-  const PORT = Services.ENDPOINT_ENGINE;
+  const PORT = Number(process.env.PORT || Services.ENDPOINT_ENGINE);
   app.listen(PORT, () => {
     console.log(`[EndpointEngine] HTTP API on port ${PORT}`);
   });

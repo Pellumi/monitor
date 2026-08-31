@@ -389,7 +389,7 @@ app.get('/usage/organization/:orgId', requireOrganizationMembership, async (req:
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 
-const PORT = Services.USAGE_TRACKER || 3008;
+const PORT = Number(process.env.PORT || Services.USAGE_TRACKER);
 app.listen(PORT, () => {
   console.log(`[UsageTracker] Running on port ${PORT}`);
 });
