@@ -3,7 +3,7 @@ initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
 import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
-import { Feature, Services } from '@tellann/shared';
+import { Feature, Services, isReportFormatEntitled, reportFormatsForTier } from '@tellann/shared';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   NotificationEmailService,
@@ -496,6 +496,20 @@ app.get('/organizations/:id', verifyJwt, verifyOrgMembership, async (req: Authen
   }
 });
 
+/**
+ * Invitation expiry accepted by the settings API, applied again at the point of
+ * use so a value written before the bound existed cannot mint an invitation
+ * that never expires.
+ */
+const INVITATION_EXPIRY_MIN_DAYS = 1;
+const INVITATION_EXPIRY_MAX_DAYS = 30;
+const INVITATION_EXPIRY_DEFAULT_DAYS = 7;
+
+function clampInvitationExpiryDays(days: number | null | undefined): number {
+  if (!Number.isInteger(days)) return INVITATION_EXPIRY_DEFAULT_DAYS;
+  return Math.min(INVITATION_EXPIRY_MAX_DAYS, Math.max(INVITATION_EXPIRY_MIN_DAYS, days as number));
+}
+
 async function requireOrgManager(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const organizationId = req.params.orgId || req.params.id;
   const membership = await prisma.organizationMembership.findUnique({
@@ -508,83 +522,146 @@ async function requireOrgManager(req: AuthenticatedRequest, res: Response, next:
 }
 
 app.get('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
-  const organization = await prisma.organization.findUnique({
-    where: { id: req.params.orgId },
-    select: { id: true, name: true, slug: true, createdAt: true, createdByUserId: true },
-  });
-  if (!organization) return res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
-  const settings = await prisma.organizationSettings.upsert({
-    where: { organizationId: organization.id },
-    update: {},
-    create: { organizationId: organization.id },
-  });
-  res.json({ organization, settings });
+  try {
+    const organization = await prisma.organization.findUnique({
+      where: { id: req.params.orgId },
+      select: { id: true, name: true, slug: true, createdAt: true, createdByUserId: true },
+    });
+    if (!organization) return res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
+    const settings = await prisma.organizationSettings.upsert({
+      where: { organizationId: organization.id },
+      update: {},
+      create: { organizationId: organization.id },
+    });
+    const entitlement = await entitlementChecker.getEntitlement(organization.id);
+    // The dashboard renders its choices from this, so a control is never offered
+    // that the PUT below would reject.
+    res.json({
+      organization,
+      settings,
+      entitlements: {
+        planType: entitlement.planType,
+        allowedReportFormats: reportFormatsForTier(entitlement.features[Feature.REPORT_EXPORT]),
+        canInviteMembers: !!entitlement.features[Feature.TEAM_COLLABORATION],
+      },
+    });
+  } catch (err) {
+    console.error('[Onboarding] Get organisation settings error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.put('/organizations/:orgId/settings', verifyJwt, verifyOrgMembership, requireOrgManager, async (req: AuthenticatedRequest, res: Response) => {
-  const current = await prisma.organizationSettings.findUnique({ where: { organizationId: req.params.orgId } });
-  if (current && req.body.version !== current.version) {
-    return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Organisation settings changed. Reload and try again.', current });
-  }
-  if (req.body.name && typeof req.body.name === "string" && req.body.name.trim()) {
-    await prisma.organization.update({
-      where: { id: req.params.orgId },
-      data: { name: req.body.name.trim() },
+  try {
+    const current = await prisma.organizationSettings.findUnique({ where: { organizationId: req.params.orgId } });
+    if (current && req.body.version !== current.version) {
+      return res.status(409).json({ error: 'VERSION_CONFLICT', message: 'Organisation settings changed. Reload and try again.', current });
+    }
+    if (req.body.name && typeof req.body.name === "string" && req.body.name.trim()) {
+      await prisma.organization.update({
+        where: { id: req.params.orgId },
+        data: { name: req.body.name.trim() },
+      });
+    }
+    if (req.body.primaryTimezone !== undefined) {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: String(req.body.primaryTimezone) }).format();
+      } catch {
+        return res.status(400).json({ error: 'INVALID_TIMEZONE', message: 'primaryTimezone must be a valid IANA time zone.' });
+      }
+    }
+    if (req.body.defaultReportFormat !== undefined && !['JSON', 'PDF', 'CSV', 'HTML'].includes(String(req.body.defaultReportFormat))) {
+      return res.status(400).json({ error: 'INVALID_REPORT_FORMAT' });
+    }
+    if (req.body.defaultInvitationExpiryDays !== undefined
+      && (!Number.isInteger(req.body.defaultInvitationExpiryDays)
+        || req.body.defaultInvitationExpiryDays < INVITATION_EXPIRY_MIN_DAYS
+        || req.body.defaultInvitationExpiryDays > INVITATION_EXPIRY_MAX_DAYS)) {
+      return res.status(400).json({
+        error: 'INVALID_INVITATION_EXPIRY',
+        message: `Invitation expiry must be between ${INVITATION_EXPIRY_MIN_DAYS} and ${INVITATION_EXPIRY_MAX_DAYS} days.`,
+      });
+    }
+
+    // Plan gates apply to a *change*, not to an echo of the stored value: the
+    // dashboard PUTs the whole settings object back, and a downgrade can leave a
+    // value behind that the plan no longer covers. Rejecting the echo would make
+    // every other setting on the page unsaveable.
+    const entitlement = await entitlementChecker.getEntitlement(req.params.orgId);
+
+    const requestedFormat = req.body.defaultReportFormat === undefined
+      ? undefined
+      : String(req.body.defaultReportFormat).toUpperCase();
+    if (requestedFormat !== undefined && requestedFormat !== current?.defaultReportFormat) {
+      const tier = entitlement.features[Feature.REPORT_EXPORT];
+      if (!isReportFormatEntitled(requestedFormat, tier)) {
+        return res.status(403).json({
+          error: 'REPORT_FORMAT_NOT_ENTITLED',
+          feature: Feature.REPORT_EXPORT,
+          plan: entitlement.planType,
+          allowedFormats: reportFormatsForTier(tier),
+          upgradeUrl: '/settings/billing',
+          message: `The ${entitlement.planType} plan cannot generate ${requestedFormat} reports. Upgrade to change the default report format.`,
+        });
+      }
+    }
+
+    // Compared against the column default when no row exists yet, so a first
+    // write cannot slip a change past the gate.
+    const currentExpiryDays = current?.defaultInvitationExpiryDays ?? INVITATION_EXPIRY_DEFAULT_DAYS;
+    if (req.body.defaultInvitationExpiryDays !== undefined
+      && req.body.defaultInvitationExpiryDays !== currentExpiryDays
+      && !entitlement.features[Feature.TEAM_COLLABORATION]) {
+      return res.status(403).json({
+        error: 'TEAM_COLLABORATION_REQUIRED',
+        feature: Feature.TEAM_COLLABORATION,
+        plan: entitlement.planType,
+        upgradeUrl: '/settings/billing',
+        message: `The ${entitlement.planType} plan cannot invite members, so invitation expiry has no effect. Upgrade to change it.`,
+      });
+    }
+    const contactKeys = ['billingContactEmail', 'technicalContactEmail', 'securityContactEmail'] as const;
+    for (const key of contactKeys) {
+      const value = req.body[key];
+      if (value !== undefined && value !== null && value !== '' && (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) {
+        return res.status(400).json({ error: 'INVALID_CONTACT_EMAIL', field: key });
+      }
+    }
+    if (req.body.defaultApplicationId) {
+      const application = await prisma.application.findFirst({ where: { id: String(req.body.defaultApplicationId), organizationId: req.params.orgId } });
+      if (!application) return res.status(400).json({ error: 'INVALID_DEFAULT_APPLICATION' });
+    }
+    if (req.body.defaultEnvironmentId) {
+      const environment = await prisma.environment.findFirst({
+        where: { id: String(req.body.defaultEnvironmentId), application: { organizationId: req.params.orgId } },
+      });
+      if (!environment) return res.status(400).json({ error: 'INVALID_DEFAULT_ENVIRONMENT' });
+      if (req.body.defaultApplicationId && environment.applicationId !== req.body.defaultApplicationId) {
+        return res.status(400).json({ error: 'DEFAULT_ENVIRONMENT_APPLICATION_MISMATCH' });
+      }
+    }
+    const allowed = [
+      'primaryTimezone', 'defaultApplicationId', 'defaultEnvironmentId', 'defaultReportFormat',
+      'defaultGraphVisibility', 'defaultDemonstrationMode', 'defaultMemberRole',
+      'defaultInvitationExpiryDays', 'billingContactEmail',
+      'technicalContactEmail', 'securityContactEmail',
+    ];
+    // `defaultSeverityThreshold` is deliberately absent: it is deprecated and no
+    // longer writable. See the note on the column in schema.prisma.
+    const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => {
+      const value = req.body[key];
+      return [key, contactKeys.includes(key as typeof contactKeys[number]) && value === '' ? null : value];
+    }));
+    const settings = await prisma.organizationSettings.upsert({
+      where: { organizationId: req.params.orgId },
+      create: { organizationId: req.params.orgId, ...data },
+      update: { ...data, version: { increment: 1 } },
     });
+    res.json(settings);
+  } catch (err) {
+    console.error('[Onboarding] Update organisation settings error', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  if (req.body.primaryTimezone !== undefined) {
-    try {
-      new Intl.DateTimeFormat('en-US', { timeZone: String(req.body.primaryTimezone) }).format();
-    } catch {
-      return res.status(400).json({ error: 'INVALID_TIMEZONE', message: 'primaryTimezone must be a valid IANA time zone.' });
-    }
-  }
-  if (req.body.defaultReportFormat !== undefined && !['JSON', 'PDF', 'CSV', 'HTML'].includes(String(req.body.defaultReportFormat))) {
-    return res.status(400).json({ error: 'INVALID_REPORT_FORMAT' });
-  }
-  if (req.body.defaultSeverityThreshold !== undefined && !['INFO', 'WARNING', 'ERROR', 'CRITICAL'].includes(String(req.body.defaultSeverityThreshold))) {
-    return res.status(400).json({ error: 'INVALID_SEVERITY_THRESHOLD' });
-  }
-  if (req.body.defaultInvitationExpiryDays !== undefined
-    && (!Number.isInteger(req.body.defaultInvitationExpiryDays) || req.body.defaultInvitationExpiryDays < 1 || req.body.defaultInvitationExpiryDays > 30)) {
-    return res.status(400).json({ error: 'INVALID_INVITATION_EXPIRY', message: 'Invitation expiry must be between 1 and 30 days.' });
-  }
-  const contactKeys = ['billingContactEmail', 'technicalContactEmail', 'securityContactEmail'] as const;
-  for (const key of contactKeys) {
-    const value = req.body[key];
-    if (value !== undefined && value !== null && value !== '' && (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) {
-      return res.status(400).json({ error: 'INVALID_CONTACT_EMAIL', field: key });
-    }
-  }
-  if (req.body.defaultApplicationId) {
-    const application = await prisma.application.findFirst({ where: { id: String(req.body.defaultApplicationId), organizationId: req.params.orgId } });
-    if (!application) return res.status(400).json({ error: 'INVALID_DEFAULT_APPLICATION' });
-  }
-  if (req.body.defaultEnvironmentId) {
-    const environment = await prisma.environment.findFirst({
-      where: { id: String(req.body.defaultEnvironmentId), application: { organizationId: req.params.orgId } },
-    });
-    if (!environment) return res.status(400).json({ error: 'INVALID_DEFAULT_ENVIRONMENT' });
-    if (req.body.defaultApplicationId && environment.applicationId !== req.body.defaultApplicationId) {
-      return res.status(400).json({ error: 'DEFAULT_ENVIRONMENT_APPLICATION_MISMATCH' });
-    }
-  }
-  const allowed = [
-    'primaryTimezone', 'defaultApplicationId', 'defaultEnvironmentId', 'defaultReportFormat',
-    'defaultGraphVisibility', 'defaultDemonstrationMode', 'defaultMemberRole',
-    'defaultInvitationExpiryDays', 'defaultSeverityThreshold', 'billingContactEmail',
-    'technicalContactEmail', 'securityContactEmail',
-  ];
-  const data = Object.fromEntries(allowed.filter((key) => req.body[key] !== undefined).map((key) => {
-    const value = req.body[key];
-    return [key, contactKeys.includes(key as typeof contactKeys[number]) && value === '' ? null : value];
-  }));
-  const settings = await prisma.organizationSettings.upsert({
-    where: { organizationId: req.params.orgId },
-    create: { organizationId: req.params.orgId, ...data },
-    update: { ...data, version: { increment: 1 } },
-  });
-  res.json(settings);
 });
 
 app.get('/organizations/:orgId/security-settings', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
@@ -858,7 +935,15 @@ app.post('/organizations/:orgId/invitations', verifyJwt, verifyOrgMembership, as
     }
 
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Honour the organisation's configured invitation expiry. The column
+    // default is 7 days, so an organisation that has never opened the settings
+    // page keeps the previous behaviour.
+    const settings = await prisma.organizationSettings.findUnique({
+      where: { organizationId: orgId },
+      select: { defaultInvitationExpiryDays: true },
+    });
+    const expiryDays = clampInvitationExpiryDays(settings?.defaultInvitationExpiryDays);
+    const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000);
     const invitation = await prisma.organizationInvitation.create({
       data: {
         organizationId: orgId,

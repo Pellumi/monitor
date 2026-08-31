@@ -4,7 +4,13 @@ initTracing('report-engine');
 import express, { Request, Response } from 'express';
 import { PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
-import { Feature, FeatureTier, Services } from '@tellann/shared';
+import {
+  Feature,
+  Services,
+  isReportFormatEntitled,
+  reportFormatsForTier,
+  resolveDefaultReportFormat,
+} from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import PDFDocument from 'pdfkit';
@@ -75,6 +81,37 @@ async function ensureFeatureAccess(
   return { allowed: true, organizationId: application.organizationId };
 }
 
+/**
+ * The format an export should use when the request did not name one: the
+ * organisation's configured default, clamped to what its plan still entitles.
+ * An application outside an organisation keeps the historical JSON default.
+ */
+async function resolveRequestedFormat(
+  applicationId: string,
+  requested: string | undefined,
+): Promise<string> {
+  if (requested) return requested.toLowerCase();
+
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    select: { organizationId: true },
+  });
+  if (!application?.organizationId) return 'json';
+
+  const [settings, entitlement] = await Promise.all([
+    prisma.organizationSettings.findUnique({
+      where: { organizationId: application.organizationId },
+      select: { defaultReportFormat: true },
+    }),
+    entitlementChecker.getEntitlement(application.organizationId),
+  ]);
+
+  return resolveDefaultReportFormat(
+    settings?.defaultReportFormat,
+    entitlement.features[Feature.REPORT_EXPORT],
+  ).toLowerCase();
+}
+
 async function ensureExportAccess(
   applicationId: string,
   format: string,
@@ -86,19 +123,13 @@ async function ensureExportAccess(
 
   const entitlement = await entitlementChecker.getEntitlement(access.organizationId);
   const tier = entitlement.features[Feature.REPORT_EXPORT];
-  const normalized = format.toLowerCase();
-  const allowedFormats = tier === FeatureTier.ALL_FORMATS
-    ? ['json', 'pdf', 'csv', 'html']
-    : tier === FeatureTier.JSON_PDF
-      ? ['json', 'pdf']
-      : ['json'];
 
-  if (!allowedFormats.includes(normalized)) {
+  if (!isReportFormatEntitled(format, tier)) {
     res.status(403).json({
       error: 'EXPORT_FORMAT_NOT_ENTITLED',
       feature: Feature.REPORT_EXPORT,
       tier,
-      allowedFormats,
+      allowedFormats: reportFormatsForTier(tier).map((allowed) => allowed.toLowerCase()),
     });
     return false;
   }
@@ -659,10 +690,13 @@ app.get('/reports/:applicationId/endpoint-intelligence', async (req: Request, re
 // 7. Report Export (HTML/JSON/CSV/PDF)
 app.get('/reports/:applicationId/export', async (req: Request, res: Response) => {
   const { applicationId } = req.params;
-  const format = (req.query.format as string ?? 'json').toLowerCase();
   const environmentId = req.query.environmentId as string | undefined;
 
   try {
+    // An unqualified export uses the organisation's default report format, so
+    // "generate me a report" honours the workspace setting rather than always
+    // producing JSON.
+    const format = await resolveRequestedFormat(applicationId, req.query.format as string | undefined);
     if (!(await ensureExportAccess(applicationId, format, res))) return;
 
     // 1. Gather all data

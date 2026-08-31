@@ -2579,6 +2579,12 @@ model OrganizationSettings {
   defaultDemonstrationMode    String       @default("GUIDED")
   defaultMemberRole           MemberRole   @default(MEMBER)
   defaultInvitationExpiryDays Int          @default(7)
+  /// @deprecated Nothing reads this. Its vocabulary (INFO/WARNING/ERROR/CRITICAL)
+  /// never matched RuleSeverity (CRITICAL/HIGH/MEDIUM/LOW/INFO), so it could not
+  /// have filtered findings even if something had. Removed from the settings UI
+  /// and from the writable set on PUT /organizations/:orgId/settings; the column
+  /// is retained so existing rows are not destroyed and can be dropped in a
+  /// later migration once no deployment reads it.
   defaultSeverityThreshold    String       @default("WARNING")
   billingContactEmail         String?
   technicalContactEmail       String?

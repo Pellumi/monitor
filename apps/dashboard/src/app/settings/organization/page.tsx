@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSession } from "@/components/providers";
 import { PermissionNotice, SettingsPage, SettingsSection } from "@/components/settings/settings-page";
@@ -14,11 +15,20 @@ type Payload = {
     primaryTimezone: string;
     defaultReportFormat: string;
     defaultInvitationExpiryDays: number;
-    defaultSeverityThreshold: string;
     billingContactEmail?: string | null;
     technicalContactEmail?: string | null;
     securityContactEmail?: string | null;
     version: number;
+  };
+  /**
+   * What the organisation's plan allows. Served by the settings API from the
+   * same entitlement resolution the PUT validates against, so a control is
+   * never offered here that saving would reject.
+   */
+  entitlements: {
+    planType: string;
+    allowedReportFormats: string[];
+    canInviteMembers: boolean;
   };
 };
 
@@ -43,8 +53,8 @@ const TIMEZONE_OPTIONS = [
 ];
 
 const REPORT_FORMAT_OPTIONS = [
-  { value: "PDF", label: "PDF Document" },
   { value: "JSON", label: "Raw JSON Payload" },
+  { value: "PDF", label: "PDF Document" },
   { value: "CSV", label: "CSV Spreadsheet" },
   { value: "HTML", label: "Interactive HTML Web Page" },
 ];
@@ -57,13 +67,6 @@ const INVITATION_EXPIRY_OPTIONS = [
   { value: "30", label: "30 days" },
 ];
 
-const SEVERITY_THRESHOLD_OPTIONS = [
-  { value: "INFO", label: "INFO — All findings & notices" },
-  { value: "WARNING", label: "WARNING — Warnings & critical items" },
-  { value: "ERROR", label: "ERROR — Errors & critical items" },
-  { value: "CRITICAL", label: "CRITICAL — Critical issues only" },
-];
-
 export default function OrganizationPage() {
   const { selectedOrgId, memberships } = useSession();
   const [payload, setPayload] = useState<Payload | null>(null);
@@ -71,6 +74,16 @@ export default function OrganizationPage() {
   const [copiedId, setCopiedId] = useState(false);
   const role = memberships.find((membership) => membership.organization.id === selectedOrgId)?.role;
   const canManage = role === "OWNER" || role === "ADMIN";
+
+  // Plan gates come from the API rather than a local copy of the plan matrix,
+  // so the choices offered here and the ones the PUT accepts cannot drift.
+  const allowedReportFormats = payload?.entitlements.allowedReportFormats ?? [];
+  const canInviteMembers = payload?.entitlements.canInviteMembers ?? false;
+  const planName = payload?.entitlements.planType ?? "current";
+  const reportFormatOptions = REPORT_FORMAT_OPTIONS.filter((option) => allowedReportFormats.includes(option.value));
+  const lockedReportFormats = REPORT_FORMAT_OPTIONS
+    .filter((option) => !allowedReportFormats.includes(option.value))
+    .map((option) => option.value);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     if (!selectedOrgId) return;
@@ -180,35 +193,45 @@ export default function OrganizationPage() {
             </div>
           </SettingsSection>
 
-          <SettingsSection title="Workspace defaults">
-            <div className="grid gap-4 md:grid-cols-3">
+          <SettingsSection
+            title="Workspace defaults"
+            description="Applied whenever a report or an invitation is created without explicit options."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
               <SelectInput
                 label="Default report format"
                 value={payload.settings.defaultReportFormat}
                 disabled={!canManage}
                 onChange={(value) => field("defaultReportFormat", value)}
-                options={REPORT_FORMAT_OPTIONS}
+                options={reportFormatOptions}
+                description={
+                  lockedReportFormats.length
+                    ? `Every report is generated in this format unless another is chosen at export. ${lockedReportFormats.join(", ")} ${lockedReportFormats.length === 1 ? "is" : "are"} not available on the ${planName} plan.`
+                    : "Every report is generated in this format unless another is chosen at export."
+                }
+                upgradeHref={lockedReportFormats.length ? "/settings/billing" : undefined}
               />
 
               <SelectInput
                 label="Invitation expiry"
                 value={String(payload.settings.defaultInvitationExpiryDays)}
-                disabled={!canManage}
+                disabled={!canManage || !canInviteMembers}
                 onChange={(value) => field("defaultInvitationExpiryDays", Number(value))}
                 options={INVITATION_EXPIRY_OPTIONS}
-              />
-
-              <SelectInput
-                label="Severity threshold"
-                value={payload.settings.defaultSeverityThreshold}
-                disabled={!canManage}
-                onChange={(value) => field("defaultSeverityThreshold", value)}
-                options={SEVERITY_THRESHOLD_OPTIONS}
+                description={
+                  canInviteMembers
+                    ? "How long a team invitation stays valid after it is sent."
+                    : `The ${planName} plan does not include team invitations, so there is nothing to expire.`
+                }
+                upgradeHref={canInviteMembers ? undefined : "/settings/billing"}
               />
             </div>
           </SettingsSection>
 
-          <SettingsSection title="Contacts">
+          <SettingsSection
+            title="Contacts"
+            description="Set an address to send that category of mail to one mailbox instead of to every member. Leave it blank and those messages go to members' own email addresses. Sign-in codes, device alerts and invitations are addressed to a person and are always delivered to them directly."
+          >
             <div className="grid gap-4 md:grid-cols-3">
               <InputWithHelper
                 label="Billing Contact Email"
@@ -217,7 +240,7 @@ export default function OrganizationPage() {
                 value={payload.settings.billingContactEmail ?? ""}
                 disabled={!canManage}
                 onChange={(value) => field("billingContactEmail", value)}
-                description="Email address for invoices, billing receipts, and plan notices."
+                description="Receives invoices, receipts, payment failures, trial and plan notices, and usage warnings."
               />
 
               <InputWithHelper
@@ -227,7 +250,7 @@ export default function OrganizationPage() {
                 value={payload.settings.technicalContactEmail ?? ""}
                 disabled={!canManage}
                 onChange={(value) => field("technicalContactEmail", value)}
-                description="Email address for system telemetry alerts and API status updates."
+                description="Receives coverage drops, missing critical flows, slow endpoints, and failed run analysis."
               />
 
               <InputWithHelper
@@ -237,7 +260,7 @@ export default function OrganizationPage() {
                 value={payload.settings.securityContactEmail ?? ""}
                 disabled={!canManage}
                 onChange={(value) => field("securityContactEmail", value)}
-                description="Email address for vulnerability advisories and security compliance."
+                description="Receives organisation security advisories and privacy or data-handling notices."
               />
             </div>
           </SettingsSection>
@@ -311,12 +334,17 @@ function SelectInput({
   onChange,
   disabled,
   options,
+  description,
+  upgradeHref,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   options: Array<{ value: string; label: string }>;
+  description?: string;
+  /** Renders an upgrade link beside the description when the plan is the limit. */
+  upgradeHref?: string;
 }) {
   const selectedOption = options.find((opt) => opt.value === value);
 
@@ -337,6 +365,19 @@ function SelectInput({
           </SelectContent>
         </Select>
       </div>
+      {description ? (
+        <span className="mt-1.5 text-[11px] text-neutral-500 leading-normal">
+          {description}
+          {upgradeHref ? (
+            <>
+              {" "}
+              <Link href={upgradeHref} className="text-neutral-300 underline underline-offset-2 hover:text-white">
+                Compare plans
+              </Link>
+            </>
+          ) : null}
+        </span>
+      ) : null}
     </div>
   );
 }

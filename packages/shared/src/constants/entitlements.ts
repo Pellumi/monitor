@@ -96,3 +96,59 @@ export interface SupportEntitlements {
  * Resolved feature map used in the Entitlement.features JSON field.
  */
 export type FeatureEntitlements = Record<Feature, boolean | string>;
+
+// ─────────────────────────────────────────────────────────────
+// Report export formats
+// ─────────────────────────────────────────────────────────────
+
+/** Every export format the report engine can produce, in preference order. */
+export const REPORT_EXPORT_FORMATS = ['JSON', 'PDF', 'CSV', 'HTML'] as const;
+
+export type ReportExportFormat = (typeof REPORT_EXPORT_FORMATS)[number];
+
+/**
+ * The export formats a REPORT_EXPORT tier entitles an organisation to.
+ *
+ * The report engine (when serving a download), the settings API (when
+ * validating a default) and the dashboard (when rendering the choices) all
+ * resolve formats through this one function, so a plan change cannot leave the
+ * three disagreeing about what a customer may download.
+ *
+ * `tier` is the resolved `features[REPORT_EXPORT]` value, which is `false` when
+ * the plan has no export entitlement at all and a `FeatureTier` string
+ * otherwise. An unrecognised truthy tier degrades to JSON rather than opening
+ * up every format.
+ */
+export function reportFormatsForTier(tier: boolean | string | undefined): ReportExportFormat[] {
+  switch (tier) {
+    case FeatureTier.ALL_FORMATS:
+      return ['JSON', 'PDF', 'CSV', 'HTML'];
+    case FeatureTier.JSON_PDF:
+      return ['JSON', 'PDF'];
+    default:
+      return tier ? ['JSON'] : [];
+  }
+}
+
+/** True when `format` (in any casing) is one the tier entitles. */
+export function isReportFormatEntitled(format: string, tier: boolean | string | undefined): boolean {
+  const normalized = String(format).toUpperCase();
+  return reportFormatsForTier(tier).some((allowed) => allowed === normalized);
+}
+
+/**
+ * The format a report should be produced in when the caller did not name one.
+ *
+ * Falls back to the best entitled format when the organisation's configured
+ * default is no longer covered by its plan — a downgrade leaves stale values
+ * behind, and a report is more useful in JSON than not produced at all.
+ */
+export function resolveDefaultReportFormat(
+  configured: string | null | undefined,
+  tier: boolean | string | undefined,
+): ReportExportFormat {
+  const allowed = reportFormatsForTier(tier);
+  const normalized = String(configured ?? '').toUpperCase();
+  const match = allowed.find((format) => format === normalized);
+  return match ?? allowed[0] ?? 'JSON';
+}

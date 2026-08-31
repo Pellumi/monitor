@@ -152,14 +152,32 @@ async function main() {
   const application = await prisma.application.create({ data: { name: 'Settings app', organizationId: free.id } });
   const environment = await prisma.environment.create({ data: { name: 'Settings staging', type: 'STAGING', applicationId: application.id } });
   const settingsPayload = await request(`/organizations/${free.id}/settings`, freeToken);
+  assert(
+    Array.isArray(settingsPayload.entitlements?.allowedReportFormats)
+      && settingsPayload.entitlements.allowedReportFormats.join(',') === 'JSON',
+    `FREE settings did not advertise JSON as its only report format: ${JSON.stringify(settingsPayload.entitlements)}`,
+  );
+  assert(settingsPayload.entitlements.canInviteMembers === false, 'FREE settings advertised member invitations');
+
+  // A format the plan does not entitle is refused, so the settings page cannot
+  // promise a report the report engine would then decline to produce.
+  await request(`/organizations/${free.id}/settings`, freeToken, {
+    method: 'PUT',
+    body: JSON.stringify({ ...settingsPayload.settings, defaultReportFormat: 'PDF' }),
+  }, 403);
+  // Invitation expiry is meaningless without team collaboration, so changing it
+  // is refused on a single-user plan.
+  await request(`/organizations/${free.id}/settings`, freeToken, {
+    method: 'PUT',
+    body: JSON.stringify({ ...settingsPayload.settings, defaultInvitationExpiryDays: 14 }),
+  }, 403);
+
   const updatedSettings = await request(`/organizations/${free.id}/settings`, freeToken, {
     method: 'PUT',
     body: JSON.stringify({
       ...settingsPayload.settings,
       primaryTimezone: 'Africa/Lagos',
-      defaultReportFormat: 'PDF',
-      defaultSeverityThreshold: 'ERROR',
-      defaultInvitationExpiryDays: 14,
+      defaultReportFormat: 'JSON',
       technicalContactEmail: 'qa@example.com',
       defaultApplicationId: application.id,
       defaultEnvironmentId: environment.id,
@@ -194,10 +212,23 @@ async function main() {
   await request(`/organizations/${team.id}/invitations`, token(teamAdmin), {
     method: 'POST', body: JSON.stringify({ email: 'not-an-email', role: 'MEMBER' }),
   }, 400);
+  const teamSettings = await request(`/organizations/${team.id}/settings`, teamOwnerToken);
+  assert(
+    teamSettings.entitlements.canInviteMembers === true
+      && teamSettings.entitlements.allowedReportFormats.join(',') === 'JSON,PDF,CSV,HTML',
+    `TEAM settings did not advertise full entitlements: ${JSON.stringify(teamSettings.entitlements)}`,
+  );
+  await request(`/organizations/${team.id}/settings`, teamOwnerToken, {
+    method: 'PUT', body: JSON.stringify({ ...teamSettings.settings, defaultInvitationExpiryDays: 3 }),
+  });
+
   const invitationEmail = `team-invite-${crypto.randomUUID()}@example.com`;
   const invitation = await request(`/organizations/${team.id}/invitations`, token(teamAdmin), {
     method: 'POST', body: JSON.stringify({ email: invitationEmail, role: 'MEMBER' }),
   }, 201);
+  // The configured expiry must reach the invitation, not the old hardcoded week.
+  const expiryDays = Math.round((new Date(invitation.expiresAt).getTime() - Date.now()) / 86_400_000);
+  assert(expiryDays === 3, `Invitation expiry ignored the organisation setting: expected 3 days, got ${expiryDays}`);
   const pending = await request(`/organizations/${team.id}/invitations/pending`, teamOwnerToken);
   assert(pending.data.some((item: any) => item.id === invitation.id && item.email === invitationEmail), 'Pending invitation was not organization-scoped');
   await request(`/organizations/${team.id}/invitations/${invitation.id}`, token(teamAdmin), { method: 'DELETE' });

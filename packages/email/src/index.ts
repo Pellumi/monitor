@@ -10,6 +10,7 @@ import {
 import { builtinTemplates, BuiltinEmailTemplate, EmailTemplateKey, getBuiltinTemplate, SenderKey } from './templates';
 import {
   ALWAYS_ON_CATEGORIES as ALWAYS_ON,
+  contactFieldFor,
   isDigestFrequency,
   normalizeFrequency,
 } from './notification-categories';
@@ -18,11 +19,14 @@ export { builtinTemplates, EmailTemplateKey };
 export {
   ALWAYS_ON_CATEGORIES,
   BATCHABLE_CATEGORIES,
+  CATEGORY_CONTACT_FIELD,
   capabilityFor,
+  contactFieldFor,
   isDigestFrequency,
   listCapabilities,
   normalizeFrequency,
   type CategoryCapability,
+  type OrganizationContactField,
 } from './notification-categories';
 
 type TemplateVariables = Record<string, unknown>;
@@ -432,7 +436,15 @@ export class NotificationEmailService {
     organizationId: string;
     roles?: MemberRole[];
   }): Promise<SendTemplateEmailResult[]> {
-    const recipients = await this.getOrganizationRecipients(params.organizationId, params.roles);
+    const template = getBuiltinTemplate(params.templateKey);
+    if (!template) {
+      throw new Error(`Unknown email template: ${params.templateKey}`);
+    }
+    const recipients = await this.resolveOrganizationRecipients(
+      params.organizationId,
+      template.category,
+      params.roles,
+    );
     const uniqueRecipients = new Map(recipients.map((recipient) => [recipient.email.toLowerCase(), recipient]));
     const results: SendTemplateEmailResult[] = [];
     for (const recipient of uniqueRecipients.values()) {
@@ -446,6 +458,47 @@ export class NotificationEmailService {
       }));
     }
     return results;
+  }
+
+  /**
+   * Who an organisation-level message in `category` is addressed to.
+   *
+   * When the organisation nominated a contact address for the category — a
+   * billing mailbox, an on-call alias, a security inbox — that address receives
+   * the mail *instead of* every member, which is the point of setting one. With
+   * no contact configured the message fans out to the members as before.
+   *
+   * The address is matched back to a member where one exists so notification
+   * preferences, digest batching and delivery history stay attached to the right
+   * user; an external alias simply carries no user id, which `emailDisposition`
+   * already handles by falling back to the category default.
+   *
+   * `roles` still narrows the member fan-out, but is not applied to a configured
+   * contact: an organisation that named a billing mailbox meant that mailbox,
+   * whether or not it belongs to an owner.
+   */
+  async resolveOrganizationRecipients(
+    organizationId: string,
+    category: EmailCategory,
+    roles?: MemberRole[],
+  ): Promise<EmailRecipient[]> {
+    const field = contactFieldFor(category);
+    if (field) {
+      const settings = await this.prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { billingContactEmail: true, technicalContactEmail: true, securityContactEmail: true },
+      });
+      const contact = settings?.[field]?.trim();
+      if (contact) {
+        const member = await this.prisma.organizationMembership.findFirst({
+          where: { organizationId, user: { email: { equals: contact, mode: 'insensitive' } } },
+          select: { userId: true },
+        });
+        return [{ email: contact, userId: member?.userId ?? null }];
+      }
+    }
+
+    return this.getOrganizationRecipients(organizationId, roles);
   }
 
   async getOrganizationRecipients(organizationId: string, roles?: MemberRole[]): Promise<EmailRecipient[]> {

@@ -153,3 +153,32 @@ export function isDigestFrequency(frequency: NotificationFrequency): boolean {
     frequency === NotificationFrequency.WEEKLY_DIGEST
   );
 }
+
+/**
+ * The organisation contact address each category is delivered to, when one is
+ * configured on OrganizationSettings.
+ *
+ * A category listed here stops fanning out to every member and goes to the one
+ * mailbox the organisation nominated; a category absent from the map always
+ * goes to the members themselves. Only organisation-level mail is routable —
+ * an OTP, a new-device alert or an invitation is addressed to one person and is
+ * sent directly rather than through the organisation broadcast, so nothing in
+ * this map can redirect it away from them.
+ */
+export const CATEGORY_CONTACT_FIELD: Partial<Record<EmailCategory, OrganizationContactField>> = {
+  [EmailCategory.BILLING]: 'billingContactEmail',
+  [EmailCategory.ALERTS]: 'technicalContactEmail',
+  [EmailCategory.SECURITY]: 'securityContactEmail',
+  [EmailCategory.COMPLIANCE]: 'securityContactEmail',
+};
+
+/** The OrganizationSettings columns that hold a routable contact address. */
+export type OrganizationContactField =
+  | 'billingContactEmail'
+  | 'technicalContactEmail'
+  | 'securityContactEmail';
+
+/** The contact column a category routes to, or null when it fans out to members. */
+export function contactFieldFor(category: EmailCategory): OrganizationContactField | null {
+  return CATEGORY_CONTACT_FIELD[category] ?? null;
+}
