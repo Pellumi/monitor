@@ -96,3 +96,53 @@ export interface SupportEntitlements {
  * Resolved feature map used in the Entitlement.features JSON field.
  */
 export type FeatureEntitlements = Record<Feature, boolean | string>;
+
+// ─────────────────────────────────────────────────────────────
+// Report export formats — canonical REPORT_EXPORT tier mapping
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The export formats the report engine can emit.
+ */
+export type ReportFormat = 'json' | 'pdf' | 'csv' | 'html';
+
+/**
+ * Canonical order used whenever formats are listed or a default is picked.
+ * Cheapest/most universally entitled first.
+ */
+export const REPORT_FORMATS: readonly ReportFormat[] = ['json', 'pdf', 'csv', 'html'];
+
+/**
+ * Resolve the export formats permitted by a resolved `REPORT_EXPORT` entitlement value.
+ *
+ * The value comes from `Entitlement.features[Feature.REPORT_EXPORT]`, which is typed
+ * `boolean | string` — a FeatureTier for tiered plans, `true` for an enabled but
+ * untiered plan, and `false`/absent when the feature is not entitled at all.
+ *
+ * A non-entitled value yields `[]`: callers must offer no export at all rather than
+ * falling back to JSON, which the report engine would reject with a 403.
+ */
+export function reportFormatsForTier(
+  tier: boolean | string | null | undefined
+): ReportFormat[] {
+  if (!tier) return [];
+  switch (tier) {
+    case FeatureTier.ALL_FORMATS:
+      return ['json', 'pdf', 'csv', 'html'];
+    case FeatureTier.JSON_PDF:
+      return ['json', 'pdf'];
+    default:
+      // FeatureTier.JSON_ONLY, or `true` for an enabled-but-untiered plan.
+      return ['json'];
+  }
+}
+
+/**
+ * Whether a specific format (case-insensitive) is permitted by the given tier.
+ */
+export function isReportFormatEntitled(
+  tier: boolean | string | null | undefined,
+  format: string
+): boolean {
+  return reportFormatsForTier(tier).includes(format.toLowerCase() as ReportFormat);
+}

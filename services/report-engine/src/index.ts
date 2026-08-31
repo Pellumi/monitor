@@ -4,7 +4,7 @@ initTracing('report-engine');
 import express, { Request, Response } from 'express';
 import { PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
-import { Feature, FeatureTier, Services } from '@tellann/shared';
+import { Feature, Services, isReportFormatEntitled, reportFormatsForTier } from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import PDFDocument from 'pdfkit';
@@ -86,14 +86,9 @@ async function ensureExportAccess(
 
   const entitlement = await entitlementChecker.getEntitlement(access.organizationId);
   const tier = entitlement.features[Feature.REPORT_EXPORT];
-  const normalized = format.toLowerCase();
-  const allowedFormats = tier === FeatureTier.ALL_FORMATS
-    ? ['json', 'pdf', 'csv', 'html']
-    : tier === FeatureTier.JSON_PDF
-      ? ['json', 'pdf']
-      : ['json'];
+  const allowedFormats = reportFormatsForTier(tier);
 
-  if (!allowedFormats.includes(normalized)) {
+  if (!isReportFormatEntitled(tier, format)) {
     res.status(403).json({
       error: 'EXPORT_FORMAT_NOT_ENTITLED',
       feature: Feature.REPORT_EXPORT,

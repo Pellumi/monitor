@@ -1,4 +1,5 @@
 'use client';
+import { isReportFormatEntitled } from '@tellann/shared/entitlements';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Button } from '@/components/ui/button';
 
@@ -168,11 +169,6 @@ function ReportsContent() {
   });
 
   const exportTier = entitlement?.features?.REPORT_EXPORT;
-  const allowedFormats = exportTier === 'ALL_FORMATS'
-    ? ['pdf', 'html', 'csv', 'json']
-    : exportTier === 'JSON_PDF'
-      ? ['pdf', 'json']
-      : ['json'];
 
   if (!selectedOrgId) return <div className="text-[#8e9192] font-mono text-sm">No organization is selected.</div>;
   if (isApplicationsLoading) return <ReportsSkeleton />;
@@ -265,7 +261,7 @@ function ReportsContent() {
             { label: 'HTML', format: 'html' },
             { label: 'CSV', format: 'csv' },
             { label: 'JSON', format: 'json' },
-          ].filter((btn) => allowedFormats.includes(btn.format)).map((btn) => (
+          ].filter((btn) => isReportFormatEntitled(exportTier, btn.format)).map((btn) => (
             <Button
               key={btn.format}
               id={`export-${btn.format}-btn`}
