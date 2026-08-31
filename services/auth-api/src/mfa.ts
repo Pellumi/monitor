@@ -15,6 +15,7 @@ import crypto from 'crypto';
 import { PrismaClient } from '@tellann/db';
 import * as OTPAuth from 'otpauth';
 import * as bcrypt from 'bcryptjs';
+import QRCode from 'qrcode';
 
 const prisma = new PrismaClient();
 
@@ -87,52 +88,130 @@ export async function generateBackupCodes(): Promise<{ plain: string[]; hashed: 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Step 1: Generate a new TOTP setup URI and QR-code-ready otpauth string.
- * Does NOT save to DB yet — user must verify before we persist.
+ * Step 1: Generate a TOTP secret, persist it as *pending*, and return everything
+ * the enrolment screen needs.
+ *
+ * The secret is stored encrypted with `totpEnabled` still false, so step 2 can
+ * verify against a server-held value. Accepting the secret back from the client
+ * would let a caller bind an authenticator of their choosing.
+ *
+ * The QR code is rendered here rather than by a third-party chart service: the
+ * otpauth URI contains the shared secret and must not leave our infrastructure.
  */
-export function generateTOTPSetup(email: string): {
-  secret: string;   // base32 secret (shown to user for manual entry)
-  uri:    string;   // otpauth:// URI for QR code
-} {
+export async function generateTOTPSetup(userId: string, email: string): Promise<{
+  secret: string;      // base32 secret, for manual entry
+  uri: string;         // otpauth:// URI
+  qrDataUrl: string;   // data: URL holding the QR image
+}> {
   const secret = new OTPAuth.Secret({ size: 20 }).base32;
   const totp = createTOTP(secret, email);
+  const uri = totp.toString();
 
-  return {
-    secret,
-    uri: totp.toString(),
-  };
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      totpSecret: encryptSecret(secret),
+      totpEnabled: false,
+      totpEnabledAt: null,
+    },
+  });
+
+  const qrDataUrl = await QRCode.toDataURL(uri, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 240,
+  });
+
+  return { secret, uri, qrDataUrl };
 }
 
 /**
- * Step 2: Verify the user's TOTP code against the un-persisted secret,
- * then enable TOTP for the user.
+ * Step 2: Verify a code against the pending secret stored by `generateTOTPSetup`,
+ * then activate TOTP and issue backup codes.
  */
 export async function enableTOTP(
   userId: string,
   email: string,
-  plaintextSecret: string,
   token: string,
 ): Promise<{ backupCodes: string[] }> {
-  const totp = createTOTP(plaintextSecret, email);
-  const delta = totp.validate({ token, window: 1 });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { totpSecret: true, totpEnabled: true },
+  });
+  if (!user?.totpSecret) {
+    throw Object.assign(new Error('Start MFA setup first'), { code: 'MFA_SETUP_NOT_STARTED' });
+  }
+  if (user.totpEnabled) {
+    throw Object.assign(new Error('TOTP already enabled'), { code: 'MFA_ALREADY_ENABLED' });
+  }
 
-  if (delta === null) {
+  const totp = createTOTP(decryptSecret(user.totpSecret), email);
+  if (totp.validate({ token, window: 1 }) === null) {
     throw Object.assign(new Error('Invalid TOTP token'), { code: 'MFA_INVALID_TOKEN' });
   }
 
-  const encryptedSecret = encryptSecret(plaintextSecret);
   const { plain, hashed } = await generateBackupCodes();
 
   await prisma.user.update({
     where: { id: userId },
     data: {
-      totpEnabled:     true,
-      totpSecret:      encryptedSecret,
-      totpEnabledAt:   new Date(),
+      totpEnabled: true,
+      totpEnabledAt: new Date(),
       totpBackupCodes: hashed,
+      mfaMethod: 'TOTP',
     },
   });
 
+  return { backupCodes: plain };
+}
+
+/** Abandons a started-but-unconfirmed enrolment. */
+export async function cancelPendingTOTP(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { totpSecret: null, totpEnabled: false, totpEnabledAt: null },
+  });
+}
+
+/** Validates a TOTP code against the user's active secret. */
+export async function verifyTOTPForUser(userId: string, email: string, token: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { totpSecret: true, totpEnabled: true },
+  });
+  if (!user?.totpEnabled || !user.totpSecret) return false;
+  const totp = createTOTP(decryptSecret(user.totpSecret), email);
+  return totp.validate({ token, window: 1 }) !== null;
+}
+
+/** Turns off every second factor, whichever method was active. */
+export async function clearMfa(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      totpEnabled: false,
+      totpSecret: null,
+      totpEnabledAt: null,
+      totpBackupCodes: [],
+      mfaMethod: 'NONE',
+    },
+  });
+}
+
+/** Activates email-OTP as the second factor. The code is verified by the caller. */
+export async function enableEmailOtpMfa(userId: string): Promise<{ backupCodes: string[] }> {
+  const { plain, hashed } = await generateBackupCodes();
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      mfaMethod: 'EMAIL_OTP',
+      totpBackupCodes: hashed,
+      // A stale enrolment secret must not linger once another method is chosen.
+      totpEnabled: false,
+      totpSecret: null,
+      totpEnabledAt: null,
+    },
+  });
   return { backupCodes: plain };
 }
 

@@ -19,6 +19,7 @@ import {
   getOIDCProviderForOrg,
   updateOIDCProvider,
 } from './oidc';
+import { createMfaRouter, MFA_CHALLENGE_COOKIE } from './mfa-routes';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -154,6 +155,19 @@ const COOKIE_OPTS = {
   path: '/',
   ...(cookieDomain ? { domain: cookieDomain } : {}),
 };
+
+/**
+ * The single shape returned when someone tries to use an account that is
+ * scheduled for deletion. The date lets the sign-in screen say exactly how long
+ * restoration remains possible instead of a vague "contact support".
+ */
+function accountDeletionPending(res: Response, user: { deletionScheduledFor?: Date | null }) {
+  return res.status(403).json({
+    error: 'ACCOUNT_DELETION_PENDING',
+    message: 'This account is scheduled for deletion. Contact support to request restoration during the retention window.',
+    deletionScheduledFor: user.deletionScheduledFor ?? null,
+  });
+}
 
 async function issueAuthSession(req: Request, res: Response, user: any, isNewUser = false) {
   const userAgent = req.headers['user-agent'] || null;
@@ -305,6 +319,32 @@ async function verifyAuth(req: AuthenticatedRequest, res: Response, next: NextFu
 app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', service: 'auth-api' });
 });
+
+/**
+ * MFA routes. Mounted here — after `verifyAuth` and `verifyLimiter` exist — so
+ * the router can reuse the same session guard, rate limiter and session issuer
+ * as the rest of auth-api rather than duplicating them.
+ */
+const mfaRouter = createMfaRouter({
+  prisma,
+  emailService,
+  verifyAuth: verifyAuth as any,
+  issueAuthSession,
+  cookieOptions: (maxAgeMs: number) => ({ ...COOKIE_OPTS, maxAge: maxAgeMs }),
+  sha256,
+  writeAuditLog,
+});
+app.use(mfaRouter);
+
+/**
+ * Starts the second-factor step when the account has one, instead of issuing a
+ * session. Returns null when no second factor is configured, so callers fall
+ * through to their normal success path.
+ */
+async function mfaGateOrNull(req: Request, res: Response, user: any) {
+  if (!user || user.mfaMethod === 'NONE' || !user.mfaMethod) return null;
+  return mfaRouter.beginChallenge(req, res, user);
+}
 
 app.post('/auth/desktop/authorize', async (req: Request, res: Response) => {
   const { codeChallenge, deviceIdentifier, deviceName, platform, appVersion, scopes } = req.body ?? {};
@@ -540,7 +580,7 @@ app.post('/auth/identify', async (req: Request, res: Response) => {
 
   try {
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-    if (user?.deletedAt) return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
+    if (user?.deletedAt) return accountDeletionPending(res, user);
     res.json({
       exists: !!user,
       preferredAuthMode: user?.preferredAuthMode || 'OTP',
@@ -562,8 +602,37 @@ app.post('/auth/send-otp', otpEmailLimiter, otpIpLimiter, async (req: Request, r
     return res.status(400).json({ error: 'INVALID_PURPOSE', message: 'Invalid OTP purpose' });
   }
 
+  // This endpoint is unauthenticated, so it may only mint codes for the
+  // first-factor flows that must work before anyone is signed in. Second
+  // factors and re-authentication are issued by their own guarded routes;
+  // accepting them here would let anyone post codes to any address.
+  const UNAUTHENTICATED_PURPOSES: OtpPurpose[] = [OtpPurpose.SIGNUP, OtpPurpose.LOGIN, OtpPurpose.INVITE];
+  if (purpose === OtpPurpose.MFA) {
+    return res.status(400).json({
+      error: 'INVALID_PURPOSE',
+      message: 'Second-factor codes are issued during sign-in only',
+    });
+  }
+
+  let sessionEmail: string | null = null;
+  if (!UNAUTHENTICATED_PURPOSES.includes(purpose as OtpPurpose)) {
+    // Re-authentication codes (account deletion) require an existing session,
+    // and always go to that session's own address rather than whatever the
+    // request body asked for.
+    const bearer = req.cookies?.access_token || req.headers.authorization?.replace('Bearer ', '');
+    if (!bearer) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Sign in to request this code' });
+    }
+    try {
+      const decoded = jwt.verify(bearer, JWT_SECRET) as { sub: string; email: string };
+      sessionEmail = decoded.email.toLowerCase().trim();
+    } catch {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Session is invalid or expired' });
+    }
+  }
+
   try {
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = sessionEmail ?? email.toLowerCase().trim();
     // Generate 6-digit OTP
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const codeHash = sha256(code);
@@ -650,7 +719,7 @@ app.post('/auth/verify-otp', verifyLimiter, async (req: Request, res: Response) 
     let isNewUser = false;
 
     if (user?.deletedAt) {
-      return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
+      return accountDeletionPending(res, user);
     }
 
     if (!user) {
@@ -726,6 +795,13 @@ app.post('/auth/verify-otp', verifyLimiter, async (req: Request, res: Response) 
       }
     }
 
+    // A brand-new account cannot have a second factor yet; an existing one is
+    // stopped here until it clears the challenge.
+    if (!isNewUser) {
+      const gate = await mfaGateOrNull(req, res, user);
+      if (gate) return res.json(gate);
+    }
+
     res.json({ user: await issueAuthSession(req, res, user, isNewUser) });
   } catch (err) {
     console.error('[Verify OTP] Error', err);
@@ -749,11 +825,14 @@ app.post('/auth/login-password', verifyLimiter, async (req: Request, res: Respon
     });
 
     const isValid = user ? await verifyPassword(password, user.passwordHash) : false;
-    if (user?.deletedAt) return res.status(403).json({ error: 'ACCOUNT_DELETION_PENDING', message: 'Contact support to request restoration during the retention window.' });
+    if (user?.deletedAt) return accountDeletionPending(res, user);
     if (!user || !isValid) {
       await writeAuditLog(user?.id || null, user?.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_FAILED, req, { email: cleanEmail, method: 'PASSWORD' });
       return res.status(400).json({ error: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
     }
+
+    const gate = await mfaGateOrNull(req, res, user);
+    if (gate) return res.json(gate);
 
     res.json({ user: await issueAuthSession(req, res, user, false) });
   } catch (err) {
@@ -831,6 +910,8 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
 
 // Logout
 app.post('/auth/logout', async (req: Request, res: Response) => {
+  // An abandoned challenge must not survive to the next sign-in attempt.
+  res.clearCookie(MFA_CHALLENGE_COOKIE, COOKIE_OPTS);
   const refreshCookie = req.cookies['refresh_token'];
   if (refreshCookie) {
     const hash = sha256(refreshCookie);

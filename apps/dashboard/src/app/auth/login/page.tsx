@@ -5,10 +5,37 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 
 // ─── Error humaniser ────────────────────────────────────────────────────────
-type ErrorKind = 'network' | 'auth' | 'generic';
+type ErrorKind = 'network' | 'auth' | 'deleted' | 'generic';
 
-function humanizeError(raw: string): { title: string; detail: string; kind: ErrorKind } {
+/** Where users are told to write when an account is pending deletion. */
+const SUPPORT_EMAIL = 'support@tellann.co';
+
+function formatDeletionDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function humanizeError(
+  raw: string,
+  code?: string | null,
+  scheduledFor?: string | null,
+): { title: string; detail: string; kind: ErrorKind } {
   const msg = raw.toLowerCase();
+
+  // Checked before the text heuristics below: this one is identified by its
+  // code, and its wording must not be mistaken for a credentials problem.
+  if (code === 'ACCOUNT_DELETION_PENDING') {
+    const on = formatDeletionDate(scheduledFor ?? null);
+    return {
+      title: 'This account is scheduled for deletion',
+      detail: on
+        ? `Sign-in is blocked while deletion is pending. Your data is kept until ${on}, and only support can restore the account before then.`
+        : 'Sign-in is blocked while deletion is pending. Your data is kept for 30 days from the request, and only support can restore the account before then.',
+      kind: 'deleted',
+    };
+  }
 
   // Browser network errors when the server is completely unreachable
   if (
@@ -75,7 +102,12 @@ export default function LoginPage() {
   const desktopRequest = searchParams.get('desktopRequest');
   const inviteToken = searchParams.get('invite');
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  // 4 is the second-factor challenge, reached only when the account has MFA on.
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [mfaMethod, setMfaMethod] = useState<'TOTP' | 'EMAIL_OTP' | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [mfaResent, setMfaResent] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -83,6 +115,11 @@ export default function LoginPage() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Carried alongside the message so the banner can react to *which* error
+  // this is rather than pattern-matching its wording.
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [deletionScheduledFor, setDeletionScheduledFor] = useState<string | null>(null);
+  const justScheduledDeletion = searchParams.get('account_deleted') === '1';
 
   // Timers
   const [resendTimer, setResendTimer] = useState(0);
@@ -192,6 +229,33 @@ export default function LoginPage() {
     setExpiryTimer(600);
   };
 
+  /** Clears any banner, including the code that drove its presentation. */
+  const clearError = () => {
+    setError(null);
+    setErrorCode(null);
+    setDeletionScheduledFor(null);
+  };
+
+  /**
+   * Surfaces what the API actually said. Previously every failed response was
+   * flattened into one generic message, which hid cases like a pending account
+   * deletion behind "Please try again".
+   */
+  const failFrom = async (res: Response, fallback: string): Promise<never> => {
+    const body = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(body.message || body.error || fallback), {
+      code: typeof body.error === 'string' ? body.error : undefined,
+      scheduledFor: typeof body.deletionScheduledFor === 'string' ? body.deletionScheduledFor : undefined,
+    });
+  };
+
+  const applyError = (err: unknown, fallback: string) => {
+    const detail = err as { message?: string; code?: string; scheduledFor?: string };
+    setError(detail?.message || fallback);
+    setErrorCode(detail?.code ?? null);
+    setDeletionScheduledFor(detail?.scheduledFor ?? null);
+  };
+
   const handleIdentify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
@@ -210,7 +274,7 @@ export default function LoginPage() {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to resolve email. Please try again.');
+        await failFrom(res, 'Failed to resolve email. Please try again.');
       }
 
       const { exists, preferredAuthMode, hasPassword } = await res.json();
@@ -225,8 +289,8 @@ export default function LoginPage() {
       }
 
       await sendOtp(cleanEmail, resolvedPurpose);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      applyError(err, 'Failed to resolve email. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -263,14 +327,24 @@ export default function LoginPage() {
         }),
       });
 
-      const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.message || 'Password login failed. Try again.');
+        await failFrom(res, 'Password login failed. Try again.');
+      }
+      const data = await res.json();
+
+      // The password was right, but the account has a second factor. No session
+      // exists yet — the challenge decides.
+      if (data.mfaRequired) {
+        setMfaMethod(data.method);
+        setMfaCode('');
+        setUseBackupCode(false);
+        setStep(4);
+        return;
       }
 
       await finishAuthentication(false);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      applyError(err, 'Password login failed. Try again.');
     } finally {
       setIsLoading(false);
     }
@@ -347,14 +421,72 @@ export default function LoginPage() {
         }),
       });
 
-      const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.message || 'Verification failed. Try again.');
+        await failFrom(res, 'Verification failed. Try again.');
+      }
+      const data = await res.json();
+
+      if (data.mfaRequired) {
+        setMfaMethod(data.method);
+        setMfaCode('');
+        setUseBackupCode(false);
+        setStep(4);
+        return;
       }
 
-      await finishAuthentication(Boolean(data.user.isNew));
-    } catch (err: any) {
-      setError(err.message);
+      await finishAuthentication(Boolean(data.user?.isNew));
+    } catch (err) {
+      applyError(err, 'Verification failed. Try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMfaVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaCode || isLoading) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api-gateway/auth/mfa/challenge/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // The challenge cookie is httpOnly, so it must ride along automatically.
+        credentials: 'same-origin',
+        body: JSON.stringify({ code: mfaCode.trim(), useBackupCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || data.message || 'That code was not accepted.');
+      }
+      await finishAuthentication(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That code was not accepted.');
+      setMfaCode('');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMfaResend = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api-gateway/auth/mfa/challenge/resend', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not send a new code.');
+      }
+      setMfaResent(true);
+      window.setTimeout(() => setMfaResent(false), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send a new code.');
     } finally {
       setIsLoading(false);
     }
@@ -367,7 +499,7 @@ export default function LoginPage() {
   };
 
   // Resolve friendly error info
-  const errorInfo = error ? humanizeError(error) : null;
+  const errorInfo = error ? humanizeError(error, errorCode, deletionScheduledFor) : null;
 
   return (
     <div className="w-full max-w-md p-6 md:p-8 bg-[#131313] border border-[#262626] rounded-md shadow-2xl animate-fade-in text-[#e2e2e2]">
@@ -377,7 +509,13 @@ export default function LoginPage() {
           TELLANN
         </h1>
         <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-          {step === 1 ? 'AUTH // IDENTIFY' : step === 2 ? 'AUTH // VERIFICATION' : 'AUTH // PASSWORD'}
+          {step === 1
+            ? 'AUTH // IDENTIFY'
+            : step === 2
+              ? 'AUTH // VERIFICATION'
+              : step === 4
+                ? 'AUTH // TWO-FACTOR'
+                : 'AUTH // PASSWORD'}
         </span>
       </div>
 
@@ -394,7 +532,13 @@ export default function LoginPage() {
       {/* Title & Description */}
       <div className="mb-6">
         <h2 className="text-2xl font-semibold text-white tracking-tight">
-          {step === 1 ? (inviteToken ? 'Accept your invitation' : 'Sign in to Tellann') : step === 2 ? 'Verify your identity' : 'Enter your password'}
+          {step === 1
+            ? (inviteToken ? 'Accept your invitation' : 'Sign in to Tellann')
+            : step === 2
+              ? 'Verify your identity'
+              : step === 4
+                ? 'Two-factor authentication'
+                : 'Enter your password'}
         </h2>
         <p className="text-sm text-[#c4c7c8] mt-1.5 leading-relaxed">
           {step === 1
@@ -405,6 +549,25 @@ export default function LoginPage() {
         </p>
       </div>
 
+      {/* Shown once, straight after scheduling deletion. */}
+      {justScheduledDeletion && !errorInfo && (
+        <div
+          role="status"
+          className="mb-6 rounded-md border border-[#333] bg-[#000000] p-4 text-xs font-mono text-neutral-300"
+        >
+          <p className="font-semibold text-white leading-snug">Account deletion scheduled</p>
+          <p className="mt-1 leading-relaxed text-neutral-400">
+            Your account has been scheduled for deletion and cannot be accessed again, you can proceed to contact our support if this request was not made by you.
+          </p>
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Account restoration request')}`}
+            className="mt-2.5 inline-block text-xs font-medium text-white underline underline-offset-2 transition hover:text-neutral-300"
+          >
+            Contact support ({SUPPORT_EMAIL})
+          </a>
+        </div>
+      )}
+
       {/* ── Error banner ──────────────────────────────────────────────────── */}
       {errorInfo && (
         <div
@@ -413,7 +576,13 @@ export default function LoginPage() {
         >
           <div className="flex items-start gap-3">
             <div className="mt-0.5 shrink-0 text-white">
-              {errorInfo.kind === 'network' ? <IconWifi className="h-4 w-4 text-amber-400" /> : <IconAlertTriangle className="h-4 w-4 text-red-400" />}
+              {errorInfo.kind === 'network' ? (
+                <IconWifi className="h-4 w-4 text-amber-400" />
+              ) : (
+                <IconAlertTriangle
+                  className={errorInfo.kind === 'deleted' ? 'h-4 w-4 text-amber-400' : 'h-4 w-4 text-red-400'}
+                />
+              )}
             </div>
 
             <div className="flex-1 min-w-0">
@@ -426,7 +595,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setError(null);
+                    clearError();
                     void handleIdentify({ preventDefault: () => {} } as React.FormEvent);
                   }}
                   disabled={isLoading || !email}
@@ -435,10 +604,20 @@ export default function LoginPage() {
                   Try again
                 </button>
               )}
+
+              {/* Retrying cannot help here — the only way forward is support. */}
+              {errorInfo.kind === 'deleted' && (
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Account restoration request')}&body=${encodeURIComponent(`Please restore my account: ${email}`)}`}
+                  className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-white underline underline-offset-2 transition hover:text-neutral-300"
+                >
+                  Contact support ({SUPPORT_EMAIL})
+                </a>
+              )}
             </div>
 
             <button
-              onClick={() => setError(null)}
+              onClick={clearError}
               className="shrink-0 text-neutral-500 hover:text-white p-0.5 transition cursor-pointer"
               aria-label="Dismiss error"
             >
@@ -547,6 +726,71 @@ export default function LoginPage() {
           >
             {purpose === 'SIGNUP' ? 'Create Account' : 'Verify & Login'}
           </Button>
+        </form>
+      ) : step === 4 ? (
+        <form onSubmit={handleMfaVerify} className="space-y-5">
+          <p className="text-xs text-[#8e9192] leading-5">
+            {useBackupCode
+              ? 'Enter one of the backup codes you saved when you turned on two-factor authentication.'
+              : mfaMethod === 'EMAIL_OTP'
+                ? `We sent a 6-digit code to ${email}. Enter it below to finish signing in.`
+                : 'Open your authenticator app and enter the 6-digit code shown for Tellann.'}
+          </p>
+
+          <div>
+            <label className="block text-xs font-mono font-medium text-[#8e9192] uppercase tracking-wider mb-2">
+              {useBackupCode ? 'Backup Code' : 'Authentication Code'}
+            </label>
+            <input
+              autoFocus
+              type="text"
+              inputMode={useBackupCode ? 'text' : 'numeric'}
+              autoComplete={useBackupCode ? 'off' : 'one-time-code'}
+              maxLength={useBackupCode ? 8 : 6}
+              disabled={isLoading}
+              value={mfaCode}
+              onChange={(e) =>
+                setMfaCode(
+                  useBackupCode
+                    ? e.target.value.toUpperCase().replace(/[^A-F0-9]/g, '')
+                    : e.target.value.replace(/\D/g, ''),
+                )
+              }
+              placeholder={useBackupCode ? 'A1B2C3D4' : '000000'}
+              className="w-full px-3.5 py-3 bg-[#000000] border border-[#262626] rounded-md text-white text-center font-mono text-xl tracking-[0.4em] placeholder-neutral-700 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition duration-150"
+            />
+          </div>
+
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            disabled={isLoading || mfaCode.length < (useBackupCode ? 8 : 6)}
+            loading={isLoading}
+            className="w-full"
+          >
+            Verify &amp; Sign in
+          </Button>
+
+          {mfaMethod === 'EMAIL_OTP' && !useBackupCode ? (
+            <button
+              type="button"
+              onClick={handleMfaResend}
+              disabled={isLoading}
+              className="w-full text-center text-xs font-mono text-[#8e9192] hover:text-white transition duration-150 underline underline-offset-2 disabled:opacity-50"
+            >
+              {mfaResent ? 'New code sent' : 'Send a new code'}
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => { setUseBackupCode(!useBackupCode); setMfaCode(''); setError(null); }}
+            disabled={isLoading}
+            className="w-full text-center text-xs font-mono text-[#8e9192] hover:text-white transition duration-150 underline underline-offset-2 disabled:opacity-50"
+          >
+            {useBackupCode ? 'Use my authenticator instead' : 'Use a backup code instead'}
+          </button>
         </form>
       ) : (
         <form onSubmit={handlePasswordLogin} className="space-y-5">

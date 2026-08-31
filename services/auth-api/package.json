@@ -20,7 +20,8 @@
     "express-rate-limit": "^7.1.5",
     "jsonwebtoken": "^9.0.2",
     "otpauth": "^9.2.1",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.6",
@@ -30,6 +31,7 @@
     "@types/node": "^20.0.0",
     "@types/bcryptjs": "^2.4.6",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@types/qrcode": "^1.5.5"
   }
 }

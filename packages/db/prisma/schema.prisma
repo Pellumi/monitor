@@ -2394,6 +2394,8 @@ enum OtpPurpose {
   LOGIN // Returning user OTP auth
   INVITE // Accept org invitation
   ACCOUNT_DELETION
+  MFA // Second-factor code — deliberately distinct from LOGIN so a first-factor
+  // code can never be replayed as the second factor.
 }
 
 enum AuditAction {
@@ -2500,6 +2502,9 @@ model User {
   totpSecret      String? // AES-256-GCM encrypted — never store plaintext
   totpEnabledAt   DateTime?
   totpBackupCodes String[]  @default([]) // bcrypt-hashed 8-char backup codes
+  /// Active second factor. Kept alongside totpEnabled so a single field answers
+  /// "is MFA on, and which kind" without inspecting several columns.
+  mfaMethod       MfaMethod @default(NONE)
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -2922,6 +2927,14 @@ model CrossTenantPatternIndex {
 // Short-lived (5 min) challenge issued after first-factor verification when
 // the user has TOTP enabled. Replaced by full session tokens on /auth/mfa/verify.
 // =============================================================================
+
+/// Which second factor a user has active. TOTP is an authenticator app;
+/// EMAIL_OTP dispatches a code to the registered address at sign-in.
+enum MfaMethod {
+  NONE
+  TOTP
+  EMAIL_OTP
+}
 
 model MfaChallengeToken {
   id        String    @id @default(uuid())
