@@ -18,6 +18,13 @@ export interface EmailRecipient {
   userId?: string | null;
 }
 
+/** A file delivered with the message, e.g. an invoice or receipt PDF. */
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface SendTemplateEmailInput {
   templateKey: EmailTemplateKey;
   to: string;
@@ -29,6 +36,7 @@ export interface SendTemplateEmailInput {
   variables?: TemplateVariables;
   idempotencyKey?: string;
   replyTo?: string;
+  attachments?: EmailAttachment[];
 }
 
 export interface SendTemplateEmailResult {
@@ -327,6 +335,15 @@ export class NotificationEmailService {
           html,
           text,
           reply_to: input.replyTo,
+          ...(input.attachments?.length
+            ? {
+                attachments: input.attachments.map((attachment) => ({
+                  filename: attachment.filename,
+                  content: attachment.content.toString('base64'),
+                  ...(attachment.contentType ? { content_type: attachment.contentType } : {}),
+                })),
+              }
+            : {}),
           headers: {
             'X-Tellann-Notification': 'true',
             'X-Tellann-Template': input.templateKey,

@@ -36,7 +36,6 @@ model Organization {
   notificationPreferences  NotificationPreference[]
   notificationEvents       NotificationEvent[]
   oidcProvider             OIDCProvider?
-  billingProfile           OrganizationBillingProfile?
   enterpriseSalesRequests  EnterpriseSalesRequest[]
   enterpriseAgreement      EnterpriseAgreement?
   storageLedgerEntries     StorageLedgerEntry[]
@@ -516,6 +515,7 @@ model Plan {
   featureFlags         FeatureFlag[]
   subscriptions        Subscription[]
   pendingSubscriptions Subscription[] @relation("PendingSubscriptionPlan")
+  lapsedSubscriptions  Subscription[] @relation("LapsedSubscriptionPlan")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -538,15 +538,17 @@ model Subscription {
   id              String             @id @default(uuid())
   organizationId  String             @unique
   organization    Organization       @relation(fields: [organizationId], references: [id])
+  /// The user who pays for this subscription. Billing country, currency,
+  /// provider routing, and provider customer handles all resolve from this
+  /// user's UserBillingProfile. Null on Free entitlement records, which have
+  /// no payer.
+  payerUserId     String?
+  payer           User?              @relation("SubscriptionPayer", fields: [payerUserId], references: [id], onDelete: SetNull)
   planId          String
   plan            Plan               @relation(fields: [planId], references: [id])
   status          SubscriptionStatus @default(ACTIVE)
   billingInterval BillingInterval    @default(MONTHLY)
   billingCurrency BillingCurrency    @default(USD)
-
-  // Stripe references (Phase 1.8C)
-  stripeCustomerId     String?
-  stripeSubscriptionId String?
 
   // Paystack references (Phase 1.8C)
   paystackCustomerCode     String?
@@ -569,14 +571,36 @@ model Subscription {
   paymentMethodExpYear      String?
   paymentMethodAuthorizedAt DateTime?
   cancelAtPeriodEnd         Boolean   @default(false)
-  migrationStatus           String    @default("NONE")
 
   // Enterprise overrides (JSON: { maxApplications: 200, ... })
   enterpriseOverrides Json?
 
+  /// Free 14-day trial (BSS §10). The payer authorizes a card up front but is
+  /// not charged until trialEndsAt, at which point the renewal worker converts
+  /// the trial into a paid period unless it was cancelled or changed first.
+  trialStartedAt     DateTime?
   trialEndsAt        DateTime?
   currentPeriodStart DateTime  @default(now())
   currentPeriodEnd   DateTime
+
+  /// When the renewal worker should next attempt a charge. Tellann schedules
+  /// its own recurring charges against the stored payment method rather than
+  /// relying on processor-side subscriptions, so trials, proration, and grace
+  /// periods behave identically on every processor.
+  nextBillingAt        DateTime?
+  lastBillingAttemptAt DateTime?
+  billingFailureCount  Int       @default(0)
+
+  /// Grace period (BSS §14). Set when a renewal charge fails; the payer keeps
+  /// full plan access until it elapses, then the subscription is scaled down to
+  /// Free rather than suspended outright.
+  graceEndsAt          DateTime?
+  /// The paid plan held before a grace-period expiry downgraded the payer to
+  /// Free, so resubscribing can offer the plan they actually lost.
+  lapsedFromPlanId     String?
+  lapsedFrom           Plan?     @relation("LapsedSubscriptionPlan", fields: [lapsedFromPlanId], references: [id])
+  lapsedAt             DateTime?
+
   // Free subscriptions are entitlement records, not renewable provider contracts.
   nonRenewing        Boolean   @default(false)
   cancelledAt        DateTime?
@@ -588,6 +612,10 @@ model Subscription {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   usageRecords UsageRecord[]
+
+  @@index([nextBillingAt, status])
+  @@index([trialEndsAt, status])
+  @@index([graceEndsAt, status])
 }
 
 model BillingProviderPlan {
@@ -676,33 +704,49 @@ model Entitlement {
   updatedAt  DateTime @updatedAt
 }
 
-model OrganizationBillingProfile {
-  id             String       @id @default(uuid())
-  organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  countryCode    String
-  legalName      String?
-  billingEmail   String?
-  addressLine1   String?
-  addressLine2   String?
-  city           String?
-  region         String?
-  postalCode     String?
-  taxId          String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+/// Billing identity is user-scoped. The signed-in user is the payer of record:
+/// their ISO billing country determines currency, plan eligibility (Local is
+/// NG-only), and which payment provider is routed. Organizations remain the
+/// entitlement boundary (applications, seats, storage) but no longer carry any
+/// billing identity of their own.
+model UserBillingProfile {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  countryCode  String
+  legalName    String?
+  billingEmail String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  region       String?
+  postalCode   String?
+  taxId        String?
+
+  /// Provider customer handles follow the payer, not the organization, so a
+  /// user who pays for several organizations reuses one provider customer.
+  paystackCustomerCode String?
+  flutterwaveCustomerId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model SubscriptionTrialHistory {
   id             String       @id @default(uuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Payer who consumed the trial. BSS §10 forbids concurrent/repeat trials;
+  /// with user-scoped billing the constraint follows the payer as well as the
+  /// organization, so one user cannot re-trial across fresh organizations.
+  userId         String?
   planType       PlanType
   startedAt      DateTime
   endedAt        DateTime
   createdAt      DateTime     @default(now())
 
   @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model StorageLedgerEntry {
@@ -827,35 +871,47 @@ model UsageSnapshot {
 model Invoice {
   id                     String          @id @default(uuid())
   organizationId         String
+  /// Payer of record at the time the invoice was raised. Retained even if the
+  /// user later leaves the organization so billing history stays attributable.
+  payerUserId            String?
   invoiceNumber          String          @unique
   planType               PlanType
   billingInterval        BillingInterval
   currency               BillingCurrency
   subtotal               Int // In smallest unit (cents/kobo)
+  /// Tax charged, in the same minor units as subtotal.
   tax                    Int             @default(0)
+  /// Rate in basis points (750 = 7.5%), so the printed rate is exact.
+  taxRate                Int             @default(0)
+  /// Human label for the tax line, e.g. "VAT".
+  taxLabel               String?
+  /// ISO country whose tax regime was applied.
+  taxJurisdiction        String?
   total                  Int
   status                 String          @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
   provider               String?
   providerReference      String?
   providerCustomerId     String?
   providerSubscriptionId String?
-  stripeInvoiceId        String?
   paystackRef            String?
   periodStart            DateTime
   periodEnd              DateTime
   paidAt                 DateTime?
+  /// Why this invoice exists — SUBSCRIPTION, RENEWAL, UPGRADE, TRIAL_CONVERSION.
+  reason                 String          @default("SUBSCRIPTION")
   createdAt              DateTime        @default(now())
   paymentEvents          PaymentEvent[]
 
   @@unique([provider, providerReference])
   @@index([organizationId, createdAt])
+  @@index([payerUserId, createdAt])
   @@index([provider, providerSubscriptionId])
 }
 
 model PaymentEvent {
   id                String    @id @default(uuid())
   organizationId    String
-  provider          String // "STRIPE" | "PAYSTACK"
+  provider          String // "PAYSTACK" | "FLUTTERWAVE" | "MOCK"
   eventType         String // "checkout.completed", "invoice.paid", etc.
   providerEventId   String?
   providerReference String?
@@ -2459,6 +2515,8 @@ model User {
   deviceSessions          DeviceSession[]
   desktopSetupHandoffs    DesktopSetupHandoff[]
   deletionRequests        AccountDeletionRequest[]
+  billingProfile          UserBillingProfile?
+  paidSubscriptions       Subscription[]               @relation("SubscriptionPayer")
 }
 
 model AccountDeletionRequest {

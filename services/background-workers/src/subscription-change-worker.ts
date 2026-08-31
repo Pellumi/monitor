@@ -29,8 +29,11 @@ export async function applyScheduledSubscriptionChanges(prisma: PrismaClient, no
         billingInterval: providerChange.targetInterval,
         billingCurrency: providerChange.currency,
         providerSubscriptionId: providerChange.providerOperationId,
-        paystackSubscriptionCode: providerChange.providerOperationId,
-        providerManagementToken: providerChange.providerReference,
+        // The legacy Paystack-specific mirror must only be written for Paystack
+        // changes; stamping a Flutterwave subscription id here would make later
+        // Paystack reconciliation chase a code that does not exist there.
+        paystackSubscriptionCode: providerChange.provider === 'PAYSTACK' ? providerChange.providerOperationId : undefined,
+        providerManagementToken: providerChange.provider === 'PAYSTACK' ? providerChange.providerReference : undefined,
         providerPeriodStart: now,
         pendingPlanId: null,
         pendingChangeAt: null,

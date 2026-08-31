@@ -15,14 +15,18 @@
     "test": "turbo run test",
     "test:e2e": "pnpm --filter @tellann/e2e-tests run test:e2e",
     "pack:sdks": "pnpm --dir packages/frontend-sdk pack --pack-destination ../../release/sdk && pnpm --dir packages/backend-sdk pack --pack-destination ../../release/sdk",
-    "billing:sync-paystack-test": "node scripts/sync-paystack-test-catalog.mjs",
+    "billing:seed-plans": "pnpm --filter @tellann/db run seed:plans",
+    "billing:sync-catalog": "node scripts/sync-billing-catalog.mjs",
+    "billing:sync-catalog:dry-run": "node scripts/sync-billing-catalog.mjs --dry-run",
     "verify:billing": "tsx scripts/verify-billing-lifecycle.ts",
     "verify:settings": "tsx scripts/verify-settings-entitlements.ts",
     "verify:desktop:phase1": "node scripts/verify-desktop-phase1.mjs",
     "verify:desktop:phase2": "node scripts/verify-desktop-phase2.mjs",
     "verify:desktop:intent": "node scripts/verify-desktop-phase2.mjs",
     "verify:desktop:phase3": "node scripts/verify-desktop-phase3.mjs",
-    "verify:desktop:packaged-phase3": "node scripts/verify-packaged-desktop-phase3.mjs"
+    "verify:desktop:packaged-phase3": "node scripts/verify-packaged-desktop-phase3.mjs",
+    "verify:billing:lifecycle": "node scripts/verify-billing-lifecycle-features.mjs",
+    "verify:billing:scope": "node scripts/verify-user-scoped-billing.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

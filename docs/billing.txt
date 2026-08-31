@@ -186,9 +186,16 @@ Future:
 * GBP
 * CAD
 * AUD
-Organizations select a billing currency at subscription creation.
-Billing currency becomes the invoice currency.
+Billing identity is user-scoped. The paying user holds one billing profile —
+ISO billing country, legal name, billing email, tax identifiers — and that
+profile determines the billing currency, the eligible plans, and the permitted
+payment processors for every organization that user pays for.
+Billing currency is derived from the payer's billing country at subscription
+creation and becomes the invoice currency.
 The Local plan is restricted to NGN billing only.
+Organizations remain the entitlement boundary: applications, seats, storage,
+and retention are consumed per organization, and a subscription grants those
+entitlements to exactly one organization.
 8. Supported Payment Methods
 USD
 Supported:
@@ -196,8 +203,10 @@ Supported:
 * Mastercard
 * American Express
 * Discover
+* Google Pay
+* Apple Pay
 Processors:
-* Stripe
+* Flutterwave
 NGN
 Supported:
 * Debit Cards
@@ -205,9 +214,17 @@ Supported:
 * Virtual Accounts
 * USSD
 * Mobile Money
+* Google Pay
+* Apple Pay
 Processors:
-* Paystack
+* Paystack (default)
 * Flutterwave
+Stripe was fully retired on 2026-08-31. All USD settlement moved to Flutterwave,
+which covers the same card networks plus the wallet methods. NGN payers may
+choose either Nigerian processor at checkout; Paystack is selected by default.
+Maintaining a single recurring-billing integration per currency is what allows
+trials, prorated plan changes, and the grace period to behave identically for
+every customer regardless of what they pay in.
 9. Subscription Lifecycle
 States:
 TRIAL
@@ -220,18 +237,30 @@ EXPIRED
 10. Trial Period
 Default Trial:
 14 Days
-Available For:
-* Local
-* Solo
-* Team
-* Business
+Trial Plan:
+Solo, or Local when the payer's billing country is Nigeria.
+Flow:
+1. A new account completes its billing profile (country and contact details).
+2. The payer authorizes a card. A nominal amount is authorized to prove the card
+   is chargeable; the subscription itself is not charged.
+3. On confirmation from the processor, the trial starts and the account receives
+   full plan entitlements immediately.
+4. Nothing is billed for 14 days. A reminder is sent before the trial converts.
+5. On day 14 the first full charge is taken against the stored card, and the
+   subscription becomes an ordinary paid subscription.
+6. Cancelling or changing plan before day 14 means no charge is ever taken.
+A trial cannot begin without a chargeable card on file, because a trial that
+cannot convert is a trial that silently fails.
 Free does not require a trial because it remains available without time limit. Enterprise trials are negotiated and are not activated automatically.
 Restrictions:
 * No multiple concurrent trials
 * One trial per organization
+* One trial per paying user, so a payer cannot re-trial through a new organization
 11. Upgrade Policy
 Upgrades take effect immediately.
 Billing is prorated.
+The prorated difference is charged against the payment method already on file,
+on whichever processor holds it. The customer is not sent back through checkout.
 Example:
 Upgrade:
 Local → Solo
@@ -243,6 +272,8 @@ Difference × Remaining Billing Period
 Downgrades become effective at the next renewal.
 Reason:
 Prevent accidental data loss.
+Nothing is charged at the time a downgrade is scheduled; the new, lower price
+simply applies from the next billing date.
 Customer receives warnings if new plan limits are exceeded.
 13. Renewal Policy
 Monthly Plans
@@ -251,18 +282,27 @@ Annual Plans
 Renew every 365 days.
 Automatic renewal enabled by default.
 14. Failed Payment Handling
-First Failure:
-Payment Retry
-Second Failure:
-Past Due
-Third Failure:
-Grace Period
+A renewal that does not succeed on its due date starts a grace period
+immediately. The customer keeps full plan access for the entire window.
 Grace Period Duration:
-14 Days
+7 Days
+During Grace Period:
+* Full plan entitlements remain active
+* The stored payment method is retried once per day
+* The customer is emailed at the start of the window with the deadline
+* Updating the card triggers an immediate retry
 After Grace Period:
-Subscription Suspended
-15. Suspension Behavior
-Suspended organizations:
+The subscription is scaled down to the Free plan.
+Downgrading rather than suspending is deliberate: an expired card is the common
+case, and cutting a paying customer off entirely punishes an administrative
+lapse. The plan held before the lapse is recorded so resubscribing offers it
+back directly.
+15. Reduced Access Behavior
+An organization scaled down to Free is subject to Free plan limits. Data is
+retained under the Free retention window; nothing is deleted at the moment of
+downgrade.
+Suspension remains available for accounts suspended for cause rather than
+non-payment. Suspended organizations:
 Allowed:
 * View Existing Reports
 * Export Existing Data
@@ -279,6 +319,7 @@ Invoices generated for:
 * Overage Charges
 * Enterprise Contracts
 Invoice Contents:
+* Payer
 * Organization
 * Plan
 * Billing Period
@@ -287,25 +328,38 @@ Invoice Contents:
 * Total
 * Invoice Number
 17. Taxation Framework
-Tax calculation delegated to payment provider.
-Examples:
-Stripe Tax
-Paystack Tax Support
-Flutterwave Tax Support
-Invoices must clearly display:
+Tax is calculated by Tellann from the paying user's ISO billing country and is
+applied before the customer is charged.
+Published prices are tax-inclusive. The price shown in the Pricing & Packaging
+Specification is the total the customer pays; the tax component is extracted
+from it and stated separately on the invoice. Charging tax on top of a published
+price changes what the customer pays and is therefore a pricing change requiring
+review under PPS §14.
+Registered jurisdictions:
+* NG — VAT at 7.5%
+A country outside the registered list is charged no tax, and the invoice states
+that explicitly rather than omitting the line.
+Every invoice and receipt must clearly display:
 * Tax Amount
 * Tax Rate
 * Tax Jurisdiction
 18. Customer Billing Portal
-Organizations shall access:
+The paying user shall access:
 * Current Plan
 * Next Renewal Date
+* Trial Status And First Charge Date
 * Usage Summary
 * Payment Method
 * Billing History
-* Download Invoices
+* Download Invoices And Receipts
 * Upgrade Plan
+* Downgrade Plan
 * Cancel Subscription
+Every invoice is downloadable as a PDF from the billing page and is also emailed
+to the organization's billing contacts with the PDF attached. An unpaid invoice
+downloads as an invoice; once settled the same record downloads as a receipt.
+Upgrades and downgrades are available to every customer on every processor and
+in every supported currency.
 19. Phase 2 Event Billing Framework
 Not Active During MVP.
 Future Support:

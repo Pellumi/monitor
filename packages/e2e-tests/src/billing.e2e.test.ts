@@ -9,7 +9,7 @@
  * Prerequisites:
  *   - BILLING_API_URL pointing to running billing-api
  *   - TEST_ORG_A_ID + TEST_ORG_A_TOKEN for an authenticated org
- *   - STRIPE_TEST_PRICE_ID / PAYSTACK_TEST_PLAN_CODE if testing real providers
+ *   - FLUTTERWAVE_TEST_PLAN_CODE / PAYSTACK_TEST_PLAN_CODE if testing real providers
  *   - BILLING_WEBHOOK_SECRET matching the billing-api's configured secret
  */
 
@@ -41,33 +41,6 @@ async function get(url: string, token?: string) {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(url, { headers });
   return { status: res.status, body: await res.json().catch(() => null) };
-}
-
-/**
- * Simulate a Stripe-style webhook by posting to /billing/webhooks/stripe
- * with a test payload and a dummy signature header.
- * Real signature verification requires STRIPE_WEBHOOK_SECRET.
- */
-function makeStripeWebhookBody(overrides: Record<string, unknown> = {}) {
-  return {
-    id: `evt_test_${crypto.randomUUID()}`,
-    type: 'customer.subscription.updated',
-    data: {
-      object: {
-        id: `sub_test_${Date.now()}`,
-        customer: `cus_test_${Date.now()}`,
-        status: 'active',
-        metadata: { organizationId: ORG_A_ID },
-        items: {
-          data: [{ price: { id: process.env.STRIPE_TEST_PRICE_ID ?? 'price_test_starter' } }],
-        },
-        current_period_end: Math.floor(Date.now() / 1000) + 86_400 * 30,
-        ...overrides,
-      },
-    },
-    created: Math.floor(Date.now() / 1000),
-    livemode: false,
-  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,19 +165,18 @@ describe('Billing API — MOCK provider E2E checkout activation flow', () => {
 
 describe('Billing API — Real provider checkout session creation', () => {
   const hasOrg = !!(ORG_A_ID && ORG_A_TOKEN);
-  const priceId = process.env.STRIPE_TEST_PRICE_ID;
+  const flutterwavePlan = process.env.FLUTTERWAVE_TEST_PLAN_CODE;
   const paystackPlan = process.env.PAYSTACK_TEST_PLAN_CODE;
 
-  describe.skipIf(!hasOrg)('Stripe checkout (requires TEST_ORG_A_ID & TEST_ORG_A_TOKEN)', () => {
-    it.skipIf(!priceId)('returns a valid checkout URL for Stripe (requires STRIPE_TEST_PRICE_ID)', async () => {
+  describe.skipIf(!hasOrg)('Flutterwave checkout (requires TEST_ORG_A_ID & TEST_ORG_A_TOKEN)', () => {
+    it.skipIf(!flutterwavePlan)('returns a valid checkout URL for Flutterwave (requires FLUTTERWAVE_TEST_PLAN_CODE)', async () => {
       const r = await post(
         `${BILLING}/billing/checkout`,
         {
           organizationId: ORG_A_ID,
           planType: 'SOLO',
-          priceId,
-          provider: 'stripe',
-          successUrl: 'https://app.tellann.io/billing/success?session_id={CHECKOUT_SESSION_ID}',
+          provider: 'FLUTTERWAVE',
+          successUrl: 'https://app.tellann.io/billing/success',
           cancelUrl: 'https://app.tellann.io/billing/cancel',
         },
         { Authorization: `Bearer ${ORG_A_TOKEN}` },
@@ -244,52 +216,27 @@ describe('Billing API — Real provider checkout session creation', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Billing API — Webhook security & idempotency tests', () => {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? '';
-
-  describe.skipIf(!webhookSecret)('Stripe webhook processing (requires STRIPE_WEBHOOK_SECRET)', () => {
-    it('processes a Stripe webhook event once (idempotency guard)', async () => {
-      const payload = makeStripeWebhookBody({ status: 'active' });
-      const body    = JSON.stringify(payload);
-      const ts      = Math.floor(Date.now() / 1000);
-      const sig     = crypto
-        .createHmac('sha256', webhookSecret)
-        .update(`${ts}.${body}`)
-        .digest('hex');
-
-      const headers = {
-        'Content-Type': 'application/json',
-        'stripe-signature': `t=${ts},v1=${sig}`,
-      };
-
-      // First call — should process
-      const r1 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
-        method: 'POST',
-        headers,
-        body,
-      });
-      expect([200, 202]).toContain(r1.status);
-
-      // Second call with same event ID — should be idempotent (not error)
-      const r2 = await fetch(`${BILLING}/billing/webhooks/stripe`, {
-        method: 'POST',
-        headers,
-        body,
-      });
-      expect([200, 202, 409]).toContain(r2.status);
-    }, TIMEOUT_MS);
-  });
-
-  it('rejects a Stripe webhook with invalid signature (400/401)', async () => {
-    const body = JSON.stringify(makeStripeWebhookBody());
-    const res = await fetch(`${BILLING}/billing/webhooks/stripe`, {
+  it('rejects a Flutterwave webhook with an invalid signature (400/401)', async () => {
+    const body = JSON.stringify({
+      event: 'charge.completed',
+      data: { id: Date.now(), status: 'successful', meta: { organizationId: ORG_A_ID } },
+    });
+    const res = await fetch(`${BILLING}/billing/webhooks/flutterwave`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'stripe-signature': 't=0,v1=invalidsig',
-      },
+      headers: { 'Content-Type': 'application/json', 'verif-hash': 'invalid-hash' },
       body,
     });
     expect([400, 401]).toContain(res.status);
+  }, TIMEOUT_MS);
+
+  it('rejects a webhook for a retired processor (400/404)', async () => {
+    // Stripe was fully deprecated on 2026-08-31; the route must not accept it.
+    const res = await fetch(`${BILLING}/billing/webhooks/stripe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'invoice.paid', data: { object: {} } }),
+    });
+    expect([400, 404]).toContain(res.status);
   }, TIMEOUT_MS);
 
   it('rejects a Paystack webhook with invalid signature (400/401)', async () => {

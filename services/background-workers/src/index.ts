@@ -13,6 +13,7 @@ import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
 import { runRetentionSweep } from './retention-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
+import { runBillingCycle } from './billing-cycle-worker';
 import { processDocumentJobs } from './document-processing-worker';
 import { createMetricsRegistry, createHttpMetricsMiddleware } from '@tellann/shared';
 import http from 'http';
@@ -324,6 +325,9 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   { name: 'behavioral-data-retention',        handler: () => runRetentionSweep(prisma).then(() => undefined), pattern: '0 2 * * *' },
   { name: 'scheduled-subscription-changes',   handler: () => applyScheduledSubscriptionChanges(prisma).then(() => undefined), every: 60_000 },
   { name: 'billing-dunning',                  handler: () => processBillingDunning(prisma).then(() => undefined), every: 60_000 },
+  // Trial conversions, renewals, and grace-period expiry. Every 15 minutes is
+  // ample for date-boundary work and keeps a retry close behind a failed charge.
+  { name: 'subscription-billing-cycle',       handler: () => runBillingCycle().then(() => undefined), every: 15 * 60_000 },
 ];
 
 // ─────────────────────────────────────────────────────────────

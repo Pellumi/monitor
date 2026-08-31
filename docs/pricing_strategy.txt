@@ -148,6 +148,11 @@ Customers shall always understand:
 No opaque AI credit systems shall be used.
 Published conversion rules are mandatory.
 6. Initial Launch Pricing Strategy
+Acquisition happens through a 14-day free trial of a paid plan rather than
+through the Free plan alone. A new account authorizes a card, receives Solo — or
+Local when billing from Nigeria — for 14 days at no charge, and converts
+automatically unless it cancels. Free remains available indefinitely for
+customers who want it, and is where a lapsed subscription lands.
 Free
 Purpose:
 Product discovery.
@@ -164,7 +169,7 @@ Target:
 * Small Nigerian products
 Commercial rules:
 * NGN billing only
-* Nigerian billing country required
+* Nigerian billing country required on the paying user's billing profile
 * Positioned between Free and Solo
 Solo
 Purpose:

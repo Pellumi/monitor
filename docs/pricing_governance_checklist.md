@@ -8,7 +8,7 @@ Every pricing or packaging change must update and verify all of the following:
 - `/billing/plans`, checkout eligibility, invoices, receipts, trials, upgrades, and downgrades.
 - Server-side feature and resource enforcement, including direct API requests.
 - Marketing, documentation, dashboard billing/profile, email, and admin surfaces.
-- USD/Stripe, NGN/Paystack, Nigeria-only Local, and Enterprise sales workflows.
+- USD/Flutterwave, NGN/Paystack or Flutterwave, Nigeria-only Local, and Enterprise sales workflows.
 - Usage warnings at 80%, blocking at 100%, retention dry runs, and audit evidence.
 - Shared, database, entitlement, billing, onboarding, reporting, frontend, and end-to-end tests.
 

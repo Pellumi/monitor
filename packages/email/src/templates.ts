@@ -19,6 +19,10 @@ export type EmailTemplateKey =
   | 'endpoint-slow'
   | 'billing-payment-failed'
   | 'billing-receipt'
+  | 'billing-trial-started'
+  | 'billing-trial-ending'
+  | 'billing-grace-period'
+  | 'billing-plan-lapsed'
   | 'usage-limit-warning'
   | 'security-new-device'
   | 'privacy-rule-updated';
@@ -272,6 +276,50 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     defaultFrom: 'billing',
     purpose: 'Payment receipt delivered after a successful subscription activation.',
     primaryCtaLabel: 'Open billing',
+    primaryUrlVariable: 'billingUrl',
+  },
+  {
+    key: 'billing-trial-started',
+    category: EmailCategory.BILLING,
+    subject: 'Your {{planName}} trial is live until {{trialEndsOn}}',
+    preheader: 'Full access for 14 days. Nothing is charged until then.',
+    requiredVariables: ['organizationName', 'planName', 'trialEndsOn', 'firstChargeAmount', 'billingUrl'],
+    defaultFrom: 'billing',
+    purpose: 'A free trial started and the first charge date is confirmed.',
+    primaryCtaLabel: 'Open billing',
+    primaryUrlVariable: 'billingUrl',
+  },
+  {
+    key: 'billing-trial-ending',
+    category: EmailCategory.BILLING,
+    subject: 'Your {{planName}} trial ends in {{daysRemaining}} days',
+    preheader: 'Change or cancel before the first charge.',
+    requiredVariables: ['organizationName', 'planName', 'daysRemaining', 'firstChargeAmount', 'billingUrl'],
+    defaultFrom: 'billing',
+    purpose: 'A free trial is about to convert into a paid subscription.',
+    primaryCtaLabel: 'Review plan',
+    primaryUrlVariable: 'billingUrl',
+  },
+  {
+    key: 'billing-grace-period',
+    category: EmailCategory.BILLING,
+    subject: 'Renew {{organizationName}} by {{graceEndsOn}} to keep your plan',
+    preheader: 'Payment did not go through. You have {{graceDays}} days to fix it.',
+    requiredVariables: ['organizationName', 'planName', 'graceEndsOn', 'graceDays', 'billingUrl'],
+    defaultFrom: 'billing',
+    purpose: 'A renewal payment failed and the grace period has started.',
+    primaryCtaLabel: 'Update payment',
+    primaryUrlVariable: 'billingUrl',
+  },
+  {
+    key: 'billing-plan-lapsed',
+    category: EmailCategory.BILLING,
+    subject: '{{organizationName}} has moved to the Free plan',
+    preheader: 'The grace period ended. Your data is intact.',
+    requiredVariables: ['organizationName', 'previousPlanName', 'billingUrl'],
+    defaultFrom: 'billing',
+    purpose: 'A grace period elapsed without payment and the plan was scaled down to Free.',
+    primaryCtaLabel: 'Resubscribe',
     primaryUrlVariable: 'billingUrl',
   },
   {

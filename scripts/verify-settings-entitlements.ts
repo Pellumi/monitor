@@ -41,16 +41,22 @@ async function createUser(label: string) {
 async function createOrganization(label: string, owner: { id: string }, planType: PlanType) {
   const suffix = crypto.randomUUID();
   const plan = await prisma.plan.findUniqueOrThrow({ where: { type: planType } });
+  // Billing identity is user-scoped — the owner is the payer of record.
+  await prisma.userBillingProfile.upsert({
+    where: { userId: owner.id },
+    create: { userId: owner.id, countryCode: 'US', legalName: `${label} payer` },
+    update: {},
+  });
   return prisma.organization.create({
     data: {
       name: `${label} organization`,
       slug: `${label.toLowerCase()}-${suffix}`,
       createdByUserId: owner.id,
       memberships: { create: { userId: owner.id, role: 'OWNER' } },
-      billingProfile: { create: { countryCode: 'US', legalName: `${label} organization` } },
       subscription: {
         create: {
           planId: plan.id,
+          payerUserId: owner.id,
           status: 'ACTIVE',
           currentPeriodStart: new Date(),
           currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60_000),

@@ -37,6 +37,9 @@ Each plan is designed for a distinct customer maturity level.
 4. Free Plan
 Purpose
 Allow developers to experience the complete TELLANN workflow.
+Free is also the plan an organization returns to if a paid subscription lapses
+after its grace period. Nothing is deleted at that moment; Free limits and
+retention apply from then on.
 Target Audience:
 * Individual developers
 * Students
@@ -114,7 +117,7 @@ API Access
 Audit Logs
 SSO
 Self Hosting
-Eligibility is determined by the organization's ISO billing country. Local checkout requires country NG, currency NGN, and an NGN-capable processor.
+Eligibility is determined by the paying user's ISO billing country. Billing identity is user-scoped: one billing profile per user, applied to every organization that user pays for. Local checkout requires payer country NG, currency NGN, and an NGN-capable processor (Paystack or Flutterwave). Local is also the plan granted by the 14-day free trial to payers billing from Nigeria; payers elsewhere trial on Solo.
 6. Solo Plan
 Purpose
 Support individual professionals and small products.

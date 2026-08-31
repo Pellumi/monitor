@@ -58,9 +58,19 @@ interface Plan {
 interface PlanCatalog {
   currency: BillingCurrency;
   countryRequired: boolean;
+  /** Processors that settle this payer's currency, in preference order. */
+  availableProviders: PaymentProvider[];
+  defaultProvider: PaymentProvider | null;
   currentPlanType: string;
   plans: Plan[];
 }
+
+type PaymentProvider = 'PAYSTACK' | 'FLUTTERWAVE';
+
+const PROVIDER_LABELS: Record<PaymentProvider, { name: string; methods: string }> = {
+  PAYSTACK:    { name: 'Paystack',    methods: 'Card, bank transfer, USSD, mobile money' },
+  FLUTTERWAVE: { name: 'Flutterwave', methods: 'Card, Google Pay, Apple Pay, bank transfer' },
+};
 
 interface ChangePreview {
   previewId: string;
@@ -84,7 +94,11 @@ interface Subscription {
   cancelledAt?: string | null;
   trialEndsAt?: string | null;
   activeProvider?: string | null;
-  migrationStatus?: string | null;
+  trialStartedAt?: string | null;
+  graceEndsAt?: string | null;
+  nextBillingAt?: string | null;
+  paymentMethodBrand?: string | null;
+  paymentMethodLast4?: string | null;
   plan: Plan;
 }
 
@@ -96,8 +110,11 @@ interface Invoice {
   currency: BillingCurrency;
   subtotal: number;
   tax: number;
+  taxRate?: number;
+  taxLabel?: string | null;
   total: number;
   status: string;
+  reason?: string;
   periodStart: string;
   periodEnd: string;
   paidAt?: string | null;
@@ -120,6 +137,18 @@ interface BillingProfile {
   countryCode: string;
   legalName?: string | null;
   billingEmail?: string | null;
+}
+
+interface TrialEligibility {
+  eligible: boolean;
+  reason: string | null;
+  trialDays: number;
+  planType: string;
+  planName: string | null;
+  currency: BillingCurrency;
+  firstChargeFormatted: string;
+  firstChargeOn: string;
+  availableProviders: PaymentProvider[];
 }
 
 interface UsageSummary {
@@ -263,7 +292,11 @@ export default function BillingPage() {
   const [changePlan, setChangePlan] = useState<Plan | null>(null);
   const [changeEffectiveMode, setChangeEffectiveMode] = useState<'IMMEDIATE' | 'NEXT_RENEWAL'>('IMMEDIATE');
   const [checkoutState, setCheckoutState] = useState<'PREPARING' | 'AWAITING' | 'VERIFYING' | 'ACTIVE' | 'CANCELLED' | 'FAILED' | null>(null);
-  const [testProvider, setTestProvider] = useState<'FLUTTERWAVE' | 'STRIPE' | 'PAYSTACK' | 'MOCK' | ''>('');
+  const [testProvider, setTestProvider] = useState<'FLUTTERWAVE' | 'PAYSTACK' | 'MOCK' | ''>('');
+  const [availableProviders, setAvailableProviders] = useState<PaymentProvider[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<PaymentProvider | null>(null);
+  const [trial, setTrial] = useState<TrialEligibility | null>(null);
+  const [isStartingTrial, setIsStartingTrial] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -283,21 +316,26 @@ export default function BillingPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [catalog, nextSub, nextInvoices, nextEnt, nextProfile, nextUsage] = await Promise.all([
+      const [catalog, nextSub, nextInvoices, nextEnt, nextProfile, nextUsage, nextTrial] = await Promise.all([
         requestJson<PlanCatalog>(`/api-gateway/billing/plans?organizationId=${encodeURIComponent(selectedOrgId)}`),
         requestJson<Subscription | null>(`/api-gateway/billing/organizations/${selectedOrgId}/subscription`).catch(() => null),
         requestJson<Invoice[]>(`/api-gateway/billing/organizations/${selectedOrgId}/invoices`).catch(() => [] as Invoice[]),
         requestJson<Entitlement>(`/api-gateway/organizations/${selectedOrgId}/entitlement`).catch(() => null as unknown as Entitlement),
-        requestJson<BillingProfile | null>(`/api-gateway/billing/organizations/${selectedOrgId}/profile`).catch(() => null),
+        requestJson<BillingProfile | null>(`/api-gateway/billing/users/me/profile`).catch(() => null),
         requestJson<UsageSummary | null>(`/api-gateway/usage/organization/${selectedOrgId}`).catch(() => null),
+        requestJson<TrialEligibility | null>(`/api-gateway/billing/trial/eligibility?organizationId=${encodeURIComponent(selectedOrgId)}`).catch(() => null),
       ]);
       setPlans(catalog.plans);
       setBillingCurrency(catalog.currency);
       setCountryRequired(catalog.countryRequired);
+      setAvailableProviders(catalog.availableProviders ?? []);
+      setSelectedProvider((current) =>
+        current && (catalog.availableProviders ?? []).includes(current) ? current : catalog.defaultProvider);
       setSubscription(nextSub);
       setInvoices(nextInvoices);
       setEntitlement(nextEnt);
       setBillingProfile(nextProfile);
+      setTrial(nextTrial);
       setUsageSummary(nextUsage);
       if (nextSub?.billingInterval) setBillingInterval(nextSub.billingInterval);
     } catch (err: any) {
@@ -348,6 +386,7 @@ export default function BillingPage() {
         successUrl: `${window.location.origin}/settings/billing?success=1`,
         cancelUrl: `${window.location.origin}/settings/billing?cancelled=1`,
       };
+      if (selectedProvider) body.provider = selectedProvider;
       if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_BILLING_ALLOW_TEST_PROVIDER_OVERRIDE === 'true' && testProvider) body.provider = testProvider;
       const data = await requestJson<{ checkoutUrl?: string; url?: string; authorizationUrl?: string }>('/api-gateway/billing/subscriptions/checkout', {
         method: 'POST',
@@ -433,19 +472,13 @@ export default function BillingPage() {
       setChangePlan(null);
       await load();
     } catch (err: any) {
-      if (err?.code === 'PAYSTACK_AUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYSTACK_AUTHORIZATION_REQUIRED') || String(err?.message || '').includes('Authorize Paystack')) {
-        if (subscription?.activeProvider === 'STRIPE') {
-          setError('Paystack authorization is required. Redirecting to authorization...');
-          void authorizePaystackMigration();
-        } else {
-          setError('Your current payment method must be authorized before this plan change. Redirecting...');
-          void updatePaymentMethod();
-        }
+      if (err?.code === 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYMENT_METHOD_REAUTHORIZATION_REQUIRED')) {
+        setError('Add a payment method before changing plans. Redirecting…');
+        void updatePaymentMethod();
         return;
       }
-      if (err?.code === 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYMENT_METHOD_REAUTHORIZATION_REQUIRED')) {
-        setError('Payment method reauthorization is required. Redirecting...');
-        void updatePaymentMethod();
+      if (err?.code === 'UPGRADE_CHARGE_DECLINED') {
+        setError(`${err.message} `.trim());
         return;
       }
       setError(friendlyError(err.message || 'Could not change the subscription.'));
@@ -516,23 +549,44 @@ export default function BillingPage() {
     }
   }
 
-  async function authorizePaystackMigration() {
+  // ── Start the free trial ────────────────────────────────────────────────────
+  async function startTrial() {
     if (!selectedOrgId) return;
-    setIsCheckingOut(true);
+    setIsStartingTrial(true);
     setError(null);
     try {
-      const result = await requestJson<{ checkoutUrl: string }>('/api-gateway/billing/subscriptions/migration/paystack/authorize', {
+      const result = await requestJson<{ checkoutUrl: string }>('/api-gateway/billing/trial/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           organizationId: selectedOrgId,
-          successUrl: `${window.location.origin}/settings/billing?migration=authorized`,
+          ...(selectedProvider ? { provider: selectedProvider } : {}),
+          successUrl: `${window.location.origin}/settings/billing?trial=started`,
         }),
       });
       window.location.href = result.checkoutUrl;
     } catch (err: any) {
-      setError(friendlyError(err.message || 'Could not start Paystack authorization.'));
-      setIsCheckingOut(false);
+      setError(friendlyError(err.message || 'Could not start your trial.'));
+      setIsStartingTrial(false);
+    }
+  }
+
+  // ── Download an invoice or receipt ──────────────────────────────────────────
+  async function downloadInvoice(invoice: Invoice) {
+    try {
+      const response = await authenticatedFetch(`/api-gateway/billing/invoices/${invoice.id}/document`);
+      if (!response.ok) throw new Error('The document could not be generated.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `tellann-${invoice.status === 'PAID' ? 'receipt' : 'invoice'}-${invoice.invoiceNumber}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(friendlyError(err.message || 'Could not download the document.'));
     }
   }
 
@@ -573,7 +627,7 @@ export default function BillingPage() {
         <div className="rounded-lg border border-amber-800/60 bg-amber-950/20 p-3">
           <label className="text-xs font-semibold uppercase tracking-wide text-amber-300" htmlFor="billing-test-provider">Local test provider</label>
           <select id="billing-test-provider" value={testProvider} onChange={(event) => setTestProvider(event.target.value as typeof testProvider)} className="ml-3 rounded-md border border-amber-800 bg-black px-3 py-2 text-sm text-white">
-            <option value="">Automatic routing</option><option value="PAYSTACK">Paystack</option><option value="FLUTTERWAVE">Flutterwave</option><option value="STRIPE">Stripe</option><option value="MOCK">Mock tests only</option>
+            <option value="">Automatic routing</option><option value="PAYSTACK">Paystack</option><option value="FLUTTERWAVE">Flutterwave</option><option value="MOCK">Mock tests only</option>
           </select>
           <p className="mt-2 text-xs text-amber-200/70">This control is unavailable in production. Currency and plan eligibility remain enforced by the billing API.</p>
         </div>
@@ -612,7 +666,9 @@ export default function BillingPage() {
           <div>
             <p className="text-sm font-semibold text-amber-200">Your latest subscription payment failed.</p>
             <p className="mt-1 text-xs text-amber-300/70">
-              {subscription.status === 'SUSPENDED' ? 'Paid features are suspended until payment is recovered.' : 'Your account remains active during the seven-day grace period.'}
+              {subscription.graceEndsAt
+                ? `Your plan stays active until ${formatDate(subscription.graceEndsAt)}. We retry daily — after that this organization moves to the Free plan.`
+                : 'We will retry shortly. Update your card if the problem persists.'}
             </p>
           </div>
           <div className="flex gap-2">
@@ -621,15 +677,51 @@ export default function BillingPage() {
           </div>
         </div>
       )}
-      {subscription?.activeProvider === 'STRIPE' && subscription.migrationStatus !== 'PAYSTACK_AUTHORIZED' && (
-        <div className="flex flex-col gap-3 rounded-lg border border-indigo-800 bg-indigo-950/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-indigo-100">Move future renewals to Paystack</p>
-            <p className="mt-1 text-xs text-indigo-300/70">Your Stripe subscription remains active until renewal. Paystack starts only after you securely authorize your card.</p>
+      {/* ── Free trial offer ── */}
+      {trial?.eligible && isFreePlan && (
+        <div className="flex flex-col gap-4 rounded-lg border border-violet-800/70 bg-violet-950/20 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex max-w-2xl gap-3">
+            <Zap className="mt-0.5 h-5 w-5 shrink-0 text-violet-300" />
+            <div>
+              <h3 className="text-sm font-semibold text-violet-100">
+                Try {trial.planName} free for {trial.trialDays} days
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-violet-200/70">
+                Add a card to unlock the full {trial.planName} plan straight away. Nothing is
+                charged until {formatDate(trial.firstChargeOn)}, when your first payment of{' '}
+                {trial.firstChargeFormatted} is taken. Cancel or change plan any time before then
+                and you pay nothing.
+              </p>
+            </div>
           </div>
-          <Button type="button" variant="accent" onClick={() => void authorizePaystackMigration()} disabled={isCheckingOut} className="bg-indigo-200 text-indigo-950 hover:bg-indigo-100 px-3 py-2 text-xs font-semibold h-auto">
-            Authorize Paystack
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => void startTrial()}
+            disabled={isStartingTrial}
+            className="shrink-0"
+          >
+            {isStartingTrial ? 'Starting…' : `Start ${trial.trialDays}-day trial`}
+            <ArrowUpRight className="h-4 w-4" />
           </Button>
+        </div>
+      )}
+
+      {/* ── Trial in progress ── */}
+      {subscription?.status === 'TRIAL' && subscription.trialEndsAt && (
+        <div className="flex flex-col gap-3 rounded-lg border border-violet-800/70 bg-violet-950/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-violet-100">
+              You are on a free {subscription.plan?.name} trial
+            </p>
+            <p className="mt-1 text-xs text-violet-200/70">
+              Your first payment is due {formatDate(subscription.trialEndsAt)}
+              {subscription.paymentMethodLast4
+                ? `, charged to the card ending ${subscription.paymentMethodLast4}`
+                : ''}
+              . Cancel or switch plan before then and nothing is taken.
+            </p>
+          </div>
         </div>
       )}
 
@@ -709,10 +801,37 @@ export default function BillingPage() {
               labels={['Monthly', 'Annual']}
             />
           </div>
+          {availableProviders.length > 1 && (
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Payment Processor
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {availableProviders.map((provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    onClick={() => setSelectedProvider(provider)}
+                    aria-pressed={selectedProvider === provider}
+                    title={PROVIDER_LABELS[provider].methods}
+                    className={cn(
+                      'rounded-lg border px-3 py-2 text-left transition-colors',
+                      selectedProvider === provider
+                        ? 'border-white bg-white/10 text-white'
+                        : 'border-neutral-800 bg-neutral-950 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200',
+                    )}
+                  >
+                    <span className="block text-sm font-semibold">{PROVIDER_LABELS[provider].name}</span>
+                    <span className="block text-[11px] leading-4 text-neutral-500">{PROVIDER_LABELS[provider].methods}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="text-right">
             <p className="text-sm font-semibold text-white">Prices shown in {billingCurrency}</p>
             <Link href={countryRequired ? "/settings/profile#billing-profile" : "/settings/profile"} className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-300">
-              {countryRequired ? 'Complete billing profile' : `Based on ${billingProfile?.countryCode ?? 'your organization country'}`}
+              {countryRequired ? 'Complete billing profile' : `Based on ${billingProfile?.countryCode ?? 'your billing country'}`}
             </Link>
           </div>
         </div>
@@ -730,7 +849,7 @@ export default function BillingPage() {
               <div>
                 <h3 className="text-sm font-semibold text-amber-100">Complete your billing profile to view plans</h3>
                 <p className="mt-1 text-xs leading-5 text-amber-200/70">
-                  Select your organization&apos;s billing country so Tellann can show the correct currency, eligible plans, and payment provider. No subscription change will be made.
+                  Select your billing country so Tellann can show the correct currency, eligible plans, and payment processors. Your billing profile is personal and applies to every organization you pay for. No subscription change will be made.
                 </p>
               </div>
             </div>
@@ -842,6 +961,7 @@ export default function BillingPage() {
                 <th className="px-4 py-3">Amount</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3 text-right">Document</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-800">
@@ -857,6 +977,11 @@ export default function BillingPage() {
                     </td>
                     <td className="px-4 py-3 font-semibold text-white">
                       {centsToMoney(invoice.total, invoice.currency)}
+                      {invoice.tax > 0 && (
+                        <span className="block text-[11px] font-normal text-neutral-500">
+                          incl. {centsToMoney(invoice.tax, invoice.currency)} {invoice.taxLabel ?? 'tax'}
+                        </span>
+                      )}
                     </td>
                     <td className={cn('px-4 py-3 font-semibold', INVOICE_STATUS_COLOR[invoice.status] ?? 'text-neutral-400')}>
                       {invoice.status}
@@ -864,11 +989,20 @@ export default function BillingPage() {
                     <td className="px-4 py-3 text-neutral-400 text-xs">
                       {formatDate(invoice.createdAt)}
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => void downloadInvoice(invoice)}
+                        className="text-xs font-semibold text-neutral-300 underline underline-offset-2 hover:text-white"
+                      >
+                        {invoice.status === 'PAID' ? 'Receipt' : 'Invoice'}
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="p-4">
+                  <td colSpan={7} className="p-4">
                     <EmptyState
                       variant="neutral"
                       illustration="report"

@@ -48,14 +48,19 @@ function accessToken(user: { id: string; email: string }) {
 
 async function createBillingOrganization(countryCode: 'NG' | 'US', label: string) {
   const suffix = crypto.randomUUID();
-  const user = await prisma.user.create({ data: { email: `billing-${label}-${suffix}@example.com` } });
+  // Billing identity is user-scoped — the payer carries the country, not the org.
+  const user = await prisma.user.create({
+    data: {
+      email: `billing-${label}-${suffix}@example.com`,
+      billingProfile: { create: { countryCode, legalName: `Billing ${label}`, billingEmail: `billing-${label}-${suffix}@example.com` } },
+    },
+  });
   const organization = await prisma.organization.create({
     data: {
       name: `Billing ${label}`,
       slug: `billing-${label}-${suffix}`,
       createdByUserId: user.id,
       memberships: { create: { userId: user.id, role: 'OWNER' } },
-      billingProfile: { create: { countryCode, legalName: `Billing ${label}`, billingEmail: user.email } },
     },
   });
   return { user, organization, token: accessToken(user) };
@@ -183,9 +188,16 @@ async function main() {
     },
   });
   const attempts = await prisma.billingDunningAttempt.findMany({ where: { invoiceId: recoveryInvoice.id }, orderBy: { attemptNumber: 'asc' } });
-  assert(attempts.length === 3 && attempts.map((item) => item.attemptNumber).join(',') === '1,2,3', 'Payment failure did not schedule 1/3/7-day dunning attempts');
+  assert(attempts.length === 1 && attempts[0].attemptNumber === 1, 'Payment failure did not record a dunning attempt');
   subscription = await prisma.subscription.findUniqueOrThrow({ where: { organizationId: mock.organization.id }, include: { plan: true } });
   assert(subscription.status === 'GRACE_PERIOD', 'Payment failure did not move the subscription into grace period');
+  // BSS §14: the payer keeps full access for a 7-day window, retried daily.
+  const graceDays = subscription.graceEndsAt
+    ? Math.round((subscription.graceEndsAt.getTime() - Date.now()) / 86_400_000)
+    : null;
+  assert(graceDays === 7, `Grace period should be 7 days, was ${graceDays}`);
+  assert(subscription.planId !== (await prisma.plan.findUniqueOrThrow({ where: { type: 'FREE' } })).id,
+    'Grace period must not downgrade the payer before the window elapses');
   const retry = await request('/billing/subscriptions/retry', {
     method: 'POST', body: JSON.stringify({ organizationId: mock.organization.id }),
   }, mock.token, 202);
@@ -239,6 +251,7 @@ async function main() {
     immediateUpgradeApplied: true,
     scheduledDowngradeApplied: true,
     cancellationAndResumeVerified: true,
+    gracePeriodDays: graceDays,
     dunningAndRecoveryVerified: true,
     crossTenantBillingDenied: true,
     paystackTestApiAuthenticated: true,
