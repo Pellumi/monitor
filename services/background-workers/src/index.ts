@@ -498,7 +498,16 @@ async function main() {
 
   // ── Prometheus /metrics + Bull Board server ───────────────────
   // 3020 is reserved by the marketing/docs dev surface in the monorepo.
-  const metricsPort = parseInt(process.env.BACKGROUND_WORKERS_METRICS_PORT ?? '3022', 10);
+  // Railway and similar platforms route health checks to their injected PORT.
+  // Keep the worker-specific variable for local/legacy deployments only.
+  const metricsPort = Number(
+    process.env.PORT
+      ?? process.env.BACKGROUND_WORKERS_METRICS_PORT
+      ?? 3022,
+  );
+  if (!Number.isInteger(metricsPort) || metricsPort < 0 || metricsPort > 65535) {
+    throw new Error(`Invalid background worker HTTP port: ${metricsPort}`);
+  }
 
   if (bullBoardMiddleware) {
     // Use express to serve both /metrics and /admin/jobs
