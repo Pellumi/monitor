@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { usePathname } from 'next/navigation';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { NotificationsProvider } from '@/components/notifications-provider';
+import { PreferencesProvider } from '@/components/preferences-provider';
+import { ThemeProvider } from '@/components/theme-provider';
 
 export interface User {
   id: string;
@@ -125,12 +128,31 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Bridges session values into the providers below, which take them as props so
+ * they do not have to import this module back (which would be circular).
+ */
+function SessionBridge({ children }: { children: React.ReactNode }) {
+  const { user, selectedOrgId } = useSession();
+  return (
+    <PreferencesProvider userId={user?.id ?? null}>
+      <NotificationsProvider organizationId={selectedOrgId}>
+        {children}
+      </NotificationsProvider>
+    </PreferencesProvider>
+  );
+}
+
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
   return (
     <QueryClientProvider client={queryClient}>
       <SessionProvider>
-        {children}
+        <SessionBridge>
+          <ThemeProvider>
+            {children}
+          </ThemeProvider>
+        </SessionBridge>
       </SessionProvider>
     </QueryClientProvider>
   );

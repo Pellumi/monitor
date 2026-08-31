@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { useSession } from '@/components/providers';
+import { usePreferences } from '@/components/preferences-provider';
+import { getLastApplication, preferRemembered } from '@/lib/last-selection';
 
 export interface SelectedApplication {
   id: string;
@@ -40,12 +42,18 @@ export function useSelectedApplication() {
   });
 
   const applications = applicationsQuery.data ?? NO_APPLICATIONS;
+  const { preferences } = usePreferences();
+  const rememberLast = preferences.rememberLastApplication;
+
+  // Same fallback order as the sidebar, so a page and the sidebar never disagree
+  // about which application is active: the URL, then the remembered one, then
+  // the first available.
   const selectedApplication = useMemo(
     () =>
       applications.find((application) => application.id === requestedAppId) ??
-      applications[0] ??
+      preferRemembered(applications, getLastApplication(selectedOrgId), rememberLast, applications[0]) ??
       null,
-    [applications, requestedAppId],
+    [applications, requestedAppId, selectedOrgId, rememberLast],
   );
   // Never expose an application id until it has been proven to belong to the
   // selected organization. Using the URL value while the applications query

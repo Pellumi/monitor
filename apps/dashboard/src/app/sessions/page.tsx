@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { ApplicationRequiredState } from '@/components/application-required-state';
 import { EmptyState } from '@/components/empty-state';
 import { useSelectedApplication } from '@/hooks/use-selected-application';
+import { usePreferences } from '@/components/preferences-provider';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -69,11 +70,13 @@ function SessionsContent() {
   const { appId, selectedOrgId, isLoading: isApplicationsLoading, error: applicationsError } =
     useSelectedApplication();
   const [page, setPage] = useState(1);
+  const { preferences } = usePreferences();
+  const pageSize = preferences.tablePageSize;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['sessions', appId, page],
+    queryKey: ['sessions', appId, page, pageSize],
     queryFn: async () => {
-      const url = `${REPORT_ENGINE}/applications/${appId}/sessions?page=${page}&limit=20`;
+      const url = `${REPORT_ENGINE}/applications/${appId}/sessions?page=${page}&limit=${pageSize}`;
       const res = await authenticatedFetch(url);
       if (!res.ok) throw new Error('Failed to fetch sessions');
       return res.json() as Promise<{

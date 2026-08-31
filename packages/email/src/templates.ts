@@ -25,7 +25,8 @@ export type EmailTemplateKey =
   | 'billing-plan-lapsed'
   | 'usage-limit-warning'
   | 'security-new-device'
-  | 'privacy-rule-updated';
+  | 'privacy-rule-updated'
+  | 'digest-notifications';
 
 export interface BuiltinEmailTemplate {
   key: EmailTemplateKey;
@@ -354,6 +355,18 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'A privacy rule was changed and should be reviewed for compliance.',
     primaryCtaLabel: 'Review privacy settings',
     primaryUrlVariable: 'settingsUrl',
+  },
+  {
+    key: 'digest-notifications',
+    category: EmailCategory.DIGEST,
+    subject: 'Your {{periodLabel}} Tellann summary',
+    preheader: '{{notificationCount}} update(s) from the last {{periodLabel}}.',
+    requiredVariables: ['periodLabel', 'notificationCount', 'summaryLines', 'dashboardUrl'],
+    defaultFrom: 'reports',
+    purpose: 'A batched summary of the notifications you chose to receive as a digest.',
+    primaryCtaLabel: 'Open Tellann',
+    primaryUrlVariable: 'dashboardUrl',
+    emphasisVariable: 'summaryLines',
   },
 ];
 

@@ -8,8 +8,22 @@ import {
   PrismaClient,
 } from '@tellann/db';
 import { builtinTemplates, BuiltinEmailTemplate, EmailTemplateKey, getBuiltinTemplate, SenderKey } from './templates';
+import {
+  ALWAYS_ON_CATEGORIES as ALWAYS_ON,
+  isDigestFrequency,
+  normalizeFrequency,
+} from './notification-categories';
 
 export { builtinTemplates, EmailTemplateKey };
+export {
+  ALWAYS_ON_CATEGORIES,
+  BATCHABLE_CATEGORIES,
+  capabilityFor,
+  isDigestFrequency,
+  listCapabilities,
+  normalizeFrequency,
+  type CategoryCapability,
+} from './notification-categories';
 
 type TemplateVariables = Record<string, unknown>;
 
@@ -46,12 +60,6 @@ export interface SendTemplateEmailResult {
   skippedReason?: string;
 }
 
-const ALWAYS_ON_CATEGORIES = new Set<EmailCategory>([
-  EmailCategory.SECURITY,
-  EmailCategory.BILLING,
-  EmailCategory.COMPLIANCE,
-]);
-
 const categoryDefaults: Record<EmailCategory, NotificationFrequency> = {
   [EmailCategory.SECURITY]: NotificationFrequency.IMMEDIATE,
   [EmailCategory.ACCOUNT]: NotificationFrequency.IMMEDIATE,
@@ -64,6 +72,12 @@ const categoryDefaults: Record<EmailCategory, NotificationFrequency> = {
   [EmailCategory.PRODUCT_EDUCATION]: NotificationFrequency.IMMEDIATE,
   [EmailCategory.COMPLIANCE]: NotificationFrequency.IMMEDIATE,
 };
+
+/**
+ * Marks an EmailDelivery that was held back for a digest. The digest workers
+ * select on this exact string, so it is shared rather than written inline.
+ */
+export const DEFERRED_TO_DIGEST_REASON = 'Deferred to digest';
 
 function env(name: string): string | undefined {
   const value = process.env[name];
@@ -222,6 +236,26 @@ async function parseResendResponse(response: Response): Promise<{ id?: string; e
   }
 }
 
+/**
+ * Turns a stored NotificationEvent payload back into something displayable.
+ *
+ * Events record the template key and its variables, so the same subject line the
+ * email would have used is reused for the in-app feed rather than maintaining a
+ * second set of copy.
+ */
+export function summarizeNotification(
+  templateKey: string,
+  variables: TemplateVariables = {},
+): { title: string; preheader: string; category: EmailCategory } | null {
+  const template = getBuiltinTemplate(templateKey as EmailTemplateKey);
+  if (!template) return null;
+  return {
+    title: applyVariables(template.subject, variables),
+    preheader: applyVariables(template.preheader ?? '', variables),
+    category: template.category,
+  };
+}
+
 export class NotificationEmailService {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -301,10 +335,24 @@ export class NotificationEmailService {
       return { deliveryId: delivery.id, status: delivery.status, skippedReason: suppression.reason };
     }
 
-    if (!(await this.emailAllowed(input.userId ?? null, input.organizationId ?? null, template.category))) {
-      const delivery = await this.recordDelivery(input, notificationEvent.id, idempotencyKey, EmailDeliveryStatus.SKIPPED, EmailProvider.CONSOLE, 'Email preference disabled');
-      await this.markEvent(notificationEvent.id, NotificationEventStatus.SKIPPED);
-      return { deliveryId: delivery.id, status: delivery.status, skippedReason: 'Email preference disabled' };
+    const disposition = await this.emailDisposition(
+      input.userId ?? null,
+      input.organizationId ?? null,
+      template.category,
+    );
+
+    if (disposition !== 'send') {
+      // Deferred events stay CREATED so the digest worker can pick them up;
+      // skipped ones are terminal.
+      const reason = disposition === 'defer'
+        ? DEFERRED_TO_DIGEST_REASON
+        : 'Email preference disabled';
+      const delivery = await this.recordDelivery(input, notificationEvent.id, idempotencyKey, EmailDeliveryStatus.SKIPPED, EmailProvider.CONSOLE, reason);
+      await this.markEvent(
+        notificationEvent.id,
+        disposition === 'defer' ? NotificationEventStatus.CREATED : NotificationEventStatus.SKIPPED,
+      );
+      return { deliveryId: delivery.id, status: delivery.status, skippedReason: reason };
     }
 
     const subject = applyVariables(template.subject, variables);
@@ -442,9 +490,26 @@ export class NotificationEmailService {
     });
   }
 
-  private async emailAllowed(userId: string | null, organizationId: string | null, category: EmailCategory): Promise<boolean> {
-    if (ALWAYS_ON_CATEGORIES.has(category)) return true;
-    if (!userId || !organizationId) return categoryDefaults[category] !== NotificationFrequency.NEVER;
+  /**
+   * Decides what to do with an email for `category`:
+   *
+   * - `send`   deliver now
+   * - `defer`  hold for the digest run the user asked for
+   * - `skip`   the user switched this category off
+   *
+   * Always-on categories send unconditionally. Without a user and organisation
+   * there is no preference to consult — an OTP or an invite to someone who has
+   * no account yet — so those fall back to the category default.
+   */
+  private async emailDisposition(
+    userId: string | null,
+    organizationId: string | null,
+    category: EmailCategory,
+  ): Promise<'send' | 'defer' | 'skip'> {
+    if (ALWAYS_ON.has(category)) return 'send';
+    if (!userId || !organizationId) {
+      return categoryDefaults[category] === NotificationFrequency.NEVER ? 'skip' : 'send';
+    }
 
     const preference = await this.prisma.notificationPreference.findUnique({
       where: {
@@ -456,8 +521,17 @@ export class NotificationEmailService {
       },
     });
 
-    if (!preference) return categoryDefaults[category] !== NotificationFrequency.NEVER;
-    return preference.emailEnabled && preference.frequency !== NotificationFrequency.NEVER;
+    if (!preference) {
+      return categoryDefaults[category] === NotificationFrequency.NEVER ? 'skip' : 'send';
+    }
+    if (!preference.emailEnabled) return 'skip';
+
+    // A digest frequency on a transactional category would silently delay mail
+    // the user needs immediately, so it is coerced back to IMMEDIATE here as
+    // well as at the API boundary.
+    const frequency = normalizeFrequency(category, preference.frequency);
+    if (frequency === NotificationFrequency.NEVER) return 'skip';
+    return isDigestFrequency(frequency) ? 'defer' : 'send';
   }
 
   private async recordDelivery(

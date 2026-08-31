@@ -681,16 +681,14 @@ export default function BillingPage() {
       {trial?.eligible && isFreePlan && (
         <div className="flex flex-col gap-4 rounded-lg border border-violet-800/70 bg-violet-950/20 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex max-w-2xl gap-3">
-            <Zap className="mt-0.5 h-5 w-5 shrink-0 text-violet-300" />
+            {/* <Zap className="mt-0.5 h-5 w-5 shrink-0 text-violet-300" /> */}
             <div>
               <h3 className="text-sm font-semibold text-violet-100">
                 Try {trial.planName} free for {trial.trialDays} days
               </h3>
               <p className="mt-1 text-xs leading-5 text-violet-200/70">
                 Add a card to unlock the full {trial.planName} plan straight away. Nothing is
-                charged until {formatDate(trial.firstChargeOn)}, when your first payment of{' '}
-                {trial.firstChargeFormatted} is taken. Cancel or change plan any time before then
-                and you pay nothing.
+                charged until {formatDate(trial.firstChargeOn)}.
               </p>
             </div>
           </div>
@@ -730,9 +728,9 @@ export default function BillingPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-indigo-600/20 p-2">
+              {/* <div className="rounded-lg bg-indigo-600/20 p-2">
                 <Building2 className="h-5 w-5 text-indigo-400" />
-              </div>
+              </div> */}
               <div>
                 <div className="text-lg font-bold text-white">
                   {subscription?.plan?.name || currentPlanType}

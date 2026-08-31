@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Code2, CheckCircle, XCircle, Loader2, AlertTriangle, ChevronDown, ToggleLeft, ToggleRight } from 'lucide-react';
 import { EmptyState } from '@/components/empty-state';
+import { usePersistedFilter } from '@/hooks/use-persisted-filter';
 
 interface CompiledRuleset {
   id: string;
@@ -44,7 +45,7 @@ export default function AdminRulesetsPage() {
   const [promoteLoading, setPromoteLoading] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = usePersistedFilter('admin-rulesets:status', '');
 
   const load = useCallback(async () => {
     setIsLoading(true);

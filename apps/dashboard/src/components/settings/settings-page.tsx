@@ -5,6 +5,7 @@ import { Lock, Sparkles } from "lucide-react";
 import { useSession } from "@/components/providers";
 
 import { cn } from "@/components/ui/utils";
+import { Switch } from "@/components/ui/switch";
 
 type SettingsScope = "USER" | "ORGANIZATION" | "APPLICATION";
 
@@ -74,7 +75,7 @@ export function SettingsSection({
 export function UpgradeNotice({ children }: { children: ReactNode }) {
   return (
     <div className="flex gap-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-4 text-sm text-amber-100">
-      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+      {/* <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" /> */}
       <div>{children}</div>
     </div>
   );
@@ -103,18 +104,16 @@ export function SettingsToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-start justify-between gap-4 py-3">
-      <span>
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div>
         <span className="block text-sm font-medium text-neutral-200">{label}</span>
         {description ? <span className="mt-1 block text-xs leading-5 text-neutral-500">{description}</span> : null}
-      </span>
-      <input
-        type="checkbox"
+      </div>
+      <Switch
         checked={checked}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="mt-1 h-4 w-4 accent-white disabled:opacity-40"
+        onCheckedChange={onChange}
       />
-    </label>
+    </div>
   );
 }

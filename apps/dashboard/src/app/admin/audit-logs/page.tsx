@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Shield, Loader2, AlertTriangle, Search, Filter, Download } from 'lucide-react';
 import { EmptyState } from '@/components/empty-state';
+import { usePreferences } from '@/components/preferences-provider';
+import { usePersistedFilter } from '@/hooks/use-persisted-filter';
 
 interface AuditLogEntry {
   id: string;
@@ -57,11 +59,12 @@ export default function AdminAuditLogsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [actionFilter, setActionFilter] = useState('');
+  const [actionFilter, setActionFilter] = usePersistedFilter('admin-audit-logs:action', '');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const limit = 25;
+  const { preferences } = usePreferences();
+  const limit = preferences.tablePageSize;
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -83,7 +86,7 @@ export default function AdminAuditLogsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, search, actionFilter]);
+  }, [page, search, actionFilter, limit]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -176,11 +176,11 @@ function MFAContent() {
           : "border-neutral-800 bg-neutral-900"
       }`}>
         <div className="flex items-center gap-3">
-          {isEnabled ? (
+          {/* {isEnabled ? (
             <CheckCircle className="h-5 w-5 text-emerald-400 flex-shrink-0" />
           ) : (
             <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0" />
-          )}
+          )} */}
           <div>
             <p className={`text-sm font-semibold ${isEnabled ? "text-emerald-300" : "text-amber-300"}`}>
               {isEnabled ? "MFA Enabled" : "MFA Not Configured"}
@@ -202,7 +202,7 @@ function MFAContent() {
             disabled={setupMutation.isPending}
             loading={setupMutation.isPending}
           >
-            {!setupMutation.isPending && <Shield className="h-3.5 w-3.5" />}
+            {/* {!setupMutation.isPending && <Shield className="h-3.5 w-3.5" />} */}
             Enable MFA
           </Button>
         )}

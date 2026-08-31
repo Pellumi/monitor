@@ -9,6 +9,10 @@ import {
   runCoverageAlertDigest,
   runRuleCandidateAdminDigest,
 } from './digest-workers';
+import {
+  runDailyNotificationDigest,
+  runWeeklyNotificationDigest,
+} from './notification-digest-worker';
 import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
 import { runRetentionSweep } from './retention-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
@@ -321,6 +325,9 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   { name: 'weekly-report-digest',             handler: runWeeklyReportDigest,       pattern: '0 6 * * 1' },   // Monday 6am
   { name: 'coverage-alert-digest',            handler: runCoverageAlertDigest,      pattern: '0 7 * * *' },   // daily 7am
   { name: 'rule-candidate-admin-digest',      handler: runRuleCandidateAdminDigest, pattern: '0 8 * * *' },   // daily 8am
+  // Deliver notifications the user chose to batch instead of receive instantly.
+  { name: 'notification-digest-daily',        handler: () => runDailyNotificationDigest(prisma),  pattern: '0 9 * * *' },   // daily 9am
+  { name: 'notification-digest-weekly',       handler: () => runWeeklyNotificationDigest(prisma), pattern: '0 9 * * 1' },   // Monday 9am
   { name: 'cross-tenant-index-builder',       handler: runCrossTenantIndexBuilder,  pattern: '0 1 * * 0' },   // Sunday 1am (weekly)
   { name: 'behavioral-data-retention',        handler: () => runRetentionSweep(prisma).then(() => undefined), pattern: '0 2 * * *' },
   { name: 'scheduled-subscription-changes',   handler: () => applyScheduledSubscriptionChanges(prisma).then(() => undefined), every: 60_000 },

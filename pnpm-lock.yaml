@@ -766,6 +766,9 @@ importers:
       '@tellann/document-intelligence':
         specifier: workspace:*
         version: link:../../packages/document-intelligence
+      '@tellann/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker

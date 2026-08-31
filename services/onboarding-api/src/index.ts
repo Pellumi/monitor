@@ -5,7 +5,16 @@ import express, { Request, Response, NextFunction } from 'express';
 import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
 import { Feature, Services } from '@tellann/shared';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
-import { NotificationEmailService, appUrl, buildIdempotencyKey, docsUrl } from '@tellann/email';
+import {
+  NotificationEmailService,
+  appUrl,
+  buildIdempotencyKey,
+  capabilityFor,
+  docsUrl,
+  listCapabilities,
+  normalizeFrequency,
+  summarizeNotification,
+} from '@tellann/email';
 import { generateAiFlowDraft } from '@tellann/ai';
 import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@tellann/rules';
 import { writeAuditLog, extractAuditContext } from '@tellann/authz';
@@ -632,18 +641,96 @@ app.get('/organizations/:orgId/notification-preferences', verifyJwt, verifyOrgMe
     });
 
     const byCategory = new Map(existing.map((preference) => [preference.category, preference]));
-    res.json(Object.values(EmailCategory).map((category) => byCategory.get(category) ?? {
-      id: null,
-      userId,
-      organizationId: orgId,
-      category,
-      emailEnabled: true,
-      inAppEnabled: true,
-      webhookEnabled: false,
-      frequency: category === EmailCategory.DIGEST ? NotificationFrequency.WEEKLY_DIGEST : NotificationFrequency.IMMEDIATE,
+
+    // Only categories the product actually delivers something for are returned,
+    // and each carries what it supports so the client never renders a control
+    // that nothing acts on.
+    res.json(listCapabilities().map((capability) => {
+      const stored = byCategory.get(capability.category);
+      const frequency = normalizeFrequency(
+        capability.category,
+        stored?.frequency ?? capability.defaultFrequency,
+      );
+
+      return {
+        id: stored?.id ?? null,
+        userId,
+        organizationId: orgId,
+        category: capability.category,
+        // A locked category is always reported as enabled, whatever is stored.
+        emailEnabled: capability.emailLocked ? true : stored?.emailEnabled ?? true,
+        inAppEnabled: stored?.inAppEnabled ?? true,
+        webhookEnabled: stored?.webhookEnabled ?? false,
+        frequency,
+        capability,
+      };
     }));
   } catch (err) {
     console.error('[Onboarding] Get notification preferences error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /organizations/:orgId/notifications - in-app notification feed.
+ *
+ * Every notifiable event already writes a NotificationEvent row, whether or not
+ * an email went out, so the feed is derived from those rather than duplicated
+ * into a second table. That also means switching email off for a category still
+ * leaves its in-app notifications working — the two channels are independent.
+ *
+ * `since` (ISO timestamp) returns only newer events, which is what the client
+ * polls with to surface browser notifications for things it has not shown yet.
+ */
+app.get('/organizations/:orgId/notifications', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.params;
+  const userId = req.user!.id;
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  const sinceRaw = typeof req.query.since === 'string' ? new Date(req.query.since) : null;
+  const since = sinceRaw && !Number.isNaN(sinceRaw.getTime()) ? sinceRaw : null;
+
+  try {
+    const preferences = await prisma.notificationPreference.findMany({
+      where: { organizationId: orgId, userId },
+    });
+    const disabled = new Set(
+      preferences.filter((preference) => !preference.inAppEnabled).map((preference) => preference.category),
+    );
+
+    const events = await prisma.notificationEvent.findMany({
+      where: {
+        organizationId: orgId,
+        ...(since ? { createdAt: { gt: since } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      // Over-fetch: an unknown template or a muted category is dropped below,
+      // and filtering in SQL is not possible while the category lives in JSON.
+      take: limit * 4,
+    });
+
+    const notifications = events
+      .flatMap((event) => {
+        const payload = (event.payload ?? {}) as { templateKey?: string; variables?: Record<string, unknown> };
+        if (!payload.templateKey) return [];
+        const summary = summarizeNotification(payload.templateKey, payload.variables ?? {});
+        if (!summary || disabled.has(summary.category)) return [];
+
+        return [{
+          id: event.id,
+          category: summary.category,
+          eventType: event.eventType,
+          severity: event.severity,
+          title: summary.title,
+          body: summary.preheader,
+          createdAt: event.createdAt,
+        }];
+      })
+      .slice(0, limit);
+
+    res.json({ notifications, serverTime: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Onboarding] Get notifications error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -657,14 +744,16 @@ app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, v
     return res.status(400).json({ error: 'INVALID_CATEGORY', categories: Object.values(EmailCategory) });
   }
 
-  const frequency = req.body.frequency ?? NotificationFrequency.IMMEDIATE;
-  if (!Object.values(NotificationFrequency).includes(frequency)) {
+  const requestedFrequency = req.body.frequency ?? NotificationFrequency.IMMEDIATE;
+  if (!Object.values(NotificationFrequency).includes(requestedFrequency)) {
     return res.status(400).json({ error: 'INVALID_FREQUENCY', frequencies: Object.values(NotificationFrequency) });
   }
 
-  const criticalCategories: EmailCategory[] = [EmailCategory.SECURITY, EmailCategory.BILLING, EmailCategory.COMPLIANCE];
-  const critical = criticalCategories.includes(normalizedCategory as EmailCategory);
-  const emailEnabled = critical ? true : req.body.emailEnabled !== false;
+  const capability = capabilityFor(normalizedCategory as EmailCategory);
+  // A transactional category cannot be batched, so a digest frequency is
+  // coerced back rather than stored and silently ignored later.
+  const frequency = normalizeFrequency(normalizedCategory as EmailCategory, requestedFrequency);
+  const emailEnabled = capability.emailLocked ? true : req.body.emailEnabled !== false;
 
   try {
     const preference = await prisma.notificationPreference.upsert({
@@ -692,7 +781,7 @@ app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, v
       },
     });
 
-    res.json(preference);
+    res.json({ ...preference, capability });
   } catch (err) {
     console.error('[Onboarding] Update notification preference error', err);
     res.status(500).json({ error: 'Internal server error' });

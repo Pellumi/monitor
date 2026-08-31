@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardList, CheckCircle, XCircle, Loader2, AlertTriangle, ChevronRight, Eye } from 'lucide-react';
 import { EmptyState } from '@/components/empty-state';
+import { usePersistedFilter } from '@/hooks/use-persisted-filter';
 
 interface RuleCandidate {
   id: string;
@@ -45,7 +46,7 @@ export default function AdminRuleCandidatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>('PENDING');
+  const [statusFilter, setStatusFilter] = usePersistedFilter('admin-rule-candidates:status', 'PENDING');
   const [feedback, setFeedback] = useState<{ id: string; type: 'success' | 'error'; message: string } | null>(null);
 
   const load = useCallback(async (cur?: string) => {

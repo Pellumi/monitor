@@ -1,5 +1,13 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { usePreferences } from '@/components/preferences-provider';
+import {
+  getLastApplication,
+  getLastEnvironment,
+  preferRemembered,
+  rememberLastApplication,
+  rememberLastEnvironment,
+} from '@/lib/last-selection';
 import {
   Select,
   SelectTrigger,
@@ -379,7 +387,17 @@ function AppSelector({
     enabled: !!selectedOrgId,
   });
 
-  const selectedApp = apps?.find((a) => a.id === currentAppId) ?? apps?.[0];
+  const { preferences } = usePreferences();
+
+  // With no ?appId in the URL, fall back to where the user left off rather than
+  // the first application in the list.
+  const rememberedApp = preferRemembered(
+    apps,
+    getLastApplication(selectedOrgId),
+    preferences.rememberLastApplication,
+    apps?.[0],
+  );
+  const selectedApp = apps?.find((a) => a.id === currentAppId) ?? rememberedApp;
 
   // Fetch environments for the selected app
   const { data: environments } = useQuery<Environment[]>({
@@ -399,10 +417,14 @@ function AppSelector({
     entitlement ?? null,
     "MULTIPLE_ENVIRONMENTS",
   );
+  const rememberedEnv = preferRemembered(
+    environments,
+    getLastEnvironment(selectedApp?.id),
+    preferences.rememberLastEnvironment,
+    environments?.find((e) => e.isDefault) ?? environments?.[0],
+  );
   const selectedEnv =
-    environments?.find((e) => e.id === currentEnvId) ??
-    environments?.find((e) => e.isDefault) ??
-    environments?.[0];
+    environments?.find((e) => e.id === currentEnvId) ?? rememberedEnv;
 
   // Propagate entitlement and env selection up
   useEffect(() => {
@@ -413,18 +435,29 @@ function AppSelector({
     onEnvSelected(selectedEnv?.id ?? null);
   }, [selectedEnv?.id, onEnvSelected]);
 
-  // Auto-select first app if none selected
+  // Auto-select an app if the URL names none (or names one that is not in this
+  // organisation), preferring the remembered one.
   useEffect(() => {
     if (
       apps &&
       apps.length > 0 &&
+      selectedApp &&
       (!currentAppId || !apps.some((a) => a.id === currentAppId))
     ) {
       const params = new URLSearchParams(searchParams.toString());
-      params.set("appId", apps[0].id);
+      params.set("appId", selectedApp.id);
       router.replace(`${pathname}?${params.toString()}`);
     }
-  }, [apps, currentAppId, pathname, router, searchParams]);
+  }, [apps, currentAppId, selectedApp, pathname, router, searchParams]);
+
+  // Keep the remembered selection in step with what is actually active.
+  useEffect(() => {
+    if (currentAppId) rememberLastApplication(selectedOrgId, currentAppId);
+  }, [currentAppId, selectedOrgId]);
+
+  useEffect(() => {
+    if (currentAppId && currentEnvId) rememberLastEnvironment(currentAppId, currentEnvId);
+  }, [currentAppId, currentEnvId]);
 
   // Auto-select default environment
   useEffect(() => {
@@ -441,6 +474,7 @@ function AppSelector({
   }, [environments, selectedEnv, currentEnvId, pathname, router, searchParams]);
 
   function handleSelect(appId: string) {
+    rememberLastApplication(selectedOrgId, appId);
     const params = new URLSearchParams(searchParams.toString());
     params.set("appId", appId);
     params.delete("envId");
@@ -449,6 +483,7 @@ function AppSelector({
   }
 
   function handleEnvSelect(envId: string) {
+    rememberLastEnvironment(selectedApp?.id, envId);
     const params = new URLSearchParams(searchParams.toString());
     params.set("envId", envId);
     router.push(`${pathname}?${params.toString()}`);

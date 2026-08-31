@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSession } from "@/components/providers";
 import { SettingsPage, SettingsSection, UpgradeNotice } from "@/components/settings/settings-page";
+import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 
 type AuditEntry = {
@@ -22,10 +23,12 @@ export default function AuditLogsPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [locked, setLocked] = useState(false);
+  const { preferences } = usePreferences();
+  const pageSize = preferences.tablePageSize;
 
   const load = useCallback(async () => {
     if (!selectedOrgId) return;
-    const params = new URLSearchParams({ page: String(page), limit: "25" });
+    const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
     if (query) params.set("q", query);
     const response = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/audit-logs?${params}`);
     if (response.status === 403) {
@@ -37,7 +40,7 @@ export default function AuditLogsPage() {
     setEntries(body.data ?? []);
     setTotal(body.total ?? 0);
     setLocked(false);
-  }, [page, query, selectedOrgId]);
+  }, [page, pageSize, query, selectedOrgId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), query ? 250 : 0);
@@ -66,7 +69,7 @@ export default function AuditLogsPage() {
           <div className="mt-4 flex items-center justify-between">
             <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</Button>
             <span className="text-xs text-neutral-500">Page {page}</span>
-            <Button variant="secondary" size="sm" disabled={page * 25 >= total} onClick={() => setPage((value) => value + 1)}>Next</Button>
+            <Button variant="secondary" size="sm" disabled={page * pageSize >= total} onClick={() => setPage((value) => value + 1)}>Next</Button>
           </div>
         </SettingsSection>
       )}

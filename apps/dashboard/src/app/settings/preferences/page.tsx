@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Select,
   SelectTrigger,
@@ -10,41 +10,53 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { useTheme } from "@/components/theme-provider";
+import { usePreferences } from "@/components/preferences-provider";
+import { normalizeThemePreference, type ThemePreference } from "@/lib/theme";
+import {
+  applyDisplayPreferences,
+  normalizePreferences,
+  TABLE_PAGE_SIZES,
+  type Density,
+  type Preferences,
+} from "@/lib/preferences";
 import {
   SettingsPage,
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/settings-page";
 
-type Preferences = {
-  theme: string;
-  density: string;
-  sidebarCollapsed: boolean;
-  reducedMotion: boolean;
-  highContrast: boolean;
-  tablePageSize: number;
-  persistFilters: boolean;
-  defaultLandingPage: string;
-  rememberLastApplication: boolean;
-  rememberLastEnvironment: boolean;
-  reportsOpenInNewTab: boolean;
-  version: number;
-};
 
 export default function PreferencesPage() {
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const { setTheme } = useTheme();
+  const { preferences: savedPreferences, applyPreferences } = usePreferences();
+  // Read in an unmount cleanup, so it must not be a stale render's copy.
+  const savedPreferencesRef = useRef(savedPreferences);
+  useEffect(() => {
+    savedPreferencesRef.current = savedPreferences;
+  }, [savedPreferences]);
+  // The theme the account is known to hold, so a failed save can be undone.
+  // `useTheme().theme` is unusable here: previewing a choice already moved it.
+  const persistedTheme = useRef<ThemePreference | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     authenticatedFetch("/api-gateway/auth/preferences")
       .then(async (response) => {
         if (!response.ok) throw new Error("Unable to load preferences.");
-        return response.json() as Promise<Preferences>;
+        return response.json();
       })
       .then((data) => {
-        if (!cancelled) setPreferences(data);
+        if (cancelled) return;
+        const loaded = normalizePreferences(data);
+        setPreferences(loaded);
+        persistedTheme.current = loaded.theme;
+        // The stored preferences win over whatever this device had cached.
+        setTheme(loaded.theme);
+        applyPreferences(loaded);
       })
       .catch((error: Error) => {
         if (!cancelled) setMessage(error.message);
@@ -52,12 +64,34 @@ export default function PreferencesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setTheme, applyPreferences]);
 
   function update<K extends keyof Preferences>(key: K, value: Preferences[K]) {
     setPreferences((current) =>
       current ? { ...current, [key]: value } : current,
     );
+  }
+
+  // Preview density, motion and contrast against the whole app as they are
+  // picked, for the same reason the theme select previews itself.
+  useEffect(() => {
+    if (preferences) applyDisplayPreferences(preferences);
+  }, [preferences]);
+
+  // Leaving without saving must not leave the preview behind.
+  useEffect(
+    () => () => applyDisplayPreferences(savedPreferencesRef.current),
+    [],
+  );
+
+  /**
+   * Repaints the app as soon as a theme is picked, so the select previews the
+   * choice instead of describing it. `save` still persists it to the account.
+   */
+  function updateTheme(value: string) {
+    const preference = normalizeThemePreference(value);
+    update("theme", preference);
+    setTheme(preference);
   }
 
   async function save() {
@@ -76,9 +110,21 @@ export default function PreferencesPage() {
       const body = await response.json();
       if (!response.ok)
         throw new Error(body.message ?? "Unable to save preferences.");
-      setPreferences(body);
+      const saved = normalizePreferences(body);
+      setPreferences(saved);
+      persistedTheme.current = saved.theme;
+      setTheme(saved.theme);
+      // Push to the provider so the rest of the app picks up density, page size,
+      // motion and contrast without a reload.
+      applyPreferences(saved);
       setMessage("Preferences saved.");
     } catch (error) {
+      // The preview already repainted the app; put it back so what is on screen
+      // matches what the account actually stores.
+      if (persistedTheme.current) {
+        setTheme(persistedTheme.current);
+        update("theme", persistedTheme.current);
+      }
       setMessage(
         error instanceof Error ? error.message : "Unable to save preferences.",
       );
@@ -109,8 +155,9 @@ export default function PreferencesPage() {
             <div className="grid gap-4 md:grid-cols-3">
               <SelectField
                 label="Theme"
+                description="System follows your operating system setting."
                 value={preferences.theme}
-                onChange={(value) => update("theme", value)}
+                onChange={updateTheme}
                 displayValue={
                   preferences.theme === "SYSTEM"
                     ? "System"
@@ -125,8 +172,11 @@ export default function PreferencesPage() {
               </SelectField>
               <SelectField
                 label="Density"
+                description="Compact tightens spacing throughout the interface."
                 value={preferences.density}
-                onChange={(value) => update("density", value)}
+                onChange={(value) =>
+                  update("density", value === "COMPACT" ? "COMPACT" : ("COMFORTABLE" as Density))
+                }
                 displayValue={
                   preferences.density === "COMFORTABLE"
                     ? "Comfortable"
@@ -138,11 +188,12 @@ export default function PreferencesPage() {
               </SelectField>
               <SelectField
                 label="Table page size"
+                description="Rows per page in sessions and audit logs."
                 value={String(preferences.tablePageSize)}
                 onChange={(value) => update("tablePageSize", Number(value))}
                 displayValue={String(preferences.tablePageSize)}
               >
-                {[10, 25, 50, 100].map((size) => (
+                {TABLE_PAGE_SIZES.map((size) => (
                   <SelectItem key={size} value={String(size)}>
                     {size}
                   </SelectItem>
@@ -152,16 +203,19 @@ export default function PreferencesPage() {
             <div className="mt-4 divide-y divide-neutral-800">
               <SettingsToggle
                 label="Reduced motion"
+                description="Suppress animations and transitions across the interface."
                 checked={preferences.reducedMotion}
                 onChange={(value) => update("reducedMotion", value)}
               />
               <SettingsToggle
                 label="High contrast"
+                description="Strengthen borders and muted text for easier reading."
                 checked={preferences.highContrast}
                 onChange={(value) => update("highContrast", value)}
               />
               <SettingsToggle
                 label="Persist filters"
+                description="Keep list filters, such as audit log actions, between visits."
                 checked={preferences.persistFilters}
                 onChange={(value) => update("persistFilters", value)}
               />
@@ -174,18 +228,15 @@ export default function PreferencesPage() {
             <div className="divide-y divide-neutral-800">
               <SettingsToggle
                 label="Remember last application"
+                description="Return to the application you were last working in instead of the first one."
                 checked={preferences.rememberLastApplication}
                 onChange={(value) => update("rememberLastApplication", value)}
               />
               <SettingsToggle
                 label="Remember last environment"
+                description="Return to the environment you last selected for that application."
                 checked={preferences.rememberLastEnvironment}
                 onChange={(value) => update("rememberLastEnvironment", value)}
-              />
-              <SettingsToggle
-                label="Open reports in a new tab"
-                checked={preferences.reportsOpenInNewTab}
-                onChange={(value) => update("reportsOpenInNewTab", value)}
               />
             </div>
           </SettingsSection>
@@ -207,12 +258,14 @@ export default function PreferencesPage() {
 
 function SelectField({
   label,
+  description,
   value,
   onChange,
   displayValue,
   children,
 }: {
   label: string;
+  description?: string;
   value: string;
   onChange: (value: string) => void;
   displayValue: string;
@@ -229,6 +282,11 @@ function SelectField({
         </SelectTrigger>
         <SelectContent>{children}</SelectContent>
       </Select>
+      {description ? (
+        <span className="mt-1.5 block text-xs leading-5 text-neutral-500">
+          {description}
+        </span>
+      ) : null}
     </div>
   );
 }
