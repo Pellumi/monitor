@@ -582,7 +582,9 @@ app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res:
   const { appId } = req.params;
   const { name, purpose, scopeStatement, exclusions, tags, workflowType } = req.body ?? {};
   if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'FLOW_NAME_REQUIRED' });
-  if (typeof scopeStatement !== 'string' || !scopeStatement.trim()) return res.status(400).json({ error: 'FLOW_SCOPE_REQUIRED' });
+  // Scope may be left blank at creation (e.g. the web graph editor creates the
+  // flow first and lets the author fill in scope from the side panel) but must
+  // be supplied before publishing — validateFlow enforces that at publish time.
 
   const environment = await prisma.environment.findFirst({ where: { applicationId: appId, isDefault: true } });
   const flow = await prisma.behaviorGraph.create({ data: {
@@ -590,7 +592,7 @@ app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res:
     environmentId: environment?.id ?? null,
     name: name.trim(),
     purpose: typeof purpose === 'string' ? purpose.trim() : null,
-    scopeStatement: scopeStatement.trim(),
+    scopeStatement: typeof scopeStatement === 'string' ? scopeStatement.trim() : '',
     exclusions: Array.isArray(exclusions) ? exclusions.filter((item): item is string => typeof item === 'string') : [],
     tags: Array.isArray(tags) ? tags.filter((item): item is string => typeof item === 'string') : [],
     workflowType: typeof workflowType === 'string' ? workflowType : 'CUSTOM',
@@ -652,6 +654,42 @@ app.post('/v1/applications/:appId/flows/:flowId/validate', async (req: Request, 
 app.post('/v1/applications/:appId/flows/:flowId/publish', async (req: AuthenticatedRequest, res: Response) => {
   const result = await publishCanonicalFlow(req.params.appId, req.params.flowId, req.user?.id);
   return res.status(result.status).json(result.body);
+});
+
+// Accept an AI-generated draft flow (from an uploaded document): it becomes a
+// normal editable draft — the "pending review" marker is cleared.
+app.post('/v1/applications/:appId/flows/:flowId/ai-draft/accept', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId } = req.params;
+  const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED } });
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  if (!flow.aiDraftStatus) return res.json({ ...flow });
+  const updated = await prisma.behaviorGraph.update({ where: { id: flow.id }, data: { aiDraftStatus: null } });
+  return res.json({ ...updated });
+});
+
+// Discard an AI-generated draft flow. Pristine drafts (only nodes/edges, never
+// published or bound) are deleted outright; anything with downstream rows is
+// archived so referential integrity holds.
+app.post('/v1/applications/:appId/flows/:flowId/ai-draft/decline', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId } = req.params;
+  const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED } });
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flow.id } });
+      await tx.declaredStateSuggestion.deleteMany({ where: { flowId: flow.id } });
+      await tx.behaviorGraphNode.deleteMany({ where: { graphId: flow.id } });
+      await tx.behaviorGraph.delete({ where: { id: flow.id } });
+    });
+    return res.json({ deletedFlowId: flow.id, archived: false });
+  } catch (error) {
+    console.warn('[FDRS] AI draft hard-delete failed, archiving instead', error);
+    const archived = await prisma.behaviorGraph.update({
+      where: { id: flow.id },
+      data: { aiDraftStatus: 'DECLINED', lifecycleStatus: 'ARCHIVED', isActive: false },
+    });
+    return res.json({ deletedFlowId: flow.id, archived: true, flow: archived });
+  }
 });
 
 app.post('/v1/applications/:appId/flows/:flowId/versions/:versionId/revise', async (req: AuthenticatedRequest, res: Response) => {
@@ -2198,6 +2236,54 @@ app.post('/applications/:id/declared-flow/:flowId/transitions', async (req: Requ
   } catch (err) {
     console.error('[FDRS] Add edge error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** PATCH /applications/:id/declared-flow/:flowId/transitions/:transitionId - Edit a transition edge */
+app.patch('/applications/:id/declared-flow/:flowId/transitions/:transitionId', async (req: Request, res: Response) => {
+  const { id: applicationId, flowId, transitionId } = req.params;
+  const { action, condition, actor, system } = req.body ?? {};
+  try {
+    const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    const current = await prisma.behaviorGraphEdge.findFirst({ where: { id: transitionId, graphId: flowId } });
+    if (!current) return res.status(404).json({ error: 'FLOW_TRANSITION_NOT_FOUND' });
+    const data: Record<string, unknown> = {};
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'action')) data.action = typeof action === 'string' && action.trim() ? action.trim() : null;
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'condition')) data.condition = typeof condition === 'string' && condition.trim() ? condition.trim() : null;
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'actor')) data.actor = typeof actor === 'string' && actor.trim() ? actor.trim() : null;
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'system')) data.system = typeof system === 'string' && system.trim() ? system.trim() : null;
+    const result = await prisma.$transaction(async (tx) => {
+      const edge = await tx.behaviorGraphEdge.update({ where: { id: transitionId }, data, include: { fromNode: true, toNode: true } });
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+      return { ...edge, fromStateId: edge.fromNodeId, toStateId: edge.toNodeId, fromState: edge.fromNode, toState: edge.toNode, graphVersion: updatedGraph.version };
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('[FDRS] Edit transition error:', error);
+    return res.status(500).json({ error: 'FLOW_TRANSITION_UPDATE_FAILED' });
+  }
+});
+
+/** DELETE /applications/:id/declared-flow/:flowId/transitions/:transitionId - Remove a transition edge */
+app.delete('/applications/:id/declared-flow/:flowId/transitions/:transitionId', async (req: Request, res: Response) => {
+  const { id: applicationId, flowId, transitionId } = req.params;
+  try {
+    const flow = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId } });
+    if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+    if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+    const edge = await prisma.behaviorGraphEdge.findFirst({ where: { id: transitionId, graphId: flowId } });
+    if (!edge) return res.status(404).json({ error: 'FLOW_TRANSITION_NOT_FOUND' });
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.behaviorGraphEdge.delete({ where: { id: transitionId } });
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
+      return { deletedTransitionId: transitionId, graphVersion: updatedGraph.version };
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('[FDRS] Delete transition error:', error);
+    return res.status(500).json({ error: 'FLOW_TRANSITION_DELETE_FAILED' });
   }
 });
 

@@ -279,7 +279,8 @@ async function ensureAiUsageAggregated(startDate: Date, endDate: Date, organizat
 const entitlementChecker = new EntitlementChecker(prisma);
 const storageClient = createStorageClient();
 const emailService = new NotificationEmailService(prisma);
-app.use(express.json());
+// 30 MB ceiling — document-flow generation posts the raw file as base64 JSON.
+app.use(express.json({ limit: '30mb' }));
 app.use(createDesktopRouter({
   prisma,
   entitlementChecker,
@@ -288,7 +289,7 @@ app.use(createDesktopRouter({
   jwtSecret: JWT_SECRET,
   storage: storageClient,
 }));
-app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership }));
+app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, storage: storageClient }));
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
 app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));

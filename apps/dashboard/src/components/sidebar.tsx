@@ -126,15 +126,15 @@ function useEntitlement() {
 const navigation: NavItem[] = [
   { name: "Overview", href: "/", icon: LayoutDashboard },
   {
-    name: "Behavioral Graph",
-    href: "/graph",
-    icon: GitGraph,
-    requiredFeature: "BEHAVIOR_GRAPH",
-  },
-  {
     name: "Flow Declaration",
     href: "/declare",
     icon: ClipboardList,
+    requiredFeature: "BEHAVIOR_GRAPH",
+  },
+  {
+    name: "Behavioral Graph",
+    href: "/graph",
+    icon: GitGraph,
     requiredFeature: "BEHAVIOR_GRAPH",
   },
   {

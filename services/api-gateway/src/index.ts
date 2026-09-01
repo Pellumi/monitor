@@ -157,7 +157,9 @@ async function resolveProgrammaticToken(rawToken: string): Promise<{ organizatio
 // Build and Start Fastify
 // ─────────────────────────────────────────────────────────────
 
-const fastify = Fastify({ logger: true });
+// 30 MB body ceiling so large proxied payloads (e.g. base64-encoded documents
+// for flow generation) are not rejected before reaching the upstream service.
+const fastify = Fastify({ logger: true, bodyLimit: 31 * 1024 * 1024 });
 
 async function main() {
   // CORS — allow all origins so browser SDKs work

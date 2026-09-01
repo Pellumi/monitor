@@ -1297,6 +1297,10 @@ model BehaviorGraph {
   tags               String[]            @default([])
   publishedVersionId String?
   supersededByFlowId String?
+  // Set to "PENDING_REVIEW" while an AI-generated draft (e.g. from an uploaded
+  // document) is awaiting the author's accept/discard decision. Cleared on accept.
+  aiDraftStatus      String?
+  aiDraftSourceName  String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   completedAt        DateTime?

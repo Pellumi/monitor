@@ -19,11 +19,13 @@ import {
   CircleStop,
   Code2,
   Copy,
+  FilePlus2,
   FileSearch,
   Folder,
   FolderOpen,
   GitBranch,
   Globe2,
+  GraduationCap,
   HelpCircle,
   KeyRound,
   Lock,
@@ -34,6 +36,7 @@ import {
   RefreshCw,
   SearchCode,
   ShieldCheck,
+  ShoppingCart,
   Sparkles,
   TerminalSquare,
   Trash2,
@@ -1905,6 +1908,60 @@ function WholeFlowReviewPanel({
   );
 }
 
+// Character limits for the flow definition fields.
+const FLOW_NAME_MAX = 20;
+const FLOW_PURPOSE_MAX = 200;
+const FLOW_SCOPE_MAX = 200;
+
+// Textarea that caps its length and grows to fit its content so all text stays visible.
+function CappedTextarea({
+  value,
+  onChange,
+  maxLength,
+  placeholder,
+  rows = 3,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  maxLength: number;
+  placeholder?: string;
+  rows?: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <span style={{ display: "block", width: "100%" }}>
+      <textarea
+        ref={ref}
+        rows={rows}
+        value={value}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        onChange={(event) => onChange(event.target.value.slice(0, maxLength))}
+        style={{ resize: "none", overflow: "hidden", width: "100%" }}
+      />
+      <span
+        style={{
+          display: "block",
+          marginTop: 4,
+          textAlign: "right",
+          fontSize: 11,
+          opacity: 0.6,
+        }}
+      >
+        {Math.max(0, maxLength - value.length)} characters left
+      </span>
+    </span>
+  );
+}
+
 function ManualIntentBuilder({
   projectId,
   flows,
@@ -2663,9 +2720,25 @@ function ManualIntentBuilder({
                   <span>New flow name</span>
                   <input
                     value={newFlowName}
-                    onChange={(event) => setNewFlowName(event.target.value)}
+                    maxLength={FLOW_NAME_MAX}
+                    onChange={(event) =>
+                      setNewFlowName(
+                        event.target.value.slice(0, FLOW_NAME_MAX),
+                      )
+                    }
                     placeholder="e.g. Customer checkout"
                   />
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: 4,
+                      textAlign: "right",
+                      fontSize: 11,
+                      opacity: 0.6,
+                    }}
+                  >
+                    {newFlowName.length}/{FLOW_NAME_MAX}
+                  </span>
                 </label>
                 <label>
                   <span>Flow type</span>
@@ -2698,10 +2771,11 @@ function ManualIntentBuilder({
                     </span>
                   </span>
                 </span>
-                <textarea
+                <CappedTextarea
                   rows={3}
                   value={newFlowPurpose}
-                  onChange={(event) => setNewFlowPurpose(event.target.value)}
+                  onChange={setNewFlowPurpose}
+                  maxLength={FLOW_PURPOSE_MAX}
                   placeholder="What should this functionality achieve? (e.g. Allow customers to add items to cart, enter shipping info, and place order)"
                 />
               </label>
@@ -2721,10 +2795,11 @@ function ManualIntentBuilder({
                     </span>
                   </span>
                 </span>
-                <textarea
-                  rows={2}
+                <CappedTextarea
+                  rows={3}
                   value={newFlowScope}
-                  onChange={(event) => setNewFlowScope(event.target.value)}
+                  onChange={setNewFlowScope}
+                  maxLength={FLOW_SCOPE_MAX}
                   placeholder="e.g. Guest sign-up through authenticated session"
                 />
               </label>
@@ -3353,6 +3428,52 @@ const JOB_POLL_TIMEOUT_MS = 5 * 60_000;
 const delay = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
+// Manual starting points for a new flow, mirroring the web dashboard's
+// "Create a flow" picker. Each creates a bounded draft flow of the given
+// workflow type and drops the author into the flow editor to add states.
+const FLOW_STARTING_POINTS: Array<{
+  key: string;
+  label: string;
+  description: string;
+  flowName: string;
+  workflowType: string;
+  purpose: string;
+  icon: typeof Workflow;
+}> = [
+  {
+    key: "ECOMMERCE",
+    label: "E-commerce store",
+    description:
+      "Start a typical shop journey: browse, cart, checkout, order confirmation.",
+    flowName: "Checkout",
+    workflowType: "CHECKOUT",
+    purpose:
+      "Let a shopper move from reviewing their cart through payment to an order confirmation.",
+    icon: ShoppingCart,
+  },
+  {
+    key: "LMS",
+    label: "Education / LMS",
+    description:
+      "Start a typical learning journey: course catalog, enrolment, lesson, completion.",
+    flowName: "Course enrollment",
+    workflowType: "ENROLLMENT",
+    purpose:
+      "Let a learner move from browsing courses through enrolment to completing a lesson.",
+    icon: GraduationCap,
+  },
+  {
+    key: "CUSTOM",
+    label: "Custom (empty flow)",
+    description:
+      "Start from a blank canvas and declare every state and transition yourself.",
+    flowName: "New Flow",
+    workflowType: "CUSTOM",
+    purpose: "",
+    icon: FilePlus2,
+  },
+];
+
 function intentErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("FEATURE_NOT_ENTITLED"))
@@ -3457,6 +3578,7 @@ export function IntentPage() {
     importDocuments,
     createIntentDraft,
     deleteIntentDraft,
+    createDeclaredFlow,
     busy,
   } = useDesktop();
   const navigate = useNavigate();
@@ -3487,6 +3609,7 @@ export function IntentPage() {
     useState<boolean | null>(null);
   const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [creatingFlowKey, setCreatingFlowKey] = useState<string | null>(null);
   const operationRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -3550,6 +3673,29 @@ export function IntentPage() {
     const next = await getDeclaredFlows(activeProjectId);
     setFlows(next);
     return next;
+  };
+
+  const startFlowFromTemplate = async (
+    option: (typeof FLOW_STARTING_POINTS)[number],
+  ) => {
+    if (!activeProjectId || creatingFlowKey) return;
+    setCreatingFlowKey(option.key);
+    setAutomationMessage(null);
+    try {
+      const flow = await createDeclaredFlow(
+        activeProjectId,
+        option.flowName,
+        option.workflowType,
+        option.purpose,
+        "",
+      );
+      await refreshFlows();
+      navigate(`/projects/${activeProjectId}/intent/flows/${flow.id}`);
+    } catch (error) {
+      setAutomationMessage(intentErrorMessage(error));
+    } finally {
+      setCreatingFlowKey(null);
+    }
   };
 
   const removeDraft = async (draft: IntentDraft) => {
@@ -3952,6 +4098,37 @@ export function IntentPage() {
         />
       ) : (
         <div className="stack">
+          <section className="content-card">
+            <div className="card-heading">
+              <div>
+                <small>Start a flow</small>
+                <h2>Create a flow</h2>
+              </div>
+            </div>
+            <p>
+              Pick a starting point. Every state and transition stays editable
+              afterwards, or generate one from your documents below.
+            </p>
+            <div className="review-actions">
+              {FLOW_STARTING_POINTS.map((option) => {
+                const Icon = option.icon;
+                const isCreating = creatingFlowKey === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className="button"
+                    disabled={busy || creatingFlowKey !== null}
+                    title={option.description}
+                    onClick={() => void startFlowFromTemplate(option)}
+                  >
+                    <Icon size={15} />
+                    {isCreating ? "Creating…" : option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
           <section className="content-card ai-intent-actions">
             <div>
               {/* <Status>AI-assisted intent</Status> */}

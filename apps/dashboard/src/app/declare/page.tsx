@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/empty-state";
 import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { usePersistedFilter } from "@/hooks/use-persisted-filter";
 import { useSidebarMode } from "@/components/sidebar-mode";
+import { FlowGraphEditor } from "./flow-graph-editor";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
@@ -17,7 +18,6 @@ import {
   useCallback,
   useRef,
   type CSSProperties,
-  type FormEvent,
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -371,7 +371,7 @@ interface ReconciliationReport {
 }
 
 function DeclareContent() {
-  const { appId, selectedOrgId } = useSelectedApplication();
+  const { appId, selectedOrgId, selectedApplication } = useSelectedApplication();
   const queryClient = useQueryClient();
 
   // Flow create canvas visibility (collapses the sidebar, shows the type picker).
@@ -527,12 +527,15 @@ function DeclareContent() {
       if (!res.ok) throw new Error("Failed to set profile template");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({
         queryKey: ["onboarding-progress", appId],
       });
       queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
       setIsCreating(false);
+      // Templates (E-commerce / LMS) seed a graph server-side — open it straight
+      // in the editor. A blank profile returns no graphId.
+      if (data?.graphId) setSelectedFlowId(data.graphId);
     },
   });
 
@@ -918,6 +921,10 @@ function DeclareContent() {
       setNewFlowPurpose("");
       setNewFlowScope("");
       setIsCreating(false);
+      // Keep onboarding moving when the first flow is a blank custom canvas.
+      if (onboardingProgress && !onboardingProgress.templateSelected) {
+        patchProgressMutation.mutate({ templateSelected: true });
+      }
     },
   });
 
@@ -1359,9 +1366,7 @@ function DeclareContent() {
   if (appId && isCreating) {
     return (
       <FlowCreateView
-        onboardingActive={Boolean(
-          onboardingIsActive && !onboardingProgress?.templateSelected,
-        )}
+        appId={appId}
         entitledToDocs={docFlowInferenceEnabled}
         creating={
           selectProfileMutation.isPending || createFlowMutation.isPending
@@ -1370,19 +1375,17 @@ function DeclareContent() {
           selectProfileMutation.mutate(profileId)
         }
         onCreateCustom={(data) => createFlowMutation.mutate(data)}
+        onGenerated={(flowId) => {
+          setIsCreating(false);
+          setSelectedFlowId(flowId);
+        }}
         onCancel={() => setIsCreating(false)}
       />
     );
   }
 
   if (onboardingIsActive && flowsLoading) {
-    return (
-      <div className="flex min-h-[80vh] items-center justify-center px-4">
-        <p className="text-sm text-neutral-400" role="status">
-          Loading declared flowsâ€¦
-        </p>
-      </div>
-    );
+    return <FlowsSkeleton view="grid" />;
   }
 
   if (onboardingIsActive && flowsFailed) {
@@ -1411,13 +1414,7 @@ function DeclareContent() {
     // Stage 1: Select profile template
     if (!onboardingProgress.templateSelected) {
       if (flowsLoading) {
-        return (
-          <div className="flex min-h-[80vh] items-center justify-center px-4">
-            <p className="text-sm text-neutral-400" role="status">
-              Loading declared flows…
-            </p>
-          </div>
-        );
+        return <FlowsSkeleton view="grid" />;
       }
 
       if (flowsFailed) {
@@ -1838,879 +1835,15 @@ function DeclareContent() {
     );
   }
 
+  // A flow is open — hand off to the full-screen graph editor.
   return (
-    <div className="flex h-full flex-col space-y-6">
-      {onboardingProgress &&
-        !onboardingProgress.expectedFlowsDefined &&
-        !flows?.some((flow) => flow.status === "COMPLETE") && (
-        <div className="rounded-md border border-white/20 bg-white/5 p-4 flex items-start space-x-3 text-white">
-          {/* <Info className="h-5 w-5 flex-shrink-0 mt-0.5" /> */}
-          <div className="text-sm">
-            <span className="font-semibold">
-              Step 2: Define expected workflows.
-            </span>{" "}
-            We&apos;ve preloaded a standard flow graph. Feel free to drag states
-            around to clean up the layout, add edges, or create states. Click{" "}
-            <span className="font-semibold">Mark Complete & Compile</span> at
-            the top right when you are ready to configure the SDK.
-          </div>
-        </div>
-      )}
-
-      {/* Top bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#262626] pb-5 space-y-4 md:space-y-0">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white flex items-center space-x-3">
-            <span>Flow Declaration Builder</span>
-          </h1>
-          <p className="text-sm text-neutral-400 mt-1">
-            Author top-down intent graphs and get real-time branch state
-            suggestions.
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-3">
-          <Select
-            value={selectedFlowId}
-            onValueChange={setSelectedFlowId}
-          >
-            <SelectTrigger className="w-[280px]">
-              <SelectValue placeholder="-- Select a Declared Flow --">
-                {(() => {
-                  const f = flows?.find((fl) => fl.id === selectedFlowId);
-                  return f ? `${f.name} (v${f.version}) [${f.status}]` : "";
-                })()}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">-- Select a Declared Flow --</SelectItem>
-              {flows?.map((f) => (
-                <SelectItem key={f.id} value={f.id}>
-                  {f.name} (v{f.version}) [{f.status}]
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {activeFlow && (
-            <>
-              {activeFlow.status === "DRAFT" ? (
-                <Button
-                  onClick={() => completeFlowMutation.mutate()}
-                  disabled={
-                    completeFlowMutation.isPending ||
-                    activeFlow.states.length === 0
-                  }
-                  loading={completeFlowMutation.isPending}
-                  variant="primary"
-                >
-                  {!completeFlowMutation.isPending && <Lock className="h-4 w-4" />}
-                  <span>Publish Flow</span>
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => reopenFlowMutation.mutate()}
-                  disabled={reopenFlowMutation.isPending}
-                  loading={reopenFlowMutation.isPending}
-                  variant="secondary"
-                >
-                  {!reopenFlowMutation.isPending && <Unlock className="h-4 w-4" />}
-                  <span>Create Flow Revision</span>
-                </Button>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Main container */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
-        {/* Panel 1: Flow List & Creator + Builder */}
-        <div className="lg:col-span-2 flex flex-col space-y-6 min-h-0">
-          {!selectedFlowId ? (
-            <div className="flex-1 rounded-md border border-[#262626] bg-[#131313] backdrop-blur-xl p-8 flex flex-col items-center justify-center text-center space-y-6">
-              <div className="max-w-sm space-y-2">
-                <h3 className="text-lg font-bold text-white">
-                  Declare Intent as a focused Flow
-                </h3>
-                <p className="text-xs text-neutral-400">
-                  Choose an existing flow from the dropdown, or create a new
-                  Flow to define one bounded functionality. Larger scopes reduce analysis and QA precision.
-                </p>
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (newFlowName.trim()) {
-                    createFlowMutation.mutate({
-                      name: newFlowName.trim(),
-                      workflowType: newFlowType,
-                      purpose: newFlowPurpose.trim(),
-                      scopeStatement: newFlowScope.trim(),
-                    });
-                  }
-                }}
-                className="w-full max-w-sm space-y-4 border border-[#262626] bg-black p-6 rounded-md text-left"
-              >
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">
-                    FLOW NAME
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newFlowName}
-                    onChange={(e) => setNewFlowName(e.target.value)}
-                    placeholder="e.g. Checkout Flow"
-                    className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">PURPOSE</label>
-                  <input type="text" value={newFlowPurpose} onChange={(e) => setNewFlowPurpose(e.target.value)} placeholder="What should this functionality achieve?" className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none" />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">SCOPE BOUNDARY</label>
-                  <textarea required value={newFlowScope} onChange={(e) => setNewFlowScope(e.target.value)} placeholder="e.g. Guest opens sign-up through authenticated session" className="w-full rounded-lg border border-[#262626] bg-[#131313] px-3 py-2 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none" />
-                  <p className="mt-1 text-[11px] text-amber-300">Do not declare the whole project as one Flow. Prefer authentication, checkout, password reset, or another focused capability.</p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-400 mb-1">
-                    WORKFLOW TYPE
-                  </label>
-                  <Select
-                    value={newFlowType}
-                    onValueChange={setNewFlowType}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select workflow type...">
-                        {newFlowType === "CUSTOM" && "Custom"}
-                        {newFlowType === "CHECKOUT" && "Checkout"}
-                        {newFlowType === "AUTHENTICATION" && "Authentication"}
-                        {newFlowType === "REGISTRATION" && "Registration"}
-                        {newFlowType === "ASSESSMENT" && "Assessment"}
-                        {newFlowType === "ENROLLMENT" && "Enrollment"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="CUSTOM">Custom</SelectItem>
-                      <SelectItem value="CHECKOUT">Checkout</SelectItem>
-                      <SelectItem value="AUTHENTICATION">Authentication</SelectItem>
-                      <SelectItem value="REGISTRATION">Registration</SelectItem>
-                      <SelectItem value="ASSESSMENT">Assessment</SelectItem>
-                      <SelectItem value="ENROLLMENT">Enrollment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={createFlowMutation.isPending || !newFlowName.trim() || !newFlowScope.trim()}
-                  loading={createFlowMutation.isPending}
-                  variant="primary"
-                  className="w-full"
-                >
-                  {!createFlowMutation.isPending && <Plus className="h-4 w-4" />}
-                  <span>Create Flow</span>
-                </Button>
-              </form>
-            </div>
-          ) : !activeFlow ? (
-            <div className="flex-1 rounded-md border border-[#262626] bg-[#131313] backdrop-blur-xl p-8 flex items-center justify-center">
-              <div className="text-neutral-400 animate-pulse text-sm">
-                Loading flow details...
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col space-y-6 min-h-0">
-              {/* Interactive Flow Visualizer */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#262626] bg-[#0d0d0d] p-2">
-                <div className="flex flex-wrap gap-2" aria-label="Diagram type">
-                  {(["FLOW", "SEQUENCE", "ACTIVITY", "STATE_MACHINE"] as const).map((kind) => (
-                    <button key={kind} type="button" onClick={() => setDiagramKind(kind)} className={`rounded-md border px-3 py-1.5 text-xs ${diagramKind === kind ? "border-white bg-white text-black" : "border-[#262626] bg-[#131313] text-neutral-300 hover:border-neutral-500"}`}>
-                      {kind.replace("_", " ")}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-2" aria-label="Diagram actions">
-                  <button
-                    type="button"
-                    onClick={() => void exportDiagramMarkdown()}
-                    disabled={Boolean(exportingDiagram) || !selectedDiagramSource}
-                    className="inline-flex items-center gap-2 rounded-md border border-[#262626] bg-[#131313] px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    {exportingDiagram === "markdown" ? "Exporting..." : "Markdown"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void exportDiagramPdf()}
-                    disabled={Boolean(exportingDiagram)}
-                    className="inline-flex items-center gap-2 rounded-md border border-[#262626] bg-[#131313] px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    {exportingDiagram === "pdf" ? "Exporting..." : "PDF"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDiagramFullscreen(true)}
-                    className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-neutral-200"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    Full screen
-                  </button>
-                </div>
-              </div>
-              <div
-                className={diagramFullscreen
-                  ? "fixed inset-0 z-[100] flex flex-col bg-[#050505] p-4"
-                  : "flex h-[460px] flex-col overflow-hidden rounded-md border border-[#262626] bg-black"}
-                role={diagramFullscreen ? "dialog" : undefined}
-                aria-modal={diagramFullscreen ? true : undefined}
-                aria-label={diagramFullscreen ? `${activeFlow.name} diagram full screen` : undefined}
-              >
-                {diagramFullscreen ? (
-                  <div className="mb-3 flex items-center justify-between border-b border-[#262626] pb-3" data-export-ignore="true">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{activeFlow.name}</p>
-                      <p className="text-xs text-neutral-500">{diagramKind.replace("_", " ")} diagram - version {activeFlow.version}</p>
-                    </div>
-                    <button type="button" onClick={() => setDiagramFullscreen(false)} className="inline-flex items-center gap-2 rounded-md border border-[#262626] px-3 py-2 text-xs text-white hover:bg-white/10">
-                      <Minimize2 className="h-4 w-4" /> Exit full screen
-                    </button>
-                  </div>
-                ) : null}
-                <div id="flow-diagram-capture" ref={diagramCaptureRef} className="relative min-h-0 flex-1 overflow-hidden bg-black">
-                  <div className="absolute left-4 top-4 z-10 flex items-center space-x-2 rounded-lg border border-[#262626] bg-[#131313]/80 px-3 py-1.5 backdrop-blur">
-                    <span className="h-2 w-2 rounded-full bg-white"></span>
-                    <span className="text-xs font-semibold text-neutral-300">
-                      {activeFlow.name} (v{activeFlow.version}) - {activeFlow.status}
-                    </span>
-                  </div>
-
-                  {diagramKind !== "FLOW" && selectedDiagramSource ? (
-                    <>
-                      <pre className="h-full overflow-auto whitespace-pre-wrap p-16 text-xs text-neutral-300">{selectedDiagramSource}</pre>
-                      <button type="button" data-export-ignore="true" onClick={() => setDiagramFullscreen((value) => !value)} className="absolute bottom-4 left-4 rounded border border-[#262626] bg-[#131313] p-2 text-neutral-300 hover:text-white" aria-label={diagramFullscreen ? "Exit diagram full screen" : "Open diagram full screen"} title={diagramFullscreen ? "Exit full screen" : "Open full screen"}>
-                        {diagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                      </button>
-                    </>
-                  ) : nodes.length > 0 ? (
-                    <ReactFlow
-                      nodes={nodes}
-                      edges={edges}
-                      edgeTypes={declarationEdgeTypes}
-                      onNodesChange={onNodesChange}
-                      onEdgesChange={onEdgesChange}
-                      fitView
-                    >
-                      <Background color="#222" />
-                      <Controls data-export-ignore="true">
-                        <ControlButton onClick={() => setDiagramFullscreen((value) => !value)} title={diagramFullscreen ? "Exit full screen" : "Open full screen"} aria-label={diagramFullscreen ? "Exit diagram full screen" : "Open diagram full screen"}>
-                          {diagramFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                        </ControlButton>
-                      </Controls>
-                    </ReactFlow>
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500 font-mono">
-                      [No nodes in diagram. Add states below to begin]
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Builder Controls */}
-              {activeFlow.status === "DRAFT" && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Add State */}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (stateName.trim()) {
-                        addStateMutation.mutate({
-                          stateName: stateName.toUpperCase().trim(),
-                          category: stateCategory,
-                          provenance: "USER_AUTHORED",
-                          role: stateRole,
-                          terminalKind: stateRole === "TERMINAL" ? terminalKind : undefined,
-                        });
-                      }
-                    }}
-                    className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4"
-                  >
-                    <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                      <Plus className="h-4 w-4 text-white" />
-                      <span>Add Declared State</span>
-                    </h3>
-
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
-                          STATE NAME
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={stateName}
-                          onChange={(e) => setStateName(e.target.value)}
-                          placeholder="e.g. PAYMENT_FAILED"
-                          className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">BOUNDARY ROLE</label>
-                        <Select value={stateRole} onValueChange={(value) => setStateRole(value as typeof stateRole)}>
-                          <SelectTrigger><SelectValue placeholder="Select boundary role" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="NORMAL">Intermediate</SelectItem>
-                            <SelectItem value="INITIAL">Initial state</SelectItem>
-                            <SelectItem value="TERMINAL">Terminal state</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {stateRole === "TERMINAL" ? (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">TERMINAL OUTCOME</label>
-                          <Select value={terminalKind} onValueChange={(value) => setTerminalKind(value as typeof terminalKind)}>
-                            <SelectTrigger><SelectValue placeholder="Select terminal outcome" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="SUCCESS">Success</SelectItem>
-                              <SelectItem value="FAILURE">Failure</SelectItem>
-                              <SelectItem value="CANCELLATION">Cancellation</SelectItem>
-                              <SelectItem value="ALTERNATE">Alternate completion</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ) : null}
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
-                          CATEGORY
-                        </label>
-                        <Select
-                          value={stateCategory}
-                          onValueChange={setStateCategory}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select Category...">
-                              {stateCategory === "BUSINESS" && "Business"}
-                              {stateCategory === "UI" && "UI / Interaction"}
-                              {stateCategory === "NAVIGATION" && "Navigation"}
-                              {stateCategory === "ERROR" && "Error Handling"}
-                              {stateCategory === "SYSTEM" && "System/API"}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="BUSINESS">Business</SelectItem>
-                            <SelectItem value="UI">UI / Interaction</SelectItem>
-                            <SelectItem value="NAVIGATION">Navigation</SelectItem>
-                            <SelectItem value="ERROR">Error Handling</SelectItem>
-                            <SelectItem value="SYSTEM">System/API</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={addStateMutation.isPending || !stateName.trim()}
-                      loading={addStateMutation.isPending}
-                      variant="secondary"
-                      className="w-full"
-                    >
-                      <span>Add State</span>
-                    </Button>
-                  </form>
-
-                  {/* Add Transition */}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (fromStateId && toStateId) {
-                        addTransitionMutation.mutate({
-                          fromStateId,
-                          toStateId,
-                          action: transAction.trim() || undefined,
-                          provenance: "USER_AUTHORED",
-                        });
-                      }
-                    }}
-                    className="rounded-md border border-[#262626] bg-[#131313] p-5 space-y-4"
-                  >
-                    <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                      <ArrowRight className="h-4 w-4 text-white" />
-                      <span>Add Declared Transition</span>
-                    </h3>
-
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
-                            FROM STATE
-                          </label>
-                          <Select
-                            value={fromStateId}
-                            onValueChange={setFromStateId}
-                          >
-                            <SelectTrigger className="px-2.5 py-1.5 text-xs">
-                              <SelectValue placeholder="Select...">
-                                {activeFlow.states.find((s) => s.id === fromStateId)?.stateName}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="">Select...</SelectItem>
-                              {activeFlow.states.map((s) => (
-                                <SelectItem key={s.id} value={s.id}>
-                                  {s.stateName}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
-                            TO STATE
-                          </label>
-                          <Select
-                            value={toStateId}
-                            onValueChange={setToStateId}
-                          >
-                            <SelectTrigger className="px-2.5 py-1.5 text-xs">
-                              <SelectValue placeholder="Select...">
-                                {activeFlow.states.find((s) => s.id === toStateId)?.stateName}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="">Select...</SelectItem>
-                              {activeFlow.states.map((s) => (
-                                <SelectItem key={s.id} value={s.id}>
-                                  {s.stateName}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-neutral-500 mb-1">
-                          ACTION (OPTIONAL)
-                        </label>
-                        <input
-                          type="text"
-                          value={transAction}
-                          onChange={(e) => setTransAction(e.target.value)}
-                          placeholder="e.g. CLICK_SUBMIT"
-                          className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                        />
-                      </div>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={
-                        addTransitionMutation.isPending ||
-                        !fromStateId ||
-                        !toStateId
-                      }
-                      loading={addTransitionMutation.isPending}
-                      variant="secondary"
-                      className="w-full"
-                    >
-                      <span>Add Transition</span>
-                    </Button>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Panel 2: Suggestions Panel & Reconciliation Summary */}
-        <div className="flex flex-col space-y-6 min-h-0">
-          {/* Suggestions List (Derivation Engine output) */}
-          {activeFlow && activeFlow.status === "DRAFT" && (
-            <div className="rounded-md border border-[#262626] bg-[#131313] p-5 flex flex-col h-[380px] min-h-0">
-              <div className="flex items-center justify-between border-b border-[#262626] pb-3 flex-shrink-0">
-                <h2 className="text-sm font-bold text-white flex items-center space-x-2">
-                  <Activity className="h-4 w-4 text-white" />
-                  <span>Flow Suggestions ({pendingSuggestions.length})</span>
-                </h2>
-                <Button
-                  type="button"
-                  aria-label="Refresh flow suggestions"
-                  disabled={isSuggestionsLoading || !activeFlow}
-                  onClick={() =>
-                    activeFlow &&
-                    generateSuggestions(
-                      activeFlow,
-                      "MANUAL_REFRESH",
-                      true,
-                    ).catch((error) => setSuggestionError(error.message))
-                  }
-                  variant="icon"
-                  size="icon"
-                >
-                  <RefreshCw
-                    className={`h-3.5 w-3.5 ${isSuggestionsLoading ? "animate-spin" : ""}`}
-                  />
-                </Button>
-              </div>
-
-              {suggestionError && (
-                <div
-                  role="alert"
-                  className="mt-2 rounded border border-red-900 bg-red-950/30 p-2 text-[10px] text-red-300"
-                >
-                  {suggestionError}
-                </div>
-              )}
-
-              <div className="flex-1 overflow-y-auto mt-3 space-y-3 pr-1">
-                {pendingSuggestions.length > 0 ? (
-                  pendingSuggestions.map((sug) => (
-                    <div
-                      key={sug.id}
-                      className="rounded-md border border-[#262626] bg-black p-4 space-y-3 hover:border-neutral-700 transition-all"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <span className="text-xs font-bold text-white">
-                            {sug.title ?? sug.suggestedStateName}
-                          </span>
-                          <div className="flex items-center space-x-1.5 mt-0.5">
-                            <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 px-1.5 py-0.25 rounded font-semibold">
-                              {sug.suggestionType ?? sug.category}
-                            </span>
-                            <span className="text-[9px] text-neutral-500">
-                              {sug.source === "AI"
-                                ? "Experimental AI"
-                                : sug.source === "HYBRID"
-                                  ? "AI-assisted"
-                                  : "Rule-based"}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Confidence score progress bar */}
-                        <div className="text-right">
-                          <span className="text-[10px] font-bold text-white font-mono">
-                            {(sug.confidence * 100).toFixed(0)}%
-                          </span>
-                          <div className="w-12 h-1.5 bg-neutral-850 rounded-full overflow-hidden mt-1">
-                            <div
-                              className="h-full bg-white rounded-full"
-                              style={{ width: `${sug.confidence * 100}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="text-[10px] text-neutral-400 leading-normal bg-[#131313]/50 p-2 rounded">
-                        {sug.rationale}
-                      </p>
-
-                      {sug.suggestedStatesJson?.length ||
-                      sug.suggestedTransitionsJson?.length ? (
-                        <div className="text-[10px] text-neutral-500 font-mono">
-                          {sug.suggestedStatesJson
-                            ?.map((state) => state.name)
-                            .join(", ")}
-                          {sug.suggestedTransitionsJson
-                            ?.map(
-                              (transition) =>
-                                ` ${transition.from} → ${transition.to}`,
-                            )
-                            .join(", ")}
-                        </div>
-                      ) : null}
-
-                      <div className="flex space-x-2 pt-1">
-                        <Button
-                          onClick={() =>
-                            acceptSuggestionMutation.mutate(sug.id)
-                          }
-                          disabled={acceptSuggestionMutation.isPending}
-                          variant="primary"
-                          size="sm"
-                          className="flex-1 border border-white"
-                        >
-                          <Check className="h-3 w-3" />
-                          <span>Accept</span>
-                        </Button>
-                        <Button
-                          aria-label={`Edit ${sug.title ?? sug.suggestedStateName}`}
-                          disabled={editSuggestionMutation.isPending}
-                          onClick={() => {
-                            const name = window.prompt(
-                              "Suggested state name",
-                              sug.suggestedStateName,
-                            );
-                            if (name?.trim())
-                              editSuggestionMutation.mutate({
-                                sugId: sug.id,
-                                suggestedStateName: name.trim(),
-                              });
-                          }}
-                          variant="secondary"
-                          size="sm"
-                          className="px-2 text-neutral-300"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          onClick={() => setRejectingSugId(sug.id)}
-                          variant="danger"
-                          size="sm"
-                          className="flex-1"
-                        >
-                          <X className="h-3 w-3" />
-                          <span>Reject</span>
-                        </Button>
-                        <Button
-                          aria-label={`Dismiss ${sug.title ?? sug.suggestedStateName}`}
-                          disabled={dismissSuggestionMutation.isPending}
-                          onClick={() =>
-                            dismissSuggestionMutation.mutate(sug.id)
-                          }
-                          variant="secondary"
-                          size="sm"
-                          className="px-2 text-neutral-400"
-                        >
-                          <ChevronRight className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="h-full flex items-center justify-center text-center p-6 text-xs text-neutral-500">
-                    No suggestions available. Add states to see suggestions.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Reconciliation Report Summary (when complete) */}
-          {activeFlow && activeFlow.status === "COMPLETE" && (
-            <div className="rounded-md border border-[#262626] bg-[#131313] p-5 flex flex-col max-h-[500px] min-h-0">
-              <h2 className="text-sm font-bold text-white flex items-center justify-between border-b border-[#262626] pb-3 flex-shrink-0">
-                <div className="flex items-center space-x-2">
-                  <GitCompare className="h-4 w-4 text-white" />
-                  <span>Reconciliation Status</span>
-                </div>
-                <Button
-                  onClick={() => refetchReconciliation()}
-                  variant="ghost"
-                  size="sm"
-                  className="text-[10px] text-white hover:text-white font-semibold p-0 h-auto hover:bg-transparent"
-                >
-                  Refresh
-                </Button>
-              </h2>
-
-              {activeReport ? (
-                <div className="flex-1 overflow-y-auto space-y-5 mt-4 pr-1">
-                  {/* Hero Coverage Metrics */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-md border border-[#262626] bg-black p-4 text-center">
-                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">
-                        STATE COV
-                      </div>
-                      <div className="text-2xl font-black text-white font-mono mt-1">
-                        {(activeReport.expectedCoverageScore * 100).toFixed(0)}%
-                      </div>
-                      <div className="text-[9px] text-neutral-400 mt-1">
-                        {activeReport.confirmedCount} /{" "}
-                        {activeReport.confirmedCount +
-                          activeReport.trueGapCount}{" "}
-                        states
-                      </div>
-                    </div>
-
-                    <div className="rounded-md border border-[#262626] bg-black p-4 text-center">
-                      <div className="text-[10px] text-neutral-500 font-semibold tracking-wider uppercase">
-                        TRANS COV
-                      </div>
-                      <div className="text-2xl font-black text-white font-mono mt-1">
-                        {(activeReport.transitionCoverageScore * 100).toFixed(
-                          0,
-                        )}
-                        %
-                      </div>
-                      <div className="text-[9px] text-neutral-400 mt-1">
-                        {activeReport.confirmedTransitions} /{" "}
-                        {activeReport.confirmedTransitions +
-                          activeReport.trueGapTransitions}{" "}
-                        edges
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* True Gaps section */}
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-red-400 flex items-center space-x-1">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      <span>True Gaps ({activeReport.trueGapCount})</span>
-                    </h3>
-                    <div className="space-y-1.5">
-                      {activeReport.trueGaps.map((gap: any) => (
-                        <div
-                          key={gap.stateName}
-                          className="flex items-center justify-between text-xs border border-red-950/40 bg-red-950/10 p-2.5 rounded-lg text-neutral-300"
-                        >
-                          <span className="font-mono">{gap.stateName}</span>
-                          <span className="text-[9px] text-neutral-500">
-                            {gap.provenance}
-                          </span>
-                        </div>
-                      ))}
-                      {activeReport.trueGapCount === 0 && (
-                        <p className="text-[10px] text-neutral-500 italic">
-                          No missing states detected.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Telemetry Promotion (Undeclared states) */}
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-white flex items-center space-x-1">
-                      <TrendingUp className="h-3.5 w-3.5" />
-                      <span>
-                        Undeclared States ({activeReport.undeclaredCount})
-                      </span>
-                    </h3>
-                    <div className="space-y-1.5">
-                      {activeReport.undeclared.map((und: any) => (
-                        <div
-                          key={und.stateName}
-                          className="flex flex-col border border border-[#262626] bg-black p-3 rounded-lg text-neutral-300"
-                        >
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-mono">{und.stateName}</span>
-                            <span className="text-[10px] font-semibold text-neutral-500">
-                              {und.observationCount} visits
-                            </span>
-                          </div>
-
-                          {/* Promote Button */}
-                          <div className="flex space-x-2 mt-2 pt-1 border-t border-[#262626]">
-                             <Button
-                               onClick={() =>
-                                 promoteStateMutation.mutate({
-                                   stateName: und.stateName,
-                                   accepted: true,
-                                 })
-                               }
-                               variant="primary"
-                               size="xs"
-                               className="flex-1"
-                             >
-                               Promote to Declared
-                             </Button>
-                             <Button
-                               onClick={() =>
-                                 promoteStateMutation.mutate({
-                                   stateName: und.stateName,
-                                   accepted: false,
-                                 })
-                               }
-                               variant="secondary"
-                               size="xs"
-                               className="px-2.5"
-                             >
-                               Ignore
-                             </Button>
-                          </div>
-                        </div>
-                      ))}
-                      {activeReport.undeclaredCount === 0 && (
-                        <p className="text-[10px] text-neutral-500 italic">
-                          No unexpected states observed.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center p-6 text-center space-y-4">
-                  <Info className="h-8 w-8 text-neutral-600" />
-                  <div className="max-w-[200px] text-[11px] text-neutral-400">
-                    Reconciliation runs when telemetry events are observed for
-                    this flow. Click Run below to force.
-                  </div>
-                  <Button
-                     onClick={() => refetchReconciliation()}
-                     variant="primary"
-                     size="sm"
-                   >
-                     Run Reconciliation
-                   </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Suggestion Rejection Modal */}
-      {rejectingSugId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-md border border-[#262626] bg-[#131313] p-6 space-y-4 shadow-2xl">
-            <h3 className="text-sm font-bold text-white">Reject Suggestion</h3>
-            <p className="text-xs text-neutral-400">
-              Provide an optional reason for rejecting this state suggestion
-              (feedback will be collected to train patterns).
-            </p>
-
-            <textarea
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.target.value)}
-              placeholder="e.g. This state is not applicable to our user segment."
-              className="w-full h-24 rounded-lg border border-[#262626] bg-black p-2.5 text-xs text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-            />
-
-             <div className="flex space-x-3 pt-2">
-               <Button
-                 onClick={() => setRejectingSugId(null)}
-                 variant="secondary"
-                 size="sm"
-                 className="flex-1"
-               >
-                 Cancel
-               </Button>
-               <Button
-                 onClick={() =>
-                   rejectSuggestionMutation.mutate({
-                     sugId: rejectingSugId,
-                     reason: rejectionReason.trim(),
-                   })
-                 }
-                 variant="danger"
-                 size="sm"
-                 className="flex-1"
-               >
-                 Reject
-               </Button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-md border border-[#262626] bg-[#131313]/95 px-4 py-3 text-xs font-semibold text-white shadow-2xl backdrop-blur-md transition-all duration-200 animate-in fade-in slide-in-from-bottom-4">
-          <CheckCircle2 className="h-4 w-4 text-white shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-    </div>
+    <FlowGraphEditor
+      appId={appId}
+      flowId={selectedFlowId}
+      appName={selectedApplication?.name}
+      envName={activeEnv?.name}
+      onClose={() => setSelectedFlowId("")}
+    />
   );
 }
 
@@ -2948,9 +2081,12 @@ function FlowOverview({
 
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const listable = flows.filter(
+      (flow) => (flow.lifecycleStatus ?? "DRAFT") !== "ARCHIVED",
+    );
     const filtered = query
-      ? flows.filter((flow) => flow.name.toLowerCase().includes(query))
-      : flows.slice();
+      ? listable.filter((flow) => flow.name.toLowerCase().includes(query))
+      : listable.slice();
     filtered.sort((a, b) => {
       if (sort === "alpha") return a.name.localeCompare(b.name);
       if (sort === "created")
@@ -2966,7 +2102,9 @@ function FlowOverview({
     return filtered;
   }, [flows, search, sort]);
 
-  const total = flows.length;
+  const total = flows.filter(
+    (flow) => (flow.lifecycleStatus ?? "DRAFT") !== "ARCHIVED",
+  ).length;
   const sortLabel =
     sort === "alpha"
       ? "Alphabetical"
@@ -3134,14 +2272,15 @@ const CREATE_OPTIONS: Array<{
 ];
 
 function FlowCreateView({
-  onboardingActive,
+  appId,
   entitledToDocs,
   creating,
   onSelectProfile,
   onCreateCustom,
+  onGenerated,
   onCancel,
 }: {
-  onboardingActive: boolean;
+  appId: string;
   entitledToDocs: boolean;
   creating: boolean;
   onSelectProfile: (profileId: CreateTemplate) => void;
@@ -3151,41 +2290,34 @@ function FlowCreateView({
     purpose: string;
     scopeStatement: string;
   }) => void;
+  onGenerated: (flowId: string) => void;
   onCancel: () => void;
 }) {
   const { setCollapsed } = useSidebarMode();
   const [selected, setSelected] = useState<CreateTemplate | "DOCUMENT" | null>(
     null,
   );
-  const [name, setName] = useState("");
-  const [scope, setScope] = useState("");
 
   useEffect(() => {
     setCollapsed(true);
     return () => setCollapsed(false);
   }, [setCollapsed]);
 
-  const chosen = CREATE_OPTIONS.find((option) => option.id === selected) ?? null;
-
+  // Picking a starting point creates the flow immediately and hands off to the
+  // full-screen graph editor — the flow gets a generic "New Flow" name that the
+  // author can change from the editor's top bar.
   function choose(id: CreateTemplate) {
-    if (onboardingActive) {
-      onSelectProfile(id);
+    if (id === "CUSTOM") {
+      onCreateCustom({
+        name: "New Flow",
+        workflowType: "CUSTOM",
+        purpose: "",
+        scopeStatement: "",
+      });
       return;
     }
-    setName("");
-    setScope("");
-    setSelected(id);
-  }
-
-  function submitNamed(event: FormEvent) {
-    event.preventDefault();
-    if (!chosen || !name.trim() || !scope.trim()) return;
-    onCreateCustom({
-      name: name.trim(),
-      workflowType: chosen.workflowType,
-      purpose: "",
-      scopeStatement: scope.trim(),
-    });
+    // E-commerce / LMS — seed states and transitions from the domain template.
+    onSelectProfile(id);
   }
 
   return (
@@ -3273,7 +2405,7 @@ function FlowCreateView({
             afterwards.
           </p>
 
-          {!chosen ? (
+          {
             <div className="mt-5 space-y-2">
               {CREATE_OPTIONS.map((option) => {
                 const Icon = option.icon;
@@ -3345,11 +2477,7 @@ function FlowCreateView({
               )}
 
               {selected === "DOCUMENT" && (
-                <div className="rounded-lg border border-[#262626] bg-black/40 p-4 text-[11px] leading-relaxed text-neutral-300">
-                  Document-based flow generation for the web app is the next
-                  step to build. Pick another starting point to continue for
-                  now.
-                </div>
+                <DocumentUploadPanel appId={appId} onGenerated={onGenerated} />
               )}
 
               {/* <button
@@ -3360,71 +2488,203 @@ function FlowCreateView({
                 Cancel
               </button> */}
             </div>
-          ) : (
-            <form onSubmit={submitNamed} className="mt-5 space-y-4">
-              <div className="text-xs text-neutral-400">
-                Starting point:{" "}
-                <span className="text-white">{chosen.label}</span> ·{" "}
-                <button
-                  type="button"
-                  className="underline hover:text-white"
-                  onClick={() => setSelected(null)}
-                >
-                  change
-                </button>
-              </div>
-              <div>
-                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                  Flow name
-                </label>
-                <input
-                  value={name}
-                  autoFocus
-                  required
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="e.g. Checkout Flow"
-                  className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                  Scope boundary
-                </label>
-                <textarea
-                  value={scope}
-                  required
-                  onChange={(event) => setScope(event.target.value)}
-                  placeholder="e.g. Guest lands on cart through order confirmation"
-                  className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                />
-                <p className="mt-1 text-[11px] text-amber-300">
-                  Keep each flow to one focused capability — not the whole
-                  product.
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="flex-1"
-                  onClick={() => setSelected(null)}
-                >
-                  Back
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  className="flex-1"
-                  loading={creating}
-                  disabled={creating || !name.trim() || !scope.trim()}
-                >
-                  Create flow
-                </Button>
-              </div>
-            </form>
-          )}
+          }
         </div>
       </div>
+    </div>
+  );
+}
+
+const DOC_MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  doc: "application/msword",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  txt: "text/plain",
+  html: "text/html",
+  htm: "text/html",
+  json: "application/json",
+  yaml: "application/x-yaml",
+  yml: "application/x-yaml",
+};
+const DOC_MAX_BYTES = 15 * 1024 * 1024;
+
+function DocumentUploadPanel({
+  appId,
+  onGenerated,
+}: {
+  appId: string;
+  onGenerated: (flowId: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [phase, setPhase] = useState<"idle" | "reading" | "generating">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  const busy = phase !== "idle";
+
+  const readAsBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.readAsDataURL(file);
+    });
+
+  async function handleFile(file: File) {
+    setError(null);
+    setFileName(file.name);
+    if (file.size > DOC_MAX_BYTES) {
+      setError("That file is over the 15 MB limit.");
+      return;
+    }
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const mimeType = file.type || DOC_MIME_BY_EXT[ext] || "";
+    if (!mimeType || !Object.values(DOC_MIME_BY_EXT).includes(mimeType)) {
+      setError("Unsupported file type. Use PDF, DOCX, Markdown, text, HTML, or OpenAPI.");
+      return;
+    }
+    try {
+      setPhase("reading");
+      const dataBase64 = await readAsBase64(file);
+      setPhase("generating");
+      const res = await authenticatedFetch(
+        `${ONBOARDING_API}/applications/${appId}/source-documents/generate-flow`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, mimeType, dataBase64 }),
+        },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const map: Record<string, string> = {
+          UNSUPPORTED_DOCUMENT_TYPE: "Unsupported file type.",
+          DOCUMENT_TOO_LARGE: "That file is too large.",
+          EMPTY_DOCUMENT: "That file looks empty.",
+          FEATURE_NOT_ENTITLED: "Your plan does not include document flow generation.",
+          DOCUMENT_FLOW_GENERATION_FAILED:
+            res.status === 503
+              ? "Document generation is not configured on this environment."
+              : "Couldn't derive a flow from this document. Try a clearer requirements doc.",
+        };
+        throw new Error(map[payload.error] ?? payload.error ?? "Generation failed.");
+      }
+      onGenerated(payload.flowId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generation failed.");
+      setPhase("idle");
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[#262626] bg-black/40 p-4">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.docx,.doc,.md,.markdown,.txt,.html,.htm,.json,.yaml,.yml"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void handleFile(file);
+        }}
+      />
+      {busy ? (
+        <div className="relative overflow-hidden rounded-lg border border-[#262626] bg-[#090909] p-5 space-y-4">
+          {/* Top header & file badge */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-white">
+              <span>
+                {phase === "reading"
+                  ? "Analyzing Document Content…"
+                  : "Synthesizing Intent Graph & Flow States…"}
+              </span>
+            </div>
+            {fileName && (
+              <span className="inline-flex max-w-[160px] items-center gap-1.5 truncate rounded-full border border-[#262626] bg-[#141414] px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
+                <FileText className="h-3 w-3 shrink-0 text-neutral-500" />
+                <span className="truncate">{fileName}</span>
+              </span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          <div className="space-y-1.5">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-900">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-neutral-600 via-white to-neutral-600 transition-all duration-700 ease-out"
+                style={{
+                  width: phase === "reading" ? "35%" : "82%",
+                }}
+              />
+            </div>
+            <div className="flex justify-between text-[10px] font-mono text-neutral-500">
+              <span>{phase === "reading" ? "Step 1/2: Parsing text" : "Step 2/2: Building graph"}</span>
+              <span>{phase === "reading" ? "35%" : "82%"}</span>
+            </div>
+          </div>
+
+          {/* Skeleton Graph Preview */}
+          <div className="flex items-center justify-between gap-2 rounded-md border border-[#1f1f1f] bg-black/60 p-3.5">
+            <div className="flex h-8 w-24 shrink-0 animate-pulse items-center justify-center rounded border border-[#282828] bg-[#121212]">
+              <div className="h-2 w-14 rounded bg-neutral-700" />
+            </div>
+            <div className="relative h-[2px] flex-1 overflow-hidden bg-neutral-800">
+              <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-neutral-400 to-transparent" />
+            </div>
+            <div className="flex h-8 w-28 shrink-0 animate-pulse items-center justify-center rounded border border-neutral-700 bg-neutral-800/80 shadow-[0_0_12px_rgba(255,255,255,0.06)]">
+              <div className="h-2 w-16 rounded bg-neutral-300" />
+            </div>
+            <div className="relative h-[2px] flex-1 overflow-hidden bg-neutral-800">
+              <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-neutral-400 to-transparent" />
+            </div>
+            <div className="flex h-8 w-24 shrink-0 animate-pulse items-center justify-center rounded border border-[#282828] bg-[#121212]">
+              <div className="h-2 w-12 rounded bg-neutral-700" />
+            </div>
+          </div>
+
+          {/* Subtext */}
+          <p className="text-[11px] leading-relaxed text-neutral-400">
+            {phase === "reading"
+              ? "Reading document specifications, requirements, and endpoints…"
+              : "Tellann AI is extracting states, transitions, and user journeys into an editable flow graph."}
+          </p>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="flex w-full flex-col items-center gap-2 rounded-md border border-dashed border-[#333] bg-[#0a0a0a] px-4 py-6 text-center transition-colors hover:border-white/40"
+          >
+            <UploadCloud className="h-6 w-6 text-neutral-400" />
+            <span className="text-sm font-semibold text-white">
+              Choose a document
+            </span>
+            <span className="text-[11px] text-neutral-500">
+              PDF, DOCX, Markdown, text, HTML or OpenAPI · up to 15 MB
+            </span>
+          </button>
+          {fileName && !error && (
+            <p className="truncate text-[11px] text-neutral-500">{fileName}</p>
+          )}
+          {error && (
+            <p className="text-[11px] text-red-400" role="alert">
+              {error}
+            </p>
+          )}
+          <p className="text-[11px] leading-relaxed text-neutral-500">
+            The file is sent to Tellann&apos;s model, which drafts a flow you
+            review in the editor before accepting.
+          </p>
+        </>
+      )}
     </div>
   );
 }
