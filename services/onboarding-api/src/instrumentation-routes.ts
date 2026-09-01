@@ -21,6 +21,10 @@ type CapabilityClaims = {
 };
 
 const PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED', 'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK']);
+// Statuses a repeat propose for the same task key can safely resume. Anything else
+// (STALE, REJECTED, FAILED, ROLLED_BACK) is terminal and must be superseded by a
+// fresh plan rather than handed back.
+const RESUMABLE_PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'VALIDATION_FAILED', 'COMPLETED']);
 const ADAPTERS = new Set(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
 const SDK_PACKAGES = new Set(['@tellann/frontend-sdk', '@tellann/backend-sdk']);
 const PACKAGE_MANAGERS = new Set(['pnpm', 'pnpm.cmd', 'npm', 'npm.cmd', 'yarn', 'yarn.cmd', 'bun', 'bun.exe']);
@@ -173,25 +177,41 @@ export function createInstrumentationRouter(input: {
     const taskKey = String(plan.taskKey ?? '');
     if (!taskKey || taskKey.length < 32) return res.status(400).json({ error: 'INVALID_TASK_KEY' });
     const targetFileHashes = Object.fromEntries(plan.operations.map((operation: any) => [String(operation.relativePath), operation.expectedHash ?? null]));
-    const record = await prisma.instrumentationPlan.upsert({
+    const createData = {
+      id: typeof plan.id === 'string' ? plan.id : undefined,
+      workspaceId: workspace.id, repositorySnapshotId: snapshot.id, createdByUserId: req.user!.id,
+      environmentId: environment.id, deviceSessionId: typeof req.body.deviceSessionId === 'string' ? req.body.deviceSessionId : null,
+      purpose: plan.instrumentationPurpose,
+      flowId: plan.flowId ?? null,
+      flowVersionId: plan.flowVersionId ?? null,
+      taskKey, contractVersion: String(plan.contractVersion ?? '1.0'), manifestVersion: String(plan.manifestVersion ?? '1.0'),
+      adapterId: String(plan.adapterId), adapterVersion: String(plan.adapterVersion), frameworkVersion: plan.frameworkVersion ?? null,
+      supportedVersionRange: plan.supportedVersionRange ?? null, risk: String(plan.risk ?? 'MEDIUM'),
+      approvedFileScopes: plan.approvedFileScopes.map(String), baseRevision: plan.baseRevision ?? null,
+      repositoryFingerprint: String(plan.repositoryFingerprint), targetFileHashes, evidenceJson: plan.evidence ?? {},
+      commandManifest: plan.validationCommands ?? [], eventMappingManifest: plan.operations.flatMap((operation: any) => operation.eventMappings ?? []),
+      planJson: plan as unknown as Prisma.InputJsonValue, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+    } satisfies Prisma.InstrumentationPlanUncheckedCreateInput;
+    // The task key is deterministic from the repository state, so a resumable plan
+    // for the same key is handed back unchanged (idempotent propose). A plan that has
+    // reached a terminal state — rolled back, rejected, or failed — is finished: it is
+    // moved aside (its id stays valid for history) so a fresh PROPOSED plan can be
+    // minted and the operator can review and apply setup again instead of landing on
+    // a dead task.
+    const existing = await prisma.instrumentationPlan.findUnique({
       where: { workspaceId_taskKey: { workspaceId: workspace.id, taskKey } },
-      create: {
-        id: typeof plan.id === 'string' ? plan.id : undefined,
-        workspaceId: workspace.id, repositorySnapshotId: snapshot.id, createdByUserId: req.user!.id,
-        environmentId: environment.id, deviceSessionId: typeof req.body.deviceSessionId === 'string' ? req.body.deviceSessionId : null,
-        purpose: plan.instrumentationPurpose,
-        flowId: plan.flowId ?? null,
-        flowVersionId: plan.flowVersionId ?? null,
-        taskKey, contractVersion: String(plan.contractVersion ?? '1.0'), manifestVersion: String(plan.manifestVersion ?? '1.0'),
-        adapterId: String(plan.adapterId), adapterVersion: String(plan.adapterVersion), frameworkVersion: plan.frameworkVersion ?? null,
-        supportedVersionRange: plan.supportedVersionRange ?? null, risk: String(plan.risk ?? 'MEDIUM'),
-        approvedFileScopes: plan.approvedFileScopes.map(String), baseRevision: plan.baseRevision ?? null,
-        repositoryFingerprint: String(plan.repositoryFingerprint), targetFileHashes, evidenceJson: plan.evidence ?? {},
-        commandManifest: plan.validationCommands ?? [], eventMappingManifest: plan.operations.flatMap((operation: any) => operation.eventMappings ?? []),
-        planJson: plan as unknown as Prisma.InputJsonValue, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
-      },
-      update: {},
     });
+    const record = !existing
+      ? await prisma.instrumentationPlan.create({ data: createData })
+      : RESUMABLE_PLAN_STATUSES.has(existing.status)
+        ? existing
+        : await prisma.$transaction(async (tx) => {
+            await tx.instrumentationPlan.update({
+              where: { id: existing.id },
+              data: { taskKey: `${taskKey}:superseded:${existing.id}` },
+            });
+            return tx.instrumentationPlan.create({ data: createData });
+          });
     await audit(app.organizationId, app.id, req.user!.id, 'INSTRUMENTATION_PLAN_CREATED', { planId: record.id, adapterId: record.adapterId, risk: record.risk });
     res.status(201).json(record);
   });

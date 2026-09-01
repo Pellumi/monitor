@@ -65,6 +65,7 @@ export async function evaluateCompliance(input: {
     behindCount: input.behindCount ?? null,
     agentCheckoutAllowed: Boolean(policy?.allowAgentCheckout),
     agentCheckoutGranted: input.agentCheckoutGranted,
+    canManageBranchPolicy: Boolean(policy?.canManageBranchPolicy),
   };
 
   if (!policy || !policy.bound) {

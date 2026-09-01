@@ -182,6 +182,101 @@ function graphRevisionHash(graph: { nodes: any[]; edges: any[] }): string {
   });
 }
 
+// ── Draft history + suggestion queue helpers ─────────────────
+// The published `version` stays frozen while a flow is being drafted. Every graph
+// mutation that happens during drafting (accepting a queued suggestion, restoring
+// an earlier draft) bumps `BehaviorGraph.draftSeq` and writes a FlowDraftSnapshot
+// so the editor can list history and roll back without disturbing published
+// BehaviorGraphVersion rows.
+
+function graphSnapshotPayload(nodes: any[], edges: any[]) {
+  const nameById = new Map(nodes.map((node) => [node.id, node.stateName]));
+  return {
+    states: nodes.map((node) => ({
+      name: node.stateName,
+      category: node.category,
+      role: node.role ?? 'NORMAL',
+      terminalKind: node.terminalKind ?? null,
+    })),
+    transitions: edges.map((edge) => ({
+      from: edge.fromNode?.stateName ?? nameById.get(edge.fromNodeId) ?? edge.fromNodeId,
+      to: edge.toNode?.stateName ?? nameById.get(edge.toNodeId) ?? edge.toNodeId,
+      action: edge.action ?? null,
+    })),
+  };
+}
+
+async function writeDraftSnapshot(
+  tx: any,
+  graphId: string,
+  version: number,
+  draftSeq: number,
+  label: string,
+  nodes: any[],
+  edges: any[],
+  createdById?: string | null,
+) {
+  const snapshot = graphSnapshotPayload(nodes, edges);
+  return tx.flowDraftSnapshot.upsert({
+    where: { graphId_version_draftSeq: { graphId, version, draftSeq } },
+    update: { label, snapshot: snapshot as any, stateCount: snapshot.states.length, transitionCount: snapshot.transitions.length, createdById: createdById ?? null },
+    create: {
+      graphId, version, draftSeq, label, snapshot: snapshot as any,
+      stateCount: snapshot.states.length, transitionCount: snapshot.transitions.length, createdById: createdById ?? null,
+    },
+  });
+}
+
+// Guarantees a `draftSeq = 0` baseline exists for the current version so the very
+// first mutation still has a "before" state to roll back to.
+async function ensureDraftBaseline(tx: any, graphId: string, version: number, nodes: any[], edges: any[]) {
+  const existing = await tx.flowDraftSnapshot.findUnique({
+    where: { graphId_version_draftSeq: { graphId, version, draftSeq: 0 } },
+    select: { id: true },
+  });
+  if (!existing) await writeDraftSnapshot(tx, graphId, version, 0, 'Revision baseline', nodes, edges);
+}
+
+// Retires queued suggestions whose proposed states + transitions are already
+// present in the graph — they became redundant after another suggestion landed.
+async function pruneRedundantSuggestions(flowId: string, nodes: any[], edges: any[]) {
+  const stateNames = new Set(nodes.map((node) => normalizeKeyForSuggestion(node.stateName)));
+  const nameById = new Map(nodes.map((node) => [node.id, normalizeKeyForSuggestion(node.stateName)]));
+  const edgeKeys = new Set(
+    edges.map((edge) => {
+      const from = normalizeKeyForSuggestion(edge.fromNode?.stateName ?? nameById.get(edge.fromNodeId) ?? '');
+      const to = normalizeKeyForSuggestion(edge.toNode?.stateName ?? nameById.get(edge.toNodeId) ?? '');
+      return `${from}:${to}:${edge.action ? normalizeKeyForSuggestion(edge.action) : ''}`;
+    }),
+  );
+  const pending = await prisma.declaredStateSuggestion.findMany({
+    where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } },
+  });
+  const redundant: string[] = [];
+  for (const suggestion of pending) {
+    const patch = suggestionPatch({
+      suggestedStates: suggestion.suggestedStatesJson,
+      suggestedTransitions: suggestion.suggestedTransitionsJson,
+      suggestedState: suggestion.suggestedStatesJson ? undefined : suggestion.suggestedStateName,
+      severity: suggestion.severity,
+    });
+    const statesCovered = patch.states.every((state) => stateNames.has(state.name));
+    const transitionsCovered = patch.transitions.every((transition) =>
+      edgeKeys.has(`${transition.from}:${transition.to}:${transition.action ?? ''}`),
+    );
+    if (statesCovered && transitionsCovered && (patch.states.length > 0 || patch.transitions.length > 0)) {
+      redundant.push(suggestion.id);
+    }
+  }
+  if (redundant.length) {
+    await prisma.declaredStateSuggestion.updateMany({
+      where: { id: { in: redundant } },
+      data: { status: 'SUPERSEDED' },
+    });
+  }
+  return new Set(redundant);
+}
+
 function normalizedSuggestionType(type: string): SuggestionType {
   const map: Record<string, SuggestionType> = {
     PREREQUISITE: SuggestionType.PREREQUISITE,
@@ -644,6 +739,112 @@ app.patch('/v1/applications/:appId/flows/:flowId', async (req: Request, res: Res
   return res.json(await prisma.behaviorGraph.update({ where: { id: flow.id }, data }));
 });
 
+// Permanently delete a declared flow and every downstream artefact tied to it:
+// QA runs (with their artifacts, findings, progress events and observed
+// sessions), reconciliation reports, project bindings, scans, initializations,
+// drift reports, compiled rulesets, the suggestion queue, draft snapshots and
+// published version history. This is irreversible — the editor gates it behind a
+// "type DELETE <flow name> to confirm" modal.
+app.delete('/v1/applications/:appId/flows/:flowId', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId } = req.params;
+  const flow = await prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED },
+    include: { application: { select: { organizationId: true } } },
+  });
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+
+  try {
+    const summary = await prisma.$transaction(async (tx) => {
+      const versionIds = (await tx.behaviorGraphVersion.findMany({ where: { graphId: flowId }, select: { id: true } })).map((row) => row.id);
+      const bindingIds = (await tx.flowProjectBinding.findMany({ where: { flowId }, select: { id: true } })).map((row) => row.id);
+      const scanIds = (await tx.flowScan.findMany({ where: { OR: [{ flowId }, { bindingId: { in: bindingIds } }] }, select: { id: true } })).map((row) => row.id);
+      const nodeIds = (await tx.behaviorGraphNode.findMany({ where: { graphId: flowId }, select: { id: true } })).map((row) => row.id);
+      const suggestionIds = (await tx.declaredStateSuggestion.findMany({ where: { flowId }, select: { id: true } })).map((row) => row.id);
+      const qaRunIds = (await tx.qARun.findMany({
+        where: {
+          OR: [
+            { flowId },
+            { expectedGraphVersionId: { in: versionIds } },
+            { flowBindingId: { in: bindingIds } },
+            { flowScanId: { in: scanIds } },
+            { flowInitialization: { flowId } },
+            { flowDrift: { flowId } },
+          ],
+        },
+        select: { id: true },
+      })).map((row) => row.id);
+      const sessionIds = (await tx.session.findMany({ where: { qaRunId: { in: qaRunIds } }, select: { id: true } })).map((row) => row.id);
+
+      // ── Observed sessions captured by those QA runs ─────────
+      await tx.sessionEvent.deleteMany({ where: { sessionId: { in: sessionIds } } });
+      await tx.sessionStatistic.deleteMany({ where: { sessionId: { in: sessionIds } } });
+      await tx.session.deleteMany({ where: { id: { in: sessionIds } } });
+
+      // ── Reconciliation reports (linked by flow or by QA run) ─
+      await tx.reconciliationReport.deleteMany({ where: { OR: [{ flowId }, { qaRunId: { in: qaRunIds } }] } });
+
+      // ── QA runs — artifacts, findings, progress events and
+      //    finding evidence cascade from the QARun FK. ─────────
+      await tx.qARun.deleteMany({ where: { id: { in: qaRunIds } } });
+
+      // ── Endpoint analysis: drift → initializations → scans →
+      //    bindings. Drift/init hold Restrict FKs onto scans, so
+      //    they must go first. ─────────────────────────────────
+      await tx.flowDrift.deleteMany({ where: { OR: [{ flowId }, { previousScanId: { in: scanIds } }, { currentScanId: { in: scanIds } }] } });
+      await tx.flowInitialization.deleteMany({ where: { OR: [{ flowId }, { scanId: { in: scanIds } }, { bindingId: { in: bindingIds } }] } });
+      await tx.flowScan.deleteMany({ where: { id: { in: scanIds } } });
+      await tx.flowProjectBinding.deleteMany({ where: { flowId } });
+
+      // ── Published version history ──────────────────────────
+      await tx.behaviorGraphVersion.deleteMany({ where: { graphId: flowId } });
+
+      // ── Compiled rules, suggestion queue, draft snapshots ──
+      await tx.compiledRuleset.deleteMany({ where: { flowId } });
+      await tx.suggestionOutcome.deleteMany({ where: { suggestionId: { in: suggestionIds } } });
+      await tx.declaredStateSuggestion.deleteMany({ where: { flowId } });
+      // Detach suggestions on other flows that referenced one of this flow's states.
+      await tx.declaredStateSuggestion.updateMany({ where: { parentStateId: { in: nodeIds } }, data: { parentStateId: null } });
+      await tx.flowDraftSnapshot.deleteMany({ where: { graphId: flowId } });
+
+      // ── Loose (non-FK) references to the graph ─────────────
+      await tx.graphRelationship.deleteMany({ where: { OR: [{ sourceGraphId: flowId }, { targetGraphId: flowId }] } });
+      await tx.promotionDecision.deleteMany({ where: { flowId } });
+      await tx.instrumentationPlan.updateMany({ where: { flowId }, data: { flowId: null, flowVersionId: null } });
+
+      // ── The graph itself ──────────────────────────────────
+      await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flowId } });
+      await tx.behaviorGraphNode.deleteMany({ where: { graphId: flowId } });
+      await tx.behaviorGraph.delete({ where: { id: flowId } });
+
+      return {
+        qaRuns: qaRunIds.length,
+        sessions: sessionIds.length,
+        versions: versionIds.length,
+        bindings: bindingIds.length,
+        scans: scanIds.length,
+        suggestions: suggestionIds.length,
+      };
+    });
+
+    const { ipAddress, userAgent } = extractAuditContext(req);
+    await writeAuditLog(prisma, {
+      action: AuditAction.FLOW_DELETED,
+      userId: req.user?.id ?? null,
+      organizationId: flow.application.organizationId,
+      applicationId: appId,
+      metadata: { flowId, flowName: flow.name, ...summary },
+      ipAddress,
+      userAgent,
+    });
+    console.log(`[FDRS] Flow ${flowId} ("${flow.name}") deleted by ${req.user?.id ?? 'unknown'}`, summary);
+
+    return res.json({ success: true, data: { deletedFlowId: flowId, ...summary } });
+  } catch (err) {
+    console.error('[FDRS] Flow deletion failed:', err);
+    return res.status(500).json({ error: 'FLOW_DELETE_FAILED' });
+  }
+});
+
 app.post('/v1/applications/:appId/flows/:flowId/validate', async (req: Request, res: Response) => {
   const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
   if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
@@ -700,14 +901,136 @@ app.post('/v1/applications/:appId/flows/:flowId/versions/:versionId/revise', asy
   const current = await loadCanonicalFlow(req.params.appId, req.params.flowId);
   if (!current) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
   if (current.lifecycleStatus === 'DRAFT') return res.status(409).json({ error: 'FLOW_DRAFT_ALREADY_EXISTS' });
-  const revised = await prisma.behaviorGraph.update({ where: { id: current.id }, data: {
-    status: FlowStatus.DRAFT,
-    lifecycleStatus: 'DRAFT',
-    version: { increment: 1 },
-    publishedVersionId: null,
-    completedAt: null,
-  } });
+  const revised = await prisma.$transaction(async (tx) => {
+    const graph = await tx.behaviorGraph.update({ where: { id: current.id }, data: {
+      status: FlowStatus.DRAFT,
+      lifecycleStatus: 'DRAFT',
+      version: { increment: 1 },
+      // New revision opens with a fresh draft counter and a d0 rollback baseline.
+      draftSeq: 0,
+      publishedVersionId: null,
+      completedAt: null,
+    } });
+    await writeDraftSnapshot(tx, current.id, graph.version, 0, 'Revision opened', current.nodes, current.edges, req.user?.id ?? null);
+    return graph;
+  });
   return res.status(201).json({ ...revised, derivedFromVersionId: source.id, message: 'Draft revision created; published history is unchanged.' });
+});
+
+// ── Draft history (rollback points within the current version) ─────────────
+app.get('/v1/applications/:appId/declared-flows/:flowId/draft-history', async (req: Request, res: Response) => {
+  const { appId, flowId } = req.params;
+  const graph = await prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED },
+    include: { nodes: true, edges: true },
+  });
+  if (!graph) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  const snapshots = await prisma.flowDraftSnapshot.findMany({
+    where: { graphId: flowId, version: graph.version },
+    orderBy: { draftSeq: 'desc' },
+  });
+  res.json({ success: true, data: {
+    version: graph.version,
+    draftSeq: graph.draftSeq,
+    current: { stateCount: graph.nodes.length, transitionCount: graph.edges.length },
+    snapshots: snapshots.map((snap) => ({
+      id: snap.id,
+      draftSeq: snap.draftSeq,
+      label: snap.label,
+      stateCount: snap.stateCount,
+      transitionCount: snap.transitionCount,
+      createdAt: snap.createdAt,
+      isCurrent: snap.draftSeq === graph.draftSeq,
+    })),
+  } });
+});
+
+app.post('/v1/applications/:appId/declared-flows/:flowId/draft-history/:snapshotId/restore', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId, snapshotId } = req.params;
+  const graph = await prisma.behaviorGraph.findFirst({
+    where: { id: flowId, applicationId: appId, graphType: GraphType.DECLARED },
+    include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+  });
+  if (!graph) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+  const target = await prisma.flowDraftSnapshot.findFirst({ where: { id: snapshotId, graphId: flowId } });
+  if (!target) return res.status(404).json({ error: 'DRAFT_SNAPSHOT_NOT_FOUND' });
+  if (target.version !== graph.version) return res.status(409).json({ error: 'DRAFT_SNAPSHOT_STALE_VERSION' });
+  if (target.draftSeq === graph.draftSeq) {
+    return res.json({ success: true, data: { version: graph.version, draftSeq: graph.draftSeq, idempotent: true } });
+  }
+
+  const payload = target.snapshot as { states?: any[]; transitions?: any[] };
+  const wantStates = (Array.isArray(payload.states) ? payload.states : []).map((state) => ({
+    name: normalizeKeyForSuggestion(state.name),
+    category: normalizeStateCategory(state.category),
+    role: state.role === 'INITIAL' || state.role === 'TERMINAL' ? state.role : 'NORMAL',
+    terminalKind: state.role === 'TERMINAL' && typeof state.terminalKind === 'string' ? state.terminalKind : null,
+  })).filter((state) => state.name);
+  const wantTransitions = (Array.isArray(payload.transitions) ? payload.transitions : []).map((edge) => ({
+    from: normalizeKeyForSuggestion(edge.from),
+    to: normalizeKeyForSuggestion(edge.to),
+    action: edge.action ? String(edge.action) : null,
+  })).filter((edge) => edge.from && edge.to);
+  const wantNames = new Set(wantStates.map((state) => state.name));
+
+  const userId = req.user?.id ?? null;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      await ensureDraftBaseline(tx, flowId, graph.version, graph.nodes, graph.edges);
+      // Rebuild edges from scratch; reconcile nodes so unchanged states keep
+      // their ids (and the editor keeps their saved canvas positions).
+      await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flowId } });
+      const currentNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
+      const nodesByName = new Map(currentNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
+      const staleIds = currentNodes.filter((node) => !wantNames.has(normalizeKeyForSuggestion(node.stateName))).map((node) => node.id);
+      if (staleIds.length) {
+        await tx.declaredStateSuggestion.updateMany({ where: { parentStateId: { in: staleIds } }, data: { parentStateId: null } });
+        await tx.behaviorGraphNode.deleteMany({ where: { id: { in: staleIds } } });
+      }
+      for (const state of wantStates) {
+        const existing = nodesByName.get(state.name);
+        if (existing) {
+          await tx.behaviorGraphNode.update({ where: { id: existing.id }, data: {
+            category: state.category, role: state.role as any, terminalKind: state.terminalKind as any,
+          } });
+        } else {
+          const created = await tx.behaviorGraphNode.create({ data: {
+            graphId: flowId, stateName: state.name, behaviorKey: state.name, canonicalBehavior: state.name,
+            category: state.category, role: state.role as any, terminalKind: state.terminalKind as any,
+            provenance: StateProvenance.SUGGESTED_ACCEPTED,
+          } });
+          nodesByName.set(state.name, created);
+        }
+      }
+      const edgeSeen = new Set<string>();
+      for (const edge of wantTransitions) {
+        const from = nodesByName.get(edge.from); const to = nodesByName.get(edge.to);
+        if (!from || !to) continue;
+        const key = `${from.id}:${to.id}:${edge.action ?? ''}`;
+        if (edgeSeen.has(key)) continue;
+        edgeSeen.add(key);
+        await tx.behaviorGraphEdge.create({ data: {
+          graphId: flowId, fromNodeId: from.id, toNodeId: to.id, action: edge.action,
+          provenance: StateProvenance.SUGGESTED_ACCEPTED,
+        } });
+      }
+      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { draftSeq: { increment: 1 } } });
+      const nextNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
+      const nextEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId: flowId }, include: { fromNode: true, toNode: true } });
+      await writeDraftSnapshot(tx, flowId, graph.version, updatedGraph.draftSeq, `Restored draft ${target.draftSeq}`, nextNodes, nextEdges, userId);
+      return { version: graph.version, draftSeq: updatedGraph.draftSeq };
+    });
+    const refreshed = await prisma.behaviorGraph.findFirst({
+      where: { id: flowId },
+      include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+    });
+    if (refreshed) await pruneRedundantSuggestions(flowId, refreshed.nodes, refreshed.edges);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[FDRS] Draft snapshot restore failed:', err);
+    res.status(500).json({ error: 'DRAFT_RESTORE_FAILED' });
+  }
 });
 
 app.get('/v1/applications/:appId/flows/:flowId/versions/:versionId/diagrams', async (req: Request, res: Response) => {
@@ -1442,15 +1765,11 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
     if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
     const graphHash = graphRevisionHash(graph);
-    if ((req.body.graphVersion !== undefined && Number(req.body.graphVersion) !== graph.version) ||
-        (req.body.graphHash && req.body.graphHash !== graphHash)) {
-      return res.status(409).json({ error: 'GRAPH_REVISION_STALE', graphVersion: graph.version, graphHash });
-    }
 
-    await prisma.declaredStateSuggestion.updateMany({
-      where: { flowId, status: { in: ['PENDING', 'EDITED', 'SUGGESTED'] }, NOT: { graphHash } },
-      data: { status: 'SUPERSEDED' },
-    });
+    // The queue is no longer reset when the graph revision changes. Instead of
+    // superseding every pending suggestion generated against an older hash, keep
+    // them queued and only retire the ones the graph has already caught up to.
+    await pruneRedundantSuggestions(flowId, graph.nodes, graph.edges);
 
     const profile = await prisma.applicationProfile.findUnique({ where: { applicationId: appId } });
     const domainKey = profile?.profileType || graph.workflowType || 'GENERIC_CRUD';
@@ -1536,6 +1855,14 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     }
 
     const existingStateNames = new Set(states.map((state) => normalizeKeyForSuggestion(state.name)));
+    // Dedupe key already queued (against any graph revision) — keeps the persistent
+    // queue from filling with the same suggestion re-proposed after every edit.
+    const queuedDedupeKeys = new Set(
+      (await prisma.declaredStateSuggestion.findMany({
+        where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] }, dedupeKey: { not: null } },
+        select: { dedupeKey: true },
+      })).map((row) => row.dedupeKey as string),
+    );
     const persisted = [];
     for (const item of generatedSuggestions) {
       const patch = suggestionPatch(item);
@@ -1544,6 +1871,8 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
       const knownNames = new Set([...existingStateNames, ...patch.states.map((state) => state.name)]);
       if (patch.transitions.some((transition) => !knownNames.has(transition.from) || !knownNames.has(transition.to))) continue;
       const dedupeKey = semanticSuggestionKey(item.type, patch, item.targetNodeId);
+      if (!reviewId && queuedDedupeKeys.has(dedupeKey)) continue;
+      queuedDedupeKeys.add(dedupeKey);
       const record = await prisma.declaredStateSuggestion.upsert({
         where: { flowId_graphHash_dedupeKey: { flowId, graphHash, dedupeKey } },
         update: reviewId ? { reviewId, generationTrigger: trigger, status: 'PENDING' } : {},
@@ -1565,7 +1894,8 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
       });
       persisted.push(record);
     }
-    const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, ...(reviewId ? { reviewId } : { reviewId: null }), status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+    // Return the whole live queue, not just suggestions tied to the current hash.
+    const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, ...(reviewId ? { reviewId } : { reviewId: null }), status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
     res.status(201).json({ success: true, data: { graphVersion: graph.version, graphHash, reviewId, suggestions, meta: {
       ruleCount: ruleItems.length, aiCount: suggestions.filter((item) => item.source !== SuggestionSource.RULE_ENGINE).length,
       aiAllowed: aiAccess.allowed, aiAttempted: result.aiCalled, fallbackUsed: result.fallbackUsed,
@@ -1583,7 +1913,10 @@ app.get('/v1/applications/:appId/declared-flows/:flowId/suggestions', async (req
   const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId: appId }, include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } } });
   if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
   const graphHash = graphRevisionHash(graph);
-  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, graphHash, status: { in: ['PENDING', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
+  // Retire suggestions the graph has caught up to, then return the whole live
+  // queue regardless of which revision each suggestion was generated against.
+  await pruneRedundantSuggestions(flowId, graph.nodes, graph.edges);
+  const suggestions = await prisma.declaredStateSuggestion.findMany({ where: { flowId, reviewId: null, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, orderBy: [{ severity: 'desc' }, { confidence: 'desc' }] });
   const aiAccess = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
   const aiCount = suggestions.filter((item) => item.source !== SuggestionSource.RULE_ENGINE).length;
   res.json({ success: true, data: { graphVersion: graph.version, graphHash, suggestions, meta: {
@@ -2643,10 +2976,10 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
     });
     if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
     if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
-    const currentHash = graphRevisionHash(graph);
-    if ((suggestion.graphVersion != null && suggestion.graphVersion !== graph.version) || (suggestion.graphHash && suggestion.graphHash !== currentHash)) {
-      return res.status(409).json({ error: 'GRAPH_REVISION_STALE', graphVersion: graph.version, graphHash: currentHash });
-    }
+    // Queued suggestions are no longer bound to a single graph revision: a
+    // suggestion generated before an earlier accept is still applied here, and is
+    // only refused (422 below, via validateGeneratedGraph) if it genuinely no
+    // longer fits the current graph.
 
     const patch = suggestionPatch({
       suggestedStates: suggestion.suggestedStatesJson,
@@ -2667,7 +3000,9 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
 
     const normalizedBehaviors = new Map<string, string>();
     for (const state of patch.states) normalizedBehaviors.set(state.name, await normalizeIntent(state.name, appId));
+    const userId = (req as AuthenticatedRequest).user?.id ?? null;
     const result = await prisma.$transaction(async (tx) => {
+      await ensureDraftBaseline(tx, flowId, graph.version, graph.nodes, graph.edges);
       const currentNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
       const nodesByName = new Map(currentNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
       const createdNodes = [];
@@ -2694,26 +3029,38 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
         } }));
         edgeKeys.add(edgeKey);
       }
-      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-      const snapshot = {
-        states: [...nodesByName.values()].map((node) => ({ name: node.stateName, category: node.category })),
-        transitions: prospectiveTransitions,
-      };
-      await tx.behaviorGraphVersion.create({ data: {
-        graphId: flowId, version: updatedGraph.version, snapshot: snapshot as any,
-        expectedStateCount: snapshot.states.length, expectedTransitionCount: snapshot.transitions.length,
-      } });
+      const mutated = createdNodes.length > 0 || createdEdges.length > 0;
+      // The published `version` stays frozen while drafting; each applied
+      // suggestion bumps `draftSeq` and writes a rollback snapshot instead.
+      const updatedGraph = mutated
+        ? await tx.behaviorGraph.update({ where: { id: flowId }, data: { draftSeq: { increment: 1 } } })
+        : graph;
+      if (mutated) {
+        const nextNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
+        const nextEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId: flowId }, include: { fromNode: true, toNode: true } });
+        await writeDraftSnapshot(
+          tx, flowId, graph.version, updatedGraph.draftSeq,
+          `Accepted: ${suggestion.title ?? suggestion.suggestedStateName}`,
+          nextNodes, nextEdges, userId,
+        );
+      }
       const updatedSuggestion = await tx.declaredStateSuggestion.update({ where: { id: suggestionId }, data: {
-        status: 'ACCEPTED', acceptedAt: new Date(), acceptedBy: (req as AuthenticatedRequest).user?.id ?? null,
+        status: 'ACCEPTED', acceptedAt: new Date(), acceptedBy: userId,
       } });
       if (suggestion.organizationId) await tx.ruleFeedback.create({ data: {
         organizationId: suggestion.organizationId, applicationId: appId, suggestionId,
         feedbackType: 'ACCEPTED', beforeJson: suggestion as any,
         afterJson: { createdNodeIds: createdNodes.map((node) => node.id), createdEdgeIds: createdEdges.map((edge) => edge.id) } as any,
-        createdBy: (req as AuthenticatedRequest).user?.id ?? null,
+        createdBy: userId,
       } });
-      return { suggestion: updatedSuggestion, graphVersion: updatedGraph.version, createdNodes, createdEdges };
+      return { suggestion: updatedSuggestion, graphVersion: graph.version, draftSeq: updatedGraph.draftSeq, mutated, createdNodes, createdEdges };
     });
+    // Retire any other queued suggestions the graph has now outgrown.
+    const refreshed = await prisma.behaviorGraph.findFirst({
+      where: { id: flowId },
+      include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
+    });
+    if (refreshed) await pruneRedundantSuggestions(flowId, refreshed.nodes, refreshed.edges);
     res.json({ success: true, data: result });
   } catch (err) {
     console.error('[FDRS] Atomic suggestion acceptance failed:', err);

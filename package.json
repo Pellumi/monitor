@@ -15,6 +15,9 @@
     "test": "turbo run test",
     "test:e2e": "pnpm --filter @tellann/e2e-tests run test:e2e",
     "pack:sdks": "pnpm --dir packages/frontend-sdk pack --pack-destination ../../release/sdk && pnpm --dir packages/backend-sdk pack --pack-destination ../../release/sdk",
+    "changeset": "changeset",
+    "release:version": "changeset version",
+    "release:publish": "pnpm --filter @tellann/frontend-sdk --filter @tellann/backend-sdk run build && changeset publish --no-git-checks",
     "billing:seed-plans": "pnpm --filter @tellann/db run seed:plans",
     "billing:sync-catalog": "node scripts/sync-billing-catalog.mjs",
     "billing:sync-catalog:dry-run": "node scripts/sync-billing-catalog.mjs --dry-run",
@@ -30,6 +33,7 @@
     "verify:billing:routing": "node scripts/verify-plan-change-routing.mjs"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.1",
     "@types/node": "^25.9.3",
     "ts-node": "^10.9.2",
     "turbo": "latest",

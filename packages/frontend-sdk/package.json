@@ -7,6 +7,18 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pellumi/monitor.git",
+    "directory": "packages/frontend-sdk"
+  },
+  "homepage": "https://github.com/Pellumi/monitor/tree/main/packages/frontend-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Pellumi/monitor/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -16,6 +28,7 @@
   },
   "files": [
     "dist",
+    "README.md",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts"
   ],

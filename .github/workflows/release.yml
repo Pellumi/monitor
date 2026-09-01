@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version or publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the "Version Packages" PR branch + git tags
+      pull-requests: write # open/update the "Version Packages" PR
+      id-token: write # reserved for npm provenance (see NPM_CONFIG_PROVENANCE below)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changesets needs full history to diff against baseBranch
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+          # writes ~/.npmrc with:
+          #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          # so `changeset publish` authenticates without `npm login` / OTP.
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Release PR or publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm release:version
+          publish: pnpm release:publish
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Uncomment to attach npm provenance (needs id-token: write, npm >= 9.5,
+          # and a public repo or npm's private-repo provenance enabled):
+          # NPM_CONFIG_PROVENANCE: "true"

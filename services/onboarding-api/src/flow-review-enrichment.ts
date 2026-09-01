@@ -22,9 +22,24 @@ export async function enrichFlowCodeReview(report: Record<string, any>) {
     JSON.stringify(evidenceInput),
   ].join('\n\n');
   const result = await provider.generateStructured({ prompt, schema: FlowReviewEnrichmentSchema, timeoutMs: 15_000 });
+  // The model only returns { checkpointId, explanation, priority } — keep the identifying
+  // label and repository mapping from the deterministic finding so the desktop UI can still
+  // say *which* state or transition a recommendation is about, not just a generic action.
+  const baseByCheckpoint = new Map<string, any>((report.recommendations ?? []).map((item: any) => [item.checkpointId, item]));
   const recommendations = result.data.recommendations
     .filter((item) => allowedCheckpointIds.has(item.checkpointId))
-    .map((item) => ({ ...item, action: 'Review evidence-backed checkpoint mapping' }));
+    .map((item) => {
+      const base = baseByCheckpoint.get(item.checkpointId);
+      return {
+        checkpointId: item.checkpointId,
+        kind: base?.kind ?? null,
+        action: 'Review evidence-backed checkpoint mapping',
+        label: base?.label ?? item.checkpointId,
+        detail: item.explanation,
+        priority: item.priority,
+        mapping: base?.mapping ?? null,
+      };
+    });
   const edgeCaseByCode = new Map(result.data.edgeCaseExplanations.map((item) => [item.code, item.explanation]));
   return {
     report: {

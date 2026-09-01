@@ -61,6 +61,7 @@ declare global {
           snapshot: RepositorySnapshotSummary;
         } | null>;
         getBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
+        setBranchAgentCheckout(applicationId: string, allowAgentCheckout: boolean): Promise<BranchPolicy>;
         grantQaBranchCheckout(applicationId: string, expiresInMinutes?: number): Promise<Record<string, unknown>>;
         switchToQaBranch(applicationId: string): Promise<QaBranchSwitchResult>;
         restoreWorkspaceBranch(applicationId: string): Promise<{

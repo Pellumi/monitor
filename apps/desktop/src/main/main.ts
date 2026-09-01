@@ -782,6 +782,23 @@ function registerIpc(): void {
     });
   });
 
+  /**
+   * Owner/Admin only. Flips the org-wide "allow agent checkout" flag so the
+   * member (who is also a manager) does not have to leave the desktop app for
+   * the dashboard. The server re-checks the caller's role; the cached policy is
+   * refreshed so offline compliance reflects the change immediately.
+   */
+  ipcMain.handle(IPC.setBranchAgentCheckout, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; allowAgentCheckout?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    if (typeof value.allowAgentCheckout !== 'boolean') throw new Error('INVALID_ALLOW_AGENT_CHECKOUT');
+    const policy = await cloud.setBranchAgentCheckout(value.applicationId, value.allowAgentCheckout);
+    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(value.applicationId));
+    if (stored) writeLocalState(localWorkspaceKey(value.applicationId), { ...stored, branchPolicy: policy });
+    return policy;
+  });
+
   ipcMain.handle(IPC.grantQaBranchCheckout, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; expiresInMinutes?: unknown };

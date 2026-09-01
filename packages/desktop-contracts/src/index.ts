@@ -127,6 +127,12 @@ export const BranchPolicySchema = z.object({
   allowAgentCheckout: z.boolean(),
   /** True once a repository has actually been bound to the application. */
   bound: z.boolean(),
+  /**
+   * Whether the member viewing this policy is an Owner or Admin of the owning
+   * organisation, and may therefore toggle `allowAgentCheckout` themselves.
+   * Only populated by the desktop `branch-policy` endpoint; absent elsewhere.
+   */
+  canManageBranchPolicy: z.boolean().optional(),
 });
 
 export const WorkspaceComplianceStatusSchema = z.enum([
@@ -155,6 +161,11 @@ export const WorkspaceComplianceSchema = z.object({
   agentCheckoutAllowed: z.boolean(),
   /** Whether an unexpired MANAGE_QA_BRANCH grant already exists for this workspace. */
   agentCheckoutGranted: z.boolean(),
+  /**
+   * Whether this member is an Owner or Admin and can turn agent checkout on or
+   * off for the whole application from the desktop app itself.
+   */
+  canManageBranchPolicy: z.boolean(),
   message: z.string(),
 });
 
@@ -704,6 +715,7 @@ export const IPC = {
   scanWorkspace: 'tellann:workspace:scan',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
+  setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',
   grantQaBranchCheckout: 'tellann:workspace:branch:grant',
   switchToQaBranch: 'tellann:workspace:branch:switch',
   restoreWorkspaceBranch: 'tellann:workspace:branch:restore',

@@ -62,6 +62,8 @@ type DesktopContextValue = {
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
   cloneWorkspace(applicationId: string, cloneUrl: string): Promise<LocalWorkspace | null>;
   refreshBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
+  /** Owner/Admin only: turn agent-performed branch switching on or off org-wide. */
+  setBranchAgentCheckout(applicationId: string, allowAgentCheckout: boolean): Promise<WorkspaceCompliance | null>;
   grantQaBranchCheckout(applicationId: string): Promise<WorkspaceCompliance | null>;
   switchToQaBranch(applicationId: string): Promise<QaBranchSwitchResult | null>;
   restoreWorkspaceBranch(applicationId: string): Promise<{
@@ -350,6 +352,11 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return workspace;
   }), [perform, refreshBranchCompliance]);
 
+  const setBranchAgentCheckout = useCallback(async (applicationId: string, allowAgentCheckout: boolean) => perform(async () => {
+    await bridge().projects.setBranchAgentCheckout(applicationId, allowAgentCheckout);
+    return refreshBranchCompliance(applicationId);
+  }), [perform, refreshBranchCompliance]);
+
   const grantQaBranchCheckout = useCallback(async (applicationId: string) => perform(async () => {
     await bridge().projects.grantQaBranchCheckout(applicationId);
     return refreshBranchCompliance(applicationId);
@@ -420,6 +427,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     attachWorkspace,
     cloneWorkspace,
     refreshBranchCompliance,
+    setBranchAgentCheckout,
     grantQaBranchCheckout,
     switchToQaBranch,
     restoreWorkspaceBranch,
@@ -484,7 +492,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
-    branchCompliance, refreshBranchCompliance, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
+    branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;
@@ -496,8 +504,12 @@ export function useDesktop() {
   return value;
 }
 
-function normalizeDesktopError(cause: unknown): string {
-  const raw = cause instanceof Error ? cause.message : 'Desktop operation failed';
+export function normalizeDesktopError(cause: unknown): string {
+  const raw = cause instanceof Error
+    ? cause.message
+    : typeof cause === 'string'
+      ? cause
+      : 'Desktop operation failed';
   if ((cause as { status?: number })?.status === 429 || /rate limit/i.test(raw)) {
     return raw.includes('temporarily limiting')
       ? raw
@@ -511,6 +523,16 @@ function normalizeDesktopError(cause: unknown): string {
   }
   if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
     return 'That sign-in request is no longer active. Cancel it and try again.';
+  }
+  if (/STALE_TARGET_FILE:/.test(raw)) {
+    const file = raw.split('STALE_TARGET_FILE:')[1]?.trim().split(/[\s'"]/)[0] || 'A project file';
+    return `${file} changed on disk after this setup task was created, so Tellann stopped before writing anything to avoid overwriting your own edits. Open the project’s Instrumentation page, run “Detect framework” again to build a fresh task from the current files, then approve and apply that new task.`;
+  }
+  if (/STALE_INSTRUMENTATION_BASE_REVISION|STALE_INSTRUMENTATION_PLAN|STALE_INSTRUMENTATION/.test(raw)) {
+    return 'The project changed (a new commit, or edited or installed dependencies) after this setup task was created, so it can no longer be applied safely. Run “Detect framework” again on the Instrumentation page to create a fresh task, then approve and apply it.';
+  }
+  if (/INVALID_TASK_APPROVAL|TASK_SCOPE_EXPANSION_DENIED|APPROVED_SCOPE_OUTSIDE_PLAN/.test(raw)) {
+    return 'This setup task’s approved scope no longer matches what Tellann can verify. Create a fresh task from the Instrumentation page and approve every listed file again before applying.';
   }
   return raw
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')

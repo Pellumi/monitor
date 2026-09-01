@@ -66,6 +66,7 @@ const IPC = {
   scanWorkspace: 'tellann:workspace:scan',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
+  setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',
   grantQaBranchCheckout: 'tellann:workspace:branch:grant',
   switchToQaBranch: 'tellann:workspace:branch:switch',
   restoreWorkspaceBranch: 'tellann:workspace:branch:restore',
@@ -110,6 +111,8 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.invoke(IPC.cloneWorkspace, input),
     getBranchCompliance: (applicationId: string) =>
       ipcRenderer.invoke(IPC.getBranchCompliance, applicationId),
+    setBranchAgentCheckout: (applicationId: string, allowAgentCheckout: boolean) =>
+      ipcRenderer.invoke(IPC.setBranchAgentCheckout, { applicationId, allowAgentCheckout }),
     grantQaBranchCheckout: (applicationId: string, expiresInMinutes?: number) =>
       ipcRenderer.invoke(IPC.grantQaBranchCheckout, { applicationId, expiresInMinutes }),
     switchToQaBranch: (applicationId: string) =>

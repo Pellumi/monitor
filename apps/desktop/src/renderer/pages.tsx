@@ -71,7 +71,7 @@ import type {
   IntentDraftJob,
 } from "@tellann/desktop-contracts";
 import type { LiveEvidence } from "@tellann/browser-observer";
-import { useDesktop } from "./desktop-context";
+import { useDesktop, normalizeDesktopError } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
 import { FlowDiagram } from "./components/flow-diagram";
 import { Switch } from "./components/ui/switch";
@@ -535,7 +535,7 @@ function redactDisplayedDiff(value: unknown): string {
 }
 
 type InstrumentationDiffLine = {
-  kind: "removed" | "added";
+  kind: "removed" | "added" | "context" | "meta";
   oldLine: number | null;
   newLine: number | null;
   text: string;
@@ -547,6 +547,103 @@ type InstrumentationFileDiff = {
   deletions: number;
   lines: InstrumentationDiffLine[];
 };
+
+type DiffOp = { kind: "context" | "removed" | "added"; text: string };
+
+// The instrumentation "diff" payload is not a real unified diff — the adapter
+// stores the whole previous file as one block and the whole new file as another
+// (see instrumentation-adapters `apply`). Diff the two blocks here so the viewer
+// shows only the lines that actually changed instead of "every line removed and
+// re-added".
+function lineDiff(before: string[], after: string[]): DiffOp[] {
+  const n = before.length;
+  const m = after.length;
+  const lcs: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array<number>(m + 1).fill(0),
+  );
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      lcs[i][j] =
+        before[i] === after[j]
+          ? lcs[i + 1][j + 1] + 1
+          : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (before[i] === after[j]) {
+      ops.push({ kind: "context", text: before[i] });
+      i += 1;
+      j += 1;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      ops.push({ kind: "removed", text: before[i] });
+      i += 1;
+    } else {
+      ops.push({ kind: "added", text: after[j] });
+      j += 1;
+    }
+  }
+  while (i < n) {
+    ops.push({ kind: "removed", text: before[i] });
+    i += 1;
+  }
+  while (j < m) {
+    ops.push({ kind: "added", text: after[j] });
+    j += 1;
+  }
+  return ops;
+}
+
+// Keep `context` lines around each change and collapse long unchanged runs.
+function toHunkLines(ops: DiffOp[], context = 3): InstrumentationDiffLine[] {
+  const changedIndexes = ops.flatMap((op, index) =>
+    op.kind === "context" ? [] : [index],
+  );
+  if (!changedIndexes.length) return [];
+  const keep = new Set<number>();
+  for (const index of changedIndexes) {
+    for (
+      let k = Math.max(0, index - context);
+      k <= Math.min(ops.length - 1, index + context);
+      k += 1
+    ) {
+      keep.add(k);
+    }
+  }
+  const lines: InstrumentationDiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let previousKept = -1;
+  ops.forEach((op, index) => {
+    if (op.kind === "context") {
+      oldLine += 1;
+      newLine += 1;
+    } else if (op.kind === "removed") {
+      oldLine += 1;
+    } else {
+      newLine += 1;
+    }
+    if (!keep.has(index)) return;
+    if (previousKept >= 0 && index > previousKept + 1) {
+      lines.push({
+        kind: "meta",
+        oldLine: null,
+        newLine: null,
+        text: "⋯ unchanged lines",
+      });
+    }
+    lines.push({
+      kind: op.kind,
+      oldLine: op.kind === "added" ? null : oldLine,
+      newLine: op.kind === "removed" ? null : newLine,
+      text: op.text,
+    });
+    previousKept = index;
+  });
+  return lines;
+}
 
 function parseInstrumentationDiff(value: unknown): InstrumentationFileDiff[] {
   const redacted = redactDisplayedDiff(value).replaceAll("\r\n", "\n");
@@ -568,28 +665,17 @@ function parseInstrumentationDiff(value: unknown): InstrumentationFileDiff[] {
             : "";
       const updated =
         additionBoundary >= 0 ? body.slice(additionBoundary + 2) : "";
-      const previousLines = previous === "" ? [] : previous.split("\n");
+      const previousLines =
+        previous === "" ? [] : previous.replace(/\n$/, "").split("\n");
       const updatedLines =
         updated === "" ? [] : updated.replace(/\n$/, "").split("\n");
+      const ops = lineDiff(previousLines, updatedLines);
       return [
         {
           path: pathMatch[2],
-          deletions: previousLines.length,
-          additions: updatedLines.length,
-          lines: [
-            ...previousLines.map((text, index) => ({
-              kind: "removed" as const,
-              oldLine: index + 1,
-              newLine: null,
-              text,
-            })),
-            ...updatedLines.map((text, index) => ({
-              kind: "added" as const,
-              oldLine: null,
-              newLine: index + 1,
-              text,
-            })),
-          ],
+          deletions: ops.filter((op) => op.kind === "removed").length,
+          additions: ops.filter((op) => op.kind === "added").length,
+          lines: toHunkLines(ops),
         },
       ];
     });
@@ -635,9 +721,15 @@ function InstrumentationDiffViewer({ diff }: { diff: unknown }) {
                     {line.newLine ?? ""}
                   </span>
                   <span className="diff-line-marker" aria-hidden="true">
-                    {line.kind === "added" ? "+" : "-"}
+                    {line.kind === "added"
+                      ? "+"
+                      : line.kind === "removed"
+                        ? "-"
+                        : ""}
                   </span>
-                  <code role="cell">{line.text || " "}</code>
+                  <code role="cell">
+                    {line.kind === "meta" ? line.text : line.text || " "}
+                  </code>
                 </div>
               ))}
             </div>
@@ -661,6 +753,7 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
   const {
     branchCompliance,
     refreshBranchCompliance,
+    setBranchAgentCheckout,
     grantQaBranchCheckout,
     switchToQaBranch,
     restoreWorkspaceBranch,
@@ -691,6 +784,16 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
       result.stashRef
         ? `Switched to ${result.branch}. Your uncommitted changes were stashed and can be restored.`
         : `Switched to ${result.branch}.`,
+    );
+  };
+
+  const handleAgentCheckoutPolicy = async (allow: boolean) => {
+    setNotice(null);
+    await setBranchAgentCheckout(projectId, allow);
+    setNotice(
+      allow
+        ? "Agent branch switching is now enabled for this application. Grant this workspace access to let Tellann switch it."
+        : "Agent branch switching has been disabled for this application.",
     );
   };
 
@@ -742,9 +845,20 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
           </button>
 
           {!compliance.agentCheckoutAllowed ? (
-            <span style={{ fontSize: 12, opacity: 0.7, alignSelf: "center" }}>
-              An Owner or Admin has not enabled agent-performed branch switching.
-            </span>
+            compliance.canManageBranchPolicy ? (
+              <button
+                className="button"
+                disabled={busy}
+                onClick={() => void handleAgentCheckoutPolicy(true)}
+              >
+                <Unlock size={14} />
+                Enable agent branch switching
+              </button>
+            ) : (
+              <span style={{ fontSize: 12, opacity: 0.7, alignSelf: "center" }}>
+                An Owner or Admin has not enabled agent-performed branch switching.
+              </span>
+            )
           ) : compliance.agentCheckoutGranted ? (
             <button className="button" disabled={busy} onClick={() => void handleSwitch()}>
               <GitBranch size={14} />
@@ -760,6 +874,18 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
               Allow Tellann to switch it
             </button>
           )}
+
+          {compliance.agentCheckoutAllowed && compliance.canManageBranchPolicy ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void handleAgentCheckoutPolicy(false)}
+              style={{ opacity: 0.7 }}
+            >
+              <Lock size={14} />
+              Disable agent branch switching
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -4109,22 +4235,52 @@ export function IntentPage() {
               Pick a starting point. Every state and transition stays editable
               afterwards, or generate one from your documents below.
             </p>
-            <div className="review-actions">
+            <div className="grid gap-3 sm:grid-cols-3 mt-4">
               {FLOW_STARTING_POINTS.map((option) => {
                 const Icon = option.icon;
                 const isCreating = creatingFlowKey === option.key;
                 return (
-                  <button
+                  <div
                     key={option.key}
-                    type="button"
-                    className="button"
-                    disabled={busy || creatingFlowKey !== null}
-                    title={option.description}
-                    onClick={() => void startFlowFromTemplate(option)}
+                    className="flex flex-col justify-between rounded-lg border border-[#262626] bg-[#0c0c0c] p-4 transition-all hover:border-[#383838] hover:bg-[#121212]"
                   >
-                    <Icon size={15} />
-                    {isCreating ? "Creating…" : option.label}
-                  </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        {/* <div className="flex h-8 w-8 items-center justify-center rounded-md border border-[#262626] bg-[#141414] text-neutral-300">
+                          <Icon size={16} />
+                        </div> */}
+                        {option.key === "CUSTOM" && (
+                          <span className="rounded border border-[#262626] bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400">
+                            Blank
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-semibold text-white">
+                        {option.label}
+                      </h3>
+                      <p className="text-xs leading-relaxed text-neutral-400">
+                        {option.description}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`button ${option.key === "CUSTOM" ? "" : "primary"} w-full mt-4 flex items-center justify-center gap-1.5`}
+                      disabled={busy || creatingFlowKey !== null}
+                      onClick={() => void startFlowFromTemplate(option)}
+                    >
+                      {isCreating ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          Creating…
+                        </>
+                      ) : (
+                        <>
+                          {option.label}
+                          <ArrowRight size={14} />
+                        </>
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -5105,8 +5261,12 @@ export function IntentDetailPage() {
 
 function FlowReviewPanel({
   initialization,
+  onReanalyze,
+  busy,
 }: {
   initialization: FlowInitialization;
+  onReanalyze?: () => void;
+  busy?: boolean;
 }) {
   const report = initialization.codeReviewReport;
   if (!report) return <LoadingState />;
@@ -5123,7 +5283,20 @@ function FlowReviewPanel({
           <small>First code review</small>
           <h2>Declared intent against the repository</h2>
         </div>
-        <Status>{report.engine.replace("_", " ")}</Status>
+        <div className="flex items-center gap-2">
+          <Status>{report.engine.replace("_", " ")}</Status>
+          {onReanalyze ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={onReanalyze}
+              title="Regenerate this review — useful if it was produced by an older version of Tellann"
+            >
+              <RefreshCw size={15} />
+              Re-run analysis
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="flow-review-metrics">
         <Metric
@@ -5157,18 +5330,55 @@ function FlowReviewPanel({
         <AccordionContent>
           <div className="stack">
             {report.recommendations.length ? (
-              report.recommendations.map((item: any, index: number) => (
-                <div
-                  className="muted-callout"
-                  key={`${item.checkpointId ?? "recommendation"}-${index}`}
-                >
-                  <strong>{String(item.action ?? "Review mapping")}</strong>
-                  <p>
-                    {String(item.mapping?.file ?? "No confident file mapping")}{" "}
-                    {item.mapping?.symbol ? `· ${item.mapping.symbol}` : ""}
-                  </p>
-                </div>
-              ))
+              report.recommendations.map((item: any, index: number) => {
+                const confidencePct =
+                  typeof item.mapping?.confidence === "number"
+                    ? Math.round(item.mapping.confidence * 100)
+                    : null;
+                const hasFileMapping = Boolean(item.mapping?.file);
+                return (
+                  <div
+                    className="muted-callout"
+                    key={`${item.checkpointId ?? "recommendation"}-${index}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <strong>
+                        {String(item.label ?? item.action ?? "Review mapping")}
+                      </strong>
+                      {item.priority ? (
+                        <Status>{String(item.priority)}</Status>
+                      ) : null}
+                    </div>
+                    <p>
+                      {String(
+                        item.detail ??
+                          item.action ??
+                          "Review this declared checkpoint against the repository.",
+                      )}
+                    </p>
+                    {hasFileMapping ? (
+                      <code>
+                        {String(item.mapping.file)}
+                        {item.mapping.symbol ? ` · ${item.mapping.symbol}` : ""}
+                        {confidencePct !== null
+                          ? ` · ${confidencePct}% confidence`
+                          : ""}
+                      </code>
+                    ) : (
+                      <p className="muted">
+                        {String(
+                          item.mapping?.rationale ??
+                            "No confident file mapping was found.",
+                        )}{" "}
+                        Use manual initialization to add this checkpoint at the
+                        correct location yourself, or add more repository
+                        evidence (routes, endpoints, or components) and re-run
+                        analysis.
+                      </p>
+                    )}
+                  </div>
+                );
+              })
             ) : (
               <p className="muted">
                 No remediation is required by the static review.
@@ -5181,100 +5391,467 @@ function FlowReviewPanel({
   );
 }
 
+type RoadmapStep = ManualRoadmap["steps"][number];
+
+const FLOW_GRAPH = { nodeW: 190, nodeH: 62, xGap: 60, yGap: 118, pad: 34 };
+
+// The step titles carry the human name inside quotes, e.g.
+// `Record when the flow reaches "Checkout"` — pull it out for compact labels.
+function quotedName(title: string): string {
+  return title.match(/"([^"]+)"/)?.[1] ?? title;
+}
+
+function stepKindLabel(kind: string): string {
+  return kind === "TRANSITION"
+    ? "Transition"
+    : kind === "TERMINAL"
+      ? "Finish state"
+      : kind === "PREREQUISITE"
+        ? "Setup"
+        : kind === "VERIFY"
+          ? "Verify"
+          : "State";
+}
+
 function FlowRoadmap({
   roadmap,
+  manifest,
   verification,
   busy,
   onToggle,
   onVerify,
+  onRebuild,
 }: {
   roadmap: ManualRoadmap;
+  manifest?: {
+    checkpoints?: Array<Record<string, any>>;
+    initialStateId?: string;
+  } | null;
   verification: any;
   busy: boolean;
   onToggle(stepId: string, completed: boolean): void;
   onVerify(): void;
+  onRebuild?: () => void;
 }) {
+  const stepById = useMemo(
+    () => new Map(roadmap.steps.map((step) => [step.id, step] as const)),
+    [roadmap.steps],
+  );
+
+  // Lay states out in longest-path layers from the declared initial state;
+  // transitions become the edges between them.
+  const graph = useMemo(() => {
+    const checkpoints = manifest?.checkpoints ?? [];
+    const stateCps = checkpoints.filter((c) => c.kind === "STATE");
+    const transitionCps = checkpoints.filter((c) => c.kind === "TRANSITION");
+    if (!stateCps.length) return null;
+
+    const edges = transitionCps
+      .map((t) => ({
+        from: String(t.fromCheckpointId ?? ""),
+        to: String(t.toCheckpointId ?? ""),
+      }))
+      .filter((e) => e.from && e.to);
+
+    const layer = new Map<string, number>();
+    for (const cp of stateCps) layer.set(String(cp.id), 0);
+    const initialId = `state:${manifest?.initialStateId ?? ""}`;
+    if (layer.has(initialId)) {
+      for (let pass = 0; pass < stateCps.length; pass += 1) {
+        let changed = false;
+        for (const edge of edges) {
+          const from = layer.get(edge.from);
+          if (from === undefined) continue;
+          if ((layer.get(edge.to) ?? 0) < from + 1) {
+            layer.set(edge.to, from + 1);
+            changed = true;
+          }
+        }
+        if (!changed) break;
+      }
+    }
+    const deepest = Math.max(0, ...layer.values());
+    const byLayer = new Map<number, string[]>();
+    for (const cp of stateCps) {
+      const id = String(cp.id);
+      const lvl = layer.get(id) ?? deepest + 1;
+      if (!byLayer.has(lvl)) byLayer.set(lvl, []);
+      byLayer.get(lvl)!.push(id);
+    }
+    const rows = [...byLayer.keys()].sort((a, b) => a - b);
+    const rowWidth = (count: number) =>
+      count * FLOW_GRAPH.nodeW + Math.max(0, count - 1) * FLOW_GRAPH.xGap;
+    const widest = Math.max(...rows.map((r) => rowWidth(byLayer.get(r)!.length)));
+    const pos = new Map<string, { x: number; y: number }>();
+    rows.forEach((row, rowIndex) => {
+      const ids = byLayer.get(row)!;
+      const startX = FLOW_GRAPH.pad + (widest - rowWidth(ids.length)) / 2;
+      ids.forEach((id, i) => {
+        pos.set(id, {
+          x: startX + i * (FLOW_GRAPH.nodeW + FLOW_GRAPH.xGap),
+          y: FLOW_GRAPH.pad + rowIndex * (FLOW_GRAPH.nodeH + FLOW_GRAPH.yGap),
+        });
+      });
+    });
+    return {
+      nodes: stateCps.map((cp) => ({ id: String(cp.id), cp })),
+      transitions: transitionCps,
+      pos,
+      width: widest + FLOW_GRAPH.pad * 2,
+      height:
+        FLOW_GRAPH.pad * 2 +
+        rows.length * FLOW_GRAPH.nodeH +
+        Math.max(0, rows.length - 1) * FLOW_GRAPH.yGap,
+    };
+  }, [manifest]);
+
+  const observed = useMemo(
+    () => new Set<string>(verification?.observedCheckpointIds ?? []),
+    [verification?.observedCheckpointIds],
+  );
+  const missing = useMemo(
+    () => new Set<string>(verification?.missingCheckpointIds ?? []),
+    [verification?.missingCheckpointIds],
+  );
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    setSelectedId((current) => {
+      if (current && stepById.has(current)) return current;
+      return (
+        roadmap.steps.find(
+          (s) => s.status === "CURRENT" && s.kind !== "VERIFY",
+        )?.id ??
+        roadmap.steps.find((s) => s.kind !== "VERIFY")?.id ??
+        null
+      );
+    });
+  }, [roadmap.steps, stepById]);
+  const selected = selectedId ? stepById.get(selectedId) ?? null : null;
+
+  const renderPanel = (step: RoadmapStep) => {
+    const completed = ["DONE", "VERIFIED"].includes(step.status);
+    const deps = (step.dependencies ?? [])
+      .map((id) => stepById.get(id))
+      .filter((s): s is RoadmapStep => Boolean(s))
+      .map((s) => quotedName(s.title));
+    return (
+      <div className="flow-graph-panel-body">
+        <div className="flow-graph-panel-head">
+          <span className="flow-graph-kind">{stepKindLabel(step.kind)}</span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close details"
+            onClick={() => setSelectedId(null)}
+          >
+            <X size={15} />
+          </button>
+          <h3>{quotedName(step.title)}</h3>
+        </div>
+        <p className="flow-graph-panel-desc">{step.description}</p>
+        <div className="flow-graph-panel-row">
+          <small>Where to add it</small>
+          {step.file ? (
+            <code>
+              {step.file}
+              {step.symbol ? ` · ${step.symbol}` : ""}
+            </code>
+          ) : (
+            <span className="muted">
+              Tellann could not pinpoint this. Add the line wherever this
+              happens in your code.
+            </span>
+          )}
+        </div>
+        {step.snippet ? (
+          <div className="flow-graph-panel-row">
+            <CopyableCodeBlock
+              label={<small className="muted">Checkpoint code</small>}
+              code={step.snippet}
+            />
+          </div>
+        ) : null}
+        {step.kind !== "VERIFY" ? (
+          <label className="check-row flow-graph-panel-check">
+            <Switch
+              checked={completed}
+              disabled={busy || step.status === "BLOCKED" || step.status === "VERIFIED"}
+              onCheckedChange={(checked) => onToggle(step.id, checked)}
+            />
+            <span>
+              <strong>I added this checkpoint</strong>
+            </span>
+          </label>
+        ) : null}
+        <div>
+          {step.status === "VERIFIED" || observed.has(step.id) ? (
+            <span className="flow-graph-badge is-ok">
+              <Check size={13} /> Seen in a live run
+            </span>
+          ) : missing.has(step.id) ? (
+            <span className="flow-graph-badge is-wait">
+              Not seen yet — run your app through this path
+            </span>
+          ) : (
+            <span className="flow-graph-badge">Verification not started</span>
+          )}
+        </div>
+        {deps.length ? (
+          <div className="flow-graph-panel-row">
+            <small>Comes after</small>
+            <span>{deps.join(", ")}</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
-    <section className="content-card flow-roadmap-shell">
+    <section className="content-card flow-roadmap-shell mt-6 rounded-lg">
       <div className="card-heading">
         <div>
-          <small>Manual initialization · revision {roadmap.revision}</small>
+          <small>Manual initialization</small>
           <h2>Build the declared path into your project</h2>
         </div>
-        <Status>
-          {String(verification?.status ?? "ROADMAP READY").replaceAll("_", " ")}
-        </Status>
-      </div>
-      <p className="muted">
-        Checklist progress helps you resume. Only live, ordered checkpoint
-        telemetry verifies this Flow.
-      </p>
-      <div className="flow-roadmap" aria-label="Flow initialization roadmap">
-        {roadmap.groups.map((group) => {
-          const steps = roadmap.steps.filter(
-            (step) => step.groupId === group.id,
-          );
-          if (!steps.length) return null;
-          return (
-            <section
-              className={`flow-roadmap-lane ${group.id === "spine" ? "is-spine" : "is-branch"}`}
-              key={group.id}
+        <div className="flex items-center gap-2">
+          <Status>
+            {String(verification?.status ?? "ROADMAP READY").replaceAll(
+              "_",
+              " ",
+            )}
+          </Status>
+          {onRebuild ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={onRebuild}
+              title="Rebuild this roadmap from a fresh analysis. Resets the checklist ticks below."
             >
-              <header>{group.title}</header>
-              <div className="flow-roadmap-track">
-                {steps.map((step) => {
-                  const completed = ["DONE", "VERIFIED"].includes(step.status);
+              <RefreshCw size={15} />
+              Rebuild roadmap
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <details className="flow-graph-help">
+        <summary>How this works</summary>
+        <div className="muted stack" style={{ gap: 6 }}>
+          <p>
+            Tellann can only confirm this flow by watching it happen in a real
+            run. Add one line of code at each state and transition, then run your
+            app through the flow once.
+          </p>
+          <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+            <li>
+              Click a state or transition in the graph. The panel shows its{" "}
+              <code>TELLANN.trackEvent(...)</code> line and where to put it.
+            </li>
+            <li>
+              Paste that line at the point in your code where it happens, then
+              tick <strong>“I added this checkpoint”</strong> (just a checklist
+              for you).
+            </li>
+            <li>
+              When every checkpoint is in, run your app through the whole flow
+              from start to a finish state.
+            </li>
+            <li>
+              Click <strong>“Start telemetry verification”</strong>. Tellann
+              checks the checkpoints fired in the declared order.
+            </li>
+          </ol>
+        </div>
+      </details>
+
+      {graph ? (
+        <div className="flow-graph" aria-label="Flow checkpoint graph">
+          <div className="flow-graph-canvas-wrap">
+            <div
+              className="flow-graph-inner"
+              style={{ width: graph.width, height: graph.height }}
+            >
+              <svg
+                className="flow-graph-edges"
+                width={graph.width}
+                height={graph.height}
+                aria-hidden="true"
+              >
+                <defs>
+                  <marker
+                    id="tellann-flow-arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M0,0 L10,5 L0,10 z" fill="#5b6570" />
+                  </marker>
+                </defs>
+                {graph.transitions.map((transition) => {
+                  const a = graph.pos.get(String(transition.fromCheckpointId));
+                  const b = graph.pos.get(String(transition.toCheckpointId));
+                  if (!a || !b) return null;
+                  const ax = a.x + FLOW_GRAPH.nodeW / 2;
+                  const ay = a.y + FLOW_GRAPH.nodeH;
+                  const bx = b.x + FLOW_GRAPH.nodeW / 2;
+                  const by = b.y;
+                  const forward = by > ay;
+                  const midY = (ay + by) / 2;
+                  const path = forward
+                    ? `M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}`
+                    : `M ${ax} ${ay} C ${ax + 140} ${ay}, ${bx + 140} ${by}, ${bx} ${by}`;
+                  const step = stepById.get(String(transition.id));
+                  const label = quotedName(step?.title ?? String(transition.id));
+                  const isSelected = selected?.id === transition.id;
+                  const isDone =
+                    step && ["DONE", "VERIFIED"].includes(step.status);
+                  const labelW = Math.min(200, 18 + label.length * 6.2);
+                  const lx = forward
+                    ? (ax + bx) / 2
+                    : Math.max(ax, bx) + 90;
+                  const ly = forward ? midY : (ay + by) / 2;
                   return (
-                    <article
-                      className={`flow-roadmap-step is-${step.status.toLowerCase()}`}
-                      key={step.id}
-                    >
-                      <span className="flow-roadmap-node" aria-hidden="true">
-                        {step.status === "VERIFIED" ? (
-                          <Check size={13} />
-                        ) : step.status === "BLOCKED" ? (
-                          <Lock size={12} />
-                        ) : null}
-                      </span>
-                      <div>
-                        <small>{step.kind.replace("_", " ")}</small>
-                        <h3>{step.title}</h3>
-                        <p>{step.description}</p>
-                        {step.file ? (
-                          <code>
-                            {step.file}
-                            {step.symbol ? ` · ${step.symbol}` : ""}
-                          </code>
-                        ) : null}
-                        {step.snippet ? (
-                          <pre className="code-block">{step.snippet}</pre>
-                        ) : null}
-                        {step.status !== "VERIFIED" &&
-                        step.kind !== "VERIFY" ? (
-                          <label className="check-row">
-                            <input
-                              type="checkbox"
-                              checked={completed}
-                              disabled={busy || step.status === "BLOCKED"}
-                              onChange={(event) =>
-                                onToggle(step.id, event.target.checked)
-                              }
-                            />
-                            <span>
-                              <strong>I added this checkpoint</strong>
-                            </span>
-                          </label>
-                        ) : null}
-                      </div>
-                    </article>
+                    <g key={transition.id}>
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke={
+                          isSelected
+                            ? "#9b72ff"
+                            : observed.has(String(transition.id))
+                              ? "#6ca86c"
+                              : "#3f4650"
+                        }
+                        strokeWidth={isSelected ? 2.5 : 1.5}
+                        strokeDasharray={isDone ? undefined : "5 4"}
+                        markerEnd="url(#tellann-flow-arrow)"
+                      />
+                      <g
+                        className="flow-graph-edge-label"
+                        transform={`translate(${lx} ${ly})`}
+                        onClick={() => setSelectedId(String(transition.id))}
+                      >
+                        <rect
+                          x={-labelW / 2}
+                          y={-11}
+                          width={labelW}
+                          height={22}
+                          rx={5}
+                        />
+                        <text x={0} y={4} textAnchor="middle">
+                          {label}
+                        </text>
+                      </g>
+                    </g>
                   );
                 })}
+              </svg>
+              {graph.nodes.map((node) => {
+                const place = graph.pos.get(node.id);
+                if (!place) return null;
+                const step = stepById.get(node.id);
+                const status = step?.status ?? "PENDING";
+                const isDone = ["DONE", "VERIFIED"].includes(status);
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={`flow-graph-node is-${status.toLowerCase()} ${
+                      selected?.id === node.id ? "is-selected" : ""
+                    } ${observed.has(node.id) ? "is-observed" : ""}`}
+                    style={{
+                      left: place.x,
+                      top: place.y,
+                      width: FLOW_GRAPH.nodeW,
+                      height: FLOW_GRAPH.nodeH,
+                    }}
+                    onClick={() => setSelectedId(node.id)}
+                  >
+                    <span className="flow-graph-node-role">
+                      {node.cp.stateRole === "INITIAL"
+                        ? "Start"
+                        : node.cp.stateRole === "TERMINAL"
+                          ? "Finish"
+                          : "State"}
+                    </span>
+                    <span className="flow-graph-node-name">
+                      {quotedName(step?.title ?? node.id)}
+                    </span>
+                    {isDone ? (
+                      <span className="flow-graph-node-tick">
+                        <Check size={12} />
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <aside className="flow-graph-panel">
+            {selected ? (
+              renderPanel(selected)
+            ) : (
+              <div className="flow-graph-panel-empty">
+                <Network size={28} />
+                <p>
+                  Select a state or transition in the graph to see its
+                  checkpoint code and mark it done.
+                </p>
               </div>
-            </section>
-          );
-        })}
-      </div>
-      <div className="card-actions">
+            )}
+          </aside>
+        </div>
+      ) : (
+        <ol className="flow-graph-fallback">
+          {roadmap.steps.map((step) => (
+            <li key={step.id} className={`is-${step.status.toLowerCase()}`}>
+              <div>
+                <small className="flow-graph-kind">
+                  {stepKindLabel(step.kind)}
+                </small>
+                <h4>{step.title}</h4>
+                <p>{step.description}</p>
+                {step.file ? (
+                  <code>
+                    {step.file}
+                    {step.symbol ? ` · ${step.symbol}` : ""}
+                  </code>
+                ) : null}
+                {step.snippet ? (
+                  <CopyableCodeBlock
+                    label={<small className="muted">Checkpoint code</small>}
+                    code={step.snippet}
+                  />
+                ) : null}
+                {step.kind !== "VERIFY" ? (
+                  <label className="check-row">
+                    <Switch
+                      checked={["DONE", "VERIFIED"].includes(step.status)}
+                      disabled={
+                        busy ||
+                        step.status === "BLOCKED" ||
+                        step.status === "VERIFIED"
+                      }
+                      onCheckedChange={(checked) =>
+                        onToggle(step.id, checked)
+                      }
+                    />
+                    <span>
+                      <strong>I added this checkpoint</strong>
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="card-actions mt-4">
         <button
           className="button primary"
           disabled={busy || verification?.status === "COMPLETED"}
@@ -5288,11 +5865,85 @@ function FlowRoadmap({
       </div>
       {verification?.missingCheckpointIds?.length ? (
         <p className="muted-callout">
-          Still unobserved: {verification.missingCheckpointIds.join(", ")}
+          Still unobserved:{" "}
+          {verification.missingCheckpointIds
+            .map((id: string) => quotedName(stepById.get(id)?.title ?? id))
+            .join(", ")}
         </p>
       ) : null}
     </section>
   );
+}
+
+function highlightCodeSnippet(code: string): ReactNode[] {
+  if (!code) return [];
+  const tokenRegex =
+    /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\b(?:import|from|export|const|let|var|function|void|return|await|async|type|interface|true|false|null|undefined)\b|\b[a-zA-Z_$][a-zA-Z0-9_$]*(?=\s*\()|\b[a-zA-Z_$][a-zA-Z0-9_$]*(?=\s*:)|[0-9]+)/g;
+
+  let lastIndex = 0;
+  const nodes: ReactNode[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRegex.exec(code)) !== null) {
+    const textBefore = code.slice(lastIndex, match.index);
+    if (textBefore) nodes.push(textBefore);
+
+    const token = match[0];
+    lastIndex = tokenRegex.lastIndex;
+
+    if (token.startsWith("//") || token.startsWith("/*")) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#6a9955", fontStyle: "italic" }}>
+          {token}
+        </span>,
+      );
+    } else if (
+      token.startsWith('"') ||
+      token.startsWith("'") ||
+      token.startsWith("`")
+    ) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#ce9178" }}>
+          {token}
+        </span>,
+      );
+    } else if (
+      /^(?:import|from|export|const|let|var|function|void|return|await|async|type|interface|true|false|null|undefined)$/.test(
+        token,
+      )
+    ) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#c586c0", fontWeight: 600 }}>
+          {token}
+        </span>,
+      );
+    } else if (code.slice(match.index + token.length).trimStart().startsWith("(")) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#dcdcaa" }}>
+          {token}
+        </span>,
+      );
+    } else if (code.slice(match.index + token.length).trimStart().startsWith(":")) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#9cdcfe" }}>
+          {token}
+        </span>,
+      );
+    } else if (/^\d+$/.test(token)) {
+      nodes.push(
+        <span key={nodes.length} style={{ color: "#b5cea8" }}>
+          {token}
+        </span>,
+      );
+    } else {
+      nodes.push(token);
+    }
+  }
+
+  const textAfter = code.slice(lastIndex);
+  if (textAfter) nodes.push(textAfter);
+
+  return nodes;
 }
 
 function CopyableCodeBlock({
@@ -5363,7 +6014,7 @@ function CopyableCodeBlock({
         </button>
       </div>
       <pre className="code-block" style={{ margin: 0 }}>
-        {code}
+        {highlightCodeSnippet(code)}
       </pre>
     </div>
   );
@@ -5612,16 +6263,30 @@ export function InstrumentationPage() {
       />
     );
 
+  // A `flowId` in the URL means the user is here to initialize a declared Flow,
+  // but that is a two-phase process. Phase one always connects the Tellann SDK to
+  // the project (a BOOTSTRAP proposal). Only once the SDK handshake has landed and
+  // the Flow initialization has produced its checkpoint manifest can a FLOW
+  // proposal be created — the adapter rejects a FLOW proposal that has no manifest
+  // with FLOW_INITIALIZATION_MANIFEST_REQUIRED.
+  const tellannConnected = Boolean((manualSetup?.readiness as any)?.connected);
+  const flowManifestReady =
+    Boolean(initializationId) && Boolean(flowInitialization?.manifest);
+  const instrumentationPurpose: "BOOTSTRAP" | "FLOW" =
+    flowId && tellannConnected && flowManifestReady ? "FLOW" : "BOOTSTRAP";
+  const flowContext =
+    instrumentationPurpose === "FLOW"
+      ? { flowId, flowVersionId, flowInitializationId: initializationId }
+      : {};
+
   const detect = async () => {
     if (!environment) return;
     const result = await detectInstrumentation({
       applicationId: projectId,
       environmentId: environment.id,
       environmentType: environment.type,
-      instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
-      flowId,
-      flowVersionId,
-      flowInitializationId: initializationId,
+      instrumentationPurpose,
+      ...flowContext,
     });
     setDetections(result.detections);
     const supported = result.detections.filter((item) => item.supported);
@@ -5675,16 +6340,26 @@ export function InstrumentationPage() {
     }
   };
   const visiblePlans = flowId
-    ? plans.filter(
-        (record) =>
+    ? plans.filter((record) => {
+        const purpose = String(
+          record.purpose ??
+            (record.planJson as any)?.instrumentationPurpose ??
+            "BOOTSTRAP",
+        );
+        // Until the SDK handshake lands, the only actionable task is the
+        // BOOTSTRAP proposal that connects Tellann to this project; after that
+        // only tasks scoped to this Flow version are relevant.
+        if (purpose !== "FLOW") return !tellannConnected;
+        return (
           String(record.flowId ?? (record.planJson as any)?.flowId ?? "") ===
             flowId &&
           String(
             record.flowVersionId ??
               (record.planJson as any)?.flowVersionId ??
               "",
-          ) === flowVersionId,
-      )
+          ) === flowVersionId
+        );
+      })
     : plans.filter(
         (record) =>
           String(
@@ -5722,10 +6397,8 @@ export function InstrumentationPage() {
       environmentId: environment.id,
       environmentType: environment.type,
       adapterId,
-      instrumentationPurpose: flowId ? "FLOW" : "BOOTSTRAP",
-      flowId,
-      flowVersionId,
-      flowInitializationId: initializationId,
+      instrumentationPurpose,
+      ...flowContext,
     });
   };
 
@@ -5885,7 +6558,24 @@ export function InstrumentationPage() {
       ) : null}
       {flowInitialization ? (
         <>
-          <FlowReviewPanel initialization={flowInitialization} />
+          <FlowReviewPanel
+            initialization={flowInitialization}
+            busy={busy}
+            // Only offer this while no path has been chosen yet: re-analyzing
+            // regenerates the manifest and manual roadmap (bumping its revision),
+            // which would blow away roadmap progress or an in-flight automated
+            // proposal once a mode is picked.
+            onReanalyze={
+              initializationId &&
+              flowInitialization.stage === "REVIEW_READY" &&
+              !flowInitialization.mode
+                ? () =>
+                    void analyzeFlowInitialization(initializationId).then(
+                      refreshFlowInitialization,
+                    )
+                : undefined
+            }
+          />
           {!flowInitialization.mode &&
           flowInitialization.stage === "REVIEW_READY" ? (
             <section className="content-card flow-mode-choice mt-4">
@@ -5920,7 +6610,7 @@ export function InstrumentationPage() {
                       : "Solo plan and above"}
                   </Status>
                   <h2>Instrument automatically</h2>
-                  <p>
+                  <p className="mb-4">
                     Generate a bounded AST proposal from confident mappings,
                     approve every file, and keep rollback available.
                   </p>
@@ -5947,12 +6637,22 @@ export function InstrumentationPage() {
           flowInitialization.manualRoadmap ? (
             <FlowRoadmap
               roadmap={flowInitialization.manualRoadmap}
+              manifest={flowInitialization.manifest}
               verification={flowInitialization.verification}
               busy={busy}
               onToggle={(stepId, completed) =>
                 void toggleRoadmapStep(stepId, completed)
               }
               onVerify={() => void beginVerification()}
+              onRebuild={
+                initializationId &&
+                flowInitialization.verification?.status !== "COMPLETED"
+                  ? () =>
+                      void analyzeFlowInitialization(initializationId).then(
+                        refreshFlowInitialization,
+                      )
+                  : undefined
+              }
             />
           ) : null}
           {flowInitialization.stage === "COMPLETED" ? (
@@ -6752,6 +7452,7 @@ export function InstrumentationDetailPage() {
     applyFlowInitialization,
     validateFlowInitialization,
     startFlowVerification,
+    getDeclaredFlows,
   } = useProject();
   const navigate = useNavigate();
   const [record, setRecord] = useState<Record<string, any> | null>(null);
@@ -6770,6 +7471,17 @@ export function InstrumentationDetailPage() {
     "idle" | "generating" | "saved" | "failed"
   >("idle");
   const [reportMessage, setReportMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [liveReadiness, setLiveReadiness] = useState<{
+    connected?: boolean;
+    installationTestPassed?: boolean;
+  } | null>(null);
+  // null = not yet checked. A Flow only counts once it is published AND has an
+  // active, completed initialization in this project — the same bar NewRunPage
+  // enforces before a run can start.
+  const [hasInitializedFlow, setHasInitializedFlow] = useState<boolean | null>(
+    null,
+  );
   const plan = record?.planJson as InstrumentationPlan | undefined;
   const environment = application?.environments.find(
     (item) => item.id === record?.environmentId,
@@ -6777,6 +7489,16 @@ export function InstrumentationDetailPage() {
   const installRequired =
     plan?.validationCommands.some((command) => command.id === "install-sdk") ??
     false;
+  // A rolled-back / rejected / failed / stale task is closed: it can no longer be
+  // approved, applied, re-validated or rolled back again, and any lingering local
+  // validation evidence from a previous attempt must not resurface as "success".
+  const terminalStatus = [
+    "ROLLED_BACK",
+    "ROLLBACK_FAILED",
+    "REJECTED",
+    "FAILED",
+    "STALE",
+  ].includes(String(record?.status));
   const instrumentationEntitled =
     application?.entitlements?.features.AUTOMATED_INSTRUMENTATION === true;
   const latestCloudPatch = (
@@ -6803,16 +7525,33 @@ export function InstrumentationDetailPage() {
   const buildWarning =
     buildResult?.passed === true &&
     /\bwarning\b|\(\s*!\s*\)|dynamically imported/i.test(buildResult.output);
+  // The main process classifies a failed `validate-build` whose diagnostics never
+  // reference the Tellann SDK or generated config as a passing `project-build-warning`
+  // check, so `validation.valid` stays true. Mirror that here: a pre-existing project
+  // build error the operator must fix themselves must not keep the task stuck in the
+  // "not yet done" UI when every Tellann check actually passed.
+  const buildFailureUnrelatedToTellann = (
+    ((validationEvidence as any)?.checks ?? []) as Array<{
+      name: string;
+      passed: boolean;
+    }>
+  ).some((check) => check.name === "project-build-warning" && check.passed);
   const validationSucceeded =
+    !terminalStatus &&
     ((validationEvidence as { valid?: boolean } | undefined)?.valid === true ||
       String(record?.status) === "COMPLETED") &&
-    buildResult?.passed !== false;
-  const telemetryVerified = (
+    (buildResult?.passed !== false || buildFailureUnrelatedToTellann);
+  // The apply step gives the running app a 45s window to emit TELLANN_ONBOARDING_TEST.
+  // If the app was not up during that window this check is absent, and the operator
+  // finishes verification later by starting the app while this screen polls readiness.
+  const telemetryCheckPassed = (
     ((validationEvidence as any)?.checks ?? []) as Array<{
       name: string;
       passed: boolean;
     }>
   ).some((check) => check.name === "telemetry-verification" && check.passed);
+  const telemetryVerified =
+    telemetryCheckPassed || liveReadiness?.installationTestPassed === true;
 
   const refresh = async () => {
     if (!projectId || !planId) return;
@@ -6851,6 +7590,65 @@ export function InstrumentationDetailPage() {
     void refresh().finally(() => setLoading(false));
   }, [projectId, planId]);
 
+  // Once the install itself has passed but the onboarding test event has not been
+  // seen yet, this screen is the verification step: poll live readiness so it flips
+  // to "verified" on its own when the operator starts their app.
+  const environmentId = environment?.id;
+  const pollSdkReadiness = useCallback(() => {
+    if (!projectId || !environmentId || !window.tellann?.setup?.getSdkSetup)
+      return;
+    void window.tellann.setup
+      .getSdkSetup(projectId, environmentId)
+      .then((setup) =>
+        setLiveReadiness(
+          ((setup?.readiness as Record<string, unknown>) ?? null) as {
+            connected?: boolean;
+            installationTestPassed?: boolean;
+          } | null,
+        ),
+      )
+      .catch(() => undefined);
+  }, [projectId, environmentId]);
+  useEffect(() => {
+    if (!validationSucceeded || telemetryVerified || !environmentId) return;
+    pollSdkReadiness();
+    const timer = window.setInterval(
+      pollSdkReadiness,
+      document.hidden ? 15_000 : 4_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [validationSucceeded, telemetryVerified, environmentId, pollSdkReadiness]);
+
+  // Once telemetry is verified, the completed screen's forward action should only
+  // send the operator into a QA run if a Flow is actually ready to run — otherwise
+  // this bootstrap install is done, but no Flow has been initialized in this
+  // project yet, and the right next step is to go initialize one.
+  useEffect(() => {
+    if (!projectId || !validationSucceeded || !telemetryVerified) return;
+    let cancelled = false;
+    void getDeclaredFlows(projectId)
+      .then((items) => {
+        if (cancelled) return;
+        const ready = items.some((item) => {
+          const binding = (item as any)?.projectBindings?.[0] as
+            | { status?: string; initializations?: Array<{ status?: string }> }
+            | undefined;
+          return (
+            Boolean(item.publishedVersionId) &&
+            binding?.status === "ACTIVE" &&
+            binding.initializations?.[0]?.status === "COMPLETED"
+          );
+        });
+        setHasInitializedFlow(ready);
+      })
+      .catch(() => {
+        if (!cancelled) setHasInitializedFlow(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, validationSucceeded, telemetryVerified, getDeclaredFlows]);
+
   if (!projectId) return <ProjectRequired />;
   if (!planId)
     return (
@@ -6880,6 +7678,21 @@ export function InstrumentationDetailPage() {
     );
 
   const environmentUnavailable = !environment;
+
+  // Every mutating action (approve / apply / validate / rollback) is a fire-and-forget
+  // onClick. Without this wrapper a failure — e.g. STALE_TARGET_FILE when package.json
+  // changed after the task was proposed — only lands in the main-process console. Run
+  // them through here so the reason and the recovery step are shown on this page, and
+  // the record is refreshed so a server-side FAILED transition is reflected.
+  const runAction = async (action: () => Promise<void>) => {
+    setActionError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setActionError(normalizeDesktopError(cause));
+      await refresh().catch(() => undefined);
+    }
+  };
 
   const approve = async () => {
     if (!environment)
@@ -7030,17 +7843,95 @@ export function InstrumentationDetailPage() {
         </Status>
       }
     >
+      {terminalStatus ? (
+        <section className="content-card stack mb-6">
+          <div className="card-heading">
+            <div>
+              <small>This setup task is closed</small>
+              <h2>
+                {record.status === "ROLLED_BACK"
+                  ? "Tellann changes were rolled back"
+                  : record.status === "REJECTED"
+                    ? "This setup task was rejected"
+                    : record.status === "STALE"
+                      ? "This setup task expired"
+                      : "This setup task failed"}
+              </h2>
+            </div>
+            <Status>{String(record.status)}</Status>
+          </div>
+          {record.status === "FAILED" && record.failureReasonSafe ? (
+            <div className="context-banner" role="alert">
+              <AlertTriangle size={15} />
+              <span>
+                {normalizeDesktopError(String(record.failureReasonSafe))}
+              </span>
+            </div>
+          ) : null}
+          <p>
+            A closed task can no longer be approved, applied, re-validated, or
+            rolled back. Start a new setup from the Instrumentation page and
+            Tellann will create a fresh reviewed task from the current project
+            state.
+          </p>
+          <Link
+            className="button primary"
+            to={`/projects/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+          >
+            <ArrowRight size={15} />
+            Re-run detection and create a fresh task
+          </Link>
+        </section>
+      ) : null}
+      {actionError && !terminalStatus ? (
+        <section className="content-card stack mb-6">
+          <div className="card-heading">
+            <div>
+              <small>Tellann stopped before changing anything</small>
+              <h2>This action could not be completed</h2>
+            </div>
+            <Status>Action needed</Status>
+          </div>
+          <div className="context-banner" role="alert">
+            <AlertTriangle size={15} />
+            <span>{actionError}</span>
+          </div>
+          <div className="card-actions">
+            <Link
+              className="button primary"
+              to={`/projects/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+            >
+              <ArrowRight size={15} />
+              Go to Instrumentation to re-detect
+            </Link>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => {
+                setActionError(null);
+                void refresh();
+              }}
+            >
+              <RefreshCw size={15} />
+              Dismiss and reload task
+            </button>
+          </div>
+        </section>
+      ) : null}
       {validationSucceeded ? (
         <section className="bg-[#131313] border border-[#262626] rounded-xs p-6 mb-6">
           <h2 className="text-2xl font-semibold text-white tracking-tight mb-2">
-            Tellann is installed and the project build passed
+            {buildFailure
+              ? "Tellann is installed — every Tellann check passed"
+              : "Tellann is installed and the project build passed"}
           </h2>
 
           <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
             <Check size={18} className="text-white shrink-0 mt-0.5" />
             <span className="text-sm text-[#c4c7c8] leading-relaxed">
-              The reviewed files are in place, the SDK resolves correctly, and
-              the approved TypeScript/Vite build completed successfully.
+              {buildFailure
+                ? "The reviewed files are in place and the SDK resolves correctly. Your application's own build reported pre-existing errors that do not reference Tellann, so they don't block this setup, the categorized diagnostics stay available under the technical validation evidence below."
+                : "The reviewed files are in place, the SDK resolves correctly, and the approved TypeScript/Vite build completed successfully."}
             </span>
           </div>
 
@@ -7069,7 +7960,9 @@ export function InstrumentationDetailPage() {
                 {telemetryVerified ? (
                   <li>
                     Telemetry and the onboarding test event have been received.
-                    Continue to your first guided walkthrough.
+                    {hasInitializedFlow
+                      ? " Continue to your first guided walkthrough."
+                      : " No Flow has been initialized in this project yet — initialize one to start your first guided walkthrough."}
                   </li>
                 ) : (
                   <>
@@ -7091,16 +7984,53 @@ export function InstrumentationDetailPage() {
             </div>
           </div>
 
+          {telemetryVerified ? (
+            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
+              <Check size={16} className="text-white shrink-0 mt-0.5" />
+              <span className="text-sm text-[#c4c7c8] leading-relaxed">
+                Tellann received the onboarding test event. The connection is
+                verified.{" "}
+                {hasInitializedFlow
+                  ? "You can start your first guided walkthrough."
+                  : "No Flow has been initialized in this project yet — initialize one before starting a walkthrough."}
+              </span>
+            </div>
+          ) : (
+            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
+              <RefreshCw size={15} className="text-[#8e9192] shrink-0 mt-0.5" />
+              <span className="text-sm text-[#c4c7c8] leading-relaxed flex-1">
+                Waiting for the onboarding test event
+                {environment?.name ? ` from ${environment.name}` : ""}. Start your
+                application and use it once — this screen updates on its own when
+                Tellann receives the event. No QA run is needed for this step.
+              </span>
+              <button
+                className="button shrink-0"
+                disabled={busy}
+                onClick={() => pollSdkReadiness()}
+              >
+                <RefreshCw size={13} /> Check now
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3 my-4 w-full! justify-end">
-            <Link
-              className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
-              to={`/projects/${projectId}/qa-runs/new`}
-            >
-              <Play size={15} />{" "}
-              {telemetryVerified
-                ? "Run first walkthrough"
-                : "Continue to verification"}
-            </Link>
+            {telemetryVerified && hasInitializedFlow ? (
+              <Link
+                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
+                to={`/projects/${projectId}/qa-runs/new`}
+              >
+                <Play size={15} /> Run first walkthrough
+              </Link>
+            ) : null}
+            {telemetryVerified && !hasInitializedFlow ? (
+              <Link
+                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
+                to={`/projects/${projectId}/intent`}
+              >
+                <ArrowRight size={15} /> Initialize a Flow
+              </Link>
+            ) : null}
             <Link
               className="inline-flex items-center gap-2 bg-[#000000] border border-[#444748] text-white font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-white transition-colors"
               to={`/projects/${projectId}/instrumentation`}
@@ -7122,14 +8052,14 @@ export function InstrumentationDetailPage() {
                     <button
                       className="button"
                       disabled={busy}
-                      onClick={() => void validate()}
+                      onClick={() => void runAction(validate)}
                     >
                       <RefreshCw size={15} /> Re-run local checks
                     </button>
                     <button
                       className="button danger"
                       disabled={busy}
-                      onClick={() => void rollback()}
+                      onClick={() => void runAction(rollback)}
                     >
                       <Trash2 size={15} /> Rollback Tellann changes
                     </button>
@@ -7260,7 +8190,7 @@ export function InstrumentationDetailPage() {
           </section>
         </AccordionContent>
       </AccordionItem>
-      {!validationSucceeded ? (
+      {!validationSucceeded && !terminalStatus ? (
         <section className="content-card review-actions">
           {environmentUnavailable ? (
             <div className="context-banner">
@@ -7310,11 +8240,14 @@ export function InstrumentationDetailPage() {
                 className="button danger min-w-37.5"
                 disabled={busy}
                 onClick={() =>
-                  void rejectInstrumentation(
-                    projectId,
-                    planId,
-                    "Rejected in desktop review",
-                  ).then(refresh)
+                  void runAction(async () => {
+                    await rejectInstrumentation(
+                      projectId,
+                      planId,
+                      "Rejected in desktop review",
+                    );
+                    await refresh();
+                  })
                 }
               >
                 Reject
@@ -7328,7 +8261,7 @@ export function InstrumentationDetailPage() {
                   files.length !== plan.approvedFileScopes.length ||
                   (installRequired && !commands.includes("install-sdk"))
                 }
-                onClick={() => void approveAndApply()}
+                onClick={() => void runAction(approveAndApply)}
               >
                 <ShieldCheck size={15} />
                 Approve, apply and validate
@@ -7341,7 +8274,7 @@ export function InstrumentationDetailPage() {
               disabled={
                 busy || environmentUnavailable || !instrumentationEntitled
               }
-              onClick={() => void apply()}
+              onClick={() => void runAction(apply)}
             >
               <TerminalSquare size={15} />
               Apply and validate
@@ -7355,14 +8288,14 @@ export function InstrumentationDetailPage() {
               <button
                 className="button"
                 disabled={busy}
-                onClick={() => void validate()}
+                onClick={() => void runAction(validate)}
               >
                 Re-run local checks
               </button>
               <button
                 className="button danger"
                 disabled={busy}
-                onClick={() => void rollback()}
+                onClick={() => void runAction(rollback)}
               >
                 Rollback Tellann changes
               </button>
@@ -7372,7 +8305,7 @@ export function InstrumentationDetailPage() {
       ) : null}
       {localResult ? (
         <div className="stack">
-          {buildFailure ? (
+          {buildFailure && !terminalStatus && !validationSucceeded ? (
             <section className="content-card stack">
               <div className="card-heading">
                 <div>
@@ -7437,7 +8370,7 @@ export function InstrumentationDetailPage() {
                 <button
                   className="button primary flex-1"
                   disabled={busy}
-                  onClick={() => void validate()}
+                  onClick={() => void runAction(validate)}
                 >
                   <RefreshCw size={15} /> Re-run build and Tellann checks
                 </button>
@@ -7496,7 +8429,7 @@ export function InstrumentationDetailPage() {
               </AccordionItem>
             </section>
           ) : null}
-          {buildWarning && !validationSucceeded ? (
+          {buildWarning && !validationSucceeded && !terminalStatus ? (
             <section className="content-card stack">
               <div className="card-heading">
                 <div>
@@ -7532,7 +8465,7 @@ export function InstrumentationDetailPage() {
                 <button
                   className="button primary"
                   disabled={busy}
-                  onClick={() => void validate()}
+                  onClick={() => void runAction(validate)}
                 >
                   <RefreshCw size={15} /> Re-run build and Tellann checks
                 </button>
@@ -7778,21 +8711,24 @@ export function NewRunPage() {
   useEffect(() => {
     if (!projectId) return;
     void getDeclaredFlows(projectId).then((items) => {
-      setFlows(
-        items.filter(
-          (item) => item.status === "COMPLETE" || item.status === "COMPLETED",
-        ),
-      );
-      setExpectedGraphVersionId(
-        items.find(
-          (item) => item.status === "COMPLETE" || item.status === "COMPLETED",
-        )?.versions?.[0]?.id ?? "",
-      );
-      setSelectedFlowId(
-        items.find(
-          (item) => item.status === "COMPLETE" || item.status === "COMPLETED",
-        )?.id ?? "",
-      );
+      // A run needs a Flow that is both published (a version was published from
+      // the declare view) and initialized in *this* project — an active binding
+      // whose initialization has completed. A completed/published Flow with no
+      // active, completed initialization here cannot start a run, so it is
+      // filtered out rather than surfaced as a selectable option that later fails.
+      const ready = items.filter((item) => {
+        const binding = (item as any)?.projectBindings?.[0] as
+          | { status?: string; initializations?: Array<{ status?: string }> }
+          | undefined;
+        return (
+          Boolean(item.publishedVersionId) &&
+          binding?.status === "ACTIVE" &&
+          binding.initializations?.[0]?.status === "COMPLETED"
+        );
+      });
+      setFlows(ready);
+      setExpectedGraphVersionId(ready[0]?.versions?.[0]?.id ?? "");
+      setSelectedFlowId(ready[0]?.id ?? "");
     });
   }, [getDeclaredFlows, projectId]);
   useEffect(() => {
@@ -7954,6 +8890,12 @@ export function NewRunPage() {
                 ),
               ]}
             />
+            <small>
+              Only Flows that are published and have a completed
+              initialization in this project are listed. If a Flow you
+              created is missing, either publish it from the declare view or
+              initialize it for this project first.
+            </small>
           </label>
           <label className="full">
             Capture tracks

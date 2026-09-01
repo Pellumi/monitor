@@ -3,6 +3,7 @@ import { Router, raw, type NextFunction, type Request, type Response } from 'exp
 import jwt from 'jsonwebtoken';
 import {
   EnvironmentType,
+  MemberRole,
   PrismaClient,
   QARunArtifactType,
   QACaptureTrack,
@@ -83,6 +84,23 @@ export function createDesktopRouter(input: {
 }) {
   const { prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret, storage } = input;
   const router = Router();
+
+  /** The caller's role in the organisation that owns this application, if any. */
+  async function orgRoleForApp(userId: string, appId: string): Promise<MemberRole | null> {
+    const application = await prisma.application.findUnique({
+      where: { id: appId },
+      select: { organizationId: true },
+    });
+    if (!application?.organizationId) return null;
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId, organizationId: application.organizationId } },
+      select: { role: true },
+    });
+    return membership?.role ?? null;
+  }
+
+  const canManageBranchPolicy = (role: MemberRole | null) =>
+    role === MemberRole.OWNER || role === MemberRole.ADMIN;
 
   async function authorizedRun(runId: string, userId: string) {
     return prisma.qARun.findFirst({
@@ -325,10 +343,56 @@ export function createDesktopRouter(input: {
     verifyJwt,
     verifyAppOwnership,
     async (req: DesktopRequest, res: Response) => {
-      const binding = await prisma.applicationRepositoryBinding.findUnique({
-        where: { applicationId: req.params.appId },
+      const [binding, role] = await Promise.all([
+        prisma.applicationRepositoryBinding.findUnique({
+          where: { applicationId: req.params.appId },
+        }),
+        orgRoleForApp(req.user!.id, req.params.appId),
+      ]);
+      res.json({
+        ...serializeBranchPolicy(req.params.appId, binding),
+        canManageBranchPolicy: canManageBranchPolicy(role),
       });
-      res.json(serializeBranchPolicy(req.params.appId, binding));
+    },
+  );
+
+  /**
+   * Turns agent-performed branch switching on or off for the whole application.
+   * Owner/Admin only: this is the org-wide policy the per-workspace grant sits
+   * under, so a regular member must not be able to widen it for everyone else.
+   * Deliberately scoped to just this flag; the branch names and enforcement mode
+   * stay in the dashboard's fuller policy editor.
+   */
+  router.put(
+    '/applications/:appId/branch-policy',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const role = await orgRoleForApp(req.user!.id, req.params.appId);
+      if (!canManageBranchPolicy(role)) {
+        return res.status(403).json({
+          error: 'FORBIDDEN_NOT_ORG_MANAGER',
+          message: 'Only an Owner or Admin can change the QA branch policy.',
+        });
+      }
+
+      const { allowAgentCheckout } = req.body ?? {};
+      if (typeof allowAgentCheckout !== 'boolean') {
+        return res.status(400).json({
+          error: 'INVALID_ALLOW_AGENT_CHECKOUT',
+          message: 'allowAgentCheckout must be true or false.',
+        });
+      }
+
+      const binding = await prisma.applicationRepositoryBinding.upsert({
+        where: { applicationId: req.params.appId },
+        create: { applicationId: req.params.appId, allowAgentCheckout, updatedByUserId: req.user!.id },
+        update: { allowAgentCheckout, updatedByUserId: req.user!.id },
+      });
+      res.json({
+        ...serializeBranchPolicy(req.params.appId, binding),
+        canManageBranchPolicy: true,
+      });
     },
   );
 

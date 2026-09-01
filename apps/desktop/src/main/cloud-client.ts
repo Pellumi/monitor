@@ -581,6 +581,17 @@ export class DesktopCloudClient {
     return this.request<BranchPolicy>(`/applications/${applicationId}/branch-policy`);
   }
 
+  /**
+   * Owner/Admin only. Turns agent-performed branch switching on or off for the
+   * whole application. The server rejects the call for regular members.
+   */
+  async setBranchAgentCheckout(applicationId: string, allowAgentCheckout: boolean): Promise<BranchPolicy> {
+    return this.request<BranchPolicy>(`/applications/${applicationId}/branch-policy`, {
+      method: 'PUT',
+      body: JSON.stringify({ allowAgentCheckout }),
+    });
+  }
+
   async grantQaBranchCheckout(applicationId: string, workspaceId: string, expiresInMinutes?: number) {
     return this.request<Json>(
       `/applications/${applicationId}/workspaces/${workspaceId}/qa-branch-grant`,

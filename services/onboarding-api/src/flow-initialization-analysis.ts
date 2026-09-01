@@ -10,6 +10,18 @@ function normalized(value: unknown): string {
   return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+// Declared-flow snapshots have used a few different field names for a transition's
+// endpoints over time (fromStateId/toStateId, fromNodeId/toNodeId, source/target).
+// Every reader must accept the same set in the same order, or a transition that
+// resolves fine for path traversal can still come out with empty from/to ids
+// wherever a narrower fallback chain is used.
+function transitionEndpoints(transition: JsonRecord): { from: string; to: string } {
+  return {
+    from: String(transition.fromStateId ?? transition.fromNodeId ?? transition.source ?? ''),
+    to: String(transition.toStateId ?? transition.toNodeId ?? transition.target ?? ''),
+  };
+}
+
 function repositoryEvidence(repository: JsonRecord): Array<{ file: string | null; symbol: string | null; text: string; kind: string }> {
   const sources = [
     ['route', repository.routeSummary], ['endpoint', repository.endpointSummary], ['component', repository.frameworkSummary],
@@ -35,7 +47,7 @@ function bestMapping(label: string, evidence: ReturnType<typeof repositoryEviden
 function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions: JsonRecord[]) {
   const byFrom = new Map<string, JsonRecord[]>();
   for (const transition of transitions) {
-    const from = String(transition.fromStateId ?? transition.fromNodeId ?? transition.source ?? '');
+    const { from } = transitionEndpoints(transition);
     if (!byFrom.has(from)) byFrom.set(from, []);
     byFrom.get(from)!.push(transition);
   }
@@ -45,7 +57,7 @@ function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions
     reachable.add(stateId);
     if (terminalIds.has(stateId)) { paths.push([...path, stateId]); return; }
     for (const edge of byFrom.get(stateId) ?? []) {
-      const next = String(edge.toStateId ?? edge.toNodeId ?? edge.target ?? '');
+      const { to: next } = transitionEndpoints(edge);
       if (!next || seen.has(next)) continue;
       visit(next, [...path, stateId], new Set([...seen, next]));
     }
@@ -68,10 +80,15 @@ export function analyzeFlowInitialization(snapshot: JsonRecord, repository: Json
     const mapping = bestMapping(String(state.stateName ?? state.name ?? state.behaviorKey ?? ''), evidence);
     return { stateId: stateId(state), stateName: state.stateName ?? state.name, role: state.role ?? 'NORMAL', terminalKind: state.terminalKind ?? null, implemented: mapping.confidence >= 0.65, mapping };
   });
+  // Transition endpoints are internal state ids (often UUIDs) — resolve them to the
+  // declared state name wherever they're shown to a person.
+  const stateNameById = new Map(states.map((state) => [stateId(state), String(state.stateName ?? state.name ?? state.behaviorKey ?? stateId(state))]));
+  const stateLabel = (id: string) => stateNameById.get(id) ?? id;
   const transitionFindings = transitions.map((transition) => {
-    const id = String(transition.id ?? `${transition.fromStateId}-${transition.toStateId}`);
+    const { from, to } = transitionEndpoints(transition);
+    const id = String(transition.id ?? `${from}-${to}`);
     const mapping = bestMapping(String(transition.action ?? transition.event ?? id), evidence);
-    return { transitionId: id, fromStateId: String(transition.fromStateId ?? transition.source ?? ''), toStateId: String(transition.toStateId ?? transition.target ?? ''), action: transition.action ?? null, implemented: mapping.confidence >= 0.65, mapping };
+    return { transitionId: id, fromStateId: from, toStateId: to, action: transition.action ?? null, implemented: mapping.confidence >= 0.65, mapping };
   });
   const checkpoints = [
     ...stateFindings.map((finding) => ({ id: `state:${finding.stateId}`, kind: 'STATE', stateId: finding.stateId, transitionId: null, stateRole: finding.role, terminalKind: finding.terminalKind, eventType: finding.role === 'INITIAL' ? 'FLOW_INITIAL_STATE' : finding.role === 'TERMINAL' ? 'FLOW_TERMINAL_STATE' : 'FLOW_STATE_REACHED', expectedState: finding.stateId, fromCheckpointId: null, toCheckpointId: null, required: true, mapping: finding.mapping })),
@@ -87,24 +104,90 @@ export function analyzeFlowInitialization(snapshot: JsonRecord, repository: Json
     stateFindings, transitionFindings, missingStates, incompleteTransitions,
     edgeCases: unreachableStateIds.map((id) => ({ code: 'UNREACHABLE_STATE', stateId: id, severity: 'BLOCKING' })),
     uncoveredTerminalOutcomes: terminals.filter((terminal) => !traversal.paths.some((path) => path.at(-1) === stateId(terminal))).map((terminal) => ({ stateId: stateId(terminal), terminalKind: terminal.terminalKind ?? null })),
-    evidence, recommendations: [...missingStates.map((item) => ({ checkpointId: `state:${item.stateId}`, action: 'Add state checkpoint', mapping: item.mapping })), ...incompleteTransitions.map((item) => ({ checkpointId: `transition:${item.transitionId}`, action: 'Add transition checkpoint', mapping: item.mapping }))],
+    evidence, recommendations: [
+      ...missingStates.map((item) => ({
+        checkpointId: `state:${item.stateId}`, kind: 'STATE' as const, action: 'Add state checkpoint',
+        label: String(item.stateName ?? stateLabel(item.stateId)),
+        detail: item.role === 'INITIAL'
+          ? 'This is the declared initial state. Tellann could not confidently locate where it is reached in the repository.'
+          : item.role === 'TERMINAL'
+            ? `This is a declared terminal state${item.terminalKind ? ` (${item.terminalKind})` : ''}. Tellann could not confidently locate where it is reached in the repository.`
+            : 'Tellann could not confidently locate where this declared state is reached in the repository.',
+        mapping: item.mapping,
+      })),
+      ...incompleteTransitions.map((item) => ({
+        checkpointId: `transition:${item.transitionId}`, kind: 'TRANSITION' as const, action: 'Add transition checkpoint',
+        label: String(item.action ?? `${stateLabel(item.fromStateId)} → ${stateLabel(item.toStateId)}`),
+        detail: `The transition from "${stateLabel(item.fromStateId)}" to "${stateLabel(item.toStateId)}" has no confident repository match.`,
+        mapping: item.mapping,
+      })),
+    ],
     limitations: ['Static evidence is confidence-scored; activation requires correlated runtime telemetry.'],
   };
   return { manifest, report };
 }
 
-export function buildManualRoadmap(manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'], revision = 1) {
+export function buildManualRoadmap(
+  manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
+  revision = 1,
+  report?: ReturnType<typeof analyzeFlowInitialization>['report'],
+) {
   const now = new Date().toISOString();
-  const groups = [{ id: 'spine', title: 'Declared intent', terminalKind: null }, ...manifest.terminalStateIds.map((id) => ({ id: `terminal:${id}`, title: `Terminal path · ${id}`, terminalKind: id }))];
-  const steps: JsonRecord[] = manifest.checkpoints.map((checkpoint, index) => ({
-    id: checkpoint.id, groupId: checkpoint.stateRole === 'TERMINAL' ? `terminal:${checkpoint.stateId}` : 'spine', kind: checkpoint.kind === 'TRANSITION' ? 'TRANSITION' : checkpoint.stateRole === 'TERMINAL' ? 'TERMINAL' : 'STATE',
-    title: checkpoint.kind === 'TRANSITION' ? `Track transition ${checkpoint.transitionId}` : `Track ${checkpoint.expectedState}`,
-    description: checkpoint.mapping.rationale, status: index === 0 ? 'CURRENT' : checkpoint.mapping.confidence < 0.65 ? 'BLOCKED' : 'PENDING', dependencies: checkpoint.fromCheckpointId ? [checkpoint.fromCheckpointId] : [],
-    file: checkpoint.mapping.file, symbol: checkpoint.mapping.symbol,
-    snippet: `TELLANN.trackEvent('${checkpoint.eventType}', { checkpointId: '${checkpoint.id}', stateId: ${JSON.stringify(checkpoint.stateId)}, transitionId: ${JSON.stringify(checkpoint.transitionId)} });`,
-    eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
-  }));
-  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Run the initial-to-terminal walkthrough', description: 'Start the project and demonstrate one correlated path from the declared initial state to a terminal state.', status: 'PENDING', dependencies: manifest.checkpoints.filter((item) => item.required).map((item) => item.id), file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });
+  const stateNameById = new Map<string, string>(
+    (report?.stateFindings ?? []).map((finding: any) => [String(finding.stateId), String(finding.stateName ?? finding.stateId)]),
+  );
+  const stateLabel = (id: string | null) => (id && stateNameById.get(id)) || id || 'this state';
+  const transitionLabelById = new Map<string, string>(
+    (report?.transitionFindings ?? []).map((finding: any) => [
+      String(finding.transitionId),
+      String(finding.action ?? `${stateLabel(finding.fromStateId)} → ${stateLabel(finding.toStateId)}`),
+    ]),
+  );
+  const transitionLabel = (id: string | null) => (id && transitionLabelById.get(id)) || id || 'this transition';
+
+  const groups = [
+    { id: 'spine', title: 'Main path', terminalKind: null },
+    ...manifest.terminalStateIds.map((id) => ({ id: `terminal:${id}`, title: `Path to "${stateLabel(id)}"`, terminalKind: null })),
+  ];
+  const steps: JsonRecord[] = manifest.checkpoints.map((checkpoint, index) => {
+    const isTransition = checkpoint.kind === 'TRANSITION';
+    const isInitial = checkpoint.stateRole === 'INITIAL';
+    const isTerminal = checkpoint.stateRole === 'TERMINAL';
+    const name = isTransition ? transitionLabel(checkpoint.transitionId) : stateLabel(checkpoint.stateId);
+    const title = isTransition
+      ? `Record the "${name}" transition`
+      : isInitial
+        ? `Record when the flow starts at "${name}"`
+        : isTerminal
+          ? `Record when the flow ends at "${name}"`
+          : `Record when the flow reaches "${name}"`;
+    const where = isTransition
+      ? 'this transition runs'
+      : isInitial
+        ? 'the flow begins'
+        : isTerminal
+          ? 'the flow reaches this end state'
+          : 'the flow reaches this state';
+    const description = checkpoint.mapping.file
+      ? `Add this call in ${checkpoint.mapping.file}${checkpoint.mapping.symbol ? ` (near ${checkpoint.mapping.symbol})` : ''}, at the point where ${where}.`
+      : `Tellann could not find where this happens in your code. Add this call yourself at the point where ${where}.`;
+    return {
+      id: checkpoint.id,
+      groupId: isTerminal ? `terminal:${checkpoint.stateId}` : 'spine',
+      kind: isTransition ? 'TRANSITION' : isTerminal ? 'TERMINAL' : 'STATE',
+      title,
+      description,
+      // Low mapping confidence means Tellann could not auto-locate the checkpoint,
+      // not that the user is blocked from adding it — the description says as much.
+      // Keep every step actionable so the manual roadmap can actually be completed.
+      status: index === 0 ? 'CURRENT' : 'PENDING',
+      dependencies: checkpoint.fromCheckpointId ? [checkpoint.fromCheckpointId] : [],
+      file: checkpoint.mapping.file, symbol: checkpoint.mapping.symbol,
+      snippet: `TELLANN.trackEvent('${checkpoint.eventType}', { checkpointId: '${checkpoint.id}', stateId: ${JSON.stringify(checkpoint.stateId)}, transitionId: ${JSON.stringify(checkpoint.transitionId)} });`,
+      eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
+    };
+  });
+  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Run your app through the whole flow', description: 'Start your project and go through this flow from beginning to end, at least once. Tellann watches the checkpoints you added and confirms they fire in the right order.', status: 'PENDING', dependencies: manifest.checkpoints.filter((item) => item.required).map((item) => item.id), file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });
   return { version: '1.0' as const, revision, groups, steps, generatedAt: now };
 }
 

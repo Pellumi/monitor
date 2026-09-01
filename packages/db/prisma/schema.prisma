@@ -1301,6 +1301,11 @@ model BehaviorGraph {
   // document) is awaiting the author's accept/discard decision. Cleared on accept.
   aiDraftStatus      String?
   aiDraftSourceName  String?
+  // Number of graph mutations (accepted suggestions, restores) applied since the
+  // current `version` was opened for drafting. The published `version` stays
+  // frozen while drafting; `draftSeq` is the in-progress counter. Reset to 0 when
+  // a new revision is opened.
+  draftSeq           Int                 @default(0)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   completedAt        DateTime?
@@ -1310,6 +1315,7 @@ model BehaviorGraph {
   rulesets        CompiledRuleset[]
   reconciliations ReconciliationReport[]
   versions        BehaviorGraphVersion[]
+  draftSnapshots  FlowDraftSnapshot[]
   projectBindings FlowProjectBinding[]
   scans           FlowScan[]
   drifts          FlowDrift[]
@@ -1484,6 +1490,27 @@ model BehaviorGraphVersion {
   drifts                     FlowDrift[]
 
   @@unique([graphId, version])
+}
+
+// Point-in-time snapshot of a draft graph, written after every mutation that
+// bumps `BehaviorGraph.draftSeq` (accepted suggestion, restore, revision open).
+// Lets the editor list draft history for the current version and roll back to
+// any earlier point without touching published `BehaviorGraphVersion` rows.
+model FlowDraftSnapshot {
+  id              String        @id @default(uuid())
+  graphId         String
+  graph           BehaviorGraph @relation(fields: [graphId], references: [id])
+  version         Int // frozen published version this draft belongs to
+  draftSeq        Int // 0 = baseline when the revision opened, N = after Nth mutation
+  label           String?
+  snapshot        Json // { states: [...], transitions: [...] }
+  stateCount      Int           @default(0)
+  transitionCount Int           @default(0)
+  createdAt       DateTime      @default(now())
+  createdById     String?
+
+  @@unique([graphId, version, draftSeq])
+  @@index([graphId, version])
 }
 
 model GraphRelationship {

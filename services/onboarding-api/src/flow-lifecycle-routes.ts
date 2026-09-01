@@ -155,8 +155,8 @@ export function createFlowLifecycleRouter(input: {
     const roadmapRevision = (existing?.roadmapRevision ?? 0) + 1;
     const initialization = await prisma.flowInitialization.upsert({
       where: { bindingId_flowVersionId: { bindingId: binding.id, flowVersionId: version.id } },
-      create: { organizationId: workspace.organizationId, applicationId: flow.applicationId, flowId: flow.id, flowVersionId: version.id, bindingId: binding.id, scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : null, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision) as any, codeReviewReport: report as any },
-      update: { scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : undefined, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision) as any, verification: undefined, codeReviewReport: report as any, status: 'PROPOSED', failureReasonSafe: null },
+      create: { organizationId: workspace.organizationId, applicationId: flow.applicationId, flowId: flow.id, flowVersionId: version.id, bindingId: binding.id, scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : null, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision, report) as any, codeReviewReport: report as any },
+      update: { scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : undefined, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision, report) as any, verification: undefined, codeReviewReport: report as any, status: 'PROPOSED', failureReasonSafe: null },
     });
     scheduleReportEnrichment(initialization.id, report, { repositorySnapshotId: repository.id, graphHash: manifest.graphHash });
     await prisma.flowProjectBinding.update({ where: { id: binding.id }, data: { currentScanId: scan.id } });
@@ -208,7 +208,7 @@ export function createFlowLifecycleRouter(input: {
       const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
         stage: 'SCANNING', manifest: manifest as any, codeReviewReport: report as any,
         reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' },
-        roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision) as any,
+        roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision, report) as any,
       } });
       scheduleReportEnrichment(initialization.id, report, { repositorySnapshotId: repository.id, graphHash: manifest.graphHash });
       return res.json(updated);

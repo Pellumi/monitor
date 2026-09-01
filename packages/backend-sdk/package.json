@@ -5,8 +5,21 @@
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pellumi/monitor.git",
+    "directory": "packages/backend-sdk"
+  },
+  "homepage": "https://github.com/Pellumi/monitor/tree/main/packages/backend-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Pellumi/monitor/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "files": [
     "dist",
+    "README.md",
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts"
   ],
