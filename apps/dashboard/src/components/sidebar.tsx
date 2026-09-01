@@ -73,6 +73,8 @@ import {
   FolderKanban,
 } from "lucide-react";
 import { useSession, Membership, Organization } from "./providers";
+import { useTheme } from "@/components/theme-provider";
+import { useSidebarMode } from "@/components/sidebar-mode";
 import { twMerge } from "tailwind-merge";
 
 // ─────────────────────────────────────────────────────────────
@@ -808,7 +810,7 @@ function AppSelector({
 // NavigationList — with entitlement gating
 // ─────────────────────────────────────────────────────────────
 
-function NavigationList() {
+function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -860,6 +862,39 @@ function NavigationList() {
       pathname === item.href ||
       (item.href !== "/" && pathname.startsWith(item.href + "/"));
 
+    if (collapsed) {
+      if (!enabled) {
+        return (
+          <button
+            key={item.name}
+            onClick={() => router.push("/settings/billing?upgrade=1")}
+            title={`Upgrade your plan to access ${item.name}`}
+            aria-label={`Upgrade your plan to access ${item.name}`}
+            className="group relative mx-auto my-0.5 flex h-9 w-9 items-center justify-center rounded-md text-[#3a3a3a] transition-colors hover:bg-[#131313] hover:text-[#5a5a5a]"
+          >
+            <item.icon className="h-4 w-4 flex-shrink-0" />
+            <Lock className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-[#3a3a3a] group-hover:text-amber-700/60" />
+          </button>
+        );
+      }
+      return (
+        <Link
+          key={item.name}
+          href={buildHref(item.href, hasAppId)}
+          title={item.name}
+          aria-label={item.name}
+          className={twMerge(
+            "group mx-auto my-0.5 flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+            isActive
+              ? "bg-white text-black"
+              : "text-[#8e9192] hover:bg-[#131313] hover:text-white",
+          )}
+        >
+          <item.icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+        </Link>
+      );
+    }
+
     if (!enabled) {
       return (
         <button
@@ -902,18 +937,34 @@ function NavigationList() {
   };
 
   return (
-    <nav className="flex-1 px-3 py-2 overflow-y-auto space-y-0.5">
-      {/* ── Back to App Button (shown in Settings or Admin mode) ─── */}
-      {!isMainAppMode && (
-        <button
-          type="button"
-          onClick={handleBackToApp}
-          className="flex items-center gap-2 px-3 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] w-full text-left mb-2 border-b border-[#262626] pb-3 cursor-pointer transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          <span>Back to App</span>
-        </button>
+    <nav
+      className={twMerge(
+        "flex-1 py-2 overflow-y-auto space-y-0.5",
+        collapsed ? "px-2" : "px-3",
       )}
+    >
+      {/* ── Back to App Button (shown in Settings or Admin mode) ─── */}
+      {!isMainAppMode &&
+        (collapsed ? (
+          <button
+            type="button"
+            onClick={handleBackToApp}
+            title="Back to App"
+            aria-label="Back to App"
+            className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-md border-b border-[#262626] text-[#8e9192] transition-colors hover:bg-[#131313] hover:text-white"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleBackToApp}
+            className="flex items-center gap-2 px-3 py-2 text-xs font-mono text-[#8e9192] hover:text-white hover:bg-[#131313] w-full text-left mb-2 border-b border-[#262626] pb-3 cursor-pointer transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back to App</span>
+          </button>
+        ))}
 
       {/* ── Main App Navigation Mode ─── */}
       {isMainAppMode && (
@@ -922,12 +973,14 @@ function NavigationList() {
 
       {/* ── Settings Navigation Mode ─── */}
       {isSettingsMode && (
-        <div className="space-y-4">
+        <div className={collapsed ? "space-y-0.5" : "space-y-4"}>
           {settingsNavigation.map((section) => (
             <div key={section.label}>
-              <p className="px-3 pb-1.5 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-[#444748]">
-                {section.label}
-              </p>
+              {!collapsed && (
+                <p className="px-3 pb-1.5 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-[#444748]">
+                  {section.label}
+                </p>
+              )}
               {section.items.map((item) =>
                 renderNavItem(item, item.hasAppId ?? false),
               )}
@@ -939,9 +992,11 @@ function NavigationList() {
       {/* ── Admin Navigation Mode ─── */}
       {isAdminMode && (
         <div>
-          <p className="px-3 pb-2 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-amber-600/80">
-            Admin
-          </p>
+          {!collapsed && (
+            <p className="px-3 pb-2 text-[10px] font-mono font-semibold uppercase tracking-[.1em] text-amber-600/80">
+              Admin
+            </p>
+          )}
           {adminNavigation.map((item) => renderNavItem(item, false))}
         </div>
       )}
@@ -949,7 +1004,7 @@ function NavigationList() {
   );
 }
 
-function UserProfile() {
+function UserProfile({ collapsed = false }: { collapsed?: boolean }) {
   const { user } = useSession();
   const [isOpen, setIsOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -1003,7 +1058,10 @@ function UserProfile() {
         <div
           role="menu"
           aria-label="Profile menu"
-          className="absolute bottom-full left-0 right-0 border border-[#262626] border-b-0 bg-[#0a0a0a] shadow-2xl z-50 animate-in fade-in duration-100"
+          className={twMerge(
+            "absolute bottom-full border border-[#262626] border-b-0 bg-[#0a0a0a] shadow-2xl z-50 animate-in fade-in duration-100",
+            collapsed ? "left-0 w-56" : "left-0 right-0",
+          )}
         >
           {/* Profile summary row — click navigates to profile settings */}
           <button
@@ -1087,12 +1145,18 @@ function UserProfile() {
         aria-haspopup="menu"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center gap-2.5 w-full px-4 py-3 hover:bg-[#131313] transition-colors text-left focus:outline-none cursor-pointer"
+        title={collapsed ? name : undefined}
+        className={twMerge(
+          "flex items-center hover:bg-[#131313] transition-colors text-left focus:outline-none cursor-pointer",
+          collapsed ? "justify-center px-0 py-3 w-full" : "gap-2.5 w-full px-4 py-3",
+        )}
       >
         {avatarEl}
-        <span className="flex-1 text-xs font-semibold text-white truncate min-w-0">
-          {name}
-        </span>
+        {!collapsed && (
+          <span className="flex-1 text-xs font-semibold text-white truncate min-w-0">
+            {name}
+          </span>
+        )}
       </button>
 
       {/* Sign Out Confirmation Modal */}
@@ -1164,16 +1228,35 @@ function UserProfile() {
 export function Sidebar() {
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
+  const { collapsed } = useSidebarMode();
+  const { resolvedTheme } = useTheme();
+  const iconSrc =
+    resolvedTheme === "light" ? "/logo_icon_black.svg" : "/logo_icon.svg";
 
   return (
     <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
-      <div className="hidden h-full w-60 shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] md:flex">
+      <div
+        className={twMerge(
+          "hidden h-full shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] transition-[width] duration-200 md:flex",
+          collapsed ? "w-16" : "w-60",
+        )}
+      >
         {/* Logo header */}
-        <div className="flex h-14 items-center justify-between px-4 border-b border-[#262626] shrink-0">
+        <div
+          className={twMerge(
+            "flex h-14 items-center border-b border-[#262626] shrink-0",
+            collapsed ? "justify-center px-0" : "justify-between px-4",
+          )}
+        >
           <Link href="/" className="flex items-center">
-            <h1 className="text-[18px] font-extrabold tracking-tighter text-white uppercase">
-              TELLANN
-            </h1>
+            {collapsed ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={iconSrc} alt="Tellann" className="h-7 w-7" />
+            ) : (
+              <h1 className="text-[18px] font-extrabold tracking-tighter text-white uppercase">
+                TELLANN
+              </h1>
+            )}
           </Link>
         </div>
 
@@ -1184,7 +1267,9 @@ export function Sidebar() {
             </div>
           }
         >
-          <div className="pt-3">
+          {/* Kept mounted while collapsed so entitlement and environment
+              selection still load for the navigation gating below. */}
+          <div className={collapsed ? "hidden" : "pt-3"}>
             <AppSelector
               onEntitlementLoaded={setEntitlement}
               onEnvSelected={setSelectedEnvId}
@@ -1199,10 +1284,10 @@ export function Sidebar() {
             </div>
           }
         >
-          <NavigationList />
+          <NavigationList collapsed={collapsed} />
         </Suspense>
 
-        <UserProfile />
+        <UserProfile collapsed={collapsed} />
       </div>
     </EntitlementContext.Provider>
   );

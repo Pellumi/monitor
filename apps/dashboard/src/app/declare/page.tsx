@@ -1,7 +1,10 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { ApplicationRequiredState } from "@/components/application-required-state";
+import { EmptyState } from "@/components/empty-state";
 import { useSelectedApplication } from "@/hooks/use-selected-application";
+import { usePersistedFilter } from "@/hooks/use-persisted-filter";
+import { useSidebarMode } from "@/components/sidebar-mode";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
@@ -13,6 +16,8 @@ import {
   useEffect,
   useCallback,
   useRef,
+  type CSSProperties,
+  type FormEvent,
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -44,7 +49,6 @@ import {
   TrendingUp,
   Activity,
   GitCompare,
-  Layers,
   ChevronRight,
   Info,
   Copy,
@@ -58,6 +62,15 @@ import {
   FileText,
   Maximize2,
   Minimize2,
+  LayoutGrid,
+  List,
+  Search,
+  ArrowUpDown,
+  ArrowLeft,
+  ShoppingCart,
+  GraduationCap,
+  FilePlus2,
+  UploadCloud,
 } from "lucide-react";
 
 const FDRS_API = "/api-gateway";
@@ -222,6 +235,8 @@ interface DeclaredFlow {
   scopeStatement?: string | null;
   publishedVersionId?: string | null;
   versions?: Array<{ id: string; version: number }>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 function safeExportName(value: string) {
@@ -356,8 +371,11 @@ interface ReconciliationReport {
 }
 
 function DeclareContent() {
-  const { appId } = useSelectedApplication();
+  const { appId, selectedOrgId } = useSelectedApplication();
   const queryClient = useQueryClient();
+
+  // Flow create canvas visibility (collapses the sidebar, shows the type picker).
+  const [isCreating, setIsCreating] = useState(false);
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -514,6 +532,7 @@ function DeclareContent() {
         queryKey: ["onboarding-progress", appId],
       });
       queryClient.invalidateQueries({ queryKey: ["declared-flows", appId] });
+      setIsCreating(false);
     },
   });
 
@@ -624,6 +643,25 @@ function DeclareContent() {
     },
     enabled: !!appId,
   });
+
+  // Organisation entitlement — gates document-based flow generation.
+  const { data: planEntitlement } = useQuery<{
+    features?: Record<string, boolean | string>;
+  }>({
+    queryKey: ["sidebar-entitlement", selectedOrgId],
+    queryFn: async () => {
+      const res = await authenticatedFetch(
+        `/api-gateway/organizations/${selectedOrgId}/entitlement`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch entitlement");
+      return res.json();
+    },
+    enabled: !!selectedOrgId,
+  });
+  const docFlowInferenceEnabled = (() => {
+    const value = planEntitlement?.features?.DOCUMENT_FLOW_INFERENCE;
+    return value === true || (typeof value === "string" && value !== "false");
+  })();
 
   // Get selected flow details
   const { data: activeFlow, refetch: refetchActiveFlow } =
@@ -879,6 +917,7 @@ function DeclareContent() {
       setNewFlowName("");
       setNewFlowPurpose("");
       setNewFlowScope("");
+      setIsCreating(false);
     },
   });
 
@@ -1236,15 +1275,8 @@ function DeclareContent() {
     }
   }, [activeFlow, highlightedNodeIds]);
 
-  // Auto-select active flow on load
-  useEffect(() => {
-    if (flows && flows.length > 0 && !selectedFlowId) {
-      const activeDecl = flows.find((f) => f.status === "DRAFT") || flows[0];
-      if (activeDecl) {
-        setSelectedFlowId(activeDecl.id);
-      }
-    }
-  }, [flows, selectedFlowId]);
+  // The Flow Declaration Overview is the landing view; a flow is opened into the
+  // builder only when the user picks one, so no flow is auto-selected here.
 
   // Poll SDK readiness status
   useEffect(() => {
@@ -1322,6 +1354,27 @@ function DeclareContent() {
   const onboardingIsActive =
     onboardingProgress && !onboardingProgress.completedAt;
 
+  // Focused "create a flow" canvas — takes over the screen and collapses the
+  // sidebar to icon mode. Shown from the overview's "New Flow" action.
+  if (appId && isCreating) {
+    return (
+      <FlowCreateView
+        onboardingActive={Boolean(
+          onboardingIsActive && !onboardingProgress?.templateSelected,
+        )}
+        entitledToDocs={docFlowInferenceEnabled}
+        creating={
+          selectProfileMutation.isPending || createFlowMutation.isPending
+        }
+        onSelectProfile={(profileId) =>
+          selectProfileMutation.mutate(profileId)
+        }
+        onCreateCustom={(data) => createFlowMutation.mutate(data)}
+        onCancel={() => setIsCreating(false)}
+      />
+    );
+  }
+
   if (onboardingIsActive && flowsLoading) {
     return (
       <div className="flex min-h-[80vh] items-center justify-center px-4">
@@ -1386,72 +1439,20 @@ function DeclareContent() {
         );
       }
 
-      // A flow created by another client (for example the desktop app) is
-      // authoritative even when legacy onboarding progress was never updated.
-      // Continue to the shared flow builder instead of showing setup again.
+      // No declared flows yet — land on the empty Flow Declaration Overview.
+      // Its "New Flow" action opens the focused create canvas (with the
+      // E-commerce / LMS / Custom templates), which drives the same
+      // profile-selection step onboarding needs.
       if (!flows?.length) {
         return (
-        <div className="flex min-h-[80vh] items-center justify-center px-4">
-          <div className="w-full max-w-2xl space-y-2 rounded-md border border-[#262626] bg-[#131313] p-8 backdrop-blur-xl shadow-2xl">
-            <div className="w-full flex justify-between items-start">
-              <h2 className="text-3xl font-extrabold tracking-tight text-white">
-                Select Application Profile
-              </h2>
-              <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-                APPLICATION // PROFILE
-              </span>
-            </div>
-            <div className="text-left">
-              <p className="mt-2 text-sm text-neutral-400">
-                Choose a workflow template to preload standard states and
-                transitions, or start from scratch.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
-              {[
-                {
-                  id: "ECOMMERCE",
-                  name: "E-commerce Store",
-                  desc: "Auto-generates typical shop flow: Anonymous → Browse → View Product → Add to Cart → Checkout → Success",
-                  icon: Layers,
-                },
-                {
-                  id: "LMS",
-                  name: "Education / LMS",
-                  desc: "Auto-generates typical learning flow: Anonymous → View Courses → Select → Enroll → Start Lesson → Complete",
-                  icon: ClipboardList,
-                },
-                {
-                  id: "CUSTOM",
-                  name: "Custom Flow",
-                  desc: "Start with a blank canvas to construct your application's exact state model manually",
-                  icon: Plus,
-                },
-              ].map((template) => {
-                const IconComponent = template.icon;
-                return (
-                  <button
-                    key={template.id}
-                    onClick={() => selectProfileMutation.mutate(template.id)}
-                    disabled={selectProfileMutation.isPending}
-                    className="flex flex-col items-center p-6 bg-black/40 hover:bg-[#131313] border border-[#262626] hover:border-white/50 rounded-md text-center transition-all duration-200 group"
-                  >
-                    <div className="p-3 bg-[#131313] group-hover:bg-black border border-[#262626] rounded-lg text-neutral-400 group-hover:text-white transition-colors mb-4">
-                      <IconComponent className="h-6 w-6" />
-                    </div>
-                    <span className="font-bold text-sm text-white group-hover:text-white transition-colors mb-2">
-                      {template.name}
-                    </span>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      {template.desc}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+          <FlowOverview
+            flows={[]}
+            isLoading={flowsLoading}
+            isError={flowsFailed}
+            onOpen={setSelectedFlowId}
+            onCreate={() => setIsCreating(true)}
+            onRetry={() => void refetchFlows()}
+          />
         );
       }
     }
@@ -1820,6 +1821,21 @@ function DeclareContent() {
 
   if (!appId) {
     return <ApplicationRequiredState feature="Flow declaration" />;
+  }
+
+  // Landing view: the Flow Declaration Overview. The builder below is shown only
+  // once a flow has been opened.
+  if (!selectedFlowId) {
+    return (
+      <FlowOverview
+        flows={flows ?? []}
+        isLoading={flowsLoading}
+        isError={flowsFailed}
+        onOpen={setSelectedFlowId}
+        onCreate={() => setIsCreating(true)}
+        onRetry={() => void refetchFlows()}
+      />
+    );
   }
 
   return (
@@ -2694,6 +2710,721 @@ function DeclareContent() {
           <span>{toastMessage}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Flow Declaration Overview
+// ─────────────────────────────────────────────────────────────
+
+function timeAgo(iso?: string) {
+  if (!iso) return "unknown";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "unknown";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function flowStatusOf(flow: DeclaredFlow) {
+  return (flow.lifecycleStatus ?? flow.status ?? "DRAFT").toUpperCase();
+}
+
+function flowVersionOf(flow: DeclaredFlow) {
+  return flow.versions?.[0]?.version ?? flow.version ?? 1;
+}
+
+function StatusPill({ status }: { status: string }) {
+  const tone =
+    status === "PUBLISHED" || status === "COMPLETE"
+      ? "border-emerald-900/60 bg-emerald-950/30 text-emerald-300"
+      : status === "ARCHIVED" || status === "SUPERSEDED"
+        ? "border-[#333] bg-[#151515] text-neutral-400"
+        : "border-amber-900/50 bg-amber-950/20 text-amber-300";
+  return (
+    <span
+      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${tone}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+const DOT_GRID_STYLE: CSSProperties = {
+  backgroundImage:
+    "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0)",
+  backgroundSize: "14px 14px",
+};
+
+function FlowMiniGraph() {
+  return (
+    <svg
+      viewBox="0 0 240 96"
+      className="absolute inset-0 h-full w-full"
+      aria-hidden="true"
+    >
+      <line
+        x1="46"
+        y1="34"
+        x2="120"
+        y2="34"
+        stroke="rgba(255,255,255,0.16)"
+        strokeWidth="1.5"
+      />
+      <line
+        x1="120"
+        y1="34"
+        x2="194"
+        y2="62"
+        stroke="rgba(255,255,255,0.16)"
+        strokeWidth="1.5"
+      />
+      {(
+        [
+          [46, 34],
+          [120, 34],
+          [194, 62],
+        ] as const
+      ).map(([x, y], i) => (
+        <rect
+          key={i}
+          x={x - 15}
+          y={y - 9}
+          width="30"
+          height="18"
+          rx="4"
+          fill="#141414"
+          stroke="rgba(255,255,255,0.22)"
+        />
+      ))}
+    </svg>
+  );
+}
+
+function FlowCard({
+  flow,
+  onOpen,
+}: {
+  flow: DeclaredFlow;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex flex-col overflow-hidden rounded-lg border border-[#262626] bg-[#0d0d0d] text-left transition-colors hover:border-white/40"
+    >
+      <div className="flex items-start justify-between gap-3 p-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-white">
+            {flow.name}
+          </h3>
+          <p className="mt-0.5 text-[11px] text-neutral-500">
+            {(flow.workflowType ?? "Custom").replace(/_/g, " ")} · v
+            {flowVersionOf(flow)}
+          </p>
+        </div>
+        <StatusPill status={flowStatusOf(flow)} />
+      </div>
+      <div
+        className="relative h-24 border-t border-[#1e1e1e]"
+        style={DOT_GRID_STYLE}
+      >
+        <FlowMiniGraph />
+      </div>
+      <div className="flex items-center justify-between px-4 py-2.5 text-[11px] text-neutral-500">
+        <span>Updated {timeAgo(flow.updatedAt)}</span>
+        <span className="inline-flex items-center gap-1 text-neutral-400 group-hover:text-white">
+          Open <ChevronRight className="h-3 w-3" />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function FlowRow({
+  flow,
+  onOpen,
+}: {
+  flow: DeclaredFlow;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[#131313]"
+    >
+      {/* <ClipboardList className="h-4 w-4 shrink-0 text-neutral-500" /> */}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-white">
+          {flow.name}
+        </span>
+        <span className="block text-[11px] text-neutral-500">
+          {(flow.workflowType ?? "Custom").replace(/_/g, " ")} · v
+          {flowVersionOf(flow)} · updated {timeAgo(flow.updatedAt)}
+        </span>
+      </span>
+      <StatusPill status={flowStatusOf(flow)} />
+      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-600" />
+    </button>
+  );
+}
+
+function FlowsSkeleton({ view }: { view: "grid" | "list" }) {
+  if (view === "grid") {
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 animate-pulse">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex flex-col overflow-hidden rounded-lg border border-[#262626] bg-[#0d0d0d]"
+          >
+            <div className="flex items-start justify-between gap-3 p-4">
+              <div className="space-y-2 min-w-0 flex-1">
+                <div className="h-4 w-3/5 rounded bg-neutral-800" />
+                <div className="h-3 w-2/5 rounded bg-neutral-800/60" />
+              </div>
+              <div className="h-5 w-14 rounded bg-neutral-800/60 shrink-0" />
+            </div>
+            <div
+              className="h-24 border-t border-[#1e1e1e] bg-neutral-900/30 flex items-center justify-center"
+              style={DOT_GRID_STYLE}
+            >
+              <div className="h-8 w-28 rounded bg-neutral-800/40" />
+            </div>
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <div className="h-3 w-24 rounded bg-neutral-800/40" />
+              <div className="h-3 w-10 rounded bg-neutral-800/40" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-[#1e1e1e] overflow-hidden rounded-md border border-[#262626] bg-[#0d0d0d] animate-pulse">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="flex w-full items-center gap-4 px-4 py-3">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-4 w-48 rounded bg-neutral-800" />
+            <div className="h-3 w-64 rounded bg-neutral-800/60" />
+          </div>
+          <div className="h-5 w-14 rounded bg-neutral-800/60 shrink-0" />
+          <div className="h-4 w-4 rounded bg-neutral-800/40 shrink-0" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FlowOverview({
+  flows,
+  isLoading,
+  isError,
+  onOpen,
+  onCreate,
+  onRetry,
+}: {
+  flows: DeclaredFlow[];
+  isLoading: boolean;
+  isError: boolean;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
+  onRetry: () => void;
+}) {
+  const [view, setView] = usePersistedFilter("declare:view", "grid");
+  const [sort, setSort] = usePersistedFilter("declare:sort", "recent");
+  const [search, setSearch] = useState("");
+
+  const visible = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const filtered = query
+      ? flows.filter((flow) => flow.name.toLowerCase().includes(query))
+      : flows.slice();
+    filtered.sort((a, b) => {
+      if (sort === "alpha") return a.name.localeCompare(b.name);
+      if (sort === "created")
+        return (
+          new Date(b.createdAt ?? 0).getTime() -
+          new Date(a.createdAt ?? 0).getTime()
+        );
+      return (
+        new Date(b.updatedAt ?? 0).getTime() -
+        new Date(a.updatedAt ?? 0).getTime()
+      );
+    });
+    return filtered;
+  }, [flows, search, sort]);
+
+  const total = flows.length;
+  const sortLabel =
+    sort === "alpha"
+      ? "Alphabetical"
+      : sort === "created"
+        ? "Creation date"
+        : "Recent activity";
+
+  return (
+    <div className="flex h-full flex-col space-y-6">
+      {/* Header */}
+      <div className="flex flex-col gap-4 border-b border-[#262626] pb-5 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-white">
+            Flow Declaration Overview
+          </h1>
+          {/* <p className="mt-1 text-sm text-neutral-400">
+            Author focused intent graphs and reconcile them against real
+            behaviour.
+          </p> */}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search flows by title…"
+              className="w-full rounded-md border border-[#262626] bg-[#131313] py-2 pl-9 pr-3 text-sm text-white placeholder-neutral-500 focus:border-white focus:outline-none md:w-[260px]"
+            />
+          </div>
+          <Button variant="primary" onClick={onCreate}>
+            <Plus className="h-4 w-4" />
+            <span>New Flow</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Sub-header: count · sort · view toggle */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="inline-flex items-center gap-2 font-semibold text-white">
+            {/* <ClipboardList className="h-4 w-4 text-neutral-400" /> */}
+            {total} {total === 1 ? "Flow" : "Flows"}
+          </span>
+          <span className="text-neutral-700">|</span>
+          <div className="flex items-center gap-2 text-neutral-400">
+            <ArrowUpDown className="h-3.5 w-3.5" />
+            <span className="text-xs">Sort by</span>
+            <Select value={sort} onValueChange={setSort}>
+              <SelectTrigger className="h-8 w-[160px] text-xs">
+                <SelectValue placeholder="Recent activity">
+                  {sortLabel}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">Recent activity</SelectItem>
+                <SelectItem value="alpha">Alphabetical</SelectItem>
+                <SelectItem value="created">Creation date</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 self-start rounded-md border border-[#262626] bg-[#131313] p-0.5">
+          <button
+            type="button"
+            aria-label="Grid view"
+            aria-pressed={view === "grid"}
+            onClick={() => setView("grid")}
+            className={`rounded p-1.5 transition-colors ${view === "grid" ? "bg-white text-black" : "text-neutral-400 hover:text-white"}`}
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="List view"
+            aria-pressed={view === "list"}
+            onClick={() => setView("list")}
+            className={`rounded p-1.5 transition-colors ${view === "list" ? "bg-white text-black" : "text-neutral-400 hover:text-white"}`}
+          >
+            <List className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      {isLoading ? (
+        <FlowsSkeleton view={view === "grid" ? "grid" : "list"} />
+      ) : isError ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+          <p className="text-sm text-neutral-400">
+            Declared flows could not be loaded.
+          </p>
+          <Button variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      ) : total === 0 ? (
+        <EmptyState
+          variant="activation"
+          illustration="flow"
+          eyebrow="Flow Declaration"
+          title="Declare your first flow"
+          description="Create a focused intent graph — checkout, onboarding, password reset — and Tellann will reconcile it against what your users actually do."
+          primaryAction={{ label: "Create a flow", onClick: onCreate }}
+        />
+      ) : visible.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+          No flows match “{search.trim()}”.
+        </div>
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {visible.map((flow) => (
+            <FlowCard
+              key={flow.id}
+              flow={flow}
+              onOpen={() => onOpen(flow.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="divide-y divide-[#1e1e1e] overflow-hidden rounded-md border border-[#262626] bg-[#0d0d0d]">
+          {visible.map((flow) => (
+            <FlowRow key={flow.id} flow={flow} onOpen={() => onOpen(flow.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Flow create canvas (focused mode — collapses the sidebar)
+// ─────────────────────────────────────────────────────────────
+
+type CreateTemplate = "ECOMMERCE" | "LMS" | "CUSTOM";
+
+const CREATE_OPTIONS: Array<{
+  id: CreateTemplate;
+  label: string;
+  desc: string;
+  icon: typeof ShoppingCart;
+  workflowType: string;
+}> = [
+  {
+    id: "ECOMMERCE",
+    label: "E-commerce store",
+    desc: "Preload a typical shop journey: Browse → Product → Cart → Checkout → Success.",
+    icon: ShoppingCart,
+    workflowType: "CHECKOUT",
+  },
+  {
+    id: "LMS",
+    label: "Education / LMS",
+    desc: "Preload a typical learning journey: Courses → Enrol → Lesson → Complete.",
+    icon: GraduationCap,
+    workflowType: "ENROLLMENT",
+  },
+  {
+    id: "CUSTOM",
+    label: "Custom (Empty Flow)",
+    desc: "Start from a blank canvas and declare every state and transition yourself.",
+    icon: FilePlus2,
+    workflowType: "CUSTOM",
+  },
+];
+
+function FlowCreateView({
+  onboardingActive,
+  entitledToDocs,
+  creating,
+  onSelectProfile,
+  onCreateCustom,
+  onCancel,
+}: {
+  onboardingActive: boolean;
+  entitledToDocs: boolean;
+  creating: boolean;
+  onSelectProfile: (profileId: CreateTemplate) => void;
+  onCreateCustom: (data: {
+    name: string;
+    workflowType: string;
+    purpose: string;
+    scopeStatement: string;
+  }) => void;
+  onCancel: () => void;
+}) {
+  const { setCollapsed } = useSidebarMode();
+  const [selected, setSelected] = useState<CreateTemplate | "DOCUMENT" | null>(
+    null,
+  );
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState("");
+
+  useEffect(() => {
+    setCollapsed(true);
+    return () => setCollapsed(false);
+  }, [setCollapsed]);
+
+  const chosen = CREATE_OPTIONS.find((option) => option.id === selected) ?? null;
+
+  function choose(id: CreateTemplate) {
+    if (onboardingActive) {
+      onSelectProfile(id);
+      return;
+    }
+    setName("");
+    setScope("");
+    setSelected(id);
+  }
+
+  function submitNamed(event: FormEvent) {
+    event.preventDefault();
+    if (!chosen || !name.trim() || !scope.trim()) return;
+    onCreateCustom({
+      name: name.trim(),
+      workflowType: chosen.workflowType,
+      purpose: "",
+      scopeStatement: scope.trim(),
+    });
+  }
+
+  return (
+    <div className="fixed inset-y-0 left-0 right-0 z-30 overflow-auto bg-[#050505] md:left-16">
+      {/* Graph-style backdrop */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.09) 1px, transparent 0)",
+          backgroundSize: "26px 26px",
+        }}
+      />
+      {/* <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        preserveAspectRatio="xMidYMid slice"
+        viewBox="0 0 1200 800"
+      >
+        {(
+          [
+            [140, 160, 380, 240],
+            [380, 240, 320, 470],
+            [380, 240, 700, 200],
+            [700, 200, 940, 360],
+            [320, 470, 640, 600],
+            [940, 360, 1040, 610],
+          ] as const
+        ).map(([x1, y1, x2, y2], i) => (
+          <line
+            key={i}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke="rgba(255,255,255,0.07)"
+            strokeWidth="2"
+          />
+        ))}
+        {(
+          [
+            [140, 160],
+            [380, 240],
+            [700, 200],
+            [320, 470],
+            [940, 360],
+            [640, 600],
+            [1040, 610],
+          ] as const
+        ).map(([x, y], i) => (
+          <rect
+            key={i}
+            x={x - 34}
+            y={y - 16}
+            width="68"
+            height="32"
+            rx="7"
+            fill="#0c0c0c"
+            stroke="rgba(255,255,255,0.10)"
+          />
+        ))}
+      </svg> */}
+
+      {/* Top bar */}
+      <div className="relative z-10 flex items-center justify-between border-b h-14 border-[#1c1c1c] bg-[#050505]/80 px-4 py-3 backdrop-blur">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex items-center gap-2 text-xs font-mono text-[#8e9192] transition-colors hover:text-white"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to flows
+        </button>
+        <span className="border border-[#444748] px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-[#8e9192]">
+          FLOW // NEW
+        </span>
+      </div>
+
+      {/* Centred picker */}
+      <div className="relative z-10 flex min-h-[calc(100%-56px)] items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-xl border border-[#262626] bg-[#0c0c0c]/95 p-6 shadow-2xl backdrop-blur-xl">
+          <h2 className="text-lg font-semibold text-white">Create a flow</h2>
+          <p className="mt-1 text-xs text-neutral-400">
+            Pick a starting point. Every state and transition stays editable
+            afterwards.
+          </p>
+
+          {!chosen ? (
+            <div className="mt-5 space-y-2">
+              {CREATE_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    disabled={creating}
+                    onClick={() => choose(option.id)}
+                    className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border border-[#262626] bg-black/40 px-4 py-3 text-left transition-colors  hover:bg-[#131313] disabled:opacity-50"
+                  >
+                    {/* <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#262626] bg-[#131313] text-neutral-300 group-hover:text-white"> */}
+                      <Icon className="h-4 w-4" />
+                    {/* </span> */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-white">
+                        {option.label}
+                      </span>
+                      {/* <span className="block text-[11px] leading-snug text-neutral-400">
+                        {option.desc}
+                      </span> */}
+                    </span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-neutral-600 group-hover:text-white" />
+                  </button>
+                );
+              })}
+
+              {entitledToDocs ? (
+                <button
+                  type="button"
+                  disabled={creating}
+                  onClick={() => setSelected("DOCUMENT")}
+                  className={`group flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors disabled:opacity-50 ${
+                    selected === "DOCUMENT"
+                      ? "border-white/50 bg-[#131313]"
+                      : "border-[#262626] bg-black/40 hover:border-white/40 hover:bg-[#131313]"
+                  }`}
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#262626] bg-[#131313] text-neutral-300 group-hover:text-white">
+                    <UploadCloud className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-white">
+                      Generate from a document
+                    </span>
+                    <span className="block text-[11px] leading-snug text-neutral-400">
+                      Upload a requirements, PRD or OpenAPI file and Tellann
+                      infers a reviewable flow.
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-neutral-600 group-hover:text-white" />
+                </button>
+              ) : (
+                <div className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[#262626] bg-black/20 px-4 py-3 opacity-75">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#262626] bg-[#131313] text-neutral-500">
+                    <UploadCloud className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-neutral-300">
+                      Generate from a document
+                    </span>
+                    <span className="block text-[11px] leading-snug text-neutral-500">
+                      Upgrade your plan to infer flows from requirement or spec
+                      documents.
+                    </span>
+                  </span>
+                  <Lock className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                </div>
+              )}
+
+              {selected === "DOCUMENT" && (
+                <div className="rounded-lg border border-[#262626] bg-black/40 p-4 text-[11px] leading-relaxed text-neutral-300">
+                  Document-based flow generation for the web app is the next
+                  step to build. Pick another starting point to continue for
+                  now.
+                </div>
+              )}
+
+              {/* <button
+                type="button"
+                onClick={onCancel}
+                className="mt-2 w-full text-center text-[11px] text-neutral-500 hover:text-neutral-300"
+              >
+                Cancel
+              </button> */}
+            </div>
+          ) : (
+            <form onSubmit={submitNamed} className="mt-5 space-y-4">
+              <div className="text-xs text-neutral-400">
+                Starting point:{" "}
+                <span className="text-white">{chosen.label}</span> ·{" "}
+                <button
+                  type="button"
+                  className="underline hover:text-white"
+                  onClick={() => setSelected(null)}
+                >
+                  change
+                </button>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                  Flow name
+                </label>
+                <input
+                  value={name}
+                  autoFocus
+                  required
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="e.g. Checkout Flow"
+                  className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                  Scope boundary
+                </label>
+                <textarea
+                  value={scope}
+                  required
+                  onChange={(event) => setScope(event.target.value)}
+                  placeholder="e.g. Guest lands on cart through order confirmation"
+                  className="w-full rounded-lg border border-[#262626] bg-black px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
+                />
+                <p className="mt-1 text-[11px] text-amber-300">
+                  Keep each flow to one focused capability — not the whole
+                  product.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={() => setSelected(null)}
+                >
+                  Back
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="flex-1"
+                  loading={creating}
+                  disabled={creating || !name.trim() || !scope.trim()}
+                >
+                  Create flow
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
