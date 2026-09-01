@@ -1,4 +1,7 @@
 import type {
+  BranchPolicy,
+  WorkspaceCompliance,
+  QaBranchSwitchResult,
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   FlowReviewPreview,
@@ -46,13 +49,26 @@ declare global {
           snapshot: RepositorySnapshotSummary;
         } | null>;
         chooseWorkspace(): Promise<{ path: string; name: string } | null>;
-        scanWorkspace(input: { path: string; workspaceId: string; applicationId: string }): Promise<RepositorySnapshotSummary>;
+        scanWorkspace(input: { path: string; applicationId: string }): Promise<{
+          id: string;
+          snapshot: RepositorySnapshotSummary;
+          branchPolicy: BranchPolicy | null;
+        }>;
         cloneWorkspace(input: { applicationId: string; cloneUrl: string }): Promise<{
           id: string;
           path: string;
           name: string;
           snapshot: RepositorySnapshotSummary;
         } | null>;
+        getBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
+        grantQaBranchCheckout(applicationId: string, expiresInMinutes?: number): Promise<Record<string, unknown>>;
+        switchToQaBranch(applicationId: string): Promise<QaBranchSwitchResult>;
+        restoreWorkspaceBranch(applicationId: string): Promise<{
+          restored: boolean;
+          branch: string | null;
+          stashRestored: boolean;
+          reason: string | null;
+        }>;
         onAppUpdated(callback: (event: { action: string; applicationId: string; name?: string; summary?: string }) => void): () => void;
       };
       intent: {

@@ -21,6 +21,7 @@ import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import {
   chargeAuthorization,
   createSubscription as createPaystackSubscription,
+  verifyTransaction,
   disableSubscription as disablePaystackSubscription,
   enableSubscription as enablePaystackSubscription,
   initializeTransaction,
@@ -589,6 +590,11 @@ async function activateSubscription(params: {
       providerPeriodStart: params.providerPeriodStart ?? now,
       providerPeriodEnd: params.providerPeriodEnd ?? end,
       providerNextChargeAt: params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
+      // The billing cycle renews on nextBillingAt. Free is an entitlement
+      // record with nothing to charge, so it stays unscheduled.
+      nextBillingAt: params.plan.type === PlanType.FREE
+        ? null
+        : params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
       paymentMethodReference: params.paymentMethodReference ?? null,
       paymentMethodBrand: params.paymentMethodBrand ?? null,
       paymentMethodLast4: params.paymentMethodLast4 ?? null,
@@ -618,6 +624,9 @@ async function activateSubscription(params: {
       providerPeriodStart: params.providerPeriodStart ?? now,
       providerPeriodEnd: params.providerPeriodEnd ?? end,
       providerNextChargeAt: params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
+      nextBillingAt: params.plan.type === PlanType.FREE
+        ? null
+        : params.providerNextChargeAt ?? params.providerPeriodEnd ?? end,
       paymentMethodReference: params.paymentMethodReference ?? undefined,
       paymentMethodBrand: params.paymentMethodBrand ?? undefined,
       paymentMethodLast4: params.paymentMethodLast4 ?? undefined,
@@ -975,6 +984,13 @@ app.get('/billing/plans', optionalJwt, async (req: AuthenticatedRequest, res: Re
     const countryCode = profile?.countryCode ?? null;
     const currency = currencyForCountry(countryCode);
     const currentRank = subscription ? PLAN_DEFINITIONS[subscription.plan.type as PlanTypeKey]?.rank ?? 0 : 0;
+    // Free is an entitlement record, not a paying contract, and a lapsed
+    // subscription has lost its card — neither can be changed in place.
+    const canChangeInPlace = Boolean(
+      subscription
+      && subscription.plan.type !== PlanType.FREE
+      && subscription.paymentMethodReference,
+    );
     // Processors that can settle this payer's currency, in preference order.
     // NGN payers get a real choice (BSS §8), so the UI can offer one.
     const availableProviders = countryCode ? checkoutProviders(currency) : [];
@@ -983,15 +999,26 @@ app.get('/billing/plans', optionalJwt, async (req: AuthenticatedRequest, res: Re
       countryRequired: !countryCode,
       availableProviders,
       defaultProvider: availableProviders[0] ?? null,
+      /** False when the customer must check out rather than change plan. */
+      canChangeInPlace,
+      paymentMethod: subscription?.paymentMethodLast4
+        ? { brand: subscription.paymentMethodBrand, last4: subscription.paymentMethodLast4 }
+        : null,
       currentPlanType: subscription?.plan.type ?? PlanType.FREE,
       plans: plans.map((plan) => {
         const item = publicPlan(plan, countryCode ?? undefined);
         const rank = PLAN_DEFINITIONS[plan.type as PlanTypeKey]?.rank ?? plan.sortOrder;
+        // A plan change reprices an existing paid subscription against the card
+        // on file. Without a chargeable card there is nothing to reprice, so the
+        // customer must go through checkout instead — this is the difference
+        // between "change my plan" and "start paying".
         const action = plan.type === PlanType.ENTERPRISE
           ? 'CONTACT_SALES'
           : plan.type === subscription?.plan.type
             ? 'CURRENT'
-            : rank > currentRank ? (subscription ? 'UPGRADE' : 'SUBSCRIBE') : 'DOWNGRADE';
+            : !canChangeInPlace
+              ? 'SUBSCRIBE'
+              : rank > currentRank ? 'UPGRADE' : 'DOWNGRADE';
         return {
           ...item,
           resolvedCurrency: currency,
@@ -1463,7 +1490,12 @@ app.post(['/billing/checkout', '/billing/subscriptions/checkout'], verifyJwt, re
       include: { plan: true },
     });
     const currentDefinition = currentSubscription ? PLAN_DEFINITIONS[currentSubscription.plan.type as PlanTypeKey] : null;
-    if (currentSubscription && (currentDefinition?.rank ?? 0) > 0 && currentSubscription.plan.type !== planType) {
+    // Redirect to the change flow only when it can actually serve the request.
+    // A subscription with no card on file has nothing to reprice, so checkout
+    // is the correct path even though a paid plan is technically active.
+    const changeFlowAvailable = Boolean(currentSubscription?.paymentMethodReference);
+    if (currentSubscription && (currentDefinition?.rank ?? 0) > 0
+        && currentSubscription.plan.type !== planType && changeFlowAvailable) {
       return res.status(409).json({
         error: 'SUBSCRIPTION_CHANGE_REQUIRED',
         message: 'Use the subscription change preview flow to upgrade or downgrade an active subscription.',
@@ -2074,43 +2106,157 @@ app.post('/billing/subscriptions/changes/preview', verifyJwt, requireBillingMana
   }
 });
 
-app.get('/billing/checkouts/:invoiceId/status', verifyJwt, requireBillingViewer, async (req: Request, res: Response) => {
-  const organizationId = requestOrganizationId(req);
-  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.invoiceId } });
-  if (!invoice || invoice.organizationId !== organizationId) return res.status(404).json({ error: 'CHECKOUT_NOT_FOUND' });
-  if (invoice.status === 'PENDING' && invoice.provider === 'FLUTTERWAVE'
-      && process.env.NODE_ENV !== 'production' && typeof req.query.transaction_id === 'string') {
+/**
+ * Reconciles a checkout from the browser return.
+ *
+ * Signed webhooks remain the authoritative path. This exists because the return
+ * redirect is the only signal available when the processor cannot reach the
+ * webhook endpoint — local development without a tunnel, or a webhook that is
+ * merely late. It verifies the transaction with the processor directly rather
+ * than trusting anything in the query string, so a forged return cannot
+ * activate a plan, and it is idempotent with the webhook: whichever arrives
+ * first marks the invoice PAID and the other becomes a no-op.
+ */
+async function reconcileCheckoutFromReturn(
+  invoice: NonNullable<Awaited<ReturnType<typeof prisma.invoice.findUnique>>>,
+  query: Record<string, unknown>,
+): Promise<boolean> {
+  if (invoice.status !== 'PENDING') return false;
+
+  const plan = await prisma.plan.findUnique({ where: { type: invoice.planType } });
+  if (!plan) throw new Error('PLAN_NOT_FOUND');
+
+  if (invoice.provider === 'PAYSTACK') {
+    // Paystack returns ?reference= and ?trxref=. Fall back to the reference we
+    // recorded at initialization so a stripped query string still reconciles.
+    const reference = firstString(query.reference, query.trxref) ?? invoice.providerReference;
+    if (!reference) return false;
+
+    const verified = await verifyTransaction(reference);
+    if (verified.status !== 'success' || verified.reference !== invoice.providerReference) return false;
+    validateProviderPayment({
+      eventCurrency: assertEnumValue(BillingCurrency, verified.currency),
+      invoiceCurrency: invoice.currency,
+      eventAmountMinor: verified.amount,
+      invoiceTotal: invoice.total,
+      eventPlanType: null,
+      invoicePlanType: invoice.planType,
+    });
+
+    await activateSubscription({
+      organizationId: invoice.organizationId,
+      payerUserId: invoice.payerUserId,
+      plan,
+      interval: invoice.billingInterval,
+      currency: invoice.currency,
+      provider: 'PAYSTACK',
+      providerCustomerId: verified.customerCode,
+      providerSubscriptionId: verified.subscriptionCode,
+      // Seal the same reusable authorization the webhook would have stored, or
+      // this subscription activates with no card and never renews.
+      paymentMethodReference: verified.authorizationCode ? sealPaymentReference(verified.authorizationCode) : null,
+      paymentMethodBrand: verified.card?.brand,
+      paymentMethodLast4: verified.card?.last4,
+      paymentMethodExpMonth: verified.card?.expMonth,
+      paymentMethodExpYear: verified.card?.expYear,
+    });
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { status: 'PAID', paidAt: new Date(), providerCustomerId: verified.customerCode },
+    });
+    await recordPaymentEvent(invoice.organizationId, 'PAYSTACK', 'checkout.reconciled_from_return', {
+      invoiceId: invoice.id, reference,
+    }, { invoiceId: invoice.id });
+    return true;
+  }
+
+  if (invoice.provider === 'FLUTTERWAVE') {
+    const transactionId = firstString(query.transaction_id, query.transactionId);
+    if (!transactionId) return false;
+
+    const verified = await verifyFlutterwaveTransaction(transactionId);
+    if (verified.status !== 'successful' || verified.reference !== invoice.providerReference) return false;
+    validateProviderPayment({
+      eventCurrency: assertEnumValue(BillingCurrency, verified.currency),
+      invoiceCurrency: invoice.currency,
+      eventAmountMinor: verified.amountMinor,
+      invoiceTotal: invoice.total,
+      eventPlanType: null,
+      invoicePlanType: invoice.planType,
+    });
+
+    await activateSubscription({
+      organizationId: invoice.organizationId,
+      payerUserId: invoice.payerUserId,
+      plan,
+      interval: invoice.billingInterval,
+      currency: invoice.currency,
+      provider: 'FLUTTERWAVE',
+      providerCustomerId: verified.customerId,
+      paymentMethodReference: verified.card?.token ? sealPaymentReference(verified.card.token) : null,
+      paymentMethodBrand: verified.card?.brand,
+      paymentMethodLast4: verified.card?.last4,
+      paymentMethodExpMonth: verified.card?.expMonth,
+      paymentMethodExpYear: verified.card?.expYear,
+    });
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { status: 'PAID', paidAt: new Date(), providerCustomerId: verified.customerId },
+    });
+    await recordPaymentEvent(invoice.organizationId, 'FLUTTERWAVE', 'checkout.reconciled_from_return', {
+      invoiceId: invoice.id, transactionId,
+    }, { invoiceId: invoice.id });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Reports whether a checkout has been paid, reconciling from the return if the
+ * webhook has not landed yet.
+ *
+ * Authorization derives from the invoice rather than a caller-supplied
+ * organizationId: the invoice already names its organization, and requiring the
+ * client to repeat it on a GET meant this endpoint answered 400 for every
+ * successful payment.
+ */
+app.get('/billing/checkouts/:invoiceId/status', verifyJwt, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    let invoice = await prisma.invoice.findUnique({ where: { id: req.params.invoiceId } });
+    if (!invoice) return res.status(404).json({ error: 'CHECKOUT_NOT_FOUND' });
+
+    if (invoice.payerUserId !== req.user!.id) {
+      const membership = await prisma.organizationMembership.findUnique({
+        where: { userId_organizationId: { userId: req.user!.id, organizationId: invoice.organizationId } },
+      });
+      const billingRoles: MemberRole[] = [MemberRole.OWNER, MemberRole.ADMIN];
+      if (!membership || !billingRoles.includes(membership.role)) {
+        return res.status(404).json({ error: 'CHECKOUT_NOT_FOUND' });
+      }
+    }
+
     try {
-      const verified = await verifyFlutterwaveTransaction(req.query.transaction_id);
-      if (verified.status === 'successful' && verified.reference === invoice.providerReference) {
-        validateProviderPayment({
-          eventCurrency: assertEnumValue(BillingCurrency, verified.currency), invoiceCurrency: invoice.currency,
-          eventAmountMinor: verified.amountMinor, invoiceTotal: invoice.total,
-          eventPlanType: null, invoicePlanType: invoice.planType,
-        });
-        const plan = await prisma.plan.findUnique({ where: { type: invoice.planType } });
-        if (!plan) throw new Error('PLAN_NOT_FOUND');
-        await activateSubscription({
-          organizationId: invoice.organizationId, payerUserId: invoice.payerUserId,
-          plan, interval: invoice.billingInterval,
-          currency: invoice.currency, provider: 'FLUTTERWAVE', providerCustomerId: verified.customerId,
-          paymentMethodBrand: verified.card?.brand, paymentMethodLast4: verified.card?.last4,
-          paymentMethodExpMonth: verified.card?.expMonth, paymentMethodExpYear: verified.card?.expYear,
-        });
-        await prisma.invoice.update({ where: { id: invoice.id }, data: { status: 'PAID', paidAt: new Date(), providerCustomerId: verified.customerId } });
-        invoice.status = 'PAID'; invoice.paidAt = new Date();
+      if (await reconcileCheckoutFromReturn(invoice, req.query as Record<string, unknown>)) {
+        invoice = await prisma.invoice.findUnique({ where: { id: invoice.id } }) ?? invoice;
       }
     } catch (err) {
-      console.warn('[BillingAPI] Local Flutterwave return verification did not reconcile checkout', err);
+      // A failed reconciliation is not a failed payment — the webhook may still
+      // arrive. Report PENDING and let the client keep polling.
+      console.warn('[BillingAPI] Return reconciliation did not settle checkout', err);
     }
+
+    return res.json({
+      invoiceId: invoice.id,
+      status: invoice.status === 'PAID' ? 'VERIFIED' : invoice.status === 'FAILED' ? 'FAILED' : 'PENDING',
+      provider: invoice.provider,
+      paidAt: invoice.paidAt,
+      verified: invoice.status === 'PAID',
+    });
+  } catch (err) {
+    console.error('[BillingAPI] Checkout status failed', err);
+    return res.status(500).json({ error: 'CHECKOUT_STATUS_FAILED' });
   }
-  res.json({
-    invoiceId: invoice.id,
-    status: invoice.status === 'PAID' ? 'VERIFIED' : invoice.status === 'FAILED' ? 'FAILED' : 'PENDING',
-    provider: invoice.provider,
-    paidAt: invoice.paidAt,
-    verified: invoice.status === 'PAID',
-  });
 });
 
 app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, async (req: AuthenticatedRequest, res: Response) => {
@@ -2193,8 +2339,9 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
       if (!email) return res.status(400).json({ error: 'BILLING_EMAIL_REQUIRED' });
       if (!subscription.paymentMethodReference) {
         return res.status(409).json({
-          error: 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED',
-          message: 'Add a payment method before changing plans.',
+          error: 'PAYMENT_METHOD_REQUIRED',
+          message: 'We do not have a card on file for this subscription yet, so there is nothing to charge the difference to.',
+          resolution: 'CHECKOUT',
         });
       }
 
@@ -2286,8 +2433,10 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
 
     if (subscription.activeProvider !== 'PAYSTACK') {
       return res.status(409).json({
-        error: 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED',
-        message: `Add a payment method before changing this ${subscription.activeProvider ?? 'unlinked'} subscription.`,
+        error: 'PAYMENT_METHOD_REQUIRED',
+        // Written for the person reading it in the dialog, not for a log line.
+        message: 'We do not have a card on file for this subscription yet, so there is nothing to charge the difference to.',
+        resolution: 'CHECKOUT',
       });
     }
 
@@ -2301,8 +2450,9 @@ app.post('/billing/subscriptions/changes', verifyJwt, requireBillingManager, asy
     if (!planCode) return res.status(503).json({ error: 'PROVIDER_PLAN_NOT_CONFIGURED' });
     if (!subscription.paymentMethodReference) {
       return res.status(409).json({
-        error: 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED',
-        message: 'Add a payment method before changing plans.',
+        error: 'PAYMENT_METHOD_REQUIRED',
+        message: 'We do not have a card on file for this subscription yet, so there is nothing to charge the difference to.',
+        resolution: 'CHECKOUT',
       });
     }
     const email = payerEmail(profile, req);

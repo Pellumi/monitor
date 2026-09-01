@@ -51,6 +51,13 @@ export interface PaystackVerifyResult {
   customerCode: string;
   subscriptionCode: string | null;
   authorizationCode: string | null;
+  /**
+   * The card behind the authorization. Needed because a transaction verified on
+   * the browser return must store the same reusable payment method the webhook
+   * would have stored — otherwise the subscription activates with no card and
+   * cannot renew.
+   */
+  card: { brand: string | null; last4: string | null; expMonth: string | null; expYear: string | null } | null;
   metadata: Record<string, unknown>;
 }
 
@@ -125,6 +132,14 @@ export async function verifyTransaction(reference: string): Promise<PaystackVeri
     customerCode: tx.customer?.customer_code ?? '',
     subscriptionCode: tx.subscription?.subscription_code ?? null,
     authorizationCode: tx.authorization?.authorization_code ?? null,
+    card: tx.authorization
+      ? {
+          brand: tx.authorization.brand ?? tx.authorization.card_type ?? null,
+          last4: tx.authorization.last4 ?? null,
+          expMonth: tx.authorization.exp_month ?? null,
+          expYear: tx.authorization.exp_year ?? null,
+        }
+      : null,
     metadata: tx.metadata ?? {},
   };
 }

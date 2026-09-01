@@ -54,7 +54,34 @@ type ScanOptions = {
   scannerVersion?: string;
   maxFiles?: number;
   maxFileBytes?: number;
+  /** QA review branch from the application policy, used to measure divergence. */
+  upstreamBranch?: string | null;
 };
+
+// Ref names reach the scanner from the application's branch policy, so they are
+// server-controlled input. execFileSync takes an argv array (no shell), but a
+// value like "--upload-pack=..." would still be read by git as an option.
+const SAFE_REF = /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,200}$/;
+
+export function isSafeBranchName(value: string): boolean {
+  return SAFE_REF.test(value) && !value.endsWith('/') && !value.endsWith('.lock');
+}
+
+/**
+ * How far this checkout has drifted from the shared QA branch. Returns nulls
+ * rather than throwing when there is no upstream to compare against (no remote,
+ * offline, branch never pushed) - an unknown answer is not a violation.
+ */
+function divergenceFrom(root: string, upstreamBranch: string | null | undefined) {
+  const unknown = { upstreamBranch: null, aheadCount: null, behindCount: null };
+  if (!upstreamBranch || !isSafeBranchName(upstreamBranch)) return unknown;
+  const upstreamRef = `refs/remotes/origin/${upstreamBranch}`;
+  if (!git(root, ['rev-parse', '--verify', '--quiet', upstreamRef])) return unknown;
+  const counts = git(root, ['rev-list', '--left-right', '--count', `${upstreamRef}...HEAD`]);
+  const [behind, ahead] = (counts ?? '').split(/[ \t]+/).map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(behind) || !Number.isFinite(ahead)) return unknown;
+  return { upstreamBranch, aheadCount: ahead, behindCount: behind };
+}
 
 function hash(value: string | Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -206,12 +233,17 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     .map(([name, digest]) => `${name}:${digest}`)
     .join('\0');
 
+  const divergence = divergenceFrom(resolvedRoot, options.upstreamBranch);
+
   return {
     workspaceId: options.workspaceId,
     revision,
     branch,
     dirty: Boolean(status),
     repositoryFingerprint: hash(`${revision ?? ''}\0${portableManifestIdentity}`),
+    // repositoryFingerprint folds in the revision above, so it changes on every
+    // commit and cannot identify a repository across teammates. This one can.
+    portableManifestIdentity: hash(portableManifestIdentity),
     repositoryOriginHash: remote?.originHash ?? null,
     repositoryCloneUrl: remote?.cloneUrl ?? null,
     languages: [...languages].sort(),
@@ -225,5 +257,8 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     manifestHashes,
     scannerVersion: options.scannerVersion ?? '0.1.0',
     redactionSummary: { excludedFiles, suspectedSecrets },
+    upstreamBranch: divergence.upstreamBranch,
+    aheadCount: divergence.aheadCount,
+    behindCount: divergence.behindCount,
   };
 }

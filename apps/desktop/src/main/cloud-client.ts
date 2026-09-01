@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { app, shell } from 'electron';
 import type {
+  BranchPolicy,
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   FlowReviewPreview,
@@ -561,12 +562,48 @@ export class DesktopCloudClient {
     return response.data;
   }
 
+  /** Every workspace attached to this application, including other members'. */
+  async workspaces(applicationId: string): Promise<Array<{
+    id: string;
+    createdByUserId?: string;
+    isMine?: boolean;
+    permissions?: Array<{
+      permissionType: string;
+      revokedAt: string | null;
+      expiresAt: string | null;
+    }>;
+  }>> {
+    return this.request(`/applications/${applicationId}/workspaces`);
+  }
+
+  /** The QA branch policy this application's members are all measured against. */
+  async branchPolicy(applicationId: string): Promise<BranchPolicy> {
+    return this.request<BranchPolicy>(`/applications/${applicationId}/branch-policy`);
+  }
+
+  async grantQaBranchCheckout(applicationId: string, workspaceId: string, expiresInMinutes?: number) {
+    return this.request<Json>(
+      `/applications/${applicationId}/workspaces/${workspaceId}/qa-branch-grant`,
+      { method: 'POST', body: JSON.stringify({ expiresInMinutes }) },
+    );
+  }
+
+  async revokeQaBranchCheckout(applicationId: string, workspaceId: string) {
+    return this.request<Json>(
+      `/applications/${applicationId}/workspaces/${workspaceId}/qa-branch-grant`,
+      { method: 'DELETE' },
+    );
+  }
+
   async registerWorkspace(applicationId: string, opaqueLocalId: string, snapshot: RepositorySnapshotSummary) {
     const workspace = await this.request<Json>(`/applications/${applicationId}/workspaces`, {
       method: 'POST',
       body: JSON.stringify({
         opaqueLocalId,
         repositoryFingerprint: snapshot.repositoryFingerprint,
+        // Stable across commits, unlike repositoryFingerprint, so the cloud can
+        // recognise a teammate's checkout of the same repository.
+        portableManifestIdentity: snapshot.portableManifestIdentity,
         repositoryOriginHash: snapshot.repositoryOriginHash,
         repositoryCloneUrl: snapshot.repositoryCloneUrl,
         detectedStack: snapshot.frameworks,
@@ -588,9 +625,16 @@ export class DesktopCloudClient {
         manifestHashes: snapshot.manifestHashes,
         scannerVersion: snapshot.scannerVersion,
         redactionSummary: snapshot.redactionSummary,
+        upstreamBranch: snapshot.upstreamBranch,
+        aheadCount: snapshot.aheadCount,
+        behindCount: snapshot.behindCount,
       }),
     });
-    return { workspaceId: String(workspace.id), repositorySnapshotId: String(repositorySnapshot.id) };
+    return {
+      workspaceId: String(workspace.id),
+      repositorySnapshotId: String(repositorySnapshot.id),
+      branchPolicy: (workspace as { branchPolicy?: BranchPolicy }).branchPolicy ?? null,
+    };
   }
 
   async detectInstrumentation(applicationId: string, input: { workspaceId: string; environmentId: string; detections: InstrumentationDetection[] }) {

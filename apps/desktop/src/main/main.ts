@@ -4,15 +4,22 @@ import fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
-import { IPC, StartGuidedRunInputSchema, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import { IPC, StartGuidedRunInputSchema, type BranchPolicy, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import { scanWorkspace } from '@tellann/project-intelligence';
 import { BrowserObserver } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
 import { initializeUpdater } from './update-manager';
-import { closeLocalStore, readLocalState, writeLocalState } from './local-store';
+import { closeLocalStore, deleteLocalState, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@tellann/document-intelligence';
 import { InstrumentationController, type SelectedWorkspace } from './instrumentation-controller';
+import { workspaceLocalId } from './device-identity';
+import {
+  evaluateCompliance,
+  restoreWorkspaceBranch,
+  switchToQaBranch,
+  type QaBranchCheckpoint,
+} from './qa-branch';
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
@@ -98,27 +105,82 @@ function safeDesktopError(error: unknown): string {
   return message.replace(/^Error invoking remote method '[^']+':\s*/i, '').slice(0, 240) || 'Document import failed.';
 }
 
+type StoredWorkspace = {
+  id: string;
+  path: string;
+  name: string;
+  snapshot: RepositorySnapshotSummary;
+  cloudId?: string;
+  snapshotId?: string;
+  branchPolicy?: BranchPolicy | null;
+};
+
+function qaBranchCheckpointKey(applicationId: string): string {
+  return `workspace:qa-branch-checkpoint:${applicationId}`;
+}
+
+/**
+ * Resolves the policy from the cloud, falling back to the copy cached with the
+ * workspace so a member working offline still sees the branch requirement.
+ */
+async function resolveBranchPolicy(applicationId: string, cached: BranchPolicy | null | undefined) {
+  try {
+    return await cloud.branchPolicy(applicationId);
+  } catch {
+    return cached ?? null;
+  }
+}
+
+/** Whether an unexpired MANAGE_QA_BRANCH grant covers this member's workspace. */
+async function hasQaBranchGrant(applicationId: string, cloudWorkspaceId: string | undefined): Promise<boolean> {
+  if (!cloudWorkspaceId) return false;
+  try {
+    const workspaces = await cloud.workspaces(applicationId);
+    const mine = workspaces.find((workspace) => workspace.id === cloudWorkspaceId);
+    const now = Date.now();
+    return (mine?.permissions ?? []).some((grant) => (
+      grant.permissionType === 'MANAGE_QA_BRANCH'
+      && !grant.revokedAt
+      && (!grant.expiresAt || new Date(grant.expiresAt).getTime() > now)
+    ));
+  } catch {
+    return false;
+  }
+}
+
 function localWorkspaceKey(applicationId: string): string {
   const scope = cloud.localWorkspaceScope();
   if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
   return `workspace:${scope}:${applicationId}`;
 }
 
-async function registerSelectedWorkspace(applicationId: string, selectedPath: string, workspaceId: string) {
+async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
   resolveWithinWorkspace(selectedPath, '.');
-  const snapshot = await scanWorkspace(selectedPath, { workspaceId });
+  // Derived from the folder path under a device-local secret rather than
+  // randomly generated per attach, so re-attaching the same folder updates the
+  // existing cloud workspace instead of leaving a duplicate row behind.
+  const workspaceId = workspaceLocalId(selectedPath);
+  const previous = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+  // Fetched before the scan so the scanner can measure how far this checkout has
+  // drifted from the shared QA branch in the same pass.
+  const policy = await resolveBranchPolicy(applicationId, previous?.branchPolicy);
+  const snapshot = await scanWorkspace(selectedPath, {
+    workspaceId,
+    upstreamBranch: policy?.bound ? policy.qaBranchName : null,
+  });
   const registered = await cloud.registerWorkspace(applicationId, workspaceId, snapshot);
   selectedWorkspaces.set(applicationId, {
     applicationId, localId: workspaceId, cloudId: registered.workspaceId,
     snapshotId: registered.repositorySnapshotId, root: selectedPath, snapshot,
   });
-  const workspace = {
+  const workspace: StoredWorkspace = {
     id: workspaceId,
     path: selectedPath,
     name: path.basename(selectedPath),
     snapshot,
     cloudId: registered.workspaceId,
     snapshotId: registered.repositorySnapshotId,
+    branchPolicy: registered.branchPolicy ?? policy ?? null,
   };
   writeLocalState(localWorkspaceKey(applicationId), workspace);
   return workspace;
@@ -663,14 +725,13 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.scanWorkspace, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const parsed = input as { path?: unknown; workspaceId?: unknown };
-    if (typeof parsed.path !== 'string' || typeof parsed.workspaceId !== 'string') {
-      throw new Error('INVALID_SCAN_INPUT');
-    }
+    const parsed = input as { path?: unknown };
+    if (typeof parsed.path !== 'string') throw new Error('INVALID_SCAN_INPUT');
     const applicationId = typeof (parsed as { applicationId?: unknown }).applicationId === 'string'
       ? String((parsed as { applicationId: string }).applicationId) : null;
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
-    return (await registerSelectedWorkspace(applicationId, parsed.path, parsed.workspaceId)).snapshot;
+    const workspace = await registerSelectedWorkspace(applicationId, parsed.path);
+    return { id: workspace.id, snapshot: workspace.snapshot, branchPolicy: workspace.branchPolicy ?? null };
   });
   ipcMain.handle(IPC.cloneWorkspace, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -702,10 +763,74 @@ function registerIpc(): void {
       timeout: 10 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
     });
-    const workspace = await registerSelectedWorkspace(value.applicationId, destination, crypto.randomUUID());
+    const workspace = await registerSelectedWorkspace(value.applicationId, destination);
     const { cloudId: _cloudId, snapshotId: _snapshotId, ...rendererSafe } = workspace;
     return rendererSafe;
   });
+  ipcMain.handle(IPC.getBranchCompliance, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    if (!stored) return null;
+    const policy = await resolveBranchPolicy(applicationId, stored.branchPolicy);
+    return evaluateCompliance({
+      workspaceRoot: stored.path,
+      policy,
+      agentCheckoutGranted: await hasQaBranchGrant(applicationId, stored.cloudId),
+      aheadCount: stored.snapshot.aheadCount ?? null,
+      behindCount: stored.snapshot.behindCount ?? null,
+    });
+  });
+
+  ipcMain.handle(IPC.grantQaBranchCheckout, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; expiresInMinutes?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(value.applicationId));
+    if (!stored?.cloudId) throw new Error('WORKSPACE_NOT_REGISTERED');
+    const minutes = typeof value.expiresInMinutes === 'number' ? value.expiresInMinutes : undefined;
+    return cloud.grantQaBranchCheckout(value.applicationId, stored.cloudId, minutes);
+  });
+
+  /**
+   * Performs the switch the member explicitly asked for. The grant is re-checked
+   * against the server here rather than trusted from the renderer, so a revoked
+   * or expired grant cannot be replayed by a stale window.
+   */
+  ipcMain.handle(IPC.switchToQaBranch, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    if (!stored) throw new Error('WORKSPACE_NOT_ATTACHED');
+
+    const policy = await resolveBranchPolicy(applicationId, stored.branchPolicy);
+    if (!policy?.bound) throw new Error('NO_BRANCH_POLICY');
+    if (!policy.allowAgentCheckout) throw new Error('AGENT_CHECKOUT_DISABLED');
+    if (!(await hasQaBranchGrant(applicationId, stored.cloudId))) throw new Error('AGENT_CHECKOUT_NOT_GRANTED');
+
+    const { result, checkpoint } = await switchToQaBranch(stored.path, policy);
+    if (checkpoint) writeLocalState(qaBranchCheckpointKey(applicationId), checkpoint);
+    // Re-scan so the cloud sees the new branch immediately rather than on the
+    // member's next attach.
+    if (result.switched) {
+      await registerSelectedWorkspace(applicationId, stored.path).catch(() => undefined);
+    }
+    return result;
+  });
+
+  ipcMain.handle(IPC.restoreWorkspaceBranch, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const checkpoint = readLocalState<QaBranchCheckpoint>(qaBranchCheckpointKey(applicationId));
+    if (!checkpoint) throw new Error('NO_QA_BRANCH_CHECKPOINT');
+    const restored = await restoreWorkspaceBranch(checkpoint);
+    if (restored.restored) {
+      deleteLocalState(qaBranchCheckpointKey(applicationId));
+      await registerSelectedWorkspace(applicationId, checkpoint.workspaceRoot).catch(() => undefined);
+    }
+    return restored;
+  });
+
   ipcMain.handle(IPC.detectInstrumentation, async (event, input: unknown) => {
     assertTrustedSender(event);
     return instrumentation.detect(parseInstrumentationContext(input));

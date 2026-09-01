@@ -34,9 +34,16 @@ async function git(root: string, args: string[]): Promise<string> {
   return String(result.stdout ?? '').trim();
 }
 
-function branchName(now: Date): string {
+// Instrumentation branches live under the QA review branch when the application
+// has one, so a run cannot quietly escape the branch policy into an unrelated
+// namespace. Falls back to the flat name when no policy applies.
+function branchName(now: Date, qaBranchName?: string | null): string {
   const timestamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  return `tellann/instrument-${timestamp}-${crypto.randomBytes(3).toString('hex')}`;
+  const suffix = `instrument-${timestamp}-${crypto.randomBytes(3).toString('hex')}`;
+  const prefix = qaBranchName && /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,200}$/.test(qaBranchName)
+    ? qaBranchName
+    : 'tellann';
+  return `${prefix}/${suffix}`;
 }
 
 function local(reason: string, details?: Partial<InstrumentationCheckpoint>): InstrumentationCheckpoint {
@@ -52,7 +59,10 @@ function local(reason: string, details?: Partial<InstrumentationCheckpoint>): In
   };
 }
 
-export async function createInstrumentationCheckpoint(workspaceRoot: string): Promise<InstrumentationCheckpoint> {
+export async function createInstrumentationCheckpoint(
+  workspaceRoot: string,
+  qaBranchName?: string | null,
+): Promise<InstrumentationCheckpoint> {
   const root = fs.realpathSync.native(path.resolve(workspaceRoot));
   try {
     const repositoryRoot = fs.realpathSync.native(await git(root, ['rev-parse', '--show-toplevel']));
@@ -62,7 +72,7 @@ export async function createInstrumentationCheckpoint(workspaceRoot: string): Pr
     const baseRevision = await git(root, ['rev-parse', 'HEAD']);
     const previousBranch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '')) || null;
     const dirty = Boolean(await git(root, ['status', '--porcelain=v1', '--untracked-files=normal']));
-    const branch = branchName(new Date());
+    const branch = branchName(new Date(), qaBranchName);
     await git(root, ['switch', '-c', branch]);
     return {
       kind: 'GIT_BRANCH',

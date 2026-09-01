@@ -966,6 +966,7 @@ model Application {
   workflows          Workflow[]
   demonstrations     Demonstration[]
   profile            ApplicationProfile?
+  repositoryBinding  ApplicationRepositoryBinding?
   projectWorkspaces  ProjectWorkspace[]
   qaRuns             QARun[]
   sourceDocuments    SourceDocument[]
@@ -1671,6 +1672,12 @@ enum DesktopPermissionType {
   APPLY_TASK
   RUN_COMMANDS
   SENSITIVE_BROWSER_ACTIONS
+  MANAGE_QA_BRANCH
+}
+
+enum BranchPolicyEnforcement {
+  WARN
+  BLOCK
 }
 
 enum WorkspaceTrustStatus {
@@ -1977,6 +1984,10 @@ model ProjectWorkspace {
   repositoryFingerprint String
   repositoryOriginHash  String?
   repositoryCloneUrl    String?
+  // Stable across commits (unlike repositoryFingerprint, which folds in the
+  // revision). Used to match a teammate's checkout to the application binding
+  // when the repository has no GitHub origin to hash.
+  portableManifestIdentity String?
   detectedStack         Json?
   packageManager        String?
   trustStatus           WorkspaceTrustStatus @default(UNTRUSTED)
@@ -1992,9 +2003,34 @@ model ProjectWorkspace {
   projectConnections   ProjectConnection[]
   flowProjectBindings  FlowProjectBinding[]
 
-  @@unique([applicationId, opaqueLocalId])
+  // A workspace is one person's checkout on one machine. Two members who attach
+  // the same repository must never collide onto a single row.
+  @@unique([applicationId, createdByUserId, opaqueLocalId])
   @@index([organizationId, applicationId])
+  @@index([applicationId, createdByUserId])
   @@index([applicationId, repositoryOriginHash])
+}
+
+/// The one repository an application is bound to, plus the QA branch policy that
+/// every member's local workspace is measured against. Org-owned: identical for
+/// everyone, regardless of where they cloned it or what they named the folder.
+model ApplicationRepositoryBinding {
+  id                       String                   @id @default(uuid())
+  applicationId            String                   @unique
+  application              Application              @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  repositoryOriginHash     String?
+  repositoryCloneUrl       String?
+  portableManifestIdentity String?
+  qaBranchName             String                   @default("tellann/qa-review")
+  qaBranchBase             String                   @default("main")
+  enforcement              BranchPolicyEnforcement  @default(WARN)
+  allowAgentCheckout       Boolean                  @default(false)
+  boundByUserId            String?
+  updatedByUserId          String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+
+  @@index([repositoryOriginHash])
 }
 
 model PermissionGrant {
@@ -2028,6 +2064,9 @@ model RepositorySnapshot {
   manifestHashes        Json
   scannerVersion        String
   redactionSummary      Json
+  upstreamBranch        String?
+  aheadCount            Int?
+  behindCount           Int?
   createdAt             DateTime         @default(now())
 
   qaRuns               QARun[]
@@ -2457,6 +2496,11 @@ enum AuditAction {
   API_KEY_CREATED
   API_KEY_REVOKED
   API_KEY_ROTATED
+
+  // ─── Environments ─────────────────────────────────
+  ENVIRONMENT_CREATED
+  ENVIRONMENT_UPDATED
+  ENVIRONMENT_DELETED
 
   // ─── Billing ──────────────────────────────────────
   SUBSCRIPTION_ACTIVATED

@@ -20,7 +20,7 @@ import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate 
 import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { createDesktopRouter } from './desktop-routes';
+import { createDesktopRouter, serializeBranchPolicy } from './desktop-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
@@ -1108,6 +1108,11 @@ app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, a
     const org = await prisma.organization.findUnique({ where: { id: orgId } });
     if (!org) return res.status(404).json({ error: 'Organization not found' });
 
+    const actorMembership = await getOrgMembership(req.user!.id, orgId);
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may create applications.' });
+    }
+
     // Check application limit
     const limitCheck = await entitlementChecker.canCreateApplication(orgId);
     if (!limitCheck.allowed) {
@@ -1189,7 +1194,7 @@ app.get('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, as
   try {
     const apps = await prisma.application.findMany({
       where: { organizationId: req.params.orgId },
-      include: { profile: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
+      include: { profile: true, environments: true, onboardingProgress: true, repositoryBinding: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(apps);
@@ -1213,7 +1218,7 @@ app.get('/applications', verifyJwt, async (req: AuthenticatedRequest, res: Respo
           }
         }
       },
-      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, repositoryBinding: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(apps);
@@ -1228,7 +1233,7 @@ app.get('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authenti
   try {
     const app = await prisma.application.findUnique({
       where: { id: req.params.id },
-      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, repositoryBinding: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
     });
     if (!app) return res.status(404).json({ error: 'Application not found' });
     res.json(app);
@@ -1247,6 +1252,13 @@ app.patch('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authen
     const existing = await prisma.application.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Application not found' });
 
+    const actorMembership = existing.organizationId
+      ? await getOrgMembership(req.user!.id, existing.organizationId)
+      : null;
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may update applications.' });
+    }
+
     const data: { name?: string; summary?: string | null } = {};
     if (name !== undefined && typeof name === 'string' && name.trim()) {
       data.name = name.trim();
@@ -1262,7 +1274,7 @@ app.patch('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authen
     const updated = await prisma.application.update({
       where: { id },
       data,
-      include: { profile: true, organization: true, environments: true, onboardingProgress: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
+      include: { profile: true, organization: true, environments: true, onboardingProgress: true, repositoryBinding: true, projectWorkspaces: { include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { updatedAt: 'desc' } } },
     });
 
     if (updated.organizationId) {
@@ -1278,6 +1290,156 @@ app.patch('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authen
     res.json(updated);
   } catch (err) {
     console.error('[Onboarding] Update app error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/** GET /applications/:id/repository-binding - read the repository + QA branch policy */
+app.get('/applications/:id/repository-binding', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const binding = await prisma.applicationRepositoryBinding.findUnique({
+      where: { applicationId: req.params.id },
+    });
+    res.json(serializeBranchPolicy(req.params.id, binding));
+  } catch (err) {
+    console.error('[Onboarding] Get repository binding error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /applications/:id/repository-binding - set the QA branch policy.
+ *
+ * Org-owned on purpose: the whole point of the policy is that it is identical
+ * for every member regardless of where they cloned the repository, so a single
+ * member must not be able to redefine it for everyone else.
+ */
+app.put('/applications/:id/repository-binding', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { qaBranchName, qaBranchBase, enforcement, allowAgentCheckout } = req.body ?? {};
+
+  try {
+    const application = await prisma.application.findUnique({ where: { id }, select: { organizationId: true } });
+    if (!application) return res.status(404).json({ error: 'Application not found' });
+
+    const actorMembership = application.organizationId
+      ? await getOrgMembership(req.user!.id, application.organizationId)
+      : null;
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may change the QA branch policy.' });
+    }
+
+    // Same rule the scanner applies before handing a ref to git: reject anything
+    // that could be read as an option or is not a valid branch name.
+    const validBranch = (value: unknown) =>
+      typeof value === 'string'
+      && /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,200}$/.test(value)
+      && !value.endsWith('/')
+      && !value.endsWith('.lock');
+
+    if (qaBranchName !== undefined && !validBranch(qaBranchName)) {
+      return res.status(400).json({ error: 'INVALID_BRANCH_NAME', message: 'QA branch name is not a valid Git branch name.' });
+    }
+    if (qaBranchBase !== undefined && !validBranch(qaBranchBase)) {
+      return res.status(400).json({ error: 'INVALID_BRANCH_NAME', message: 'Base branch is not a valid Git branch name.' });
+    }
+    if (enforcement !== undefined && !['WARN', 'BLOCK'].includes(String(enforcement))) {
+      return res.status(400).json({ error: 'INVALID_ENFORCEMENT', message: 'Enforcement must be WARN or BLOCK.' });
+    }
+
+    const data = {
+      ...(qaBranchName !== undefined ? { qaBranchName: String(qaBranchName) } : {}),
+      ...(qaBranchBase !== undefined ? { qaBranchBase: String(qaBranchBase) } : {}),
+      ...(enforcement !== undefined ? { enforcement: String(enforcement) as 'WARN' | 'BLOCK' } : {}),
+      ...(allowAgentCheckout !== undefined ? { allowAgentCheckout: Boolean(allowAgentCheckout) } : {}),
+      updatedByUserId: req.user!.id,
+    };
+
+    const binding = await prisma.applicationRepositoryBinding.upsert({
+      where: { applicationId: id },
+      create: { applicationId: id, ...data },
+      update: data,
+    });
+
+    res.json(serializeBranchPolicy(id, binding));
+  } catch (err) {
+    console.error('[Onboarding] Update repository binding error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /applications/:id/workspace-roster - every member's attached checkout.
+ *
+ * Replaces reading projectWorkspaces[0], which showed whichever teammate scanned
+ * most recently and presented that foreign machine branch and stack as if it
+ * belonged to the viewer.
+ */
+app.get('/applications/:id/workspace-roster', verifyJwt, verifyAppOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const [binding, workspaces] = await Promise.all([
+      prisma.applicationRepositoryBinding.findUnique({ where: { applicationId: id } }),
+      prisma.projectWorkspace.findMany({
+        where: { applicationId: id },
+        include: {
+          snapshots: { orderBy: { createdAt: 'desc' }, take: 1 },
+          permissions: { where: { permissionType: 'MANAGE_QA_BRANCH', revokedAt: null } },
+        },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const userIds = [...new Set(workspaces.map((workspace) => workspace.createdByUserId))];
+    const users = userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, email: true, displayName: true },
+        })
+      : [];
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const policy = serializeBranchPolicy(id, binding);
+    const now = Date.now();
+
+    res.json({
+      policy,
+      workspaces: workspaces.map((workspace) => {
+        const snapshot = workspace.snapshots[0] ?? null;
+        const owner = usersById.get(workspace.createdByUserId) ?? null;
+        const onQaBranch = Boolean(policy.bound && snapshot?.branch && snapshot.branch === policy.qaBranchName);
+        const status = !policy.bound
+          ? 'NO_POLICY'
+          : !snapshot?.branch
+            ? 'UNKNOWN'
+            : onQaBranch ? 'COMPLIANT' : 'BRANCH_MISMATCH';
+        return {
+          id: workspace.id,
+          isMine: workspace.createdByUserId === req.user!.id,
+          owner: owner
+            ? { id: owner.id, email: owner.email, displayName: owner.displayName }
+            : { id: workspace.createdByUserId, email: null, displayName: null },
+          packageManager: workspace.packageManager,
+          detectedStack: workspace.detectedStack,
+          trustStatus: workspace.trustStatus,
+          lastScannedAt: workspace.lastScannedAt,
+          branch: snapshot?.branch ?? null,
+          revision: snapshot?.revision ?? null,
+          dirty: snapshot?.dirty ?? null,
+          aheadCount: snapshot?.aheadCount ?? null,
+          behindCount: snapshot?.behindCount ?? null,
+          routeSummary: snapshot?.routeSummary ?? null,
+          endpointSummary: snapshot?.endpointSummary ?? null,
+          documentationSummary: snapshot?.documentationSummary ?? null,
+          status,
+          blocksRun: status === 'BRANCH_MISMATCH' && policy.enforcement === 'BLOCK',
+          agentCheckoutGranted: workspace.permissions.some(
+            (grant) => !grant.expiresAt || grant.expiresAt.getTime() > now,
+          ),
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[Onboarding] Workspace roster error', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1329,6 +1491,13 @@ app.delete('/applications/:id', verifyJwt, verifyAppOwnership, async (req: Authe
       select: { id: true, name: true, organizationId: true },
     });
     if (!app) return res.status(404).json({ error: 'Application not found' });
+
+    const actorMembership = app.organizationId
+      ? await getOrgMembership(req.user!.id, app.organizationId)
+      : null;
+    if (!isOrgManager(actorMembership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may delete applications.' });
+    }
 
     // Perform cascade deletion of all child records inside a transaction
     await prisma.$transaction(async (tx) => {
@@ -1481,6 +1650,11 @@ app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, asy
     });
     if (!app) return res.status(404).json({ error: 'Application not found' });
 
+    const membership = await getOrgMembership(req.user!.id, app.organizationId as string);
+    if (!isOrgManager(membership?.role)) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may create environments.' });
+    }
+
     // Check environment limit
     const limitCheck = await entitlementChecker.canCreateEnvironment(appId);
     if (!limitCheck.allowed) {
@@ -1502,6 +1676,14 @@ app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, asy
       }
     });
 
+    void writeAuditLog(prisma, {
+      action: AuditAction.ENVIRONMENT_CREATED,
+      userId: req.user!.id,
+      organizationId: app.organizationId,
+      applicationId: appId,
+      metadata: { environmentId: env.id, name: env.name, type: env.type },
+    });
+
     res.status(201).json(env);
   } catch (err) {
     console.error('[Onboarding] Create environment error', err);
@@ -1509,29 +1691,114 @@ app.post('/applications/:appId/environments', verifyJwt, verifyAppOwnership, asy
   }
 });
 
-/** PATCH /environments/:envId — update the display name or browser base URL. */
+/**
+ * PATCH /environments/:envId — update the display name, browser base URL,
+ * SDK-enabled flag, or promote the environment to the application default.
+ */
 app.patch('/environments/:envId', verifyJwt, verifyEnvOwnership, async (req: AuthenticatedRequest, res: Response) => {
   const { envId } = req.params;
-  const environment = await prisma.environment.findUnique({ where: { id: envId } });
+  const environment = await prisma.environment.findUnique({
+    where: { id: envId },
+    include: { application: { select: { organizationId: true } } },
+  });
   if (!environment) return res.status(404).json({ error: 'Environment not found' });
+
+  const membership = await getOrgMembership(req.user!.id, environment.application.organizationId as string);
+  if (!isOrgManager(membership?.role)) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may change environments.' });
+  }
 
   const body = req.body ?? {};
   if (body.type !== undefined && body.type !== environment.type) {
     return res.status(400).json({ error: 'Environment type cannot be changed after creation.' });
   }
+  if (body.isDefault === false && environment.isDefault) {
+    return res.status(400).json({ error: 'To change the default, set another environment as the default instead.' });
+  }
 
   try {
-    const updated = await prisma.environment.update({
-      where: { id: envId },
-      data: {
-        ...(body.name !== undefined ? { name: normalizeEnvironmentName(body.name) } : {}),
-        ...(body.baseUrl !== undefined ? { baseUrl: normalizeEnvironmentBaseUrl(body.baseUrl, environment.type) } : {}),
-      },
+    const data: Record<string, unknown> = {
+      ...(body.name !== undefined ? { name: normalizeEnvironmentName(body.name) } : {}),
+      ...(body.baseUrl !== undefined ? { baseUrl: normalizeEnvironmentBaseUrl(body.baseUrl, environment.type) } : {}),
+      ...(typeof body.sdkEnabled === 'boolean' ? { sdkEnabled: body.sdkEnabled } : {}),
+    };
+    const promoteToDefault = body.isDefault === true && !environment.isDefault;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (promoteToDefault) {
+        await tx.environment.updateMany({
+          where: { applicationId: environment.applicationId, isDefault: true },
+          data: { isDefault: false },
+        });
+        data.isDefault = true;
+      }
+      return tx.environment.update({ where: { id: envId }, data });
+    });
+
+    void writeAuditLog(prisma, {
+      action: AuditAction.ENVIRONMENT_UPDATED,
+      userId: req.user!.id,
+      organizationId: environment.application.organizationId,
+      applicationId: environment.applicationId,
+      metadata: { environmentId: envId, changed: [...Object.keys(data)] },
     });
     return res.json(updated);
   } catch (error) {
     if (error instanceof Error && !('code' in error)) return res.status(400).json({ error: error.message });
     console.error('[Onboarding] Update environment error', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * DELETE /environments/:envId — remove a non-default environment that has no
+ * ingestion keys or captured data. Owners and Admins only.
+ */
+app.delete('/environments/:envId', verifyJwt, verifyEnvOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  const { envId } = req.params;
+  const environment = await prisma.environment.findUnique({
+    where: { id: envId },
+    include: {
+      application: { select: { organizationId: true } },
+      _count: { select: { apiKeys: true, sessions: true, qaRuns: true, demonstrations: true, behaviorGraphs: true } },
+    },
+  });
+  if (!environment) return res.status(404).json({ error: 'Environment not found' });
+
+  const membership = await getOrgMembership(req.user!.id, environment.application.organizationId as string);
+  if (!isOrgManager(membership?.role)) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Only Owners and Admins may delete environments.' });
+  }
+  if (environment.isDefault) {
+    return res.status(400).json({ error: 'DEFAULT_ENVIRONMENT', message: 'The default environment cannot be deleted. Set another environment as the default first.' });
+  }
+
+  const dependents =
+    environment._count.apiKeys +
+    environment._count.sessions +
+    environment._count.qaRuns +
+    environment._count.demonstrations +
+    environment._count.behaviorGraphs;
+  if (dependents > 0) {
+    return res.status(409).json({
+      error: 'ENVIRONMENT_NOT_EMPTY',
+      message: 'This environment has ingestion keys or captured data. Turn off its SDK access instead of deleting it.',
+      counts: environment._count,
+    });
+  }
+
+  try {
+    await prisma.environment.delete({ where: { id: envId } });
+    void writeAuditLog(prisma, {
+      action: AuditAction.ENVIRONMENT_DELETED,
+      userId: req.user!.id,
+      organizationId: environment.application.organizationId,
+      applicationId: environment.applicationId,
+      metadata: { environmentId: envId, name: environment.name, type: environment.type },
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('[Onboarding] Delete environment error', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

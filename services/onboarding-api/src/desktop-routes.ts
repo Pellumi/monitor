@@ -32,6 +32,47 @@ function safeArtifact(artifact: { bytes: bigint } & Record<string, unknown>) {
   return { ...artifact, bytes: artifact.bytes.toString() };
 }
 
+type RepositoryBindingRow = {
+  applicationId: string;
+  repositoryOriginHash: string | null;
+  repositoryCloneUrl: string | null;
+  qaBranchName: string;
+  qaBranchBase: string;
+  enforcement: 'WARN' | 'BLOCK';
+  allowAgentCheckout: boolean;
+};
+
+/**
+ * The wire shape every client evaluates its local checkout against. `bound` is
+ * false until a repository has actually been attached, which is what lets the
+ * desktop distinguish "no policy yet" from "policy says you are on the wrong
+ * branch" without a second round trip.
+ */
+export function serializeBranchPolicy(applicationId: string, binding: RepositoryBindingRow | null) {
+  if (!binding) {
+    return {
+      applicationId,
+      repositoryOriginHash: null,
+      repositoryCloneUrl: null,
+      qaBranchName: 'tellann/qa-review',
+      qaBranchBase: 'main',
+      enforcement: 'WARN' as const,
+      allowAgentCheckout: false,
+      bound: false,
+    };
+  }
+  return {
+    applicationId,
+    repositoryOriginHash: binding.repositoryOriginHash,
+    repositoryCloneUrl: binding.repositoryCloneUrl,
+    qaBranchName: binding.qaBranchName,
+    qaBranchBase: binding.qaBranchBase,
+    enforcement: binding.enforcement,
+    allowAgentCheckout: binding.allowAgentCheckout,
+    bound: true,
+  };
+}
+
 export function createDesktopRouter(input: {
   prisma: PrismaClient;
   entitlementChecker: EntitlementChecker;
@@ -98,7 +139,10 @@ export function createDesktopRouter(input: {
     verifyAppOwnership,
     async (req: DesktopRequest, res: Response) => {
       const { appId } = req.params;
-      const { opaqueLocalId, repositoryFingerprint, repositoryOriginHash, repositoryCloneUrl, detectedStack, packageManager } = req.body ?? {};
+      const {
+        opaqueLocalId, repositoryFingerprint, repositoryOriginHash, repositoryCloneUrl,
+        portableManifestIdentity, detectedStack, packageManager,
+      } = req.body ?? {};
       if (!opaqueLocalId || !repositoryFingerprint) {
         return res.status(400).json({ error: 'opaqueLocalId and repositoryFingerprint are required' });
       }
@@ -122,16 +166,62 @@ export function createDesktopRouter(input: {
       });
       if (!application?.organizationId) return res.status(404).json({ error: 'Application not found' });
 
+      const incomingOrigin = repositoryOriginHash ? String(repositoryOriginHash) : null;
+      const incomingManifest = portableManifestIdentity ? String(portableManifestIdentity) : null;
+
+      let binding = await prisma.applicationRepositoryBinding.findUnique({
+        where: { applicationId: appId },
+      });
+
+      if (!binding) {
+        // The first member to attach a folder establishes what repository this
+        // application is, and inherits the default QA branch policy.
+        binding = await prisma.applicationRepositoryBinding.create({
+          data: {
+            applicationId: appId,
+            repositoryOriginHash: incomingOrigin,
+            repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : null,
+            portableManifestIdentity: incomingManifest,
+            boundByUserId: req.user!.id,
+          },
+        });
+      } else if (binding.repositoryOriginHash && incomingOrigin && binding.repositoryOriginHash !== incomingOrigin) {
+        // Only a positive contradiction is rejected. A missing origin hash is not
+        // evidence of a wrong folder: the repository may have no GitHub remote,
+        // or name its remote something other than "origin".
+        return res.status(409).json({
+          error: 'REPOSITORY_MISMATCH',
+          message: 'This folder belongs to a different repository than the one this application is bound to.',
+          expectedCloneUrl: binding.repositoryCloneUrl,
+        });
+      } else if (!binding.repositoryOriginHash && incomingOrigin) {
+        // Backfill the strong identity once any member supplies one.
+        binding = await prisma.applicationRepositoryBinding.update({
+          where: { applicationId: appId },
+          data: {
+            repositoryOriginHash: incomingOrigin,
+            repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : binding.repositoryCloneUrl,
+          },
+        });
+      }
+
       const workspace = await prisma.projectWorkspace.upsert({
-        where: { applicationId_opaqueLocalId: { applicationId: appId, opaqueLocalId: String(opaqueLocalId) } },
+        where: {
+          applicationId_createdByUserId_opaqueLocalId: {
+            applicationId: appId,
+            createdByUserId: req.user!.id,
+            opaqueLocalId: String(opaqueLocalId),
+          },
+        },
         create: {
           organizationId: application.organizationId,
           applicationId: appId,
           createdByUserId: req.user!.id,
           opaqueLocalId: String(opaqueLocalId),
           repositoryFingerprint: String(repositoryFingerprint),
-          repositoryOriginHash: repositoryOriginHash ? String(repositoryOriginHash) : undefined,
+          repositoryOriginHash: incomingOrigin ?? undefined,
           repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : undefined,
+          portableManifestIdentity: incomingManifest ?? undefined,
           detectedStack: detectedStack ?? undefined,
           packageManager: packageManager ? String(packageManager) : undefined,
           trustStatus: 'READ_ONLY',
@@ -139,14 +229,15 @@ export function createDesktopRouter(input: {
         },
         update: {
           repositoryFingerprint: String(repositoryFingerprint),
-          repositoryOriginHash: repositoryOriginHash ? String(repositoryOriginHash) : undefined,
+          repositoryOriginHash: incomingOrigin ?? undefined,
           repositoryCloneUrl: repositoryCloneUrl ? String(repositoryCloneUrl) : undefined,
+          portableManifestIdentity: incomingManifest ?? undefined,
           detectedStack: detectedStack ?? undefined,
           packageManager: packageManager ? String(packageManager) : undefined,
           lastScannedAt: new Date(),
         },
       });
-      res.status(201).json(workspace);
+      res.status(201).json({ ...workspace, branchPolicy: serializeBranchPolicy(appId, binding) });
     },
   );
 
@@ -158,7 +249,7 @@ export function createDesktopRouter(input: {
       const {
         workspaceId, revision, branch, dirty, repositoryFingerprint, frameworkSummary,
         routeSummary, endpointSummary, documentationSummary, manifestHashes,
-        scannerVersion, redactionSummary,
+        scannerVersion, redactionSummary, upstreamBranch, aheadCount, behindCount,
       } = req.body ?? {};
       if (!workspaceId || !repositoryFingerprint || !scannerVersion) {
         return res.status(400).json({
@@ -185,6 +276,9 @@ export function createDesktopRouter(input: {
           manifestHashes: manifestHashes ?? {},
           scannerVersion: String(scannerVersion),
           redactionSummary: redactionSummary ?? {},
+          upstreamBranch: upstreamBranch ? String(upstreamBranch) : undefined,
+          aheadCount: Number.isInteger(aheadCount) ? Number(aheadCount) : undefined,
+          behindCount: Number.isInteger(behindCount) ? Number(behindCount) : undefined,
         },
       });
       res.status(201).json(snapshot);
@@ -206,7 +300,12 @@ export function createDesktopRouter(input: {
       });
       res.json(workspaces.map((workspace) => ({
         id: workspace.id,
+        createdByUserId: workspace.createdByUserId,
+        // Lets a client show "your workspace" without a second lookup. Two members
+        // attaching the same repository now own separate rows.
+        isMine: workspace.createdByUserId === req.user!.id,
         opaqueLocalId: workspace.opaqueLocalId,
+        portableManifestIdentity: workspace.portableManifestIdentity,
         repositoryFingerprint: workspace.repositoryFingerprint,
         repositoryOriginHash: workspace.repositoryOriginHash,
         repositoryCloneUrl: workspace.repositoryCloneUrl,
@@ -217,6 +316,96 @@ export function createDesktopRouter(input: {
         latestSnapshot: workspace.snapshots[0] ?? null,
         permissions: workspace.permissions,
       })));
+    },
+  );
+
+  /** The QA branch policy every member's local checkout is measured against. */
+  router.get(
+    '/applications/:appId/branch-policy',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const binding = await prisma.applicationRepositoryBinding.findUnique({
+        where: { applicationId: req.params.appId },
+      });
+      res.json(serializeBranchPolicy(req.params.appId, binding));
+    },
+  );
+
+  /**
+   * Grants Tellann permission to move THIS member's own workspace onto the QA
+   * branch. Deliberately narrow: only over a workspace the caller owns, only
+   * while the organisation allows agent checkout, and only for a bounded window.
+   */
+  router.post(
+    '/applications/:appId/workspaces/:workspaceId/qa-branch-grant',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const workspace = await prisma.projectWorkspace.findFirst({
+        where: { id: req.params.workspaceId, applicationId: req.params.appId },
+      });
+      if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+      if (workspace.createdByUserId !== req.user!.id) {
+        return res.status(403).json({
+          error: 'FORBIDDEN',
+          message: 'You can only grant workspace access on your own machine.',
+        });
+      }
+
+      const binding = await prisma.applicationRepositoryBinding.findUnique({
+        where: { applicationId: req.params.appId },
+      });
+      if (!binding?.allowAgentCheckout) {
+        return res.status(403).json({
+          error: 'AGENT_CHECKOUT_DISABLED',
+          message: 'An Owner or Admin has not enabled agent-performed branch switching for this application.',
+        });
+      }
+
+      const requestedMinutes = Number(req.body?.expiresInMinutes);
+      const minutes = Number.isFinite(requestedMinutes)
+        ? Math.min(Math.max(Math.trunc(requestedMinutes), 5), 24 * 60)
+        : 60;
+
+      // Supersede any earlier grant so a workspace never carries two live ones.
+      await prisma.permissionGrant.updateMany({
+        where: { workspaceId: workspace.id, permissionType: 'MANAGE_QA_BRANCH', revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      const grant = await prisma.permissionGrant.create({
+        data: {
+          workspaceId: workspace.id,
+          grantedByUserId: req.user!.id,
+          permissionType: 'MANAGE_QA_BRANCH',
+          fileScopes: [],
+          commandScopes: ['git fetch', 'git switch', 'git stash'],
+          purpose: `Switch this workspace to the QA review branch ${binding.qaBranchName}.`,
+          expiresAt: new Date(Date.now() + minutes * 60_000),
+        },
+      });
+      res.status(201).json(grant);
+    },
+  );
+
+  router.delete(
+    '/applications/:appId/workspaces/:workspaceId/qa-branch-grant',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const workspace = await prisma.projectWorkspace.findFirst({
+        where: { id: req.params.workspaceId, applicationId: req.params.appId },
+      });
+      if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+      if (workspace.createdByUserId !== req.user!.id) {
+        return res.status(403).json({ error: 'FORBIDDEN', message: 'You can only revoke your own grants.' });
+      }
+      const { count } = await prisma.permissionGrant.updateMany({
+        where: { workspaceId: workspace.id, permissionType: 'MANAGE_QA_BRANCH', revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      res.json({ revoked: count });
     },
   );
 

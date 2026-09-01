@@ -22,6 +22,7 @@ import {
   FileSearch,
   Folder,
   FolderOpen,
+  GitBranch,
   Globe2,
   HelpCircle,
   KeyRound,
@@ -644,6 +645,145 @@ function InstrumentationDiffViewer({ diff }: { diff: unknown }) {
   );
 }
 
+/**
+ * The QA review branch gate.
+ *
+ * Every member clones the project wherever they like and works on whatever
+ * branch they like, so the only thing the organisation can hold constant is the
+ * branch name. This surfaces the verdict for THIS machine and offers the two
+ * ways out: switch it yourself, or let Tellann switch it for you under an
+ * explicit, revocable grant.
+ */
+function QaBranchNotice({ projectId }: { projectId: string }) {
+  const {
+    branchCompliance,
+    refreshBranchCompliance,
+    grantQaBranchCheckout,
+    switchToQaBranch,
+    restoreWorkspaceBranch,
+    busy,
+  } = useDesktop();
+  const [notice, setNotice] = useState<string | null>(null);
+  const compliance = branchCompliance[projectId];
+
+  useEffect(() => {
+    void refreshBranchCompliance(projectId);
+  }, [projectId, refreshBranchCompliance]);
+
+  if (!compliance || compliance.status === "NO_POLICY") return null;
+
+  const compliant = compliance.status === "COMPLIANT";
+  const mismatch = compliance.status === "BRANCH_MISMATCH";
+  const accent = compliant ? "#2f6b3f" : compliance.blocksRun ? "#7a2e2e" : "#7a5a2e";
+
+  const handleSwitch = async () => {
+    setNotice(null);
+    const result = await switchToQaBranch(projectId);
+    if (!result) return;
+    if (!result.switched) {
+      setNotice(`Could not switch branch: ${result.reason ?? "unknown reason"}.`);
+      return;
+    }
+    setNotice(
+      result.stashRef
+        ? `Switched to ${result.branch}. Your uncommitted changes were stashed and can be restored.`
+        : `Switched to ${result.branch}.`,
+    );
+  };
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${accent}`,
+        borderRadius: 8,
+        padding: "14px 16px",
+        marginBottom: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {compliant ? <ShieldCheck size={16} /> : <AlertTriangle size={16} />}
+        <strong style={{ fontSize: 13 }}>
+          {compliant ? "QA review branch" : compliance.blocksRun ? "QA review branch required" : "QA review branch warning"}
+        </strong>
+        {compliance.requiredBranch ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, opacity: 0.8 }}>
+            <GitBranch size={13} />
+            {compliance.requiredBranch}
+          </span>
+        ) : null}
+      </div>
+
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>{compliance.message}</p>
+
+      {mismatch && compliance.dirty ? (
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.85 }}>
+          This workspace has uncommitted changes. They will be stashed before the switch and can
+          be restored afterwards, never discarded.
+        </p>
+      ) : null}
+
+      {notice ? <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>{notice}</p> : null}
+
+      {mismatch ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() => void refreshBranchCompliance(projectId)}
+          >
+            <RefreshCw size={14} />
+            I switched it myself
+          </button>
+
+          {!compliance.agentCheckoutAllowed ? (
+            <span style={{ fontSize: 12, opacity: 0.7, alignSelf: "center" }}>
+              An Owner or Admin has not enabled agent-performed branch switching.
+            </span>
+          ) : compliance.agentCheckoutGranted ? (
+            <button className="button" disabled={busy} onClick={() => void handleSwitch()}>
+              <GitBranch size={14} />
+              Switch to {compliance.requiredBranch}
+            </button>
+          ) : (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void grantQaBranchCheckout(projectId)}
+            >
+              <Unlock size={14} />
+              Allow Tellann to switch it
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      {compliant ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            className="button"
+            disabled={busy}
+            onClick={async () => {
+              const result = await restoreWorkspaceBranch(projectId);
+              if (!result) return;
+              setNotice(
+                result.restored
+                  ? `Restored ${result.branch}${result.stashRestored ? " and reapplied your stashed changes" : ""}.`
+                  : `Could not restore your previous branch: ${result.reason ?? "unknown reason"}.`,
+              );
+            }}
+          >
+            <RefreshCw size={14} />
+            Restore my previous branch
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function WorkspacePage() {
   const { projectId, application, workspace, attachWorkspace, cloneWorkspace, busy } =
     useProject();
@@ -671,6 +811,7 @@ export function WorkspacePage() {
         </button>
       }
     >
+      <QaBranchNotice projectId={projectId} />
       {!workspace ? (
         (application as any)?.projectWorkspaces?.[0] ? (
           (() => {

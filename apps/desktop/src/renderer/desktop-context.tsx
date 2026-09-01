@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  QaBranchSwitchResult,
+  WorkspaceCompliance,
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   FlowReviewPreview,
@@ -48,6 +50,8 @@ type DesktopContextValue = {
   session: DesktopSession | null;
   applications: DesktopApplication[];
   workspaces: Record<string, LocalWorkspace>;
+  /** Per-application QA branch verdict for this member's own checkout. */
+  branchCompliance: Record<string, WorkspaceCompliance>;
   runs: Record<string, QARunSummary[]>;
   activeRun: GuidedRunState | null;
   signIn(): Promise<void>;
@@ -57,6 +61,15 @@ type DesktopContextValue = {
   refreshApplications(): Promise<DesktopApplication[]>;
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
   cloneWorkspace(applicationId: string, cloneUrl: string): Promise<LocalWorkspace | null>;
+  refreshBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
+  grantQaBranchCheckout(applicationId: string): Promise<WorkspaceCompliance | null>;
+  switchToQaBranch(applicationId: string): Promise<QaBranchSwitchResult | null>;
+  restoreWorkspaceBranch(applicationId: string): Promise<{
+    restored: boolean;
+    branch: string | null;
+    stashRestored: boolean;
+    reason: string | null;
+  } | null>;
   refreshRuns(applicationId: string): Promise<QARunSummary[]>;
   getRun(runId: string): Promise<Record<string, unknown>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
@@ -145,6 +158,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [applications, setApplications] = useState<DesktopApplication[]>([]);
   const [workspaces, setWorkspaces] = useState<Record<string, LocalWorkspace>>({});
+  const [branchCompliance, setBranchCompliance] = useState<Record<string, WorkspaceCompliance>>({});
   const [runs, setRuns] = useState<Record<string, QARunSummary[]>>({});
   const [activeRun, setActiveRun] = useState<GuidedRunState | null>(null);
 
@@ -305,22 +319,61 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     });
   }, [perform]);
 
+  const refreshBranchCompliance = useCallback(async (applicationId: string) => {
+    try {
+      const compliance = await bridge().projects.getBranchCompliance(applicationId);
+      setBranchCompliance((current) => {
+        if (!compliance) {
+          const { [applicationId]: _removed, ...rest } = current;
+          return rest;
+        }
+        return { ...current, [applicationId]: compliance };
+      });
+      return compliance;
+    } catch {
+      // A compliance check that cannot run is not a violation, so it must never
+      // surface as an error banner over the rest of the app.
+      return null;
+    }
+  }, []);
+
   const attachWorkspace = useCallback(async (applicationId: string) => perform(async () => {
     const selected = await bridge().projects.chooseWorkspace();
     if (!selected) return null;
-    const id = crypto.randomUUID();
-    const snapshot = await bridge().projects.scanWorkspace({ ...selected, workspaceId: id, applicationId });
-    const workspace = { id, ...selected, snapshot };
+    // The workspace id is derived in the main process from the folder path, so
+    // re-attaching the same folder updates the existing record rather than
+    // creating a duplicate.
+    const scanned = await bridge().projects.scanWorkspace({ ...selected, applicationId });
+    const workspace = { id: scanned.id, ...selected, snapshot: scanned.snapshot };
     setWorkspaces((current) => ({ ...current, [applicationId]: workspace }));
+    void refreshBranchCompliance(applicationId);
     return workspace;
-  }), [perform]);
+  }), [perform, refreshBranchCompliance]);
+
+  const grantQaBranchCheckout = useCallback(async (applicationId: string) => perform(async () => {
+    await bridge().projects.grantQaBranchCheckout(applicationId);
+    return refreshBranchCompliance(applicationId);
+  }), [perform, refreshBranchCompliance]);
+
+  const switchToQaBranch = useCallback(async (applicationId: string) => perform(async () => {
+    const result = await bridge().projects.switchToQaBranch(applicationId);
+    await refreshBranchCompliance(applicationId);
+    return result;
+  }), [perform, refreshBranchCompliance]);
+
+  const restoreWorkspaceBranch = useCallback(async (applicationId: string) => perform(async () => {
+    const result = await bridge().projects.restoreWorkspaceBranch(applicationId);
+    await refreshBranchCompliance(applicationId);
+    return result;
+  }), [perform, refreshBranchCompliance]);
 
   const cloneWorkspace = useCallback(async (applicationId: string, cloneUrl: string) => perform(async () => {
     const workspace = await bridge().projects.cloneWorkspace({ applicationId, cloneUrl });
     if (!workspace) return null;
     setWorkspaces((current) => ({ ...current, [applicationId]: workspace }));
+    void refreshBranchCompliance(applicationId);
     return workspace;
-  }), [perform]);
+  }), [perform, refreshBranchCompliance]);
 
   const refreshRuns = useCallback(async (applicationId: string) => {
     const result = await bridge().runs.list(applicationId);
@@ -356,6 +409,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     session,
     applications,
     workspaces,
+    branchCompliance,
     runs,
     activeRun,
     signIn,
@@ -365,6 +419,10 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     refreshApplications,
     attachWorkspace,
     cloneWorkspace,
+    refreshBranchCompliance,
+    grantQaBranchCheckout,
+    switchToQaBranch,
+    restoreWorkspaceBranch,
     refreshRuns,
     getRun: (runId) => bridge().runs.get(runId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
@@ -426,6 +484,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    branchCompliance, refreshBranchCompliance, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;

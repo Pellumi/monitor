@@ -10,6 +10,7 @@ export const PermissionTypeSchema = z.enum([
   'APPLY_TASK',
   'RUN_COMMANDS',
   'SENSITIVE_BROWSER_ACTIONS',
+  'MANAGE_QA_BRANCH',
 ]);
 export const RunStatusSchema = z.enum([
   'CREATED',
@@ -80,8 +81,12 @@ export const RepositorySnapshotSummarySchema = z.object({
   branch: z.string().nullable(),
   dirty: z.boolean(),
   repositoryFingerprint: z.string().min(32),
+  portableManifestIdentity: z.string().min(32).nullable().optional(),
   repositoryOriginHash: z.string().min(32).nullable().optional(),
   repositoryCloneUrl: z.string().url().nullable().optional(),
+  upstreamBranch: z.string().nullable().optional(),
+  aheadCount: z.number().int().nonnegative().nullable().optional(),
+  behindCount: z.number().int().nonnegative().nullable().optional(),
   languages: z.array(z.string()),
   packageManager: z.string().nullable(),
   launchCommands: z.array(z.object({
@@ -107,6 +112,62 @@ export const RepositorySnapshotSummarySchema = z.object({
     excludedFiles: z.number().int().nonnegative(),
     suspectedSecrets: z.number().int().nonnegative(),
   }),
+});
+
+export const BranchPolicyEnforcementSchema = z.enum(['WARN', 'BLOCK']);
+
+/** The org-owned repository binding an application's members all share. */
+export const BranchPolicySchema = z.object({
+  applicationId: z.string().uuid(),
+  repositoryOriginHash: z.string().nullable(),
+  repositoryCloneUrl: z.string().nullable(),
+  qaBranchName: z.string(),
+  qaBranchBase: z.string(),
+  enforcement: BranchPolicyEnforcementSchema,
+  allowAgentCheckout: z.boolean(),
+  /** True once a repository has actually been bound to the application. */
+  bound: z.boolean(),
+});
+
+export const WorkspaceComplianceStatusSchema = z.enum([
+  'COMPLIANT',
+  'BRANCH_MISMATCH',
+  'NOT_A_REPOSITORY',
+  'NO_POLICY',
+  'UNKNOWN',
+]);
+
+/**
+ * Whether one member's checkout satisfies the shared QA branch policy. Evaluated
+ * locally so it still works offline; the server re-derives it on snapshot ingest.
+ */
+export const WorkspaceComplianceSchema = z.object({
+  status: WorkspaceComplianceStatusSchema,
+  policy: BranchPolicySchema.nullable(),
+  currentBranch: z.string().nullable(),
+  requiredBranch: z.string().nullable(),
+  dirty: z.boolean(),
+  aheadCount: z.number().int().nullable(),
+  behindCount: z.number().int().nullable(),
+  /** BLOCK enforcement plus a mismatch is the only combination that stops a run. */
+  blocksRun: z.boolean(),
+  /** Whether the org allows Tellann to perform the switch on the member's behalf. */
+  agentCheckoutAllowed: z.boolean(),
+  /** Whether an unexpired MANAGE_QA_BRANCH grant already exists for this workspace. */
+  agentCheckoutGranted: z.boolean(),
+  message: z.string(),
+});
+
+export const QaBranchSwitchResultSchema = z.object({
+  switched: z.boolean(),
+  branch: z.string().nullable(),
+  previousBranch: z.string().nullable(),
+  baseRevision: z.string().nullable(),
+  /** Set when pre-existing uncommitted work was stashed to make the switch safe. */
+  stashRef: z.string().nullable(),
+  createdBranch: z.boolean(),
+  fetched: z.boolean(),
+  reason: z.string().nullable(),
 });
 
 export const RunCorrelationContextSchema = z.object({
@@ -642,6 +703,10 @@ export const IPC = {
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
   cloneWorkspace: 'tellann:workspace:clone',
+  getBranchCompliance: 'tellann:workspace:branch:compliance',
+  grantQaBranchCheckout: 'tellann:workspace:branch:grant',
+  switchToQaBranch: 'tellann:workspace:branch:switch',
+  restoreWorkspaceBranch: 'tellann:workspace:branch:restore',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
@@ -709,6 +774,11 @@ export const DesktopApplicationSchema = z.object({
 export type DesktopDevice = z.infer<typeof DesktopDeviceSchema>;
 export type DesktopPermission = z.infer<typeof DesktopPermissionSchema>;
 export type RepositorySnapshotSummary = z.infer<typeof RepositorySnapshotSummarySchema>;
+export type BranchPolicy = z.infer<typeof BranchPolicySchema>;
+export type BranchPolicyEnforcement = z.infer<typeof BranchPolicyEnforcementSchema>;
+export type WorkspaceCompliance = z.infer<typeof WorkspaceComplianceSchema>;
+export type WorkspaceComplianceStatus = z.infer<typeof WorkspaceComplianceStatusSchema>;
+export type QaBranchSwitchResult = z.infer<typeof QaBranchSwitchResultSchema>;
 export type RunCorrelationContext = z.infer<typeof RunCorrelationContextSchema>;
 export type QARun = z.infer<typeof QARunSchema>;
 export type QARunSummary = z.infer<typeof QARunSummarySchema>;

@@ -65,7 +65,6 @@ import {
   ArrowLeft,
   Bell,
   SlidersHorizontal,
-  EyeOff,
   Database,
   Plug,
   ScrollText,
@@ -242,7 +241,6 @@ const settingsNavigation: SettingsNavSection[] = [
         href: "/settings/ingestion-keys",
         icon: KeyRound,
       },
-      { name: "Privacy & Capture", href: "/settings/privacy", icon: EyeOff },
       { name: "Storage & Retention", href: "/settings/data", icon: Database },
       { name: "Integrations", href: "/settings/integrations", icon: Plug },
     ],
@@ -611,25 +609,35 @@ function AppSelector({
 
       {/* Environment Selector */}
       {environments && environments.length > 0 && (
-        <div className="flex items-center border border-[#1e1e1e] bg-black px-2.5 py-1.5">
-          {hasMultipleEnvs && environments.length > 1 ? (
-            <select
-              value={selectedEnv?.id || ""}
-              onChange={(e) => handleEnvSelect(e.target.value)}
-              className="flex-1 bg-transparent text-[#8e9192] text-[10px] font-mono tracking-[.04em] focus:outline-none appearance-none cursor-pointer"
-            >
+        hasMultipleEnvs && environments.length > 1 ? (
+          <Select
+            value={selectedEnv?.id || ""}
+            onValueChange={(val) => handleEnvSelect(val)}
+          >
+            <SelectTrigger className="text-[10px] font-mono tracking-[.06em] uppercase text-[#8e9192] py-1.5 border-[#262626] bg-black hover:border-[#3a3a3a] transition-colors">
+              <SelectValue placeholder="Select environment…">
+                {selectedEnv ? `${selectedEnv.name} (${selectedEnv.type})` : ""}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
               {environments.map((env) => (
-                <option key={env.id} value={env.id}>
+                <SelectItem
+                  key={env.id}
+                  value={env.id}
+                  className="text-[10px] font-mono tracking-[.06em] uppercase"
+                >
                   {env.name} ({env.type})
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          ) : (
+            </SelectContent>
+          </Select>
+        ) : (
+          <div className="flex items-center border border-[#1e1e1e] bg-black px-2.5 py-1.5">
             <span className="text-[10px] font-mono text-[#8e9192] tracking-[.04em] truncate">
               {selectedEnv?.name ?? "Default"} · {selectedEnv?.type ?? "env"}
             </span>
-          )}
-        </div>
+          </div>
+        )
       )}
 
       {/* Application Limit Modal */}

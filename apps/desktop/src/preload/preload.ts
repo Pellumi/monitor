@@ -65,6 +65,10 @@ const IPC = {
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
   cloneWorkspace: 'tellann:workspace:clone',
+  getBranchCompliance: 'tellann:workspace:branch:compliance',
+  grantQaBranchCheckout: 'tellann:workspace:branch:grant',
+  switchToQaBranch: 'tellann:workspace:branch:switch',
+  restoreWorkspaceBranch: 'tellann:workspace:branch:restore',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
@@ -100,10 +104,18 @@ contextBridge.exposeInMainWorld('tellann', {
     list: () => ipcRenderer.invoke(IPC.getApplications),
     getLocalWorkspace: (applicationId: string) => ipcRenderer.invoke(IPC.getLocalWorkspace, applicationId),
     chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
-    scanWorkspace: (input: { path: string; workspaceId: string; applicationId: string }) =>
+    scanWorkspace: (input: { path: string; applicationId: string }) =>
       ipcRenderer.invoke(IPC.scanWorkspace, input),
     cloneWorkspace: (input: { applicationId: string; cloneUrl: string }) =>
       ipcRenderer.invoke(IPC.cloneWorkspace, input),
+    getBranchCompliance: (applicationId: string) =>
+      ipcRenderer.invoke(IPC.getBranchCompliance, applicationId),
+    grantQaBranchCheckout: (applicationId: string, expiresInMinutes?: number) =>
+      ipcRenderer.invoke(IPC.grantQaBranchCheckout, { applicationId, expiresInMinutes }),
+    switchToQaBranch: (applicationId: string) =>
+      ipcRenderer.invoke(IPC.switchToQaBranch, applicationId),
+    restoreWorkspaceBranch: (applicationId: string) =>
+      ipcRenderer.invoke(IPC.restoreWorkspaceBranch, applicationId),
     onAppUpdated: (callback: (event: any) => void) => {
       const subscription = (_: unknown, data: any) => callback(data);
       ipcRenderer.on(IPC.appUpdated, subscription);

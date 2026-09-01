@@ -291,7 +291,8 @@ export default function BillingPage() {
   const [changePreview, setChangePreview] = useState<ChangePreview | null>(null);
   const [changePlan, setChangePlan] = useState<Plan | null>(null);
   const [changeEffectiveMode, setChangeEffectiveMode] = useState<'IMMEDIATE' | 'NEXT_RENEWAL'>('IMMEDIATE');
-  const [checkoutState, setCheckoutState] = useState<'PREPARING' | 'AWAITING' | 'VERIFYING' | 'ACTIVE' | 'CANCELLED' | 'FAILED' | null>(null);
+  const [changeError, setChangeError] = useState<{ title: string; detail: string; action?: 'CHECKOUT' | 'PAYMENT_METHOD' } | null>(null);
+  const [checkoutState, setCheckoutState] = useState<'PREPARING' | 'AWAITING' | 'VERIFYING' | 'ACTIVE' | 'CANCELLED' | 'FAILED' | 'PENDING_CONFIRMATION' | null>(null);
   const [testProvider, setTestProvider] = useState<'FLUTTERWAVE' | 'PAYSTACK' | 'MOCK' | ''>('');
   const [availableProviders, setAvailableProviders] = useState<PaymentProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<PaymentProvider | null>(null);
@@ -354,17 +355,29 @@ export default function BillingPage() {
     if (!invoiceId) return;
     let stopped = false; let attempts = 0;
     setCheckoutState('VERIFYING');
+    // Each processor names its return parameters differently — Paystack sends
+    // reference/trxref, Flutterwave sends transaction_id. Forward whichever
+    // arrived so the server can verify the payment directly if the webhook has
+    // not landed yet.
+    const returnParams = new URLSearchParams();
+    for (const key of ['reference', 'trxref', 'transaction_id']) {
+      const value = query.get(key);
+      if (value) returnParams.set(key, value);
+    }
+    const suffix = returnParams.toString() ? `?${returnParams}` : '';
+
     const poll = async () => {
-      const transactionId = query.get('transaction_id');
-      const suffix = transactionId ? `?transaction_id=${encodeURIComponent(transactionId)}` : '';
       try {
         const result = await requestJson<{ status: string }>(`/api-gateway/billing/checkouts/${invoiceId}/status${suffix}`);
         if (stopped) return;
         if (result.status === 'VERIFIED') { setCheckoutState('ACTIVE'); await load(); return; }
         if (['FAILED', 'CANCELLED'].includes(result.status)) { setCheckoutState(result.status as 'FAILED' | 'CANCELLED'); return; }
-      } catch { if (attempts >= 9) setCheckoutState('FAILED'); }
+      } catch { if (attempts >= 11) setCheckoutState('FAILED'); }
       attempts += 1;
-      if (!stopped && attempts < 10) window.setTimeout(() => void poll(), 2000);
+      // Banks can take a while to settle, so keep polling for about a minute
+      // before giving up rather than declaring failure after 20 seconds.
+      if (!stopped && attempts < 12) window.setTimeout(() => void poll(), 5000);
+      else if (!stopped) setCheckoutState('PENDING_CONFIRMATION');
     };
     void poll();
     return () => { stopped = true; };
@@ -426,6 +439,7 @@ export default function BillingPage() {
   }
 
   async function previewPlanChange(plan: Plan) {
+    setChangeError(null);
     if (!selectedOrgId) return;
     setIsCheckingOut(true);
     setError(null);
@@ -470,21 +484,57 @@ export default function BillingPage() {
       }
       setChangePreview(null);
       setChangePlan(null);
+      setChangeError(null);
       await load();
     } catch (err: any) {
-      if (err?.code === 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED' || String(err?.message || '').includes('PAYMENT_METHOD_REAUTHORIZATION_REQUIRED')) {
-        setError('Add a payment method before changing plans. Redirecting…');
-        void updatePaymentMethod();
+      // Every branch here writes to changeError, not the page banner, because
+      // the banner renders behind the modal backdrop and the user never sees it.
+      if (err?.code === 'PAYMENT_METHOD_REQUIRED' || err?.code === 'PAYMENT_METHOD_REAUTHORIZATION_REQUIRED') {
+        setChangeError({
+          title: 'We need a card before we can switch you',
+          detail: `Changing plans charges the difference to a card already on file, and this subscription does not have one yet. Checking out for ${changePlan?.name ?? 'this plan'} sets the card up and starts the plan in the same step.`,
+          action: 'CHECKOUT',
+        });
         return;
       }
       if (err?.code === 'UPGRADE_CHARGE_DECLINED') {
-        setError(`${err.message} `.trim());
+        setChangeError({
+          title: 'Your card was declined',
+          detail: err.message || 'The bank turned down the payment. Update your card and try again — your current plan is unchanged.',
+          action: 'PAYMENT_METHOD',
+        });
         return;
       }
-      setError(friendlyError(err.message || 'Could not change the subscription.'));
+      if (err?.code === 'PREVIEW_EXPIRED') {
+        setChangeError({
+          title: 'This quote has expired',
+          detail: 'Prices are held for 15 minutes. Close this and pick the plan again to get a fresh quote.',
+        });
+        return;
+      }
+      if (err?.code === 'PROVIDER_PLAN_NOT_CONFIGURED') {
+        setChangeError({
+          title: 'This plan is not available for payment yet',
+          detail: 'The payment processor has no price configured for this plan and currency. This is on our side — please contact support and we will sort it out.',
+        });
+        return;
+      }
+      setChangeError({
+        title: 'We could not change your plan',
+        detail: friendlyError(err?.message || 'Something went wrong on our side. Your current plan is unchanged and you have not been charged.'),
+      });
     } finally {
       setIsCheckingOut(false);
     }
+  }
+
+  /** Closes the dialog and sends the customer to checkout for the same plan. */
+  async function checkoutFromFailedChange() {
+    const plan = changePlan;
+    setChangeError(null);
+    setChangePreview(null);
+    setChangePlan(null);
+    if (plan) await handleCheckout(plan);
   }
 
   // ── Cancel subscription ─────────────────────────────────────────────────────
@@ -658,7 +708,8 @@ export default function BillingPage() {
           {checkoutState === 'VERIFYING' && 'Verifying payment with the provider…'}
           {checkoutState === 'ACTIVE' && 'Payment verified. Your paid plan is active.'}
           {checkoutState === 'CANCELLED' && 'Checkout was cancelled. Your current plan is unchanged.'}
-          {checkoutState === 'FAILED' && 'Payment could not be verified. Your current plan is unchanged.'}
+          {checkoutState === 'PENDING_CONFIRMATION' && 'Your payment is still being confirmed by the bank. This can take a few minutes — refresh this page shortly. If you were charged, your plan activates automatically and nothing further is needed.'}
+          {checkoutState === 'FAILED' && 'We could not confirm this payment. If your bank shows a charge, it will activate automatically once the processor confirms it — refresh in a few minutes or contact support with your invoice number. Your current plan is unchanged.'}
         </div>
       )}
       {subscription && ['GRACE_PERIOD', 'PAST_DUE', 'SUSPENDED'].includes(subscription.status) && (
@@ -1207,28 +1258,70 @@ export default function BillingPage() {
               ) : null}
             </div>
 
+            {/* Failure, explained where the action was taken */}
+            {changeError && (
+              <div
+                role="alert"
+                className="mx-6 mb-1 flex gap-3 rounded border border-amber-800/70 bg-amber-950/30 p-4"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-100">{changeError.title}</p>
+                  <p className="mt-1 text-xs leading-5 text-amber-200/80">{changeError.detail}</p>
+                  <p className="mt-2 text-xs leading-5 text-amber-200/60">
+                    Nothing has been charged and your current plan is unchanged.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Footer Actions */}
             <div className="flex w-full flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 border-t border-[#262626] bg-black px-6 py-4">
               <button
                 type="button"
-                onClick={() => { setChangePreview(null); setChangePlan(null); }}
+                onClick={() => { setChangePreview(null); setChangePlan(null); setChangeError(null); }}
                 className="rounded bg-[#262626] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-white hover:bg-[#333333] transition-colors"
                 disabled={isCheckingOut}
               >
-                Cancel
+                {changeError ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="button"
-                onClick={() => void confirmPlanChange(changeEffectiveMode)}
-                disabled={isCheckingOut}
-                className="rounded flex-1 bg-white px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-black hover:bg-neutral-200 transition-colors disabled:opacity-50"
-              >
-                {changePreview.direction === 'DOWNGRADE'
-                  ? 'Schedule Downgrade'
-                  : changeEffectiveMode === 'NEXT_RENEWAL'
-                    ? 'Start Next Cycle'
-                    : `Pay ${centsToMoney(changePreview.amountDue, changePreview.currency)} & Start Now`}
-              </button>
+
+              {/* After a failure the primary action becomes the way out of it,
+                  rather than the button that just failed. */}
+              {changeError?.action === 'CHECKOUT' ? (
+                <button
+                  type="button"
+                  onClick={() => void checkoutFromFailedChange()}
+                  disabled={isCheckingOut}
+                  className="rounded flex-1 bg-white px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-black hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                >
+                  {isCheckingOut ? 'Opening checkout…' : `Continue to checkout for ${changePlan.name}`}
+                </button>
+              ) : changeError?.action === 'PAYMENT_METHOD' ? (
+                <button
+                  type="button"
+                  onClick={() => void updatePaymentMethod()}
+                  disabled={isCheckingOut}
+                  className="rounded flex-1 bg-white px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-black hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                >
+                  {isCheckingOut ? 'Opening…' : 'Update card'}
+                </button>
+              ) : changeError ? null : (
+                <button
+                  type="button"
+                  onClick={() => void confirmPlanChange(changeEffectiveMode)}
+                  disabled={isCheckingOut}
+                  className="rounded flex-1 bg-white px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-black hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                >
+                  {isCheckingOut
+                    ? 'Working…'
+                    : changePreview.direction === 'DOWNGRADE'
+                      ? 'Schedule Downgrade'
+                      : changeEffectiveMode === 'NEXT_RENEWAL'
+                        ? 'Start Next Cycle'
+                        : `Pay ${centsToMoney(changePreview.amountDue, changePreview.currency)} & Start Now`}
+                </button>
+              )}
             </div>
           </div>
         </div>

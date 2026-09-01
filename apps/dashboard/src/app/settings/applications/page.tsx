@@ -71,6 +71,39 @@ interface ApplicationDetails {
   createdAt?: string;
 }
 
+interface BranchPolicy {
+  applicationId: string;
+  repositoryOriginHash: string | null;
+  repositoryCloneUrl: string | null;
+  qaBranchName: string;
+  qaBranchBase: string;
+  enforcement: "WARN" | "BLOCK";
+  allowAgentCheckout: boolean;
+  bound: boolean;
+}
+
+interface WorkspaceRosterEntry {
+  id: string;
+  isMine: boolean;
+  owner: { id: string; email: string | null; displayName: string | null };
+  packageManager?: string | null;
+  detectedStack?: any;
+  lastScannedAt?: string | null;
+  branch: string | null;
+  revision: string | null;
+  dirty: boolean | null;
+  aheadCount: number | null;
+  behindCount: number | null;
+  status: "COMPLIANT" | "BRANCH_MISMATCH" | "NO_POLICY" | "UNKNOWN";
+  blocksRun: boolean;
+  agentCheckoutGranted: boolean;
+}
+
+interface WorkspaceRoster {
+  policy: BranchPolicy;
+  workspaces: WorkspaceRosterEntry[];
+}
+
 interface Entitlement {
   planType: string;
   features: Record<string, boolean | string>;
@@ -112,77 +145,323 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-function parseWorkspaceInfo(workspace?: ProjectWorkspace) {
-  if (!workspace) return null;
-  const latestSnapshot = workspace.snapshots?.[0] || workspace.snapshot;
+function statusChip(status: WorkspaceRosterEntry["status"], blocksRun: boolean) {
+  if (status === "COMPLIANT") return { label: "ON QA BRANCH", className: "border-white text-white" };
+  if (status === "BRANCH_MISMATCH") {
+    return blocksRun
+      ? { label: "WRONG BRANCH / BLOCKED", className: "border-red-900 text-red-400" }
+      : { label: "WRONG BRANCH", className: "border-yellow-800 text-yellow-500" };
+  }
+  if (status === "UNKNOWN") return { label: "NOT SCANNED", className: "border-[#444748] text-[#8e9192]" };
+  return { label: "NO POLICY", className: "border-[#444748] text-[#8e9192]" };
+}
 
-  // Routes count
-  const routesRaw = latestSnapshot?.routeSummary ?? latestSnapshot?.routes;
-  const routesCount = Array.isArray(routesRaw)
-    ? routesRaw.length
-    : routesRaw && typeof routesRaw === "object"
-    ? Object.keys(routesRaw).length
-    : typeof routesRaw === "number"
-    ? routesRaw
-    : 0;
+function ownerLabel(owner: WorkspaceRosterEntry["owner"]) {
+  return owner.displayName || owner.email || owner.id.slice(0, 8);
+}
 
-  // Endpoints count
-  const endpointsRaw = latestSnapshot?.endpointSummary ?? latestSnapshot?.endpoints;
-  const endpointsCount = Array.isArray(endpointsRaw)
-    ? endpointsRaw.length
-    : endpointsRaw && typeof endpointsRaw === "object"
-    ? Object.keys(endpointsRaw).length
-    : typeof endpointsRaw === "number"
-    ? endpointsRaw
-    : 0;
+/**
+ * Every member's checkout, plus the org-owned branch policy they are all
+ * measured against.
+ *
+ * This replaces reading projectWorkspaces[0], which rendered whichever teammate
+ * scanned most recently and presented that machine's branch and stack as though
+ * it were the viewer's own.
+ */
+function WorkspaceRosterSection({ appId, canManage }: { appId: string; canManage: boolean }) {
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftBranch, setDraftBranch] = useState("");
+  const [draftBase, setDraftBase] = useState("");
+  const [draftEnforcement, setDraftEnforcement] = useState<"WARN" | "BLOCK">("WARN");
+  const [draftAllowAgent, setDraftAllowAgent] = useState(false);
+  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
 
-  // Docs count
-  const docsRaw = latestSnapshot?.documentationSummary ?? latestSnapshot?.documentation;
-  const docsCount = Array.isArray(docsRaw)
-    ? docsRaw.length
-    : docsRaw && typeof docsRaw === "object"
-    ? Object.keys(docsRaw).length
-    : typeof docsRaw === "number"
-    ? docsRaw
-    : 0;
+  const { data: roster, isLoading } = useQuery<WorkspaceRoster>({
+    queryKey: ["workspace-roster", appId],
+    queryFn: async () => {
+      const res = await authenticatedFetch(`/api-gateway/applications/${appId}/workspace-roster`);
+      if (!res.ok) throw new Error("Failed to fetch workspace roster");
+      return res.json();
+    },
+  });
 
-  // Package manager
-  const packageManager = workspace.packageManager || latestSnapshot?.packageManager || "npm";
-
-  // Frameworks / Stack
-  const stackRaw = workspace.detectedStack || latestSnapshot?.frameworkSummary || latestSnapshot?.frameworks;
-  let frameworks: Array<{ name: string; version?: string }> = [];
-  if (Array.isArray(stackRaw)) {
-    frameworks = stackRaw.map((f: any) =>
-      typeof f === "string"
-        ? { name: f }
-        : { name: f.framework || f.name || String(f), version: f.version }
-    );
-  } else if (stackRaw && typeof stackRaw === "object") {
-    frameworks = Object.entries(stackRaw).map(([name, ver]) => ({
-      name,
-      version: typeof ver === "string" ? ver : undefined,
-    }));
+  function openPolicyEditor() {
+    if (!roster) return;
+    setDraftBranch(roster.policy.qaBranchName);
+    setDraftBase(roster.policy.qaBranchBase);
+    setDraftEnforcement(roster.policy.enforcement);
+    setDraftAllowAgent(roster.policy.allowAgentCheckout);
+    setPolicyError(null);
+    setIsEditing(true);
   }
 
-  const branch = latestSnapshot?.branch || null;
-  const revision = latestSnapshot?.revision ? String(latestSnapshot.revision).slice(0, 7) : null;
-  const fingerprint = workspace.repositoryFingerprint
-    ? workspace.repositoryFingerprint.slice(0, 12)
-    : workspace.opaqueLocalId;
-  const path = workspace.path || null;
+  async function savePolicy(e: React.FormEvent) {
+    e.preventDefault();
+    setIsSavingPolicy(true);
+    setPolicyError(null);
+    try {
+      const res = await authenticatedFetch(`/api-gateway/applications/${appId}/repository-binding`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          qaBranchName: draftBranch.trim(),
+          qaBranchBase: draftBase.trim(),
+          enforcement: draftEnforcement,
+          allowAgentCheckout: draftAllowAgent,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || body.error || "Failed to save branch policy");
+      }
+      setIsEditing(false);
+      await queryClient.invalidateQueries({ queryKey: ["workspace-roster", appId] });
+    } catch (err: any) {
+      setPolicyError(err.message || "Failed to save branch policy");
+    } finally {
+      setIsSavingPolicy(false);
+    }
+  }
 
-  return {
-    routesCount,
-    endpointsCount,
-    docsCount,
-    packageManager,
-    frameworks,
-    branch,
-    revision,
-    fingerprint,
-    path,
-  };
+  if (isLoading) {
+    return <div className="h-40 rounded border border-[#262626] bg-black animate-pulse" />;
+  }
+
+  const policy = roster?.policy;
+  const workspaces = roster?.workspaces ?? [];
+  const mismatched = workspaces.filter((entry) => entry.status === "BRANCH_MISMATCH").length;
+
+  return (
+    <div className="rounded border border-[#262626] bg-black p-4 space-y-4">
+      {/* QA branch policy — identical for every member of the organisation */}
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#262626] pb-2.5">
+          <span className="text-[11px] font-mono tracking-[.08em] uppercase text-[#8e9192]">
+            QA REVIEW BRANCH POLICY
+          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className={`border px-2 py-0.5 text-[10px] font-mono tracking-[.08em] uppercase ${
+                policy?.enforcement === "BLOCK" ? "border-white text-white" : "border-[#444748] text-[#8e9192]"
+              }`}
+            >
+              {policy?.enforcement === "BLOCK" ? "BLOCKING" : "WARN ONLY"}
+            </span>
+            {canManage && !isEditing && (
+              <button
+                type="button"
+                onClick={openPolicyEditor}
+                className="px-2 py-0.5 rounded border border-[#262626] bg-black text-[#8e9192] hover:text-white text-[10px] font-mono uppercase tracking-[.08em] transition-colors cursor-pointer"
+              >
+                EDIT POLICY
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isEditing ? (
+          <form onSubmit={savePolicy} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[#8e9192] text-[10px] font-mono tracking-[.08em] uppercase block mb-1">
+                  QA REVIEW BRANCH
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={draftBranch}
+                  onChange={(e) => setDraftBranch(e.target.value)}
+                  className="w-full rounded border border-[#262626] bg-black px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-white transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[#8e9192] text-[10px] font-mono tracking-[.08em] uppercase block mb-1">
+                  BASE BRANCH
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={draftBase}
+                  onChange={(e) => setDraftBase(e.target.value)}
+                  className="w-full rounded border border-[#262626] bg-black px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-white transition-colors"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[#8e9192] text-[10px] font-mono tracking-[.08em] uppercase block mb-1">
+                ENFORCEMENT
+              </label>
+              <select
+                value={draftEnforcement}
+                onChange={(e) => setDraftEnforcement(e.target.value as "WARN" | "BLOCK")}
+                className="w-full rounded border border-[#262626] bg-black px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-white transition-colors"
+              >
+                <option value="WARN">WARN — flag members on the wrong branch</option>
+                <option value="BLOCK">BLOCK — stop QA runs off the review branch</option>
+              </select>
+            </div>
+
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draftAllowAgent}
+                onChange={(e) => setDraftAllowAgent(e.target.checked)}
+                className="mt-0.5 accent-white"
+              />
+              <span className="text-xs text-[#c4c7c8] leading-relaxed">
+                Allow Tellann to switch a member&apos;s local branch for them.
+                <span className="block text-[10px] font-mono text-[#8e9192] mt-0.5">
+                  EACH MEMBER STILL GRANTS ACCESS PER WORKSPACE. UNCOMMITTED WORK IS STASHED, NEVER DISCARDED.
+                </span>
+              </span>
+            </label>
+
+            {policyError ? (
+              <p className="text-[11px] font-mono text-red-400">[ERROR] {policyError}</p>
+            ) : null}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="px-3 py-1.5 rounded border border-[#262626] bg-black text-[#8e9192] hover:text-white text-[10px] font-mono uppercase tracking-[.08em] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingPolicy || !draftBranch.trim() || !draftBase.trim()}
+                className="px-3 py-1.5 rounded border border-white bg-white text-black text-[10px] font-mono uppercase tracking-[.08em] disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                {isSavingPolicy ? "Saving…" : "Save Policy"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
+            <div className="rounded border border-[#262626] bg-[#131313] p-2.5">
+              <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em]">REVIEW BRANCH</div>
+              <div className="text-white mt-1 truncate">{policy?.qaBranchName ?? "—"}</div>
+            </div>
+            <div className="rounded border border-[#262626] bg-[#131313] p-2.5">
+              <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em]">BASE BRANCH</div>
+              <div className="text-white mt-1 truncate">{policy?.qaBranchBase ?? "—"}</div>
+            </div>
+            <div className="rounded border border-[#262626] bg-[#131313] p-2.5">
+              <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em]">AGENT CHECKOUT</div>
+              <div className="text-white mt-1">{policy?.allowAgentCheckout ? "ALLOWED" : "DISABLED"}</div>
+            </div>
+          </div>
+        )}
+
+        {policy && !policy.bound ? (
+          <p className="text-[11px] text-[#8e9192] font-sans leading-relaxed">
+            No repository is bound yet. The first member to attach a folder in Tellann Desktop binds
+            this application to their repository, and everyone else is matched against it.
+          </p>
+        ) : policy?.repositoryCloneUrl ? (
+          <p className="text-[11px] text-[#8e9192] font-mono truncate">
+            BOUND REPOSITORY: {policy.repositoryCloneUrl}
+          </p>
+        ) : null}
+      </div>
+
+      {/* One row per member per machine */}
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#262626] pb-2.5">
+          <span className="text-[11px] font-mono tracking-[.08em] uppercase text-[#8e9192]">
+            ATTACHED WORKSPACES
+          </span>
+          <span className="text-[10px] font-mono uppercase tracking-[.08em] text-[#8e9192]">
+            {workspaces.length} ATTACHED
+            {mismatched > 0 ? ` · ${mismatched} OFF-BRANCH` : ""}
+          </span>
+        </div>
+
+        {workspaces.length === 0 ? (
+          <div className="text-xs text-[#c4c7c8] leading-relaxed py-1 font-sans">
+            No one has attached a local workspace yet. Launch <strong>Tellann Desktop</strong>, select
+            this application, and click <em>Attach folder</em>.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {workspaces.map((entry) => {
+              const chip = statusChip(entry.status, entry.blocksRun);
+              return (
+                <div
+                  key={entry.id}
+                  className={`rounded border p-3 space-y-2 ${
+                    entry.isMine ? "border-[#444748] bg-[#131313]" : "border-[#262626] bg-[#131313]"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <span className="text-xs font-semibold text-white truncate">
+                        {ownerLabel(entry.owner)}
+                      </span>
+                      {entry.isMine && (
+                        <span className="border border-white text-white px-1.5 py-0.5 text-[9px] font-mono tracking-[.08em] uppercase">
+                          YOU
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`border px-2 py-0.5 text-[10px] font-mono tracking-[.08em] uppercase ${chip.className}`}
+                    >
+                      {chip.label}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                    <div>
+                      <div className="text-[9px] text-[#8e9192] uppercase tracking-[.08em]">BRANCH</div>
+                      <div className="text-white truncate">{entry.branch ?? "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-[#8e9192] uppercase tracking-[.08em]">REVISION</div>
+                      <div className="text-white truncate">{entry.revision?.slice(0, 7) ?? "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-[#8e9192] uppercase tracking-[.08em]">WORKING TREE</div>
+                      <div className="text-white">
+                        {entry.dirty === null ? "—" : entry.dirty ? "DIRTY" : "CLEAN"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-[#8e9192] uppercase tracking-[.08em]">VS QA BRANCH</div>
+                      <div className="text-white">
+                        {entry.aheadCount === null && entry.behindCount === null
+                          ? "—"
+                          : `+${entry.aheadCount ?? 0} / -${entry.behindCount ?? 0}`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-[#8e9192] uppercase tracking-[.08em]">
+                    <span>{entry.packageManager ?? "UNKNOWN PM"}</span>
+                    <span>·</span>
+                    <span>
+                      LAST SCANNED{" "}
+                      {entry.lastScannedAt ? new Date(entry.lastScannedAt).toLocaleString() : "NEVER"}
+                    </span>
+                    {entry.agentCheckoutGranted && (
+                      <>
+                        <span>·</span>
+                        <span className="text-white">AGENT CHECKOUT GRANTED</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -335,7 +614,7 @@ export default function ApplicationsPage() {
   });
 
   // Fetch organization entitlement limits
-  const { data: entitlement } = useQuery<Entitlement>({
+  const { data: entitlement, isLoading: isEntitlementLoading } = useQuery<Entitlement>({
     queryKey: ["sidebar-entitlement", selectedOrgId],
     queryFn: async () => {
       if (!selectedOrgId) return null;
@@ -346,9 +625,14 @@ export default function ApplicationsPage() {
     enabled: !!selectedOrgId,
   });
 
+  // Until the entitlement resolves we do not know the real limit, so we must not
+  // fall back to 1 and claim the org is out of slots. The server re-checks the
+  // limit on create and is the authority.
+  const entitlementReady = !!entitlement;
   const appLimit = entitlement?.limits?.applications ?? 1;
   const currentCount = apps?.length ?? 0;
-  const limitReached = currentCount >= appLimit;
+  const limitReached = entitlementReady && currentCount >= appLimit;
+  const canCreate = canManage && !isEntitlementLoading;
 
   // Handlers
   function openCreate() {
@@ -381,6 +665,11 @@ export default function ApplicationsPage() {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (res.status === 403 && typeof body.limit === "number") {
+          setShowCreateModal(false);
+          setShowLimitModal(true);
+          return;
+        }
         throw new Error(body.message || body.error || "Failed to create application");
       }
 
@@ -536,7 +825,8 @@ export default function ApplicationsPage() {
           </div>
           <p className="text-xs text-[#c4c7c8] font-sans">
             Using <strong className="text-white font-mono">{currentCount}</strong> of{" "}
-            <strong className="text-white font-mono">{appLimit}</strong> allowed application{appLimit > 1 ? "s" : ""}.
+            <strong className="text-white font-mono">{entitlementReady ? appLimit : "—"}</strong>{" "}
+            allowed application{!entitlementReady || appLimit > 1 ? "s" : ""}.
           </p>
         </div>
 
@@ -544,7 +834,8 @@ export default function ApplicationsPage() {
           <button
             type="button"
             onClick={openCreate}
-            className="inline-block bg-white text-black text-xs font-semibold uppercase tracking-[.08em] px-4 py-2.5 rounded hover:bg-neutral-200 transition-colors cursor-pointer"
+            disabled={!canCreate}
+            className="inline-block bg-white text-black text-xs font-semibold uppercase tracking-[.08em] px-4 py-2.5 rounded hover:bg-neutral-200 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Create Application
           </button>
@@ -561,8 +852,6 @@ export default function ApplicationsPage() {
       ) : apps && apps.length > 0 ? (
         <div className="space-y-6">
           {apps.map((app) => {
-            const workspace = app.projectWorkspaces?.[0];
-            const parsedWorkspace = parseWorkspaceInfo(workspace);
             const progressPercentage = calculateProgressPercentage(app.onboardingProgress);
 
             return (
@@ -637,91 +926,8 @@ export default function ApplicationsPage() {
                 </div>
 
                 <div className="p-5 space-y-5">
-                  {/* Feature 3: Attached Project Workspace & Analysis Overview */}
-                  <div className="rounded border border-[#262626] bg-black p-4 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#262626] pb-2.5">
-                      <span className="text-[11px] font-mono tracking-[.08em] uppercase text-[#8e9192]">
-                        ATTACHED PROJECT WORKSPACE
-                      </span>
-                      {parsedWorkspace ? (
-                        <span className="border border-white text-white px-2 py-0.5 text-[10px] font-mono tracking-[.08em] uppercase">
-                          CONNECTED
-                        </span>
-                      ) : (
-                        <span className="border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[10px] font-mono tracking-[.08em] uppercase">
-                          NOT ATTACHED
-                        </span>
-                      )}
-                    </div>
-
-                    {parsedWorkspace ? (
-                      <div className="space-y-3 text-xs font-mono">
-                        {/* Path / Fingerprint */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#131313] p-2.5 rounded border border-[#262626]">
-                          <span className="text-[#c4c7c8] truncate max-w-xl">
-                            {parsedWorkspace.path
-                              ? `Path: ${parsedWorkspace.path}`
-                              : `Workspace Fingerprint: ${parsedWorkspace.fingerprint}`}
-                          </span>
-                          <span className="border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[10px] uppercase">
-                            {parsedWorkspace.packageManager}
-                          </span>
-                        </div>
-
-                        {/* Frameworks & Stack */}
-                        {parsedWorkspace.frameworks.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] text-[#8e9192] uppercase tracking-[.08em]">DETECTED STACK:</span>
-                            {parsedWorkspace.frameworks.map((fw) => (
-                              <span
-                                key={fw.name}
-                                className="border border-[#262626] bg-[#131313] text-white px-2 py-0.5 text-[10px] rounded"
-                              >
-                                {fw.name} {fw.version ? `v${fw.version}` : ""}
-                              </span>
-                            ))}
-                            {parsedWorkspace.branch && (
-                              <span className="border border-[#262626] text-[#8e9192] px-2 py-0.5 text-[10px] rounded">
-                                branch: {parsedWorkspace.branch}
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Analysis Overview: Routes, Endpoints, Docs */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-                          <div className="rounded border border-[#262626] bg-[#131313] p-2.5 text-center">
-                            <div className="text-base font-bold text-white">
-                              {parsedWorkspace.routesCount}
-                            </div>
-                            <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em] mt-0.5">
-                              DISCOVERED ROUTES
-                            </div>
-                          </div>
-                          <div className="rounded border border-[#262626] bg-[#131313] p-2.5 text-center">
-                            <div className="text-base font-bold text-white">
-                              {parsedWorkspace.endpointsCount}
-                            </div>
-                            <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em] mt-0.5">
-                              ENDPOINTS MAPPED
-                            </div>
-                          </div>
-                          <div className="rounded border border-[#262626] bg-[#131313] p-2.5 text-center">
-                            <div className="text-base font-bold text-white">
-                              {parsedWorkspace.docsCount}
-                            </div>
-                            <div className="text-[10px] text-[#8e9192] uppercase tracking-[.08em] mt-0.5">
-                              DOC MANIFESTS
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-[#c4c7c8] leading-relaxed py-1 font-sans">
-                        To link a local workspace folder, launch the <strong>Tellann Desktop</strong> application, select this application, and click <em>Attach Local Workspace</em>.
-                      </div>
-                    )}
-                  </div>
+                  {/* Repository binding, QA branch policy, and every member's checkout */}
+                  <WorkspaceRosterSection appId={app.id} canManage={canManage} />
 
                   {/* Feature 5: Telemetry Fan-out Stats Strip */}
                   <ApplicationStatsStrip appId={app.id} />
@@ -742,7 +948,8 @@ export default function ApplicationsPage() {
             <button
               type="button"
               onClick={openCreate}
-              className="inline-block bg-white text-black text-xs font-semibold uppercase tracking-[.08em] px-4 py-2.5 rounded hover:bg-neutral-200 transition-colors cursor-pointer"
+              disabled={!canCreate}
+              className="inline-block bg-white text-black text-xs font-semibold uppercase tracking-[.08em] px-4 py-2.5 rounded hover:bg-neutral-200 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Create Application
             </button>
