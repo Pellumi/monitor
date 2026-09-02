@@ -2,7 +2,9 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 
-process.loadEnvFile?.('.env');
+// Container deployments inject the environment directly and ship no .env file.
+// loadEnvFile throws ENOENT rather than no-opping, so its absence must be tolerated.
+try { process.loadEnvFile?.('.env'); } catch { /* environment already populated by the platform */ }
 
 const gateway = process.env.API_GATEWAY_URL ?? 'http://127.0.0.1:3000';
 const prisma = new PrismaClient();

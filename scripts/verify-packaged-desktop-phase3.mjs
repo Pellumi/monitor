@@ -7,7 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { _electron as electron } from 'playwright';
 import { PrismaClient } from '@prisma/client';
 
-process.loadEnvFile?.('.env');
+// Container deployments inject the environment directly and ship no .env file.
+// loadEnvFile throws ENOENT rather than no-opping, so its absence must be tolerated.
+try { process.loadEnvFile?.('.env'); } catch { /* environment already populated by the platform */ }
 const prisma = new PrismaClient();
 const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-packaged-phase3-'));
 const executablePath = path.resolve('apps/desktop/release/phase1/win-unpacked/Tellann.exe');

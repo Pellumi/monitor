@@ -3,7 +3,9 @@ import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import { applyScheduledSubscriptionChanges } from '../services/background-workers/src/subscription-change-worker';
 
-process.loadEnvFile?.('.env');
+// Container deployments inject the environment directly and ship no .env file.
+// loadEnvFile throws ENOENT rather than no-opping, so its absence must be tolerated.
+try { process.loadEnvFile?.('.env'); } catch { /* environment already populated by the platform */ }
 const prisma = new PrismaClient();
 const billing = process.env.BILLING_API_URL ?? 'http://127.0.0.1:3009';
 const mockSecret = process.env.BILLING_MOCK_WEBHOOK_SECRET ?? 'tellann-local-acceptance-mock-webhook-secret';
