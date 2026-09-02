@@ -70,6 +70,9 @@ function bearerIdentity(request: FastifyRequest): { client?: string; key?: strin
 // Routes that bypass API key authentication
 const PUBLIC_PREFIXES = ['/health', '/auth', '/internal/app-events', '/v1/desktop/app-events'];
 
+// Routes that bypass rate limiting. See the allowList note on the plugin below.
+const RATE_LIMIT_EXEMPT_PATHS = new Set(['/auth/refresh', '/auth/desktop/refresh']);
+
 // ─────────────────────────────────────────────────────────────
 // In-memory key cache (TTL: 60s) to avoid DB round-trip per request
 // ─────────────────────────────────────────────────────────────
@@ -171,9 +174,26 @@ async function resolveProgrammaticToken(rawToken: string): Promise<{ organizatio
 // Build and Start Fastify
 // ─────────────────────────────────────────────────────────────
 
+// Dashboard rate limiting is keyed on the client IP, so behind a load balancer
+// every dashboard user shares one bucket unless the forwarded-for chain is
+// trusted. It stays opt-in: trusting the header when nothing strips it lets a
+// caller forge the key and walk around the limit. Set to `true`, a hop count,
+// or a comma-separated list of trusted proxy addresses.
+function trustProxyConfig(): boolean | number | string {
+  const raw = process.env.API_GATEWAY_TRUST_PROXY?.trim();
+  if (!raw || raw === 'false') return false;
+  if (raw === 'true') return true;
+  const hops = Number(raw);
+  return Number.isInteger(hops) && hops > 0 ? hops : raw;
+}
+
 // 30 MB body ceiling so large proxied payloads (e.g. base64-encoded documents
 // for flow generation) are not rejected before reaching the upstream service.
-const fastify = Fastify({ logger: true, bodyLimit: 31 * 1024 * 1024 });
+const fastify = Fastify({
+  logger: true,
+  bodyLimit: 31 * 1024 * 1024,
+  trustProxy: trustProxyConfig(),
+});
 
 async function main() {
   // CORS — allow all origins so browser SDKs work
@@ -181,6 +201,12 @@ async function main() {
 
   // Rate limiting — keyed on API key prefix header (injected after auth) or IP
   await fastify.register(rateLimit, {
+    // Session renewal is exempt. It is keyed on IP like the rest of the
+    // dashboard traffic it is issued alongside, so a limited client would be
+    // unable to refresh precisely when it needs to — and the dashboard reads a
+    // refused refresh as a dead session. Rotation itself is the abuse control
+    // here: a refresh token is single-use.
+    allowList: (req) => RATE_LIMIT_EXEMPT_PATHS.has(req.url.split('?')[0]),
     max: (req) => {
       const identity = bearerIdentity(req);
       if (identity.client === 'desktop') return DESKTOP_RATE_LIMIT_MAX;

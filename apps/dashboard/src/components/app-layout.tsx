@@ -38,10 +38,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </header>
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6 md:p-8">
-          {/* Desktop bell: the mobile header carries its own above. */}
-          <div className="mb-4 hidden justify-end md:flex">
-            <NotificationBell />
-          </div>
           {children}
         </main>
       </div>

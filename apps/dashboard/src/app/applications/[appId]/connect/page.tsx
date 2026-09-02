@@ -48,7 +48,214 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-function GatewaySettings({ descriptor, onSaved }: { descriptor: Descriptor; onSaved: () => void }) {
+const DASHBOARD_GATEWAY_URL = (process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "").replace(/\/$/, "");
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const { hostname } = new URL(value);
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]" ||
+      hostname.endsWith(".localhost")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The onboarding service embeds http://localhost:3000 into the descriptor whenever
+ * TELLANN_PUBLIC_GATEWAY_URL is unset for its own deployment. A hosted dashboard must still
+ * hand users a reachable telemetry origin, so prefer a customised endpoint, then the
+ * dashboard's configured gateway URL, then its own origin, before showing a loopback address.
+ */
+function resolveGatewayEndpoint(descriptor: Descriptor): string {
+  if (descriptor.gatewayEndpointCustomized) return descriptor.gatewayEndpoint;
+  if (!isLoopbackUrl(descriptor.gatewayEndpoint)) return descriptor.gatewayEndpoint;
+  if (DASHBOARD_GATEWAY_URL && !isLoopbackUrl(DASHBOARD_GATEWAY_URL)) return DASHBOARD_GATEWAY_URL;
+  if (typeof window !== "undefined" && !isLoopbackUrl(window.location.origin)) return window.location.origin;
+  return descriptor.gatewayEndpoint;
+}
+
+type FrameworkId =
+  | "nextjs"
+  | "react-vite"
+  | "react-cra"
+  | "sveltekit"
+  | "vanilla"
+  | "node"
+  | "nextjs-server"
+  | "deno";
+
+type SnippetContext = { packageName: string; endpoint: string; applicationId: string; environmentId: string };
+
+type FrameworkOption = {
+  id: FrameworkId;
+  label: string;
+  kind: "FRONTEND" | "BACKEND";
+  envVars: { url: string; key: string } | null;
+  build: (ctx: SnippetContext) => string;
+};
+
+function frontendSnippet(opts: {
+  ctx: SnippetContext;
+  comment: string;
+  urlExpr: string;
+  keyExpr: string;
+  extraImport?: string;
+}): string {
+  const lines = [`import { TELLANN } from '${opts.ctx.packageName}';`];
+  if (opts.extraImport) lines.push(opts.extraImport);
+  lines.push(
+    "",
+    opts.comment,
+    "TELLANN.initialize({",
+    `    endpoint: ${opts.urlExpr},`,
+    `    apiKey: ${opts.keyExpr},`,
+    `    applicationId: '${opts.ctx.applicationId}',`,
+    `    environmentId: '${opts.ctx.environmentId}'`,
+    "});",
+    "",
+    "void TELLANN.verifyInstallation();",
+  );
+  return lines.join("\n");
+}
+
+const FRAMEWORKS: FrameworkOption[] = [
+  {
+    id: "nextjs",
+    label: "Next.js",
+    kind: "FRONTEND",
+    envVars: { url: "NEXT_PUBLIC_TELLANN_GATEWAY_URL", key: "NEXT_PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize Tellann browser telemetry (root client component or instrumentation-client.ts)",
+        urlExpr: `process.env.NEXT_PUBLIC_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "process.env.NEXT_PUBLIC_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "react-vite",
+    label: "Vite (React / Vue / Svelte)",
+    kind: "FRONTEND",
+    envVars: { url: "VITE_TELLANN_GATEWAY_URL", key: "VITE_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize once from your entry file (main.tsx / main.ts), outside any component",
+        urlExpr: `import.meta.env.VITE_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "import.meta.env.VITE_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "react-cra",
+    label: "Create React App",
+    kind: "FRONTEND",
+    envVars: { url: "REACT_APP_TELLANN_GATEWAY_URL", key: "REACT_APP_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize once from src/index.tsx, outside any component",
+        urlExpr: `process.env.REACT_APP_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "process.env.REACT_APP_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "sveltekit",
+    label: "SvelteKit",
+    kind: "FRONTEND",
+    envVars: { url: "PUBLIC_TELLANN_GATEWAY_URL", key: "PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        extraImport: "import { env } from '$env/dynamic/public';",
+        comment: "// Initialize from hooks.client.ts (or a root +layout.svelte module script)",
+        urlExpr: `env.PUBLIC_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "env.PUBLIC_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "vanilla",
+    label: "Vanilla / other",
+    kind: "FRONTEND",
+    envVars: null,
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize Tellann browser telemetry as early as possible in your app bootstrap",
+        urlExpr: `'${ctx.endpoint}'`,
+        keyExpr: "'YOUR_API_KEY'",
+      }),
+  },
+  {
+    id: "node",
+    label: "Node.js (Express / Fastify / Nest)",
+    kind: "BACKEND",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      [
+        `import { TELLANN } from '${ctx.packageName}';`,
+        "",
+        "// Initialize before your HTTP server starts — keep this at the very top of your entry file",
+        "TELLANN.initialize({",
+        `    endpoint: process.env.TELLANN_GATEWAY_URL || '${ctx.endpoint}',`,
+        "    apiKey: process.env.TELLANN_INGESTION_KEY,",
+        `    applicationId: '${ctx.applicationId}',`,
+        `    environmentId: '${ctx.environmentId}'`,
+        "});",
+        "",
+        "await TELLANN.verifyInstallation();",
+      ].join("\n"),
+  },
+  {
+    id: "nextjs-server",
+    label: "Next.js (server)",
+    kind: "BACKEND",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      [
+        `import { TELLANN } from '${ctx.packageName}';`,
+        "",
+        "// Call from register() in instrumentation.ts so it runs once per server process",
+        "export async function register() {",
+        "    TELLANN.initialize({",
+        `        endpoint: process.env.TELLANN_GATEWAY_URL || '${ctx.endpoint}',`,
+        "        apiKey: process.env.TELLANN_INGESTION_KEY,",
+        `        applicationId: '${ctx.applicationId}',`,
+        `        environmentId: '${ctx.environmentId}'`,
+        "    });",
+        "    await TELLANN.verifyInstallation();",
+        "}",
+      ].join("\n"),
+  },
+  {
+    id: "deno",
+    label: "Deno",
+    kind: "BACKEND",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      [
+        `import { TELLANN } from 'npm:${ctx.packageName}';`,
+        "",
+        "// Initialize before your server starts. Run with --allow-env --allow-net",
+        "TELLANN.initialize({",
+        `    endpoint: Deno.env.get('TELLANN_GATEWAY_URL') ?? '${ctx.endpoint}',`,
+        "    apiKey: Deno.env.get('TELLANN_INGESTION_KEY'),",
+        `    applicationId: '${ctx.applicationId}',`,
+        `    environmentId: '${ctx.environmentId}'`,
+        "});",
+        "",
+        "await TELLANN.verifyInstallation();",
+      ].join("\n"),
+  },
+];
+
+const DEFAULT_FRAMEWORK: Record<"FRONTEND" | "BACKEND", FrameworkId> = { FRONTEND: "nextjs", BACKEND: "node" };
+
+function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor: Descriptor; fallbackEndpoint: string; onSaved: () => void }) {
   const [customized, setCustomized] = useState(descriptor.gatewayEndpointCustomized);
   const [endpoint, setEndpoint] = useState(descriptor.gatewayEndpointCustomized ? descriptor.gatewayEndpoint : "");
   const save = useMutation({
@@ -89,7 +296,7 @@ function GatewaySettings({ descriptor, onSaved }: { descriptor: Descriptor; onSa
           <input
             id="telemetry-gateway-url"
             type="url"
-            value={customized ? endpoint : descriptor.gatewayEndpoint}
+            value={customized ? endpoint : fallbackEndpoint}
             onChange={(event) => setEndpoint(event.target.value)}
             disabled={!customized}
             placeholder="https://telemetry.example.com"
@@ -115,6 +322,7 @@ export default function ConnectApplicationPage() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"choice" | "manual" | "desktop">("choice");
   const [targetId, setTargetId] = useState<"frontend" | "backend">("frontend");
+  const [framework, setFramework] = useState<FrameworkId>("nextjs");
   const [manager, setManager] = useState("pnpm");
   const [rawKey, setRawKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -142,7 +350,21 @@ export default function ConnectApplicationPage() {
   });
 
   const target = useMemo(() => setup.data?.targets.find((item) => item.id === targetId), [setup.data, targetId]);
-  const snippet = target?.snippet.replace(/YOUR_API_KEY/g, rawKey ?? "YOUR_API_KEY") ?? "";
+  const targetKind = target?.kind ?? "FRONTEND";
+  const frameworkOptions = useMemo(() => FRAMEWORKS.filter((item) => item.kind === targetKind), [targetKind]);
+  const activeFramework = frameworkOptions.find((item) => item.id === framework) ?? frameworkOptions[0];
+  const resolvedEndpoint = setup.data ? resolveGatewayEndpoint(setup.data) : "";
+  const snippet =
+    target && setup.data && activeFramework
+      ? activeFramework
+          .build({
+            packageName: target.packageName,
+            endpoint: resolvedEndpoint,
+            applicationId: setup.data.applicationId,
+            environmentId: setup.data.environmentId,
+          })
+          .replace(/YOUR_API_KEY/g, rawKey ?? "YOUR_API_KEY")
+      : "";
   const copy = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(key);
@@ -231,8 +453,9 @@ export default function ConnectApplicationPage() {
         </table>
 
         <GatewaySettings
-          key={`${descriptor.environmentId}:${descriptor.gatewayEndpoint}:${descriptor.gatewayEndpointCustomized}`}
+          key={`${descriptor.environmentId}:${resolvedEndpoint}:${descriptor.gatewayEndpointCustomized}`}
           descriptor={descriptor}
+          fallbackEndpoint={resolvedEndpoint}
           onSaved={() => void queryClient.invalidateQueries({ queryKey: ["sdk-setup", appId] })}
         />
 
@@ -384,7 +607,10 @@ export default function ConnectApplicationPage() {
             {descriptor.targets.map((item) => (
               <button
                 key={item.id}
-                onClick={() => setTargetId(item.id)}
+                onClick={() => {
+                  setTargetId(item.id);
+                  setFramework(DEFAULT_FRAMEWORK[item.kind]);
+                }}
                 className={`rounded px-4 py-2 font-mono text-xs uppercase tracking-wider transition-colors ${
                   targetId === item.id
                     ? "bg-white text-black font-semibold"
@@ -398,6 +624,24 @@ export default function ConnectApplicationPage() {
 
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-4">
+              <div>
+                <label className="mb-2 block font-mono text-xs uppercase tracking-wider text-[#8e9192]">
+                  Framework
+                </label>
+                <Select value={activeFramework?.id ?? ""} onValueChange={(value) => setFramework(value as FrameworkId)}>
+                  <SelectTrigger className="font-mono text-xs">
+                    <SelectValue placeholder="Select framework">{activeFramework?.label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {frameworkOptions.map((item) => (
+                      <SelectItem key={item.id} value={item.id} className="font-mono text-xs">
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div>
                 <label className="mb-2 block font-mono text-xs uppercase tracking-wider text-[#8e9192]">
                   Package Manager
@@ -457,6 +701,18 @@ export default function ConnectApplicationPage() {
                 onCopy={() => void copy("snippet", snippet)}
                 multiline
               />
+              {activeFramework?.envVars ? (
+                <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
+                  Set <span className="text-white">{activeFramework.envVars.url}</span> and{" "}
+                  <span className="text-white">{activeFramework.envVars.key}</span> in your environment. The URL falls
+                  back to <span className="text-white">{resolvedEndpoint}</span> when unset.
+                </p>
+              ) : (
+                <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
+                  This snippet reads no build-time environment variables; it posts telemetry directly to{" "}
+                  <span className="text-white">{resolvedEndpoint}</span>.
+                </p>
+              )}
               <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
                 Start your application after initialization. This page will detect its session, first event, and test automatically.
               </p>

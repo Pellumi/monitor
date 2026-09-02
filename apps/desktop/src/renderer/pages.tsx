@@ -83,11 +83,21 @@ import {
 } from "./components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 
-function ActionTooltip({ content, children }: { content: string; children: ReactNode }) {
+function ActionTooltip({
+  content,
+  children,
+}: {
+  content: string;
+  children: ReactNode;
+}) {
   const [visible, setVisible] = useState(false);
   return (
     <div
-      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
       onMouseEnter={() => setVisible(true)}
       onMouseLeave={() => setVisible(false)}
       onFocus={() => setVisible(true)}
@@ -770,14 +780,20 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
 
   const compliant = compliance.status === "COMPLIANT";
   const mismatch = compliance.status === "BRANCH_MISMATCH";
-  const accent = compliant ? "#2f6b3f" : compliance.blocksRun ? "#7a2e2e" : "#7a5a2e";
+  const accent = compliant
+    ? "#2f6b3f"
+    : compliance.blocksRun
+      ? "#7a2e2e"
+      : "#7a5a2e";
 
   const handleSwitch = async () => {
     setNotice(null);
     const result = await switchToQaBranch(projectId);
     if (!result) return;
     if (!result.switched) {
-      setNotice(`Could not switch branch: ${result.reason ?? "unknown reason"}.`);
+      setNotice(
+        `Could not switch branch: ${result.reason ?? "unknown reason"}.`,
+      );
       return;
     }
     setNotice(
@@ -812,26 +828,42 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {compliant ? <ShieldCheck size={16} /> : <AlertTriangle size={16} />}
         <strong style={{ fontSize: 13 }}>
-          {compliant ? "QA review branch" : compliance.blocksRun ? "QA review branch required" : "QA review branch warning"}
+          {compliant
+            ? "QA review branch"
+            : compliance.blocksRun
+              ? "QA review branch required"
+              : "QA review branch warning"}
         </strong>
         {compliance.requiredBranch ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, opacity: 0.8 }}>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 12,
+              opacity: 0.8,
+            }}
+          >
             <GitBranch size={13} />
             {compliance.requiredBranch}
           </span>
         ) : null}
       </div>
 
-      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>{compliance.message}</p>
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+        {compliance.message}
+      </p>
 
       {mismatch && compliance.dirty ? (
         <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.85 }}>
-          This workspace has uncommitted changes. They will be stashed before the switch and can
-          be restored afterwards, never discarded.
+          This workspace has uncommitted changes. They will be stashed before
+          the switch and can be restored afterwards, never discarded.
         </p>
       ) : null}
 
-      {notice ? <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>{notice}</p> : null}
+      {notice ? (
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>{notice}</p>
+      ) : null}
 
       {mismatch ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -840,8 +872,7 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
             disabled={busy}
             onClick={() => void refreshBranchCompliance(projectId)}
           >
-            <RefreshCw size={14} />
-            I switched it myself
+            <RefreshCw size={14} />I switched it myself
           </button>
 
           {!compliance.agentCheckoutAllowed ? (
@@ -856,11 +887,16 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
               </button>
             ) : (
               <span style={{ fontSize: 12, opacity: 0.7, alignSelf: "center" }}>
-                An Owner or Admin has not enabled agent-performed branch switching.
+                An Owner or Admin has not enabled agent-performed branch
+                switching.
               </span>
             )
           ) : compliance.agentCheckoutGranted ? (
-            <button className="button" disabled={busy} onClick={() => void handleSwitch()}>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void handleSwitch()}
+            >
               <GitBranch size={14} />
               Switch to {compliance.requiredBranch}
             </button>
@@ -875,7 +911,8 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
             </button>
           )}
 
-          {compliance.agentCheckoutAllowed && compliance.canManageBranchPolicy ? (
+          {compliance.agentCheckoutAllowed &&
+          compliance.canManageBranchPolicy ? (
             <button
               className="button"
               disabled={busy}
@@ -914,8 +951,14 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
 }
 
 export function WorkspacePage() {
-  const { projectId, application, workspace, attachWorkspace, cloneWorkspace, busy } =
-    useProject();
+  const {
+    projectId,
+    application,
+    workspace,
+    attachWorkspace,
+    cloneWorkspace,
+    busy,
+  } = useProject();
   const [pathCopied, setPathCopied] = useState(false);
   if (!projectId) return <ProjectRequired />;
   if (!application)
@@ -1118,9 +1161,10 @@ export function WorkspacePage() {
                     opacity: 0.8,
                   }}
                 >
-                  Repository context is registered for <strong>{application.name}</strong>,
-                  but no folder is connected on this device. Attach an existing
-                  checkout or clone the team repository to begin local review.
+                  Repository context is registered for{" "}
+                  <strong>{application.name}</strong>, but no folder is
+                  connected on this device. Attach an existing checkout or clone
+                  the team repository to begin local review.
                 </p>
 
                 <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -1134,7 +1178,12 @@ export function WorkspacePage() {
                   {cloudWs.repositoryCloneUrl ? (
                     <button
                       className="button font-mono text-xs uppercase"
-                      onClick={() => void cloneWorkspace(projectId, cloudWs.repositoryCloneUrl)}
+                      onClick={() =>
+                        void cloneWorkspace(
+                          projectId,
+                          cloudWs.repositoryCloneUrl,
+                        )
+                      }
                       disabled={busy}
                     >
                       Clone from GitHub
@@ -1198,7 +1247,10 @@ export function WorkspacePage() {
                     flex: 1,
                   }}
                 >
-                  <Folder size={15} style={{ color: "#ffffff", flexShrink: 0 }} />
+                  <Folder
+                    size={15}
+                    style={{ color: "#ffffff", flexShrink: 0 }}
+                  />
                   <span
                     style={{
                       fontFamily: "ui-monospace, monospace",
@@ -1213,7 +1265,14 @@ export function WorkspacePage() {
                     {workspace.path}
                   </span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    flexShrink: 0,
+                  }}
+                >
                   <ActionTooltip content="Open in File Explorer">
                     <button
                       type="button"
@@ -1233,12 +1292,24 @@ export function WorkspacePage() {
                       onClick={async () => {
                         if (workspace.path) {
                           try {
-                            if (typeof window.tellann?.system?.openPath === "function") {
-                              await window.tellann.system.openPath(workspace.path);
-                            } else if (typeof window.tellann?.system?.copyText === "function") {
-                              await window.tellann.system.copyText(workspace.path);
+                            if (
+                              typeof window.tellann?.system?.openPath ===
+                              "function"
+                            ) {
+                              await window.tellann.system.openPath(
+                                workspace.path,
+                              );
+                            } else if (
+                              typeof window.tellann?.system?.copyText ===
+                              "function"
+                            ) {
+                              await window.tellann.system.copyText(
+                                workspace.path,
+                              );
                             } else {
-                              await navigator.clipboard.writeText(workspace.path);
+                              await navigator.clipboard.writeText(
+                                workspace.path,
+                              );
                             }
                           } catch (err) {
                             console.error("Could not open folder path", err);
@@ -1248,10 +1319,14 @@ export function WorkspacePage() {
                       aria-label={`Open folder in file explorer: ${workspace.path}`}
                     >
                       <FolderOpen size={14} />
-                      <span style={{ fontSize: "11px", fontWeight: 500 }}>Open</span>
+                      <span style={{ fontSize: "11px", fontWeight: 500 }}>
+                        Open
+                      </span>
                     </button>
                   </ActionTooltip>
-                  <ActionTooltip content={pathCopied ? "Copied!" : "Copy path to clipboard"}>
+                  <ActionTooltip
+                    content={pathCopied ? "Copied!" : "Copy path to clipboard"}
+                  >
                     <button
                       type="button"
                       style={{
@@ -1268,8 +1343,13 @@ export function WorkspacePage() {
                       }}
                       onClick={async () => {
                         if (workspace.path) {
-                          if (typeof window.tellann?.system?.copyText === "function") {
-                            await window.tellann.system.copyText(workspace.path);
+                          if (
+                            typeof window.tellann?.system?.copyText ===
+                            "function"
+                          ) {
+                            await window.tellann.system.copyText(
+                              workspace.path,
+                            );
                           } else {
                             await navigator.clipboard.writeText(workspace.path);
                           }
@@ -1279,7 +1359,11 @@ export function WorkspacePage() {
                       }}
                       aria-label="Copy folder path"
                     >
-                      {pathCopied ? <Check size={14} style={{ color: "#ffffff" }} /> : <Copy size={14} />}
+                      {pathCopied ? (
+                        <Check size={14} style={{ color: "#ffffff" }} />
+                      ) : (
+                        <Copy size={14} />
+                      )}
                     </button>
                   </ActionTooltip>
                 </div>
@@ -2681,11 +2765,14 @@ function ManualIntentBuilder({
       }
       setCopiedFlowLabel(key);
       window.setTimeout(
-        () => setCopiedFlowLabel((current) => (current === key ? null : current)),
+        () =>
+          setCopiedFlowLabel((current) => (current === key ? null : current)),
         1500,
       );
     } catch {
-      setMessage("Could not copy the label. Select the text and copy it manually.");
+      setMessage(
+        "Could not copy the label. Select the text and copy it manually.",
+      );
     }
   };
 
@@ -2848,9 +2935,7 @@ function ManualIntentBuilder({
                     value={newFlowName}
                     maxLength={FLOW_NAME_MAX}
                     onChange={(event) =>
-                      setNewFlowName(
-                        event.target.value.slice(0, FLOW_NAME_MAX),
-                      )
+                      setNewFlowName(event.target.value.slice(0, FLOW_NAME_MAX))
                     }
                     placeholder="e.g. Customer checkout"
                   />
@@ -3072,7 +3157,10 @@ function ManualIntentBuilder({
                 {activeFlow.states.map((state, index) => (
                   <div key={state.id}>
                     <span>{index + 1}</span>
-                    <strong className="manual-truncated-label" title={state.stateName}>
+                    <strong
+                      className="manual-truncated-label"
+                      title={state.stateName}
+                    >
                       {state.stateName}
                     </strong>
                     <small>{state.category}</small>
@@ -3080,10 +3168,17 @@ function ManualIntentBuilder({
                       <button
                         type="button"
                         className="icon-button"
-                        title={copiedFlowLabel === `state:${state.id}` ? "Copied" : "Copy full state name"}
+                        title={
+                          copiedFlowLabel === `state:${state.id}`
+                            ? "Copied"
+                            : "Copy full state name"
+                        }
                         aria-label={`Copy full state name: ${state.stateName}`}
                         onClick={() =>
-                          void copyFlowLabel(`state:${state.id}`, state.stateName)
+                          void copyFlowLabel(
+                            `state:${state.id}`,
+                            state.stateName,
+                          )
                         }
                       >
                         {copiedFlowLabel === `state:${state.id}` ? (
@@ -3230,7 +3325,10 @@ function ManualIntentBuilder({
                     <div className="manual-transition-flow">
                       <strong
                         className="state-tag manual-truncated-label"
-                        title={stateNameById.get(transition.fromStateId) ?? transition.fromState?.stateName}
+                        title={
+                          stateNameById.get(transition.fromStateId) ??
+                          transition.fromState?.stateName
+                        }
                       >
                         {stateNameById.get(transition.fromStateId) ??
                           transition.fromState?.stateName}
@@ -3238,7 +3336,10 @@ function ManualIntentBuilder({
                       <ArrowRight size={14} className="transition-arrow" />
                       <strong
                         className="state-tag manual-truncated-label"
-                        title={stateNameById.get(transition.toStateId) ?? transition.toState?.stateName}
+                        title={
+                          stateNameById.get(transition.toStateId) ??
+                          transition.toState?.stateName
+                        }
                       >
                         {stateNameById.get(transition.toStateId) ??
                           transition.toState?.stateName}
@@ -3254,7 +3355,11 @@ function ManualIntentBuilder({
                       <button
                         type="button"
                         className="icon-button"
-                        title={copiedFlowLabel === `transition:${transition.id}` ? "Copied" : "Copy full transition"}
+                        title={
+                          copiedFlowLabel === `transition:${transition.id}`
+                            ? "Copied"
+                            : "Copy full transition"
+                        }
                         aria-label={`Copy full transition: ${transition.action || "Transition"}`}
                         onClick={() => {
                           const from =
@@ -4128,7 +4233,10 @@ export function IntentPage() {
     } catch (error) {
       setStage("FAILED");
       const msg = intentErrorMessage(error);
-      if (String(error).includes("FEATURE_NOT_ENTITLED") || msg.includes("FEATURE_NOT_ENTITLED")) {
+      if (
+        String(error).includes("FEATURE_NOT_ENTITLED") ||
+        msg.includes("FEATURE_NOT_ENTITLED")
+      ) {
         setEntitlementModalOpen(true);
       }
       setAutomationMessage(msg);
@@ -4143,7 +4251,10 @@ export function IntentPage() {
       void pollDraftJob(activeDraftJobId, operation).catch((error) => {
         setStage("FAILED");
         const msg = intentErrorMessage(error);
-        if (String(error).includes("FEATURE_NOT_ENTITLED") || msg.includes("FEATURE_NOT_ENTITLED")) {
+        if (
+          String(error).includes("FEATURE_NOT_ENTITLED") ||
+          msg.includes("FEATURE_NOT_ENTITLED")
+        ) {
           setEntitlementModalOpen(true);
         }
         setAutomationMessage(msg);
@@ -5481,7 +5592,9 @@ function FlowRoadmap({
     const rows = [...byLayer.keys()].sort((a, b) => a - b);
     const rowWidth = (count: number) =>
       count * FLOW_GRAPH.nodeW + Math.max(0, count - 1) * FLOW_GRAPH.xGap;
-    const widest = Math.max(...rows.map((r) => rowWidth(byLayer.get(r)!.length)));
+    const widest = Math.max(
+      ...rows.map((r) => rowWidth(byLayer.get(r)!.length)),
+    );
     const pos = new Map<string, { x: number; y: number }>();
     rows.forEach((row, rowIndex) => {
       const ids = byLayer.get(row)!;
@@ -5519,15 +5632,14 @@ function FlowRoadmap({
     setSelectedId((current) => {
       if (current && stepById.has(current)) return current;
       return (
-        roadmap.steps.find(
-          (s) => s.status === "CURRENT" && s.kind !== "VERIFY",
-        )?.id ??
+        roadmap.steps.find((s) => s.status === "CURRENT" && s.kind !== "VERIFY")
+          ?.id ??
         roadmap.steps.find((s) => s.kind !== "VERIFY")?.id ??
         null
       );
     });
   }, [roadmap.steps, stepById]);
-  const selected = selectedId ? stepById.get(selectedId) ?? null : null;
+  const selected = selectedId ? (stepById.get(selectedId) ?? null) : null;
 
   const renderPanel = (step: RoadmapStep) => {
     const completed = ["DONE", "VERIFIED"].includes(step.status);
@@ -5576,7 +5688,9 @@ function FlowRoadmap({
           <label className="check-row flow-graph-panel-check">
             <Switch
               checked={completed}
-              disabled={busy || step.status === "BLOCKED" || step.status === "VERIFIED"}
+              disabled={
+                busy || step.status === "BLOCKED" || step.status === "VERIFIED"
+              }
               onCheckedChange={(checked) => onToggle(step.id, checked)}
             />
             <span>
@@ -5640,8 +5754,8 @@ function FlowRoadmap({
         <div className="muted stack" style={{ gap: 6 }}>
           <p>
             Tellann can only confirm this flow by watching it happen in a real
-            run. Add one line of code at each state and transition, then run your
-            app through the flow once.
+            run. Add one line of code at each state and transition, then run
+            your app through the flow once.
           </p>
           <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>
@@ -5705,14 +5819,14 @@ function FlowRoadmap({
                     ? `M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}`
                     : `M ${ax} ${ay} C ${ax + 140} ${ay}, ${bx + 140} ${by}, ${bx} ${by}`;
                   const step = stepById.get(String(transition.id));
-                  const label = quotedName(step?.title ?? String(transition.id));
+                  const label = quotedName(
+                    step?.title ?? String(transition.id),
+                  );
                   const isSelected = selected?.id === transition.id;
                   const isDone =
                     step && ["DONE", "VERIFIED"].includes(step.status);
                   const labelW = Math.min(200, 18 + label.length * 6.2);
-                  const lx = forward
-                    ? (ax + bx) / 2
-                    : Math.max(ax, bx) + 90;
+                  const lx = forward ? (ax + bx) / 2 : Math.max(ax, bx) + 90;
                   const ly = forward ? midY : (ay + by) / 2;
                   return (
                     <g key={transition.id}>
@@ -5836,9 +5950,7 @@ function FlowRoadmap({
                         step.status === "BLOCKED" ||
                         step.status === "VERIFIED"
                       }
-                      onCheckedChange={(checked) =>
-                        onToggle(step.id, checked)
-                      }
+                      onCheckedChange={(checked) => onToggle(step.id, checked)}
                     />
                     <span>
                       <strong>I added this checkpoint</strong>
@@ -5893,7 +6005,10 @@ function highlightCodeSnippet(code: string): ReactNode[] {
 
     if (token.startsWith("//") || token.startsWith("/*")) {
       nodes.push(
-        <span key={nodes.length} style={{ color: "#6a9955", fontStyle: "italic" }}>
+        <span
+          key={nodes.length}
+          style={{ color: "#6a9955", fontStyle: "italic" }}
+        >
           {token}
         </span>,
       );
@@ -5917,13 +6032,23 @@ function highlightCodeSnippet(code: string): ReactNode[] {
           {token}
         </span>,
       );
-    } else if (code.slice(match.index + token.length).trimStart().startsWith("(")) {
+    } else if (
+      code
+        .slice(match.index + token.length)
+        .trimStart()
+        .startsWith("(")
+    ) {
       nodes.push(
         <span key={nodes.length} style={{ color: "#dcdcaa" }}>
           {token}
         </span>,
       );
-    } else if (code.slice(match.index + token.length).trimStart().startsWith(":")) {
+    } else if (
+      code
+        .slice(match.index + token.length)
+        .trimStart()
+        .startsWith(":")
+    ) {
       nodes.push(
         <span key={nodes.length} style={{ color: "#9cdcfe" }}>
           {token}
@@ -6479,8 +6604,8 @@ export function InstrumentationPage() {
           <p className="mb-4">
             Install and initialize a Tellann SDK, start this environment, and
             send <code>TELLANN_INITIALIZED</code> or{" "}
-            <code>TELLANN_ONBOARDING_TEST</code>. Finding package files alone does
-            not unlock the Flow.
+            <code>TELLANN_ONBOARDING_TEST</code>. Finding package files alone
+            does not unlock the Flow.
           </p>
           <div className="card-actions">
             <button
@@ -6751,7 +6876,8 @@ export function InstrumentationPage() {
                   {formatted.workspaceName ? (
                     <small className="muted">
                       Project: <code>{formatted.workspaceName}</code>
-                      {" · "}Package manager: <code>{formatted.packageManager}</code>
+                      {" · "}Package manager:{" "}
+                      <code>{formatted.packageManager}</code>
                     </small>
                   ) : (
                     <small className="muted">
@@ -6945,8 +7071,8 @@ export function InstrumentationPage() {
                                 gap: "4px",
                               }}
                             >
-                              <Check size={13} /> Connection verified! Tellann is
-                              receiving live telemetry from your app.
+                              <Check size={13} /> Connection verified! Tellann
+                              is receiving live telemetry from your app.
                             </span>
                           ) : (
                             <span>
@@ -7014,8 +7140,8 @@ export function InstrumentationPage() {
                             lineHeight: "1.5",
                           }}
                         >
-                          Once your application is running, choose what you want to
-                          do next:
+                          Once your application is running, choose what you want
+                          to do next:
                         </p>
                         <div
                           style={{
@@ -7052,7 +7178,8 @@ export function InstrumentationPage() {
                                 }
                                 onClick={() => void detect()}
                               >
-                                <SearchCode size={14} /> Detect framework & create proposal
+                                <SearchCode size={14} /> Detect framework &
+                                create proposal
                               </button>
                               <Link
                                 className="button"
@@ -7090,7 +7217,8 @@ export function InstrumentationPage() {
                         marginBottom: "8px",
                       }}
                     >
-                      <AlertTriangle size={14} /> Troubleshooting — Why isn't my app connecting?
+                      <AlertTriangle size={14} /> Troubleshooting — Why isn't my
+                      app connecting?
                     </strong>
                     <ul
                       style={{
@@ -7102,15 +7230,33 @@ export function InstrumentationPage() {
                       }}
                     >
                       <li>
-                        <strong>Place initialization at top-level module scope:</strong>{" "}
-                        Call <code>TELLANN.initialize(...)</code> in <code>main.tsx</code> or top of <code>App.tsx</code> <em>outside</em> component functions (e.g. outside <code>{"const App = () => ..."}</code>). Calling it inside a component function resets the SDK session on every React render.
+                        <strong>
+                          Place initialization at top-level module scope:
+                        </strong>{" "}
+                        Call <code>TELLANN.initialize(...)</code> in{" "}
+                        <code>main.tsx</code> or top of <code>App.tsx</code>{" "}
+                        <em>outside</em> component functions (e.g. outside{" "}
+                        <code>{"const App = () => ..."}</code>). Calling it
+                        inside a component function resets the SDK session on
+                        every React render.
                       </li>
                       <li>
-                        <strong>Set environment key & restart dev server:</strong> Put{" "}
-                        <code>VITE_TELLANN_INGESTION_KEY={manualRawKey || "tellann_..."}</code> in your <code>.env.local</code> file and restart your Vite server (<code>npm run dev</code>).
+                        <strong>
+                          Set environment key & restart dev server:
+                        </strong>{" "}
+                        Put{" "}
+                        <code>
+                          VITE_TELLANN_INGESTION_KEY=
+                          {manualRawKey || "tellann_..."}
+                        </code>{" "}
+                        in your <code>.env.local</code> file and restart your
+                        Vite server (<code>npm run dev</code>).
                       </li>
                       <li>
-                        <strong>Check browser console & network tab:</strong> Press F12 in your browser to check if <code>/v1/events/batch</code> requests are failing or blocked by CORS.
+                        <strong>Check browser console & network tab:</strong>{" "}
+                        Press F12 in your browser to check if{" "}
+                        <code>/v1/events/batch</code> requests are failing or
+                        blocked by CORS.
                       </li>
                     </ul>
                   </div>
@@ -7213,8 +7359,8 @@ export function InstrumentationPage() {
                 style={{ display: "inline-block", marginRight: "8px" }}
               />{" "}
               Automated instrumentation is not included on the{" "}
-              {application?.entitlements?.planType ?? "current"} plan. Browser-only
-              QA remains available.
+              {application?.entitlements?.planType ?? "current"} plan.
+              Browser-only QA remains available.
             </span>
             <button
               className="button primary"
@@ -8000,9 +8146,10 @@ export function InstrumentationDetailPage() {
               <RefreshCw size={15} className="text-[#8e9192] shrink-0 mt-0.5" />
               <span className="text-sm text-[#c4c7c8] leading-relaxed flex-1">
                 Waiting for the onboarding test event
-                {environment?.name ? ` from ${environment.name}` : ""}. Start your
-                application and use it once — this screen updates on its own when
-                Tellann receives the event. No QA run is needed for this step.
+                {environment?.name ? ` from ${environment.name}` : ""}. Start
+                your application and use it once — this screen updates on its
+                own when Tellann receives the event. No QA run is needed for
+                this step.
               </span>
               <button
                 className="button shrink-0"
@@ -8891,10 +9038,10 @@ export function NewRunPage() {
               ]}
             />
             <small>
-              Only Flows that are published and have a completed
-              initialization in this project are listed. If a Flow you
-              created is missing, either publish it from the declare view or
-              initialize it for this project first.
+              Only Flows that are published and have a completed initialization
+              in this project are listed. If a Flow you created is missing,
+              either publish it from the declare view or initialize it for this
+              project first.
             </small>
           </label>
           <label className="full">

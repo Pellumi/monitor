@@ -20,6 +20,7 @@ import {
   updateOIDCProvider,
 } from './oidc';
 import { createMfaRouter, MFA_CHALLENGE_COOKIE } from './mfa-routes';
+import { classifyRotation } from './refresh-rotation';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -465,19 +466,43 @@ app.post('/auth/desktop/token', async (req: Request, res: Response) => {
 
 app.post('/auth/desktop/refresh', async (req: Request, res: Response) => {
   const rawRefreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : '';
-  const session = await prisma.deviceSession.findUnique({
-    where: { refreshTokenHash: sha256(rawRefreshToken) },
-    include: { user: true },
-  });
-  if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+  if (!rawRefreshToken) {
     return res.status(401).json({ error: 'DESKTOP_SESSION_INVALID' });
   }
+  const presentedHash = sha256(rawRefreshToken);
+  const candidate = await prisma.deviceSession.findFirst({
+    where: {
+      OR: [{ refreshTokenHash: presentedHash }, { previousRefreshTokenHash: presentedHash }],
+    },
+    include: { user: true },
+  });
+  const lookup = classifyRotation(candidate, presentedHash);
+
+  if (lookup.status === 'REUSED') {
+    await prisma.deviceSession.update({
+      where: { id: lookup.session.id },
+      data: { revokedAt: new Date() },
+    });
+    await writeAuditLog(lookup.session.userId, lookup.session.organizationId, AuditAction.SESSION_REVOKED, req);
+    return res.status(401).json({ error: 'DESKTOP_SESSION_INVALID' });
+  }
+  if (lookup.status === 'UNKNOWN') {
+    return res.status(401).json({ error: 'DESKTOP_SESSION_INVALID' });
+  }
+
+  const session = lookup.session;
+  if (session.user.deletedAt) {
+    return accountDeletionPending(res, session.user);
+  }
+
   const nextRefreshToken = crypto.randomBytes(64).toString('base64url');
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   await prisma.deviceSession.update({
     where: { id: session.id },
     data: {
       refreshTokenHash: sha256(nextRefreshToken),
+      previousRefreshTokenHash: session.refreshTokenHash,
+      rotatedAt: new Date(),
       expiresAt,
       lastSeenAt: new Date(),
     },
@@ -852,24 +877,39 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
   const oldHash = sha256(oldRawRefresh);
 
   try {
-    const session = await prisma.userSession.findFirst({
+    const candidate = await prisma.userSession.findFirst({
       where: {
-        refreshTokenHash: oldHash,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
+        OR: [{ refreshTokenHash: oldHash }, { previousRefreshTokenHash: oldHash }],
       },
       include: { user: true },
     });
+    const lookup = classifyRotation(candidate, oldHash);
 
-    if (!session) {
+    if (lookup.status === 'REUSED') {
+      // A superseded token replayed long after its rotation is the signature of a
+      // leaked cookie, so the whole session goes rather than being extended.
+      await prisma.userSession.update({
+        where: { id: lookup.session.id },
+        data: { revokedAt: new Date() },
+      });
+      await writeAuditLog(lookup.session.userId, null, AuditAction.SESSION_REVOKED, req);
+      res.clearCookie('access_token', COOKIE_OPTS);
+      res.clearCookie('refresh_token', COOKIE_OPTS);
       return res.status(401).json({ error: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
-    // Revoke old session (Rotation)
-    await prisma.userSession.update({
-      where: { id: session.id },
-      data: { revokedAt: new Date() },
-    });
+    if (lookup.status === 'UNKNOWN') {
+      res.clearCookie('access_token', COOKIE_OPTS);
+      res.clearCookie('refresh_token', COOKIE_OPTS);
+      return res.status(401).json({ error: 'SESSION_INVALID', message: 'Invalid or expired session' });
+    }
+
+    const session = lookup.session;
+
+    // Mirrors verifyAuth: a session must not outlive the account it belongs to.
+    if (session.user.deletedAt) {
+      return accountDeletionPending(res, session.user);
+    }
 
     await writeAuditLog(session.userId, null, AuditAction.SESSION_REFRESHED, req);
 
@@ -889,12 +929,15 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
     const newRefreshHash = sha256(newRawRefresh);
     const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    await prisma.userSession.create({
+    // Rotate in place. Creating a row per rotation grew UserSession by one
+    // revoked row every 15 minutes per signed-in user and made /auth/sessions
+    // unreadable; the row is the session, and only its token changes.
+    await prisma.userSession.update({
+      where: { id: session.id },
       data: {
-        userId: session.userId,
         refreshTokenHash: newRefreshHash,
-        userAgent: req.headers['user-agent'] || null,
-        ipAddress: req.ip || null,
+        previousRefreshTokenHash: session.refreshTokenHash,
+        rotatedAt: new Date(),
         expiresAt: refreshExpires,
       },
     });
@@ -917,7 +960,11 @@ app.post('/auth/logout', async (req: Request, res: Response) => {
   if (refreshCookie) {
     const hash = sha256(refreshCookie);
     try {
-      const session = await prisma.userSession.findUnique({ where: { refreshTokenHash: hash } });
+      // The cookie may still hold the pre-rotation token inside the grace
+      // window; missing it here would leave the session live after a logout.
+      const session = await prisma.userSession.findFirst({
+        where: { OR: [{ refreshTokenHash: hash }, { previousRefreshTokenHash: hash }] },
+      });
       if (session) {
         await prisma.userSession.update({
           where: { id: session.id },
@@ -1058,7 +1105,10 @@ app.post('/auth/account/deletion', verifyAuth, async (req: AuthenticatedRequest,
     await tx.deviceSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now } });
     return deletion;
   });
-  res.clearCookie('access_token'); res.clearCookie('refresh_token');
+  // COOKIE_OPTS carries the domain/path the cookies were set with — clearing
+  // without them leaves a domain-scoped cookie in place.
+  res.clearCookie('access_token', COOKIE_OPTS);
+  res.clearCookie('refresh_token', COOKIE_OPTS);
   res.status(202).json({ status: request.status, scheduledFor, restoration: 'SUPPORT_ONLY' });
 });
 
@@ -1175,7 +1225,10 @@ app.get('/auth/sessions', verifyAuth, async (req: AuthenticatedRequest, res: Res
     ipAddress: session.ipAddress,
     createdAt: session.createdAt,
     expiresAt: session.expiresAt,
-    current: currentHash === session.refreshTokenHash,
+    // The cookie can legitimately still hold the pre-rotation token inside the
+    // grace window, so matching only the current hash would mislabel this device.
+    current: currentHash !== null
+      && (currentHash === session.refreshTokenHash || currentHash === session.previousRefreshTokenHash),
   })));
 });
 
@@ -1200,7 +1253,16 @@ app.delete('/auth/sessions', verifyAuth, async (req: AuthenticatedRequest, res: 
     where: {
       userId: req.user.id,
       revokedAt: null,
-      ...(currentHash ? { refreshTokenHash: { not: currentHash } } : {}),
+      // Exclude by session id, not by hash: inside the rotation grace window the
+      // caller's cookie holds the previous hash, and matching on the current one
+      // alone would sign this device out along with the others.
+      ...(currentHash
+        ? {
+            NOT: {
+              OR: [{ refreshTokenHash: currentHash }, { previousRefreshTokenHash: currentHash }],
+            },
+          }
+        : {}),
     },
     data: { revokedAt: new Date() },
   });

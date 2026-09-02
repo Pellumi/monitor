@@ -72,7 +72,10 @@ export function EntitlementModal({
   const nextPlan = customRequiredPlan ?? resolved.nextPlan;
 
   const handleUpgrade = () => {
-    const dashboardBillingUrl = "http://localhost:3000/settings/billing";
+    const dashboardBaseUrl = (
+      import.meta.env.VITE_TELLANN_DASHBOARD_URL || "http://localhost:3010"
+    ).replace(/\/$/, "");
+    const dashboardBillingUrl = `${dashboardBaseUrl}/settings/billing`;
     if (window.tellann?.system?.openExternal) {
       void window.tellann.system.openExternal(dashboardBillingUrl);
     } else {

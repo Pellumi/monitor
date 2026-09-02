@@ -75,6 +75,7 @@ import {
 import { useSession, Membership, Organization } from "./providers";
 import { useTheme } from "@/components/theme-provider";
 import { useSidebarMode } from "@/components/sidebar-mode";
+import { NotificationBell } from "@/components/notification-bell";
 import { twMerge } from "tailwind-merge";
 
 // ─────────────────────────────────────────────────────────────
@@ -1225,6 +1226,15 @@ function UserProfile({ collapsed = false }: { collapsed?: boolean }) {
 // Sidebar (root)
 // ─────────────────────────────────────────────────────────────
 
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 500;
+const SIDEBAR_DEFAULT_WIDTH = 240;
+const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+
+function clampSidebarWidth(value: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
+}
+
 export function Sidebar() {
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
@@ -1233,14 +1243,85 @@ export function Sidebar() {
   const iconSrc =
     resolvedTheme === "light" ? "/logo_icon_black.svg" : "/logo_icon.svg";
 
+  // ── Adjustable width (drag the right edge; persisted per browser) ──
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+      if (stored) {
+        const parsed = Number.parseInt(stored, 10);
+        if (!Number.isNaN(parsed)) setWidth(clampSidebarWidth(parsed));
+      }
+    } catch {
+      /* localStorage unavailable — fall back to the default width */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    function onMouseMove(event: MouseEvent) {
+      // The sidebar is pinned to the viewport's left edge, so the pointer's
+      // x position is the target width.
+      setWidth(clampSidebarWidth(event.clientX));
+    }
+    function onMouseUp() {
+      setIsResizing(false);
+    }
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizing]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+    } catch {
+      /* ignore persistence failures */
+    }
+  }, [width]);
+
   return (
     <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
       <div
+        style={collapsed ? undefined : { width }}
         className={twMerge(
-          "hidden h-full shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] transition-[width] duration-200 md:flex",
-          collapsed ? "w-16" : "w-60",
+          "relative hidden h-full shrink-0 flex-col border-r border-[#262626] bg-[#0a0a0a] md:flex",
+          !isResizing && "transition-[width] duration-200",
+          collapsed && "w-16",
         )}
       >
+        {/* Drag handle — resize between 200px and 500px; double-click to reset */}
+        {!collapsed && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsResizing(true);
+            }}
+            onDoubleClick={() => setWidth(SIDEBAR_DEFAULT_WIDTH)}
+            className={twMerge(
+              "absolute right-0 top-0 z-50 h-full w-1 cursor-col-resize transition-colors hover:bg-[#3a3a3a]",
+              isResizing && "bg-[#3a3a3a]",
+            )}
+          />
+        )}
+
         {/* Logo header */}
         <div
           className={twMerge(
@@ -1258,6 +1339,7 @@ export function Sidebar() {
               </h1>
             )}
           </Link>
+          {!collapsed && <NotificationBell />}
         </div>
 
         <Suspense

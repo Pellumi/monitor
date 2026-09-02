@@ -1969,6 +1969,10 @@ model DeviceSession {
   publicKey        String?
   scopes           String[]
   refreshTokenHash String        @unique
+  // See UserSession.previousRefreshTokenHash — same rotation grace, so a desktop
+  // retry that races its own refresh does not wipe the stored credential.
+  previousRefreshTokenHash String? @unique
+  rotatedAt        DateTime?
   lastSeenAt       DateTime      @default(now())
   expiresAt        DateTime
   revokedAt        DateTime?
@@ -2704,6 +2708,12 @@ model UserSession {
   userId           String
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   refreshTokenHash String    @unique // sha256(plaintext_refresh_token)
+  // The hash this session held immediately before its last rotation, kept so a
+  // request that raced the rotation (a second tab, an in-flight retry) can still
+  // be honoured for a few seconds instead of being logged out. Presenting it
+  // after `rotatedAt` + grace is treated as token reuse and kills the session.
+  previousRefreshTokenHash String? @unique
+  rotatedAt        DateTime?
   userAgent        String?
   ipAddress        String?
   expiresAt        DateTime

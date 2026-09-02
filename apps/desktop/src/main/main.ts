@@ -23,6 +23,9 @@ import {
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
+import { loadDesktopEnvironment } from './environment';
+
+loadDesktopEnvironment();
 
 let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;

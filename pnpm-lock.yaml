@@ -123,6 +123,9 @@ importers:
       '@tellann/project-intelligence':
         specifier: workspace:*
         version: link:../../packages/project-intelligence
+      dotenv:
+        specifier: 16.6.1
+        version: 16.6.1
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.9

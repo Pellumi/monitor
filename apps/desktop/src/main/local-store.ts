@@ -1,5 +1,5 @@
-import path from 'node:path';
-import { app, safeStorage } from 'electron';
+import path from "node:path";
+import { app, safeStorage } from "electron";
 
 type Statement = {
   run(...values: unknown[]): unknown;
@@ -18,10 +18,12 @@ function getDatabase(): Database {
   if (database) return database;
   // Electron 43 ships a Node runtime with the built-in synchronous SQLite API.
   // Keeping the require dynamic avoids coupling renderer compilation to Node APIs.
-  const { DatabaseSync } = require('node:sqlite') as {
+  const { DatabaseSync } = require("node:sqlite") as {
     DatabaseSync: new (filename: string) => Database;
   };
-  database = new DatabaseSync(path.join(app.getPath('userData'), 'tellann-local.db'));
+  database = new DatabaseSync(
+    path.join(app.getPath("userData"), "tellann-local.db"),
+  );
   database.exec(`
     CREATE TABLE IF NOT EXISTS encrypted_state (
       key TEXT PRIMARY KEY,
@@ -34,24 +36,33 @@ function getDatabase(): Database {
 
 export function readLocalState<T>(key: string): T | null {
   if (!safeStorage.isEncryptionAvailable()) return null;
-  const row = getDatabase().prepare('SELECT value FROM encrypted_state WHERE key = ?').get(key);
+  const row = getDatabase()
+    .prepare("SELECT value FROM encrypted_state WHERE key = ?")
+    .get(key);
   if (!row?.value) return null;
-  const encrypted = Buffer.isBuffer(row.value) ? row.value : Buffer.from(row.value as Uint8Array);
+  const encrypted = Buffer.isBuffer(row.value)
+    ? row.value
+    : Buffer.from(row.value as Uint8Array);
   return JSON.parse(safeStorage.decryptString(encrypted)) as T;
 }
 
 export function writeLocalState(key: string, value: unknown): void {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('WINDOWS_PROTECTED_STORAGE_UNAVAILABLE');
+  if (!safeStorage.isEncryptionAvailable())
+    throw new Error("WINDOWS_PROTECTED_STORAGE_UNAVAILABLE");
   const encrypted = safeStorage.encryptString(JSON.stringify(value));
-  getDatabase().prepare(`
+  getDatabase()
+    .prepare(
+      `
     INSERT INTO encrypted_state (key, value, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-  `).run(key, encrypted, new Date().toISOString());
+  `,
+    )
+    .run(key, encrypted, new Date().toISOString());
 }
 
 export function deleteLocalState(key: string): void {
-  getDatabase().prepare('DELETE FROM encrypted_state WHERE key = ?').run(key);
+  getDatabase().prepare("DELETE FROM encrypted_state WHERE key = ?").run(key);
 }
 
 export function closeLocalStore(): void {
