@@ -219,6 +219,7 @@ async function issueAuthSession(req: Request, res: Response, user: any, isNewUse
       eventType: 'SECURITY_NEW_DEVICE',
       severity: 'HIGH',
       variables: {
+        signedInAt: `${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`,
         ipAddress: ipAddress || 'Unknown IP',
         userAgent: userAgent || 'Unknown browser',
         securityUrl: appUrl('/settings/profile'),

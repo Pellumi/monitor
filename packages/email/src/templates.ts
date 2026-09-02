@@ -43,6 +43,8 @@ export interface BuiltinEmailTemplate {
   secondaryCtaLabel?: string;
   secondaryUrlVariable?: string;
   emphasisVariable?: string;
+  /** Optional advisory shown below the facts, e.g. what to do if a sign-in was not you. */
+  footnote?: string;
 }
 
 export type SenderKey = 'hello' | 'security' | 'reports' | 'alerts' | 'billing' | 'support';
@@ -341,9 +343,11 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     preheader: 'A new session was created for your account.',
     requiredVariables: ['ipAddress', 'userAgent', 'securityUrl'],
     defaultFrom: 'security',
-    purpose: 'A new device or browser signed in to your Tellann account.',
+    purpose: 'A new device or browser just signed in to your Tellann account. Here is what we recorded.',
     primaryCtaLabel: 'Review sessions',
     primaryUrlVariable: 'securityUrl',
+    footnote:
+      "If this was you, no action is needed. If you don't recognise this sign-in, open Review sessions to revoke it and change your password right away.",
   },
   {
     key: 'privacy-rule-updated',

@@ -162,13 +162,71 @@ function isUrlVariable(key: string): boolean {
   return /url$/i.test(key);
 }
 
+function isUserAgentVariable(key: string): boolean {
+  return /^useragent$/i.test(key.replace(/[_-]/g, ''));
+}
+
+function isIpVariable(key: string): boolean {
+  return /(^|[_-])ip([_-]|$)/i.test(key) || /ipaddress/i.test(key.replace(/[_-]/g, ''));
+}
+
+/**
+ * Turns a raw `User-Agent` header into something a person can actually act on
+ * ("Chrome 152 · Windows · Desktop") while keeping the original string as a
+ * secondary line. A value that is already human-friendly is returned untouched.
+ */
+export function describeUserAgent(raw: unknown): string {
+  const ua = String(raw ?? '').trim();
+  if (!ua || /^unknown/i.test(ua)) return 'Unknown device';
+  // No UA-style tokens means it was already written for humans.
+  if (!/[()/]/.test(ua)) return ua;
+
+  const major = (re: RegExp): string => {
+    const match = re.exec(ua);
+    return match ? match[1].split('.')[0] : '';
+  };
+  const join = (label: string, version: string) => (version ? `${label} ${version}` : label);
+
+  let browser = 'Unknown browser';
+  if (/\bEdg(?:e|A|iOS)?\//.test(ua)) browser = join('Edge', major(/Edg(?:e|A|iOS)?\/([\d.]+)/));
+  else if (/\b(?:OPR|Opera)\//.test(ua)) browser = join('Opera', major(/(?:OPR|Opera)\/([\d.]+)/));
+  else if (/\bFirefox\//.test(ua)) browser = join('Firefox', major(/Firefox\/([\d.]+)/));
+  else if (/\bChrome\//.test(ua)) browser = join('Chrome', major(/Chrome\/([\d.]+)/));
+  else if (/\bVersion\/[\d.]+ (?:Mobile\/\S+ )?Safari/.test(ua)) browser = join('Safari', major(/Version\/([\d.]+)/));
+  else if (/\bSafari\//.test(ua)) browser = 'Safari';
+
+  let os = '';
+  if (/Windows NT/.test(ua)) os = 'Windows';
+  else if (/iPhone|iPad|iPod/.test(ua)) os = 'iOS';
+  else if (/Android/.test(ua)) os = join('Android', major(/Android ([\d.]+)/));
+  else if (/Mac OS X ([\d_]+)/.test(ua)) os = `macOS ${(/Mac OS X ([\d_]+)/.exec(ua) as RegExpExecArray)[1].replace(/_/g, '.')}`;
+  else if (/CrOS/.test(ua)) os = 'ChromeOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+
+  const device = /Mobi|iPhone|iPod|Android.*Mobile/.test(ua)
+    ? 'Mobile'
+    : /iPad|Tablet/.test(ua)
+    ? 'Tablet'
+    : 'Desktop';
+
+  return [browser, os, device].filter(Boolean).join(' · ');
+}
+
 function renderFactRows(template: BuiltinEmailTemplate, variables: TemplateVariables): string {
   return publicVariables(variables)
     .filter(([key]) => !isUrlVariable(key) && key !== template.emphasisVariable)
-    .map(([key, value]) => `<tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #262626;color:#8e9192;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;">${escapeHtml(humanizeKey(key))}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #262626;color:#ffffff;text-align:right;font:13px 'JetBrains Mono','Courier New',monospace;">${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}</td>
-    </tr>`)
+    .map(([key, rawValue]) => {
+      const value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue);
+      const isUa = isUserAgentVariable(key);
+      const primary = isUa ? describeUserAgent(value) : value;
+      const secondary = isUa && primary !== value ? value : '';
+      const wrap = isUa || isIpVariable(key) ? 'break-all' : 'break-word';
+      return `<tr><td class="tl-fact" style="padding:12px 14px;border-bottom:1px solid #262626;">
+        <div style="color:#8e9192;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(humanizeKey(key))}</div>
+        <div style="margin-top:5px;color:#ffffff;font:13px 'JetBrains Mono','Courier New',monospace;line-height:1.5;word-break:${wrap};overflow-wrap:anywhere;">${escapeHtml(primary)}</div>
+        ${secondary ? `<div style="margin-top:4px;color:#8e9192;font:11px 'JetBrains Mono','Courier New',monospace;line-height:1.5;word-break:break-all;overflow-wrap:anywhere;">${escapeHtml(secondary)}</div>` : ''}
+      </td></tr>`;
+    })
     .join('');
 }
 
@@ -181,28 +239,52 @@ export function renderTemplateHtml(template: BuiltinEmailTemplate, variables: Te
   const headline = applyVariables(template.headline || template.subject, variables);
 
   const cta = typeof ctaUrl === 'string' && ctaUrl
-    ? `<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#ffffff;color:#000000;text-decoration:none;padding:14px 20px;border-radius:4px;font:600 13px Poppins,Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.primaryCtaLabel)}</a>`
+    ? `<a class="tl-btn" href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#ffffff;color:#000000;text-decoration:none;padding:14px 20px;margin:0 10px 10px 0;border-radius:4px;font:600 13px Poppins,Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.primaryCtaLabel)}</a>`
     : '';
   const secondaryCta = typeof secondaryUrl === 'string' && secondaryUrl
-    ? `<a href="${escapeHtml(secondaryUrl)}" style="display:inline-block;color:#ffffff;text-decoration:none;padding:13px 19px;border:1px solid #444748;border-radius:4px;font:500 13px Poppins,Arial,sans-serif;letter-spacing:.06em;text-transform:uppercase;">${escapeHtml(template.secondaryCtaLabel || 'Learn more')}</a>`
+    ? `<a class="tl-btn" href="${escapeHtml(secondaryUrl)}" style="display:inline-block;color:#ffffff;text-decoration:none;padding:13px 19px;margin:0 10px 10px 0;border:1px solid #444748;border-radius:4px;font:500 13px Poppins,Arial,sans-serif;letter-spacing:.06em;text-transform:uppercase;">${escapeHtml(template.secondaryCtaLabel || 'Learn more')}</a>`
+    : '';
+  const footnote = template.footnote
+    ? `<p class="tl-footnote" style="font-size:13px;line-height:1.6;margin:24px 0 0;color:#c4c7c8;border-left:2px solid #444748;padding-left:12px;">${escapeHtml(applyVariables(template.footnote, variables))}</p>`
     : '';
 
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"></head>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+    <style>
+      body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; }
+      a { color:#ffffff; }
+      @media only screen and (max-width:600px) {
+        .tl-main { padding:20px 0 !important; }
+        .tl-card { padding:20px 16px !important; border-left:0 !important; border-right:0 !important; border-radius:0 !important; }
+        .tl-brand { margin-bottom:24px !important; }
+        .tl-badge { font-size:10px !important; padding:4px 6px !important; letter-spacing:.06em !important; }
+        .tl-h1 { font-size:22px !important; line-height:1.25 !important; }
+        .tl-purpose { font-size:15px !important; }
+        .tl-emphasis { font-size:22px !important; padding:22px 12px !important; }
+        .tl-btnrow { margin-top:24px !important; }
+        .tl-btn { display:block !important; width:100% !important; text-align:center !important; margin:0 0 10px 0 !important; box-sizing:border-box !important; }
+      }
+    </style>
+  </head>
   <body style="margin:0;background:#000000;font-family:Poppins,Arial,Helvetica,sans-serif;color:#e2e2e2;">
     <div style="display:none;max-height:0;overflow:hidden;">${escapeHtml(template.preheader)}</div>
-    <main style="max-width:600px;margin:0 auto;padding:40px 16px;">
-      <section style="background:#131313;border:1px solid #262626;border-radius:4px;padding:24px;">
-        <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 40px;"><tr>
+    <main class="tl-main" style="max-width:600px;margin:0 auto;padding:40px 16px;">
+      <section class="tl-card" style="background:#131313;border:1px solid #262626;border-radius:4px;padding:24px;">
+        <table role="presentation" class="tl-brand" style="width:100%;border-collapse:collapse;margin:0 0 40px;"><tr>
           <td style="color:#ffffff;font-size:22px;font-weight:800;letter-spacing:-.04em;">TELLANN</td>
-          <td style="text-align:right;"><span style="display:inline-block;border:1px solid #444748;color:#8e9192;padding:5px 7px;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.designLabel || `${template.category} // Notification`)}</span></td>
+          <td style="text-align:right;"><span class="tl-badge" style="display:inline-block;border:1px solid #444748;color:#8e9192;padding:5px 7px;font:11px 'JetBrains Mono','Courier New',monospace;letter-spacing:.08em;text-transform:uppercase;">${escapeHtml(template.designLabel || `${template.category} // Notification`)}</span></td>
         </tr></table>
-        <h1 style="font-size:30px;line-height:1.2;margin:0 0 16px;color:#ffffff;font-weight:600;letter-spacing:-.01em;">${escapeHtml(headline)}</h1>
-        <p style="font-size:16px;line-height:1.6;margin:0 0 24px;color:#c4c7c8;">${escapeHtml(template.purpose)}</p>
-        ${emphasis !== undefined && emphasis !== null && emphasis !== '' ? `<div style="background:#000000;border:1px solid #262626;padding:28px 16px;margin:0 0 24px;text-align:center;color:#ffffff;font:500 28px 'JetBrains Mono','Courier New',monospace;letter-spacing:${template.key === 'auth-otp' ? '.22em' : '.02em'};overflow-wrap:anywhere;">${escapeHtml(emphasis)}</div>` : ''}
-        ${facts ? `<table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 24px;background:#000000;border:1px solid #262626;">${facts}</table>` : ''}
-        ${(cta || secondaryCta) ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:32px 0 0;">${cta}${secondaryCta}</div>` : ''}
+        <h1 class="tl-h1" style="font-size:30px;line-height:1.2;margin:0 0 16px;color:#ffffff;font-weight:600;letter-spacing:-.01em;">${escapeHtml(headline)}</h1>
+        <p class="tl-purpose" style="font-size:16px;line-height:1.6;margin:0 0 24px;color:#c4c7c8;">${escapeHtml(template.purpose)}</p>
+        ${emphasis !== undefined && emphasis !== null && emphasis !== '' ? `<div class="tl-emphasis" style="background:#000000;border:1px solid #262626;padding:28px 16px;margin:0 0 24px;text-align:center;color:#ffffff;font:500 28px 'JetBrains Mono','Courier New',monospace;letter-spacing:${template.key === 'auth-otp' ? '.22em' : '.02em'};overflow-wrap:anywhere;word-break:break-word;">${escapeHtml(emphasis)}</div>` : ''}
+        ${facts ? `<table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 24px;background:#000000;border:1px solid #262626;table-layout:fixed;">${facts}</table>` : ''}
+        ${(cta || secondaryCta) ? `<div class="tl-btnrow" style="margin:32px 0 0;">${cta}${secondaryCta}</div>` : ''}
+        ${footnote}
         <div style="border-top:1px solid #262626;margin-top:40px;padding-top:20px;color:#8e9192;font-size:12px;line-height:1.6;">
           ${variables.organizationName ? `${escapeHtml(variables.organizationName)}${variables.applicationName ? ' &middot; ' : ''}` : ''}${variables.applicationName ? escapeHtml(variables.applicationName) : ''}
           <br>You received this because of activity in Tellann. <a href="${escapeHtml(appUrl('/settings/profile'))}" style="color:#c4c7c8;">Notification preferences</a><br>Tellann, Abuja, Nigeria
