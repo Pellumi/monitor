@@ -29,6 +29,20 @@ const UPSTREAM = {
   AUTH_API:          process.env.AUTH_API_URL || `http://localhost:${Services.AUTH_API}`,
 };
 
+const UPSTREAM_PROBE_TIMEOUT_MS = 3000;
+
+// A missing *_URL variable silently degrades to localhost, where nothing is
+// listening in a containerised deployment. That turns a configuration mistake
+// into an opaque 500 on every proxied request, so name it loudly at boot.
+if (process.env.NODE_ENV === 'production') {
+  const defaulted = Object.entries(UPSTREAM)
+    .filter(([, url]) => url.includes('localhost'))
+    .map(([name]) => `${name}_URL`);
+  if (defaulted.length) {
+    console.error(`[API Gateway] Upstream URLs unset in production, falling back to localhost: ${defaulted.join(', ')}`);
+  }
+}
+
 const ONBOARDING_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-key`;
 const PROGRAMMATIC_VALIDATE_URL = `${UPSTREAM.ONBOARDING_API}/internal/validate-programmatic-token`;
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
@@ -274,6 +288,46 @@ async function main() {
     service: 'api-gateway',
     upstreams: Object.keys(UPSTREAM),
   }));
+
+  // Upstream reachability. The gateway proxies blindly, so a misconfigured or
+  // down upstream surfaces to callers as an opaque FST_REPLY_FROM_* 500 with no
+  // message. This probes each upstream and reports where it actually points and
+  // why the connection failed. Off unless explicitly enabled, because it
+  // discloses the private-network topology.
+  fastify.get('/health/upstreams', async (_request, reply) => {
+    if (process.env.GATEWAY_DIAGNOSTICS !== 'on' && process.env.NODE_ENV === 'production') {
+      return reply.code(404).send({ error: 'NOT_FOUND' });
+    }
+
+    const results = await Promise.all(
+      Object.entries(UPSTREAM).map(async ([name, url]) => {
+        const started = Date.now();
+        try {
+          const res = await fetch(new URL('/health', url), {
+            signal: AbortSignal.timeout(UPSTREAM_PROBE_TIMEOUT_MS),
+          });
+          return { name, url, ok: res.ok, status: res.status, ms: Date.now() - started };
+        } catch (err: any) {
+          // Connection failures nest the useful code one level down: fetch
+          // reports "fetch failed" and the cause carries ECONNREFUSED/ENOTFOUND,
+          // or an AggregateError whose own message is empty.
+          const cause = err?.cause ?? err;
+          const nested = Array.isArray(cause?.errors) ? cause.errors[0] : null;
+          return {
+            name,
+            url,
+            ok: false,
+            error: cause?.code ?? nested?.code ?? err?.name ?? 'UNKNOWN',
+            detail: nested?.message || cause?.message || err?.message || null,
+            ms: Date.now() - started,
+          };
+        }
+      }),
+    );
+
+    const unreachable = results.filter((r) => !r.ok).map((r) => r.name);
+    return { status: unreachable.length ? 'degraded' : 'healthy', unreachable, upstreams: results };
+  });
 
   // ─────────────────────────────────────────────────────────────
   // Real-time Application Events (SSE)
