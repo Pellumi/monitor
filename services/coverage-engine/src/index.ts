@@ -14,6 +14,10 @@ const emailService = new NotificationEmailService(prisma);
 const entitlementChecker = new EntitlementChecker(prisma);
 app.use(express.json());
 
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy', service: 'coverage-engine' });
+});
+
 // Helper: Calculate Observed Flows using DFS
 function countObservedFlows(transitions: any[]): number {
   const adjList = new Map<string, string[]>();

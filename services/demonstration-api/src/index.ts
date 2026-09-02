@@ -12,7 +12,14 @@ const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
+const REPORT_ENGINE_URL = (process.env.REPORT_ENGINE_URL || `http://localhost:${Services.REPORT_ENGINE}`).replace(/\/$/, '');
+const COVERAGE_ENGINE_URL = (process.env.COVERAGE_ENGINE_URL || `http://localhost:${Services.COVERAGE_ENGINE}`).replace(/\/$/, '');
+const FDRS_API_URL = (process.env.FDRS_API_URL || `http://localhost:${Services.FDRS_API}`).replace(/\/$/, '');
 app.use(express.json());
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy', service: 'demonstration-api' });
+});
 
 async function analyzeDemonstration(req: Request, res: Response, id: string, expectedGraphId?: string | null, analysisMode?: string | null) {
   if (!id) {
@@ -27,7 +34,7 @@ async function analyzeDemonstration(req: Request, res: Response, id: string, exp
     return res.status(404).json({ error: 'Demonstration not found' });
   }
 
-  const response = await fetch(`http://localhost:${Services.COVERAGE_ENGINE || 3003}/coverage/generate`, {
+  const response = await fetch(`${COVERAGE_ENGINE_URL}/coverage/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -45,7 +52,7 @@ async function analyzeDemonstration(req: Request, res: Response, id: string, exp
 
   if (expectedGraphId || analysisMode === 'EXPECTED_VS_OBSERVED') {
     const reconciliationResponse = await fetch(
-      `http://localhost:${Services.FDRS_API}/applications/${demo.applicationId}/reconciliation/run`,
+      `${FDRS_API_URL}/applications/${demo.applicationId}/reconciliation/run`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -281,7 +288,7 @@ app.get('/demonstrations/:id/results', async (req: Request, res: Response) => {
     }
 
     // Fetch compiled report from Report Engine
-    const response = await fetch(`http://localhost:${Services.REPORT_ENGINE || 3004}/reports/${demo.applicationId}/latest`);
+    const response = await fetch(`${REPORT_ENGINE_URL}/reports/${demo.applicationId}/latest`);
     
     if (!response.ok) {
       throw new Error(`Report Engine returned ${response.status}`);

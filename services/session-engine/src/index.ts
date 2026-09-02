@@ -304,4 +304,7 @@ async function start() {
   });
 }
 
-start().catch(console.error);
+start().catch((error) => {
+  console.error('[SessionEngine] Failed to start', error);
+  process.exit(1);
+});

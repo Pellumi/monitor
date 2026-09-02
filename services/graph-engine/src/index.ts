@@ -13,6 +13,7 @@ const kafka = new Kafka({
   brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
   retry: { retries: 5, initialRetryTime: 300 },
 });
+const FDRS_API_URL = (process.env.FDRS_API_URL || `http://localhost:${Services.FDRS_API}`).replace(/\/$/, '');
 
 const consumer = kafka.consumer({ groupId: ConsumerGroups.GRAPH_ENGINE });
 
@@ -329,7 +330,7 @@ async function processCompletedSession({ message }: EachMessagePayload) {
     }
 
     // FDRS: Trigger auto-reconciliation incrementally (Phase D)
-    globalThis.fetch(`http://localhost:${Services.FDRS_API}/applications/${applicationId}/reconciliation/run`, {
+    globalThis.fetch(`${FDRS_API_URL}/applications/${applicationId}/reconciliation/run`, {
       method: 'POST',
     }).catch((err: any) => {
       console.warn('[GraphEngine] Failed to trigger auto-reconciliation:', err.message);
@@ -364,4 +365,7 @@ async function start() {
   });
 }
 
-start().catch(console.error);
+start().catch((error) => {
+  console.error('[GraphEngine] Failed to start', error);
+  process.exit(1);
+});
