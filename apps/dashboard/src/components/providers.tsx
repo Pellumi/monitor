@@ -12,7 +12,10 @@ export interface User {
   id: string;
   email: string;
   displayName: string | null;
+  /** Always a ready-to-render URL: an uploaded image, a chosen DiceBear avatar, or an email-seeded default. */
   avatarUrl: string | null;
+  /** True when the user uploaded an image or picked a generated avatar (vs. the email default). */
+  hasCustomAvatar?: boolean;
   preferredAuthMode: 'OTP' | 'PASSWORD';
   hasPassword: boolean;
   isSystemAdmin?: boolean;

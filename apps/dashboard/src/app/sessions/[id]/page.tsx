@@ -2,7 +2,7 @@
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Button } from '@/components/ui/button';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -60,6 +60,278 @@ function formatOffset(ms: number): string {
 function StatusBadge({ code }: { code: number }) {
   const color = code < 300 ? 'text-green-400' : code < 400 ? 'text-yellow-400' : 'text-red-400';
   return <span className={`font-mono text-xs font-semibold ${color}`}>{code}</span>;
+}
+
+// ─── Selector preview helpers ────────────────────────────────────────────────
+// Interaction events (LINK_CLICK, BUTTON_CLICK, FORM_SUBMITTED, …) carry a raw
+// CSS selector string in their metadata. Rendered verbatim it is an unreadable
+// wall of Tailwind classes, so we parse it into a DOM path and a friendly
+// visual mock of the element the user actually touched.
+
+const FRIENDLY_TAG: Record<string, string> = {
+  a: 'Link', button: 'Button', input: 'Input', textarea: 'Text area',
+  select: 'Dropdown', form: 'Form', img: 'Image', label: 'Label',
+  li: 'List item', ul: 'List', ol: 'List', nav: 'Navigation', header: 'Header',
+  footer: 'Footer', span: 'Text', p: 'Paragraph', div: 'Container',
+  section: 'Section', article: 'Article', h1: 'Heading', h2: 'Heading',
+  h3: 'Heading', h4: 'Heading', svg: 'Icon', path: 'Icon', td: 'Table cell',
+  th: 'Table header', tr: 'Table row', table: 'Table',
+};
+
+interface SelectorStep {
+  raw: string;
+  tag: string;
+  id?: string;
+  classes: string[];
+}
+
+// Split a single compound selector (e.g. `button.w-full.hover:bg-x#id`) into its
+// parts. Tailwind classes contain `:` and `[...]`, so we walk the string and
+// only break on a top-level `.`/`#` (never inside square brackets).
+function parseSelectorStep(raw: string): SelectorStep {
+  let tag = '';
+  let i = 0;
+  while (i < raw.length && /[a-zA-Z0-9_-]/.test(raw[i])) { tag += raw[i]; i += 1; }
+
+  const classes: string[] = [];
+  let id: string | undefined;
+  let marker = '';
+  let cur = '';
+  let depth = 0;
+
+  const flush = () => {
+    if (!cur) return;
+    if (marker === '#') id = cur;
+    else if (marker === '.') classes.push(cur);
+    cur = '';
+  };
+
+  for (; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === '[') depth += 1;
+    else if (ch === ']') depth = Math.max(0, depth - 1);
+
+    if (depth === 0 && (ch === '.' || ch === '#')) {
+      flush();
+      marker = ch;
+      continue;
+    }
+    cur += ch;
+  }
+  flush();
+
+  return { raw, tag: tag || '*', id, classes };
+}
+
+function parseSelector(selector: string): SelectorStep[] {
+  return selector
+    .split('>')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(parseSelectorStep);
+}
+
+function humanizeTag(tag: string): string {
+  const t = tag.toLowerCase();
+  return FRIENDLY_TAG[t] ?? (t === '*' ? 'Element' : t);
+}
+
+const ARROW = (
+  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+  </svg>
+);
+
+/** A safe, simulated render of the element that was interacted with. */
+function ElementPreview({ meta }: { meta: Record<string, unknown> }) {
+  const steps  = typeof meta.selector === 'string' ? parseSelector(meta.selector) : [];
+  const target = steps[steps.length - 1];
+  const tag    = (target?.tag ?? '').toLowerCase();
+  const label  = humanizeTag(tag);
+  const text   = typeof meta.text === 'string' ? meta.text.trim() : '';
+  const href   = typeof meta.href === 'string' ? meta.href.trim() : '';
+  const value  = typeof meta.value === 'string' ? meta.value : '';
+  const placeholder = typeof meta.placeholder === 'string' ? meta.placeholder : '';
+
+  let mock: React.ReactNode;
+  if (tag === 'a') {
+    mock = (
+      <span className="inline-flex items-center gap-2 rounded-md bg-fuchsia-500/10 px-3 py-1.5 text-sm font-medium text-fuchsia-300 ring-1 ring-fuchsia-500/30">
+        {text || 'link'}
+        {ARROW}
+      </span>
+    );
+  } else if (tag === 'button') {
+    mock = (
+      <span className="inline-flex items-center rounded-md bg-violet-500/15 px-3 py-1.5 text-sm font-medium text-violet-200 ring-1 ring-violet-500/30">
+        {text || 'Button'}
+      </span>
+    );
+  } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+    mock = (
+      <span className="inline-flex w-full max-w-xs items-center rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-300">
+        {value || text || placeholder || `${label.toLowerCase()}…`}
+      </span>
+    );
+  } else if (tag === 'img') {
+    mock = (
+      <span className="inline-flex items-center gap-2 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-400">
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
+        </svg>
+        {text || 'image'}
+      </span>
+    );
+  } else {
+    mock = (
+      <span className="rounded-md bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200">
+        {text || label}
+      </span>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+      <p className="mb-3 text-xs uppercase tracking-wider text-neutral-500">Element preview</p>
+      <div className="flex min-h-[68px] w-full items-center justify-center rounded-md border border-dashed border-neutral-700 bg-neutral-900/60 p-4">
+        {mock}
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-neutral-300">
+        <span className="text-neutral-500">Interacted with a </span>
+        <span className="font-medium text-white">{label.toLowerCase()}</span>
+        {text && (
+          <>
+            <span className="text-neutral-500"> labelled </span>
+            <span className="font-medium text-white">“{text}”</span>
+          </>
+        )}
+        {href && (
+          <>
+            <span className="text-neutral-500"> that navigates to </span>
+            <span className="font-mono text-xs text-blue-300 break-all">{href}</span>
+          </>
+        )}
+        <span className="text-neutral-500">.</span>
+      </p>
+    </div>
+  );
+}
+
+/** The CSS selector broken into an indented, readable DOM path. */
+function SelectorPath({ selector }: { selector: string }) {
+  const steps = parseSelector(selector);
+  const [showClasses, setShowClasses] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-xs uppercase tracking-wider text-neutral-500">DOM path</p>
+        <button
+          onClick={() => setShowClasses(v => !v)}
+          className="text-xs text-neutral-500 transition-colors hover:text-neutral-300"
+        >
+          {showClasses ? 'Hide classes' : 'Show classes'}
+        </button>
+      </div>
+      <ol className="space-y-1 overflow-x-auto">
+        {steps.map((s, i) => {
+          const last = i === steps.length - 1;
+          return (
+            <li
+              key={i}
+              className="flex items-start gap-1.5 whitespace-nowrap font-mono text-xs"
+              style={{ paddingLeft: `${Math.min(i, 10) * 12}px` }}
+            >
+              <span className="select-none text-neutral-700">{i === 0 ? '•' : '└'}</span>
+              <span className="min-w-0">
+                <span className={last ? 'font-semibold text-fuchsia-300' : 'text-neutral-200'}>
+                  {s.tag}
+                </span>
+                {s.id && <span className="text-amber-300">#{s.id}</span>}
+                {showClasses
+                  ? s.classes.map((c, j) => (
+                      <span key={j} className="text-neutral-500">.{c}</span>
+                    ))
+                  : s.classes.length > 0 && (
+                      <span className="text-neutral-600"> · {s.classes.length} class{s.classes.length > 1 ? 'es' : ''}</span>
+                    )}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+const PREVIEW_HANDLED_KEYS = new Set(['selector', 'text', 'href', 'elementId', 'value', 'placeholder']);
+
+/** Remaining primitive/complex metadata rendered as a tidy key/value list. */
+function MetadataList({ meta, includeAll = false }: { meta: Record<string, unknown>; includeAll?: boolean }) {
+  const entries = Object.entries(meta).filter(
+    ([k, v]) => (includeAll || !PREVIEW_HANDLED_KEYS.has(k)) && v !== '' && v != null,
+  );
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+      <p className="mb-3 text-xs uppercase tracking-wider text-neutral-500">Details</p>
+      <dl className="grid grid-cols-[minmax(0,140px)_1fr] gap-x-4 gap-y-2 text-xs">
+        {entries.map(([k, v]) => (
+          <Fragment key={k}>
+            <dt className="truncate font-mono text-neutral-500">{k}</dt>
+            <dd className="min-w-0 break-words font-mono text-neutral-200">
+              {typeof v === 'object' ? (
+                <pre className="whitespace-pre-wrap text-neutral-300">{JSON.stringify(v, null, 2)}</pre>
+              ) : (
+                String(v)
+              )}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/** Detail panel body: a friendly Preview by default, raw JSON on demand. */
+function EventDetail({ event }: { event: ReplayData['timeline'][number] }) {
+  const [tab, setTab] = useState<'preview' | 'json'>('preview');
+  const meta = event.metadata ?? {};
+  const hasSelector = typeof meta.selector === 'string' && meta.selector.length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-1">
+        {(['preview', 'json'] as const).map(v => (
+          <button
+            key={v}
+            onClick={() => setTab(v)}
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              tab === v ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'
+            }`}
+          >
+            {v === 'json' ? 'Raw JSON' : 'Preview'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'json' ? (
+        <pre className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 font-mono text-xs leading-relaxed text-neutral-300 whitespace-pre-wrap">
+          {JSON.stringify(meta, null, 2)}
+        </pre>
+      ) : (
+        <div className="space-y-4">
+          {hasSelector && <ElementPreview meta={meta} />}
+          {hasSelector && <SelectorPath selector={meta.selector as string} />}
+          <MetadataList meta={meta} includeAll={!hasSelector} />
+          {!hasSelector && Object.keys(meta).length === 0 && (
+            <p className="text-sm text-neutral-600">No metadata was recorded for this event.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface ReplayData {
@@ -419,9 +691,7 @@ function ReplayViewerContent() {
           </div>
           <div className="flex-1 overflow-auto p-4">
             {selected ? (
-              <pre className="text-xs text-neutral-300 font-mono whitespace-pre-wrap leading-relaxed">
-                {JSON.stringify(selected.metadata, null, 2)}
-              </pre>
+              <EventDetail event={selected} />
             ) : (
               <p className="text-sm text-neutral-600">Click an event in the list or timeline to inspect its metadata.</p>
             )}

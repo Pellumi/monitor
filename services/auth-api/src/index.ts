@@ -21,11 +21,14 @@ import {
 } from './oidc';
 import { createMfaRouter, MFA_CHALLENGE_COOKIE } from './mfa-routes';
 import { classifyRotation } from './refresh-rotation';
+import { createAvatarRouter, resolveAvatarUrl } from './avatar-routes';
+import { createStorageClient } from '@tellann/storage';
 
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
+const storage = createStorageClient();
 
 const PORT = process.env.PORT || 3013;
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
@@ -337,6 +340,10 @@ const mfaRouter = createMfaRouter({
   writeAuditLog,
 });
 app.use(mfaRouter);
+
+// Profile picture routes (upload / pick generated / remove, plus the public
+// id → image redirect). Mounted here so it can reuse `verifyAuth`.
+app.use(createAvatarRouter({ prisma, verifyAuth: verifyAuth as any, storage }));
 
 /**
  * Starts the second-factor step when the account has one, instead of issuing a
@@ -1024,7 +1031,8 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
         id: user.id,
         email: user.email,
         displayName: user.displayName,
-        avatarUrl: user.avatarUrl,
+        avatarUrl: await resolveAvatarUrl(user, storage),
+        hasCustomAvatar: Boolean(user.avatarKey || user.avatarUrl),
         preferredAuthMode: user.preferredAuthMode,
         hasPassword: Boolean(user.passwordHash),
         isSystemAdmin,
@@ -1146,7 +1154,7 @@ app.patch('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Respons
       id: updated.id,
       email: updated.email,
       displayName: updated.displayName,
-      avatarUrl: updated.avatarUrl,
+      avatarUrl: await resolveAvatarUrl(updated, storage),
       preferredAuthMode: updated.preferredAuthMode,
       hasPassword: Boolean(updated.passwordHash),
     });

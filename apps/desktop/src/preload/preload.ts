@@ -4,6 +4,7 @@ const IPC = {
   getVersion: 'tellann:version',
   copyText: 'tellann:system:copy-text',
   getSession: 'tellann:auth:session',
+  getAvatarDataUri: 'tellann:auth:avatar',
   claimSetupHandoff: 'tellann:setup:handoff:claim',
   consumeSetupHandoff: 'tellann:setup:handoff:consume',
   getSdkSetup: 'tellann:setup:sdk:get',
@@ -98,6 +99,7 @@ const IPC = {
 contextBridge.exposeInMainWorld('tellann', {
   auth: {
     getSession: () => ipcRenderer.invoke(IPC.getSession),
+    getAvatarDataUri: () => ipcRenderer.invoke(IPC.getAvatarDataUri),
     signIn: () => ipcRenderer.invoke(IPC.signIn),
     reopenSignIn: () => ipcRenderer.invoke(IPC.reopenSignIn),
     cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),

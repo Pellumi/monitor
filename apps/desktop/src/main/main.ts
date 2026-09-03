@@ -325,6 +325,10 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return cloud.getSession();
   });
+  ipcMain.handle(IPC.getAvatarDataUri, (event) => {
+    assertTrustedSender(event);
+    return cloud.avatarDataUri();
+  });
   ipcMain.handle(IPC.claimSetupHandoff, async (event) => {
     assertTrustedSender(event);
     if (!pendingSetupHandoffToken) return null;

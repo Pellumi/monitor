@@ -36,7 +36,7 @@ export function AppShell() {
   const projectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1];
   const navigate = useNavigate();
   const {
-    applications, workspaces, activeRun, busy, cloudAvailable, error, session, signOut,
+    applications, workspaces, activeRun, busy, cloudAvailable, error, session, avatarDataUri, signOut,
     refreshApplications, clearError,
   } = useDesktop();
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(storedSidebarMode);
@@ -52,6 +52,9 @@ export function AppShell() {
   const userName = session?.user?.displayName?.trim() || session?.user?.email.split('@')[0] || 'Tellann user';
   const userEmail = session?.user?.email ?? '';
   const initials = userName.slice(0, 2).toUpperCase();
+  const avatarNode = avatarDataUri
+    ? <img className="profile-avatar" src={avatarDataUri} alt={userName} />
+    : <span className="profile-avatar">{initials}</span>;
   const effectiveSidebarWidth = sidebarMode === 'closed' ? 0 : sidebarMode === 'icon' ? 68 : sidebarWidth;
 
   useEffect(() => {
@@ -221,7 +224,7 @@ export function AppShell() {
             {profileOpen ? (
               <div className="profile-popover" role="menu" aria-label="Profile menu">
                 <button className="profile-summary" type="button" onClick={() => { setProfileOpen(false); void window.tellann?.system.openProfile(); }}>
-                  <span className="profile-avatar">{initials}</span>
+                  {avatarNode}
                   <span className="profile-identity"><strong>{userName}</strong><small>{userEmail}</small></span>
                   <ChevronRight size={14} />
                 </button>
@@ -240,7 +243,7 @@ export function AppShell() {
               title={sidebarMode === 'icon' ? userName : undefined}
               onClick={() => setProfileOpen((current) => !current)}
             >
-              <span className="profile-avatar">{initials}</span>
+              {avatarNode}
               <span className="profile-trigger-name">{userName}</span>
             </button>
           </div>

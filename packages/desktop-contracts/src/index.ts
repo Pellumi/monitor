@@ -653,6 +653,7 @@ export const IPC = {
   getVersion: 'tellann:version',
   copyText: 'tellann:system:copy-text',
   getSession: 'tellann:auth:session',
+  getAvatarDataUri: 'tellann:auth:avatar',
   claimSetupHandoff: 'tellann:setup:handoff:claim',
   consumeSetupHandoff: 'tellann:setup:handoff:consume',
   getSdkSetup: 'tellann:setup:sdk:get',

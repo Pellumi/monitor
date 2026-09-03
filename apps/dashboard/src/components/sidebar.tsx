@@ -15,6 +15,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { Avatar } from "@/components/ui/avatar";
 
 import Link from "next/link";
 import {
@@ -1032,21 +1033,12 @@ function UserProfile({ collapsed = false }: { collapsed?: boolean }) {
   if (!user) return null;
 
   const isSystemAdmin = (user as any)?.isSystemAdmin === true;
-  const initial = (user.displayName?.[0] || user.email[0]).toUpperCase();
   const name = user.displayName || user.email.split("@")[0];
   const docsUrl =
     process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
-  const avatarEl = user.avatarUrl ? (
-    <img
-      src={user.avatarUrl}
-      alt={name}
-      className="w-7 h-7 object-cover flex-shrink-0 border border-[#262626]"
-    />
-  ) : (
-    <div className="w-7 h-7 bg-black border border-[#444748] text-white flex items-center justify-center font-mono font-bold text-[10px] flex-shrink-0 tracking-widest">
-      {initial}
-    </div>
+  const avatarEl = (
+    <Avatar src={user.avatarUrl} name={user.displayName} email={user.email} size={28} />
   );
 
   return (

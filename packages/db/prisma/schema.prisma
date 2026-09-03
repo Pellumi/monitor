@@ -2567,7 +2567,12 @@ model User {
   id                   String    @id @default(uuid())
   email                String    @unique
   displayName          String?
+  /// Custom avatar source. `avatarKey` points at an uploaded image in object
+  /// storage; when set it wins over `avatarUrl`. `avatarUrl` holds an external
+  /// image URL (a DiceBear-generated avatar the user picked). Both null means
+  /// the account falls back to a DiceBear avatar seeded from the email.
   avatarUrl            String?
+  avatarKey            String?
   passwordHash         String?
   preferredAuthMode    String    @default("OTP")
   passwordUpdatedAt    DateTime?

@@ -1195,6 +1195,9 @@ select:focus-visible {
     700 10px ui-monospace,
     monospace;
 }
+img.profile-avatar {
+  object-fit: cover;
+}
 .profile-trigger-name {
   min-width: 0;
   overflow: hidden;

@@ -1,14 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { CheckCircle2, AlertCircle, CreditCard } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { CheckCircle2, AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { countries } from "countries-list";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSession } from "@/components/providers";
 import { SettingsPage, SettingsSection } from "@/components/settings/settings-page";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/utils";
+import { Avatar } from "@/components/ui/avatar";
+import { AVATAR_BACKGROUND_PRESETS, dicebearAvatarUrl } from "@/lib/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+const ACCEPTED_AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
+/** Crop `file` to a centred square and re-encode as a 512px PNG, keeping the upload small. */
+async function toSquarePng(file: File, size = 512): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is unavailable in this browser.");
+    const scale = Math.max(size / bitmap.width, size / bitmap.height);
+    const drawW = bitmap.width * scale;
+    const drawH = bitmap.height * scale;
+    ctx.drawImage(bitmap, (size - drawW) / 2, (size - drawH) / 2, drawW, drawH);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Could not process that image."))),
+        "image/png",
+      ),
+    );
+  } finally {
+    bitmap.close();
+  }
+}
 
 export default function ProfileSettingsPage() {
   const { user, refetch } = useSession();
@@ -20,6 +48,17 @@ export default function ProfileSettingsPage() {
   const [billingEmail, setBillingEmail] = useState("");
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingSaving, setBillingSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarBusy, setAvatarBusy] = useState<null | "upload" | "generated" | "remove">(null);
+  const [avatarBg, setAvatarBg] = useState("");
+  const [avatarSeedSalt, setAvatarSeedSalt] = useState("");
+  const generatedAvatarUrl = useMemo(
+    () =>
+      dicebearAvatarUrl(`${user?.email ?? "tellann"}${avatarSeedSalt ? `-${avatarSeedSalt}` : ""}`, {
+        backgroundColor: avatarBg,
+      }),
+    [user?.email, avatarSeedSalt, avatarBg],
+  );
   const countryOptions = useMemo(() => Object.entries(countries)
     .map(([code, country]) => ({ code, name: country.name }))
     .sort((left, right) => left.name.localeCompare(right.name)), []);
@@ -75,6 +114,76 @@ export default function ProfileSettingsPage() {
     }
   }
 
+  async function uploadAvatar(file: File) {
+    if (!ACCEPTED_AVATAR_TYPES.includes(file.type)) {
+      setNotice({ type: "error", text: "Choose a PNG, JPEG or WebP image." });
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setNotice({ type: "error", text: "That image is too large. Pick one under 10 MB." });
+      return;
+    }
+    setAvatarBusy("upload");
+    setNotice(null);
+    try {
+      const blob = await toSquarePng(file);
+      const response = await authenticatedFetch("/api-gateway/auth/me/avatar", {
+        method: "POST",
+        headers: { "Content-Type": "image/png" },
+        body: blob,
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Unable to upload image.");
+      await refetch();
+      setAvatarSeedSalt("");
+      setAvatarBg("");
+      setNotice({ type: "success", text: "Profile picture updated." });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unable to upload image." });
+    } finally {
+      setAvatarBusy(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function saveGeneratedAvatar() {
+    setAvatarBusy("generated");
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch("/api-gateway/auth/me/avatar/generated", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarUrl: generatedAvatarUrl }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Unable to save avatar.");
+      await refetch();
+      setNotice({ type: "success", text: "Profile picture updated." });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unable to save avatar." });
+    } finally {
+      setAvatarBusy(null);
+    }
+  }
+
+  async function removeAvatar() {
+    setAvatarBusy("remove");
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch("/api-gateway/auth/me/avatar", { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Unable to remove image.");
+      await refetch();
+      setAvatarSeedSalt("");
+      setAvatarBg("");
+      setNotice({ type: "success", text: "Profile picture reset to the default." });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unable to remove image." });
+    } finally {
+      setAvatarBusy(null);
+    }
+  }
+
   async function saveBillingProfile(event: FormEvent) {
     event.preventDefault();
     if (!countryCode) return;
@@ -126,6 +235,114 @@ export default function ProfileSettingsPage() {
           </button>
         </div>
       ) : null}
+      <SettingsSection
+        title="Profile picture"
+        description="Shown across Tellann wherever your account appears — the sidebar, member lists and comments."
+      >
+        <div className="flex flex-col gap-8 sm:flex-row sm:items-start">
+          <div className="flex flex-col items-center gap-3">
+            <Avatar
+              src={user?.avatarUrl}
+              name={user?.displayName}
+              email={user?.email}
+              size={96}
+              className="border-neutral-700"
+            />
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={avatarBusy !== null}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {avatarBusy === "upload" ? "Uploading…" : "Upload image"}
+              </Button>
+              {user?.hasCustomAvatar ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={avatarBusy !== null}
+                  onClick={removeAvatar}
+                >
+                  {avatarBusy === "remove" ? "Resetting…" : "Reset"}
+                </Button>
+              ) : null}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_AVATAR_TYPES.join(",")}
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void uploadAvatar(file);
+              }}
+            />
+            <p className="max-w-[13rem] text-center text-[11px] leading-4 text-neutral-500">
+              PNG, JPEG or WebP. Centre-cropped to a square automatically.
+            </p>
+          </div>
+
+          <div className="flex-1 space-y-4">
+            <div className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
+              Or use a generated avatar
+            </div>
+            <div className="flex items-center gap-4">
+              <Avatar
+                src={generatedAvatarUrl}
+                name={user?.displayName}
+                email={user?.email}
+                size={64}
+                className="border-neutral-700"
+              />
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap gap-1.5">
+                  {AVATAR_BACKGROUND_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value || "transparent"}
+                      type="button"
+                      title={preset.label}
+                      aria-label={preset.label}
+                      aria-pressed={avatarBg === preset.value}
+                      onClick={() => setAvatarBg(preset.value)}
+                      className={cn(
+                        "h-6 w-6 rounded-full border transition-colors",
+                        avatarBg === preset.value
+                          ? "border-white"
+                          : "border-neutral-700 hover:border-neutral-500",
+                      )}
+                      style={{
+                        background: preset.value
+                          ? `#${preset.value}`
+                          : "repeating-conic-gradient(#404040 0% 25%, #262626 0% 50%) 50% / 10px 10px",
+                      }}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAvatarSeedSalt(Math.random().toString(36).slice(2, 8))}
+                  className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-neutral-400 transition-colors hover:text-white"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Shuffle
+                </button>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={avatarBusy !== null}
+              onClick={saveGeneratedAvatar}
+            >
+              {avatarBusy === "generated" ? "Saving…" : "Use this avatar"}
+            </Button>
+          </div>
+        </div>
+      </SettingsSection>
       <form onSubmit={save} className="space-y-6">
         <SettingsSection title="Account information">
           <div className="grid gap-4 md:grid-cols-2">

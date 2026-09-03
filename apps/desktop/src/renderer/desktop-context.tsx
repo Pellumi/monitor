@@ -48,6 +48,8 @@ type DesktopContextValue = {
   error: string | null;
   cloudAvailable: boolean;
   session: DesktopSession | null;
+  /** The signed-in user's avatar as a `data:` URI, or null to fall back to initials. */
+  avatarDataUri: string | null;
   applications: DesktopApplication[];
   workspaces: Record<string, LocalWorkspace>;
   /** Per-application QA branch verdict for this member's own checkout. */
@@ -163,6 +165,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const [branchCompliance, setBranchCompliance] = useState<Record<string, WorkspaceCompliance>>({});
   const [runs, setRuns] = useState<Record<string, QARunSummary[]>>({});
   const [activeRun, setActiveRun] = useState<GuidedRunState | null>(null);
+  const [avatarDataUri, setAvatarDataUri] = useState<string | null>(null);
 
   useEffect(() => {
     if (!window.tellann) return;
@@ -202,6 +205,20 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!window.tellann || !userId) {
+      setAvatarDataUri(null);
+      return;
+    }
+    let cancelled = false;
+    void window.tellann.auth
+      .getAvatarDataUri()
+      .then((uri) => { if (!cancelled) setAvatarDataUri(uri); })
+      .catch(() => { if (!cancelled) setAvatarDataUri(null); });
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (!window.tellann?.projects?.onAppUpdated) return;
@@ -414,6 +431,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     error,
     cloudAvailable,
     session,
+    avatarDataUri,
     applications,
     workspaces,
     branchCompliance,
@@ -493,6 +511,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
+    avatarDataUri,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;

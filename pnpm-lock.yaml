@@ -714,6 +714,9 @@ importers:
       '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@tellann/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@tellann/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry

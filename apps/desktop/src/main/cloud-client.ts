@@ -156,6 +156,49 @@ export class DesktopCloudClient {
     return session ? `${session.user.id}:${this.deviceIdentifier()}` : null;
   }
 
+  /**
+   * The signed-in user's avatar as a `data:` URI, so the renderer can show it
+   * under its `img-src 'self' data:` CSP without reaching out to the network
+   * itself. Resolves uploads, chosen DiceBear avatars and the email-seeded
+   * default alike — the auth service's public redirect endpoint does that.
+   * Cached briefly; returns null (fall back to initials) on any failure.
+   */
+  private avatarCache: { userId: string; dataUri: string; cachedAt: number } | null = null;
+
+  async avatarDataUri(): Promise<string | null> {
+    const session = loadDesktopSession();
+    const userId = session?.user?.id;
+    if (!userId) return null;
+
+    if (
+      this.avatarCache &&
+      this.avatarCache.userId === userId &&
+      Date.now() - this.avatarCache.cachedAt < 5 * 60_000
+    ) {
+      return this.avatarCache.dataUri;
+    }
+
+    try {
+      const response = await fetch(`${AUTH_URL}/auth/users/${encodeURIComponent(userId)}/avatar`, {
+        redirect: "follow",
+      });
+      if (!response.ok) return null;
+      const contentType = response.headers.get("content-type")?.split(";")[0].trim() || "image/svg+xml";
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > 5 * 1024 * 1024) return null;
+      const dataUri = `data:${contentType};base64,${bytes.toString("base64")}`;
+      this.avatarCache = { userId, dataUri, cachedAt: Date.now() };
+      return dataUri;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Drop the cached avatar so the next read re-fetches (used after sign-out). */
+  clearAvatarCache(): void {
+    this.avatarCache = null;
+  }
+
   async signIn(): Promise<ReturnType<DesktopCloudClient["getSession"]>> {
     this.cancelSignIn();
     const controller = new AbortController();
@@ -239,6 +282,7 @@ export class DesktopCloudClient {
       }).catch(() => undefined);
     }
     clearDesktopSession();
+    this.clearAvatarCache();
   }
 
   async applications(): Promise<DesktopApplication[]> {

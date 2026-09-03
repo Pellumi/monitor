@@ -8,6 +8,8 @@ import { Users, UserMinus, Shield, ChevronDown, Loader2, AlertTriangle, CheckCir
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from '@/components/providers';
 import { EmptyState } from '@/components/empty-state';
+import { Avatar } from '@/components/ui/avatar';
+import { userAvatarEndpoint } from '@/lib/avatar';
 
 interface Entitlement {
   planType: string;
@@ -343,7 +345,6 @@ export default function MembersPage() {
         ) : (
           <ul className="divide-y divide-[#262626]">
             {members.map((member) => {
-              const initial = (member.user.displayName?.[0] || member.user.email[0]).toUpperCase();
               const isCurrentUser = member.userId === user?.id;
               const isSoleOwner = member.role === 'OWNER' && owners.length === 1;
               const canModify = isOwner && !isCurrentUser && !isSoleOwner;
@@ -351,9 +352,14 @@ export default function MembersPage() {
               return (
                 <li key={member.id} className="flex items-center gap-4 px-5 py-4">
                   {/* Avatar */}
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black border border-[#262626] text-white font-bold font-mono text-xs shadow">
-                    {initial}
-                  </div>
+                  <Avatar
+                    src={member.user.avatarUrl ?? userAvatarEndpoint(member.userId)}
+                    name={member.user.displayName}
+                    email={member.user.email}
+                    size={36}
+                    shape="circle"
+                    className="shadow"
+                  />
 
                   {/* Identity */}
                   <div className="flex-1 min-w-0">

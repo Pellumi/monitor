@@ -29,6 +29,7 @@ declare global {
     tellann?: {
       auth: {
         getSession(): Promise<DesktopSession>;
+        getAvatarDataUri(): Promise<string | null>;
         signIn(): Promise<DesktopSession>;
         reopenSignIn(): Promise<void>;
         cancelSignIn(): Promise<void>;

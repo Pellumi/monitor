@@ -2,6 +2,8 @@
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Avatar } from "@/components/ui/avatar";
+import { userAvatarEndpoint } from "@/lib/avatar";
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -1286,7 +1288,6 @@ export default function LegacySettingsPage() {
                 ) : (
                   <ul className="divide-y divide-neutral-800">
                     {teamMembers.map((member) => {
-                      const initial = (member.user.displayName?.[0] || member.user.email[0] || '?').toUpperCase();
                       const isCurrentUser = member.userId === user.id;
                       const isSoleOwner = member.role === 'OWNER' && owners.length === 1;
                       const canModify = isOrgOwner && !isCurrentUser && !isSoleOwner;
@@ -1294,9 +1295,13 @@ export default function LegacySettingsPage() {
                       return (
                         <li key={member.id} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center">
                           <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-                              {initial}
-                            </div>
+                            <Avatar
+                              src={userAvatarEndpoint(member.userId)}
+                              name={member.user.displayName}
+                              email={member.user.email}
+                              size={36}
+                              shape="circle"
+                            />
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="truncate text-sm font-semibold text-white">{member.user.displayName || member.user.email.split('@')[0]}</span>

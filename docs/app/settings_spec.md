@@ -173,7 +173,7 @@ This page manages the user’s identity inside Tellann.
 
 ### Account information
 
-- Profile image
+- Profile picture (see below)
 - First name and last name
 - Display name
 - Job title
@@ -184,6 +184,40 @@ This page manages the user’s identity inside Tellann.
 - Account creation date
 
 Changing the email address should require verification before the old address is replaced.
+
+### Profile picture
+
+Every account always has a picture. With nothing chosen it is a DiceBear
+`notionists-neutral` illustration deterministically seeded from the user's email,
+so the same person always renders the same face. Users can override it in two
+ways:
+
+- **Upload an image** — PNG, JPEG or WebP. The browser centre-crops it to a
+  square and re-encodes it as a 512px PNG before upload; the stored object is
+  capped at 2 MB. Held in object storage (`@tellann/storage`), keyed by user id.
+- **Pick a generated avatar** — the DiceBear illustration with a chosen
+  background colour and an optional reshuffled seed. Stored as the external
+  DiceBear URL.
+
+"Reset" clears the override and returns the account to the email-seeded default.
+
+Resolution / precedence: uploaded image (`User.avatarKey`) → chosen DiceBear URL
+(`User.avatarUrl`) → email-seeded DiceBear default.
+
+**API (auth-api, proxied under `/api-gateway`):**
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /auth/me/avatar` | Upload a custom image. Raw image bytes as the body; `Content-Type` is the image type. |
+| `PUT /auth/me/avatar/generated` | Body `{ avatarUrl }` — must be an `api.dicebear.com` URL. |
+| `DELETE /auth/me/avatar` | Remove any override. |
+| `GET /auth/users/:userId/avatar` | Public 302 redirect to the resolved image. Used by member lists and the desktop app. |
+
+`GET /auth/me` returns `avatarUrl` already resolved to a directly-renderable URL,
+plus `hasCustomAvatar`. The dashboard `<Avatar>` component
+(`components/ui/avatar.tsx`) renders it with an initials fallback; the desktop
+app fetches the image in the main process and hands the renderer a `data:` URI
+so its `img-src 'self' data:` CSP is untouched.
 
 ### Personal defaults
 
