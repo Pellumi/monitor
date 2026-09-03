@@ -386,6 +386,19 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/code-graph:
+    dependencies:
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../desktop-contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   packages/db:
     dependencies:
       '@prisma/client':
@@ -579,13 +592,13 @@ importers:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.43
-      typescript:
-        specifier: ^5.0.0
-        version: 5.9.3
 
   packages/rules:
     dependencies:
@@ -905,6 +918,34 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  services/code-intelligence-worker:
+    dependencies:
+      '@tellann/code-graph':
+        specifier: workspace:*
+        version: link:../../packages/code-graph
+      '@tellann/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@tellann/project-intelligence':
+        specifier: workspace:*
+        version: link:../../packages/project-intelligence
+      '@tellann/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@tellann/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      ts-node-dev:
+        specifier: ^2.0.0
+        version: 2.0.0(@types/node@20.19.43)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   services/coverage-engine:
     dependencies:
       '@tellann/db':
@@ -1147,6 +1188,9 @@ importers:
       '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@tellann/code-graph':
+        specifier: workspace:*
+        version: link:../../packages/code-graph
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db

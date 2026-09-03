@@ -85,6 +85,16 @@ services:
     volumes:
       - redis_data:/data
 
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/tellann-local-graph
+    volumes:
+      - neo4j_data:/data
+
   # ─── Gap 8: Observability Stack ─────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.50.0
@@ -158,6 +168,7 @@ volumes:
   clickhouse_data:
   minio_data:
   redis_data:
+  neo4j_data:
   prometheus_data:
   alertmanager_data:
   grafana_data:

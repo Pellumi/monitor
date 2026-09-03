@@ -8,6 +8,7 @@
     "build:marketing": "pnpm --filter @tellann/marketing build",
     "dev": "node scripts/dev.js",
     "dev:desktop-intent": "node scripts/run-desktop-intent-stack.mjs",
+    "dev:code-intelligence": "pnpm --filter @tellann/code-intelligence-worker dev",
     "dev:app": "pnpm --filter dashboard dev",
     "dev:docs": "pnpm --filter @tellann/docs dev",
     "dev:marketing": "pnpm --filter @tellann/marketing dev",

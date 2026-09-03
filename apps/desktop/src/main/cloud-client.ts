@@ -3,6 +3,7 @@ import os from "node:os";
 import { app, net, shell } from "electron";
 import type {
   BranchPolicy,
+  CodebaseAnalysis,
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   FlowReviewPreview,
@@ -1113,6 +1114,52 @@ export class DesktopCloudClient {
       branchPolicy:
         (workspace as { branchPolicy?: BranchPolicy }).branchPolicy ?? null,
     };
+  }
+
+  async createCodebaseAnalysis(
+    applicationId: string,
+    input: {
+      workspaceId: string;
+      repositorySnapshotId: string;
+      revision: string | null;
+      branch: string | null;
+      dirty: boolean;
+      repositoryFingerprint: string;
+      repositoryIdentity: string | null;
+      scannerVersion: string;
+      archive: { checksum: string; fileCount: number; excludedFiles: number; uncompressedBytes: number; buffer: Buffer };
+    },
+  ) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/snapshots`, {
+      method: 'POST',
+      body: JSON.stringify({
+        workspaceId: input.workspaceId,
+        repositorySnapshotId: input.repositorySnapshotId,
+        revision: input.revision,
+        branch: input.branch,
+        dirty: input.dirty,
+        repositoryFingerprint: input.repositoryFingerprint,
+        repositoryIdentity: input.repositoryIdentity,
+        scannerVersion: input.scannerVersion,
+        contentHash: input.archive.checksum,
+        fileCount: input.archive.fileCount,
+        excludedFileCount: input.archive.excludedFiles,
+        totalBytes: input.archive.uncompressedBytes,
+        archiveBase64: input.archive.buffer.toString('base64'),
+      }),
+    });
+  }
+
+  async completeCodebaseAnalysis(applicationId: string, jobId: string, analysis: CodebaseAnalysis) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/result`, {
+      method: 'PUT', body: JSON.stringify({ analysis }),
+    });
+  }
+
+  async updateCodebaseAnalysis(applicationId: string, jobId: string, status: CodebaseAnalysis['status'], progress: number, stageMessage: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/progress`, {
+      method: 'PATCH', body: JSON.stringify({ status, progress, stageMessage }),
+    });
   }
 
   async detectInstrumentation(

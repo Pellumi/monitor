@@ -44,6 +44,7 @@ import {
   Workflow,
   X,
 } from "lucide-react";
+import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
 import {
   Link,
   Navigate,
@@ -1423,6 +1424,7 @@ export function WorkspacePage() {
           </section>
         </div>
       )}
+      {workspace && projectId ? <CodebaseAnalysisPanel applicationId={projectId} workspaceRoot={workspace.path} /> : null}
     </Page>
   );
 }

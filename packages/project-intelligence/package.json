@@ -9,7 +9,8 @@
     "test": "node --test dist/index.test.js"
   },
   "dependencies": {
-    "@tellann/desktop-contracts": "workspace:*"
+    "@tellann/desktop-contracts": "workspace:*",
+    "typescript": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

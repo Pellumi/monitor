@@ -45,6 +45,7 @@ model Organization {
   settings                 OrganizationSettings?
   securitySettings         OrganizationSecuritySettings?
   projectWorkspaces        ProjectWorkspace[]
+  codebaseSnapshots        CodebaseSnapshot[]
   qaRuns                   QARun[]
   sourceDocuments          SourceDocument[]
   deviceSessions           DeviceSession[]
@@ -972,6 +973,8 @@ model Application {
   qaRuns             QARun[]
   sourceDocuments    SourceDocument[]
   projectConnections ProjectConnection[]
+  codebaseSnapshots  CodebaseSnapshot[]
+  codebaseAnalysisJobs CodebaseAnalysisJob[]
 
   // FDRS relations (Section 22)
   behaviorGraphs         BehaviorGraph[]
@@ -2038,6 +2041,7 @@ model ProjectWorkspace {
   patchSets            PatchSet[]
   projectConnections   ProjectConnection[]
   flowProjectBindings  FlowProjectBinding[]
+  codebaseSnapshots     CodebaseSnapshot[]
 
   // A workspace is one person's checkout on one machine. Two members who attach
   // the same repository must never collide onto a single row.
@@ -2108,8 +2112,179 @@ model RepositorySnapshot {
   qaRuns               QARun[]
   instrumentationPlans InstrumentationPlan[]
   flowScans            FlowScan[]
+  codebaseSnapshots    CodebaseSnapshot[]
 
   @@index([workspaceId, createdAt])
+}
+
+enum CodebaseAnalysisStatus {
+  QUEUED
+  INGESTING
+  PARSING
+  LINKING
+  GRAPHING
+  DISCOVERING_FEATURES
+  ANALYZING_ARCHITECTURE
+  SUMMARIZING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum SourceArchiveStatus {
+  PENDING
+  UPLOADING
+  READY
+  FAILED
+  DELETED
+}
+
+model CodebaseSnapshot {
+  id                       String             @id @default(uuid())
+  organizationId           String
+  organization             Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId            String
+  application              Application        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  workspaceId              String
+  workspace                ProjectWorkspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repositorySnapshotId     String?
+  repositorySnapshot       RepositorySnapshot? @relation(fields: [repositorySnapshotId], references: [id], onDelete: SetNull)
+  repositoryFingerprint    String
+  repositoryIdentity       String?
+  revision                 String?
+  branch                   String?
+  dirty                    Boolean
+  contentHash              String
+  scannerVersion           String
+  analyzerVersions         Json
+  fileCount                Int                @default(0)
+  totalBytes               BigInt             @default(0)
+  excludedFileCount        Int                @default(0)
+  graphVersion             String?
+  createdByUserId          String
+  createdAt                DateTime           @default(now())
+  sourceArchive            SourceArchive?
+  analysisJobs             CodebaseAnalysisJob[]
+
+  @@unique([workspaceId, contentHash, scannerVersion])
+  @@index([applicationId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model SourceArchive {
+  id                 String              @id @default(uuid())
+  codebaseSnapshotId String              @unique
+  codebaseSnapshot   CodebaseSnapshot    @relation(fields: [codebaseSnapshotId], references: [id], onDelete: Cascade)
+  status             SourceArchiveStatus @default(PENDING)
+  objectKey          String?             @unique
+  checksum           String
+  bytes              BigInt
+  fileCount          Int
+  encryptionVersion  String              @default("storage-managed-v1")
+  retentionUntil     DateTime?
+  uploadedAt         DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+}
+
+model CodebaseAnalysisJob {
+  id                  String                 @id @default(uuid())
+  organizationId      String
+  applicationId       String
+  application         Application            @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  codebaseSnapshotId  String
+  codebaseSnapshot    CodebaseSnapshot       @relation(fields: [codebaseSnapshotId], references: [id], onDelete: Cascade)
+  status              CodebaseAnalysisStatus @default(QUEUED)
+  progress            Int                    @default(0)
+  stageMessage        String                 @default("Queued")
+  attempt             Int                    @default(0)
+  maxAttempts         Int                    @default(3)
+  scheduledAt         DateTime               @default(now())
+  startedAt           DateTime?
+  completedAt         DateTime?
+  heartbeatAt         DateTime?
+  leaseOwner          String?
+  leaseExpiresAt      DateTime?
+  cancellationRequestedAt DateTime?
+  errorCodeSafe       String?
+  errorMessageSafe    String?
+  entityCount         Int                    @default(0)
+  relationshipCount   Int                    @default(0)
+  featureCount        Int                    @default(0)
+  resultSummary       Json?
+  graphVersion        String?
+  supersededByJobId   String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  stages              AnalysisStageRun[]
+  analyzerRuns        AnalyzerRun[]
+  warnings            AnalysisWarning[]
+  projections         AnalysisProjection[]
+
+  @@index([status, scheduledAt])
+  @@index([applicationId, createdAt])
+  @@index([codebaseSnapshotId, createdAt])
+}
+
+model AnalysisStageRun {
+  id          String                 @id @default(uuid())
+  jobId       String
+  job         CodebaseAnalysisJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stage       CodebaseAnalysisStatus
+  status      String
+  progress    Int                    @default(0)
+  attempt     Int                    @default(1)
+  startedAt   DateTime               @default(now())
+  completedAt DateTime?
+  errorSafe   String?
+
+  @@index([jobId, startedAt])
+}
+
+model AnalyzerRun {
+  id          String              @id @default(uuid())
+  jobId       String
+  job         CodebaseAnalysisJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  analyzer    String
+  version     String
+  status      String
+  inputCount  Int                 @default(0)
+  outputCount Int                 @default(0)
+  durationMs  Int?
+  metadata    Json?
+  createdAt   DateTime            @default(now())
+
+  @@index([jobId, analyzer])
+}
+
+model AnalysisWarning {
+  id         String              @id @default(uuid())
+  jobId      String
+  job        CodebaseAnalysisJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  code       String
+  severity   String
+  message    String
+  path       String?
+  metadata   Json?
+  createdAt  DateTime            @default(now())
+
+  @@index([jobId, severity])
+}
+
+model AnalysisProjection {
+  id           String              @id @default(uuid())
+  jobId        String
+  job          CodebaseAnalysisJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind         String
+  schemaVersion String             @default("1.0")
+  payload      Json
+  checksum     String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([jobId, kind])
 }
 
 model SourceDocument {

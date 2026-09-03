@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tellann/authz": "workspace:*",
+    "@tellann/code-graph": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
     "@tellann/email": "workspace:*",

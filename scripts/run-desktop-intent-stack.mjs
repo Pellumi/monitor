@@ -59,7 +59,7 @@ const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const services = [
   ['auth-api', '@tellann/auth-api'], ['onboarding-api', '@tellann/onboarding-api'],
   ['fdrs-api', '@tellann/fdrs-api'], ['api-gateway', '@tellann/api-gateway'],
-  ['background-workers', '@tellann/background-workers'], ['desktop', '@tellann/desktop'],
+  ['background-workers', '@tellann/background-workers'], ['code-intelligence-worker', '@tellann/code-intelligence-worker'], ['desktop', '@tellann/desktop'],
 ];
 const children = [];
 let stopping = false;

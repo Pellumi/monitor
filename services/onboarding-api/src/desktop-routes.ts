@@ -14,6 +14,8 @@ import {
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import type { StorageClient } from '@tellann/storage';
+import { CodebaseAnalysisSchema } from '@tellann/desktop-contracts';
+import { createGraphStore } from '@tellann/code-graph';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
@@ -84,6 +86,7 @@ export function createDesktopRouter(input: {
 }) {
   const { prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret, storage } = input;
   const router = Router();
+  const codeGraph = createGraphStore();
 
   /** The caller's role in the organisation that owns this application, if any. */
   async function orgRoleForApp(userId: string, appId: string): Promise<MemberRole | null> {
@@ -302,6 +305,120 @@ export function createDesktopRouter(input: {
       res.status(201).json(snapshot);
     },
   );
+
+  router.post(
+    '/applications/:appId/codebase/snapshots',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const body = req.body ?? {};
+      if (!body.workspaceId || !body.repositoryFingerprint || !body.contentHash || !body.scannerVersion || !body.archiveBase64) {
+        return res.status(400).json({ error: 'INVALID_CODEBASE_SNAPSHOT', message: 'Workspace, repository identity, content hash, scanner version, and source archive are required.' });
+      }
+      const [application, workspace] = await Promise.all([
+        prisma.application.findUnique({ where: { id: req.params.appId }, select: { organizationId: true } }),
+        prisma.projectWorkspace.findFirst({ where: { id: String(body.workspaceId), applicationId: req.params.appId, createdByUserId: req.user!.id } }),
+      ]);
+      if (!application?.organizationId || !workspace) return res.status(404).json({ error: 'Workspace not found' });
+      let archive: Buffer;
+      try { archive = Buffer.from(String(body.archiveBase64), 'base64'); } catch { return res.status(400).json({ error: 'INVALID_SOURCE_ARCHIVE' }); }
+      if (!archive.length || archive.length > 22 * 1024 * 1024) return res.status(413).json({ error: 'SOURCE_ARCHIVE_TOO_LARGE' });
+      const checksum = crypto.createHash('sha256').update(archive).digest('hex');
+      if (checksum !== String(body.contentHash)) return res.status(400).json({ error: 'SOURCE_ARCHIVE_CHECKSUM_MISMATCH' });
+      const existing = await (prisma as any).codebaseSnapshot.findUnique({
+        where: { workspaceId_contentHash_scannerVersion: { workspaceId: workspace.id, contentHash: checksum, scannerVersion: String(body.scannerVersion) } },
+        include: { analysisJobs: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      });
+      if (existing?.analysisJobs?.[0]) return res.status(200).json({ snapshotId: existing.id, jobId: existing.analysisJobs[0].id, deduplicated: true });
+      const snapshot = await (prisma as any).codebaseSnapshot.create({ data: {
+        organizationId: application.organizationId, applicationId: req.params.appId, workspaceId: workspace.id,
+        repositorySnapshotId: body.repositorySnapshotId ? String(body.repositorySnapshotId) : null,
+        repositoryFingerprint: String(body.repositoryFingerprint), repositoryIdentity: body.repositoryIdentity ? String(body.repositoryIdentity) : null,
+        revision: body.revision ? String(body.revision) : null, branch: body.branch ? String(body.branch) : null,
+        dirty: Boolean(body.dirty), contentHash: checksum, scannerVersion: String(body.scannerVersion),
+        analyzerVersions: {}, fileCount: Math.max(0, Number(body.fileCount) || 0), totalBytes: BigInt(Math.max(0, Number(body.totalBytes) || 0)),
+        excludedFileCount: Math.max(0, Number(body.excludedFileCount) || 0), createdByUserId: req.user!.id,
+      }});
+      const objectKey = `codebase-snapshots/${application.organizationId}/${req.params.appId}/${snapshot.id}.json.gz`;
+      try {
+        await storage.uploadAndPresign(objectKey, archive, 'application/gzip', 900);
+        const job = await prisma.$transaction(async (tx) => {
+          await (tx as any).sourceArchive.create({ data: { codebaseSnapshotId: snapshot.id, status: 'READY', objectKey, checksum, bytes: BigInt(archive.length), fileCount: Math.max(0, Number(body.fileCount) || 0), uploadedAt: new Date() } });
+          await (tx as any).codebaseAnalysisJob.updateMany({ where: { applicationId: req.params.appId, status: { in: ['QUEUED','INGESTING','PARSING','LINKING','GRAPHING','DISCOVERING_FEATURES','ANALYZING_ARCHITECTURE','SUMMARIZING'] } }, data: { status: 'CANCELLED', completedAt: new Date(), stageMessage: 'Superseded by a newer snapshot' } });
+          return (tx as any).codebaseAnalysisJob.create({ data: { organizationId: application.organizationId, applicationId: req.params.appId, codebaseSnapshotId: snapshot.id } });
+        });
+        await prisma.storageLedgerEntry.create({ data: { organizationId: application.organizationId, objectKey, ownerType: 'CODEBASE_SNAPSHOT', ownerId: snapshot.id, category: 'SOURCE_ARCHIVE', bytes: BigInt(archive.length) } });
+        return res.status(202).json({ snapshotId: snapshot.id, jobId: job.id, status: job.status });
+      } catch (error) {
+        await (prisma as any).codebaseSnapshot.delete({ where: { id: snapshot.id } }).catch(() => undefined);
+        throw error;
+      }
+    },
+  );
+
+  router.get('/applications/:appId/codebase/analyses/latest', verifyJwt, verifyAppOwnership, async (req: DesktopRequest, res: Response) => {
+    const job = await (prisma as any).codebaseAnalysisJob.findFirst({
+      where: { applicationId: req.params.appId }, orderBy: { createdAt: 'desc' },
+      include: { stages: { orderBy: { startedAt: 'asc' } }, warnings: true, projections: true, codebaseSnapshot: { select: { id: true, revision: true, branch: true, contentHash: true, createdAt: true } } },
+    });
+    if (!job) return res.status(404).json({ error: 'Codebase analysis not found' });
+    res.json({ ...job, projections: Object.fromEntries(job.projections.map((item: any) => [item.kind, item.payload])) });
+  });
+
+  router.post('/applications/:appId/codebase/analyses/:jobId/cancel', verifyJwt, verifyAppOwnership, async (req: DesktopRequest, res: Response) => {
+    const result = await (prisma as any).codebaseAnalysisJob.updateMany({ where: { id: req.params.jobId, applicationId: req.params.appId, status: { notIn: ['COMPLETED','PARTIAL','FAILED','CANCELLED'] } }, data: { cancellationRequestedAt: new Date(), status: 'CANCELLED', completedAt: new Date(), stageMessage: 'Cancelled by user' } });
+    res.json({ cancelled: result.count > 0 });
+  });
+
+  router.patch('/applications/:appId/codebase/analyses/:jobId/progress', verifyJwt, verifyAppOwnership, async (req: DesktopRequest, res: Response) => {
+    const allowed = new Set(['INGESTING','PARSING','LINKING','GRAPHING','DISCOVERING_FEATURES','ANALYZING_ARCHITECTURE','SUMMARIZING']);
+    const status = String(req.body?.status ?? '');
+    if (!allowed.has(status)) return res.status(400).json({ error: 'INVALID_ANALYSIS_STAGE' });
+    const progress = Math.min(Math.max(Math.round(Number(req.body?.progress) || 0), 0), 99);
+    const result = await (prisma as any).codebaseAnalysisJob.updateMany({ where: { id: req.params.jobId, applicationId: req.params.appId, status: { notIn: ['COMPLETED','PARTIAL','FAILED','CANCELLED'] } }, data: { status, progress, stageMessage: String(req.body?.stageMessage ?? status).slice(0, 500), startedAt: new Date(), heartbeatAt: new Date() } });
+    if (!result.count) return res.status(409).json({ error: 'ANALYSIS_NOT_ACTIVE' });
+    await (prisma as any).analysisStageRun.create({ data: { jobId: req.params.jobId, stage: status, status: 'COMPLETED', progress, completedAt: new Date() } });
+    res.json({ updated: true });
+  });
+
+  router.put('/applications/:appId/codebase/analyses/:jobId/result', verifyJwt, verifyAppOwnership, async (req: DesktopRequest, res: Response) => {
+    const parsedAnalysis = CodebaseAnalysisSchema.safeParse(req.body?.analysis);
+    if (!parsedAnalysis.success) return res.status(400).json({ error: 'INVALID_CODEBASE_ANALYSIS', details: parsedAnalysis.error.issues.slice(0, 10) });
+    const analysis = parsedAnalysis.data;
+    const job = await (prisma as any).codebaseAnalysisJob.findFirst({ where: { id: req.params.jobId, applicationId: req.params.appId }, include: { codebaseSnapshot: true } });
+    if (!job) return res.status(404).json({ error: 'Codebase analysis not found' });
+    if (!analysis || analysis.repositoryFingerprint !== job.codebaseSnapshot.repositoryFingerprint) return res.status(400).json({ error: 'ANALYSIS_SNAPSHOT_MISMATCH' });
+    const projectionKinds = ['entities','relationships','features','findings'] as const;
+    const projections = projectionKinds.map((kind) => ({ kind, payload: analysis[kind] ?? [], checksum: crypto.createHash('sha256').update(JSON.stringify(analysis[kind] ?? [])).digest('hex') }));
+    await prisma.$transaction(async (tx) => {
+      for (const projection of projections) await (tx as any).analysisProjection.upsert({ where: { jobId_kind: { jobId: job.id, kind: projection.kind } }, create: { jobId: job.id, ...projection }, update: projection });
+      for (const message of analysis.warnings ?? []) await (tx as any).analysisWarning.create({ data: { jobId: job.id, code: 'ANALYSIS_WARNING', severity: 'WARNING', message: String(message).slice(0, 1_000) } });
+      await (tx as any).codebaseAnalysisJob.update({ where: { id: job.id }, data: { status: analysis.status === 'PARTIAL' ? 'PARTIAL' : 'COMPLETED', progress: 100, stageMessage: analysis.stageMessage ?? 'Analysis completed', completedAt: new Date(), entityCount: analysis.entities?.length ?? 0, relationshipCount: analysis.relationships?.length ?? 0, featureCount: analysis.features?.length ?? 0, resultSummary: analysis.summary ?? {}, graphVersion: analysis.graphVersion ?? null } });
+      await (tx as any).codebaseSnapshot.update({ where: { id: job.codebaseSnapshotId }, data: { graphVersion: analysis.graphVersion ?? null, analyzerVersions: analysis.analyzerVersions ?? {} } });
+    });
+    if (codeGraph) {
+      try {
+        await codeGraph.replace({ organizationId: job.organizationId, applicationId: job.applicationId, snapshotId: job.codebaseSnapshotId, graphVersion: analysis.graphVersion }, analysis.entities, analysis.relationships);
+      } catch (error) {
+        await (prisma as any).analysisWarning.create({ data: { jobId: job.id, code: 'GRAPH_STORE_UNAVAILABLE', severity: 'WARNING', message: error instanceof Error ? error.message.slice(0, 1_000) : 'Neo4j graph projection failed' } });
+        await (prisma as any).codebaseAnalysisJob.update({ where: { id: job.id }, data: { status: 'PARTIAL', stageMessage: 'Analysis completed; graph store projection is unavailable' } });
+      }
+    }
+    res.json({ completed: true });
+  });
+
+  router.post('/applications/:appId/codebase/graph', verifyJwt, verifyAppOwnership, async (req: DesktopRequest, res: Response) => {
+    if (!codeGraph) return res.status(503).json({ error: 'GRAPH_STORE_UNAVAILABLE' });
+    const job = await (prisma as any).codebaseAnalysisJob.findFirst({ where: { applicationId: req.params.appId, status: { in: ['COMPLETED','PARTIAL'] } }, orderBy: { createdAt: 'desc' } });
+    if (!job?.graphVersion) return res.status(404).json({ error: 'Codebase graph not found' });
+    const result = await codeGraph.project({ organizationId: job.organizationId, applicationId: job.applicationId, snapshotId: job.codebaseSnapshotId, graphVersion: job.graphVersion }, {
+      types: Array.isArray(req.body?.types) ? req.body.types.map(String).slice(0, 30) : [],
+      relationshipTypes: Array.isArray(req.body?.relationshipTypes) ? req.body.relationshipTypes.map(String).slice(0, 30) : [],
+      search: typeof req.body?.search === 'string' ? req.body.search.slice(0, 200) : '',
+      depth: Math.min(Math.max(Number(req.body?.depth) || 1, 1), 8), limit: Math.min(Math.max(Number(req.body?.limit) || 250, 1), 1_000),
+    });
+    res.json(result);
+  });
 
   router.get(
     '/applications/:appId/workspaces',

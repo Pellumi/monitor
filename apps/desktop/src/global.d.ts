@@ -12,6 +12,7 @@ import type {
   QARunSummary,
   QualityReport,
   RepositorySnapshotSummary,
+  CodebaseAnalysis,
   StartGuidedRunInput,
   SourceDocumentSummary,
   IntentDraft,
@@ -55,6 +56,8 @@ declare global {
           snapshot: RepositorySnapshotSummary;
           branchPolicy: BranchPolicy | null;
         }>;
+        getCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysis | null>;
+        cancelCodebaseAnalysis(applicationId: string): Promise<{ cancelled: boolean }>;
         cloneWorkspace(input: { applicationId: string; cloneUrl: string }): Promise<{
           id: string;
           path: string;

@@ -3,10 +3,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
-import { IPC, StartGuidedRunInputSchema, type BranchPolicy, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import { IPC, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
-import { scanWorkspace } from '@tellann/project-intelligence';
+import { buildSanitizedSourceArchive, scanWorkspace } from '@tellann/project-intelligence';
 import { BrowserObserver } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
 import { initializeUpdater } from './update-manager';
@@ -51,6 +52,7 @@ async function syncNotificationOrganization(): Promise<void> {
 const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
+const codebaseWorkers = new Map<string, Worker>();
 let pendingSetupHandoffToken: string | null = null;
 const execFileAsync = promisify(execFile);
 const instrumentation = new InstrumentationController(
@@ -174,6 +176,50 @@ function localWorkspaceKey(applicationId: string): string {
   return `workspace:${scope}:${applicationId}`;
 }
 
+function codebaseAnalysisKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  return `codebase-analysis:${scope}:${applicationId}`;
+}
+
+function beginCodebaseAnalysis(applicationId: string, root: string, snapshot: RepositorySnapshotSummary, cloudJobId?: string): void {
+  codebaseWorkers.get(applicationId)?.terminate().catch(() => undefined);
+  const initial: CodebaseAnalysis = {
+    id: `pending:${snapshot.repositoryFingerprint.slice(0, 24)}`,
+    workspaceId: snapshot.workspaceId,
+    repositoryFingerprint: snapshot.repositoryFingerprint,
+    graphVersion: '',
+    analyzerVersions: {},
+    status: 'QUEUED', progress: 0, stageMessage: 'Queued for analysis',
+    startedAt: new Date().toISOString(), completedAt: null,
+    entities: [], relationships: [], features: [], findings: [], warnings: [],
+    summary: { files: 0, symbols: 0, relationships: 0, applications: 0, services: 0, domains: 0, features: 0, coveragePercent: 0, confidence: 0 },
+  };
+  writeLocalState(codebaseAnalysisKey(applicationId), initial);
+  const worker = new Worker(path.join(__dirname, 'codebase-worker.js'), {
+    workerData: { root, workspaceId: snapshot.workspaceId, repositoryFingerprint: snapshot.repositoryFingerprint },
+  });
+  codebaseWorkers.set(applicationId, worker);
+  worker.on('message', (message: { type?: string; analysis?: CodebaseAnalysis; status?: CodebaseAnalysis['status']; progress?: number; stageMessage?: string; message?: string }) => {
+    if (message.type === 'progress') {
+      const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
+      writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: message.status ?? current.status, progress: message.progress ?? current.progress, stageMessage: message.stageMessage ?? current.stageMessage });
+      if (cloudJobId && message.status) void cloud.updateCodebaseAnalysis(applicationId, cloudJobId, message.status, message.progress ?? 0, message.stageMessage ?? '').catch(() => undefined);
+    } else if (message.type === 'complete' && message.analysis) {
+      writeLocalState(codebaseAnalysisKey(applicationId), message.analysis);
+      if (cloudJobId) void cloud.completeCodebaseAnalysis(applicationId, cloudJobId, message.analysis).catch((error) => console.warn('[codebase-analysis] Could not publish analysis projections', error));
+    } else if (message.type === 'error') {
+      const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
+      writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'FAILED', stageMessage: String(message.message ?? 'Analysis failed').slice(0, 240), completedAt: new Date().toISOString() });
+    }
+  });
+  worker.once('exit', () => codebaseWorkers.delete(applicationId));
+  worker.once('error', (error) => {
+    const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
+    writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'FAILED', stageMessage: error.message.slice(0, 240), completedAt: new Date().toISOString() });
+  });
+}
+
 async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
   resolveWithinWorkspace(selectedPath, '.');
   // Derived from the folder path under a device-local secret rather than
@@ -203,6 +249,36 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
     branchPolicy: registered.branchPolicy ?? policy ?? null,
   };
   writeLocalState(localWorkspaceKey(applicationId), workspace);
+  const consent = await dialog.showMessageBox(mainWindow!, {
+    type: 'question',
+    title: 'Upload source for codebase analysis?',
+    message: 'Tellann can upload a sanitized, encrypted source snapshot for complete codebase analysis.',
+    detail: 'Secrets, dependency folders, generated output, symlinks, binaries, and oversized files are excluded. The snapshot is tied to this exact revision and can be deleted under your organization retention policy.',
+    buttons: ['Upload and analyze', 'Keep analysis local'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  let cloudJobId: string | undefined;
+  if (consent.response === 0) {
+    try {
+      const archive = buildSanitizedSourceArchive(selectedPath);
+      const created = await cloud.createCodebaseAnalysis(applicationId, {
+        workspaceId: registered.workspaceId,
+        repositorySnapshotId: registered.repositorySnapshotId,
+        revision: snapshot.revision,
+        branch: snapshot.branch,
+        dirty: snapshot.dirty,
+        repositoryFingerprint: snapshot.repositoryFingerprint,
+        repositoryIdentity: snapshot.repositoryOriginHash ?? snapshot.portableManifestIdentity ?? null,
+        scannerVersion: snapshot.scannerVersion,
+        archive,
+      });
+      cloudJobId = typeof created.jobId === 'string' ? created.jobId : undefined;
+    } catch (error) {
+      console.warn('[codebase-analysis] Cloud snapshot upload failed; local analysis will continue', error);
+    }
+  }
+  beginCodebaseAnalysis(applicationId, selectedPath, snapshot, cloudJobId);
   return workspace;
 }
 
@@ -796,6 +872,22 @@ function registerIpc(): void {
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
     const workspace = await registerSelectedWorkspace(applicationId, parsed.path);
     return { id: workspace.id, snapshot: workspace.snapshot, branchPolicy: workspace.branchPolicy ?? null };
+  });
+  ipcMain.handle(IPC.getCodebaseAnalysis, (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId));
+  });
+  ipcMain.handle(IPC.cancelCodebaseAnalysis, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const worker = codebaseWorkers.get(applicationId);
+    if (!worker) return { cancelled: false };
+    await worker.terminate();
+    codebaseWorkers.delete(applicationId);
+    const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId));
+    if (current) writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'CANCELLED', stageMessage: 'Analysis cancelled', completedAt: new Date().toISOString() });
+    return { cancelled: true };
   });
   ipcMain.handle(IPC.cloneWorkspace, async (event, input: unknown) => {
     assertTrustedSender(event);

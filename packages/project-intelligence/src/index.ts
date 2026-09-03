@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+export { analyzeCodebase, buildSanitizedSourceArchive, buildSanitizedSourceManifest } from './codebase-analysis';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',

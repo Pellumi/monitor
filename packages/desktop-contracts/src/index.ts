@@ -114,6 +114,125 @@ export const RepositorySnapshotSummarySchema = z.object({
   }),
 });
 
+export const CodebaseAnalysisStatusSchema = z.enum([
+  'QUEUED', 'INGESTING', 'PARSING', 'LINKING', 'GRAPHING',
+  'DISCOVERING_FEATURES', 'ANALYZING_ARCHITECTURE', 'SUMMARIZING',
+  'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED',
+]);
+
+export const CodeEntityTypeSchema = z.enum([
+  'repository', 'application', 'service', 'package', 'directory', 'file', 'module',
+  'class', 'interface', 'function', 'method', 'test', 'ui_route', 'ui_action',
+  'endpoint', 'database_model', 'database_table', 'event', 'queue', 'job',
+  'external_service', 'domain', 'feature', 'workflow',
+]);
+
+export const CodeRelationshipTypeSchema = z.enum([
+  'CONTAINS', 'DEFINES', 'IMPORTS', 'EXPORTS', 'CALLS', 'USES', 'IMPLEMENTS',
+  'EXTENDS', 'ROUTES_TO', 'READS', 'WRITES', 'PUBLISHES', 'SUBSCRIBES_TO',
+  'HANDLED_BY', 'DEPENDS_ON', 'TESTS', 'CONFIGURES', 'BELONGS_TO_DOMAIN',
+  'IMPLEMENTS_FEATURE', 'CALLS_EXTERNAL',
+]);
+
+export const CodeEvidenceSchema = z.object({
+  kind: z.string(),
+  path: z.string(),
+  startLine: z.number().int().positive().nullable().default(null),
+  endLine: z.number().int().positive().nullable().default(null),
+  symbol: z.string().nullable().default(null),
+  excerpt: z.string().max(2_000).nullable().default(null),
+  analyzer: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+
+export const CodeEntitySchema = z.object({
+  id: z.string(),
+  type: CodeEntityTypeSchema,
+  name: z.string(),
+  path: z.string().nullable().default(null),
+  startLine: z.number().int().positive().nullable().default(null),
+  endLine: z.number().int().positive().nullable().default(null),
+  language: z.string().nullable().default(null),
+  confidence: z.number().min(0).max(1),
+  metadata: z.record(z.unknown()).default({}),
+  evidence: z.array(CodeEvidenceSchema).default([]),
+});
+
+export const CodeRelationshipSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  target: z.string(),
+  type: CodeRelationshipTypeSchema,
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(CodeEvidenceSchema).default([]),
+});
+
+export const SoftwareFeatureSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  domain: z.string(),
+  triggers: z.array(z.string()),
+  entrypoints: z.array(z.string()),
+  workflow: z.array(z.object({ entityId: z.string(), label: z.string() })),
+  reads: z.array(z.string()),
+  writes: z.array(z.string()),
+  externalServices: z.array(z.string()),
+  emittedEvents: z.array(z.string()),
+  downstreamEffects: z.array(z.string()),
+  authorization: z.array(z.string()),
+  sourceFiles: z.array(z.string()),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(CodeEvidenceSchema),
+});
+
+export const CodebaseFindingSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['CYCLE', 'COUPLING', 'UNRESOLVED_REFERENCE', 'STALE_DOCUMENTATION', 'DYNAMIC_CODE', 'UNSUPPORTED_LANGUAGE']),
+  severity: z.enum(['INFO', 'WARNING', 'HIGH']),
+  title: z.string(),
+  description: z.string(),
+  entityIds: z.array(z.string()),
+  evidence: z.array(CodeEvidenceSchema),
+});
+
+export const CodebaseAnalysisSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string().uuid(),
+  repositoryFingerprint: z.string(),
+  graphVersion: z.string(),
+  analyzerVersions: z.record(z.string()),
+  status: CodebaseAnalysisStatusSchema,
+  progress: z.number().min(0).max(100),
+  stageMessage: z.string(),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+  entities: z.array(CodeEntitySchema),
+  relationships: z.array(CodeRelationshipSchema),
+  features: z.array(SoftwareFeatureSchema),
+  findings: z.array(CodebaseFindingSchema),
+  summary: z.object({
+    files: z.number().int().nonnegative(),
+    symbols: z.number().int().nonnegative(),
+    relationships: z.number().int().nonnegative(),
+    applications: z.number().int().nonnegative(),
+    services: z.number().int().nonnegative(),
+    domains: z.number().int().nonnegative(),
+    features: z.number().int().nonnegative(),
+    coveragePercent: z.number().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+  }),
+  warnings: z.array(z.string()),
+});
+
+export type CodebaseAnalysisStatus = z.infer<typeof CodebaseAnalysisStatusSchema>;
+export type CodeEvidence = z.infer<typeof CodeEvidenceSchema>;
+export type CodeEntity = z.infer<typeof CodeEntitySchema>;
+export type CodeRelationship = z.infer<typeof CodeRelationshipSchema>;
+export type SoftwareFeature = z.infer<typeof SoftwareFeatureSchema>;
+export type CodebaseFinding = z.infer<typeof CodebaseFindingSchema>;
+export type CodebaseAnalysis = z.infer<typeof CodebaseAnalysisSchema>;
+
 export const BranchPolicyEnforcementSchema = z.enum(['WARN', 'BLOCK']);
 
 /** The org-owned repository binding an application's members all share. */
@@ -714,6 +833,8 @@ export const IPC = {
   chooseWorkspace: 'tellann:workspace:choose',
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
+  getCodebaseAnalysis: 'tellann:workspace:analysis:get',
+  cancelCodebaseAnalysis: 'tellann:workspace:analysis:cancel',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
   setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',

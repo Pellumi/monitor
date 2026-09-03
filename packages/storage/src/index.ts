@@ -29,6 +29,7 @@ export interface StorageAdapter {
   upload(key: string, buffer: Buffer, contentType: string): Promise<UploadResult>;
   presign(key: string, ttlSeconds: number): Promise<string>;
   delete(key: string): Promise<void>;
+  download(key: string): Promise<Buffer>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +81,12 @@ export class S3StorageAdapter implements StorageAdapter {
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
+
+  async download(key: string): Promise<Buffer> {
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!response.Body) throw new Error('Storage object has no body');
+    return Buffer.from(await response.Body.transformToByteArray());
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +116,11 @@ export class FirebaseStorageAdapter implements StorageAdapter {
 
   async delete(key: string): Promise<void> {
     await this.bucket.file(key).delete({ ignoreNotFound: true });
+  }
+
+  async download(key: string): Promise<Buffer> {
+    const [buffer] = await this.bucket.file(key).download();
+    return Buffer.from(buffer);
   }
 }
 
@@ -143,6 +155,11 @@ export class LocalFsStorageAdapter implements StorageAdapter {
   async delete(key: string): Promise<void> {
     const filePath = path.join(this.baseDir, key.replace(/\//g, path.sep));
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+
+  async download(key: string): Promise<Buffer> {
+    const filePath = path.join(this.baseDir, key.replace(/\//g, path.sep));
+    return fs.readFileSync(filePath);
   }
 }
 
@@ -188,6 +205,11 @@ export class StorageClient {
   /** Delete an object. */
   async delete(key: string): Promise<void> {
     return this.primary.delete(key);
+  }
+
+  async download(key: string): Promise<Buffer> {
+    try { return await this.primary.download(key); }
+    catch (error) { if (!this.fallback) throw error; return this.fallback.download(key); }
   }
 }
 
