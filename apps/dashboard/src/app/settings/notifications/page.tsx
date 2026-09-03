@@ -347,7 +347,19 @@ function WebPushSection({
     setBusy(true);
     try {
       const result = await sendTestPush(orgId);
-      onMessage(`Test push sent to ${result.sent} of ${result.total} browser(s).`);
+      if (result.sent > 0) {
+        onMessage(
+          `Test push accepted by ${result.sent} of ${result.total} browser(s). If nothing appears, check your OS Do Not Disturb / Focus mode and this site's notification permission.`,
+        );
+      } else {
+        const reason = result.failures?.[0];
+        const detail = reason?.statusCode
+          ? ` Push service responded ${reason.statusCode}${reason.error ? ` (${reason.error})` : ""}.`
+          : "";
+        onMessage(
+          `The push service rejected the test for all ${result.total} browser(s) — no notification was delivered.${detail} Re-enable browser push to refresh this subscription.`,
+        );
+      }
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "Test failed.");
     } finally {

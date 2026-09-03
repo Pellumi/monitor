@@ -42,12 +42,18 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     (async () => {
-      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const hasVisible = clientList.some(
-        (client) => client.visibilityState === 'visible' || client.focused,
-      );
-      // A visible dashboard already showed the in-app toast for this event.
-      if (hasVisible) return;
+      // A "Send test" from settings is an explicit request to SEE the OS
+      // notification, so it must render even while the dashboard is in focus.
+      const isTest = payload.id === 'test' || payload.tag === 'tellann-test';
+
+      if (!isTest) {
+        const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const hasVisible = clientList.some(
+          (client) => client.visibilityState === 'visible' || client.focused,
+        );
+        // A visible dashboard already showed the in-app toast for this event.
+        if (hasVisible) return;
+      }
 
       await self.registration.showNotification(payload.title || 'Tellann', {
         body: payload.body || '',

@@ -12,7 +12,7 @@
  * Closed-process delivery (WNS/APNs/background agent) is explicitly out of scope
  * for Phase 1 — see docs/notification_implementation_plan.md.
  */
-import { BrowserWindow, Notification } from 'electron';
+import { BrowserWindow, net, Notification } from 'electron';
 import { IPC } from '@tellann/desktop-contracts';
 import { loadDesktopSession } from './secure-store';
 import { readLocalState, writeLocalState } from './local-store';
@@ -43,8 +43,13 @@ function platform(): 'WINDOWS' | 'MACOS' | 'LINUX' {
   return 'LINUX';
 }
 
-/** A stable id for this installation, created once and kept in the local store. */
-function installationId(): string {
+/**
+ * A stable id for this installation, created once and kept in the local store.
+ * Touches `safeStorage`, which is only available after the Electron `app` is
+ * ready, so this must never run at module load / constructor time — call it
+ * lazily from an async method (see the `installationId` getter below).
+ */
+function resolveInstallationId(): string {
   const stored = readLocalState<{ id: string }>(INSTALLATION_KEY);
   if (stored?.id) return stored.id;
   const id = crypto.randomUUID();
@@ -62,7 +67,7 @@ export class DesktopNotificationClient {
   private readonly apiUrl: string;
   private readonly getWindow: () => BrowserWindow | null;
   private readonly appVersion: string;
-  private readonly installationId = installationId();
+  private resolvedInstallationId: string | null = null;
 
   private organizationId: string | null = null;
   private abort: AbortController | null = null;
@@ -78,6 +83,17 @@ export class DesktopNotificationClient {
     this.apiUrl = deps.apiUrl.replace(/\/$/, '');
     this.appVersion = deps.appVersion;
     this.getWindow = deps.getWindow;
+  }
+
+  /**
+   * Lazily resolved so no protected-storage I/O happens before the app is ready.
+   * Every caller is inside an async method that only runs post-`whenReady`.
+   */
+  private get installationId(): string {
+    if (!this.resolvedInstallationId) {
+      this.resolvedInstallationId = resolveInstallationId();
+    }
+    return this.resolvedInstallationId;
   }
 
   /** Point the client at an organisation (or null to detach). Idempotent. */
@@ -144,8 +160,9 @@ export class DesktopNotificationClient {
   private async api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
     const token = this.token();
     if (!token || !this.organizationId) throw new Error('NOT_READY');
-    const res = await fetch(`${this.apiUrl}/organizations/${this.organizationId}${path}`, {
+    const res = await net.fetch(`${this.apiUrl}/organizations/${this.organizationId}${path}`, {
       ...init,
+      credentials: 'omit',
       headers: {
         ...(init.headers ?? {}),
         authorization: `Bearer ${token}`,
@@ -181,15 +198,20 @@ export class DesktopNotificationClient {
     while (this.running) {
       const token = this.token();
       if (!token || !this.organizationId) return;
+      // Abort any prior attempt's socket before opening a new one so failed
+      // reconnects don't stack up half-dead connections in the fetch pool.
+      this.abort?.abort();
       this.abort = new AbortController();
       try {
         const url = new URL(`${this.apiUrl}/organizations/${this.organizationId}/notification-stream`);
         if (this.cursor) url.searchParams.set('cursor', this.cursor);
-        const res = await fetch(url, {
+        const res = await net.fetch(url.toString(), {
+          credentials: 'omit',
           headers: { authorization: `Bearer ${token}`, accept: 'text/event-stream' },
           signal: this.abort.signal,
         });
         if (!res.ok || !res.body) {
+          await res.body?.cancel().catch(() => undefined);
           attempt += 1;
           await this.backoff(attempt);
           continue;
@@ -211,29 +233,33 @@ export class DesktopNotificationClient {
     let eventName = 'message';
     let lastId: string | null = null;
 
-    while (this.running) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split('\n\n');
-      buffer = chunks.pop() ?? '';
-      for (const chunk of chunks) {
-        eventName = 'message';
-        let data = '';
-        for (const line of chunk.split('\n')) {
-          if (line.startsWith('event:')) eventName = line.slice(6).trim();
-          else if (line.startsWith('data:')) data += line.slice(5).trim();
-          else if (line.startsWith('id:')) lastId = line.slice(3).trim();
-        }
-        if (eventName !== 'notification' || !data) continue;
-        try {
-          const row = JSON.parse(data) as DesktopNotificationRow;
-          if (lastId) this.cursor = lastId;
-          this.handleNotification(row);
-        } catch {
-          /* skip malformed frame */
+    try {
+      while (this.running) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() ?? '';
+        for (const chunk of chunks) {
+          eventName = 'message';
+          let data = '';
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).trim();
+            else if (line.startsWith('id:')) lastId = line.slice(3).trim();
+          }
+          if (eventName !== 'notification' || !data) continue;
+          try {
+            const row = JSON.parse(data) as DesktopNotificationRow;
+            if (lastId) this.cursor = lastId;
+            this.handleNotification(row);
+          } catch {
+            /* skip malformed frame */
+          }
         }
       }
+    } finally {
+      await reader.cancel().catch(() => undefined);
     }
   }
 

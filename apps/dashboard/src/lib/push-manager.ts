@@ -135,15 +135,25 @@ export async function disablePush(orgId: string): Promise<PushState> {
   return 'unsubscribed';
 }
 
+export interface TestPushResult {
+  sent: number;
+  total: number;
+  failures?: Array<{ statusCode?: number; error?: string }>;
+}
+
 /** Fires the server's test-notification path for this user's subscriptions. */
-export async function sendTestPush(orgId: string): Promise<{ sent: number; total: number }> {
+export async function sendTestPush(orgId: string): Promise<TestPushResult> {
   const response = await authenticatedFetch(
     `/api-gateway/organizations/${orgId}/push-subscriptions/test`,
     { method: 'POST' },
   );
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.error === 'NO_SUBSCRIPTIONS' ? 'This browser is not subscribed.' : 'Test failed.');
+    if (body.error === 'NO_SUBSCRIPTIONS') throw new Error('This browser is not subscribed.');
+    if (body.error === 'WEB_PUSH_NOT_CONFIGURED') {
+      throw new Error('Browser push is not configured on this server (missing VAPID keys).');
+    }
+    throw new Error('Test failed.');
   }
   return response.json();
 }

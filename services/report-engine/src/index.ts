@@ -21,6 +21,19 @@ const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 
+/**
+ * Base URL of the Endpoint Engine. In local dev every service shares localhost
+ * on a fixed port; in a split deployment (Railway, k8s) the engine lives in its
+ * own container and must be reached over its internal address, so the URL is
+ * environment-driven with the dev default as fallback.
+ */
+const ENDPOINT_ENGINE_URL = (
+  process.env.ENDPOINT_ENGINE_URL || `http://localhost:${Services.ENDPOINT_ENGINE}`
+).replace(/\/$/, '');
+
+const endpointAnalysisUrl = (applicationId: string) =>
+  `${ENDPOINT_ENGINE_URL}/endpoints/${applicationId}/analysis`;
+
 async function uploadMeteredReport(applicationId: string, key: string, buffer: Buffer, contentType: string) {
   const application = await prisma.application.findUnique({ where: { id: applicationId }, select: { organizationId: true } });
   if (!application?.organizationId) return storage.uploadAndPresign(key, buffer, contentType, 3600);
@@ -674,9 +687,7 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
 app.get('/reports/:applicationId/endpoint-intelligence', async (req: Request, res: Response) => {
   const { applicationId } = req.params;
   try {
-    const upstream = await fetch(
-      `http://localhost:${Services.ENDPOINT_ENGINE}/endpoints/${applicationId}/analysis`
-    );
+    const upstream = await fetch(endpointAnalysisUrl(applicationId));
     if (!upstream.ok) {
       return res.status(upstream.status).json({ error: 'Endpoint Engine unavailable' });
     }
@@ -773,9 +784,7 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     // Fetch clickhouse endpoint metrics from endpoint-engine
     let endpoints: any[] = [];
     try {
-      const upstream = await fetch(
-        `http://localhost:${Services.ENDPOINT_ENGINE}/endpoints/${applicationId}/analysis`
-      );
+      const upstream = await fetch(endpointAnalysisUrl(applicationId));
       if (upstream.ok) {
         const payload = await upstream.json();
         endpoints = payload.endpoints || [];

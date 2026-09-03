@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import os from "node:os";
-import { app, shell } from "electron";
+import { app, net, shell } from "electron";
 import type {
   BranchPolicy,
   DeclaredFlowDetail,
@@ -34,6 +34,17 @@ import {
 import { loadDesktopEnvironment } from "./environment";
 
 loadDesktopEnvironment();
+
+/**
+ * All cloud HTTP goes through Electron's `net.fetch` (Chromium network stack)
+ * rather than Node's global `fetch` (undici). Chromium has an async DNS
+ * resolver with caching + retry that tolerates a flaky local resolver, runs off
+ * the JS event loop, and honours system proxy settings — Node's `fetch` collapses
+ * DNS + connect + TLS into a single 10s budget that a slow lookup blows through
+ * as `UND_ERR_CONNECT_TIMEOUT`.
+ */
+const cloudFetch: typeof fetch = (input: any, init: any = {}) =>
+  net.fetch(input, { credentials: "omit", ...init });
 
 const API_URL = (
   process.env.TELLANN_API_URL ?? "http://127.0.0.1:3000"
@@ -84,7 +95,7 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   }
 
   try {
-    response = await fetch(url, {
+    response = await cloudFetch(url, {
       ...init,
       method,
       headers,
@@ -179,7 +190,7 @@ export class DesktopCloudClient {
     }
 
     try {
-      const response = await fetch(`${AUTH_URL}/auth/users/${encodeURIComponent(userId)}/avatar`, {
+      const response = await cloudFetch(`${AUTH_URL}/auth/users/${encodeURIComponent(userId)}/avatar`, {
         redirect: "follow",
       });
       if (!response.ok) return null;
@@ -366,14 +377,16 @@ export class DesktopCloudClient {
 
     void (async () => {
       while (!controller.signal.aborted) {
+        let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
         try {
-          const res = await fetch(url, { signal: controller.signal });
+          const res = await cloudFetch(url, { signal: controller.signal });
           if (!res.ok || !res.body) {
+            await res.body?.cancel().catch(() => undefined);
             await waitFor(5000, controller.signal).catch(() => undefined);
             continue;
           }
 
-          const reader = res.body.getReader();
+          reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
 
@@ -401,6 +414,10 @@ export class DesktopCloudClient {
         } catch {
           if (controller.signal.aborted) break;
           await waitFor(5000, controller.signal).catch(() => undefined);
+        } finally {
+          // Release the socket before reconnecting so failed attempts don't
+          // stack up half-dead connections.
+          await reader?.cancel().catch(() => undefined);
         }
       }
     })();
@@ -1584,7 +1601,7 @@ export class DesktopCloudClient {
   ): Promise<T> {
     const current = loadDesktopSession();
     if (!current) throw new Error("AUTHENTICATION_REQUIRED");
-    const response = await fetch(`${API_URL}${pathName}`, {
+    const response = await cloudFetch(`${API_URL}${pathName}`, {
       method: "POST",
       headers: {
         ...headers,

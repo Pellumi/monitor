@@ -99,8 +99,8 @@ function AuthenticatedApp() {
 
           <div className="auth-card-footer text-center">
             Tellann Systems &middot; Desktop Service
-            <br />
-            You received this prompt because of activity in Tellann Desktop.
+            {/* <br />   */}
+            {/* You received this prompt because of activity in Tellann Desktop. */}
           </div>
         </div>
       </div>

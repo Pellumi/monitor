@@ -117,7 +117,7 @@ export interface WebPushLike {
   send: (
     subscription: { endpoint: string; p256dh: string; auth: string },
     payload: { id: string; title: string; body: string; severity: string; tag: string; deepLink?: string | null },
-  ) => Promise<{ ok: boolean; gone: boolean }>;
+  ) => Promise<{ ok: boolean; gone: boolean; statusCode?: number; error?: string }>;
 }
 
 export function createNotificationRouter(input: {
@@ -359,6 +359,7 @@ export function createNotificationRouter(input: {
     const subs = await prisma.pushSubscription.findMany({ where: { userId: req.user!.id, enabled: true } });
     if (subs.length === 0) return res.status(400).json({ error: 'NO_SUBSCRIPTIONS' });
     let sent = 0;
+    const failures: Array<{ statusCode?: number; error?: string }> = [];
     for (const sub of subs) {
       const result = await webPush.send(sub, {
         id: 'test',
@@ -370,11 +371,25 @@ export function createNotificationRouter(input: {
       if (result.ok) {
         sent += 1;
         await prisma.pushSubscription.update({ where: { id: sub.id }, data: { failureCount: 0, lastSeenAt: new Date() } });
-      } else if (result.gone) {
-        await prisma.pushSubscription.update({ where: { id: sub.id }, data: { enabled: false } });
+      } else {
+        failures.push({ statusCode: result.statusCode, error: result.error });
+        console.warn('[Notifications] test push send failed', {
+          subscriptionId: sub.id,
+          endpointOrigin: safeOrigin(sub.endpoint),
+          statusCode: result.statusCode,
+          error: result.error,
+        });
+        if (result.gone) {
+          await prisma.pushSubscription.update({ where: { id: sub.id }, data: { enabled: false } });
+        } else {
+          await prisma.pushSubscription.update({
+            where: { id: sub.id },
+            data: { failureCount: { increment: 1 } },
+          });
+        }
       }
     }
-    res.json({ sent, total: subs.length });
+    res.json({ sent, total: subs.length, failures });
   });
 
   // ── Desktop devices ───────────────────────────────────────────────────────
