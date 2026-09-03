@@ -734,7 +734,36 @@ export const IPC = {
   rollbackInstrumentation: 'tellann:instrumentation:rollback',
   getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
   generateInstrumentationReport: 'tellann:instrumentation:report:generate',
+  // ── Notifications ─────────────────────────────────────────────────────────
+  /** renderer → main: which organisation's notifications to stream. */
+  notificationsSetActiveOrg: 'tellann:notifications:set-active-org',
+  /** renderer → main: page the feed (payload: { cursor?, filter? }). */
+  notificationsFetch: 'tellann:notifications:fetch',
+  notificationMarkRead: 'tellann:notifications:mark-read',
+  notificationMarkAllRead: 'tellann:notifications:mark-all-read',
+  notificationDismiss: 'tellann:notifications:dismiss',
+  /** renderer → main: record the click and navigate to the deep link. */
+  notificationOpen: 'tellann:notifications:open',
+  /** main → renderer: a notification arrived while the window was focused. */
+  notificationReceived: 'tellann:notifications:received',
+  /** main → renderer: unread count changed. */
+  notificationUnreadCount: 'tellann:notifications:unread-count',
 } as const;
+
+export const DesktopNotificationSchema = z.object({
+  id: z.string(),
+  notificationId: z.string(),
+  type: z.string(),
+  category: z.string(),
+  severity: z.enum(['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  title: z.string(),
+  body: z.string(),
+  deepLink: z.string().nullable(),
+  createdAt: z.string(),
+  readAt: z.string().nullable(),
+  dismissedAt: z.string().nullable(),
+});
+export type DesktopNotification = z.infer<typeof DesktopNotificationSchema>;
 
 export const DesktopSessionSchema = z.object({
   authenticated: z.boolean(),

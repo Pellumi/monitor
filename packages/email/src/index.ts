@@ -3,6 +3,8 @@ import {
   EmailDeliveryStatus,
   EmailProvider,
   MemberRole,
+  NotificationChannel,
+  NotificationDeliveryStatus,
   NotificationEventStatus,
   NotificationFrequency,
   PrismaClient,
@@ -14,8 +16,11 @@ import {
   isDigestFrequency,
   normalizeFrequency,
 } from './notification-categories';
+import { coerceSeverity } from './orchestrator';
 
 export { builtinTemplates, EmailTemplateKey };
+export * from './orchestrator';
+export * from './web-push';
 export {
   ALWAYS_ON_CATEGORIES,
   BATCHABLE_CATEGORIES,
@@ -55,6 +60,14 @@ export interface SendTemplateEmailInput {
   idempotencyKey?: string;
   replyTo?: string;
   attachments?: EmailAttachment[];
+  /** A relative deep link to attach to the in-app notification, if any. */
+  deepLink?: string | null;
+  /**
+   * Internal: set by the notification orchestrator when it already owns the
+   * central Notification for this message, so the compatibility shim below does
+   * not create a second one.
+   */
+  _skipCentralNotification?: boolean;
 }
 
 export interface SendTemplateEmailResult {
@@ -398,6 +411,16 @@ export class NotificationEmailService {
       input.templateKey,
     ]);
 
+    // Compatibility shim: every account-bound transactional email also becomes a
+    // central Notification + per-recipient feed row, so existing producers gain
+    // in-app delivery without a call-site change. Best-effort — a failure here
+    // must never block the email.
+    if (!input._skipCentralNotification) {
+      await this.ensureCentralNotification(input, template, idempotencyKey).catch((err) => {
+        console.error('[Email] central notification shim failed', err);
+      });
+    }
+
     const existing = idempotencyKey
       ? await this.prisma.emailDelivery.findUnique({ where: { idempotencyKey } })
       : null;
@@ -528,18 +551,160 @@ export class NotificationEmailService {
       params.roles,
     );
     const uniqueRecipients = new Map(recipients.map((recipient) => [recipient.email.toLowerCase(), recipient]));
+
+    // One logical notification for the whole fan-out — multiple email recipients
+    // must not create multiple central Notification rows.
+    const baseKey =
+      params.idempotencyKey ??
+      buildIdempotencyKey([
+        params.organizationId,
+        params.applicationId,
+        params.eventType,
+        params.templateKey,
+      ]);
+    await this.persistCentralNotification({
+      organizationId: params.organizationId,
+      applicationId: params.applicationId ?? null,
+      eventType: params.eventType,
+      category: template.category,
+      severity: params.severity,
+      templateKey: params.templateKey,
+      variables: params.variables ?? {},
+      deepLink: params.deepLink ?? null,
+      sourceEventId: baseKey,
+      recipientUserIds: [...uniqueRecipients.values()]
+        .map((r) => r.userId)
+        .filter((id): id is string => !!id),
+    }).catch((err) => console.error('[Email] central notification (members) shim failed', err));
+
     const results: SendTemplateEmailResult[] = [];
     for (const recipient of uniqueRecipients.values()) {
       results.push(await this.sendTransactional({
         ...params,
         to: recipient.email,
         userId: recipient.userId,
+        // The fan-out notification is already persisted above.
+        _skipCentralNotification: true,
         idempotencyKey: params.idempotencyKey
           ? buildIdempotencyKey([params.idempotencyKey, recipient.userId ?? recipient.email])
           : undefined,
       }));
     }
     return results;
+  }
+
+  /**
+   * Upserts the central Notification for a transactional email and attaches a
+   * feed row per account-bound recipient. Idempotent on
+   * (eventType, sourceEventId); safe to call from the retry path.
+   */
+  private async ensureCentralNotification(
+    input: SendTemplateEmailInput,
+    template: BuiltinEmailTemplate,
+    idempotencyKey: string,
+  ): Promise<void> {
+    if (!input.userId || !input.organizationId) return; // no account => email only
+    await this.persistCentralNotification({
+      organizationId: input.organizationId,
+      applicationId: input.applicationId ?? null,
+      eventType: input.eventType,
+      category: template.category,
+      severity: input.severity,
+      templateKey: input.templateKey,
+      variables: input.variables ?? {},
+      deepLink: input.deepLink ?? null,
+      sourceEventId: idempotencyKey,
+      recipientUserIds: [input.userId],
+    });
+  }
+
+  private async persistCentralNotification(opts: {
+    organizationId: string;
+    applicationId: string | null;
+    eventType: string;
+    category: EmailCategory;
+    severity?: string;
+    templateKey: EmailTemplateKey;
+    variables: TemplateVariables;
+    deepLink: string | null;
+    sourceEventId: string;
+    recipientUserIds: string[];
+  }): Promise<void> {
+    if (opts.recipientUserIds.length === 0) return;
+    const summary = summarizeNotification(opts.templateKey, opts.variables);
+    const template = getBuiltinTemplate(opts.templateKey);
+    const title = (summary?.title ?? template?.subject ?? opts.eventType).slice(0, 300);
+    const body = (summary?.preheader ?? template?.preheader ?? '').slice(0, 2000);
+
+    const notification = await this.prisma.notification.upsert({
+      where: {
+        sourceEventType_sourceEventId: {
+          sourceEventType: opts.eventType,
+          sourceEventId: opts.sourceEventId,
+        },
+      },
+      create: {
+        organizationId: opts.organizationId,
+        applicationId: opts.applicationId,
+        type: opts.eventType,
+        category: opts.category,
+        severity: coerceSeverity(opts.severity),
+        title,
+        body,
+        deepLink: opts.deepLink,
+        sourceEventType: opts.eventType,
+        sourceEventId: opts.sourceEventId,
+        metadata: { via: 'email-shim', templateKey: opts.templateKey },
+      },
+      update: {},
+      select: { id: true },
+    });
+
+    const uniqueUserIds = [...new Set(opts.recipientUserIds)];
+    const prefs = await this.prisma.notificationPreference.findMany({
+      where: {
+        organizationId: opts.organizationId,
+        userId: { in: uniqueUserIds },
+        category: opts.category,
+      },
+      select: { userId: true, inAppEnabled: true },
+    });
+    const inAppByUser = new Map(prefs.map((p) => [p.userId, p.inAppEnabled]));
+    const locked = ALWAYS_ON.has(opts.category);
+
+    for (const userId of uniqueUserIds) {
+      const deliveredToFeed = locked ? true : inAppByUser.get(userId) ?? true;
+      await this.prisma.userNotification.upsert({
+        where: { notificationId_userId: { notificationId: notification.id, userId } },
+        create: {
+          notificationId: notification.id,
+          userId,
+          organizationId: opts.organizationId,
+          deliveredToFeed,
+        },
+        update: {},
+      });
+      if (deliveredToFeed) {
+        await this.prisma.notificationDelivery.upsert({
+          where: {
+            notificationId_userId_channel: {
+              notificationId: notification.id,
+              userId,
+              channel: NotificationChannel.IN_APP,
+            },
+          },
+          create: {
+            notificationId: notification.id,
+            userId,
+            channel: NotificationChannel.IN_APP,
+            status: NotificationDeliveryStatus.DELIVERED,
+            sentAt: new Date(),
+            deliveredAt: new Date(),
+          },
+          update: {},
+        });
+      }
+    }
   }
 
   /**

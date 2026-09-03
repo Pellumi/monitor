@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { safeInternalPath } from '@/lib/safe-path';
 
 // ─── Error humaniser ────────────────────────────────────────────────────────
 type ErrorKind = 'network' | 'auth' | 'deleted' | 'generic';
@@ -98,9 +99,17 @@ function IconAlertTriangle({ className }: { className?: string }) {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const from = searchParams.get('from') || '/';
   const desktopRequest = searchParams.get('desktopRequest');
   const inviteToken = searchParams.get('invite');
+  // A plan chosen on the marketing site before signing in. Kept as a fallback
+  // destination for links that predate `from`-carrying plan URLs. `free` is
+  // excluded deliberately: there is nothing to pay for, so those visitors want
+  // the product, not the billing page.
+  const selectedPlan = searchParams.get('plan')?.toLowerCase();
+  const paidPlan = selectedPlan && selectedPlan !== 'free' ? selectedPlan : null;
+  const from =
+    safeInternalPath(searchParams.get('from'))
+    ?? (paidPlan ? `/settings/billing?plan=${encodeURIComponent(paidPlan)}` : '/');
 
   // 4 is the second-factor challenge, reached only when the account has MFA on.
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);

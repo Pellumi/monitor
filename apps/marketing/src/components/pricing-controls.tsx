@@ -109,9 +109,15 @@ function PlanCard({
 }) {
   const price = planPrice(plan, billing, currency);
   const featured = plan.type === "SOLO" || plan.type === "TEAM";
+  // Paid plans go straight to the billing page with the plan pre-selected: the
+  // dashboard's proxy sends a signed-out visitor through sign-in and back here,
+  // so one link serves both. Free has nothing to pay for, and Enterprise is a
+  // conversation — `reason` is what the contact page reads to open that tab.
   const href = plan.contactSales
-    ? "/contact?plan=enterprise"
-    : `${appUrl}/auth/login?plan=${plan.type.toLowerCase()}`;
+    ? "/contact?reason=enterprise"
+    : plan.type === "FREE"
+      ? `${appUrl}/auth/login`
+      : `${appUrl}/settings/billing?plan=${plan.type.toLowerCase()}`;
   return (
     <article
       className={`pricing-plan-card pricing-plan-${plan.type.toLowerCase()}${featured ? " is-featured" : ""}`}

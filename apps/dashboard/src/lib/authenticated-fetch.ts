@@ -66,6 +66,9 @@ function redirectToLogin() {
   const from = `${window.location.pathname}${window.location.search}`;
   const loginUrl = new URL('/auth/login', window.location.origin);
   loginUrl.searchParams.set('from', from);
+  // Tells the middleware not to send this browser straight back here on the
+  // strength of cookies the API has just refused.
+  loginUrl.searchParams.set('reauth', '1');
   window.location.assign(loginUrl.toString());
 }
 

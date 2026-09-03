@@ -9,9 +9,11 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tellann/db": "workspace:*"
+    "@tellann/db": "workspace:*",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.0.0",
     "vitest": "^4.1.9"
   }

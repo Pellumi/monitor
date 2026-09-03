@@ -352,6 +352,7 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
           applicationId,
           eventType: 'COVERAGE_DEGRADED',
           severity: stateCoveragePercent < 50 ? 'HIGH' : 'MEDIUM',
+          deepLink: `/reports?applicationId=${applicationId}`,
           variables: {
             applicationName: application.name,
             previousCoverageScore: previousSnapshot.coveragePercent.toFixed(1),
@@ -370,6 +371,7 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
           applicationId,
           eventType: 'MISSING_CRITICAL_FLOW',
           severity: 'HIGH',
+          deepLink: `/missing-flows?applicationId=${applicationId}`,
           variables: {
             applicationName: application.name,
             missingFlowCount: newMissingFlows.length,

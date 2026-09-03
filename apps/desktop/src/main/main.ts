@@ -24,6 +24,7 @@ import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
 import { loadDesktopEnvironment } from './environment';
+import { DesktopNotificationClient } from './notification-client';
 
 loadDesktopEnvironment();
 
@@ -31,6 +32,22 @@ let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;
 const packagedChromiumPath = path.join(process.resourcesPath, 'chromium', 'chrome-win64', 'chrome.exe');
 const cloud = new DesktopCloudClient();
+const notificationClient = new DesktopNotificationClient({
+  apiUrl: process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000',
+  appVersion: app.getVersion(),
+  getWindow: () => mainWindow,
+});
+
+/** Point the notification client at the org of the user's first application. */
+async function syncNotificationOrganization(): Promise<void> {
+  try {
+    const apps = await cloud.applications();
+    const organizationId = apps.find((entry) => entry.organizationId)?.organizationId ?? null;
+    await notificationClient.setActiveOrganization(organizationId);
+  } catch {
+    // Not signed in yet, or offline — a later sign-in / focus retries.
+  }
+}
 const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
@@ -334,7 +351,9 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.signIn, async (event) => {
     assertTrustedSender(event);
-    return cloud.signIn();
+    const result = await cloud.signIn();
+    void syncNotificationOrganization();
+    return result;
   });
   ipcMain.handle(IPC.reopenSignIn, async (event) => {
     assertTrustedSender(event);
@@ -346,17 +365,55 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.signOut, async (event) => {
     assertTrustedSender(event);
+    await notificationClient.stop().catch(() => undefined);
     await cloud.signOut();
     selectedWorkspaces.clear();
   });
   ipcMain.handle(IPC.getApplications, async (event) => {
     assertTrustedSender(event);
-    return cloud.applications();
+    const apps = await cloud.applications();
+    // Opportunistically (re)arm notifications now that we know an org.
+    void notificationClient.setActiveOrganization(
+      apps.find((entry) => entry.organizationId)?.organizationId ?? null,
+    );
+    return apps;
   });
   cloud.subscribeToAppEvents((appEvent) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.appUpdated, appEvent);
     }
+  });
+
+  // ── Notifications ─────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.notificationsSetActiveOrg, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    await notificationClient.setActiveOrganization(
+      typeof organizationId === 'string' && organizationId ? organizationId : null,
+    );
+  });
+  ipcMain.handle(IPC.notificationsFetch, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = (input ?? {}) as { cursor?: string; filter?: string };
+    return notificationClient.fetchFeed({ cursor: value.cursor, filter: value.filter });
+  });
+  ipcMain.handle(IPC.notificationMarkRead, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return notificationClient.markRead(id);
+  });
+  ipcMain.handle(IPC.notificationMarkAllRead, async (event) => {
+    assertTrustedSender(event);
+    return notificationClient.markAllRead();
+  });
+  ipcMain.handle(IPC.notificationDismiss, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return notificationClient.dismiss(id);
+  });
+  ipcMain.handle(IPC.notificationOpen, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return notificationClient.open(id);
   });
   ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -1056,6 +1113,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   registerIpc();
   await createWindow();
+  // Re-arm notifications if a session is already stored, and again whenever the
+  // window regains focus (the access token may have been refreshed since).
+  void syncNotificationOrganization();
+  mainWindow?.on('focus', () => void syncNotificationOrganization());
   await initializeUpdater().catch((error) => {
     console.error('Desktop update check failed', error instanceof Error ? error.message : error);
   });
@@ -1082,6 +1143,7 @@ app.on('before-quit', (event) => {
 });
 
 app.on('quit', () => closeLocalStore());
+app.on('will-quit', () => void notificationClient.stop().catch(() => undefined));
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) void createWindow();

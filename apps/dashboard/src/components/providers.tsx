@@ -136,7 +136,7 @@ function SessionBridge({ children }: { children: React.ReactNode }) {
   const { user, selectedOrgId } = useSession();
   return (
     <PreferencesProvider userId={user?.id ?? null}>
-      <NotificationsProvider organizationId={selectedOrgId}>
+      <NotificationsProvider organizationId={selectedOrgId} userId={user?.id ?? null}>
         {children}
       </NotificationsProvider>
     </PreferencesProvider>

@@ -1339,7 +1339,7 @@ export function Sidebar() {
               </h1>
             )}
           </Link>
-          {!collapsed && <NotificationBell />}
+          {!collapsed && <NotificationBell align="left" />}
         </div>
 
         <Suspense

@@ -3,9 +3,11 @@
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar';
 import { SidebarModeProvider } from '@/components/sidebar-mode';
-import React from 'react';
+import React, { Suspense } from 'react';
 import Link from 'next/link';
 import { NotificationBell } from '@/components/notification-bell';
+import { NotificationToaster } from '@/components/notification-toaster';
+import { SessionNotice } from '@/components/session-notice';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -38,9 +40,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </header>
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6 md:p-8">
+          {/* useSearchParams inside would otherwise pull the whole layout out
+              of prerendering. */}
+          <Suspense fallback={null}>
+            <SessionNotice />
+          </Suspense>
           {children}
         </main>
       </div>
+      <NotificationToaster />
     </SidebarModeProvider>
   );
 }

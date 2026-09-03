@@ -116,7 +116,9 @@ export function SelectValue({
   const { value } = useSelectContext("SelectValue");
   return (
     <span className={cn("truncate", className)}>
-      {children ?? value ?? <span className="text-[var(--muted)]">{placeholder}</span>}
+      {children ?? (value || null) ?? (
+        <span className="text-[var(--muted)]">{placeholder}</span>
+      )}
     </span>
   );
 }

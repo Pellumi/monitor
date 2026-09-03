@@ -2,7 +2,7 @@
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Button, buttonVariants } from '@/components/ui/button';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   CreditCard,
@@ -347,6 +347,45 @@ export default function BillingPage() {
   }, [selectedOrgId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ── Plan pre-selected elsewhere (e.g. the marketing pricing page) ───────────
+  // Arrives as ?plan=solo, survives the sign-in detour, and opens the same
+  // dialog the plan buttons below open — so a visitor who picked a plan before
+  // they had an account lands on the payment step rather than on a page of
+  // prices they have already chosen from.
+  const requestedPlanRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!plans.length || !selectedOrgId) return;
+
+    const query = new URLSearchParams(window.location.search);
+    const requested = query.get('plan')?.toUpperCase();
+    if (!requested || requestedPlanRef.current === requested) return;
+    requestedPlanRef.current = requested;
+
+    // Consumed once: clearing it here keeps a reload, or a shared link, from
+    // reopening a dialog the user has already dismissed.
+    query.delete('plan');
+    const rest = query.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+
+    const target = plans.find((plan) => plan.type === requested);
+    // A plan that is not in this organisation's catalog, one it is not eligible
+    // for, one that needs a sales conversation, and the plan they are already
+    // on all have nothing to preview — leave them on the page rather than
+    // opening a dialog that can only fail.
+    if (
+      !target
+      || target.eligible === false
+      || target.action === 'CONTACT_SALES'
+      || target.action === 'CURRENT'
+      || target.type === currentPlanType
+    ) return;
+
+    void previewPlanChange(target);
+    // previewPlanChange closes over current state but is stable enough for this
+    // one-shot effect; re-running on its identity would reopen the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans, selectedOrgId, currentPlanType]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);

@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 export type ContactReason =
   | "sales"
@@ -264,7 +272,10 @@ const emptyValues: Record<string, string> = {
   email: "",
   organization: "",
   message: "",
-  website: "",
+  // Honeypot. Deliberately not a name any route asks for — it used to be
+  // "website", which the partnership route genuinely collects, so every
+  // partnership enquiry that filled it in was discarded as a bot.
+  referralCode: "",
 };
 
 export function ContactWorkspace({
@@ -286,6 +297,9 @@ export function ContactWorkspace({
   const [status, setStatus] = useState<
     "idle" | "submitting" | "success" | "error" | "unavailable"
   >("idle");
+  // The server's own wording for a refusal it can explain better than we can
+  // — a rate limit, say. Null falls back to the generic message below.
+  const [serverError, setServerError] = useState<string | null>(null);
 
   useEffect(() => {
     const urlReason = searchParams.get("reason")?.toLowerCase() as ContactReason | null;
@@ -325,7 +339,10 @@ export function ContactWorkspace({
   function update(name: string, value: string) {
     setValues((current) => ({ ...current, [name]: value }));
     if (errors[name]) setErrors((current) => ({ ...current, [name]: "" }));
-    if (status !== "idle") setStatus("idle");
+    if (status !== "idle") {
+      setStatus("idle");
+      setServerError(null);
+    }
   }
 
   function validate() {
@@ -368,7 +385,8 @@ export function ContactWorkspace({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!validate()) return;
-    if (values.website) {
+    if (values.referralCode) {
+      // Same shape a real submission gets, so a bot learns nothing.
       setStatus("success");
       return;
     }
@@ -383,8 +401,31 @@ export function ContactWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: reason.toUpperCase(), ...values }),
       });
-      setStatus(response.ok ? "success" : "error");
+
+      if (response.ok) {
+        setStatus("success");
+        // A sent message should leave a clean form behind, or a second enquiry
+        // silently resubmits the first one's text.
+        setValues(emptyValues);
+        setErrors({});
+        return;
+      }
+
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; message?: string; fields?: Record<string, string> }
+        | null;
+
+      // The server re-runs the same validation this form does. Showing its
+      // verdict per field beats a generic failure the sender cannot act on.
+      if (payload?.fields && Object.keys(payload.fields).length) {
+        setErrors(payload.fields);
+        setStatus("idle");
+        return;
+      }
+      setServerError(payload?.message ?? null);
+      setStatus("error");
     } catch {
+      setServerError(null);
       setStatus("error");
     }
   }
@@ -524,12 +565,23 @@ export function ContactWorkspace({
                   error={errors[field.name]}
                 >
                   {field.kind === "select" ? (
-                    <select {...controlProps(field.name)}>
-                      <option value="">Select an option</option>
-                      {field.options?.map((option) => (
-                        <option key={option}>{option}</option>
-                      ))}
-                    </select>
+                    <Select
+                      value={values[field.name] || ""}
+                      onValueChange={(val) => update(field.name, val)}
+                    >
+                      <SelectTrigger id={`contact-${field.name}`}>
+                        <SelectValue placeholder="Select an option" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {field.options?.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <input
                       placeholder={field.placeholder}
@@ -553,14 +605,14 @@ export function ContactWorkspace({
               </p>
             )}
             <div className="contact-honeypot" aria-hidden="true">
-              <label htmlFor="contact-website">Leave this field empty</label>
+              <label htmlFor="contact-referral-code">Leave this field empty</label>
               <input
-                id="contact-website"
-                name="website"
+                id="contact-referral-code"
+                name="referralCode"
                 tabIndex={-1}
                 autoComplete="off"
-                value={values.website}
-                onChange={(event) => update("website", event.target.value)}
+                value={values.referralCode}
+                onChange={(event) => update("referralCode", event.target.value)}
               />
             </div>
             <p className="contact-consent">
@@ -595,7 +647,8 @@ export function ContactWorkspace({
                 <>
                   <b>We couldn&apos;t send your request.</b>
                   <span>
-                    Your message has not been submitted. Please try again.
+                    {serverError ??
+                      "Your message has not been submitted. Please try again."}
                   </span>
                 </>
               )}

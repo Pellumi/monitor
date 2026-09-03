@@ -830,6 +830,7 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
             organizationId: application.organizationId,
             applicationId,
             eventType: 'REPORT_EXPORT_READY',
+            deepLink: `/reports?applicationId=${applicationId}`,
             variables: {
               applicationName: application.name,
               format: format.toUpperCase(),

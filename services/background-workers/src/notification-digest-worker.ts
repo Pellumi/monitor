@@ -135,6 +135,9 @@ export async function runNotificationDigest(
       userId: group.userId,
       organizationId: group.organizationId,
       eventType: 'NOTIFICATION_DIGEST',
+      // A digest is an email-only rollup of items that already appeared in the
+      // in-app feed individually; it should not create its own feed entry.
+      _skipCentralNotification: true,
       variables: {
         periodLabel: options.periodLabel,
         notificationCount: lines.length,

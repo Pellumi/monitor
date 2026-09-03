@@ -208,6 +208,7 @@ app.get('/endpoints/:applicationId/analysis', async (req: Request, res: Response
         applicationId,
         eventType: 'ENDPOINT_SLOW',
         severity: slowest[0].avgMs > 2000 ? 'HIGH' : 'MEDIUM',
+        deepLink: `/endpoints?applicationId=${applicationId}`,
         variables: {
           applicationName: application.name,
           endpoint: `${slowest[0].method} ${slowest[0].endpoint}`,

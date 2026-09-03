@@ -2,19 +2,22 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
-import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
+import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, NotificationSeverity, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
 import { Feature, Services, isReportFormatEntitled, reportFormatsForTier } from '@tellann/shared';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   NotificationEmailService,
+  NotificationOrchestrator,
   appUrl,
   buildIdempotencyKey,
   capabilityFor,
+  createWebPushSenderFromEnv,
+  describeWebPushConfig,
   docsUrl,
   listCapabilities,
   normalizeFrequency,
-  summarizeNotification,
 } from '@tellann/email';
+import { createNotificationRouter, notificationHub } from './notification-routes';
 import { generateAiFlowDraft } from '@tellann/ai';
 import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@tellann/rules';
 import { writeAuditLog, extractAuditContext } from '@tellann/authz';
@@ -25,6 +28,7 @@ import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
 import { createFlowLifecycleRouter } from './flow-lifecycle-routes';
+import { createContactRouter } from './contact-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@tellann/storage';
 
@@ -279,6 +283,24 @@ async function ensureAiUsageAggregated(startDate: Date, endDate: Date, organizat
 const entitlementChecker = new EntitlementChecker(prisma);
 const storageClient = createStorageClient();
 const emailService = new NotificationEmailService(prisma);
+
+// Central notification pipeline. The Web Push sender is null until VAPID keys
+// are configured, exactly as the email sender is until RESEND_API_KEY is set.
+const webPushStatus = describeWebPushConfig();
+if (webPushStatus.problems.length) {
+  console.error(`[Onboarding] ${webPushStatus.summary}`);
+} else {
+  console.log(`[Onboarding] ${webPushStatus.summary}`);
+}
+const webPushSender = createWebPushSenderFromEnv();
+const notificationOrchestrator = new NotificationOrchestrator({
+  prisma,
+  emailService,
+  webPush: webPushSender,
+  onPersisted: ({ organizationId, recipientUserIds }) => {
+    notificationHub.emit('notification.created', { organizationId, recipientUserIds });
+  },
+});
 // 30 MB ceiling — document-flow generation posts the raw file as base64 JSON.
 app.use(express.json({ limit: '30mb' }));
 app.use(createDesktopRouter({
@@ -293,6 +315,44 @@ app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppO
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
 app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));
+// Public: the marketing contact form posts here without a session.
+app.use(createContactRouter({ prisma, emailService }));
+// User-facing notification feed, preferences, push subscriptions, devices, SSE.
+app.use(createNotificationRouter({
+  prisma,
+  verifyJwt,
+  verifyOrgMembership,
+  vapidPublicKey: webPushSender?.publicKey ?? null,
+  webPush: webPushSender,
+}));
+
+/**
+ * POST /internal/notifications — the internal producer entrypoint.
+ *
+ * Other services submit one normalized notification request per business event.
+ * Reached service-to-service (not through the public gateway); an optional
+ * shared secret in NOTIFICATIONS_INTERNAL_SECRET gates it when set.
+ */
+app.post('/internal/notifications', async (req: Request, res: Response) => {
+  const secret = process.env.NOTIFICATIONS_INTERNAL_SECRET?.trim();
+  if (secret && req.headers['x-internal-secret'] !== secret) {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
+  }
+  const body = req.body ?? {};
+  if (!body.organizationId || !body.type || !body.category || !body.title || !body.body || !body.sourceEventType) {
+    return res.status(400).json({
+      error: 'INVALID_REQUEST',
+      required: ['organizationId', 'type', 'category', 'title', 'body', 'sourceEventType'],
+    });
+  }
+  try {
+    const result = await notificationOrchestrator.createNotification(body);
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    console.error('[Onboarding] internal notification error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Enable CORS for dashboard queries
 app.use((req, res, next) => {
@@ -739,6 +799,13 @@ app.get('/organizations/:orgId/notification-preferences', verifyJwt, verifyOrgMe
         emailEnabled: capability.emailLocked ? true : stored?.emailEnabled ?? true,
         inAppEnabled: stored?.inAppEnabled ?? true,
         webhookEnabled: stored?.webhookEnabled ?? false,
+        webPushEnabled: stored?.webPushEnabled ?? false,
+        desktopEnabled: stored?.desktopEnabled ?? true,
+        minSeverity: stored?.minSeverity ?? 'LOW',
+        quietHoursEnabled: stored?.quietHoursEnabled ?? false,
+        quietHoursStart: stored?.quietHoursStart ?? null,
+        quietHoursEnd: stored?.quietHoursEnd ?? null,
+        criticalOverridesQuietHours: stored?.criticalOverridesQuietHours ?? true,
         frequency,
         capability,
       };
@@ -749,69 +816,9 @@ app.get('/organizations/:orgId/notification-preferences', verifyJwt, verifyOrgMe
   }
 });
 
-/**
- * GET /organizations/:orgId/notifications - in-app notification feed.
- *
- * Every notifiable event already writes a NotificationEvent row, whether or not
- * an email went out, so the feed is derived from those rather than duplicated
- * into a second table. That also means switching email off for a category still
- * leaves its in-app notifications working — the two channels are independent.
- *
- * `since` (ISO timestamp) returns only newer events, which is what the client
- * polls with to surface browser notifications for things it has not shown yet.
- */
-app.get('/organizations/:orgId/notifications', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
-  const { orgId } = req.params;
-  const userId = req.user!.id;
-
-  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
-  const sinceRaw = typeof req.query.since === 'string' ? new Date(req.query.since) : null;
-  const since = sinceRaw && !Number.isNaN(sinceRaw.getTime()) ? sinceRaw : null;
-
-  try {
-    const preferences = await prisma.notificationPreference.findMany({
-      where: { organizationId: orgId, userId },
-    });
-    const disabled = new Set(
-      preferences.filter((preference) => !preference.inAppEnabled).map((preference) => preference.category),
-    );
-
-    const events = await prisma.notificationEvent.findMany({
-      where: {
-        organizationId: orgId,
-        ...(since ? { createdAt: { gt: since } } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      // Over-fetch: an unknown template or a muted category is dropped below,
-      // and filtering in SQL is not possible while the category lives in JSON.
-      take: limit * 4,
-    });
-
-    const notifications = events
-      .flatMap((event) => {
-        const payload = (event.payload ?? {}) as { templateKey?: string; variables?: Record<string, unknown> };
-        if (!payload.templateKey) return [];
-        const summary = summarizeNotification(payload.templateKey, payload.variables ?? {});
-        if (!summary || disabled.has(summary.category)) return [];
-
-        return [{
-          id: event.id,
-          category: summary.category,
-          eventType: event.eventType,
-          severity: event.severity,
-          title: summary.title,
-          body: summary.preheader,
-          createdAt: event.createdAt,
-        }];
-      })
-      .slice(0, limit);
-
-    res.json({ notifications, serverTime: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Onboarding] Get notifications error', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// The in-app notification feed (`GET /organizations/:orgId/notifications` and
+// its read/dismiss/action/stream siblings) is served by createNotificationRouter,
+// mounted below, from the central Notification / UserNotification tables.
 
 /** PUT /organizations/:orgId/notification-preferences/:category - update current user's preference */
 app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, verifyOrgMembership, async (req: AuthenticatedRequest, res: Response) => {
@@ -833,6 +840,28 @@ app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, v
   const frequency = normalizeFrequency(normalizedCategory as EmailCategory, requestedFrequency);
   const emailEnabled = capability.emailLocked ? true : req.body.emailEnabled !== false;
 
+  const minSeverity = (Object.values(NotificationSeverity) as string[]).includes(String(req.body.minSeverity))
+    ? (String(req.body.minSeverity) as NotificationSeverity)
+    : NotificationSeverity.LOW;
+  const clampMinutes = (value: unknown): number | null => {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 0 && n < 24 * 60 ? n : null;
+  };
+
+  const fields = {
+    emailEnabled,
+    inAppEnabled: req.body.inAppEnabled !== false,
+    webhookEnabled: req.body.webhookEnabled === true,
+    webPushEnabled: req.body.webPushEnabled === true,
+    desktopEnabled: req.body.desktopEnabled !== false,
+    minSeverity,
+    quietHoursEnabled: req.body.quietHoursEnabled === true,
+    quietHoursStart: clampMinutes(req.body.quietHoursStart),
+    quietHoursEnd: clampMinutes(req.body.quietHoursEnd),
+    criticalOverridesQuietHours: req.body.criticalOverridesQuietHours !== false,
+    frequency,
+  };
+
   try {
     const preference = await prisma.notificationPreference.upsert({
       where: {
@@ -842,20 +871,12 @@ app.put('/organizations/:orgId/notification-preferences/:category', verifyJwt, v
           category: normalizedCategory as EmailCategory,
         },
       },
-      update: {
-        emailEnabled,
-        inAppEnabled: req.body.inAppEnabled !== false,
-        webhookEnabled: req.body.webhookEnabled === true,
-        frequency,
-      },
+      update: fields,
       create: {
         userId,
         organizationId: orgId,
         category: normalizedCategory as EmailCategory,
-        emailEnabled,
-        inAppEnabled: req.body.inAppEnabled !== false,
-        webhookEnabled: req.body.webhookEnabled === true,
-        frequency,
+        ...fields,
       },
     });
 

@@ -85,6 +85,14 @@ const IPC = {
   rollbackInstrumentation: 'tellann:instrumentation:rollback',
   getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
   generateInstrumentationReport: 'tellann:instrumentation:report:generate',
+  notificationsSetActiveOrg: 'tellann:notifications:set-active-org',
+  notificationsFetch: 'tellann:notifications:fetch',
+  notificationMarkRead: 'tellann:notifications:mark-read',
+  notificationMarkAllRead: 'tellann:notifications:mark-all-read',
+  notificationDismiss: 'tellann:notifications:dismiss',
+  notificationOpen: 'tellann:notifications:open',
+  notificationReceived: 'tellann:notifications:received',
+  notificationUnreadCount: 'tellann:notifications:unread-count',
 } as const;
 
 contextBridge.exposeInMainWorld('tellann', {
@@ -193,6 +201,26 @@ contextBridge.exposeInMainWorld('tellann', {
     apply: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.applyInstrumentation, { applicationId, planId }),
     validate: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.validateInstrumentation, { applicationId, planId }),
     rollback: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.rollbackInstrumentation, { applicationId, planId }),
+  },
+  notifications: {
+    setActiveOrganization: (organizationId: string | null) =>
+      ipcRenderer.invoke(IPC.notificationsSetActiveOrg, organizationId),
+    fetch: (input?: { cursor?: string; filter?: string }) =>
+      ipcRenderer.invoke(IPC.notificationsFetch, input ?? {}),
+    markRead: (id: string) => ipcRenderer.invoke(IPC.notificationMarkRead, id),
+    markAllRead: () => ipcRenderer.invoke(IPC.notificationMarkAllRead),
+    dismiss: (id: string) => ipcRenderer.invoke(IPC.notificationDismiss, id),
+    open: (id: string) => ipcRenderer.invoke(IPC.notificationOpen, id),
+    onReceived: (callback: (row: any) => void) => {
+      const subscription = (_: unknown, data: any) => callback(data);
+      ipcRenderer.on(IPC.notificationReceived, subscription);
+      return () => ipcRenderer.removeListener(IPC.notificationReceived, subscription);
+    },
+    onOpenDeepLink: (callback: (payload: { deepLink: string }) => void) => {
+      const subscription = (_: unknown, data: any) => callback(data);
+      ipcRenderer.on(IPC.notificationOpen, subscription);
+      return () => ipcRenderer.removeListener(IPC.notificationOpen, subscription);
+    },
   },
   system: {
     getVersion: () => ipcRenderer.invoke(IPC.getVersion),

@@ -82,6 +82,7 @@ async function analyzeDemonstration(req: Request, res: Response, id: string, exp
       organizationId: orgId,
       applicationId: demo.applicationId,
       eventType: 'DEMO_REPORT_READY',
+      deepLink: `/reports?applicationId=${demo.applicationId}`,
       variables: {
         applicationName: demo.application.name,
         environmentName: demo.environmentId || 'Default',
@@ -213,6 +214,7 @@ app.post('/demonstrations/stop', async (req: Request, res: Response) => {
         organizationId: orgId,
         applicationId: demo.applicationId,
         eventType: 'DEMO_COMPLETED_PROCESSING',
+        deepLink: `/reports?applicationId=${demo.applicationId}`,
         variables: {
           applicationName: demo.application.name,
           sessionId: demo.sessionId,
@@ -251,6 +253,7 @@ app.post('/demonstrations/analyze', async (req: Request, res: Response) => {
           applicationId: demo.applicationId,
           eventType: 'DEMO_ANALYSIS_FAILED',
           severity: 'HIGH',
+          deepLink: `/reports?applicationId=${demo.applicationId}`,
           variables: {
             applicationName: demo.application.name,
             sessionId: demo.sessionId,

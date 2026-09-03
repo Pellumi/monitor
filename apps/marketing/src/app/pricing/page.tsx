@@ -299,7 +299,7 @@ export default function PricingPage() {
           <h2 id="enterprise-heading">
             Control identity, infrastructure, governance, and support.
           </h2>
-          <Link href="/contact?plan=enterprise">
+          <Link href="/contact?reason=enterprise">
             Talk to sales <span aria-hidden="true">→</span>
           </Link>
         </div>
@@ -386,7 +386,7 @@ export default function PricingPage() {
           >
             Start free <span aria-hidden="true">→</span>
           </a>
-          <Link href="/contact?plan=enterprise">Talk to sales</Link>
+          <Link href="/contact?reason=enterprise">Talk to sales</Link>
         </div>
       </section>
     </main>

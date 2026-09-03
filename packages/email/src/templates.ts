@@ -26,6 +26,7 @@ export type EmailTemplateKey =
   | 'usage-limit-warning'
   | 'security-new-device'
   | 'privacy-rule-updated'
+  | 'contact-submission'
   | 'digest-notifications';
 
 export interface BuiltinEmailTemplate {
@@ -348,6 +349,21 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     primaryUrlVariable: 'securityUrl',
     footnote:
       "If this was you, no action is needed. If you don't recognise this sign-in, open Review sessions to revoke it and change your password right away.",
+  },
+  {
+    key: 'contact-submission',
+    category: EmailCategory.ALERTS,
+    subject: 'New {{contactType}} enquiry from {{senderName}}',
+    preheader: 'Someone submitted the contact form on the marketing site.',
+    requiredVariables: ['contactType', 'senderName', 'senderEmail', 'messageBody', 'replyUrl'],
+    defaultFrom: 'support',
+    purpose: 'A new message arrived through the public contact form.',
+    // The message is prose, so it goes in the fact table rather than the
+    // emphasis block, which is sized for short codes.
+    primaryCtaLabel: 'Reply to sender',
+    primaryUrlVariable: 'replyUrl',
+    footnote:
+      "Replying to this email also reaches the sender — the reply-to address is theirs, not Tellann's.",
   },
   {
     key: 'privacy-rule-updated',

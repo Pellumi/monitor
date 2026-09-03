@@ -35,6 +35,7 @@ model Organization {
   entitlement              Entitlement?
   notificationPreferences  NotificationPreference[]
   notificationEvents       NotificationEvent[]
+  notifications            Notification[]
   oidcProvider             OIDCProvider?
   enterpriseSalesRequests  EnterpriseSalesRequest[]
   enterpriseAgreement      EnterpriseAgreement?
@@ -2593,6 +2594,9 @@ model User {
   memberships             OrganizationMembership[]
   auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
+  userNotifications       UserNotification[]
+  pushSubscriptions       PushSubscription[]
+  notificationDevices     NotificationDevice[]
   emailDeliveries         EmailDelivery[]
   digestPreference        NotificationDigestPreference?
   preferences             UserPreference?
@@ -2846,7 +2850,21 @@ model NotificationPreference {
   emailEnabled   Boolean               @default(true)
   inAppEnabled   Boolean               @default(true)
   webhookEnabled Boolean               @default(false)
+  /// Standards-based Web Push while no dashboard client is visible. Off by
+  /// default: it needs an explicit browser permission grant first.
+  webPushEnabled Boolean               @default(false)
+  /// Native notifications from a running Tellann Desktop instance.
+  desktopEnabled Boolean               @default(true)
   frequency      NotificationFrequency @default(IMMEDIATE)
+  /// Push/desktop are suppressed below this severity; the in-app feed always
+  /// receives the item regardless.
+  minSeverity    NotificationSeverity  @default(LOW)
+  quietHoursEnabled Boolean            @default(false)
+  /// Minutes past local midnight. start > end means the window wraps midnight.
+  quietHoursStart Int?
+  quietHoursEnd   Int?
+  /// When set, CRITICAL still pushes during quiet hours.
+  criticalOverridesQuietHours Boolean  @default(true)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
@@ -2905,6 +2923,178 @@ model EmailSuppression {
 
   @@unique([email, category])
   @@index([email])
+}
+
+// =============================================================================
+// CENTRAL NOTIFICATION PIPELINE (Phase 1)
+//
+// One logical notification per business event, fanned out to per-recipient
+// feed state and per-channel delivery attempts. Email becomes one adapter
+// rather than the owner of the record. See docs/notification_implementation_plan.md.
+// =============================================================================
+
+/// INFO < LOW < MEDIUM < HIGH < CRITICAL. Ordinal comparison drives the
+/// per-preference minimum-severity threshold and quiet-hour overrides.
+enum NotificationSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  WEB_PUSH
+  DESKTOP
+  EMAIL
+  WEBHOOK
+}
+
+enum NotificationDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
+  SUPPRESSED
+}
+
+enum NotificationDevicePlatform {
+  WINDOWS
+  MACOS
+  LINUX
+}
+
+/// One logical event, scoped to its organization and optional resource.
+///
+/// `dedupeKey` collapses repeated detections of the same condition; `groupKey`
+/// aggregates related findings in the UI. Idempotency for producers is on
+/// (sourceEventType, sourceEventId).
+model Notification {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId  String?
+  workflowId     String?
+  reportId       String?
+  runId          String?
+
+  type     String
+  category EmailCategory
+  severity NotificationSeverity @default(INFO)
+
+  title    String
+  body     String
+  deepLink String?
+
+  sourceEventType String
+  sourceEventId   String?
+
+  dedupeKey String?
+  groupKey  String?
+  metadata  Json    @default("{}")
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  recipients UserNotification[]
+  deliveries NotificationDelivery[]
+
+  @@unique([sourceEventType, sourceEventId])
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, createdAt])
+  @@index([groupKey])
+}
+
+/// Per-recipient feed state. One row per user authorized to see a notification.
+model UserNotification {
+  id             String       @id @default(uuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  deliveredToFeed Boolean   @default(true)
+  readAt          DateTime?
+  dismissedAt     DateTime?
+  actionedAt      DateTime?
+  expiresAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([notificationId, userId])
+  @@index([userId, organizationId, createdAt])
+  @@index([userId, organizationId, readAt])
+  @@index([userId, organizationId, dismissedAt])
+}
+
+/// One recipient/channel delivery attempt with bounded retry bookkeeping.
+model NotificationDelivery {
+  id             String       @id @default(uuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String?
+  channel        NotificationChannel
+  status         NotificationDeliveryStatus @default(QUEUED)
+  attempts       Int          @default(0)
+  providerId     String?
+  /// Sanitized short code, never the provider's raw error text.
+  failureCode    String?
+  skippedReason  String?
+  nextAttemptAt  DateTime?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([notificationId, userId, channel])
+  @@index([status, nextAttemptAt])
+}
+
+/// A browser Web Push subscription. One per browser/device; independently
+/// revocable. Key material is encrypted at rest when NOTIFICATIONS_ENCRYPTION_KEY
+/// is set.
+model PushSubscription {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  endpoint       String   @unique
+  p256dh         String
+  auth           String
+  userAgent      String?
+  deviceLabel    String?
+  enabled        Boolean  @default(true)
+  failureCount   Int      @default(0)
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, enabled])
+}
+
+/// A desktop (Electron) installation registered to receive native
+/// notifications while it is running. Closed-process delivery is out of scope
+/// for Phase 1.
+model NotificationDevice {
+  id             String                    @id @default(uuid())
+  userId         String
+  user           User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  installationId String                    @unique
+  platform       NotificationDevicePlatform
+  appVersion     String?
+  label          String?
+  enabled        Boolean                   @default(true)
+  present        Boolean                   @default(false)
+  lastSeenAt     DateTime                  @default(now())
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@index([userId, enabled])
 }
 
 // =============================================================================
@@ -3099,4 +3289,55 @@ model NotificationDigestPreference {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Why someone reached out through the public contact form. Mirrors the routes
+/// offered on the marketing site so submissions arrive already triaged.
+enum ContactSubmissionType {
+  SALES
+  ENTERPRISE
+  SUPPORT
+  PARTNERSHIP
+  PRESS
+  SECURITY
+  PRIVACY
+  GENERAL
+}
+
+enum ContactSubmissionStatus {
+  NEW
+  IN_PROGRESS
+  RESOLVED
+  SPAM
+}
+
+/// A message from the public contact form.
+///
+/// The fields every route asks for are columns so they can be filtered and
+/// sorted; the route-specific ones (team size, requirement, impact, and so on)
+/// vary per type and are kept in `details` rather than as a wide sparse table.
+model ContactSubmission {
+  id           String                  @id @default(uuid())
+  type         ContactSubmissionType
+  status       ContactSubmissionStatus @default(NEW)
+  firstName    String
+  lastName     String
+  email        String
+  organization String?
+  subject      String?
+  message      String
+  /// Answers to the fields this contact type asks for, keyed by field name.
+  details      Json                    @default("{}")
+  /// Hashed, not stored raw: enough to spot a flood from one source without
+  /// keeping an identifier for someone who has only sent us a question.
+  ipHash       String?
+  userAgent    String?
+  /// Whether the notification email to the team was accepted for delivery.
+  notifiedAt   DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  @@index([type, status])
+  @@index([createdAt])
+  @@index([email])
 }
