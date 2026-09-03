@@ -278,7 +278,6 @@ function buildGuidance(
       report.undeclaredTransitions >
     0;
   const hasGaps = report.trueGapCount > 0 || report.trueGapTransitions > 0;
-  const hasUndeclared = report.undeclaredCount > 0 || report.undeclaredTransitions > 0;
 
   const all: Guidance[] = [];
 
