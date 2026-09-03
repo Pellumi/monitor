@@ -69,6 +69,7 @@ const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: false },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.BASIC },
+  { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: false },
 ];
 
 const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
@@ -77,6 +78,7 @@ const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.STANDARD },
+  { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.BASIC },
 ];
 
 const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
@@ -85,6 +87,7 @@ const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: false },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.STANDARD },
 ];
 
 const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
@@ -93,6 +96,7 @@ const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.SHARED_RUN_GOVERNANCE,         enabled: true },
   { feature: Feature.BROWSER_TRACE_CAPTURE,         enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
+  { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
 // ─────────────────────────────────────────────────────────────

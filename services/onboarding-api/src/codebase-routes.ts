@@ -14,6 +14,8 @@ import {
 import { compareAnalyses } from '@tellann/project-intelligence';
 import { createGraphStore } from '@tellann/code-graph';
 import { explainFeatures } from '@tellann/ai';
+import { Feature } from '@tellann/shared';
+import type { EntitlementChecker } from '@tellann/entitlement-checker';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
@@ -93,9 +95,10 @@ export function createCodebaseRouter(input: {
   verifyJwt: Middleware;
   verifyAppOwnership: Middleware;
   storage: StorageClient;
-  requireEntitlement?: Middleware;
+  /** Omitted only by tests that exercise the routes in isolation. */
+  entitlementChecker?: EntitlementChecker;
 }) {
-  const { prisma, verifyJwt, verifyAppOwnership, storage } = input;
+  const { prisma, verifyJwt, verifyAppOwnership, storage, entitlementChecker } = input;
   const router = Router();
   const codeGraph = createGraphStore();
   const analyses = new AnalysisCache();
@@ -108,9 +111,20 @@ export function createCodebaseRouter(input: {
   }, 60_000);
   sweep.unref?.();
 
-  /** Entitlement gate, when the caller supplied one. */
-  const gate: Middleware[] = input.requireEntitlement ? [input.requireEntitlement] : [];
-  const guarded = [verifyJwt, verifyAppOwnership, ...gate];
+  /**
+   * Codebase intelligence is a paid capability, so every route below is gated on
+   * the owning organisation's entitlement as well as on ownership.
+   */
+  const requireEntitlement: Middleware = async (req, res, next) => {
+    if (!entitlementChecker) return next();
+    const organizationId = await organizationFor(req.params.appId);
+    if (!organizationId) return res.status(404).json({ error: 'Application not found' });
+    if (!await entitlementChecker.canAccess(organizationId, Feature.CODEBASE_INTELLIGENCE)) {
+      return res.status(403).json({ error: 'FEATURE_NOT_ENTITLED', feature: Feature.CODEBASE_INTELLIGENCE });
+    }
+    return next();
+  };
+  const guarded = [verifyJwt, verifyAppOwnership, requireEntitlement];
 
   async function organizationFor(applicationId: string): Promise<string | null> {
     const application = await prisma.application.findUnique({

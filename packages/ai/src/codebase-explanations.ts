@@ -98,14 +98,25 @@ function buildPrompt(bundles: FeatureEvidenceBundle[]): string {
  */
 export function isGrounded(text: string, vocabulary: string[]): boolean {
   const allowed = new Set(vocabulary.map((token) => token.toLowerCase()));
-  const suspicious = text
-    .split(/[^A-Za-z0-9]+/)
-    .filter((token) => token.length > 3)
-    // Only proper-noun-ish and identifier-ish tokens can name a subject; ordinary
-    // prose is what we asked the model to write.
-    .filter((token) => /[A-Z]/.test(token.slice(1)) || /^[A-Z]/.test(token))
-    .map((token) => token.toLowerCase())
-    .filter((token) => !COMMON_PROSE.has(token));
+
+  // Only tokens that could actually name a subject are checked. A word is one
+  // when it carries an internal capital (PayPal, UserRepository) or is
+  // capitalised somewhere other than the start of a sentence, where a capital
+  // carries no meaning. Ordinary prose is what the model was asked to write and
+  // must not be treated as an unsupported claim.
+  const suspicious: string[] = [];
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    const words = sentence.split(/[^A-Za-z0-9]+/).filter(Boolean);
+    words.forEach((word, index) => {
+      if (word.length <= 3) return;
+      const internalCapital = /[A-Z]/.test(word.slice(1));
+      const leadingCapital = /^[A-Z]/.test(word);
+      if (!internalCapital && (!leadingCapital || index === 0)) return;
+      const lowered = word.toLowerCase();
+      if (COMMON_PROSE.has(lowered)) return;
+      suspicious.push(lowered);
+    });
+  }
   return suspicious.every((token) => allowed.has(token));
 }
 
@@ -195,7 +206,10 @@ export async function explainFeatures(
       const bundle = byId.get(item.featureId);
       if (!bundle) continue;
       answered.add(item.featureId);
-      const grounded = isGrounded(`${item.name} ${item.description}`, bundle.vocabulary);
+      // Checked separately: joining them would make the description's first
+      // word look like a mid-sentence capital and be read as a claim.
+      const grounded = isGrounded(item.name, bundle.vocabulary)
+        && isGrounded(item.description, bundle.vocabulary);
       if (!grounded) {
         results.push(deterministic(bundle, provider.model));
         continue;

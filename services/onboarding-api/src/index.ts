@@ -316,6 +316,7 @@ app.use(createCodebaseRouter({
   prisma,
   verifyJwt,
   verifyAppOwnership,
+  entitlementChecker,
   storage: storageClient,
 }));
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, storage: storageClient }));
