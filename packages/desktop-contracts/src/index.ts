@@ -196,6 +196,80 @@ export const CodebaseFindingSchema = z.object({
   evidence: z.array(CodeEvidenceSchema),
 });
 
+export const CouplingRecordSchema = z.object({
+  entityId: z.string(),
+  name: z.string(),
+  path: z.string().nullable(),
+  fanIn: z.number().int().nonnegative(),
+  fanOut: z.number().int().nonnegative(),
+  instability: z.number().min(0).max(1),
+  centrality: z.number().min(0).max(1),
+});
+
+export const ArchitectureReportSchema = z.object({
+  metrics: z.object({
+    modules: z.number().int().nonnegative(),
+    domains: z.number().int().nonnegative(),
+    cycles: z.number().int().nonnegative(),
+    stronglyConnectedComponents: z.number().int().nonnegative(),
+    averageFanIn: z.number().nonnegative(),
+    averageFanOut: z.number().nonnegative(),
+    maxFanIn: z.number().int().nonnegative(),
+    orphanModules: z.number().int().nonnegative(),
+    unresolvedCallRatio: z.number().min(0).max(1),
+  }),
+  coupling: z.array(CouplingRecordSchema),
+  hotspots: z.array(CouplingRecordSchema),
+  domains: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    memberCount: z.number().int().nonnegative(),
+    confidence: z.number().min(0).max(1),
+    signals: z.array(z.string()),
+  })),
+});
+
+/** How much of the repository the deep analyzers actually reached. */
+export const AnalysisCoverageSchema = z.object({
+  totalFiles: z.number().int().nonnegative(),
+  analyzableFiles: z.number().int().nonnegative(),
+  analyzedFiles: z.number().int().nonnegative(),
+  unsupportedLanguageFiles: z.record(z.number().int().nonnegative()),
+  excludedByReason: z.record(z.number().int().nonnegative()),
+  languageBytes: z.record(z.number().int().nonnegative()),
+  /** Share of call sites reaching a declaration inside this repository. */
+  internalCallRatio: z.number().min(0).max(1),
+  /** Share reaching a dependency. Correct resolution, not a coverage gap. */
+  externalCallRatio: z.number().min(0).max(1),
+  /** Share where no declaration was found at all: the graph is blind here. */
+  unresolvedCallRatio: z.number().min(0).max(1),
+  internalImportRatio: z.number().min(0).max(1),
+  unresolvedImportRatio: z.number().min(0).max(1),
+  truncated: z.boolean(),
+});
+
+export const IncrementalReportSchema = z.object({
+  mode: z.enum(['full', 'incremental', 'unchanged']),
+  reason: z.string(),
+  reusedFiles: z.number().int().nonnegative(),
+  reanalyzedFiles: z.number().int().nonnegative(),
+  addedFiles: z.array(z.string()),
+  modifiedFiles: z.array(z.string()),
+  deletedFiles: z.array(z.string()),
+  invalidatedDependents: z.number().int().nonnegative(),
+});
+
+/** Provenance for any text a language model produced. */
+export const AiExplanationSchema = z.object({
+  featureId: z.string(),
+  name: z.string(),
+  description: z.string(),
+  model: z.string(),
+  promptVersion: z.string(),
+  confidence: z.number().min(0).max(1),
+  grounded: z.boolean(),
+});
+
 export const CodebaseAnalysisSchema = z.object({
   id: z.string(),
   workspaceId: z.string().uuid(),
@@ -207,10 +281,20 @@ export const CodebaseAnalysisSchema = z.object({
   stageMessage: z.string(),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
+  /** Exact revision analysed; null for a checkout with no Git history. */
+  revision: z.string().nullable().default(null),
+  branch: z.string().nullable().default(null),
+  dirty: z.boolean().default(false),
+  /** Content hash of the analysed working tree, so dirty states stay distinct. */
+  contentHash: z.string().default(''),
   entities: z.array(CodeEntitySchema),
   relationships: z.array(CodeRelationshipSchema),
   features: z.array(SoftwareFeatureSchema),
   findings: z.array(CodebaseFindingSchema),
+  architecture: ArchitectureReportSchema.nullable().default(null),
+  coverage: AnalysisCoverageSchema.nullable().default(null),
+  incremental: IncrementalReportSchema.nullable().default(null),
+  explanations: z.array(AiExplanationSchema).default([]),
   summary: z.object({
     files: z.number().int().nonnegative(),
     symbols: z.number().int().nonnegative(),
@@ -219,10 +303,77 @@ export const CodebaseAnalysisSchema = z.object({
     services: z.number().int().nonnegative(),
     domains: z.number().int().nonnegative(),
     features: z.number().int().nonnegative(),
+    endpoints: z.number().int().nonnegative().default(0),
+    dataModels: z.number().int().nonnegative().default(0),
+    events: z.number().int().nonnegative().default(0),
+    externalServices: z.number().int().nonnegative().default(0),
+    tests: z.number().int().nonnegative().default(0),
     coveragePercent: z.number().min(0).max(100),
     confidence: z.number().min(0).max(1),
   }),
   warnings: z.array(z.string()),
+});
+
+export const AnalysisChangeSchema = z.object({
+  kind: z.enum(['ADDED', 'REMOVED', 'CHANGED']),
+  category: z.enum(['entity', 'dependency', 'feature', 'domain', 'endpoint', 'external', 'architecture']),
+  label: z.string(),
+  detail: z.string(),
+  entityId: z.string().nullable(),
+});
+
+export const AnalysisComparisonSchema = z.object({
+  fromAnalysisId: z.string(),
+  toAnalysisId: z.string(),
+  fromRevision: z.string().nullable(),
+  toRevision: z.string().nullable(),
+  changes: z.array(AnalysisChangeSchema),
+  summary: z.object({
+    entitiesAdded: z.number().int().nonnegative(),
+    entitiesRemoved: z.number().int().nonnegative(),
+    featuresAdded: z.number().int().nonnegative(),
+    featuresRemoved: z.number().int().nonnegative(),
+    featuresChanged: z.number().int().nonnegative(),
+    domainsAdded: z.number().int().nonnegative(),
+    domainsRemoved: z.number().int().nonnegative(),
+    endpointsAdded: z.number().int().nonnegative(),
+    endpointsRemoved: z.number().int().nonnegative(),
+    externalsAdded: z.number().int().nonnegative(),
+    externalsRemoved: z.number().int().nonnegative(),
+  }),
+});
+
+export const BlastRadiusSchema = z.object({
+  entityId: z.string(),
+  affected: z.object({
+    modules: z.number().int().nonnegative(),
+    functions: z.number().int().nonnegative(),
+    endpoints: z.number().int().nonnegative(),
+    jobs: z.number().int().nonnegative(),
+    tests: z.number().int().nonnegative(),
+    features: z.number().int().nonnegative(),
+  }),
+  entityIds: z.array(z.string()),
+  truncated: z.boolean(),
+});
+
+export const GraphProjectionQuerySchema = z.object({
+  view: z.enum(['hierarchy', 'dependencies', 'architecture', 'features', 'data', 'events', 'external', 'all']).default('all'),
+  granularity: z.enum(['repository', 'application', 'service', 'package', 'module', 'file', 'class', 'function', 'domain', 'feature']).default('file'),
+  types: z.array(CodeEntityTypeSchema).max(30).default([]),
+  relationshipTypes: z.array(CodeRelationshipTypeSchema).max(30).default([]),
+  rootId: z.string().nullable().default(null),
+  search: z.string().max(200).default(''),
+  depth: z.number().int().min(1).max(8).default(1),
+  limit: z.number().int().min(1).max(2_000).default(250),
+  direction: z.enum(['out', 'in', 'both']).default('both'),
+});
+
+export const GraphProjectionSchema = z.object({
+  nodes: z.array(CodeEntitySchema),
+  edges: z.array(CodeRelationshipSchema),
+  truncated: z.boolean(),
+  totalMatched: z.number().int().nonnegative().default(0),
 });
 
 export type CodebaseAnalysisStatus = z.infer<typeof CodebaseAnalysisStatusSchema>;
@@ -232,6 +383,16 @@ export type CodeRelationship = z.infer<typeof CodeRelationshipSchema>;
 export type SoftwareFeature = z.infer<typeof SoftwareFeatureSchema>;
 export type CodebaseFinding = z.infer<typeof CodebaseFindingSchema>;
 export type CodebaseAnalysis = z.infer<typeof CodebaseAnalysisSchema>;
+export type CouplingRecord = z.infer<typeof CouplingRecordSchema>;
+export type ArchitectureReport = z.infer<typeof ArchitectureReportSchema>;
+export type AnalysisCoverage = z.infer<typeof AnalysisCoverageSchema>;
+export type IncrementalReport = z.infer<typeof IncrementalReportSchema>;
+export type AiExplanation = z.infer<typeof AiExplanationSchema>;
+export type AnalysisChange = z.infer<typeof AnalysisChangeSchema>;
+export type AnalysisComparison = z.infer<typeof AnalysisComparisonSchema>;
+export type BlastRadiusResult = z.infer<typeof BlastRadiusSchema>;
+export type GraphProjectionQuery = z.infer<typeof GraphProjectionQuerySchema>;
+export type GraphProjection = z.infer<typeof GraphProjectionSchema>;
 
 export const BranchPolicyEnforcementSchema = z.enum(['WARN', 'BLOCK']);
 
@@ -835,6 +996,9 @@ export const IPC = {
   scanWorkspace: 'tellann:workspace:scan',
   getCodebaseAnalysis: 'tellann:workspace:analysis:get',
   cancelCodebaseAnalysis: 'tellann:workspace:analysis:cancel',
+  rescanCodebase: 'tellann:workspace:analysis:rescan',
+  codebaseQuery: 'tellann:workspace:analysis:query',
+  openCodebaseEvidence: 'tellann:workspace:analysis:evidence:open',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
   setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',

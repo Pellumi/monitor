@@ -72,3 +72,6 @@ ALTER TABLE "AnalysisStageRun" ADD CONSTRAINT "AnalysisStageRun_jobId_fkey" FORE
 ALTER TABLE "AnalyzerRun" ADD CONSTRAINT "AnalyzerRun_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "CodebaseAnalysisJob"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "AnalysisWarning" ADD CONSTRAINT "AnalysisWarning_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "CodebaseAnalysisJob"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "AnalysisProjection" ADD CONSTRAINT "AnalysisProjection_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "CodebaseAnalysisJob"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Organisation-configurable retention for uploaded source snapshots.
+ALTER TABLE "OrganizationSettings" ADD COLUMN IF NOT EXISTS "codebaseRetentionDays" INTEGER;

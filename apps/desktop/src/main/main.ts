@@ -1,13 +1,18 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
 import { IPC, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
-import { buildSanitizedSourceArchive, scanWorkspace } from '@tellann/project-intelligence';
+import {
+  buildSanitizedSourceArchive,
+  previewSanitizedSourceArchive,
+  scanWorkspace,
+} from '@tellann/project-intelligence';
 import { BrowserObserver } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
 import { initializeUpdater } from './update-manager';
@@ -182,42 +187,236 @@ function codebaseAnalysisKey(applicationId: string): string {
   return `codebase-analysis:${scope}:${applicationId}`;
 }
 
-function beginCodebaseAnalysis(applicationId: string, root: string, snapshot: RepositorySnapshotSummary, cloudJobId?: string): void {
-  codebaseWorkers.get(applicationId)?.terminate().catch(() => undefined);
-  const initial: CodebaseAnalysis = {
+/**
+ * Local analysis state. Records which mode the workspace is in so a restart can
+ * reconnect to a cloud job rather than silently duplicating it, and so a local
+ * run that died with the process is recognised as interrupted instead of
+ * reporting "parsing" for ever.
+ */
+type CodebaseAnalysisState = {
+  mode: 'cloud' | 'local';
+  cloudJobId: string | null;
+  workspaceRoot: string;
+  workspaceId: string;
+  repositoryFingerprint: string;
+  updatedAt: string;
+  /** Present for local analyses; a cloud analysis is fetched from the API. */
+  analysis: CodebaseAnalysis | null;
+  uploadProgress: { sent: number; total: number } | null;
+};
+
+function codebaseCacheKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  return `codebase-cache:${scope}:${applicationId}`;
+}
+
+function readAnalysisState(applicationId: string): CodebaseAnalysisState | null {
+  try {
+    return readLocalState<CodebaseAnalysisState>(codebaseAnalysisKey(applicationId));
+  } catch {
+    return null;
+  }
+}
+
+function writeAnalysisState(applicationId: string, state: CodebaseAnalysisState): void {
+  writeLocalState(codebaseAnalysisKey(applicationId), { ...state, updatedAt: new Date().toISOString() });
+}
+
+function patchLocalAnalysis(applicationId: string, patch: Partial<CodebaseAnalysis>): void {
+  const state = readAnalysisState(applicationId);
+  if (!state?.analysis) return;
+  writeAnalysisState(applicationId, { ...state, analysis: { ...state.analysis, ...patch } });
+}
+
+function pendingAnalysis(snapshot: RepositorySnapshotSummary, message: string): CodebaseAnalysis {
+  return {
     id: `pending:${snapshot.repositoryFingerprint.slice(0, 24)}`,
     workspaceId: snapshot.workspaceId,
     repositoryFingerprint: snapshot.repositoryFingerprint,
     graphVersion: '',
     analyzerVersions: {},
-    status: 'QUEUED', progress: 0, stageMessage: 'Queued for analysis',
-    startedAt: new Date().toISOString(), completedAt: null,
-    entities: [], relationships: [], features: [], findings: [], warnings: [],
-    summary: { files: 0, symbols: 0, relationships: 0, applications: 0, services: 0, domains: 0, features: 0, coveragePercent: 0, confidence: 0 },
+    status: 'QUEUED',
+    progress: 0,
+    stageMessage: message,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    revision: snapshot.revision,
+    branch: snapshot.branch,
+    dirty: snapshot.dirty,
+    contentHash: '',
+    entities: [], relationships: [], features: [], findings: [],
+    architecture: null, coverage: null, incremental: null, explanations: [],
+    warnings: [],
+    summary: {
+      files: 0, symbols: 0, relationships: 0, applications: 0, services: 0,
+      domains: 0, features: 0, endpoints: 0, dataModels: 0, events: 0,
+      externalServices: 0, tests: 0, coveragePercent: 0, confidence: 0,
+    },
   };
-  writeLocalState(codebaseAnalysisKey(applicationId), initial);
+}
+
+/**
+ * Run the analyzer in a worker thread so a large repository cannot block the
+ * Electron main process. Cached fragments from the previous run are handed in
+ * so a rescan only re-analyses what actually changed.
+ */
+function beginLocalCodebaseAnalysis(
+  applicationId: string,
+  root: string,
+  snapshot: RepositorySnapshotSummary,
+): void {
+  void codebaseWorkers.get(applicationId)?.terminate().catch(() => undefined);
+
+  writeAnalysisState(applicationId, {
+    mode: 'local',
+    cloudJobId: null,
+    workspaceRoot: root,
+    workspaceId: snapshot.workspaceId,
+    repositoryFingerprint: snapshot.repositoryFingerprint,
+    updatedAt: new Date().toISOString(),
+    analysis: pendingAnalysis(snapshot, 'Queued for local analysis'),
+    uploadProgress: null,
+  });
+
+  let cache: unknown = null;
+  try {
+    cache = readLocalState(codebaseCacheKey(applicationId));
+  } catch {
+    cache = null;
+  }
+
   const worker = new Worker(path.join(__dirname, 'codebase-worker.js'), {
-    workerData: { root, workspaceId: snapshot.workspaceId, repositoryFingerprint: snapshot.repositoryFingerprint },
+    workerData: {
+      root,
+      workspaceId: snapshot.workspaceId,
+      repositoryFingerprint: snapshot.repositoryFingerprint,
+      cache,
+    },
   });
   codebaseWorkers.set(applicationId, worker);
-  worker.on('message', (message: { type?: string; analysis?: CodebaseAnalysis; status?: CodebaseAnalysis['status']; progress?: number; stageMessage?: string; message?: string }) => {
+
+  worker.on('message', (message: {
+    type?: string;
+    analysis?: CodebaseAnalysis;
+    cache?: unknown;
+    status?: CodebaseAnalysis['status'];
+    progress?: number;
+    stageMessage?: string;
+    message?: string;
+  }) => {
     if (message.type === 'progress') {
-      const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
-      writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: message.status ?? current.status, progress: message.progress ?? current.progress, stageMessage: message.stageMessage ?? current.stageMessage });
-      if (cloudJobId && message.status) void cloud.updateCodebaseAnalysis(applicationId, cloudJobId, message.status, message.progress ?? 0, message.stageMessage ?? '').catch(() => undefined);
+      patchLocalAnalysis(applicationId, {
+        status: message.status,
+        progress: message.progress,
+        stageMessage: message.stageMessage,
+      });
     } else if (message.type === 'complete' && message.analysis) {
-      writeLocalState(codebaseAnalysisKey(applicationId), message.analysis);
-      if (cloudJobId) void cloud.completeCodebaseAnalysis(applicationId, cloudJobId, message.analysis).catch((error) => console.warn('[codebase-analysis] Could not publish analysis projections', error));
+      const state = readAnalysisState(applicationId);
+      if (state) writeAnalysisState(applicationId, { ...state, analysis: message.analysis });
+      if (message.cache) {
+        try {
+          writeLocalState(codebaseCacheKey(applicationId), message.cache);
+        } catch (error) {
+          console.warn('[codebase-analysis] Could not persist the incremental cache', error);
+        }
+      }
     } else if (message.type === 'error') {
-      const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
-      writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'FAILED', stageMessage: String(message.message ?? 'Analysis failed').slice(0, 240), completedAt: new Date().toISOString() });
+      patchLocalAnalysis(applicationId, {
+        status: 'FAILED',
+        stageMessage: String(message.message ?? 'Analysis failed').slice(0, 240),
+        completedAt: new Date().toISOString(),
+      });
     }
   });
   worker.once('exit', () => codebaseWorkers.delete(applicationId));
   worker.once('error', (error) => {
-    const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId)) ?? initial;
-    writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'FAILED', stageMessage: error.message.slice(0, 240), completedAt: new Date().toISOString() });
+    patchLocalAnalysis(applicationId, {
+      status: 'FAILED',
+      stageMessage: error.message.slice(0, 240),
+      completedAt: new Date().toISOString(),
+    });
   });
+}
+
+const ACTIVE_ANALYSIS = new Set([
+  'QUEUED', 'INGESTING', 'PARSING', 'LINKING', 'GRAPHING',
+  'DISCOVERING_FEATURES', 'ANALYZING_ARCHITECTURE', 'SUMMARIZING',
+]);
+
+/**
+ * A local analysis lives in a worker thread, so it cannot outlive the process.
+ * Anything still marked active on startup is finished by restarting it against
+ * the same workspace, and the stage message says so. A cloud analysis needs
+ * none of this: the job kept running and is simply polled again.
+ */
+function resumeInterruptedAnalyses(): void {
+  for (const [applicationId, workspace] of selectedWorkspaces) {
+    const state = readAnalysisState(applicationId);
+    if (!state || state.mode !== 'local') continue;
+    if (!state.analysis || !ACTIVE_ANALYSIS.has(state.analysis.status)) continue;
+    if (codebaseWorkers.has(applicationId)) continue;
+    if (!existsSync(workspace.root)) continue;
+    patchLocalAnalysis(applicationId, {
+      stageMessage: 'Restarting after the desktop was closed mid-analysis',
+    });
+    beginLocalCodebaseAnalysis(applicationId, workspace.root, workspace.snapshot);
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Ask before any source leaves the device, showing what would actually be sent:
+ * compressed size, file count, what was redacted, and what was excluded. The
+ * archive is planned first precisely so those numbers are real rather than a
+ * general promise.
+ */
+async function requestUploadConsent(
+  selectedPath: string,
+  snapshot: RepositorySnapshotSummary,
+): Promise<boolean> {
+  let preview: ReturnType<typeof previewSanitizedSourceArchive>;
+  try {
+    preview = previewSanitizedSourceArchive(selectedPath);
+  } catch {
+    return false;
+  }
+  const exclusions = Object.entries(preview.excludedByReason)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([reason, count]) => `${Number(count)} ${reason.replaceAll('-', ' ')}`)
+    .join(', ');
+  const identity = snapshot.repositoryOriginHash
+    ? 'the repository bound to this application'
+    : 'this local folder';
+  const detail = [
+    `Repository: ${identity}${snapshot.branch ? ` on ${snapshot.branch}` : ''}${snapshot.revision ? ` at ${snapshot.revision.slice(0, 8)}` : ''}${snapshot.dirty ? ' (including uncommitted changes)' : ''}.`,
+    `Languages: ${preview.languages.map((item: { language: string }) => item.language).slice(0, 5).join(', ') || 'none detected'}.`,
+    preview.redactions
+      ? `${preview.redactions} secret-shaped value(s) across ${preview.redactedFiles} file(s) will be replaced with [redacted] before upload.`
+      : 'No secret-shaped values were found in the files to be uploaded.',
+    exclusions ? `Excluded and never uploaded: ${exclusions}.` : 'Nothing was excluded.',
+    preview.truncated
+      ? 'This repository exceeds the upload budget, so lower-priority files (documentation first) will be left out and reported.'
+      : '',
+    'The snapshot is encrypted before upload, tied to this exact revision, and deleted automatically under your organization retention policy.',
+    'Keeping it local runs the same analysis on this machine instead, and nothing is uploaded.',
+  ].filter(Boolean).join('\n\n');
+
+  const consent = await dialog.showMessageBox(mainWindow!, {
+    type: 'question',
+    title: 'Upload source for codebase analysis?',
+    message: `Upload ${preview.fileCount} files (${formatBytes(preview.compressedBytes)} compressed) for full codebase analysis?`,
+    detail,
+    buttons: ['Upload and analyze', 'Keep analysis local'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  return consent.response === 0;
 }
 
 async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
@@ -249,20 +448,24 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
     branchPolicy: registered.branchPolicy ?? policy ?? null,
   };
   writeLocalState(localWorkspaceKey(applicationId), workspace);
-  const consent = await dialog.showMessageBox(mainWindow!, {
-    type: 'question',
-    title: 'Upload source for codebase analysis?',
-    message: 'Tellann can upload a sanitized, encrypted source snapshot for complete codebase analysis.',
-    detail: 'Secrets, dependency folders, generated output, symlinks, binaries, and oversized files are excluded. The snapshot is tied to this exact revision and can be deleted under your organization retention policy.',
-    buttons: ['Upload and analyze', 'Keep analysis local'],
-    defaultId: 0,
-    cancelId: 1,
-  });
-  let cloudJobId: string | undefined;
-  if (consent.response === 0) {
+  // Exactly one analysis runs per workspace. With consent the worker service
+  // owns it; without consent it runs here. Doing both would mean the same job
+  // being written by two producers.
+  const consented = await requestUploadConsent(selectedPath, snapshot);
+  if (consented) {
     try {
+      writeAnalysisState(applicationId, {
+        mode: 'cloud',
+        cloudJobId: null,
+        workspaceRoot: selectedPath,
+        workspaceId: registered.workspaceId,
+        repositoryFingerprint: snapshot.repositoryFingerprint,
+        updatedAt: new Date().toISOString(),
+        analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
+        uploadProgress: { sent: 0, total: 1 },
+      });
       const archive = buildSanitizedSourceArchive(selectedPath);
-      const created = await cloud.createCodebaseAnalysis(applicationId, {
+      const created = await cloud.uploadCodebaseSnapshot(applicationId, {
         workspaceId: registered.workspaceId,
         repositorySnapshotId: registered.repositorySnapshotId,
         revision: snapshot.revision,
@@ -272,13 +475,43 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
         repositoryIdentity: snapshot.repositoryOriginHash ?? snapshot.portableManifestIdentity ?? null,
         scannerVersion: snapshot.scannerVersion,
         archive,
+        onProgress: (sent, total) => {
+          const state = readAnalysisState(applicationId);
+          if (!state) return;
+          writeAnalysisState(applicationId, {
+            ...state,
+            uploadProgress: { sent, total },
+            analysis: state.analysis
+              ? { ...state.analysis, stageMessage: `Uploading source snapshot (${sent} of ${total})`, progress: Math.round((sent / total) * 4) }
+              : state.analysis,
+          });
+        },
       });
-      cloudJobId = typeof created.jobId === 'string' ? created.jobId : undefined;
+      const state = readAnalysisState(applicationId);
+      writeAnalysisState(applicationId, {
+        mode: 'cloud',
+        cloudJobId: created.jobId,
+        workspaceRoot: selectedPath,
+        workspaceId: registered.workspaceId,
+        repositoryFingerprint: snapshot.repositoryFingerprint,
+        updatedAt: new Date().toISOString(),
+        analysis: state?.analysis ?? pendingAnalysis(snapshot, 'Queued for analysis'),
+        uploadProgress: null,
+      });
+      return workspace;
     } catch (error) {
-      console.warn('[codebase-analysis] Cloud snapshot upload failed; local analysis will continue', error);
+      // The upload failed, so no cloud job exists to wait for. Fall back to a
+      // local analysis and say why rather than showing a job that will never move.
+      console.warn('[codebase-analysis] Source upload failed; analysing locally instead', error);
+      beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
+      patchLocalAnalysis(applicationId, {
+        warnings: ['The source snapshot could not be uploaded, so this analysis ran on your machine instead.'],
+      });
+      return workspace;
     }
   }
-  beginCodebaseAnalysis(applicationId, selectedPath, snapshot, cloudJobId);
+
+  beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
   return workspace;
 }
 
@@ -873,21 +1106,155 @@ function registerIpc(): void {
     const workspace = await registerSelectedWorkspace(applicationId, parsed.path);
     return { id: workspace.id, snapshot: workspace.snapshot, branchPolicy: workspace.branchPolicy ?? null };
   });
-  ipcMain.handle(IPC.getCodebaseAnalysis, (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.getCodebaseAnalysis, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId));
+    const state = readAnalysisState(applicationId);
+    if (!state) return null;
+
+    if (state.mode === 'local' || !state.cloudJobId) {
+      // A local run that is marked active with no worker behind it died with a
+      // previous process; report that plainly instead of a frozen progress bar.
+      const stale = state.analysis
+        && ACTIVE_ANALYSIS.has(state.analysis.status)
+        && !codebaseWorkers.has(applicationId)
+        && state.mode === 'local';
+      return {
+        mode: state.mode,
+        source: 'local' as const,
+        interrupted: Boolean(stale),
+        uploadProgress: state.uploadProgress,
+        analysis: state.analysis,
+        job: null,
+      };
+    }
+
+    try {
+      const remote = await cloud.getCodebaseAnalysis(applicationId) as Record<string, any>;
+      return {
+        mode: 'cloud' as const,
+        source: 'cloud' as const,
+        interrupted: false,
+        uploadProgress: state.uploadProgress,
+        analysis: (remote.analysis as CodebaseAnalysis | null) ?? null,
+        job: {
+          jobId: remote.jobId,
+          status: remote.status,
+          progress: remote.progress,
+          stageMessage: remote.stageMessage,
+          attempt: remote.attempt,
+          maxAttempts: remote.maxAttempts,
+          errorMessageSafe: remote.errorMessageSafe,
+          warnings: remote.warnings ?? [],
+          stages: remote.stages ?? [],
+          snapshot: remote.snapshot ?? null,
+        },
+      };
+    } catch (error) {
+      return {
+        mode: 'cloud' as const,
+        source: 'cloud' as const,
+        interrupted: false,
+        uploadProgress: state.uploadProgress,
+        analysis: state.analysis,
+        job: null,
+        unreachable: error instanceof Error ? error.message.slice(0, 200) : 'Cloud analysis is unreachable',
+      };
+    }
   });
   ipcMain.handle(IPC.cancelCodebaseAnalysis, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const state = readAnalysisState(applicationId);
+    if (state?.mode === 'cloud' && state.cloudJobId) {
+      await cloud.cancelCloudCodebaseAnalysis(applicationId, state.cloudJobId).catch(() => undefined);
+      return { cancelled: true };
+    }
     const worker = codebaseWorkers.get(applicationId);
     if (!worker) return { cancelled: false };
     await worker.terminate();
     codebaseWorkers.delete(applicationId);
-    const current = readLocalState<CodebaseAnalysis>(codebaseAnalysisKey(applicationId));
-    if (current) writeLocalState(codebaseAnalysisKey(applicationId), { ...current, status: 'CANCELLED', stageMessage: 'Analysis cancelled', completedAt: new Date().toISOString() });
+    patchLocalAnalysis(applicationId, {
+      status: 'CANCELLED',
+      stageMessage: 'Analysis cancelled',
+      completedAt: new Date().toISOString(),
+    });
     return { cancelled: true };
+  });
+  ipcMain.handle(IPC.rescanCodebase, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    if (!workspace) throw new Error('WORKSPACE_NOT_ATTACHED');
+    const state = readAnalysisState(applicationId);
+    if (state?.mode === 'cloud') {
+      // Rescanning a cloud workspace means sending the current revision again;
+      // re-attaching is the one path that asks for consent against real numbers.
+      return { rescanned: false, requiresReattach: true };
+    }
+    const snapshot = await scanWorkspace(workspace.path, { workspaceId: workspace.id });
+    beginLocalCodebaseAnalysis(applicationId, workspace.path, snapshot);
+    return { rescanned: true, requiresReattach: false };
+  });
+  ipcMain.handle(IPC.codebaseQuery, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; kind?: unknown; payload?: unknown };
+    if (typeof value?.applicationId !== 'string' || typeof value?.kind !== 'string') {
+      throw new Error('INVALID_CODEBASE_QUERY');
+    }
+    const payload = (value.payload ?? {}) as Record<string, any>;
+    switch (value.kind) {
+      case 'graph':
+        return cloud.queryCodebaseGraph(value.applicationId, payload);
+      case 'hierarchy':
+        return cloud.codebaseHierarchy(
+          value.applicationId,
+          typeof payload.parentId === 'string' ? payload.parentId : null,
+          Number(payload.offset) || 0,
+          Number(payload.limit) || 200,
+        );
+      case 'entity':
+        return cloud.codebaseEntity(value.applicationId, String(payload.entityId ?? ''));
+      case 'blast-radius':
+        return cloud.codebaseBlastRadius(value.applicationId, String(payload.entityId ?? ''));
+      case 'compare':
+        return cloud.codebaseCompare(value.applicationId);
+      case 'ask':
+        return cloud.askCodebase(value.applicationId, String(payload.question ?? ''));
+      case 'collection':
+        return cloud.codebaseCollection(
+          value.applicationId,
+          String(payload.collection ?? 'features').replace(/[^a-z-]/g, ''),
+          String(payload.search ?? ''),
+          Number(payload.offset) || 0,
+          Number(payload.limit) || 100,
+        );
+      default:
+        throw new Error('UNKNOWN_CODEBASE_QUERY');
+    }
+  });
+  /**
+   * Open an evidence location in the user's editor. The renderer supplies a
+   * repository-relative path only; the absolute path is built here and checked
+   * against the attached workspace, so a crafted path cannot reach outside it.
+   */
+  ipcMain.handle(IPC.openCodebaseEvidence, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; path?: unknown };
+    if (typeof value?.applicationId !== 'string' || typeof value?.path !== 'string') {
+      throw new Error('INVALID_EVIDENCE_REQUEST');
+    }
+    const workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(value.applicationId));
+    if (!workspace) return { opened: false, reason: 'WORKSPACE_NOT_ATTACHED' };
+    let absolute: string;
+    try {
+      absolute = resolveWithinWorkspace(workspace.path, value.path);
+    } catch {
+      return { opened: false, reason: 'PATH_OUTSIDE_WORKSPACE' };
+    }
+    if (!existsSync(absolute)) return { opened: false, reason: 'FILE_NOT_FOUND' };
+    const error = await shell.openPath(absolute);
+    return error ? { opened: false, reason: error } : { opened: true };
   });
   ipcMain.handle(IPC.cloneWorkspace, async (event, input: unknown) => {
     assertTrustedSender(event);

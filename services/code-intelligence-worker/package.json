@@ -3,10 +3,23 @@
   "private": true,
   "version": "0.1.0",
   "main": "dist/index.js",
-  "scripts": { "build": "tsc", "start": "node dist/index.js", "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts" },
-  "dependencies": {
-    "@tellann/code-graph": "workspace:*", "@tellann/db": "workspace:*", "@tellann/project-intelligence": "workspace:*",
-    "@tellann/storage": "workspace:*", "@tellann/telemetry": "workspace:*"
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts"
   },
-  "devDependencies": { "@types/node": "^20.0.0", "ts-node-dev": "^2.0.0", "typescript": "^5.0.0" }
+  "dependencies": {
+    "@tellann/ai": "workspace:*",
+    "@tellann/code-graph": "workspace:*",
+    "@tellann/db": "workspace:*",
+    "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/project-intelligence": "workspace:*",
+    "@tellann/storage": "workspace:*",
+    "@tellann/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0"
+  }
 }

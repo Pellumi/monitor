@@ -2852,6 +2852,9 @@ model OrganizationSettings {
   billingContactEmail         String?
   technicalContactEmail       String?
   securityContactEmail        String?
+  /// Days an uploaded source snapshot is retained before automatic deletion.
+  /// Null falls back to CODEBASE_SNAPSHOT_RETENTION_DAYS.
+  codebaseRetentionDays       Int?
   version                     Int          @default(1)
   createdAt                   DateTime     @default(now())
   updatedAt                   DateTime     @updatedAt

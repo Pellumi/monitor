@@ -24,6 +24,7 @@ import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createDesktopRouter, serializeBranchPolicy } from './desktop-routes';
+import { createCodebaseRouter } from './codebase-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
@@ -309,6 +310,12 @@ app.use(createDesktopRouter({
   verifyJwt,
   verifyAppOwnership,
   jwtSecret: JWT_SECRET,
+  storage: storageClient,
+}));
+app.use(createCodebaseRouter({
+  prisma,
+  verifyJwt,
+  verifyAppOwnership,
   storage: storageClient,
 }));
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, storage: storageClient }));

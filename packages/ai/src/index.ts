@@ -15,6 +15,7 @@ export * from './providers/json-http-provider';
 export * from './costs';
 export * from './flow-suggestions';
 export * from './document-flow';
+export * from './codebase-explanations';
 
 // ─────────────────────────────────────────────────────────────
 // Types

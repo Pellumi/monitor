@@ -67,6 +67,9 @@ const IPC = {
   scanWorkspace: 'tellann:workspace:scan',
   getCodebaseAnalysis: 'tellann:workspace:analysis:get',
   cancelCodebaseAnalysis: 'tellann:workspace:analysis:cancel',
+  rescanCodebase: 'tellann:workspace:analysis:rescan',
+  codebaseQuery: 'tellann:workspace:analysis:query',
+  openCodebaseEvidence: 'tellann:workspace:analysis:evidence:open',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
   setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',
@@ -123,6 +126,12 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.invoke(IPC.getCodebaseAnalysis, applicationId),
     cancelCodebaseAnalysis: (applicationId: string) =>
       ipcRenderer.invoke(IPC.cancelCodebaseAnalysis, applicationId),
+    rescanCodebase: (applicationId: string) =>
+      ipcRenderer.invoke(IPC.rescanCodebase, applicationId),
+    codebaseQuery: (input: { applicationId: string; kind: string; payload?: Record<string, unknown> }) =>
+      ipcRenderer.invoke(IPC.codebaseQuery, input),
+    openCodebaseEvidence: (input: { applicationId: string; path: string; line?: number }) =>
+      ipcRenderer.invoke(IPC.openCodebaseEvidence, input),
     cloneWorkspace: (input: { applicationId: string; cloneUrl: string }) =>
       ipcRenderer.invoke(IPC.cloneWorkspace, input),
     getBranchCompliance: (applicationId: string) =>

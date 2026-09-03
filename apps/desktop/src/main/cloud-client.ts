@@ -1116,11 +1116,16 @@ export class DesktopCloudClient {
     };
   }
 
-  async createCodebaseAnalysis(
+  /**
+   * Upload a sanitized archive in bounded parts and create the analysis job.
+   * Parts are re-sendable, so a dropped connection resumes rather than
+   * restarting the whole transfer.
+   */
+  async uploadCodebaseSnapshot(
     applicationId: string,
     input: {
       workspaceId: string;
-      repositorySnapshotId: string;
+      repositorySnapshotId: string | null;
       revision: string | null;
       branch: string | null;
       dirty: boolean;
@@ -1128,37 +1133,105 @@ export class DesktopCloudClient {
       repositoryIdentity: string | null;
       scannerVersion: string;
       archive: { checksum: string; fileCount: number; excludedFiles: number; uncompressedBytes: number; buffer: Buffer };
+      onProgress?: (sent: number, total: number) => void;
     },
-  ) {
-    return this.request<Json>(`/applications/${applicationId}/codebase/snapshots`, {
+  ): Promise<{ snapshotId: string; jobId: string }> {
+    const PART_BYTES = 3 * 1024 * 1024;
+    const total = Math.max(1, Math.ceil(input.archive.buffer.length / PART_BYTES));
+
+    const initiated = await this.request<Json>(`/applications/${applicationId}/codebase/uploads`, {
       method: 'POST',
       body: JSON.stringify({
         workspaceId: input.workspaceId,
-        repositorySnapshotId: input.repositorySnapshotId,
-        revision: input.revision,
-        branch: input.branch,
-        dirty: input.dirty,
-        repositoryFingerprint: input.repositoryFingerprint,
-        repositoryIdentity: input.repositoryIdentity,
-        scannerVersion: input.scannerVersion,
+        totalParts: total,
         contentHash: input.archive.checksum,
-        fileCount: input.archive.fileCount,
-        excludedFileCount: input.archive.excludedFiles,
-        totalBytes: input.archive.uncompressedBytes,
-        archiveBase64: input.archive.buffer.toString('base64'),
+        totalBytes: input.archive.buffer.length,
       }),
     });
+    const uploadId = String(initiated.uploadId ?? '');
+    if (!uploadId) throw new Error('CODEBASE_UPLOAD_NOT_ACCEPTED');
+
+    try {
+      for (let part = 0; part < total; part += 1) {
+        const slice = input.archive.buffer.subarray(part * PART_BYTES, (part + 1) * PART_BYTES);
+        await this.request<Json>(
+          `/applications/${applicationId}/codebase/uploads/${uploadId}/parts/${part}`,
+          { method: 'PUT', body: JSON.stringify({ dataBase64: slice.toString('base64') }) },
+        );
+        input.onProgress?.(part + 1, total);
+      }
+
+      const created = await this.request<Json>(`/applications/${applicationId}/codebase/snapshots`, {
+        method: 'POST',
+        body: JSON.stringify({
+          uploadId,
+          workspaceId: input.workspaceId,
+          repositorySnapshotId: input.repositorySnapshotId,
+          revision: input.revision,
+          branch: input.branch,
+          dirty: input.dirty,
+          repositoryFingerprint: input.repositoryFingerprint,
+          repositoryIdentity: input.repositoryIdentity,
+          scannerVersion: input.scannerVersion,
+          fileCount: input.archive.fileCount,
+          excludedFileCount: input.archive.excludedFiles,
+          totalBytes: input.archive.uncompressedBytes,
+        }),
+      });
+      return { snapshotId: String(created.snapshotId ?? ''), jobId: String(created.jobId ?? '') };
+    } catch (error) {
+      await this.request<Json>(`/applications/${applicationId}/codebase/uploads/${uploadId}`, { method: 'DELETE' })
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
-  async completeCodebaseAnalysis(applicationId: string, jobId: string, analysis: CodebaseAnalysis) {
-    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/result`, {
-      method: 'PUT', body: JSON.stringify({ analysis }),
+  async getCodebaseAnalysis(applicationId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/latest`, { method: 'GET' });
+  }
+
+  async cancelCloudCodebaseAnalysis(applicationId: string, jobId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/cancel`, { method: 'POST' });
+  }
+
+  async retryCloudCodebaseAnalysis(applicationId: string, jobId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/retry`, { method: 'POST' });
+  }
+
+  async queryCodebaseGraph(applicationId: string, query: Record<string, unknown>) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/graph`, {
+      method: 'POST', body: JSON.stringify(query),
     });
   }
 
-  async updateCodebaseAnalysis(applicationId: string, jobId: string, status: CodebaseAnalysis['status'], progress: number, stageMessage: string) {
-    return this.request<Json>(`/applications/${applicationId}/codebase/analyses/${jobId}/progress`, {
-      method: 'PATCH', body: JSON.stringify({ status, progress, stageMessage }),
+  async codebaseCollection(applicationId: string, collection: string, search: string, offset: number, limit: number) {
+    const parameters = new URLSearchParams({ search, offset: String(offset), limit: String(limit) });
+    return this.request<Json>(`/applications/${applicationId}/codebase/${collection}?${parameters}`, { method: 'GET' });
+  }
+
+  async codebaseHierarchy(applicationId: string, parentId: string | null, offset: number, limit: number) {
+    const parameters = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (parentId) parameters.set('parentId', parentId);
+    return this.request<Json>(`/applications/${applicationId}/codebase/hierarchy?${parameters}`, { method: 'GET' });
+  }
+
+  async codebaseEntity(applicationId: string, entityId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/entities/${encodeURIComponent(entityId)}`, { method: 'GET' });
+  }
+
+  async codebaseBlastRadius(applicationId: string, entityId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/blast-radius`, {
+      method: 'POST', body: JSON.stringify({ entityId }),
+    });
+  }
+
+  async codebaseCompare(applicationId: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/compare`, { method: 'GET' });
+  }
+
+  async askCodebase(applicationId: string, question: string) {
+    return this.request<Json>(`/applications/${applicationId}/codebase/ask`, {
+      method: 'POST', body: JSON.stringify({ question }),
     });
   }
 

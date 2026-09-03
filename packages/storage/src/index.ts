@@ -1,3 +1,4 @@
+export * from './archive-encryption';
 import {
   S3Client,
   PutObjectCommand,
@@ -205,6 +206,20 @@ export class StorageClient {
   /** Delete an object. */
   async delete(key: string): Promise<void> {
     return this.primary.delete(key);
+  }
+
+  /**
+   * Store an object without minting a signed URL for it. Source archives are
+   * only ever read back by the analysis worker, so handing out a presigned link
+   * would create a way to fetch a customer's code that nothing needs.
+   */
+  async upload(key: string, buffer: Buffer, contentType: string): Promise<UploadResult> {
+    try {
+      return await this.primary.upload(key, buffer, contentType);
+    } catch (error) {
+      if (!this.fallback) throw error;
+      return this.fallback.upload(key, buffer, contentType);
+    }
   }
 
   async download(key: string): Promise<Buffer> {

@@ -26,6 +26,29 @@ import type {
 import type { GuidedRunState } from '@tellann/browser-observer';
 
 declare global {
+  /** What the desktop knows about an analysis, whichever side is running it. */
+  type CodebaseAnalysisView = {
+    mode: 'cloud' | 'local';
+    source: 'cloud' | 'local';
+    /** A local run whose worker died with a previous desktop process. */
+    interrupted: boolean;
+    uploadProgress: { sent: number; total: number } | null;
+    analysis: CodebaseAnalysis | null;
+    job: {
+      jobId: string;
+      status: CodebaseAnalysis['status'];
+      progress: number;
+      stageMessage: string;
+      attempt: number;
+      maxAttempts: number;
+      errorMessageSafe: string | null;
+      warnings: Array<{ code: string; severity: string; message: string }>;
+      stages: Array<{ stage: string; status: string; progress: number; completedAt: string | null }>;
+      snapshot: { id: string; revision: string | null; branch: string | null; dirty: boolean } | null;
+    } | null;
+    unreachable?: string;
+  };
+
   interface Window {
     tellann?: {
       auth: {
@@ -56,8 +79,15 @@ declare global {
           snapshot: RepositorySnapshotSummary;
           branchPolicy: BranchPolicy | null;
         }>;
-        getCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysis | null>;
+        getCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisView | null>;
         cancelCodebaseAnalysis(applicationId: string): Promise<{ cancelled: boolean }>;
+        rescanCodebase(applicationId: string): Promise<{ rescanned: boolean; requiresReattach: boolean }>;
+        codebaseQuery(input: {
+          applicationId: string;
+          kind: 'graph' | 'hierarchy' | 'entity' | 'blast-radius' | 'compare' | 'ask' | 'collection';
+          payload?: Record<string, unknown>;
+        }): Promise<any>;
+        openCodebaseEvidence(input: { applicationId: string; path: string; line?: number }): Promise<{ opened: boolean; reason?: string }>;
         cloneWorkspace(input: { applicationId: string; cloneUrl: string }): Promise<{
           id: string;
           path: string;

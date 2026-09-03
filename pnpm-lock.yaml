@@ -920,12 +920,18 @@ importers:
 
   services/code-intelligence-worker:
     dependencies:
+      '@tellann/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@tellann/code-graph':
         specifier: workspace:*
         version: link:../../packages/code-graph
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contracts
       '@tellann/project-intelligence':
         specifier: workspace:*
         version: link:../../packages/project-intelligence
@@ -1203,6 +1209,9 @@ importers:
       '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
+      '@tellann/project-intelligence':
+        specifier: workspace:*
+        version: link:../../packages/project-intelligence
       '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
