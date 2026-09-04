@@ -690,14 +690,22 @@ export const FlowProjectBindingSchema = z.object({
   currentScanId: z.string().uuid().nullable(), initializedAt: z.string().datetime().or(z.date()).nullable(), lastRescannedAt: z.string().datetime().or(z.date()).nullable(),
 }).passthrough();
 
+/**
+ * The name a checkpoint carries in the user's own code. Markers are written by
+ * hand, so they are named after the declared flow and state — `required` marks the
+ * two a flow cannot be initialized without: its initial state and one terminal.
+ */
+export const FlowMarkerSchema = z.object({ flow: z.string(), state: z.string().nullable(), transition: z.string().nullable() });
 export const FlowCheckpointSchema = z.object({
   id: z.string(), kind: z.enum(['STATE', 'TRANSITION']), stateId: z.string().nullable(), transitionId: z.string().nullable(),
   stateRole: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']).nullable(), terminalKind: z.string().nullable(), eventType: z.string(),
   expectedState: z.string().nullable(), fromCheckpointId: z.string().nullable(), toCheckpointId: z.string().nullable(), required: z.boolean(),
+  label: z.string().optional(), marker: FlowMarkerSchema.nullable().optional(),
   mapping: z.object({ file: z.string().nullable(), symbol: z.string().nullable(), confidence: z.number().min(0).max(1), rationale: z.string() }),
 });
 export const FlowInitializationManifestSchema = z.object({
   version: z.literal('1.0'), graphVersionId: z.string().uuid(), graphHash: z.string(), repositorySnapshotId: z.string().uuid(),
+  flowKey: z.string().optional(), flowName: z.string().optional(),
   initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
   unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointSchema), generatedAt: z.string().datetime(),
 });
@@ -716,6 +724,7 @@ export const ManualRoadmapStepSchema = z.object({
   id: z.string(), groupId: z.string(), kind: z.enum(['PREREQUISITE', 'STATE', 'TRANSITION', 'TERMINAL', 'VERIFY']), title: z.string(),
   description: z.string(), status: z.enum(['PENDING', 'CURRENT', 'DONE', 'VERIFIED', 'BLOCKED']), dependencies: z.array(z.string()),
   file: z.string().nullable(), symbol: z.string().nullable(), snippet: z.string(), eventType: z.string().nullable(), checkpointId: z.string().nullable(),
+  required: z.boolean().optional(), marker: FlowMarkerSchema.nullable().optional(),
   userCompletedAt: z.string().datetime().nullable(), verificationEvidence: z.array(z.any()),
 });
 export const ManualRoadmapSchema = z.object({
@@ -726,6 +735,11 @@ export const CheckpointCoverageSchema = z.object({
   status: z.enum(['NOT_STARTED', 'WAITING_FOR_INITIAL', 'RECORDING', 'COMPLETED', 'INCOMPLETE']), startedAt: z.string().datetime().nullable(),
   observedCheckpointIds: z.array(z.string()), missingCheckpointIds: z.array(z.string()), reachedTerminalStateIds: z.array(z.string()),
   orderingErrors: z.array(z.any()), verifiedPath: z.array(z.string()), lastEventAt: z.string().datetime().nullable(),
+  // Present when the flow was initialized by searching the code rather than by
+  // watching a live run.
+  method: z.enum(['STATIC_CODE_SCAN', 'RUNTIME_TELEMETRY']).optional(),
+  codeEvidence: z.array(z.object({ checkpointId: z.string(), file: z.string(), line: z.number().int() })).optional(),
+  scannedAt: z.string().datetime().nullable().optional(),
 });
 
 export const FlowInitializationSchema = z.object({
@@ -976,6 +990,7 @@ export const IPC = {
   setFlowInitializationMode: 'tellann:flow:initialization:mode',
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
+  verifyFlowCheckpointsInCode: 'tellann:flow:initialization:verification:code-scan',
   getFlowVerification: 'tellann:flow:initialization:verification:get',
   rescanFlow: 'tellann:flow:rescan',
   approveFlowInitialization: 'tellann:flow:initialization:approve',
@@ -1215,3 +1230,22 @@ export type DesktopOrganization = z.infer<typeof DesktopOrganizationSchema>;
 export type CreateApplicationInput = z.infer<typeof CreateApplicationInputSchema>;
 export type AppEvent = z.infer<typeof AppEventSchema>;
 export type CodebaseUploadConsentRequest = z.infer<typeof CodebaseUploadConsentRequestSchema>;
+
+/**
+ * A folder was attached to an application that is already bound to a different
+ * repository. The API answers 409 with this code; the desktop main process
+ * re-throws it across IPC so the renderer can prompt for another folder.
+ */
+export const REPOSITORY_MISMATCH_CODE = 'REPOSITORY_MISMATCH';
+
+/**
+ * The payload the main process encodes into the error message. The renderer
+ * parses it back out there rather than here: this module compiles to CommonJS
+ * and pulls in zod, so the renderer only ever imports types from it.
+ */
+export type RepositoryMismatch = {
+  /** The sentence the API supplied, safe to show as-is. */
+  message: string;
+  /** The repository this application is bound to, when the API knows it. */
+  expectedCloneUrl: string | null;
+};

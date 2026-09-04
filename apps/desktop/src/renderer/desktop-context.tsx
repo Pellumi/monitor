@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  RepositoryMismatch,
   CreateApplicationInput,
   DesktopOrganization,
   QaBranchSwitchResult,
@@ -42,6 +43,36 @@ export type LocalWorkspace = {
   snapshot: RepositorySnapshotSummary;
 };
 
+/** A rejected folder attach, plus the application it was rejected for. */
+export type RepositoryMismatchPrompt = RepositoryMismatch & { applicationId: string };
+
+/**
+ * Recovers the mismatch details the main process encoded into the error message,
+ * because Electron keeps only `message` when a rejection crosses IPC — and it
+ * prefixes that, so the payload is matched anywhere in the string rather than
+ * anchored to its start.
+ *
+ * This lives here rather than in @tellann/desktop-contracts because that package
+ * compiles to CommonJS and pulls in zod: the renderer imports only types from it.
+ * The code below must stay in step with REPOSITORY_MISMATCH_CODE there.
+ */
+function parseRepositoryMismatch(cause: unknown): RepositoryMismatch | null {
+  const raw = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+  const match = /REPOSITORY_MISMATCH\s+(\{[\s\S]*\})/.exec(raw);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]) as Partial<RepositoryMismatch>;
+    return {
+      message: typeof parsed.message === 'string' && parsed.message
+        ? parsed.message
+        : 'This folder belongs to a different repository than the one this application is bound to.',
+      expectedCloneUrl: typeof parsed.expectedCloneUrl === 'string' ? parsed.expectedCloneUrl : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 type DesktopContextValue = {
   bridgeAvailable: boolean;
   loading: boolean;
@@ -69,6 +100,9 @@ type DesktopContextValue = {
   /** Creates the application in the cloud, then refreshes the local list. */
   createApplication(input: CreateApplicationInput): Promise<DesktopApplication | null>;
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
+  /** Set when the last attach was refused because the folder is a different repository. */
+  repositoryMismatch: RepositoryMismatchPrompt | null;
+  dismissRepositoryMismatch(): void;
   cloneWorkspace(applicationId: string, cloneUrl: string): Promise<LocalWorkspace | null>;
   refreshBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
   /** Owner/Admin only: turn agent-performed branch switching on or off org-wide. */
@@ -108,6 +142,7 @@ type DesktopContextValue = {
   setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
   updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
   startFlowVerification(initializationId: string): Promise<Record<string, any>>;
+  verifyFlowCheckpointsInCode(applicationId: string, initializationId: string): Promise<Record<string, any>>;
   getFlowVerification(initializationId: string): Promise<Record<string, any>>;
   rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
   approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
@@ -171,6 +206,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const [fetchedOrganizations, setFetchedOrganizations] = useState<DesktopOrganization[]>([]);
   const [workspaces, setWorkspaces] = useState<Record<string, LocalWorkspace>>({});
   const [branchCompliance, setBranchCompliance] = useState<Record<string, WorkspaceCompliance>>({});
+  const [repositoryMismatch, setRepositoryMismatch] = useState<RepositoryMismatchPrompt | null>(null);
   const [runs, setRuns] = useState<Record<string, QARunSummary[]>>({});
   const [activeRun, setActiveRun] = useState<GuidedRunState | null>(null);
   const [avatarDataUri, setAvatarDataUri] = useState<string | null>(null);
@@ -413,10 +449,22 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const attachWorkspace = useCallback(async (applicationId: string) => perform(async () => {
     const selected = await bridge().projects.chooseWorkspace();
     if (!selected) return null;
+    setRepositoryMismatch(null);
     // The workspace id is derived in the main process from the folder path, so
     // re-attaching the same folder updates the existing record rather than
     // creating a duplicate.
-    const scanned = await bridge().projects.scanWorkspace({ ...selected, applicationId });
+    let scanned: Awaited<ReturnType<ReturnType<typeof bridge>['projects']['scanWorkspace']>>;
+    try {
+      scanned = await bridge().projects.scanWorkspace({ ...selected, applicationId });
+    } catch (cause) {
+      const mismatch = parseRepositoryMismatch(cause);
+      // The wrong folder is the user's next decision, not an app-level failure:
+      // it is raised as a modal that offers the folder picker again, instead of
+      // an error banner above a page they are not looking at.
+      if (!mismatch) throw cause;
+      setRepositoryMismatch({ ...mismatch, applicationId });
+      return null;
+    }
     const workspace = { id: scanned.id, ...selected, snapshot: scanned.snapshot };
     setWorkspaces((current) => ({ ...current, [applicationId]: workspace }));
     void refreshBranchCompliance(applicationId);
@@ -500,6 +548,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     refreshOrganizations,
     createApplication,
     attachWorkspace,
+    repositoryMismatch,
+    dismissRepositoryMismatch: () => setRepositoryMismatch(null),
     cloneWorkspace,
     refreshBranchCompliance,
     setBranchAgentCheckout,
@@ -533,6 +583,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
     startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),
+    verifyFlowCheckpointsInCode: (applicationId, initializationId) => perform(() => bridge().intent.verifyFlowCheckpointsInCode(applicationId, initializationId)),
     getFlowVerification: (initializationId) => bridge().intent.getFlowVerification(initializationId),
     rescanFlow: (bindingId, applicationId) => perform(() => bridge().intent.rescanFlow(bindingId, applicationId)),
     approveFlowInitialization: (initializationId, instrumentationPlanId) => perform(() => bridge().intent.approveFlowInitialization(initializationId, instrumentationPlanId)),
@@ -568,7 +619,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
-    avatarDataUri, organizations, refreshOrganizations, createApplication,
+    avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;

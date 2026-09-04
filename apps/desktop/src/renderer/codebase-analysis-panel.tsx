@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import type {
   AiExplanation,
@@ -26,6 +27,7 @@ import {
   Database,
   ExternalLink,
   FileText,
+  FolderOpen,
   FolderTree,
   GitCompare,
   GitFork,
@@ -44,6 +46,7 @@ import {
   X,
 } from "lucide-react";
 import { CodebaseGraphExplorer } from "./codebase-graph-explorer";
+import { useDesktop } from "./desktop-context";
 
 type View =
   | "overview"
@@ -1724,6 +1727,48 @@ function AskView({ applicationId }: { applicationId: string }) {
 
 // ── Shell ────────────────────────────────────────────────────────────────────
 
+/**
+ * The worker reports a folder it cannot open as a raw `ENOENT` against a path
+ * it has already redacted to `[workspace]`, which tells the reader nothing and
+ * cannot be fixed by retrying — the folder has to be attached again.
+ */
+function isMissingWorkspaceFailure(detail: string | null | undefined): boolean {
+  return /ENOENT|no such file or directory|WORKSPACE_NOT_ATTACHED/i.test(detail ?? "");
+}
+
+/**
+ * Every state where the panel has nothing to show: what happened, the technical
+ * detail underneath it, and the action that actually resolves it.
+ *
+ * These used to be bare children of `.analysis-shell`, which has no padding of
+ * its own, so a full-bleed warning bar and an unaligned button sat flush against
+ * the card edges. The shell stays padding-free for the data views; this supplies
+ * its own frame.
+ */
+function AnalysisStateCard({
+  title,
+  description,
+  detail,
+  actions,
+}: {
+  title: string;
+  description: string;
+  detail?: string | null;
+  actions: ReactNode;
+}) {
+  return (
+    <section className="content-card analysis-shell w-full">
+      <div className="analysis-state w-full max-w-none p-0!">
+        {/* <AlertTriangle size={18} className="analysis-state-icon" /> */}
+        <h2>{title}</h2>
+        <p>{description}</p>
+        {detail ? <p className="analysis-state-detail">{detail}</p> : null}
+        <div className="analysis-state-actions ml-auto!">{actions}</div>
+      </div>
+    </section>
+  );
+}
+
 export function CodebaseAnalysisPanel({
   applicationId,
   workspaceRoot,
@@ -1731,6 +1776,7 @@ export function CodebaseAnalysisPanel({
   applicationId: string;
   workspaceRoot: string;
 }) {
+  const { attachWorkspace, busy } = useDesktop();
   const [view, setView] = useState<View>("overview");
   const [state, setState] = useState<CodebaseAnalysisView | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -1748,7 +1794,9 @@ export function CodebaseAnalysisPanel({
   const [rescan, setRescan] = useState<{
     busy: boolean;
     message: string | null;
-  }>({ busy: false, message: null });
+    /** The rescan cannot proceed until a folder is attached again. */
+    needsAttach: boolean;
+  }>({ busy: false, message: null, needsAttach: false });
 
   useEffect(() => {
     let stopped = false;
@@ -1798,7 +1846,7 @@ export function CodebaseAnalysisPanel({
    * the new revision, and a failure has to be visible rather than swallowed.
    */
   const startRescan = useCallback(async () => {
-    setRescan({ busy: true, message: null });
+    setRescan({ busy: true, message: null, needsAttach: false });
     try {
       const result =
         await window.tellann?.projects?.rescanCodebase?.(applicationId);
@@ -1806,6 +1854,7 @@ export function CodebaseAnalysisPanel({
         setRescan({
           busy: false,
           message: "This build of the desktop app cannot start a rescan.",
+          needsAttach: false,
         });
         return;
       }
@@ -1813,22 +1862,36 @@ export function CodebaseAnalysisPanel({
         setRescan({
           busy: false,
           message:
-            "This workspace sends its source for cloud analysis. Re-attach the folder to analyse the current revision, so consent is asked against what would actually be uploaded.",
+            "This workspace sends its source for cloud analysis. Attaching the folder again analyses the current revision, so consent is asked against what would actually be uploaded.",
+          needsAttach: true,
         });
         return;
       }
-      setRescan({ busy: false, message: null });
+      setRescan({ busy: false, message: null, needsAttach: false });
       setReloadToken((value) => value + 1);
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The rescan could not be started.";
       setRescan({
         busy: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "The rescan could not be started.",
+        message,
+        needsAttach: isMissingWorkspaceFailure(message),
       });
     }
   }, [applicationId]);
+
+  /**
+   * Opens the folder picker and restarts polling. Attaching runs a fresh
+   * analysis in the main process, so the panel only has to look again.
+   */
+  const attachFolder = useCallback(async () => {
+    const attached = await attachWorkspace(applicationId).catch(() => null);
+    if (!attached) return;
+    setRescan({ busy: false, message: null, needsAttach: false });
+    setReloadToken((value) => value + 1);
+  }, [attachWorkspace, applicationId]);
 
   const analysis = state?.analysis ?? null;
   const status = state?.job?.status ?? analysis?.status ?? null;
@@ -1888,12 +1951,20 @@ export function CodebaseAnalysisPanel({
 
   if (!state) {
     return (
-      <section className="content-card analysis-shell">
-        <p className="analysis-empty">
-          Deep analysis has not started for this workspace. Re-attach the folder
-          to build a versioned code graph.
-        </p>
-      </section>
+      <AnalysisStateCard
+        title="No code graph yet"
+        description="Deep analysis has not run for this application. Attach the project folder to build a versioned code graph from it."
+        actions={
+          <button
+            className="analysis-btn-primary"
+            onClick={() => void attachFolder()}
+            disabled={busy}
+          >
+            <FolderOpen size={14} />
+            Attach folder
+          </button>
+        }
+      />
     );
   }
 
@@ -1979,44 +2050,85 @@ export function CodebaseAnalysisPanel({
   }
 
   if (status === "FAILED") {
+    const failure = state.job?.errorMessageSafe ?? analysis?.stageMessage ?? null;
+    // A folder that cannot be opened is not something a retry can fix, and the
+    // raw ENOENT names a path that was redacted to "[workspace]" on the way
+    // here — so it is stated plainly and answered with the picker instead.
+    const missingFolder = isMissingWorkspaceFailure(failure);
+    const needsAttach = missingFolder || rescan.needsAttach;
     return (
-      <section className="content-card analysis-shell">
-        <div className="analysis-warning">
-          <AlertTriangle size={15} />
-          Analysis failed:{" "}
-          {state.job?.errorMessageSafe ??
-            analysis?.stageMessage ??
-            "no detail was recorded"}
-          .
-        </div>
-        <button
-          className="analysis-btn-primary"
-          onClick={() => void startRescan()}
-          disabled={rescan.busy}
-        >
-          {rescan.busy ? (
-            <Loader2 size={14} className="spin" />
+      <AnalysisStateCard
+        title={missingFolder ? "The project folder is missing" : "Analysis failed"}
+        description={
+          missingFolder
+            ? "Tellann could not open the folder attached to this application, it has been moved, renamed, or deleted since the last analysis. Attach it again to rebuild the code graph."
+            : "The codebase analysis stopped before it finished, so no results were saved from this run."
+        }
+        detail={rescan.message ?? (missingFolder ? null : failure)}
+        actions={
+          needsAttach ? (
+            <button
+              className="analysis-btn-primary"
+              onClick={() => void attachFolder()}
+              disabled={busy}
+            >
+              <FolderOpen size={14} />
+              Attach folder
+            </button>
           ) : (
-            <RefreshCw size={14} />
-          )}
-          {rescan.busy ? "Starting…" : "Try again"}
-        </button>
-        {rescan.message ? (
-          <p className="analysis-note">{rescan.message}</p>
-        ) : null}
-      </section>
+            <button
+              className="analysis-btn-primary"
+              onClick={() => void startRescan()}
+              disabled={rescan.busy}
+            >
+              {rescan.busy ? (
+                <Loader2 size={14} className="spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {rescan.busy ? "Starting…" : "Try again"}
+            </button>
+          )
+        }
+      />
     );
   }
 
   if (!analysis) {
     return (
-      <section className="content-card analysis-shell">
-        <p className="analysis-empty">
-          {status === "CANCELLED"
-            ? "This analysis was cancelled. Re-attach the workspace or rescan to start a new one."
-            : "No analysis results are available for this workspace yet."}
-        </p>
-      </section>
+      <AnalysisStateCard
+        title={status === "CANCELLED" ? "Analysis cancelled" : "No results yet"}
+        description={
+          status === "CANCELLED"
+            ? "This analysis was stopped before it produced a code graph. Start a new one, or attach a different folder."
+            : "No analysis results are available for this application yet. Run one against the attached folder to build a code graph."
+        }
+        detail={rescan.message}
+        actions={
+          <>
+            <button
+              className="analysis-btn-primary"
+              onClick={() => void startRescan()}
+              disabled={rescan.busy || busy}
+            >
+              {rescan.busy ? (
+                <Loader2 size={14} className="spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {rescan.busy ? "Starting…" : "Run analysis"}
+            </button>
+            <button
+              className="analysis-btn-secondary"
+              onClick={() => void attachFolder()}
+              disabled={busy}
+            >
+              <FolderOpen size={14} />
+              Attach folder
+            </button>
+          </>
+        }
+      />
     );
   }
 

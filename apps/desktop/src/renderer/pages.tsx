@@ -5627,11 +5627,20 @@ function stepKindLabel(kind: string): string {
           : "State";
 }
 
+/** What the last "check my code" pass found, so the card can explain itself. */
+type FlowCodeScanOutcome = {
+  completed: boolean;
+  filesScanned: number;
+  markersFound: number;
+  error?: string;
+};
+
 function FlowRoadmap({
   roadmap,
   manifest,
   verification,
   busy,
+  scanOutcome,
   onToggle,
   onVerify,
   onRebuild,
@@ -5643,6 +5652,7 @@ function FlowRoadmap({
   } | null;
   verification: any;
   busy: boolean;
+  scanOutcome: FlowCodeScanOutcome | null;
   onToggle(stepId: string, completed: boolean): void;
   onVerify(): void;
   onRebuild?: () => void;
@@ -5730,6 +5740,41 @@ function FlowRoadmap({
     [verification?.missingCheckpointIds],
   );
 
+  // Initialization needs the flow's boundaries only: the declared initial state
+  // and one terminal state. Those are the steps we put in front of the user; the
+  // rest of the graph stays available but never blocks them.
+  const requiredSteps = useMemo(() => {
+    const checkpoints = manifest?.checkpoints ?? [];
+    // Read the boundaries off the manifest rather than off the step flags, so a
+    // roadmap generated before this contract still shows just its two ends.
+    const ordered = [
+      ...checkpoints.filter((cp) => cp.stateRole === "INITIAL"),
+      ...checkpoints.filter((cp) => cp.stateRole === "TERMINAL"),
+    ].map((cp) => String(cp.id));
+    const steps = ordered.length
+      ? ordered
+          .map((id) => stepById.get(id))
+          .filter((step): step is RoadmapStep => Boolean(step))
+      : roadmap.steps.filter(
+          (step) =>
+            step.kind !== "VERIFY" && (step as any).required !== false,
+        );
+    return steps.filter((step) => Boolean(step.snippet));
+  }, [manifest, roadmap.steps, stepById]);
+  const requiredSummary = useMemo(() => {
+    if (!verification?.startedAt) return "NOT CHECKED YET";
+    const startFound = requiredSteps.some(
+      (step) => step.kind !== "TERMINAL" && observed.has(step.id),
+    );
+    const finishFound = requiredSteps.some(
+      (step) => step.kind === "TERMINAL" && observed.has(step.id),
+    );
+    if (startFound && finishFound) return "BOTH FOUND";
+    if (startFound) return "FINISH MARKER MISSING";
+    if (finishFound) return "START MARKER MISSING";
+    return "NOT FOUND YET";
+  }, [observed, requiredSteps, verification?.startedAt]);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {
     setSelectedId((current) => {
@@ -5744,6 +5789,15 @@ function FlowRoadmap({
   }, [roadmap.steps, stepById]);
   const selected = selectedId ? (stepById.get(selectedId) ?? null) : null;
 
+  // Where the code scan actually found this checkpoint, so the user can tell a
+  // marker they just added from one that was already there.
+  const evidenceLocation = (step: RoadmapStep): string | null => {
+    const hit = (step.verificationEvidence ?? []).find(
+      (item: any) => item?.file,
+    ) as { file?: string; line?: number } | undefined;
+    return hit?.file ? `${hit.file}${hit.line ? `:${hit.line}` : ""}` : null;
+  };
+
   const renderPanel = (step: RoadmapStep) => {
     const completed = ["DONE", "VERIFIED"].includes(step.status);
     const deps = (step.dependencies ?? [])
@@ -5753,7 +5807,10 @@ function FlowRoadmap({
     return (
       <div className="flow-graph-panel-body">
         <div className="flow-graph-panel-head">
-          <span className="flow-graph-kind">{stepKindLabel(step.kind)}</span>
+          <span className="flow-graph-kind">
+            {stepKindLabel(step.kind)}
+            {(step as any).required === false ? " · optional" : " · required"}
+          </span>
           <button
             type="button"
             className="icon-button"
@@ -5804,14 +5861,19 @@ function FlowRoadmap({
         <div>
           {step.status === "VERIFIED" || observed.has(step.id) ? (
             <span className="flow-graph-badge is-ok">
-              <Check size={13} /> Seen in a live run
+              <Check size={13} /> Found in your code
+              {evidenceLocation(step) ? ` · ${evidenceLocation(step)}` : ""}
             </span>
           ) : missing.has(step.id) ? (
             <span className="flow-graph-badge is-wait">
-              Not seen yet — run your app through this path
+              Not found in your code yet
             </span>
           ) : (
-            <span className="flow-graph-badge">Verification not started</span>
+            <span className="flow-graph-badge">
+              {(step as any).required === false
+                ? "Optional — not needed to initialize"
+                : "Not checked yet"}
+            </span>
           )}
         </div>
         {deps.length ? (
@@ -5829,7 +5891,7 @@ function FlowRoadmap({
       <div className="card-heading">
         <div>
           <small>Manual initialization</small>
-          <h2>Build the declared path into your project</h2>
+          <h2>Mark where this flow starts and ends in your code</h2>
         </div>
         <div className="flex items-center gap-2">
           <Status>
@@ -5856,31 +5918,72 @@ function FlowRoadmap({
         <summary>How this works</summary>
         <div className="muted stack" style={{ gap: 6 }}>
           <p>
-            Tellann can only confirm this flow by watching it happen in a real
-            run. Add one line of code at each state and transition, then run
-            your app through the flow once.
+            Tellann needs to know where this flow begins and where it can end in
+            your code. That is two lines — everything else in the graph is
+            optional detail you can add whenever you like.
           </p>
           <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>
-              Click a state or transition in the graph. The panel shows its{" "}
-              <code>TELLANN.trackEvent(...)</code> line and where to put it.
+              Paste the <strong>start</strong> line where the flow begins, and
+              one <strong>finish</strong> line where it ends.
             </li>
             <li>
-              Paste that line at the point in your code where it happens, then
-              tick <strong>“I added this checkpoint”</strong> (just a checklist
-              for you).
+              Click <strong>“Check my code”</strong>. Tellann searches the
+              attached project folder for those markers — your app does not have
+              to be running.
             </li>
             <li>
-              When every checkpoint is in, run your app through the whole flow
-              from start to a finish state.
-            </li>
-            <li>
-              Click <strong>“Start telemetry verification”</strong>. Tellann
-              checks the checkpoints fired in the declared order.
+              Once both are found, the flow is initialized and you can start a
+              QA run.
             </li>
           </ol>
+          <p>
+            Optional: add the in-between states and transitions from the graph
+            for a finer-grained picture during runs.
+          </p>
         </div>
       </details>
+
+      {requiredSteps.length ? (
+        <div className="flow-required-markers">
+          <div className="flow-required-head">
+            <h3>Add these lines to your code</h3>
+            <Status>{requiredSummary}</Status>
+          </div>
+          <p className="muted">
+            The start marker is required, plus <strong>at least one</strong>{" "}
+            finish marker. Put each one where that moment actually happens in
+            your code.
+          </p>
+          <div className="flow-required-list">
+            {requiredSteps.map((step) => (
+              <div
+                key={step.id}
+                className={`flow-required-item ${
+                  observed.has(step.id) ? "is-found" : ""
+                }`}
+              >
+                <CopyableCodeBlock
+                  label={
+                    <small className="muted">
+                      {step.kind === "TERMINAL" ? "Finish" : "Start"} ·{" "}
+                      {quotedName(step.title)}
+                      {observed.has(step.id) ? " · found in your code" : ""}
+                    </small>
+                  }
+                  code={step.snippet}
+                />
+                {step.file ? (
+                  <small className="muted">
+                    Suggested location: <code>{step.file}</code>
+                    {step.symbol ? ` · ${step.symbol}` : ""}
+                  </small>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {graph ? (
         <div className="flow-graph" aria-label="Flow checkpoint graph">
@@ -6072,18 +6175,31 @@ function FlowRoadmap({
           disabled={busy || verification?.status === "COMPLETED"}
           onClick={onVerify}
         >
-          <Play size={15} />
-          {verification?.startedAt
-            ? "Restart verification"
-            : "Start telemetry verification"}
+          <SearchCode size={15} />
+          {verification?.status === "COMPLETED"
+            ? "Flow initialized"
+            : verification?.startedAt
+              ? "Check my code again"
+              : "Check my code"}
         </button>
       </div>
-      {verification?.missingCheckpointIds?.length ? (
-        <p className="muted-callout">
-          Still unobserved:{" "}
-          {verification.missingCheckpointIds
-            .map((id: string) => quotedName(stepById.get(id)?.title ?? id))
-            .join(", ")}
+      {scanOutcome?.error ? (
+        <p className="muted-callout" role="alert">
+          {scanOutcome.error}
+        </p>
+      ) : scanOutcome && !scanOutcome.completed ? (
+        <p className="muted-callout" role="status">
+          Searched {scanOutcome.filesScanned.toLocaleString()} source file
+          {scanOutcome.filesScanned === 1 ? "" : "s"} in the attached project and
+          could not find{" "}
+          {verification?.missingCheckpointIds?.length
+            ? verification.missingCheckpointIds
+                .map((id: string) => `“${quotedName(stepById.get(id)?.title ?? id)}”`)
+                .join(" or ")
+            : "the start and finish markers"}
+          . Add the line
+          {verification?.missingCheckpointIds?.length === 1 ? "" : "s"} above,
+          save the file, then check again.
         </p>
       ) : null}
     </section>
@@ -6378,7 +6494,7 @@ export function InstrumentationPage() {
     analyzeFlowInitialization,
     setFlowInitializationMode,
     updateFlowRoadmapStep,
-    startFlowVerification,
+    verifyFlowCheckpointsInCode,
     getFlowVerification,
   } = useProject();
   const navigate = useNavigate();
@@ -6421,6 +6537,9 @@ export function InstrumentationPage() {
   const [flowInitialization, setFlowInitialization] =
     useState<FlowInitialization | null>(null);
   const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
+  const [scanOutcome, setScanOutcome] = useState<FlowCodeScanOutcome | null>(
+    null,
+  );
 
   const refreshPlans = async () => {
     if (!projectId) return;
@@ -6659,10 +6778,39 @@ export function InstrumentationPage() {
     await refreshFlowInitialization();
   };
 
-  const beginVerification = async () => {
-    if (!initializationId) return;
-    await startFlowVerification(initializationId);
-    await refreshFlowInitialization();
+  /**
+   * Initialize the flow from the code that is already written. The desktop main
+   * process searches the attached project for the declared start and finish
+   * markers; nothing has to be running. On success there is nothing left to set
+   * up, so the user goes straight to starting a QA run.
+   */
+  const verifyCheckpointsInCode = async () => {
+    if (!initializationId || !projectId) return;
+    setScanOutcome(null);
+    try {
+      const result = await verifyFlowCheckpointsInCode(
+        projectId,
+        initializationId,
+      );
+      setScanOutcome({
+        completed: result.completed === true,
+        filesScanned: Number(result.filesScanned) || 0,
+        markersFound: Number(result.markersFound) || 0,
+      });
+      await refreshFlowInitialization();
+      if (result.completed === true) {
+        navigate(
+          `/applications/${projectId}/qa-runs/new${flowId ? `?flowId=${encodeURIComponent(flowId)}` : ""}`,
+        );
+      }
+    } catch (cause) {
+      setScanOutcome({
+        completed: false,
+        filesScanned: 0,
+        markersFound: 0,
+        error: String((cause as Error)?.message ?? cause),
+      });
+    }
   };
 
   useEffect(() => {
@@ -6819,8 +6967,8 @@ export function InstrumentationPage() {
                   <Status>All plans</Status>
                   <h2>Guide me manually</h2>
                   <p className="mb-4">
-                    Follow a persisted code roadmap, make the changes yourself,
-                    then prove the path with live telemetry.
+                    Add two lines yourself — where the flow starts and where it
+                    finishes — and Tellann finds them in your code.
                   </p>
                   <button
                     className="button primary"
@@ -6868,10 +7016,11 @@ export function InstrumentationPage() {
               manifest={flowInitialization.manifest}
               verification={flowInitialization.verification}
               busy={busy}
+              scanOutcome={scanOutcome}
               onToggle={(stepId, completed) =>
                 void toggleRoadmapStep(stepId, completed)
               }
-              onVerify={() => void beginVerification()}
+              onVerify={() => void verifyCheckpointsInCode()}
               onRebuild={
                 initializationId &&
                 flowInitialization.verification?.status !== "COMPLETED"
@@ -6886,8 +7035,16 @@ export function InstrumentationPage() {
           {flowInitialization.stage === "COMPLETED" ? (
             <div className="context-banner">
               <Check size={15} />
-              Flow initialized. Tellann observed an ordered path from the
-              declared initial state to a terminal state.
+              {(flowInitialization.verification as any)?.method ===
+              "STATIC_CODE_SCAN"
+                ? "Flow initialized. Tellann found the start marker and a finish marker in your code."
+                : "Flow initialized. Tellann observed an ordered path from the declared initial state to a terminal state."}
+              <Link
+                className="button"
+                to={`/applications/${projectId}/qa-runs/new${flowId ? `?flowId=${encodeURIComponent(flowId)}` : ""}`}
+              >
+                Start a QA run
+              </Link>
             </div>
           ) : null}
         </>
@@ -8909,6 +9066,8 @@ export function NewRunPage() {
     listInstrumentationPlans,
   } = useProject();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedFlowId = searchParams.get("flowId") ?? "";
   const [environmentId, setEnvironmentId] = useState(
     application?.environments[0]?.id ?? "",
   );
@@ -8977,10 +9136,16 @@ export function NewRunPage() {
         );
       });
       setFlows(ready);
-      setExpectedGraphVersionId(ready[0]?.versions?.[0]?.id ?? "");
-      setSelectedFlowId(ready[0]?.id ?? "");
+      // Arriving straight from initializing a Flow, that Flow is the one the user
+      // means to run — preselect it rather than whichever sorts first.
+      const requested = requestedFlowId
+        ? ready.find((item) => item.id === requestedFlowId)
+        : undefined;
+      const preferred = requested ?? ready[0];
+      setExpectedGraphVersionId(preferred?.versions?.[0]?.id ?? "");
+      setSelectedFlowId(preferred?.id ?? "");
     });
-  }, [getDeclaredFlows, projectId]);
+  }, [getDeclaredFlows, projectId, requestedFlowId]);
   useEffect(() => {
     if (!projectId) return;
     void listInstrumentationPlans(projectId)

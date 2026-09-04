@@ -124,6 +124,10 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
     Object.assign(error, {
       status: response.status,
       code: payload?.error,
+      // Carried through so callers can render the specific remediation the API
+      // named (e.g. the repository an application is already bound to) rather
+      // than only the sentence.
+      expectedCloneUrl: payload?.expectedCloneUrl,
       retryAfterMs:
         Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
           ? retryAfterSeconds * 1_000
@@ -889,6 +893,16 @@ export class DesktopCloudClient {
     return this.request(
       `/flow-initializations/${initializationId}/verification/start`,
       { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async submitFlowCodeScan(
+    initializationId: string,
+    matches: Json[],
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/verification/code-scan`,
+      { method: "POST", body: JSON.stringify({ matches }) },
     );
   }
 

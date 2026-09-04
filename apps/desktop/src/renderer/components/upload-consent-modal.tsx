@@ -121,7 +121,7 @@ export function UploadConsentModal() {
           </div>
         ) : null}
 
-        <div className="permission-summary">
+        {/* <div className="permission-summary">
           <ShieldCheck />
           <div>
             <strong>What happens to the snapshot</strong>
@@ -131,7 +131,7 @@ export function UploadConsentModal() {
               same analysis on this machine instead, and nothing is uploaded.
             </p>
           </div>
-        </div>
+        </div> */}
 
         <div className="desktop-modal-actions">
           <button type="button" disabled={submitting} onClick={() => answer(false)}>

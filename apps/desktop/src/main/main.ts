@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, IPC, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import {
   answerFromAnalysis,
@@ -21,6 +21,7 @@ import {
 } from '@tellann/project-intelligence';
 import { BrowserObserver } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
+import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
 import { closeLocalStore, deleteLocalState, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@tellann/document-intelligence';
@@ -518,6 +519,90 @@ async function requestUploadConsent(
   });
 }
 
+/**
+ * Upload and queue the full analysis after the workspace attach has completed.
+ *
+ * This deliberately does not sit on the `scanWorkspace` IPC request. Uploads
+ * can take an arbitrary amount of time (or wait on a temporarily unavailable
+ * service), while attaching the already-scanned folder is a completed local
+ * action and must be reflected in the renderer immediately.
+ */
+async function beginCloudCodebaseAnalysis(
+  applicationId: string,
+  selectedPath: string,
+  snapshot: RepositorySnapshotSummary,
+  registered: { workspaceId: string; repositorySnapshotId: string },
+): Promise<void> {
+  try {
+    writeAnalysisState(applicationId, {
+      mode: 'cloud',
+      cloudJobId: null,
+      workspaceRoot: selectedPath,
+      workspaceId: registered.workspaceId,
+      repositoryFingerprint: snapshot.repositoryFingerprint,
+      updatedAt: new Date().toISOString(),
+      analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
+      uploadProgress: { sent: 0, total: 1 },
+    });
+    const archive = buildSanitizedSourceArchive(selectedPath);
+    const created = await cloud.uploadCodebaseSnapshot(applicationId, {
+      workspaceId: registered.workspaceId,
+      repositorySnapshotId: registered.repositorySnapshotId,
+      revision: snapshot.revision,
+      branch: snapshot.branch,
+      dirty: snapshot.dirty,
+      repositoryFingerprint: snapshot.repositoryFingerprint,
+      repositoryIdentity: snapshot.repositoryOriginHash ?? snapshot.portableManifestIdentity ?? null,
+      scannerVersion: snapshot.scannerVersion,
+      archive,
+      onProgress: (sent, total) => {
+        const state = readAnalysisState(applicationId);
+        if (!state) return;
+        writeAnalysisState(applicationId, {
+          ...state,
+          uploadProgress: { sent, total },
+          analysis: state.analysis
+            ? { ...state.analysis, stageMessage: `Uploading source snapshot (${sent} of ${total})`, progress: Math.round((sent / total) * 4) }
+            : state.analysis,
+        });
+      },
+    });
+    const state = readAnalysisState(applicationId);
+    writeAnalysisState(applicationId, {
+      mode: 'cloud',
+      cloudJobId: created.jobId,
+      workspaceRoot: selectedPath,
+      workspaceId: registered.workspaceId,
+      repositoryFingerprint: snapshot.repositoryFingerprint,
+      updatedAt: new Date().toISOString(),
+      analysis: state?.analysis ?? pendingAnalysis(snapshot, 'Queued for analysis'),
+      uploadProgress: null,
+    });
+  } catch (error) {
+    // The upload failed, so no cloud job exists to wait for. Fall back to a
+    // local analysis and say why rather than showing a job that will never move.
+    console.warn('[codebase-analysis] Source upload failed; analysing locally instead', error);
+    beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
+    patchLocalAnalysis(applicationId, {
+      warnings: ['The source snapshot could not be uploaded, so this analysis ran on your machine instead.'],
+    });
+  }
+}
+
+/**
+ * Electron drops every property but `message` when an `ipcMain.handle` rejection
+ * crosses to the renderer, so the parts the renderer needs to build the
+ * "wrong folder" modal — the code and the repository the application is bound
+ * to — travel inside the message and are parsed back out there.
+ */
+function repositoryMismatchError(cause: unknown): Error {
+  const details = cause as { message?: string; expectedCloneUrl?: unknown };
+  return new Error(`${REPOSITORY_MISMATCH_CODE} ${JSON.stringify({
+    message: details?.message ?? 'This folder belongs to a different repository than the one this application is bound to.',
+    expectedCloneUrl: typeof details?.expectedCloneUrl === 'string' ? details.expectedCloneUrl : null,
+  })}`);
+}
+
 async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
   resolveWithinWorkspace(selectedPath, '.');
   // Derived from the folder path under a device-local secret rather than
@@ -532,7 +617,16 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
     workspaceId,
     upstreamBranch: policy?.bound ? policy.qaBranchName : null,
   });
-  const registered = await cloud.registerWorkspace(applicationId, workspaceId, snapshot);
+  let registered: Awaited<ReturnType<typeof cloud.registerWorkspace>>;
+  try {
+    registered = await cloud.registerWorkspace(applicationId, workspaceId, snapshot);
+  } catch (cause) {
+    // Attaching the wrong folder is a correctable choice rather than a failure
+    // of the app, so it is re-thrown in a shape the renderer can turn into a
+    // modal with its own "choose another folder" action.
+    if ((cause as { code?: unknown })?.code === REPOSITORY_MISMATCH_CODE) throw repositoryMismatchError(cause);
+    throw cause;
+  }
   selectedWorkspaces.set(applicationId, {
     applicationId, localId: workspaceId, cloudId: registered.workspaceId,
     snapshotId: registered.repositorySnapshotId, root: selectedPath, snapshot,
@@ -552,62 +646,10 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
   // being written by two producers.
   const consented = await requestUploadConsent(applicationId, selectedPath, snapshot);
   if (consented) {
-    try {
-      writeAnalysisState(applicationId, {
-        mode: 'cloud',
-        cloudJobId: null,
-        workspaceRoot: selectedPath,
-        workspaceId: registered.workspaceId,
-        repositoryFingerprint: snapshot.repositoryFingerprint,
-        updatedAt: new Date().toISOString(),
-        analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
-        uploadProgress: { sent: 0, total: 1 },
-      });
-      const archive = buildSanitizedSourceArchive(selectedPath);
-      const created = await cloud.uploadCodebaseSnapshot(applicationId, {
-        workspaceId: registered.workspaceId,
-        repositorySnapshotId: registered.repositorySnapshotId,
-        revision: snapshot.revision,
-        branch: snapshot.branch,
-        dirty: snapshot.dirty,
-        repositoryFingerprint: snapshot.repositoryFingerprint,
-        repositoryIdentity: snapshot.repositoryOriginHash ?? snapshot.portableManifestIdentity ?? null,
-        scannerVersion: snapshot.scannerVersion,
-        archive,
-        onProgress: (sent, total) => {
-          const state = readAnalysisState(applicationId);
-          if (!state) return;
-          writeAnalysisState(applicationId, {
-            ...state,
-            uploadProgress: { sent, total },
-            analysis: state.analysis
-              ? { ...state.analysis, stageMessage: `Uploading source snapshot (${sent} of ${total})`, progress: Math.round((sent / total) * 4) }
-              : state.analysis,
-          });
-        },
-      });
-      const state = readAnalysisState(applicationId);
-      writeAnalysisState(applicationId, {
-        mode: 'cloud',
-        cloudJobId: created.jobId,
-        workspaceRoot: selectedPath,
-        workspaceId: registered.workspaceId,
-        repositoryFingerprint: snapshot.repositoryFingerprint,
-        updatedAt: new Date().toISOString(),
-        analysis: state?.analysis ?? pendingAnalysis(snapshot, 'Queued for analysis'),
-        uploadProgress: null,
-      });
-      return workspace;
-    } catch (error) {
-      // The upload failed, so no cloud job exists to wait for. Fall back to a
-      // local analysis and say why rather than showing a job that will never move.
-      console.warn('[codebase-analysis] Source upload failed; analysing locally instead', error);
-      beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
-      patchLocalAnalysis(applicationId, {
-        warnings: ['The source snapshot could not be uploaded, so this analysis ran on your machine instead.'],
-      });
-      return workspace;
-    }
+    // Let the scan IPC resolve before archive creation/upload begins. The
+    // renderer can now show the attached folder even if the cloud is slow.
+    setImmediate(() => void beginCloudCodebaseAnalysis(applicationId, selectedPath, snapshot, registered));
+    return workspace;
   }
 
   beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
@@ -1019,6 +1061,26 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
     return cloud.flowVerification(initializationId);
+  });
+  /**
+   * Initialize a Flow from the code that is already written, instead of waiting for
+   * the user to run their project. The search happens here, on this device: only the
+   * marker names and the file/line they were found at are sent to Tellann.
+   */
+  ipcMain.handle(IPC.verifyFlowCheckpointsInCode, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; initializationId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.initializationId !== 'string') {
+      throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    }
+    const workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(value.applicationId));
+    if (!workspace) throw new Error('WORKSPACE_NOT_ATTACHED');
+    if (!existsSync(workspace.path)) {
+      throw new Error('The attached folder is no longer on this machine. Re-attach it to check for checkpoints.');
+    }
+    const scan = scanWorkspaceForFlowMarkers(workspace.path);
+    const result = await cloud.submitFlowCodeScan(value.initializationId, distinctMarkers(scan.matches) as unknown as Record<string, unknown>[]);
+    return { ...(result as Record<string, unknown>), filesScanned: scan.filesScanned, markersFound: scan.matches.length, truncated: scan.truncated };
   });
   ipcMain.handle(IPC.rescanFlow, async (event, input: unknown) => {
     assertTrustedSender(event);

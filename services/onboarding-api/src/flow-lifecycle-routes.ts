@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { PrismaClient } from '@tellann/db';
-import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage } from './flow-initialization-analysis';
+import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { sdkReadiness } from './sdk-setup-routes';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
@@ -129,7 +129,7 @@ export function createFlowLifecycleRouter(input: {
     }
     let analysis: ReturnType<typeof analyzeFlowInitialization>;
     try {
-      analysis = analyzeFlowInitialization(version.snapshot as any, repository as any, version.id, String((version as any).graphHash ?? ''));
+      analysis = analyzeFlowInitialization(version.snapshot as any, repository as any, version.id, String((version as any).graphHash ?? ''), flow.name);
     } catch (error) {
       await prisma.flowProjectBinding.update({ where: { id: binding.id }, data: { status: 'FAILED' } });
       return res.status(422).json({ error: error instanceof Error ? error.message : 'FLOW_ANALYSIS_FAILED' });
@@ -166,7 +166,7 @@ export function createFlowLifecycleRouter(input: {
   async function ownedInitialization(req: FlowRequest, res: Response) {
     const initialization = await prisma.flowInitialization.findFirst({
       where: { id: req.params.initializationId, flow: { application: { organization: { memberships: { some: { userId: req.user!.id } } } } } },
-      include: { binding: true, scan: true, flowVersion: true },
+      include: { binding: true, scan: true, flowVersion: true, flow: true },
     });
     if (!initialization) res.status(404).json({ error: 'FLOW_INITIALIZATION_NOT_FOUND' });
     return initialization;
@@ -203,7 +203,7 @@ export function createFlowLifecycleRouter(input: {
     const repository = await prisma.repositorySnapshot.findFirst({ where: { id: initialization.scan.repositorySnapshotId, workspaceId: initialization.binding.workspaceId } });
     if (!repository) return res.status(404).json({ error: 'REPOSITORY_SNAPSHOT_NOT_FOUND' });
     try {
-      const { manifest, report } = analyzeFlowInitialization(initialization.flowVersion.snapshot as any, repository as any, initialization.flowVersionId, String((initialization.flowVersion as any).graphHash ?? ''));
+      const { manifest, report } = analyzeFlowInitialization(initialization.flowVersion.snapshot as any, repository as any, initialization.flowVersionId, String((initialization.flowVersion as any).graphHash ?? ''), initialization.flow?.name);
       const roadmapRevision = initialization.roadmapRevision + 1;
       const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
         stage: 'SCANNING', manifest: manifest as any, codeReviewReport: report as any,
@@ -241,6 +241,55 @@ export function createFlowLifecycleRouter(input: {
     const verification = { status: 'WAITING_FOR_INITIAL', startedAt, observedCheckpointIds: [], missingCheckpointIds: (manifest?.checkpoints ?? []).filter((item: any) => item.required).map((item: any) => item.id), reachedTerminalStateIds: [], orderingErrors: [], verifiedPath: [], lastEventAt: null };
     const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: { stage: 'AWAITING_TELEMETRY', verification } });
     return res.status(201).json({ initializationId: updated.id, verification: updated.verification });
+  });
+
+  /**
+   * Initialize a flow from markers found in the attached project, without waiting
+   * for the user to run their app. The desktop app performs the search locally —
+   * source never leaves the device — and posts the marker hits here; this route is
+   * what decides whether they satisfy the declared boundaries.
+   */
+  router.post('/flow-initializations/:initializationId/verification/code-scan', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    if (!initialization.mode) return res.status(409).json({ error: 'FLOW_INITIALIZATION_MODE_REQUIRED' });
+    const manifest = initialization.manifest as any;
+    if (!manifest?.checkpoints?.length) return res.status(409).json({ error: 'FLOW_MANIFEST_NOT_READY' });
+    const matches = records(req.body?.matches).map((match) => ({
+      file: String(match.file ?? ''),
+      line: Number(match.line) || 0,
+      eventType: typeof match.eventType === 'string' ? match.eventType : null,
+      flow: typeof match.flow === 'string' ? match.flow : null,
+      state: typeof match.state === 'string' ? match.state : null,
+      transition: typeof match.transition === 'string' ? match.transition : null,
+      checkpointId: typeof match.checkpointId === 'string' ? match.checkpointId : null,
+    }));
+    const verification = evaluateCodeScanCoverage(manifest, matches, new Date().toISOString());
+    const completed = verification.status === 'COMPLETED';
+    const roadmap = initialization.manualRoadmap as any;
+    if (roadmap?.steps) {
+      roadmap.steps = roadmap.steps.map((step: any) => verification.observedCheckpointIds.includes(step.checkpointId)
+        ? { ...step, status: 'VERIFIED', verificationEvidence: verification.codeEvidence.filter((item) => item.checkpointId === step.checkpointId) }
+        : step);
+    }
+    const [updated] = await prisma.$transaction([
+      prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
+        verification: verification as any, manualRoadmap: roadmap ?? undefined,
+        ...(completed ? { status: 'COMPLETED', stage: 'COMPLETED', completedAt: new Date() } : {}),
+      } }),
+      ...(completed ? [prisma.flowProjectBinding.update({ where: { id: initialization.bindingId }, data: { status: 'ACTIVE', initializedAt: new Date() } })] : []),
+    ]);
+    // A scan that found no boundary marker is a normal outcome the user acts on,
+    // not a failed request: the caller needs the resolved verification either way,
+    // so the outcome travels in the body rather than in the status code.
+    return res.json({
+      initializationId: updated.id,
+      completed,
+      verification: updated.verification,
+      roadmap: updated.manualRoadmap,
+      initialization: updated,
+      missingCheckpointIds: verification.missingCheckpointIds,
+    });
   });
 
   router.get('/flow-initializations/:initializationId/verification', async (req: FlowRequest, res: Response) => {
@@ -307,7 +356,7 @@ export function createFlowLifecycleRouter(input: {
   router.post('/flow-bindings/:bindingId/rescans', async (req: FlowRequest, res: Response) => {
     const binding = await prisma.flowProjectBinding.findFirst({
       where: { id: req.params.bindingId, flow: { application: { organization: { memberships: { some: { userId: req.user!.id } } } } } },
-      include: { flowVersion: true, scans: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      include: { flowVersion: true, flow: true, scans: { orderBy: { createdAt: 'desc' }, take: 1 } },
     });
     if (!binding) return res.status(404).json({ error: 'FLOW_BINDING_NOT_FOUND' });
     if (binding.status !== 'ACTIVE') return res.status(409).json({ error: 'FLOW_BINDING_NOT_ACTIVE' });
@@ -315,7 +364,7 @@ export function createFlowLifecycleRouter(input: {
     if (!previous) return res.status(409).json({ error: 'INITIAL_FLOW_SCAN_REQUIRED' });
     const repository = await prisma.repositorySnapshot.findFirst({ where: { id: String(req.body.repositorySnapshotId ?? ''), workspaceId: binding.workspaceId } });
     if (!repository) return res.status(404).json({ error: 'REPOSITORY_SNAPSHOT_NOT_FOUND' });
-    const { report } = analyzeFlowInitialization(binding.flowVersion.snapshot as any, repository as any, binding.flowVersionId, String((binding.flowVersion as any).graphHash ?? ''));
+    const { report } = analyzeFlowInitialization(binding.flowVersion.snapshot as any, repository as any, binding.flowVersionId, String((binding.flowVersion as any).graphHash ?? ''), binding.flow?.name);
     const scan = await prisma.flowScan.create({ data: {
       organizationId: binding.organizationId, applicationId: binding.applicationId, flowId: binding.flowId, flowVersionId: binding.flowVersionId,
       bindingId: binding.id, repositorySnapshotId: repository.id, parentScanId: previous.id, kind: 'RESCAN', status: 'COMPLETED', scannerVersion: repository.scannerVersion,

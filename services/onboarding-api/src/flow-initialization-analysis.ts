@@ -10,6 +10,43 @@ function normalized(value: unknown): string {
   return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+/**
+ * A checkpoint's human-facing name. This is what a developer types into their own
+ * code, so it has to be readable and stable — never a raw id. Anything that would
+ * slugify to nothing (an id-only state, a symbol-only action) falls back to a short
+ * hash of the source text rather than an empty marker.
+ */
+export function markerSlug(value: unknown): string {
+  const slug = String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/g, '');
+  if (slug && !/^[0-9-]+$/.test(slug)) return slug;
+  const source = String(value ?? '').trim();
+  return source ? `x-${crypto.createHash('sha1').update(source).digest('hex').slice(0, 8)}` : 'unnamed';
+}
+
+// Two declared states can carry the same name ("Failed" under two branches), and
+// markers are matched by name, so a duplicate would make one checkpoint shadow the
+// other during a code scan. Suffix collisions instead.
+function uniqueMarkerSlugs(entries: Array<[string, string]>): Map<string, string> {
+  const used = new Set<string>();
+  const result = new Map<string, string>();
+  for (const [id, label] of entries) {
+    const base = markerSlug(label);
+    let slug = base;
+    for (let suffix = 2; used.has(slug); suffix += 1) slug = `${base}-${suffix}`;
+    used.add(slug);
+    result.set(id, slug);
+  }
+  return result;
+}
+
+export type FlowMarker = { flow: string; state: string | null; transition: string | null };
+
+/** The single line a developer pastes into their code for one checkpoint. */
+export function checkpointSnippet(eventType: string, marker: FlowMarker): string {
+  const target = marker.transition ? `transition: '${marker.transition}'` : `state: '${marker.state ?? ''}'`;
+  return `TELLANN.trackEvent('${eventType}', { flow: '${marker.flow}', ${target} });`;
+}
+
 // Declared-flow snapshots have used a few different field names for a transition's
 // endpoints over time (fromStateId/toStateId, fromNodeId/toNodeId, source/target).
 // Every reader must accept the same set in the same order, or a transition that
@@ -66,7 +103,7 @@ function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions
   return { paths, reachable };
 }
 
-export function analyzeFlowInitialization(snapshot: JsonRecord, repository: JsonRecord, graphVersionId: string, graphHash?: string) {
+export function analyzeFlowInitialization(snapshot: JsonRecord, repository: JsonRecord, graphVersionId: string, graphHash?: string, flowName?: string) {
   const states = records(snapshot.states ?? snapshot.nodes);
   const transitions = records(snapshot.transitions ?? snapshot.edges);
   const initial = states.find((state) => state.role === 'INITIAL');
@@ -90,13 +127,25 @@ export function analyzeFlowInitialization(snapshot: JsonRecord, repository: Json
     const mapping = bestMapping(String(transition.action ?? transition.event ?? id), evidence);
     return { transitionId: id, fromStateId: from, toStateId: to, action: transition.action ?? null, implemented: mapping.confidence >= 0.65, mapping };
   });
+  // Markers are what the developer writes by hand, so they are named after the
+  // declared flow and state — never after an internal id.
+  const flowKey = markerSlug(flowName ?? snapshot.name ?? snapshot.flowName ?? 'flow');
+  const stateMarkers = uniqueMarkerSlugs(states.map((state) => [stateId(state), String(state.stateName ?? state.name ?? state.behaviorKey ?? stateId(state))] as [string, string]));
+  const transitionMarkers = uniqueMarkerSlugs(transitionFindings.map((finding) => [
+    finding.transitionId,
+    String(finding.action ?? `${stateLabel(finding.fromStateId)}-to-${stateLabel(finding.toStateId)}`),
+  ] as [string, string]));
+  // Only the boundaries are required: one initial state tells Tellann where the
+  // flow begins in the code and one terminal state tells it where it ends. Every
+  // state and transition in between is offered but optional, so a long declared
+  // flow does not turn into a long plotting exercise before the first QA run.
   const checkpoints = [
-    ...stateFindings.map((finding) => ({ id: `state:${finding.stateId}`, kind: 'STATE', stateId: finding.stateId, transitionId: null, stateRole: finding.role, terminalKind: finding.terminalKind, eventType: finding.role === 'INITIAL' ? 'FLOW_INITIAL_STATE' : finding.role === 'TERMINAL' ? 'FLOW_TERMINAL_STATE' : 'FLOW_STATE_REACHED', expectedState: finding.stateId, fromCheckpointId: null, toCheckpointId: null, required: true, mapping: finding.mapping })),
-    ...transitionFindings.map((finding) => ({ id: `transition:${finding.transitionId}`, kind: 'TRANSITION', stateId: null, transitionId: finding.transitionId, stateRole: null, terminalKind: null, eventType: 'FLOW_TRANSITION', expectedState: finding.toStateId, fromCheckpointId: `state:${finding.fromStateId}`, toCheckpointId: `state:${finding.toStateId}`, required: true, mapping: finding.mapping })),
+    ...stateFindings.map((finding) => ({ id: `state:${finding.stateId}`, kind: 'STATE', stateId: finding.stateId, transitionId: null, stateRole: finding.role, terminalKind: finding.terminalKind, eventType: finding.role === 'INITIAL' ? 'FLOW_INITIAL_STATE' : finding.role === 'TERMINAL' ? 'FLOW_TERMINAL_STATE' : 'FLOW_STATE_REACHED', expectedState: finding.stateId, fromCheckpointId: null, toCheckpointId: null, required: finding.role === 'INITIAL' || finding.role === 'TERMINAL', label: String(finding.stateName ?? stateLabel(finding.stateId)), marker: { flow: flowKey, state: stateMarkers.get(finding.stateId) ?? markerSlug(finding.stateId), transition: null }, mapping: finding.mapping })),
+    ...transitionFindings.map((finding) => ({ id: `transition:${finding.transitionId}`, kind: 'TRANSITION', stateId: null, transitionId: finding.transitionId, stateRole: null, terminalKind: null, eventType: 'FLOW_TRANSITION', expectedState: finding.toStateId, fromCheckpointId: `state:${finding.fromStateId}`, toCheckpointId: `state:${finding.toStateId}`, required: false, label: String(finding.action ?? `${stateLabel(finding.fromStateId)} → ${stateLabel(finding.toStateId)}`), marker: { flow: flowKey, state: null, transition: transitionMarkers.get(finding.transitionId) ?? markerSlug(finding.transitionId) }, mapping: finding.mapping })),
   ];
   const now = new Date().toISOString();
   const unreachableStateIds = states.map(stateId).filter((id) => !traversal.reachable.has(id));
-  const manifest = { version: '1.0' as const, graphVersionId, graphHash: graphHash ?? crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'), repositorySnapshotId: String(repository.id), initialStateId: stateId(initial), terminalStateIds: [...terminalIds], paths: traversal.paths, unreachableStateIds, checkpoints, generatedAt: now };
+  const manifest = { version: '1.0' as const, graphVersionId, graphHash: graphHash ?? crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'), repositorySnapshotId: String(repository.id), flowKey, flowName: String(flowName ?? snapshot.name ?? snapshot.flowName ?? 'Flow'), initialStateId: stateId(initial), terminalStateIds: [...terminalIds], paths: traversal.paths, unreachableStateIds, checkpoints, generatedAt: now };
   const missingStates = stateFindings.filter((item) => !item.implemented);
   const incompleteTransitions = transitionFindings.filter((item) => !item.implemented);
   const report = { version: '1.0' as const, kind: 'FLOW_CODE_REVIEW' as const, generatedAt: now, engine: 'RULES_FALLBACK' as const,
@@ -168,26 +217,35 @@ export function buildManualRoadmap(
         : isTerminal
           ? 'the flow reaches this end state'
           : 'the flow reaches this state';
-    const description = checkpoint.mapping.file
+    const placement = checkpoint.mapping.file
       ? `Add this call in ${checkpoint.mapping.file}${checkpoint.mapping.symbol ? ` (near ${checkpoint.mapping.symbol})` : ''}, at the point where ${where}.`
       : `Tellann could not find where this happens in your code. Add this call yourself at the point where ${where}.`;
+    // Boundary checkpoints are what initialization checks for; the rest are extra
+    // detail the user can add later, and saying so keeps the roadmap honest about
+    // how little is actually needed to get to a QA run.
+    const description = (checkpoint as any).required === false
+      ? `Optional — not needed to initialize this flow. ${placement}`
+      : placement;
     return {
       id: checkpoint.id,
       groupId: isTerminal ? `terminal:${checkpoint.stateId}` : 'spine',
       kind: isTransition ? 'TRANSITION' : isTerminal ? 'TERMINAL' : 'STATE',
       title,
       description,
+      required: (checkpoint as any).required !== false,
+      marker: (checkpoint as any).marker ?? null,
       // Low mapping confidence means Tellann could not auto-locate the checkpoint,
       // not that the user is blocked from adding it — the description says as much.
       // Keep every step actionable so the manual roadmap can actually be completed.
       status: index === 0 ? 'CURRENT' : 'PENDING',
       dependencies: checkpoint.fromCheckpointId ? [checkpoint.fromCheckpointId] : [],
       file: checkpoint.mapping.file, symbol: checkpoint.mapping.symbol,
-      snippet: `TELLANN.trackEvent('${checkpoint.eventType}', { checkpointId: '${checkpoint.id}', stateId: ${JSON.stringify(checkpoint.stateId)}, transitionId: ${JSON.stringify(checkpoint.transitionId)} });`,
+      snippet: checkpointSnippet(checkpoint.eventType, (checkpoint as any).marker ?? { flow: (manifest as any).flowKey ?? 'flow', state: checkpoint.stateId, transition: checkpoint.transitionId }),
       eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
     };
   });
-  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Run your app through the whole flow', description: 'Start your project and go through this flow from beginning to end, at least once. Tellann watches the checkpoints you added and confirms they fire in the right order.', status: 'PENDING', dependencies: manifest.checkpoints.filter((item) => item.required).map((item) => item.id), file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });
+  const requiredIds = manifest.checkpoints.filter((item) => item.required).map((item) => item.id);
+  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Check your code for the start and finish markers', description: 'Once the start marker and at least one finish marker are in your code, Tellann searches the attached project for them. No run of your app is needed to initialize the flow.', status: 'PENDING', dependencies: requiredIds, required: true, marker: null, file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });
   return { version: '1.0' as const, revision, groups, steps, generatedAt: now };
 }
 
@@ -215,5 +273,75 @@ export function calculateCheckpointCoverage(manifest: ReturnType<typeof analyzeF
     observedCheckpointIds: observedIds, missingCheckpointIds: required.filter((id) => !observedIds.includes(id)),
     reachedTerminalStateIds: manifest.terminalStateIds.filter((id) => observedIds.includes(`state:${id}`)), orderingErrors,
     verifiedPath: matchedSequence ?? [], lastEventAt: observed.at(-1)?.timestamp ?? null,
+  };
+}
+
+export type FlowMarkerMatch = {
+  /** Repository-relative path of the file the marker was found in. */
+  file: string;
+  line: number;
+  eventType?: string | null;
+  flow?: string | null;
+  state?: string | null;
+  transition?: string | null;
+  /** Markers written by an older Tellann carry the raw checkpoint id instead. */
+  checkpointId?: string | null;
+};
+
+/**
+ * Resolve the markers a code scan found against the declared manifest.
+ *
+ * Initialization is satisfied by the flow's boundaries alone — the declared initial
+ * state and at least one declared terminal state. Anything else the scan finds is
+ * recorded as observed, but never gates the flow: the point of the boundaries is
+ * that they tell Tellann where the flow starts and ends in the code, which is all a
+ * QA run needs to correlate the rest.
+ */
+export function evaluateCodeScanCoverage(
+  manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
+  matches: FlowMarkerMatch[],
+  scannedAt = new Date().toISOString(),
+) {
+  const checkpoints = (manifest.checkpoints ?? []) as Array<Record<string, any>>;
+  const byMarker = new Map<string, string>();
+  for (const checkpoint of checkpoints) {
+    const marker = checkpoint.marker as FlowMarker | undefined;
+    if (!marker) continue;
+    const name = marker.transition ? `transition/${marker.transition}` : `state/${marker.state}`;
+    byMarker.set(`${marker.flow}#${name}`, checkpoint.id);
+  }
+  const knownIds = new Set(checkpoints.map((checkpoint) => String(checkpoint.id)));
+  const evidence: Array<{ checkpointId: string; file: string; line: number }> = [];
+  for (const match of matches) {
+    const name = match.transition ? `transition/${markerSlug(match.transition)}` : match.state ? `state/${markerSlug(match.state)}` : null;
+    const resolved = match.checkpointId && knownIds.has(match.checkpointId)
+      ? match.checkpointId
+      : name && match.flow
+        ? byMarker.get(`${markerSlug(match.flow)}#${name}`)
+        : undefined;
+    if (!resolved) continue;
+    evidence.push({ checkpointId: resolved, file: match.file, line: match.line });
+  }
+  const observedCheckpointIds = [...new Set(evidence.map((item) => item.checkpointId))];
+  const initialCheckpointId = `state:${manifest.initialStateId}`;
+  const terminalCheckpointIds = (manifest.terminalStateIds ?? []).map((id) => `state:${id}`);
+  const foundInitial = observedCheckpointIds.includes(initialCheckpointId);
+  const foundTerminals = terminalCheckpointIds.filter((id) => observedCheckpointIds.includes(id));
+  const missingCheckpointIds = [
+    ...(foundInitial ? [] : [initialCheckpointId]),
+    ...(foundTerminals.length ? [] : terminalCheckpointIds),
+  ];
+  return {
+    status: (foundInitial && foundTerminals.length ? 'COMPLETED' : 'INCOMPLETE') as 'COMPLETED' | 'INCOMPLETE',
+    method: 'STATIC_CODE_SCAN' as const,
+    startedAt: scannedAt,
+    observedCheckpointIds,
+    missingCheckpointIds,
+    reachedTerminalStateIds: foundTerminals.map((id) => id.slice('state:'.length)),
+    orderingErrors: [] as Array<Record<string, unknown>>,
+    verifiedPath: foundInitial && foundTerminals.length ? [initialCheckpointId, foundTerminals[0]] : [],
+    codeEvidence: evidence,
+    lastEventAt: null,
+    scannedAt,
   };
 }

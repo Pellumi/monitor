@@ -1094,6 +1094,63 @@
   padding: 24px;
 }
 
+/*
+ * Placeholder states — nothing to analyse, nothing to show, or a run that
+ * failed. `.analysis-shell` carries no padding of its own because the data
+ * views draw their own edge-to-edge headers, so these supply the gutter.
+ */
+.analysis-state {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 32px 24px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.analysis-state-icon {
+  color: #8e9192;
+  margin-bottom: 4px;
+}
+.analysis-state h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.analysis-state p {
+  margin: 0;
+  color: #8e9192;
+  font-size: 13px;
+  line-height: 1.6;
+}
+/* The underlying error, kept readable but clearly secondary to the sentence
+   above it. Long unbroken paths must wrap rather than widen the card. */
+.analysis-state p.analysis-state-detail {
+  padding: 9px 11px;
+  border: 1px solid #262626;
+  border-radius: 4px;
+  background: #000000;
+  color: #71717a;
+  font: 11px / 1.5 ui-monospace, monospace;
+  overflow-wrap: anywhere;
+  width: 100%;
+  box-sizing: border-box;
+}
+.analysis-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+/* The secondary button is 26px tall elsewhere, where it sits inline in dense
+   headers. Next to a primary CTA it has to match its height. */
+.analysis-state-actions .analysis-btn-secondary {
+  height: 36px;
+  padding: 0 14px;
+}
+
 .analysis-progress {
   height: 8px;
   margin: 24px;
@@ -2135,7 +2192,6 @@ button {
   background-size: 24px 24px;
 }
 .empty-state,
-.analysis-state,
 .run-placeholder {
   width: min(500px, 86%);
   text-align: center;
@@ -2149,7 +2205,6 @@ button {
   color: #ffffff;
 }
 .empty-state h2,
-.analysis-state h2,
 .run-placeholder h2 {
   margin: 16px 0 8px;
   font-size: 20px;
@@ -2157,7 +2212,6 @@ button {
   color: #ffffff;
 }
 .empty-state p,
-.analysis-state p,
 .run-placeholder p {
   margin: 0 auto 20px;
   max-width: 400px;
@@ -5710,6 +5764,26 @@ button:disabled {
 }
 .flow-graph-badge.is-ok { border-color: #3c5d3c; color: #8fce8f; }
 .flow-graph-badge.is-wait { border-color: #5a4a2c; color: #e0c07a; }
+
+/* The two lines initialization actually needs, kept above the graph so the
+   optional detail below never reads as work the user has to do first. */
+.flow-required-markers {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: #0c0c0d;
+}
+.flow-required-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.flow-required-head > h3 { margin: 0; font-size: 13px; }
+.flow-required-markers > p { margin: 6px 0 12px; font-size: 12px; }
+.flow-required-list { display: grid; gap: 12px; }
+.flow-required-item { display: grid; gap: 4px; }
+.flow-required-item.is-found { border-left: 2px solid #3c5d3c; padding-left: 10px; }
 
 .flow-graph-fallback {
   list-style: none;

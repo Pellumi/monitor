@@ -139,6 +139,7 @@ declare global {
         setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
         updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
         startFlowVerification(initializationId: string): Promise<Record<string, any>>;
+        verifyFlowCheckpointsInCode(applicationId: string, initializationId: string): Promise<Record<string, any>>;
         getFlowVerification(initializationId: string): Promise<Record<string, any>>;
         rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
         approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;

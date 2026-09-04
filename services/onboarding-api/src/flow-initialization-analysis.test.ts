@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage } from './flow-initialization-analysis';
+import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
 const repository = {
@@ -108,4 +108,86 @@ test('AI enrichment preserves the deterministic report when no configured provid
   assert.equal(result.provenance.engine, 'RULES_FALLBACK');
   assert.ok('evidence' in result.report);
   assert.deepEqual(result.report.evidence, report.evidence);
+});
+
+test('boundary checkpoints are the only required ones, and markers read in plain language', () => {
+  const snapshot = {
+    states: [
+      { id: '901c8745-8280-4a2e-b88a-cfd0d1571103', stateName: 'Cart viewed', role: 'INITIAL' },
+      { id: 'b1', stateName: 'Address entered', role: 'NORMAL' },
+      { id: 'c1', stateName: 'Order confirmed', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+    ],
+    transitions: [
+      { id: 't1', fromStateId: '901c8745-8280-4a2e-b88a-cfd0d1571103', toStateId: 'b1', action: 'Enter address' },
+      { id: 't2', fromStateId: 'b1', toStateId: 'c1', action: 'Submit payment' },
+    ],
+  };
+  const { manifest, report } = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000014', undefined, 'Checkout');
+  assert.equal(manifest.flowKey, 'checkout');
+  const required = manifest.checkpoints.filter((item) => item.required).map((item) => item.id);
+  assert.deepEqual(required, ['state:901c8745-8280-4a2e-b88a-cfd0d1571103', 'state:c1'], 'only the declared boundaries gate initialization');
+
+  const roadmap = buildManualRoadmap(manifest, 1, report);
+  const initialStep = roadmap.steps.find((step) => step.id === 'state:901c8745-8280-4a2e-b88a-cfd0d1571103');
+  assert.equal(initialStep?.snippet, "TELLANN.trackEvent('FLOW_INITIAL_STATE', { flow: 'checkout', state: 'cart-viewed' });");
+  assert.ok(!roadmap.steps.some((step) => step.snippet.includes('901c8745')), 'no snippet exposes an internal id');
+  const transitionStep = roadmap.steps.find((step) => step.id === 'transition:t2');
+  assert.equal(transitionStep?.snippet, "TELLANN.trackEvent('FLOW_TRANSITION', { flow: 'checkout', transition: 'submit-payment' });");
+  assert.equal(transitionStep?.required, false);
+  assert.ok(String(transitionStep?.description).startsWith('Optional'), 'optional steps say so before the placement advice');
+});
+
+test('states that share a name get distinct markers', () => {
+  const snapshot = {
+    states: [
+      { id: 'a', stateName: 'Start', role: 'INITIAL' },
+      { id: 'b', stateName: 'Failed', role: 'TERMINAL', terminalKind: 'FAILURE' },
+      { id: 'c', stateName: 'Failed', role: 'TERMINAL', terminalKind: 'FAILURE' },
+    ],
+    transitions: [{ id: 't', fromStateId: 'a', toStateId: 'b', action: 'fail' }],
+  };
+  const { manifest } = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000015', undefined, 'Payment');
+  const markers = manifest.checkpoints.filter((item) => item.kind === 'STATE').map((item) => item.marker.state);
+  assert.deepEqual(markers, ['start', 'failed', 'failed-2']);
+});
+
+test('a code scan initializes the flow from the start marker and one finish marker alone', () => {
+  const snapshot = {
+    states: [
+      { id: 'a', stateName: 'Cart viewed', role: 'INITIAL' },
+      { id: 'b', stateName: 'Address entered', role: 'NORMAL' },
+      { id: 'c', stateName: 'Order confirmed', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+      { id: 'd', stateName: 'Payment declined', role: 'TERMINAL', terminalKind: 'FAILURE' },
+    ],
+    transitions: [{ id: 't1', fromStateId: 'a', toStateId: 'c', action: 'Pay' }],
+  };
+  const { manifest } = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000016', undefined, 'Checkout');
+
+  const complete = evaluateCodeScanCoverage(manifest, [
+    { file: 'src/cart.ts', line: 12, flow: 'checkout', state: 'cart-viewed' },
+    { file: 'src/receipt.ts', line: 40, flow: 'checkout', state: 'order-confirmed' },
+  ]);
+  assert.equal(complete.status, 'COMPLETED', 'one terminal is enough — the other declared endings are not required');
+  assert.equal(complete.method, 'STATIC_CODE_SCAN');
+  assert.deepEqual(complete.reachedTerminalStateIds, ['c']);
+  assert.deepEqual(complete.codeEvidence, [
+    { checkpointId: 'state:a', file: 'src/cart.ts', line: 12 },
+    { checkpointId: 'state:c', file: 'src/receipt.ts', line: 40 },
+  ]);
+
+  const startOnly = evaluateCodeScanCoverage(manifest, [{ file: 'src/cart.ts', line: 12, flow: 'checkout', state: 'cart-viewed' }]);
+  assert.equal(startOnly.status, 'INCOMPLETE');
+  assert.deepEqual(startOnly.missingCheckpointIds, ['state:c', 'state:d'], 'either terminal would satisfy it');
+
+  const legacy = evaluateCodeScanCoverage(manifest, [
+    { file: 'src/cart.ts', line: 12, checkpointId: 'state:a' },
+    { file: 'src/receipt.ts', line: 40, checkpointId: 'state:c' },
+  ]);
+  assert.equal(legacy.status, 'COMPLETED', 'markers written by an older Tellann still resolve');
+
+  const foreign = evaluateCodeScanCoverage(manifest, [
+    { file: 'src/other.ts', line: 3, flow: 'refunds', state: 'cart-viewed' },
+    { file: 'src/receipt.ts', line: 40, flow: 'checkout', state: 'order-confirmed' },
+  ]);
+  assert.deepEqual(foreign.observedCheckpointIds, ['state:c'], 'another flow’s marker never satisfies this one');
 });

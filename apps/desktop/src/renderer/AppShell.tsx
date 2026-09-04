@@ -9,6 +9,7 @@ import { useDesktop } from './desktop-context';
 import { SelectField } from './components/ui/select';
 import { NotificationToaster } from './components/notification-toaster';
 import { UploadConsentModal } from './components/upload-consent-modal';
+import { RepositoryMismatchModal } from './components/repository-mismatch-modal';
 
 type SidebarMode = 'full' | 'icon' | 'closed';
 
@@ -290,6 +291,7 @@ export function AppShell() {
 
       <NotificationToaster />
       <UploadConsentModal />
+      <RepositoryMismatchModal />
 
       <footer className="global-statusbar" aria-live="polite">
         <div><Activity size={16} /><span>{activeRun ? `Run ${activeRun.status.toLowerCase()}` : 'Ready for a guided run'}</span></div>
