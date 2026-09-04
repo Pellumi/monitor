@@ -2,7 +2,7 @@
 
 **Document status:** Proposed implementation specification  
 **Target:** Tellann Windows desktop application  
-**Scope:** Projects, Intent, Instrumentation, QA Runs, Reports, workspace status, run status  
+**Scope:** Applications, Intent, Instrumentation, QA Runs, Reports, workspace status, run status  
 **Source context:** Tellann Agentic Desktop Upgrade Implementation Plan
 
 ---
@@ -47,7 +47,7 @@ A project in the desktop UI is an aggregate of:
 - Instrumentation manifests.
 - QA runs and reports.
 
-Do not create a second unrelated cloud “Project” entity merely because the desktop uses the word **Projects**. The desktop label should represent this aggregate.
+The desktop label for this aggregate is **Applications**, matching the cloud `Application` and the web dashboard. Do not introduce a second cloud entity for it — the aggregate is a presentation of one `Application`, not a separate record.
 
 ### 2.3 No silent disabled states
 
@@ -68,7 +68,7 @@ Examples:
 
 The main desktop sidebar should remain execution-focused:
 
-1. Projects
+1. Applications
 2. Intent
 3. Instrumentation
 4. QA Runs
@@ -81,43 +81,43 @@ Organization members, billing, audit administration, SSO, and most account setti
 ## 3. Canonical route map
 
 ```text
-/projects
-/projects/new
-/projects/:projectId
-/projects/:projectId/workspace
-/projects/:projectId/sources
-/projects/:projectId/environments
-/projects/:projectId/activity
+/applications
+/applications/new
+/applications/:projectId
+/applications/:projectId/workspace
+/applications/:projectId/sources
+/applications/:projectId/environments
+/applications/:projectId/activity
 
-/projects/:projectId/intent
-/projects/:projectId/intent/drafts/:draftId
-/projects/:projectId/intent/versions
-/projects/:projectId/intent/versions/:versionId
-/projects/:projectId/intent/compare
-/projects/:projectId/intent/editor
+/applications/:projectId/intent
+/applications/:projectId/intent/drafts/:draftId
+/applications/:projectId/intent/versions
+/applications/:projectId/intent/versions/:versionId
+/applications/:projectId/intent/compare
+/applications/:projectId/intent/editor
 
-/projects/:projectId/instrumentation
-/projects/:projectId/instrumentation/plans/:planId
-/projects/:projectId/instrumentation/plans/:planId/diff
-/projects/:projectId/instrumentation/plans/:planId/validation
-/projects/:projectId/instrumentation/history
-/projects/:projectId/instrumentation/manifests/:manifestId
+/applications/:projectId/instrumentation
+/applications/:projectId/instrumentation/plans/:planId
+/applications/:projectId/instrumentation/plans/:planId/diff
+/applications/:projectId/instrumentation/plans/:planId/validation
+/applications/:projectId/instrumentation/history
+/applications/:projectId/instrumentation/manifests/:manifestId
 
-/projects/:projectId/qa-runs
-/projects/:projectId/qa-runs/new
-/projects/:projectId/qa-runs/:runId
-/projects/:projectId/qa-runs/:runId/live
-/projects/:projectId/qa-runs/:runId/evidence
-/projects/:projectId/qa-runs/:runId/findings
-/projects/:projectId/qa-runs/:runId/replay
-/projects/:projectId/qa-runs/:runId/graph
-/projects/:projectId/qa-runs/:runId/reconciliation
-/projects/:projectId/qa-runs/:runId/artifacts
+/applications/:projectId/qa-runs
+/applications/:projectId/qa-runs/new
+/applications/:projectId/qa-runs/:runId
+/applications/:projectId/qa-runs/:runId/live
+/applications/:projectId/qa-runs/:runId/evidence
+/applications/:projectId/qa-runs/:runId/findings
+/applications/:projectId/qa-runs/:runId/replay
+/applications/:projectId/qa-runs/:runId/graph
+/applications/:projectId/qa-runs/:runId/reconciliation
+/applications/:projectId/qa-runs/:runId/artifacts
 
-/projects/:projectId/reports
-/projects/:projectId/reports/:reportId
-/projects/:projectId/reports/compare
-/projects/:projectId/reports/:reportId/export
+/applications/:projectId/reports
+/applications/:projectId/reports/:reportId
+/applications/:projectId/reports/compare
+/applications/:projectId/reports/:reportId/export
 ```
 
 Optional unscoped aliases may exist only as route resolvers:
@@ -132,7 +132,7 @@ Optional unscoped aliases may exist only as route resolvers:
 Each alias must resolve to the last selected project or redirect to:
 
 ```text
-/projects?next=<requested-section>
+/applications?next=<requested-section>
 ```
 
 The user’s intended destination must be preserved after project selection.
@@ -143,25 +143,25 @@ The user’s intended destination must be preserved after project selection.
 
 | Sidebar item | Primary destination | Scope | Always clickable | Main responsibility |
 |---|---|---:|---:|---|
-| Projects | `/projects` | Organization/device | Yes | Select, create, attach, scan, and manage working projects |
-| Intent | `/projects/:projectId/intent` | Project | Yes | Define and review expected application behavior |
-| Instrumentation | `/projects/:projectId/instrumentation` | Project/workspace | Yes | Inspect, plan, apply, verify, and roll back Tellann instrumentation |
-| QA Runs | `/projects/:projectId/qa-runs` | Project | Yes | Create, control, inspect, and compare guided QA runs |
-| Reports | `/projects/:projectId/reports` | Project | Yes | View canonical quality reports and run comparisons |
+| Applications | `/applications` | Organization/device | Yes | Create, select, attach, scan, and manage applications |
+| Intent | `/applications/:projectId/intent` | Project | Yes | Define and review expected application behavior |
+| Instrumentation | `/applications/:projectId/instrumentation` | Project/workspace | Yes | Inspect, plan, apply, verify, and roll back Tellann instrumentation |
+| QA Runs | `/applications/:projectId/qa-runs` | Project | Yes | Create, control, inspect, and compare guided QA runs |
+| Reports | `/applications/:projectId/reports` | Project | Yes | View canonical quality reports and run comparisons |
 
 When no project is selected, project-scoped links should resolve to the project picker with the intended section retained. They must not be inert.
 
 ---
 
-# 5. Projects
+# 5. Applications
 
 ## 5.1 Destination
 
-**Sidebar route:** `/projects`
+**Sidebar route:** `/applications`
 
 ## 5.2 Purpose
 
-Projects is the desktop entry point. It connects a Tellann cloud application to a local repository, a staging URL, or both.
+Applications is the desktop entry point. It creates a Tellann cloud application and connects it to a local repository, a staging URL, or both. Creation posts to the same `POST /organizations/:orgId/applications` endpoint the web dashboard uses, so plan limits, role checks and the APP_CREATED broadcast behave identically on both surfaces.
 
 It answers:
 
@@ -174,7 +174,7 @@ It answers:
 - Is the repository snapshot current?
 - What should I do next?
 
-## 5.3 Projects list page
+## 5.3 Applications list page
 
 The page should display cards or rows containing:
 
@@ -224,7 +224,7 @@ Filters:
 
 ## 5.4 Create project flow
 
-**Route:** `/projects/new`
+**Route:** `/applications/new`
 
 Wizard:
 
@@ -311,7 +311,7 @@ Show:
 
 ## 5.5 Project overview
 
-**Route:** `/projects/:projectId`
+**Route:** `/applications/:projectId`
 
 Sections:
 
@@ -331,7 +331,7 @@ This is the preferred landing page after selecting a project.
 
 ## 5.6 Workspace page
 
-**Route:** `/projects/:projectId/workspace`
+**Route:** `/applications/:projectId/workspace`
 
 Contains:
 
@@ -352,7 +352,7 @@ Contains:
 
 ## 5.7 Sources page
 
-**Route:** `/projects/:projectId/sources`
+**Route:** `/applications/:projectId/sources`
 
 Contains:
 
@@ -372,7 +372,7 @@ Contains:
 
 ## 5.8 Environments page
 
-**Route:** `/projects/:projectId/environments`
+**Route:** `/applications/:projectId/environments`
 
 Contains:
 
@@ -402,7 +402,7 @@ Contains:
 
 ## 6.1 Destination
 
-**Sidebar route:** `/projects/:projectId/intent`
+**Sidebar route:** `/applications/:projectId/intent`
 
 ## 6.2 Product meaning
 
@@ -483,7 +483,7 @@ Review actions:
 
 ## 6.5 Draft detail
 
-**Route:** `/projects/:projectId/intent/drafts/:draftId`
+**Route:** `/applications/:projectId/intent/drafts/:draftId`
 
 Tabs:
 
@@ -499,7 +499,7 @@ A draft may never silently become canonical. Acceptance creates an immutable dec
 
 ## 6.6 Versions
 
-**Route:** `/projects/:projectId/intent/versions`
+**Route:** `/applications/:projectId/intent/versions`
 
 List:
 
@@ -515,7 +515,7 @@ List:
 
 Version detail:
 
-**Route:** `/projects/:projectId/intent/versions/:versionId`
+**Route:** `/applications/:projectId/intent/versions/:versionId`
 
 Contains:
 
@@ -529,7 +529,7 @@ Contains:
 
 ## 6.7 Compare
 
-**Route:** `/projects/:projectId/intent/compare`
+**Route:** `/applications/:projectId/intent/compare`
 
 Comparisons:
 
@@ -553,7 +553,7 @@ Diff categories:
 
 ## 6.8 Advanced editor
 
-**Route:** `/projects/:projectId/intent/editor`
+**Route:** `/applications/:projectId/intent/editor`
 
 The advanced graph editor supports detailed manipulation but is not the default onboarding experience.
 
@@ -618,7 +618,7 @@ Add:
 
 ## 7.1 Destination
 
-**Sidebar route:** `/projects/:projectId/instrumentation`
+**Sidebar route:** `/applications/:projectId/instrumentation`
 
 ## 7.2 Purpose
 
@@ -702,7 +702,7 @@ Preparing a plan requires no write access.
 
 ## 7.5 Plan detail
 
-**Route:** `/projects/:projectId/instrumentation/plans/:planId`
+**Route:** `/applications/:projectId/instrumentation/plans/:planId`
 
 Tabs:
 
@@ -727,7 +727,7 @@ Actions:
 
 ## 7.6 Diff review
 
-**Route:** `/projects/:projectId/instrumentation/plans/:planId/diff`
+**Route:** `/applications/:projectId/instrumentation/plans/:planId/diff`
 
 Display:
 
@@ -759,7 +759,7 @@ After approval:
 10. Allow accept or rollback.
 
 **Validation route:**  
-`/projects/:projectId/instrumentation/plans/:planId/validation`
+`/applications/:projectId/instrumentation/plans/:planId/validation`
 
 Display each check separately:
 
@@ -773,7 +773,7 @@ Display each check separately:
 
 ## 7.8 History
 
-**Route:** `/projects/:projectId/instrumentation/history`
+**Route:** `/applications/:projectId/instrumentation/history`
 
 Contains:
 
@@ -856,7 +856,7 @@ Later phases add Python, PHP, .NET, and Java adapters.
 
 ## 8.1 Destination
 
-**Sidebar route:** `/projects/:projectId/qa-runs`
+**Sidebar route:** `/applications/:projectId/qa-runs`
 
 ## 8.2 Purpose
 
@@ -922,7 +922,7 @@ Primary actions:
 
 ## 8.4 New QA run wizard
 
-**Route:** `/projects/:projectId/qa-runs/new`
+**Route:** `/applications/:projectId/qa-runs/new`
 
 ### Step 1 — Project and environment
 
@@ -1008,7 +1008,7 @@ Show all permissions and restrictions in one final summary.
 
 ## 8.5 Active run page
 
-**Route:** `/projects/:projectId/qa-runs/:runId/live`
+**Route:** `/applications/:projectId/qa-runs/:runId/live`
 
 Recommended layout:
 
@@ -1074,7 +1074,7 @@ Production form submission remains blocked even after a generic confirmation.
 
 ## 8.7 Run detail
 
-**Route:** `/projects/:projectId/qa-runs/:runId`
+**Route:** `/applications/:projectId/qa-runs/:runId`
 
 Summary:
 
@@ -1095,7 +1095,7 @@ Summary:
 
 ## 8.8 Evidence
 
-**Route:** `/projects/:projectId/qa-runs/:runId/evidence`
+**Route:** `/applications/:projectId/qa-runs/:runId/evidence`
 
 Categories:
 
@@ -1124,7 +1124,7 @@ Every item must expose:
 
 ## 8.9 Findings
 
-**Route:** `/projects/:projectId/qa-runs/:runId/findings`
+**Route:** `/applications/:projectId/qa-runs/:runId/findings`
 
 Finding categories:
 
@@ -1165,7 +1165,7 @@ Tellann may recommend a product fix but must not apply it.
 
 ## 8.10 Replay
 
-**Route:** `/projects/:projectId/qa-runs/:runId/replay`
+**Route:** `/applications/:projectId/qa-runs/:runId/replay`
 
 Provide:
 
@@ -1181,7 +1181,7 @@ Provide:
 
 ## 8.11 Observed graph
 
-**Route:** `/projects/:projectId/qa-runs/:runId/graph`
+**Route:** `/applications/:projectId/qa-runs/:runId/graph`
 
 Show:
 
@@ -1199,7 +1199,7 @@ Do not confuse this with Intent. This is what Tellann observed during the run.
 
 ## 8.12 Reconciliation
 
-**Route:** `/projects/:projectId/qa-runs/:runId/reconciliation`
+**Route:** `/applications/:projectId/qa-runs/:runId/reconciliation`
 
 Compare expected intent with observed behavior:
 
@@ -1244,7 +1244,7 @@ The UI should distinguish local execution status from cloud processing status.
 
 ## 9.1 Destination
 
-**Sidebar route:** `/projects/:projectId/reports`
+**Sidebar route:** `/applications/:projectId/reports`
 
 ## 9.2 Purpose
 
@@ -1292,7 +1292,7 @@ Primary actions:
 
 ## 9.4 Report detail
 
-**Route:** `/projects/:projectId/reports/:reportId`
+**Route:** `/applications/:projectId/reports/:reportId`
 
 Sections:
 
@@ -1316,7 +1316,7 @@ Every finding must link back to its run evidence.
 
 ## 9.5 Report comparison
 
-**Route:** `/projects/:projectId/reports/compare`
+**Route:** `/applications/:projectId/reports/compare`
 
 Compare:
 
@@ -1343,7 +1343,7 @@ A comparison must never imply release regression unless the selected data suppor
 
 ## 9.6 Export
 
-**Route:** `/projects/:projectId/reports/:reportId/export`
+**Route:** `/applications/:projectId/reports/:reportId/export`
 
 Formats depend on entitlement and report contract:
 
@@ -1383,7 +1383,7 @@ The screenshot shows **Workspace** and **Run Status** blocks. These should be ac
 Click destination:
 
 ```text
-/projects/:projectId/workspace
+/applications/:projectId/workspace
 ```
 
 States:
@@ -1424,8 +1424,8 @@ The current wording **Not analyzed** should be clickable and lead directly to th
 
 Click behavior:
 
-- Active run exists → open `/projects/:projectId/qa-runs/:runId/live`.
-- No active run → open `/projects/:projectId/qa-runs`.
+- Active run exists → open `/applications/:projectId/qa-runs/:runId/live`.
+- No active run → open `/applications/:projectId/qa-runs`.
 - Run processing → open run detail.
 - Run failed → open run detail at failure stage.
 
@@ -1649,10 +1649,10 @@ interface DesktopNavItem {
 const navItems: DesktopNavItem[] = [
   {
     id: "projects",
-    label: "Projects",
+    label: "Applications",
     icon: Folder,
     projectScoped: false,
-    resolveHref: () => "/projects",
+    resolveHref: () => "/applications",
   },
   {
     id: "intent",
@@ -1661,8 +1661,8 @@ const navItems: DesktopNavItem[] = [
     projectScoped: true,
     resolveHref: ({ activeProjectId }) =>
       activeProjectId
-        ? `/projects/${activeProjectId}/intent`
-        : "/projects?next=intent",
+        ? `/applications/${activeProjectId}/intent`
+        : "/applications?next=intent",
   },
   {
     id: "instrumentation",
@@ -1671,8 +1671,8 @@ const navItems: DesktopNavItem[] = [
     projectScoped: true,
     resolveHref: ({ activeProjectId }) =>
       activeProjectId
-        ? `/projects/${activeProjectId}/instrumentation`
-        : "/projects?next=instrumentation",
+        ? `/applications/${activeProjectId}/instrumentation`
+        : "/applications?next=instrumentation",
   },
   {
     id: "qa-runs",
@@ -1681,8 +1681,8 @@ const navItems: DesktopNavItem[] = [
     projectScoped: true,
     resolveHref: ({ activeProjectId }) =>
       activeProjectId
-        ? `/projects/${activeProjectId}/qa-runs`
-        : "/projects?next=qa-runs",
+        ? `/applications/${activeProjectId}/qa-runs`
+        : "/applications?next=qa-runs",
   },
   {
     id: "reports",
@@ -1691,8 +1691,8 @@ const navItems: DesktopNavItem[] = [
     projectScoped: true,
     resolveHref: ({ activeProjectId }) =>
       activeProjectId
-        ? `/projects/${activeProjectId}/reports`
-        : "/projects?next=reports",
+        ? `/applications/${activeProjectId}/reports`
+        : "/applications?next=reports",
   },
 ];
 ```
@@ -1706,13 +1706,13 @@ function isNavItemActive(
   section: DesktopSection,
 ): boolean {
   if (section === "projects") {
-    return pathname === "/projects" ||
-      /^\/projects\/[^/]+(?:\/workspace|\/sources|\/environments|\/activity)?$/.test(pathname);
+    return pathname === "/applications" ||
+      /^\/applications\/[^/]+(?:\/workspace|\/sources|\/environments|\/activity)?$/.test(pathname);
   }
 
   if (!projectId) return false;
 
-  return pathname.startsWith(`/projects/${projectId}/${section}`);
+  return pathname.startsWith(`/applications/${projectId}/${section}`);
 }
 ```
 
@@ -1759,7 +1759,7 @@ Do not use a click handler that merely sets an `activeTab` class. Navigation and
 
 | Area | Phase 0 | Phase 1 | Phase 2 | Phase 3+ |
 |---|---|---|---|---|
-| Projects | Shell/auth/folder proof | Full project attach and read-only scan | Sources and change diffs | Adapter-rich workspace intelligence |
+| Applications | Shell/auth/folder proof | Full project attach and read-only scan | Sources and change diffs | Adapter-rich workspace intelligence |
 | Intent | Placeholder/current graph selection | Basic expected version selection | Full document/repository drafts and review | Intent-aware instrumentation mapping |
 | Instrumentation | Security shell | Browser-only/manual status | Proposal-only | Apply, validate, rollback |
 | QA Runs | Managed browser proof | Full guided browser-first runs | Runs against accepted inferred intent | Correlated SDK/semantic runs |
@@ -1782,7 +1782,7 @@ A feature that has not reached its delivery phase must still have a useful desti
 - Missing project context produces a project-selection flow.
 - No visible item silently ignores a click.
 
-## Projects
+## Applications
 
 - A user can attach a folder without executing scripts.
 - A user can use URL-only mode.
@@ -1827,7 +1827,7 @@ A feature that has not reached its delivery phase must still have a useful desti
 1. Create route definitions for the five primary destinations.
 2. Replace active-tab-only sidebar code with route links.
 3. Add active-project resolution and `next` redirect handling.
-4. Implement Projects list and project overview.
+4. Implement the Applications list and application overview.
 5. Make workspace and run status blocks clickable.
 6. Add contextual empty states for the other four destinations.
 7. Implement QA Runs list, new-run wizard, and active-run route.
@@ -1844,7 +1844,7 @@ A feature that has not reached its delivery phase must still have a useful desti
 ```text
 Tellann Desktop
 │
-├── Projects
+├── Applications
 │   ├── Project list
 │   ├── Create/attach
 │   ├── Overview

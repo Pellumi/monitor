@@ -68,7 +68,7 @@ function bearerIdentity(request: FastifyRequest): { client?: string; key?: strin
 }
 
 // Routes that bypass API key authentication
-const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/internal/app-events', '/v1/desktop/app-events'];
+const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/internal/app-events', '/v1/desktop/app-events', '/v1/app-events'];
 
 // Routes that bypass rate limiting. See the allowList note on the plugin below.
 const RATE_LIMIT_EXEMPT_PATHS = new Set(['/auth/refresh', '/auth/desktop/refresh']);
@@ -366,7 +366,7 @@ async function main() {
   }
   const sseClients = new Set<SSEClient>();
 
-  fastify.get('/v1/desktop/app-events', async (request, reply) => {
+  const appEventsStream = async (request: any, reply: any) => {
     const query = request.query as { organizationId?: string };
     const organizationId = query.organizationId || (request.headers['x-tellann-org-id'] as string);
 
@@ -388,7 +388,12 @@ async function main() {
     });
 
     return reply.hijack();
-  });
+  };
+
+  // Both surfaces read the same stream. The `/v1/desktop/` path predates the web
+  // dashboard subscribing to it and is kept so older desktop builds keep working.
+  fastify.get('/v1/desktop/app-events', appEventsStream);
+  fastify.get('/v1/app-events', appEventsStream);
 
   fastify.post('/internal/app-events/broadcast', async (request) => {
     const body = request.body as {

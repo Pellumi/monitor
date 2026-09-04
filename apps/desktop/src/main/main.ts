@@ -6,11 +6,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
-import { IPC, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, IPC, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import {
+  answerFromAnalysis,
+  blastRadiusInAnalysis,
   buildSanitizedSourceArchive,
+  compareAnalyses,
+  describeEntity,
+  hierarchyChildren,
   previewSanitizedSourceArchive,
+  projectAnalysis,
   scanWorkspace,
 } from '@tellann/project-intelligence';
 import { BrowserObserver } from '@tellann/browser-observer';
@@ -44,12 +50,31 @@ const notificationClient = new DesktopNotificationClient({
   getWindow: () => mainWindow,
 });
 
-/** Point the notification client at the org of the user's first application. */
+/**
+ * Point both live streams — the notification feed and the application-event
+ * broadcast — at one organisation. Called whenever we learn or re-learn which
+ * organisation this window is working in, so a newly created application and
+ * its notification reach the renderer without a restart.
+ */
+async function applyActiveOrganization(organizationId: string | null): Promise<void> {
+  if (!organizationId) return;
+  activeOrganizationId = organizationId;
+  cloud.setAppEventsOrganization(organizationId);
+  await notificationClient.setActiveOrganization(organizationId);
+}
+
 async function syncNotificationOrganization(): Promise<void> {
   try {
     const apps = await cloud.applications();
     const organizationId = apps.find((entry) => entry.organizationId)?.organizationId ?? null;
-    await notificationClient.setActiveOrganization(organizationId);
+    if (organizationId) {
+      await applyActiveOrganization(organizationId);
+      return;
+    }
+    // No applications yet — the member still belongs to an organisation, and
+    // that is exactly the case where they are about to create their first one.
+    const organizations = await cloud.organizations();
+    await applyActiveOrganization(organizations[0]?.id ?? null);
   } catch {
     // Not signed in yet, or offline — a later sign-in / focus retries.
   }
@@ -59,6 +84,7 @@ const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
 const codebaseWorkers = new Map<string, Worker>();
 let pendingSetupHandoffToken: string | null = null;
+let activeOrganizationId: string | null = null;
 const execFileAsync = promisify(execFile);
 const instrumentation = new InstrumentationController(
   cloud,
@@ -211,6 +237,41 @@ function codebaseCacheKey(applicationId: string): string {
   return `codebase-cache:${scope}:${applicationId}`;
 }
 
+/** The analysis before the current one, kept so Changes works without the cloud. */
+function codebasePreviousKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  return `codebase-previous:${scope}:${applicationId}`;
+}
+
+function readPreviousAnalysis(applicationId: string): CodebaseAnalysis | null {
+  try {
+    return readLocalState<CodebaseAnalysis>(codebasePreviousKey(applicationId));
+  } catch {
+    return null;
+  }
+}
+
+/** Entity and feature collections the views ask for, filtered the same way the API filters them. */
+function localCollection(analysis: CodebaseAnalysis, collection: string, search: string): unknown[] {
+  const ofType = (...types: CodeEntity['type'][]) =>
+    analysis.entities.filter((entity) => types.includes(entity.type));
+  const all: unknown[] =
+    collection === 'features' ? analysis.features
+      : collection === 'domains' ? analysis.architecture?.domains ?? []
+        : collection === 'endpoints' ? ofType('endpoint')
+          : collection === 'ui-routes' ? ofType('ui_route', 'ui_action')
+            : collection === 'data-stores' ? ofType('database_model', 'database_table')
+              : collection === 'events' ? ofType('event', 'queue', 'job')
+                : collection === 'external-systems' ? ofType('external_service')
+                  : collection === 'findings' ? analysis.findings
+                    : collection === 'coupling' ? analysis.architecture?.coupling ?? []
+                      : [];
+  const needle = search.trim().toLowerCase();
+  if (!needle) return all;
+  return all.filter((item) => JSON.stringify(item).toLowerCase().includes(needle));
+}
+
 function readAnalysisState(applicationId: string): CodebaseAnalysisState | null {
   try {
     return readLocalState<CodebaseAnalysisState>(codebaseAnalysisKey(applicationId));
@@ -247,7 +308,7 @@ function pendingAnalysis(snapshot: RepositorySnapshotSummary, message: string): 
     contentHash: '',
     entities: [], relationships: [], features: [], findings: [],
     architecture: null, coverage: null, incremental: null, explanations: [],
-    warnings: [],
+    warnings: [], notices: [],
     summary: {
       files: 0, symbols: 0, relationships: 0, applications: 0, services: 0,
       domains: 0, features: 0, endpoints: 0, dataModels: 0, events: 0,
@@ -313,6 +374,17 @@ function beginLocalCodebaseAnalysis(
       });
     } else if (message.type === 'complete' && message.analysis) {
       const state = readAnalysisState(applicationId);
+      // Keep the analysis this one replaces, but only when it described a
+      // different revision - overwriting it with a rerun of the same tree would
+      // leave nothing to compare against.
+      const outgoing = state?.analysis;
+      if (outgoing?.entities.length && outgoing.contentHash !== message.analysis.contentHash) {
+        try {
+          writeLocalState(codebasePreviousKey(applicationId), outgoing);
+        } catch (error) {
+          console.warn('[codebase-analysis] Could not retain the previous analysis', error);
+        }
+      }
       if (state) writeAnalysisState(applicationId, { ...state, analysis: message.analysis });
       if (message.cache) {
         try {
@@ -371,12 +443,35 @@ function formatBytes(bytes: number): string {
 }
 
 /**
+ * In-flight consent prompts, keyed by request id. The renderer owns the dialog,
+ * so the answer arrives over IPC rather than from a blocking native call.
+ */
+const pendingUploadConsents = new Map<string, (consented: boolean) => void>();
+
+/**
+ * Settle every outstanding prompt as "keep local". Called when the window goes
+ * away: a consent that can no longer be given must never read as given, and the
+ * attach that is awaiting it must not hang forever.
+ */
+function cancelPendingUploadConsents(): void {
+  for (const resolve of pendingUploadConsents.values()) resolve(false);
+  pendingUploadConsents.clear();
+}
+
+/**
  * Ask before any source leaves the device, showing what would actually be sent:
  * compressed size, file count, what was redacted, and what was excluded. The
  * archive is planned first precisely so those numbers are real rather than a
  * general promise.
+ *
+ * The prompt is rendered in-app rather than as a native message box, so it can
+ * lay the figures out properly and match the rest of the application. Anything
+ * that prevents the question being asked and answered — no window, a preview
+ * that cannot be planned, a window that closes — resolves to "keep local",
+ * because the safe default is that nothing is uploaded.
  */
 async function requestUploadConsent(
+  applicationId: string,
   selectedPath: string,
   snapshot: RepositorySnapshotSummary,
 ): Promise<boolean> {
@@ -386,37 +481,41 @@ async function requestUploadConsent(
   } catch {
     return false;
   }
-  const exclusions = Object.entries(preview.excludedByReason)
-    .filter(([, count]) => Number(count) > 0)
-    .map(([reason, count]) => `${Number(count)} ${reason.replaceAll('-', ' ')}`)
-    .join(', ');
-  const identity = snapshot.repositoryOriginHash
-    ? 'the repository bound to this application'
-    : 'this local folder';
-  const detail = [
-    `Repository: ${identity}${snapshot.branch ? ` on ${snapshot.branch}` : ''}${snapshot.revision ? ` at ${snapshot.revision.slice(0, 8)}` : ''}${snapshot.dirty ? ' (including uncommitted changes)' : ''}.`,
-    `Languages: ${preview.languages.map((item: { language: string }) => item.language).slice(0, 5).join(', ') || 'none detected'}.`,
-    preview.redactions
-      ? `${preview.redactions} secret-shaped value(s) across ${preview.redactedFiles} file(s) will be replaced with [redacted] before upload.`
-      : 'No secret-shaped values were found in the files to be uploaded.',
-    exclusions ? `Excluded and never uploaded: ${exclusions}.` : 'Nothing was excluded.',
-    preview.truncated
-      ? 'This repository exceeds the upload budget, so lower-priority files (documentation first) will be left out and reported.'
-      : '',
-    'The snapshot is encrypted before upload, tied to this exact revision, and deleted automatically under your organization retention policy.',
-    'Keeping it local runs the same analysis on this machine instead, and nothing is uploaded.',
-  ].filter(Boolean).join('\n\n');
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
 
-  const consent = await dialog.showMessageBox(mainWindow!, {
-    type: 'question',
-    title: 'Upload source for codebase analysis?',
-    message: `Upload ${preview.fileCount} files (${formatBytes(preview.compressedBytes)} compressed) for full codebase analysis?`,
-    detail,
-    buttons: ['Upload and analyze', 'Keep analysis local'],
-    defaultId: 0,
-    cancelId: 1,
+  const requestId = crypto.randomUUID();
+  const request: CodebaseUploadConsentRequest = {
+    requestId,
+    applicationId,
+    workspaceName: path.basename(selectedPath),
+    fileCount: preview.fileCount,
+    compressedBytes: preview.compressedBytes,
+    repositoryLabel: snapshot.repositoryOriginHash
+      ? 'the repository bound to this application'
+      : 'this local folder',
+    branch: snapshot.branch ?? null,
+    revision: snapshot.revision ?? null,
+    dirty: Boolean(snapshot.dirty),
+    languages: preview.languages.map((item: { language: string }) => item.language).slice(0, 5),
+    redactions: preview.redactions,
+    redactedFiles: preview.redactedFiles,
+    exclusions: Object.entries(preview.excludedByReason)
+      .filter(([, count]) => Number(count) > 0)
+      .map(([reason, count]) => ({ reason: reason.replaceAll('-', ' '), count: Number(count) })),
+    truncated: Boolean(preview.truncated),
+  };
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const settle = (consented: boolean) => {
+      if (settled) return;
+      settled = true;
+      pendingUploadConsents.delete(requestId);
+      resolve(consented);
+    };
+    pendingUploadConsents.set(requestId, settle);
+    mainWindow!.webContents.send(IPC.uploadConsentRequested, request);
   });
-  return consent.response === 0;
 }
 
 async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
@@ -451,7 +550,7 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
   // Exactly one analysis runs per workspace. With consent the worker service
   // owns it; without consent it runs here. Doing both would mean the same job
   // being written by two producers.
-  const consented = await requestUploadConsent(selectedPath, snapshot);
+  const consented = await requestUploadConsent(applicationId, selectedPath, snapshot);
   if (consented) {
     try {
       writeAnalysisState(applicationId, {
@@ -600,6 +699,9 @@ async function createWindow(): Promise<void> {
       devTools: !app.isPackaged,
     },
   });
+  // An attach waiting on consent must not hang if the window disappears.
+  mainWindow.on('closed', cancelPendingUploadConsents);
+  mainWindow.webContents.on('render-process-gone', cancelPendingUploadConsents);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const allowed = process.env.VITE_DEV_SERVER_URL;
@@ -680,16 +782,43 @@ function registerIpc(): void {
     assertTrustedSender(event);
     await notificationClient.stop().catch(() => undefined);
     await cloud.signOut();
+    activeOrganizationId = null;
+    cloud.setAppEventsOrganization(null);
     selectedWorkspaces.clear();
   });
   ipcMain.handle(IPC.getApplications, async (event) => {
     assertTrustedSender(event);
     const apps = await cloud.applications();
-    // Opportunistically (re)arm notifications now that we know an org.
-    void notificationClient.setActiveOrganization(
+    // Opportunistically (re)arm the live streams now that we know an org.
+    void applyActiveOrganization(
       apps.find((entry) => entry.organizationId)?.organizationId ?? null,
     );
     return apps;
+  });
+  ipcMain.handle(IPC.uploadConsentResolve, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { requestId?: unknown; consented?: unknown };
+    if (typeof value?.requestId !== 'string') throw new Error('INVALID_UPLOAD_CONSENT_RESPONSE');
+    const settle = pendingUploadConsents.get(value.requestId);
+    // A stale or duplicated answer is not an error: the prompt it belongs to
+    // has already been settled (the window closed, or it was answered once).
+    if (settle) settle(value.consented === true);
+    return { resolved: Boolean(settle) };
+  });
+  ipcMain.handle(IPC.getOrganizations, async (event) => {
+    assertTrustedSender(event);
+    const organizations = await cloud.organizations();
+    if (!activeOrganizationId) void applyActiveOrganization(organizations[0]?.id ?? null);
+    return organizations;
+  });
+  ipcMain.handle(IPC.createApplication, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const parsed = CreateApplicationInputSchema.parse(input);
+    const created = await cloud.createApplication({ ...parsed, name: parsed.name.trim() });
+    // Arm the streams against the new application's organisation before the
+    // renderer refreshes, so the `app-created` notification is not missed.
+    await applyActiveOrganization(created.organizationId);
+    return created;
   });
   cloud.subscribeToAppEvents((appEvent) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1192,7 +1321,16 @@ function registerIpc(): void {
       // re-attaching is the one path that asks for consent against real numbers.
       return { rescanned: false, requiresReattach: true };
     }
-    const snapshot = await scanWorkspace(workspace.path, { workspaceId: workspace.id });
+    if (!existsSync(workspace.path)) {
+      throw new Error('The attached folder is no longer on this machine. Re-attach it to analyse again.');
+    }
+    // The QA branch is carried through so a rescan measures drift the same way
+    // the original attach did, rather than silently losing it.
+    const policy = workspace.branchPolicy;
+    const snapshot = await scanWorkspace(workspace.path, {
+      workspaceId: workspace.id,
+      upstreamBranch: policy?.bound ? policy.qaBranchName : null,
+    });
     beginLocalCodebaseAnalysis(applicationId, workspace.path, snapshot);
     return { rescanned: true, requiresReattach: false };
   });
@@ -1203,27 +1341,85 @@ function registerIpc(): void {
       throw new Error('INVALID_CODEBASE_QUERY');
     }
     const payload = (value.payload ?? {}) as Record<string, any>;
+    const applicationId = value.applicationId;
+    const state = readAnalysisState(applicationId);
+
+    // A workspace that declined the upload has no analysis on the server, so
+    // asking the API would 404. Everything below is answerable from the graph
+    // held on this device, and answering it here is also what keeps the user's
+    // choice to keep their source local meaningful.
+    if (state?.mode !== 'cloud') {
+      const analysis = state?.analysis;
+      if (!analysis || !analysis.entities.length) {
+        throw new Error('No completed local analysis is available for this workspace yet.');
+      }
+      switch (value.kind) {
+        case 'graph':
+          return projectAnalysis(analysis, payload);
+        case 'hierarchy': {
+          const children = hierarchyChildren(
+            analysis,
+            typeof payload.parentId === 'string' ? payload.parentId : null,
+          );
+          const offset = Math.max(Number(payload.offset) || 0, 0);
+          const limit = Math.min(Math.max(Number(payload.limit) || 200, 1), 1_000);
+          return { items: children.slice(offset, offset + limit), total: children.length, offset, limit };
+        }
+        case 'entity': {
+          const detail = describeEntity(analysis, String(payload.entityId ?? ''));
+          if (!detail) throw new Error('Entity not found in this analysis.');
+          return detail;
+        }
+        case 'blast-radius':
+          return blastRadiusInAnalysis(analysis, String(payload.entityId ?? ''));
+        case 'ask':
+          // No model runs here: a local analysis has no provider credentials and
+          // must not send code anywhere. The deterministic descriptions and their
+          // citations are the answer.
+          return answerFromAnalysis(analysis, String(payload.question ?? ''));
+        case 'compare': {
+          const previous = readPreviousAnalysis(applicationId);
+          if (!previous) {
+            return {
+              changes: [],
+              message: 'Only one analysis has been kept for this workspace so far. Rescan after making a change to compare revisions.',
+            };
+          }
+          return compareAnalyses(previous, analysis);
+        }
+        case 'collection': {
+          const collection = String(payload.collection ?? 'features');
+          const items = localCollection(analysis, collection, String(payload.search ?? ''));
+          const offset = Math.max(Number(payload.offset) || 0, 0);
+          const limit = Math.min(Math.max(Number(payload.limit) || 100, 1), 1_000);
+          return { items: items.slice(offset, offset + limit), total: items.length, offset, limit };
+        }
+        default:
+          throw new Error('UNKNOWN_CODEBASE_QUERY');
+      }
+    }
+
     switch (value.kind) {
       case 'graph':
-        return cloud.queryCodebaseGraph(value.applicationId, payload);
+        return cloud.queryCodebaseGraph(applicationId, payload);
       case 'hierarchy':
         return cloud.codebaseHierarchy(
-          value.applicationId,
+          applicationId,
           typeof payload.parentId === 'string' ? payload.parentId : null,
           Number(payload.offset) || 0,
           Number(payload.limit) || 200,
         );
       case 'entity':
-        return cloud.codebaseEntity(value.applicationId, String(payload.entityId ?? ''));
+        return cloud.codebaseEntity(applicationId, String(payload.entityId ?? ''));
       case 'blast-radius':
-        return cloud.codebaseBlastRadius(value.applicationId, String(payload.entityId ?? ''));
+        return cloud.codebaseBlastRadius(applicationId, String(payload.entityId ?? ''));
       case 'compare':
-        return cloud.codebaseCompare(value.applicationId);
+        return cloud.codebaseCompare(applicationId);
       case 'ask':
-        return cloud.askCodebase(value.applicationId, String(payload.question ?? ''));
+        return cloud.askCodebase(applicationId, String(payload.question ?? ''));
       case 'collection':
         return cloud.codebaseCollection(
-          value.applicationId,
+          applicationId,
           String(payload.collection ?? 'features').replace(/[^a-z-]/g, ''),
           String(payload.search ?? ''),
           Number(payload.offset) || 0,

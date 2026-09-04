@@ -8,8 +8,11 @@ import type {
   DeclaredFlowSummary,
   FlowReviewPreview,
   FlowSuggestionsResponse,
+  AppEvent,
+  CreateApplicationInput,
   DesktopApplication,
   DesktopEntitlements,
+  DesktopOrganization,
   QARunSummary,
   QualityReport,
   RepositorySnapshotSummary,
@@ -372,14 +375,69 @@ export class DesktopCloudClient {
     });
   }
 
-  subscribeToAppEvents(onEvent: (event: any) => void): () => void {
+  /** Organisations the signed-in member belongs to, newest first. */
+  async organizations(): Promise<DesktopOrganization[]> {
+    const orgs = await this.request<Array<Json>>("/organizations");
+    return orgs.map((item) => ({
+      id: String(item.id),
+      name: String(item.name),
+      slug: typeof item.slug === "string" ? item.slug : null,
+    }));
+  }
+
+  /**
+   * Create an application in the cloud. Deliberately the same endpoint the web
+   * dashboard posts to: the plan limit, the Owner/Admin check, the default
+   * Development environment, the `app-created` notification and the APP_CREATED
+   * broadcast that refreshes every other signed-in surface all live there, so
+   * Desktop must not reimplement any of it.
+   */
+  async createApplication(input: CreateApplicationInput): Promise<{ id: string; name: string; organizationId: string }> {
+    const created = await this.request<Json>(
+      `/organizations/${input.organizationId}/applications`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: input.name,
+          summary: input.summary ?? undefined,
+        }),
+      },
+    );
+    return {
+      id: String(created.id),
+      name: String(created.name),
+      organizationId: String(created.organizationId ?? input.organizationId),
+    };
+  }
+
+  private appEventsOrganizationId: string | null = null;
+  private appEventsReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  /**
+   * Re-scope the app-event stream once the active organisation is known.
+   * Until then the stream is unscoped and the gateway fans every event out, so
+   * narrowing it as soon as we can keeps another organisation's activity from
+   * reaching this window at all.
+   */
+  setAppEventsOrganization(organizationId: string | null): void {
+    if (this.appEventsOrganizationId === organizationId) return;
+    this.appEventsOrganizationId = organizationId;
+    // Dropping the reader ends the current connection; the loop below
+    // reconnects immediately with the new scope.
+    void this.appEventsReader?.cancel().catch(() => undefined);
+  }
+
+  subscribeToAppEvents(onEvent: (event: AppEvent) => void): () => void {
     const controller = new AbortController();
-    const url = `${API_URL}/v1/desktop/app-events`;
 
     void (async () => {
       while (!controller.signal.aborted) {
         let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+        const scopedTo = this.appEventsOrganizationId;
         try {
+          const url = scopedTo
+            ? `${API_URL}/v1/desktop/app-events?organizationId=${encodeURIComponent(scopedTo)}`
+            : `${API_URL}/v1/desktop/app-events`;
           const res = await cloudFetch(url, { signal: controller.signal });
           if (!res.ok || !res.body) {
             await res.body?.cancel().catch(() => undefined);
@@ -388,6 +446,7 @@ export class DesktopCloudClient {
           }
 
           reader = res.body.getReader();
+          this.appEventsReader = reader;
           const decoder = new TextDecoder();
           let buffer = "";
 
@@ -403,9 +462,18 @@ export class DesktopCloudClient {
               if (line.startsWith("data: ")) {
                 try {
                   const data = JSON.parse(line.slice(6));
-                  if (data.action) {
-                    onEvent(data);
+                  // Belt and braces: the gateway already filters by
+                  // organisation, but a stream opened before the org was known
+                  // may still be carrying events from before the re-scope.
+                  if (!data.action) continue;
+                  if (
+                    this.appEventsOrganizationId &&
+                    data.organizationId &&
+                    data.organizationId !== this.appEventsOrganizationId
+                  ) {
+                    continue;
                   }
+                  onEvent(data as AppEvent);
                 } catch {
                   // Ignore parse error
                 }
@@ -418,6 +486,7 @@ export class DesktopCloudClient {
         } finally {
           // Release the socket before reconnecting so failed attempts don't
           // stack up half-dead connections.
+          if (this.appEventsReader === reader) this.appEventsReader = null;
           await reader?.cancel().catch(() => undefined);
         }
       }

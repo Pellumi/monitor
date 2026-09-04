@@ -12,27 +12,27 @@ export type DesktopNavItem = {
 };
 
 const sectionHref = (section: Exclude<DesktopSection, 'projects'>, projectId?: string) =>
-  projectId ? `/projects/${projectId}/${section}` : `/projects?next=${section}`;
+  projectId ? `/applications/${projectId}/${section}` : `/applications?next=${section}`;
 
 export const desktopNavigation: DesktopNavItem[] = [
   {
     id: 'projects',
-    label: 'Projects',
+    label: 'Applications',
     icon: Folder,
     projectScoped: false,
-    resolveHref: () => '/projects',
+    resolveHref: () => '/applications',
     matches: (pathname) =>
-      pathname === '/projects'
-      || pathname === '/projects/new'
-      || /^\/projects\/[^/]+(?:\/(?:workspace|environments|activity))?$/.test(pathname),
+      pathname === '/applications'
+      || pathname === '/applications/new'
+      || /^\/applications\/[^/]+(?:\/(?:workspace|environments|activity))?$/.test(pathname),
   },
   // {
   //   id: 'sources',
   //   label: 'Documents',
   //   icon: BookOpenText,
   //   projectScoped: true,
-  //   resolveHref: (projectId) => projectId ? `/projects/${projectId}/sources` : '/projects',
-  //   matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/sources`)),
+  //   resolveHref: (projectId) => projectId ? `/applications/${projectId}/sources` : '/applications',
+  //   matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/applications/${projectId}/sources`)),
   // },
   {
     id: 'intent',
@@ -40,7 +40,7 @@ export const desktopNavigation: DesktopNavItem[] = [
     icon: Workflow,
     projectScoped: true,
     resolveHref: (projectId) => sectionHref('intent', projectId),
-    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/intent`)),
+    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/applications/${projectId}/intent`)),
   },
   {
     id: 'instrumentation',
@@ -48,7 +48,7 @@ export const desktopNavigation: DesktopNavItem[] = [
     icon: Code2,
     projectScoped: true,
     resolveHref: (projectId) => sectionHref('instrumentation', projectId),
-    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/instrumentation`)),
+    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/applications/${projectId}/instrumentation`)),
   },
   {
     id: 'qa-runs',
@@ -56,7 +56,7 @@ export const desktopNavigation: DesktopNavItem[] = [
     icon: Play,
     projectScoped: true,
     resolveHref: (projectId) => sectionHref('qa-runs', projectId),
-    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/qa-runs`)),
+    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/applications/${projectId}/qa-runs`)),
   },
   {
     id: 'reports',
@@ -64,6 +64,6 @@ export const desktopNavigation: DesktopNavItem[] = [
     icon: BarChart3,
     projectScoped: true,
     resolveHref: (projectId) => sectionHref('reports', projectId),
-    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/projects/${projectId}/reports`)),
+    matches: (pathname, projectId) => Boolean(projectId && pathname.startsWith(`/applications/${projectId}/reports`)),
   },
 ];

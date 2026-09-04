@@ -7,6 +7,8 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { desktopNavigation } from './navigation';
 import { useDesktop } from './desktop-context';
 import { SelectField } from './components/ui/select';
+import { NotificationToaster } from './components/notification-toaster';
+import { UploadConsentModal } from './components/upload-consent-modal';
 
 type SidebarMode = 'full' | 'icon' | 'closed';
 
@@ -15,8 +17,8 @@ const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 420;
 
 function equivalentProjectRoute(pathname: string, projectId: string) {
-  const match = pathname.match(/^\/projects\/[^/]+(\/.*)?$/);
-  return match ? `/projects/${projectId}${match[1] ?? ''}` : `/projects/${projectId}`;
+  const match = pathname.match(/^\/applications\/[^/]+(\/.*)?$/);
+  return match ? `/applications/${projectId}${match[1] ?? ''}` : `/applications/${projectId}`;
 }
 
 function storedSidebarMode(): SidebarMode {
@@ -33,7 +35,11 @@ function storedSidebarWidth() {
 
 export function AppShell() {
   const location = useLocation();
-  const projectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  // `/applications/new` is the create wizard, not an application id. Reading
+  // `new` as one makes the "unknown application" guard below bounce straight
+  // to the first existing application, so the wizard never renders.
+  const routeSegment = location.pathname.match(/^\/applications\/([^/]+)/)?.[1];
+  const projectId = routeSegment === 'new' ? undefined : routeSegment;
   const navigate = useNavigate();
   const {
     applications, workspaces, activeRun, busy, cloudAvailable, error, session, avatarDataUri, signOut,
@@ -65,9 +71,20 @@ export function AppShell() {
       navigate(equivalentProjectRoute(location.pathname, fallback), { replace: true });
     } else {
       localStorage.removeItem('tellann:last-project');
-      navigate('/projects', { replace: true });
+      navigate('/applications', { replace: true });
     }
   }, [application, applications, cloudAvailable, location.pathname, navigate, projectId, session?.authenticated]);
+
+  // Clicking a native OS notification (or a toast's View action) asks the main
+  // process to focus this window and hand over the notification's deep link.
+  // Desktop and the web dashboard share the `/applications/:id` shape, so the
+  // same link resolves on either surface.
+  useEffect(() => {
+    if (!window.tellann?.notifications?.onOpenDeepLink) return;
+    return window.tellann.notifications.onOpenDeepLink(({ deepLink }) => {
+      if (typeof deepLink === 'string' && deepLink.startsWith('/')) navigate(deepLink);
+    });
+  }, [navigate]);
 
   useEffect(() => {
     if (!profileOpen) return;
@@ -152,13 +169,13 @@ export function AppShell() {
         <button className="sidebar-toggle" type="button" onClick={cycleSidebar} title={sidebarToggleLabel} aria-label={sidebarToggleLabel}>
           {sidebarMode === 'full' ? <PanelLeftClose size={17} /> : sidebarMode === 'icon' ? <PanelLeftOpen size={17} /> : <PanelLeft size={17} />}
         </button>
-        <Link className="brand" to="/projects">Tellann</Link>
+        <Link className="brand" to="/applications">Tellann</Link>
         <SelectField
-          ariaLabel="Active project"
+          ariaLabel="Active application"
           value={application?.id ?? ''}
           onValueChange={changeProject}
           options={applications.map((item) => ({ value: item.id, label: `${item.organizationName} / ${item.name}` }))}
-          placeholder="Select project"
+          placeholder="Select application"
           className="topbar-select project-select"
         />
         {application && application.environments.length > 1 ? (
@@ -175,7 +192,7 @@ export function AppShell() {
             className="topbar-select environment-select"
           />
         ) : null}
-        <span className="environment">{environment?.type ?? 'NO PROJECT'}</span>
+        <span className="environment">{environment?.type ?? 'NO APPLICATION'}</span>
         <div className="topbar-spacer" />
       </header>
 
@@ -196,7 +213,7 @@ export function AppShell() {
             ))}
           </nav>
           <div className="sidebar-statuses">
-            <Link className="sidebar-status" title={sidebarMode === 'icon' ? `Workspace: ${workspace ? 'Analyzed' : 'Not analyzed'}` : undefined} to={projectId ? `/projects/${projectId}/workspace` : '/projects'}>
+            <Link className="sidebar-status" title={sidebarMode === 'icon' ? `Workspace: ${workspace ? 'Analyzed' : 'Not analyzed'}` : undefined} to={projectId ? `/applications/${projectId}/workspace` : '/applications'}>
               <Folder className="sidebar-status-icon" size={18} />
               <span>Workspace</span>
               <strong>{workspace ? 'Analyzed' : 'Not analyzed'}</strong>
@@ -209,9 +226,9 @@ export function AppShell() {
               title={sidebarMode === 'icon' ? `Run status: ${activeRun?.status ?? 'Ready'}` : undefined}
               to={projectId
                 ? activeRun
-                  ? `/projects/${projectId}/qa-runs/${activeRun.runId}/live`
-                  : `/projects/${projectId}/qa-runs`
-                : '/projects?next=qa-runs'}
+                  ? `/applications/${projectId}/qa-runs/${activeRun.runId}/live`
+                  : `/applications/${projectId}/qa-runs`
+                : '/applications?next=qa-runs'}
             >
               <Activity className="sidebar-status-icon" size={18} />
               <span>Run status</span>
@@ -270,6 +287,9 @@ export function AppShell() {
         ) : null}
         <Outlet />
       </main>
+
+      <NotificationToaster />
+      <UploadConsentModal />
 
       <footer className="global-statusbar" aria-live="polite">
         <div><Activity size={16} /><span>{activeRun ? `Run ${activeRun.status.toLowerCase()}` : 'Ready for a guided run'}</span></div>

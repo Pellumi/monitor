@@ -189,11 +189,11 @@ function Status({ children }: { children: ReactNode }) {
   );
 }
 
-function ProjectRequired() {
+function ApplicationRequired() {
   const location = useLocation();
-  const section = location.pathname.split("/")[1] || "projects";
+  const section = location.pathname.split("/")[1] || "applications";
   return (
-    <Navigate replace to={`/projects?next=${encodeURIComponent(section)}`} />
+    <Navigate replace to={`/applications?next=${encodeURIComponent(section)}`} />
   );
 }
 
@@ -204,8 +204,8 @@ export function RouteResolver({ section }: { section: string }) {
       replace
       to={
         lastProject
-          ? `/projects/${lastProject}/${section}`
-          : `/projects?next=${section}`
+          ? `/applications/${lastProject}/${section}`
+          : `/applications?next=${section}`
       }
     />
   );
@@ -221,15 +221,15 @@ export function RootResolver() {
     return (
       <Navigate
         replace
-        to={`/projects/${projectId}/qa-runs/${activeRun.runId}/live`}
+        to={`/applications/${projectId}/qa-runs/${activeRun.runId}/live`}
       />
     );
   return (
-    <Navigate replace to={projectId ? `/projects/${projectId}` : "/projects"} />
+    <Navigate replace to={projectId ? `/applications/${projectId}` : "/applications"} />
   );
 }
 
-export function ProjectsPage() {
+export function ApplicationsPage() {
   const { applications, workspaces, runs, refreshRuns, attachWorkspace, busy } =
     useDesktop();
   const [searchParams] = useSearchParams();
@@ -250,25 +250,25 @@ export function ProjectsPage() {
 
   return (
     <Page
-      title="Projects"
+      title="Applications"
       description="Connect a Tellann application to a local workspace, a development URL, or a staging URL."
       actions={
-        <Link className="button primary" to="/projects/new">
-          Create project
+        <Link className="button primary" to="/applications/new">
+          Create application
         </Link>
       }
     >
       {next ? (
         <div className="context-banner">
-          Select a project to continue to <strong>{next}</strong>.
+          Select an application to continue to <strong>{next}</strong>.
         </div>
       ) : null}
       <div className="filter-row">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter projects"
-          aria-label="Filter projects"
+          placeholder="Filter applications"
+          aria-label="Filter applications"
         />
       </div>
       {visible.length ? (
@@ -277,8 +277,8 @@ export function ProjectsPage() {
             const workspace = workspaces[application.id];
             const latestRun = runs[application.id]?.[0];
             const destination = next
-              ? `/projects/${application.id}/${next}`
-              : `/projects/${application.id}`;
+              ? `/applications/${application.id}/${next}`
+              : `/applications/${application.id}`;
             return (
               <article className="project-card" key={application.id}>
                 <div className="card-heading">
@@ -329,7 +329,7 @@ export function ProjectsPage() {
                       )
                     }
                   >
-                    Open project
+                    Open application
                   </Link>
                   <button
                     disabled={busy}
@@ -345,11 +345,11 @@ export function ProjectsPage() {
       ) : (
         <EmptyState
           icon={<Folder size={36} />}
-          title="No projects available"
+          title="No applications available"
           description="Create a cloud application or sign in to an organization with an existing application."
           action={
-            <Link className="button primary" to="/projects/new">
-              Create project
+            <Link className="button primary" to="/applications/new">
+              Create application
             </Link>
           }
         />
@@ -358,85 +358,159 @@ export function ProjectsPage() {
   );
 }
 
-export function NewProjectPage() {
-  const { applications, attachWorkspace, busy } = useDesktop();
+export function NewApplicationPage() {
+  const {
+    organizations,
+    refreshOrganizations,
+    createApplication,
+    attachWorkspace,
+    busy,
+    clearError,
+  } = useDesktop();
   const navigate = useNavigate();
-  const [applicationId, setApplicationId] = useState(applications[0]?.id ?? "");
-  const [mode, setMode] = useState<"folder" | "url">("folder");
+  const [organizationId, setOrganizationId] = useState("");
+  const [name, setName] = useState("");
+  const [summary, setSummary] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [organizationsError, setOrganizationsError] = useState<string | null>(
+    null,
+  );
+  const [loadingOrganizations, setLoadingOrganizations] = useState(false);
+
+  // A failed lookup must not read as "you belong to no organization", so the
+  // reason is reported and the load can be retried.
+  const loadOrganizations = useCallback(() => {
+    setLoadingOrganizations(true);
+    setOrganizationsError(null);
+    void refreshOrganizations()
+      .catch((cause) => setOrganizationsError(normalizeDesktopError(cause)))
+      .finally(() => setLoadingOrganizations(false));
+  }, [refreshOrganizations]);
+
+  useEffect(() => {
+    loadOrganizations();
+  }, [loadOrganizations]);
+
+  // Only default the selection; never overwrite a choice the user has made.
+  useEffect(() => {
+    setOrganizationId((current) =>
+      current && organizations.some((item) => item.id === current)
+        ? current
+        : (organizations[0]?.id ?? ""),
+    );
+  }, [organizations]);
+
+  const trimmedName = name.trim();
 
   const complete = async () => {
-    if (!applicationId) return;
-    if (mode === "folder") await attachWorkspace(applicationId);
-    localStorage.setItem("tellann:last-project", applicationId);
-    navigate(
-      mode === "url"
-        ? `/projects/${applicationId}/qa-runs/new`
-        : `/projects/${applicationId}`,
-    );
+    if (!organizationId || !trimmedName) return;
+    setFormError(null);
+    let created;
+    try {
+      created = await createApplication({
+        organizationId,
+        name: trimmedName,
+        summary: summary.trim() || null,
+      });
+    } catch (cause) {
+      // The cloud owns the plan limit and the Owner/Admin check, so its message
+      // is the one worth showing — and it belongs beside the form rather than in
+      // the shell banner, which is why that one is cleared.
+      setFormError(normalizeDesktopError(cause));
+      clearError();
+      return;
+    }
+    if (!created) {
+      setFormError(
+        "The application was created but could not be loaded. Reopen the Applications list to continue.",
+      );
+      return;
+    }
+    localStorage.setItem("tellann:last-project", created.id);
+    // The folder picker is always offered and always optional: cancelling it
+    // leaves the application browser-only, and a folder can be attached later
+    // from the Applications list or the Workspace page.
+    await attachWorkspace(created.id).catch(() => undefined);
+    navigate(`/applications/${created.id}`);
   };
 
   return (
     <Page
-      title="Create or attach project"
-      description="Start with read-only workspace access or continue without a repository."
+      title="Create application"
+      description="Register a new application in your organization, then choose a local folder for it — or skip the folder and attach one whenever you like."
     >
       <section className="wizard-card">
-        <div className="step-label">Step 1 of 3 / Cloud application</div>
+        <div className="step-label">Step 1 of 2 / Organization</div>
         <label>
-          Application
+          Organization
           <SelectField
-            value={applicationId}
-            onValueChange={setApplicationId}
-            options={applications.map((item) => ({
+            value={organizationId}
+            onValueChange={setOrganizationId}
+            options={organizations.map((item) => ({
               value: item.id,
-              label: `${item.organizationName} / ${item.name}`,
+              label: item.name,
             }))}
-            placeholder="Select application"
+            placeholder={
+              organizations.length
+                ? "Select organization"
+                : loadingOrganizations
+                  ? "Loading organizations…"
+                  : organizationsError
+                    ? "Organizations could not be loaded"
+                    : "No organization available"
+            }
           />
         </label>
-        <div className="step-label">Step 2 of 3 / Working mode</div>
-        <div className="choice-grid">
-          <button
-            className={mode === "folder" ? "choice selected" : "choice"}
-            onClick={() => setMode("folder")}
-          >
-            <Folder />
-            <strong>Local folder</strong>
-            <span>Read-only analysis. No scripts are executed.</span>
-          </button>
-          <button
-            className={mode === "url" ? "choice selected" : "choice"}
-            onClick={() => setMode("url")}
-          >
-            <Globe2 />
-            <strong>Browser-only URL</strong>
-            <span>No SDK, source, write, or command permission required.</span>
-          </button>
-        </div>
-        <div className="step-label">Step 3 of 3 / Permission summary</div>
-        <div className="permission-summary">
-          <ShieldCheck />
-          <div>
-            <strong>
-              {mode === "folder" ? "Read workspace" : "Browser-only"}
-            </strong>
-            <p>
-              {mode === "folder"
-                ? "Tellann reads approved project files locally and uploads only redacted derived summaries."
-                : "Tellann captures only the evidence categories approved for the guided run."}
-            </p>
+        {organizationsError ? (
+          <div className="global-error" role="alert">
+            <span>{organizationsError}</span>
+            <button onClick={loadOrganizations} disabled={loadingOrganizations}>
+              Retry
+            </button>
           </div>
-        </div>
+        ) : null}
+
+        <div className="step-label">Step 2 of 2 / Application</div>
+        <label>
+          Application name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="e.g. Production E-commerce Store"
+            maxLength={120}
+          />
+        </label>
+        <label>
+          Summary (optional)
+          <textarea
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            placeholder="What this application does, in a sentence or two."
+            rows={3}
+            maxLength={500}
+          />
+        </label>
+
+        {formError ? (
+          <div className="global-error" role="alert">
+            <span>{formError}</span>
+          </div>
+        ) : null}
+
         <button
           className="button primary"
-          disabled={!applicationId || busy}
+          disabled={!organizationId || !trimmedName || busy}
           onClick={() => void complete()}
         >
-          {mode === "folder"
-            ? "Choose folder and analyze"
-            : "Continue to QA run"}
+          {busy ? "Creating…" : "Create application"}
           <ArrowRight size={16} />
         </button>
+        <p className="wizard-footnote">
+          The application is created in Tellann Cloud, so it appears in the web
+          dashboard immediately and everyone signed in is notified. A folder
+          picker opens next for read-only analysis — skip it to stay
+          browser-only, and attach a folder later from the Applications list.
+        </p>
       </section>
     </Page>
   );
@@ -453,24 +527,24 @@ function useProject() {
   };
 }
 
-export function ProjectOverviewPage() {
+export function ApplicationOverviewPage() {
   const { projectId, application, workspace, runs, refreshRuns } = useProject();
   useEffect(() => {
     if (projectId) void refreshRuns(projectId).catch(() => undefined);
   }, [projectId, refreshRuns]);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="This project does not exist or is outside your current organization access."
+        title="Application unavailable"
+        description="This application does not exist or is outside your current organization access."
       />
     );
   const latest = runs[projectId]?.[0];
   return (
     <Page
       title={application.name}
-      description={`${application.organizationName} / Desktop project overview`}
+      description={`${application.organizationName} / Desktop application overview`}
     >
       <div className="metric-grid">
         <Metric
@@ -504,16 +578,24 @@ export function ProjectOverviewPage() {
           <div className="card-actions">
             <Link
               className="button primary"
-              to={`/projects/${projectId}/qa-runs/new`}
+              to={`/applications/${projectId}/qa-runs/new`}
             >
               New QA run
-            </Link>
-            <Link className="button" to={`/projects/${projectId}/workspace`}>
-              Workspace
             </Link>
           </div>
         </section>
       </div>
+      <div className="section-heading">
+        <div>
+          <h2>Workspace</h2>
+          <p>
+            Local repository access, read-only analysis, detected stack, and
+            redaction status.
+          </p>
+        </div>
+        <WorkspaceAttachButton />
+      </div>
+      <WorkspaceDetails />
     </Page>
   );
 }
@@ -951,7 +1033,25 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
   );
 }
 
-export function WorkspacePage() {
+function WorkspaceAttachButton() {
+  const { projectId, workspace, attachWorkspace, busy } = useProject();
+  if (!projectId) return null;
+  return (
+    <button
+      className="button"
+      disabled={busy}
+      onClick={() => void attachWorkspace(projectId)}
+    >
+      <RefreshCw size={15} />
+      {workspace ? "Change folder" : "Attach folder"}
+    </button>
+  );
+}
+
+// Rendered both on the standalone workspace route and inline under the
+// application overview, so the workspace details are visible without an extra
+// navigation click.
+export function WorkspaceDetails() {
   const {
     projectId,
     application,
@@ -961,29 +1061,9 @@ export function WorkspacePage() {
     busy,
   } = useProject();
   const [pathCopied, setPathCopied] = useState(false);
-  if (!projectId) return <ProjectRequired />;
-  if (!application)
-    return (
-      <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
-      />
-    );
+  if (!projectId || !application) return null;
   return (
-    <Page
-      title="Workspace"
-      description="Local repository access, read-only analysis, detected stack, and redaction status."
-      actions={
-        <button
-          className="button"
-          disabled={busy}
-          onClick={() => void attachWorkspace(projectId)}
-        >
-          <RefreshCw size={15} />
-          {workspace ? "Change or rescan folder" : "Attach folder"}
-        </button>
-      }
-    >
+    <>
       <QaBranchNotice projectId={projectId} />
       {!workspace ? (
         (application as any)?.projectWorkspaces?.[0] ? (
@@ -1425,6 +1505,27 @@ export function WorkspacePage() {
         </div>
       )}
       {workspace && projectId ? <CodebaseAnalysisPanel applicationId={projectId} workspaceRoot={workspace.path} /> : null}
+    </>
+  );
+}
+
+export function WorkspacePage() {
+  const { projectId, application } = useProject();
+  if (!projectId) return <ApplicationRequired />;
+  if (!application)
+    return (
+      <NotFoundPage
+        title="Application unavailable"
+        description="Select another application."
+      />
+    );
+  return (
+    <Page
+      title="Workspace"
+      description="Local repository access, read-only analysis, detected stack, and redaction status."
+      actions={<WorkspaceAttachButton />}
+    >
+      <WorkspaceDetails />
     </Page>
   );
 }
@@ -1446,7 +1547,7 @@ export function SourcesPage() {
       if (access.accessDenied) {
         const available = await refreshApplications().catch(() => []);
         const fallback = available[0]?.id;
-        navigate(fallback ? `/projects/${fallback}/sources` : "/projects", {
+        navigate(fallback ? `/applications/${fallback}/sources` : "/applications", {
           replace: true,
         });
         return;
@@ -1482,7 +1583,7 @@ export function SourcesPage() {
     return () => window.clearInterval(timer);
   }, [documents, projectId]);
 
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
 
   if (unentitled) {
     return (
@@ -1600,7 +1701,7 @@ export function SourcesPage() {
                   {version ? (
                     <Link
                       className="button"
-                      to={`/projects/${projectId}/intent`}
+                      to={`/applications/${projectId}/intent`}
                     >
                       Use in Intent
                     </Link>
@@ -1655,7 +1756,7 @@ export function EnvironmentsPage() {
 export function ActivityPage() {
   return (
     <GuardedFeaturePage
-      title="Project activity"
+      title="Application activity"
       description="Workspace scans, runs, reports, and local synchronization activity."
       phase="Cloud audit expansion is scheduled for enterprise hardening."
       fallback="QA run and report history are available in their respective sections."
@@ -2788,7 +2889,7 @@ function ManualIntentBuilder({
     );
     if (!(setup?.readiness as any)?.connected) {
       navigate(
-        `/projects/${projectId}/instrumentation?setup=connect&flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&environmentId=${encodeURIComponent(environmentId)}`,
+        `/applications/${projectId}/instrumentation?setup=connect&flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&environmentId=${encodeURIComponent(environmentId)}`,
       );
       return;
     }
@@ -2804,7 +2905,7 @@ function ManualIntentBuilder({
     if (!initializationId)
       throw new Error("Flow initialization was created without an identifier.");
     navigate(
-      `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(environmentId)}`,
+      `/applications/${projectId}/instrumentation?flowId=${encodeURIComponent(activeFlow.id)}&flowVersionId=${encodeURIComponent(activeFlow.publishedVersionId)}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(environmentId)}`,
     );
   };
 
@@ -2826,7 +2927,7 @@ function ManualIntentBuilder({
       ) : null}
 
       <section className="context-banner" role="note">
-        <strong>Keep every Flow focused.</strong> Declaring an entire project as
+        <strong>Keep every Flow focused.</strong> Declaring an entire application as
         one Flow reduces precision. Prefer one bounded capability such as
         authentication, checkout, password reset, or account deletion.
       </section>
@@ -2862,7 +2963,7 @@ function ManualIntentBuilder({
         {flows.length > 0 && flowMode === "existing" ? (
           <div className="flow-selection-mode">
             <p className="flow-section-guide">
-              Select an existing flow from this project to review, edit, or
+              Select an existing flow from this application to review, edit, or
               publish its states and transitions.
             </p>
             <div className="flow-select-row">
@@ -2920,7 +3021,7 @@ function ManualIntentBuilder({
           <div className="flow-create-mode">
             {flows.length === 0 ? (
               <p className="flow-section-guide">
-                No flows have been created for this project yet. Fill out the
+                No flows have been created for this application yet. Fill out the
                 details below to define your first flow.
               </p>
             ) : (
@@ -3606,12 +3707,12 @@ export function DeclaredFlowPage() {
     };
   }, [refreshFlows]);
 
-  if (!projectId || !flowId) return <ProjectRequired />;
+  if (!projectId || !flowId) return <ApplicationRequired />;
   if (!application) {
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
+        title="Application unavailable"
+        description="Select another application."
       />
     );
   }
@@ -3620,7 +3721,7 @@ export function DeclaredFlowPage() {
     return (
       <NotFoundPage
         title="Flow unavailable"
-        description="This flow does not exist or is outside the selected project."
+        description="This flow does not exist or is outside the selected application."
       />
     );
   }
@@ -3630,7 +3731,7 @@ export function DeclaredFlowPage() {
       title="Edit declared flow"
       description="Add the expected states and transitions, then complete the flow when it is ready for QA."
       actions={
-        <Link className="button" to={`/projects/${projectId}/intent`}>
+        <Link className="button" to={`/applications/${projectId}/intent`}>
           Back to Intent
         </Link>
       }
@@ -3923,7 +4024,7 @@ export function IntentPage() {
         "",
       );
       await refreshFlows();
-      navigate(`/projects/${activeProjectId}/intent/flows/${flow.id}`);
+      navigate(`/applications/${activeProjectId}/intent/flows/${flow.id}`);
     } catch (error) {
       setAutomationMessage(intentErrorMessage(error));
     } finally {
@@ -3970,7 +4071,7 @@ export function IntentPage() {
           setStage("DRAFT_READY");
           setActiveDraftJobId(null);
           await refresh();
-          navigate(`/projects/${activeProjectId}/intent/drafts/${job.draftId}`);
+          navigate(`/applications/${activeProjectId}/intent/drafts/${job.draftId}`);
           return;
         }
         if (job.status === "FAILED" || job.status === "CANCELLED") {
@@ -4283,12 +4384,12 @@ export function IntentPage() {
     "PROCESSING_DOCUMENTS",
     "GENERATING_DRAFT",
   ].includes(stage);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
+        title="Application unavailable"
+        description="Select another application."
       />
     );
   return (
@@ -4309,12 +4410,12 @@ export function IntentPage() {
               <Sparkles size={15} /> Upgrade plan
             </button>
           ) : null}
-          <Link className="button" to={`/projects/${projectId}/sources`}>
+          <Link className="button" to={`/applications/${projectId}/sources`}>
             <BookOpenText size={15} /> View documents
           </Link>
           <Link
             className="button"
-            to={`/projects/${projectId}/intent/versions`}
+            to={`/applications/${projectId}/intent/versions`}
           >
             Version history
           </Link>
@@ -4727,7 +4828,7 @@ export function IntentPage() {
                     >
                       <Link
                         className="min-w-0 flex-1 flex flex-col gap-0.5 text-inherit hover:no-underline"
-                        to={`/projects/${projectId}/intent/drafts/${draft.id}`}
+                        to={`/applications/${projectId}/intent/drafts/${draft.id}`}
                       >
                         <strong className="truncate" title={draftName}>
                           {draftName}
@@ -4776,7 +4877,7 @@ export function IntentPage() {
                   <Link
                     className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full hover:no-underline"
                     key={flow.id}
-                    to={`/projects/${projectId}/intent/flows/${flow.id}`}
+                    to={`/applications/${projectId}/intent/flows/${flow.id}`}
                     aria-label={`${flow.status === "DRAFT" ? "Open and edit" : "View"} ${flow.name}`}
                   >
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
@@ -4885,7 +4986,7 @@ export function IntentDetailPage() {
     const next = (draft?.draftJson as any)?.workflows;
     setEditedWorkflows(Array.isArray(next) ? structuredClone(next) : []);
   }, [draft]);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!draftId)
     return (
       <GuardedFeaturePage
@@ -4900,7 +5001,7 @@ export function IntentDetailPage() {
     return (
       <NotFoundPage
         title="Intent draft unavailable"
-        description="The draft may have been removed or belongs to another project."
+        description="The draft may have been removed or belongs to another application."
       />
     );
   const draftJson = draft.draftJson as any;
@@ -4934,11 +5035,11 @@ export function IntentDetailPage() {
       conflictResolutions: resolutions,
       editedWorkflows: workflows,
     });
-    navigate(`/projects/${projectId}/intent`);
+    navigate(`/applications/${projectId}/intent`);
   };
   const reject = async () => {
     await reviewIntentDraft(projectId, draft.id, { action: "REJECT" });
-    navigate(`/projects/${projectId}/intent`);
+    navigate(`/applications/${projectId}/intent`);
   };
   const correct = async () => {
     const requestedChange = correction.trim();
@@ -4962,7 +5063,7 @@ export function IntentDetailPage() {
         if (job.status === "COMPLETED" && job.draftId) {
           setCorrectionStatus("Revision complete. Opening the updated draft…");
           setCorrection("");
-          navigate(`/projects/${projectId}/intent/drafts/${job.draftId}`);
+          navigate(`/applications/${projectId}/intent/drafts/${job.draftId}`);
           return;
         }
         if (job.status === "FAILED" || job.status === "CANCELLED")
@@ -4987,7 +5088,7 @@ export function IntentDetailPage() {
   return (
     <Page
       title="Review generated system flows"
-      description={`Tellann found ${workflows.length} user ${workflows.length === 1 ? "journey" : "journeys"}${documentNames.length ? ` from ${documentNames.map((name) => `“${name}”`).join(", ")}` : " from your approved project evidence"}. Review ${workflows.length === 1 ? "it" : "them"} before using ${workflows.length === 1 ? "it" : "them"} in QA tests.`}
+      description={`Tellann found ${workflows.length} user ${workflows.length === 1 ? "journey" : "journeys"}${documentNames.length ? ` from ${documentNames.map((name) => `“${name}”`).join(", ")}` : " from your approved application evidence"}. Review ${workflows.length === 1 ? "it" : "them"} before using ${workflows.length === 1 ? "it" : "them"} in QA tests.`}
       actions={
         <Status>
           {draft.status === "PENDING_REVIEW"
@@ -5256,7 +5357,7 @@ export function IntentDetailPage() {
               <div>
                 <dt>Documents</dt>
                 <dd>
-                  {documentNames.join(", ") || "Approved project evidence"}
+                  {documentNames.join(", ") || "Approved application evidence"}
                 </dd>
               </div>
               <div>
@@ -6381,12 +6482,12 @@ export function InstrumentationPage() {
     projectId,
   ]);
 
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
+        title="Application unavailable"
+        description="Select another application."
       />
     );
 
@@ -6449,7 +6550,7 @@ export function InstrumentationPage() {
             : `This setup already has a ${String(record.status).toLowerCase().replaceAll("_", " ")} task. Opening it now.`,
         );
         navigate(
-          `/projects/${projectId}/instrumentation/plans/${returnedPlanId}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`,
+          `/applications/${projectId}/instrumentation/plans/${returnedPlanId}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`,
         );
         return;
       }
@@ -6541,7 +6642,7 @@ export function InstrumentationPage() {
     if (!nextId)
       throw new Error("Flow initialization was created without an identifier.");
     navigate(
-      `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(flowId)}&flowVersionId=${encodeURIComponent(flowVersionId)}&initializationId=${encodeURIComponent(nextId)}&environmentId=${encodeURIComponent(environmentId)}`,
+      `/applications/${projectId}/instrumentation?flowId=${encodeURIComponent(flowId)}&flowVersionId=${encodeURIComponent(flowVersionId)}&initializationId=${encodeURIComponent(nextId)}&environmentId=${encodeURIComponent(environmentId)}`,
       { replace: true },
     );
   };
@@ -7185,13 +7286,13 @@ export function InstrumentationPage() {
                               </button>
                               <Link
                                 className="button"
-                                to={`/projects/${projectId}/intent`}
+                                to={`/applications/${projectId}/intent`}
                               >
                                 <Workflow size={14} /> View Behavior Graph
                               </Link>
                               <Link
                                 className="button"
-                                to={`/projects/${projectId}/qa-runs/new`}
+                                to={`/applications/${projectId}/qa-runs/new`}
                               >
                                 <Play size={14} /> New QA Run
                               </Link>
@@ -7543,7 +7644,7 @@ export function InstrumentationPage() {
                 <Link
                   className="table-row"
                   key={String(plan.id)}
-                  to={`/projects/${projectId}/instrumentation/plans/${plan.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+                  to={`/applications/${projectId}/instrumentation/plans/${plan.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
                 >
                   <span>
                     <strong>{String(plan.adapterId)}</strong>
@@ -7797,7 +7898,7 @@ export function InstrumentationDetailPage() {
     };
   }, [projectId, validationSucceeded, telemetryVerified, getDeclaredFlows]);
 
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!planId)
     return (
       <Page
@@ -7806,7 +7907,7 @@ export function InstrumentationDetailPage() {
       >
         <Link
           className="button primary"
-          to={`/projects/${projectId}/instrumentation`}
+          to={`/applications/${projectId}/instrumentation`}
         >
           Open tasks
         </Link>
@@ -7820,7 +7921,7 @@ export function InstrumentationDetailPage() {
         description={
           loadError
             ? `Tellann could not load this task: ${loadError}`
-            : "The task may have been removed or may belong to another project."
+            : "The task may have been removed or may belong to another application."
         }
       />
     );
@@ -7911,7 +8012,7 @@ export function InstrumentationDetailPage() {
       });
       await startFlowVerification(initializationId);
       navigate(
-        `/projects/${projectId}/instrumentation?flowId=${encodeURIComponent(String(plan.flowId ?? ""))}&flowVersionId=${encodeURIComponent(String(plan.flowVersionId ?? ""))}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(String(record.environmentId ?? ""))}`,
+        `/applications/${projectId}/instrumentation?flowId=${encodeURIComponent(String(plan.flowId ?? ""))}&flowVersionId=${encodeURIComponent(String(plan.flowVersionId ?? ""))}&initializationId=${encodeURIComponent(initializationId)}&environmentId=${encodeURIComponent(String(record.environmentId ?? ""))}`,
       );
       return;
     }
@@ -7964,7 +8065,7 @@ export function InstrumentationDetailPage() {
       setReportState("saved");
       setReportMessage(
         result.sourceAdded
-          ? `${result.filename} was saved and added to this project’s Sources (${result.sourceStatus?.toLowerCase() ?? "queued"}).`
+          ? `${result.filename} was saved and added to this application’s Sources (${result.sourceStatus?.toLowerCase() ?? "queued"}).`
           : `${result.filename} was saved, but could not be added to Sources: ${result.sourceError ?? "unknown upload error"}`,
       );
     } catch (cause) {
@@ -8024,7 +8125,7 @@ export function InstrumentationDetailPage() {
           </p>
           <Link
             className="button primary"
-            to={`/projects/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+            to={`/applications/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
           >
             <ArrowRight size={15} />
             Re-run detection and create a fresh task
@@ -8047,7 +8148,7 @@ export function InstrumentationDetailPage() {
           <div className="card-actions">
             <Link
               className="button primary"
-              to={`/projects/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+              to={`/applications/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
             >
               <ArrowRight size={15} />
               Go to Instrumentation to re-detect
@@ -8110,7 +8211,7 @@ export function InstrumentationDetailPage() {
                     Telemetry and the onboarding test event have been received.
                     {hasInitializedFlow
                       ? " Continue to your first guided walkthrough."
-                      : " No Flow has been initialized in this project yet — initialize one to start your first guided walkthrough."}
+                      : " No Flow has been initialized in this application yet — initialize one to start your first guided walkthrough."}
                   </li>
                 ) : (
                   <>
@@ -8140,7 +8241,7 @@ export function InstrumentationDetailPage() {
                 verified.{" "}
                 {hasInitializedFlow
                   ? "You can start your first guided walkthrough."
-                  : "No Flow has been initialized in this project yet — initialize one before starting a walkthrough."}
+                  : "No Flow has been initialized in this application yet — initialize one before starting a walkthrough."}
               </span>
             </div>
           ) : (
@@ -8167,7 +8268,7 @@ export function InstrumentationDetailPage() {
             {telemetryVerified && hasInitializedFlow ? (
               <Link
                 className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
-                to={`/projects/${projectId}/qa-runs/new`}
+                to={`/applications/${projectId}/qa-runs/new`}
               >
                 <Play size={15} /> Run first walkthrough
               </Link>
@@ -8175,14 +8276,14 @@ export function InstrumentationDetailPage() {
             {telemetryVerified && !hasInitializedFlow ? (
               <Link
                 className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
-                to={`/projects/${projectId}/intent`}
+                to={`/applications/${projectId}/intent`}
               >
                 <ArrowRight size={15} /> Initialize a Flow
               </Link>
             ) : null}
             <Link
               className="inline-flex items-center gap-2 bg-[#000000] border border-[#444748] text-white font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-white transition-colors"
-              to={`/projects/${projectId}/instrumentation`}
+              to={`/applications/${projectId}/instrumentation`}
             >
               View instrumentation history
             </Link>
@@ -8708,12 +8809,12 @@ function useRuns(projectId?: string) {
 export function RunsPage() {
   const { projectId, application } = useProject();
   const { items, loading } = useRuns(projectId);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
+        title="Application unavailable"
+        description="Select another application."
       />
     );
   return (
@@ -8723,7 +8824,7 @@ export function RunsPage() {
       actions={
         <Link
           className="button primary"
-          to={`/projects/${projectId}/qa-runs/new`}
+          to={`/applications/${projectId}/qa-runs/new`}
         >
           <Play size={15} />
           New QA run
@@ -8742,7 +8843,7 @@ export function RunsPage() {
           action={
             <Link
               className="button primary"
-              to={`/projects/${projectId}/qa-runs/new`}
+              to={`/applications/${projectId}/qa-runs/new`}
             >
               Start first run
             </Link>
@@ -8773,7 +8874,7 @@ function RunTable({
         <Link
           className="table-row"
           key={run.id}
-          to={`/projects/${projectId}/qa-runs/${run.id}`}
+          to={`/applications/${projectId}/qa-runs/${run.id}`}
         >
           <span>
             <strong>{run.id.slice(0, 8)}</strong>
@@ -8897,12 +8998,12 @@ export function NewRunPage() {
       })
       .catch(() => undefined);
   }, [listInstrumentationPlans, projectId]);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
       <NotFoundPage
-        title="Project unavailable"
-        description="Select another project."
+        title="Application unavailable"
+        description="Select another application."
       />
     );
   const begin = async () => {
@@ -8920,7 +9021,7 @@ export function NewRunPage() {
       !scan
     ) {
       throw new Error(
-        "Initialize this published Flow in the selected project and environment before starting a QA run.",
+        "Initialize this published Flow in the selected application and environment before starting a QA run.",
       );
     }
     const run = await startRun({
@@ -8944,7 +9045,7 @@ export function NewRunPage() {
       launchCommandId: launchCommandId || undefined,
       launchApproved: Boolean(launchCommandId) && launchApproved,
     });
-    navigate(`/projects/${projectId}/qa-runs/${run.runId}/live`);
+    navigate(`/applications/${projectId}/qa-runs/${run.runId}/live`);
   };
   return (
     <Page
@@ -9041,9 +9142,9 @@ export function NewRunPage() {
             />
             <small>
               Only Flows that are published and have a completed initialization
-              in this project are listed. If a Flow you created is missing,
+              in this application are listed. If a Flow you created is missing,
               either publish it from the declare view or initialize it for this
-              project first.
+              application first.
             </small>
           </label>
           <label className="full">
@@ -9184,7 +9285,7 @@ export function LiveRunPage() {
   const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACCESSIBILITY">(
     "CONSOLE",
   );
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (!run)
     return (
       <EmptyState
@@ -9194,7 +9295,7 @@ export function LiveRunPage() {
         action={
           <Link
             className="button primary"
-            to={`/projects/${projectId}/qa-runs`}
+            to={`/applications/${projectId}/qa-runs`}
           >
             Run history
           </Link>
@@ -9909,7 +10010,7 @@ export function RunDetailPage() {
       cancelled = true;
     };
   }, [activeTab, getRunReplay, replay, replayError, runId]);
-  if (!projectId || !runId) return <ProjectRequired />;
+  if (!projectId || !runId) return <ApplicationRequired />;
   if (loading) return <LoadingState />;
   if (runError)
     return (
@@ -9917,7 +10018,7 @@ export function RunDetailPage() {
         title="Run unavailable"
         description="Tellann could not load this QA run. The desktop window remains safe to use."
         actions={
-          <Link className="button" to={`/projects/${projectId}/qa-runs`}>
+          <Link className="button" to={`/applications/${projectId}/qa-runs`}>
             Back to QA runs
           </Link>
         }
@@ -10002,7 +10103,7 @@ export function RunDetailPage() {
       {run.reportId ? (
         <Link
           className="button primary mt-4"
-          to={`/projects/${projectId}/reports/${encodeURIComponent(String(run.reportId))}?runId=${runId}`}
+          to={`/applications/${projectId}/reports/${encodeURIComponent(String(run.reportId))}?runId=${runId}`}
         >
           Open QA report
         </Link>
@@ -10013,11 +10114,11 @@ export function RunDetailPage() {
 
 export function RunSubPage({ kind }: { kind: string }) {
   const { projectId, runId } = useParams();
-  if (!projectId || !runId) return <ProjectRequired />;
+  if (!projectId || !runId) return <ApplicationRequired />;
   return (
     <Navigate
       replace
-      to={`/projects/${projectId}/qa-runs/${runId}?tab=${encodeURIComponent(kind)}`}
+      to={`/applications/${projectId}/qa-runs/${runId}?tab=${encodeURIComponent(kind)}`}
     />
   );
 }
@@ -10025,7 +10126,7 @@ export function RunSubPage({ kind }: { kind: string }) {
 export function ReportsPage() {
   const { projectId } = useParams();
   const { items, loading } = useRuns(projectId);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   const reportRuns = items.filter(
     (run) => run.reportId || run.status === "COMPLETED",
   );
@@ -10071,7 +10172,7 @@ export function ReportsPage() {
               </dl>
               <Link
                 className="button primary"
-                to={`/projects/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`}
+                to={`/applications/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`}
               >
                 Open report
               </Link>
@@ -10086,7 +10187,7 @@ export function ReportsPage() {
           action={
             <Link
               className="button primary"
-              to={`/projects/${projectId}/qa-runs/new`}
+              to={`/applications/${projectId}/qa-runs/new`}
             >
               Start QA run
             </Link>
@@ -10111,7 +10212,7 @@ export function ReportDetailPage() {
         .finally(() => setLoading(false));
     else setLoading(false);
   }, [getReport, runId]);
-  if (!projectId) return <ProjectRequired />;
+  if (!projectId) return <ApplicationRequired />;
   if (loading) return <LoadingState />;
   if (!report)
     return (
@@ -10158,7 +10259,7 @@ export function ReportDetailPage() {
           <div className="w-full flex justify-end">
             <Link
               className="button mt-4 primary"
-              to={`/projects/${projectId}/qa-runs/${report.runId}/evidence`}
+              to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}
             >
               Review evidence
             </Link>
@@ -10173,7 +10274,7 @@ export function ReportDetailPage() {
           <div className="w-full flex justify-end">
             <Link
               className="button mt-4 primary"
-              to={`/projects/${projectId}/qa-runs/${report.runId}/reconciliation`}
+              to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}
             >
               View reconciliation
             </Link>
@@ -10330,10 +10431,10 @@ export function NotFoundPage({
       <EmptyState
         icon={<AlertTriangle size={36} />}
         title="Nothing was changed"
-        description="Choose a valid project or return to the project list."
+        description="Choose a valid application or return to the application list."
         action={
-          <Link className="button primary" to="/projects">
-            Projects
+          <Link className="button primary" to="/applications">
+            Applications
           </Link>
         }
       />

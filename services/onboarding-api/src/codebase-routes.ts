@@ -11,7 +11,10 @@ import {
   CodebaseAnalysisSchema, GraphProjectionQuerySchema,
   type CodebaseAnalysis, type CodeEntity, type CodeRelationship,
 } from '@tellann/desktop-contracts';
-import { compareAnalyses } from '@tellann/project-intelligence';
+import {
+  answerFromAnalysis, blastRadiusInAnalysis, compareAnalyses, describeEntity,
+  hierarchyChildren, projectAnalysis, retrieveFeatures, shortestPathInAnalysis,
+} from '@tellann/project-intelligence';
 import { createGraphStore } from '@tellann/code-graph';
 import { explainFeatures } from '@tellann/ai';
 import { Feature } from '@tellann/shared';
@@ -560,70 +563,16 @@ export function createCodebaseRouter(input: {
   router.get('/applications/:appId/codebase/hierarchy', ...guarded, async (req: DesktopRequest, res: Response) => {
     const current = await currentAnalysis(req.params.appId);
     if (!current) return res.status(404).json({ error: 'Codebase analysis not found' });
-    const { analysis } = current;
     const parentId = req.query.parentId ? String(req.query.parentId) : null;
-
-    const byId = new Map(analysis.entities.map((entity) => [entity.id, entity]));
-    const children: CodeEntity[] = [];
-    if (!parentId) {
-      children.push(...analysis.entities.filter((entity) => entity.type === 'repository'));
-      if (!children.length) {
-        children.push(...analysis.entities.filter((entity) =>
-          entity.type === 'application' || entity.type === 'service'));
-      }
-    } else {
-      for (const edge of analysis.relationships) {
-        if (edge.source !== parentId) continue;
-        if (edge.type !== 'CONTAINS' && edge.type !== 'DEFINES') continue;
-        const child = byId.get(edge.target);
-        if (child) children.push(child);
-      }
-    }
-
-    const hasChildren = new Set(
-      analysis.relationships
-        .filter((edge) => edge.type === 'CONTAINS' || edge.type === 'DEFINES')
-        .map((edge) => edge.source),
-    );
-    const page = paginate(
-      children
-        .sort((left, right) => (left.type < right.type ? -1 : left.type > right.type ? 1 : left.name.localeCompare(right.name)))
-        .map((entity) => ({ ...entity, expandable: hasChildren.has(entity.id) })),
-      req,
-    );
-    res.json(page);
+    res.json(paginate(hierarchyChildren(current.analysis, parentId), req));
   });
 
   router.get('/applications/:appId/codebase/entities/:entityId', ...guarded, async (req: DesktopRequest, res: Response) => {
     const current = await currentAnalysis(req.params.appId);
     if (!current) return res.status(404).json({ error: 'Codebase analysis not found' });
-    const { analysis } = current;
-    const entity = analysis.entities.find((item) => item.id === req.params.entityId);
-    if (!entity) return res.status(404).json({ error: 'Entity not found' });
-
-    const byId = new Map(analysis.entities.map((item) => [item.id, item]));
-    const describe = (edge: CodeRelationship, side: 'source' | 'target') => ({
-      relationship: edge.type,
-      confidence: edge.confidence,
-      evidence: edge.evidence.slice(0, 3),
-      entity: byId.get(edge[side]) ?? null,
-    });
-
-    const outgoing = analysis.relationships.filter((edge) => edge.source === entity.id);
-    const incoming = analysis.relationships.filter((edge) => edge.target === entity.id);
-    res.json({
-      entity,
-      callees: outgoing.filter((edge) => edge.type === 'CALLS').slice(0, 200).map((edge) => describe(edge, 'target')),
-      callers: incoming.filter((edge) => edge.type === 'CALLS').slice(0, 200).map((edge) => describe(edge, 'source')),
-      dependencies: outgoing.filter((edge) => ['IMPORTS', 'DEPENDS_ON', 'USES'].includes(edge.type)).slice(0, 200).map((edge) => describe(edge, 'target')),
-      dependents: incoming.filter((edge) => ['IMPORTS', 'DEPENDS_ON', 'USES'].includes(edge.type)).slice(0, 200).map((edge) => describe(edge, 'source')),
-      dataAccess: outgoing.filter((edge) => edge.type === 'READS' || edge.type === 'WRITES').slice(0, 100).map((edge) => describe(edge, 'target')),
-      sideEffects: outgoing.filter((edge) => ['PUBLISHES', 'CALLS_EXTERNAL', 'SUBSCRIBES_TO'].includes(edge.type)).slice(0, 100).map((edge) => describe(edge, 'target')),
-      tests: incoming.filter((edge) => edge.type === 'TESTS').slice(0, 50).map((edge) => describe(edge, 'source')),
-      features: analysis.features.filter((feature) =>
-        feature.workflow.some((step) => step.entityId === entity.id)).slice(0, 20),
-      evidence: entity.evidence,
-    });
+    const detail = describeEntity(current.analysis, req.params.entityId);
+    if (!detail) return res.status(404).json({ error: 'Entity not found' });
+    res.json(detail);
   });
 
   /**
@@ -690,7 +639,7 @@ export function createCodebaseRouter(input: {
         // degrades the view rather than breaking it.
       }
     }
-    res.json(projectFromAnalysis(analysis, parsed.data));
+    res.json(projectAnalysis(analysis, parsed.data));
   });
 
   router.post('/applications/:appId/codebase/path', ...guarded, async (req: DesktopRequest, res: Response) => {
@@ -708,7 +657,7 @@ export function createCodebaseRouter(input: {
         if (path.found) return res.json(path);
       } catch { /* fall through */ }
     }
-    res.json(shortestPathFromAnalysis(analysis, source, target));
+    res.json(shortestPathInAnalysis(analysis, source, target));
   });
 
   router.post('/applications/:appId/codebase/blast-radius', ...guarded, async (req: DesktopRequest, res: Response) => {
@@ -716,7 +665,7 @@ export function createCodebaseRouter(input: {
     if (!entityId) return res.status(400).json({ error: 'ENTITY_ID_REQUIRED' });
     const current = await currentAnalysis(req.params.appId);
     if (!current) return res.status(404).json({ error: 'Codebase analysis not found' });
-    res.json(blastRadiusFromAnalysis(current.analysis, entityId, Math.min(Math.max(Number(req.body?.maxDepth) || 8, 1), 12)));
+    res.json(blastRadiusInAnalysis(current.analysis, entityId, Math.min(Math.max(Number(req.body?.maxDepth) || 8, 1), 12)));
   });
 
   router.get('/applications/:appId/codebase/compare', ...guarded, async (req: DesktopRequest, res: Response) => {
@@ -750,28 +699,11 @@ export function createCodebaseRouter(input: {
     const { analysis } = current;
     // Retrieval: rank features by term overlap, then answer from their evidence
     // bundles so every statement is traceable to a graph node.
-    const terms = question.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 2);
-    const scored = analysis.features
-      .map((feature) => {
-        const haystack = [
-          feature.name, feature.description, feature.domain, ...feature.triggers,
-          ...feature.reads, ...feature.writes, ...feature.externalServices,
-          ...feature.emittedEvents, ...feature.sourceFiles,
-        ].join(' ').toLowerCase();
-        return { feature, score: terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0) };
-      })
-      .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 5);
+    // Retrieval is shared with the offline path so both rank the same way; only
+    // the description step differs.
+    const scored = retrieveFeatures(analysis, question);
 
-    if (!scored.length) {
-      return res.json({
-        answer: 'Nothing in the analysed graph matches that question. The feature, service, or symbol it refers to was not discovered in this snapshot.',
-        grounded: false,
-        citations: [],
-        features: [],
-      });
-    }
+    if (!scored.length) return res.json(answerFromAnalysis(analysis, question));
 
     const bundles = scored.map(({ feature }) => ({
       featureId: feature.id,
@@ -884,145 +816,4 @@ export function createCodebaseRouter(input: {
   });
 
   return router;
-}
-
-// ── In-process fallbacks, used when the graph store is unavailable ───────────
-
-function projectFromAnalysis(
-  analysis: CodebaseAnalysis,
-  query: { types: string[]; relationshipTypes: string[]; search: string; depth: number; limit: number; rootId: string | null; direction: 'out' | 'in' | 'both' },
-) {
-  const byId = new Map(analysis.entities.map((entity) => [entity.id, entity]));
-  const outgoing = new Map<string, CodeRelationship[]>();
-  const incoming = new Map<string, CodeRelationship[]>();
-  for (const edge of analysis.relationships) {
-    if (query.relationshipTypes.length && !query.relationshipTypes.includes(edge.type)) continue;
-    const out = outgoing.get(edge.source);
-    if (out) out.push(edge); else outgoing.set(edge.source, [edge]);
-    const into = incoming.get(edge.target);
-    if (into) into.push(edge); else incoming.set(edge.target, [edge]);
-  }
-
-  const search = query.search.toLowerCase();
-  const seeds = analysis.entities.filter((entity) => {
-    if (query.rootId) return entity.id === query.rootId;
-    if (query.types.length && !query.types.includes(entity.type)) return false;
-    if (!search) return true;
-    return entity.name.toLowerCase().includes(search) || (entity.path ?? '').toLowerCase().includes(search);
-  }).slice(0, query.limit);
-
-  const nodes = new Map(seeds.map((entity) => [entity.id, entity]));
-  const edges = new Map<string, CodeRelationship>();
-  let frontier = seeds.map((entity) => entity.id);
-  for (let depth = 0; depth < query.depth && nodes.size < query.limit; depth += 1) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      const candidates = [
-        ...(query.direction !== 'in' ? outgoing.get(id) ?? [] : []),
-        ...(query.direction !== 'out' ? incoming.get(id) ?? [] : []),
-      ];
-      for (const edge of candidates) {
-        const other = edge.source === id ? edge.target : edge.source;
-        edges.set(edge.id, edge);
-        if (nodes.has(other) || nodes.size >= query.limit) continue;
-        const entity = byId.get(other);
-        if (!entity) continue;
-        nodes.set(other, entity);
-        next.push(other);
-      }
-    }
-    frontier = next;
-  }
-
-  const kept = new Set(nodes.keys());
-  return {
-    nodes: [...nodes.values()],
-    edges: [...edges.values()].filter((edge) => kept.has(edge.source) && kept.has(edge.target)),
-    truncated: nodes.size >= query.limit,
-    totalMatched: nodes.size,
-  };
-}
-
-function shortestPathFromAnalysis(analysis: CodebaseAnalysis, source: string, target: string) {
-  const adjacency = new Map<string, CodeRelationship[]>();
-  for (const edge of analysis.relationships) {
-    const bucket = adjacency.get(edge.source);
-    if (bucket) bucket.push(edge);
-    else adjacency.set(edge.source, [edge]);
-  }
-  const previous = new Map<string, CodeRelationship>();
-  const visited = new Set([source]);
-  const queue = [source];
-  while (queue.length) {
-    const current = queue.shift()!;
-    if (current === target) break;
-    for (const edge of adjacency.get(current) ?? []) {
-      if (visited.has(edge.target)) continue;
-      visited.add(edge.target);
-      previous.set(edge.target, edge);
-      queue.push(edge.target);
-    }
-  }
-  if (!previous.has(target) && source !== target) return { nodes: [], edges: [], found: false };
-
-  const byId = new Map(analysis.entities.map((entity) => [entity.id, entity]));
-  const edges: CodeRelationship[] = [];
-  let cursor = target;
-  while (cursor !== source) {
-    const edge = previous.get(cursor);
-    if (!edge) break;
-    edges.unshift(edge);
-    cursor = edge.source;
-  }
-  const nodes = [source, ...edges.map((edge) => edge.target)]
-    .map((id) => byId.get(id))
-    .filter(Boolean) as CodeEntity[];
-  return { nodes, edges, found: true };
-}
-
-function blastRadiusFromAnalysis(analysis: CodebaseAnalysis, entityId: string, maxDepth: number) {
-  const structural = new Set(['IMPORTS', 'CALLS', 'DEPENDS_ON', 'EXTENDS', 'IMPLEMENTS', 'USES', 'ROUTES_TO', 'TESTS', 'IMPLEMENTS_FEATURE']);
-  const incoming = new Map<string, string[]>();
-  for (const edge of analysis.relationships) {
-    if (!structural.has(edge.type)) continue;
-    const bucket = incoming.get(edge.target);
-    if (bucket) bucket.push(edge.source);
-    else incoming.set(edge.target, [edge.source]);
-  }
-  const byId = new Map(analysis.entities.map((entity) => [entity.id, entity]));
-  const visited = new Set([entityId]);
-  let frontier = [entityId];
-  let truncated = false;
-  for (let depth = 0; depth < maxDepth && frontier.length; depth += 1) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const dependent of incoming.get(id) ?? []) {
-        if (visited.has(dependent)) continue;
-        if (visited.size >= 2_000) { truncated = true; break; }
-        visited.add(dependent);
-        next.push(dependent);
-      }
-    }
-    frontier = next;
-  }
-  visited.delete(entityId);
-
-  const affected = { modules: 0, functions: 0, endpoints: 0, jobs: 0, tests: 0, features: 0 };
-  for (const id of visited) {
-    const entity = byId.get(id);
-    if (!entity) continue;
-    if (entity.type === 'file') affected.modules += 1;
-    else if (entity.type === 'function' || entity.type === 'method') affected.functions += 1;
-    else if (entity.type === 'endpoint' || entity.type === 'ui_route' || entity.type === 'ui_action') affected.endpoints += 1;
-    else if (entity.type === 'job' || entity.type === 'queue') affected.jobs += 1;
-    else if (entity.type === 'test') affected.tests += 1;
-    else if (entity.type === 'feature') affected.features += 1;
-  }
-  return {
-    entityId,
-    affected,
-    entityIds: [...visited].slice(0, 500),
-    truncated,
-    entities: [...visited].slice(0, 200).map((id) => byId.get(id)).filter(Boolean),
-  };
 }

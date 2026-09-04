@@ -1202,6 +1202,9 @@ app.post('/organizations/:orgId/applications', verifyJwt, verifyOrgMembership, a
         organizationId: orgId,
         applicationId: application.id,
         eventType: 'APP_CREATED',
+        // Both surfaces route `/applications/:id`, so one deep link makes the
+        // in-app notification actionable in the dashboard and in Desktop.
+        deepLink: `/applications/${application.id}`,
         variables: {
           applicationName: application.name,
           organizationName: org.name,

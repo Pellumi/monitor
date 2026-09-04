@@ -1,5 +1,5 @@
 import { KeyRound, ShieldCheck } from 'lucide-react';
-import { useEffect } from 'react';
+import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react';
 import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { DesktopProvider, useDesktop } from './desktop-context';
@@ -12,11 +12,11 @@ import {
   IntentDetailPage,
   IntentPage,
   LiveRunPage,
-  NewProjectPage,
+  NewApplicationPage,
   NewRunPage,
   NotFoundPage,
-  ProjectOverviewPage,
-  ProjectsPage,
+  ApplicationOverviewPage,
+  ApplicationsPage,
   ReportAuxPage,
   ReportDetailPage,
   ReportsPage,
@@ -28,6 +28,51 @@ import {
   SourcesPage,
   WorkspacePage,
 } from './pages';
+
+class RendererErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Tellann renderer failed to render', error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="auth-shell">
+        <div className="auth-card" role="alert">
+          <div className="auth-card-header">
+            <span className="brand-logo">TELLANN</span>
+            <span className="badge">Page recovery</span>
+          </div>
+          <h1>This page could not be displayed</h1>
+          <p>{this.state.error.message || 'An unexpected renderer error occurred.'}</p>
+          <div className="actions-row">
+            <button className="primary-btn" onClick={() => window.location.reload()}>
+              Reload Tellann
+            </button>
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                window.location.hash = '/applications';
+                window.location.reload();
+              }}
+            >
+              Return to applications
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 function AuthenticatedApp() {
   const { bridgeAvailable, loading, busy, authPending, error, session, signIn, reopenSignIn } = useDesktop();
@@ -45,7 +90,7 @@ function AuthenticatedApp() {
           <p>
             {bridgeAvailable
               ? 'Sign in securely in your system browser. Raw source remains local and your device credential is protected by Windows.'
-              : 'This URL is only the renderer preview. Authentication, project access, and managed-browser controls are provided by Electron.'}
+              : 'This URL is only the renderer preview. Authentication, application access, and managed-browser controls are provided by Electron.'}
           </p>
 
           <table className="auth-meta-table">
@@ -113,41 +158,41 @@ function AuthenticatedApp() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<RootResolver />} />
-          <Route path="projects" element={<ProjectsPage />} />
-          <Route path="projects/new" element={<NewProjectPage />} />
-          <Route path="projects/:projectId" element={<ProjectOverviewPage />} />
-          <Route path="projects/:projectId/workspace" element={<WorkspacePage />} />
-          <Route path="projects/:projectId/sources" element={<SourcesPage />} />
-          <Route path="projects/:projectId/environments" element={<EnvironmentsPage />} />
-          <Route path="projects/:projectId/activity" element={<ActivityPage />} />
+          <Route path="applications" element={<ApplicationsPage />} />
+          <Route path="applications/new" element={<NewApplicationPage />} />
+          <Route path="applications/:projectId" element={<ApplicationOverviewPage />} />
+          <Route path="applications/:projectId/workspace" element={<WorkspacePage />} />
+          <Route path="applications/:projectId/sources" element={<SourcesPage />} />
+          <Route path="applications/:projectId/environments" element={<EnvironmentsPage />} />
+          <Route path="applications/:projectId/activity" element={<ActivityPage />} />
 
-          <Route path="projects/:projectId/intent" element={<IntentPage />} />
-          <Route path="projects/:projectId/intent/flows/:flowId" element={<DeclaredFlowPage />} />
-          <Route path="projects/:projectId/intent/drafts/:draftId" element={<IntentDetailPage />} />
-          <Route path="projects/:projectId/intent/versions" element={<IntentDetailPage />} />
-          <Route path="projects/:projectId/intent/versions/:versionId" element={<IntentDetailPage />} />
-          <Route path="projects/:projectId/intent/compare" element={<IntentDetailPage />} />
-          <Route path="projects/:projectId/intent/editor" element={<IntentDetailPage />} />
+          <Route path="applications/:projectId/intent" element={<IntentPage />} />
+          <Route path="applications/:projectId/intent/flows/:flowId" element={<DeclaredFlowPage />} />
+          <Route path="applications/:projectId/intent/drafts/:draftId" element={<IntentDetailPage />} />
+          <Route path="applications/:projectId/intent/versions" element={<IntentDetailPage />} />
+          <Route path="applications/:projectId/intent/versions/:versionId" element={<IntentDetailPage />} />
+          <Route path="applications/:projectId/intent/compare" element={<IntentDetailPage />} />
+          <Route path="applications/:projectId/intent/editor" element={<IntentDetailPage />} />
 
-          <Route path="projects/:projectId/instrumentation" element={<InstrumentationPage />} />
-          <Route path="projects/:projectId/instrumentation/plans/:planId" element={<InstrumentationDetailPage />} />
-          <Route path="projects/:projectId/instrumentation/plans/:planId/diff" element={<InstrumentationDetailPage />} />
-          <Route path="projects/:projectId/instrumentation/plans/:planId/validation" element={<InstrumentationDetailPage />} />
-          <Route path="projects/:projectId/instrumentation/history" element={<InstrumentationDetailPage />} />
-          <Route path="projects/:projectId/instrumentation/manifests/:manifestId" element={<InstrumentationDetailPage />} />
+          <Route path="applications/:projectId/instrumentation" element={<InstrumentationPage />} />
+          <Route path="applications/:projectId/instrumentation/plans/:planId" element={<InstrumentationDetailPage />} />
+          <Route path="applications/:projectId/instrumentation/plans/:planId/diff" element={<InstrumentationDetailPage />} />
+          <Route path="applications/:projectId/instrumentation/plans/:planId/validation" element={<InstrumentationDetailPage />} />
+          <Route path="applications/:projectId/instrumentation/history" element={<InstrumentationDetailPage />} />
+          <Route path="applications/:projectId/instrumentation/manifests/:manifestId" element={<InstrumentationDetailPage />} />
 
-          <Route path="projects/:projectId/qa-runs" element={<RunsPage />} />
-          <Route path="projects/:projectId/qa-runs/new" element={<NewRunPage />} />
-          <Route path="projects/:projectId/qa-runs/:runId" element={<RunDetailPage />} />
-          <Route path="projects/:projectId/qa-runs/:runId/live" element={<LiveRunPage />} />
+          <Route path="applications/:projectId/qa-runs" element={<RunsPage />} />
+          <Route path="applications/:projectId/qa-runs/new" element={<NewRunPage />} />
+          <Route path="applications/:projectId/qa-runs/:runId" element={<RunDetailPage />} />
+          <Route path="applications/:projectId/qa-runs/:runId/live" element={<LiveRunPage />} />
           {['evidence', 'findings', 'replay', 'graph', 'reconciliation', 'artifacts'].map((kind) => (
-            <Route key={kind} path={`projects/:projectId/qa-runs/:runId/${kind}`} element={<RunSubPage kind={kind} />} />
+            <Route key={kind} path={`applications/:projectId/qa-runs/:runId/${kind}`} element={<RunSubPage kind={kind} />} />
           ))}
 
-          <Route path="projects/:projectId/reports" element={<ReportsPage />} />
-          <Route path="projects/:projectId/reports/compare" element={<ReportAuxPage kind="compare" />} />
-          <Route path="projects/:projectId/reports/:reportId" element={<ReportDetailPage />} />
-          <Route path="projects/:projectId/reports/:reportId/export" element={<ReportAuxPage kind="export" />} />
+          <Route path="applications/:projectId/reports" element={<ReportsPage />} />
+          <Route path="applications/:projectId/reports/compare" element={<ReportAuxPage kind="compare" />} />
+          <Route path="applications/:projectId/reports/:reportId" element={<ReportDetailPage />} />
+          <Route path="applications/:projectId/reports/:reportId/export" element={<ReportAuxPage kind="export" />} />
 
           <Route path="intent" element={<RouteResolver section="intent" />} />
           <Route path="instrumentation" element={<RouteResolver section="instrumentation" />} />
@@ -170,7 +215,7 @@ function SetupHandoffResolver() {
       const environmentId = String(handoff.environmentId ?? '');
       const handoffId = String(handoff.id ?? '');
       if (!applicationId || !environmentId) return;
-      navigate(`/projects/${applicationId}/instrumentation?setup=connect&environmentId=${encodeURIComponent(environmentId)}&handoffId=${encodeURIComponent(handoffId)}`);
+      navigate(`/applications/${applicationId}/instrumentation?setup=connect&environmentId=${encodeURIComponent(environmentId)}&handoffId=${encodeURIComponent(handoffId)}`);
       if (handoffId) void window.tellann?.setup.consumeHandoff(handoffId).catch(() => undefined);
     }).catch(() => undefined);
     return () => { cancelled = true; };
@@ -179,5 +224,9 @@ function SetupHandoffResolver() {
 }
 
 export function App() {
-  return <DesktopProvider><AuthenticatedApp /></DesktopProvider>;
+  return (
+    <RendererErrorBoundary>
+      <DesktopProvider><AuthenticatedApp /></DesktopProvider>
+    </RendererErrorBoundary>
+  );
 }

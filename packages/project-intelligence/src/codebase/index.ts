@@ -20,6 +20,7 @@ export * from './inventory';
 export * from './incremental';
 export * from './architecture';
 export * from './evidence-bundle';
+export * from './query';
 export { canonicalRoute, endpointId } from './frameworks';
 export { blastRadius };
 
@@ -264,12 +265,20 @@ export function analyzeCodebase(
     });
   }
   if (inventory.truncated) {
-    graph.warn('The repository exceeded the file budget for a single scan; the inventory is partial.');
+    graph.warn('The repository exceeded the file budget for a single scan, so the inventory is incomplete.');
   }
+  // Redaction working as designed is worth reporting, but it is not a gap in the
+  // analysis: these files hold credentials, not application logic.
   for (const [reason, count] of Object.entries(inventory.exclusions)) {
     if (!count) continue;
     if (reason === 'secret-path') {
-      graph.warn(`${count} path(s) matching credential patterns were excluded and never left the device.`);
+      graph.notice(`${count} path(s) matching credential patterns were excluded and never left this device.`);
+    }
+    if (reason === 'oversized') {
+      graph.notice(`${count} non-source file(s) were larger than the per-file limit and were not read.`);
+    }
+    if (reason === 'oversized-source') {
+      graph.warn(`${count} source file(s) exceeded the per-file size limit and were not parsed.`);
     }
   }
 
@@ -292,6 +301,8 @@ export function analyzeCodebase(
     typescript: ts.version,
   };
 
+  // PARTIAL means something could not be read, not merely that something was
+  // worth mentioning. Notices never downgrade the status.
   const status: CodebaseAnalysis['status'] = graph.warnings.length ? 'PARTIAL' : 'COMPLETED';
   const analysis: CodebaseAnalysis = {
     // Identity folds in the content hash, so two different dirty trees at the
@@ -303,7 +314,9 @@ export function analyzeCodebase(
     analyzerVersions,
     status,
     progress: 100,
-    stageMessage: graph.warnings.length ? 'Analysis completed with coverage warnings' : 'Analysis completed',
+    stageMessage: graph.warnings.length
+      ? `Analysis completed; ${graph.warnings.length} coverage gap(s) reported`
+      : 'Analysis completed',
     startedAt,
     completedAt: new Date().toISOString(),
     revision,
@@ -360,6 +373,7 @@ export function analyzeCodebase(
         : 1,
     },
     warnings: graph.warnings,
+    notices: graph.notices,
   };
 
   const importEdges: Array<[string, string]> = [];

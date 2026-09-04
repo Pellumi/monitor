@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  CreateApplicationInput,
+  DesktopOrganization,
   QaBranchSwitchResult,
   WorkspaceCompliance,
   DeclaredFlowDetail,
@@ -51,6 +53,8 @@ type DesktopContextValue = {
   /** The signed-in user's avatar as a `data:` URI, or null to fall back to initials. */
   avatarDataUri: string | null;
   applications: DesktopApplication[];
+  /** Organisations the member belongs to — the owner of any application they create. */
+  organizations: DesktopOrganization[];
   workspaces: Record<string, LocalWorkspace>;
   /** Per-application QA branch verdict for this member's own checkout. */
   branchCompliance: Record<string, WorkspaceCompliance>;
@@ -61,6 +65,9 @@ type DesktopContextValue = {
   cancelSignIn(): Promise<void>;
   signOut(): Promise<void>;
   refreshApplications(): Promise<DesktopApplication[]>;
+  refreshOrganizations(): Promise<DesktopOrganization[]>;
+  /** Creates the application in the cloud, then refreshes the local list. */
+  createApplication(input: CreateApplicationInput): Promise<DesktopApplication | null>;
   attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
   cloneWorkspace(applicationId: string, cloneUrl: string): Promise<LocalWorkspace | null>;
   refreshBranchCompliance(applicationId: string): Promise<WorkspaceCompliance | null>;
@@ -161,6 +168,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   const [cloudAvailable, setCloudAvailable] = useState(true);
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [applications, setApplications] = useState<DesktopApplication[]>([]);
+  const [fetchedOrganizations, setFetchedOrganizations] = useState<DesktopOrganization[]>([]);
   const [workspaces, setWorkspaces] = useState<Record<string, LocalWorkspace>>({});
   const [branchCompliance, setBranchCompliance] = useState<Record<string, WorkspaceCompliance>>({});
   const [runs, setRuns] = useState<Record<string, QARunSummary[]>>({});
@@ -186,6 +194,9 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
           await bridge().projects.getLocalWorkspace(application.id),
         ] as const));
         setWorkspaces(Object.fromEntries(localEntries.filter((entry): entry is [string, LocalWorkspace] => Boolean(entry[1]))));
+        // A member with no applications still belongs to an organisation, and
+        // that is exactly when they need to create their first one.
+        void bridge().projects.listOrganizations().then(setFetchedOrganizations).catch(() => undefined);
       }
     }).catch(async (cause) => {
       if (cancelled) return;
@@ -278,6 +289,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
       const nextSession = await bridge().auth.signIn();
       setSession(nextSession);
       setApplications(await bridge().projects.list());
+      void bridge().projects.listOrganizations().then(setFetchedOrganizations).catch(() => undefined);
       setCloudAvailable(true);
     } catch (cause) {
       const raw = cause instanceof Error ? cause.message : String(cause);
@@ -328,11 +340,53 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     throw cause;
   }), [perform]);
 
+  const refreshOrganizations = useCallback(async () => {
+    // An Electron process started before this method existed exposes a bridge
+    // without it, which would otherwise surface as an opaque TypeError.
+    if (typeof bridge().projects.listOrganizations !== 'function') {
+      throw new Error('Restart Tellann Desktop to load your organizations.');
+    }
+    const next = await bridge().projects.listOrganizations();
+    setFetchedOrganizations(next);
+    return next;
+  }, []);
+
+  /**
+   * Every application already carries the organisation that owns it, so the
+   * picker stays populated from data in hand even when `/organizations` is
+   * unreachable — which otherwise looks identical to belonging to none.
+   */
+  const organizations = useMemo(() => {
+    const merged = new Map<string, DesktopOrganization>();
+    for (const organization of fetchedOrganizations) merged.set(organization.id, organization);
+    for (const application of applications) {
+      if (merged.has(application.organizationId)) continue;
+      merged.set(application.organizationId, {
+        id: application.organizationId,
+        name: application.organizationName,
+        slug: null,
+      });
+    }
+    return [...merged.values()];
+  }, [applications, fetchedOrganizations]);
+
+  const createApplication = useCallback(async (input: CreateApplicationInput) => perform(async () => {
+    const created = await bridge().projects.create(input);
+    // The cloud is the source of truth for environments and entitlements, so
+    // read the application back rather than synthesising it here. The list also
+    // arrives via the APP_CREATED broadcast, but waiting for it would leave the
+    // caller without an id to navigate to.
+    const nextApplications = await bridge().projects.list();
+    setApplications(nextApplications);
+    return nextApplications.find((item) => item.id === created.id) ?? null;
+  }), [perform]);
+
   const signOut = useCallback(async () => {
     await perform(async () => {
       await bridge().auth.signOut();
       setSession(null);
       setApplications([]);
+      setFetchedOrganizations([]);
       setRuns({});
       setActiveRun(null);
     });
@@ -433,6 +487,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     session,
     avatarDataUri,
     applications,
+    organizations,
     workspaces,
     branchCompliance,
     runs,
@@ -442,6 +497,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     cancelSignIn,
     signOut,
     refreshApplications,
+    refreshOrganizations,
+    createApplication,
     attachWorkspace,
     cloneWorkspace,
     refreshBranchCompliance,
@@ -511,7 +568,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
-    avatarDataUri,
+    avatarDataUri, organizations, refreshOrganizations, createApplication,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;

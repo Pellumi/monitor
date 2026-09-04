@@ -14,6 +14,8 @@ const IPC = {
   cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
+  getOrganizations: 'tellann:cloud:organizations',
+  createApplication: 'tellann:cloud:applications:create',
   appUpdated: 'tellann:cloud:app-updated',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
@@ -76,6 +78,8 @@ const IPC = {
   grantQaBranchCheckout: 'tellann:workspace:branch:grant',
   switchToQaBranch: 'tellann:workspace:branch:switch',
   restoreWorkspaceBranch: 'tellann:workspace:branch:restore',
+  uploadConsentRequested: 'tellann:workspace:upload-consent:request',
+  uploadConsentResolve: 'tellann:workspace:upload-consent:resolve',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
@@ -118,6 +122,9 @@ contextBridge.exposeInMainWorld('tellann', {
   },
   projects: {
     list: () => ipcRenderer.invoke(IPC.getApplications),
+    listOrganizations: () => ipcRenderer.invoke(IPC.getOrganizations),
+    create: (input: { organizationId: string; name: string; summary?: string | null }) =>
+      ipcRenderer.invoke(IPC.createApplication, input),
     getLocalWorkspace: (applicationId: string) => ipcRenderer.invoke(IPC.getLocalWorkspace, applicationId),
     chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
     scanWorkspace: (input: { path: string; applicationId: string }) =>
@@ -144,6 +151,15 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.invoke(IPC.switchToQaBranch, applicationId),
     restoreWorkspaceBranch: (applicationId: string) =>
       ipcRenderer.invoke(IPC.restoreWorkspaceBranch, applicationId),
+    onUploadConsentRequested: (callback: (request: any) => void) => {
+      const subscription = (_: unknown, data: any) => callback(data);
+      ipcRenderer.on(IPC.uploadConsentRequested, subscription);
+      return () => {
+        ipcRenderer.removeListener(IPC.uploadConsentRequested, subscription);
+      };
+    },
+    resolveUploadConsent: (requestId: string, consented: boolean) =>
+      ipcRenderer.invoke(IPC.uploadConsentResolve, { requestId, consented }),
     onAppUpdated: (callback: (event: any) => void) => {
       const subscription = (_: unknown, data: any) => callback(data);
       ipcRenderer.on(IPC.appUpdated, subscription);

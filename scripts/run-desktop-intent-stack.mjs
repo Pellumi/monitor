@@ -41,19 +41,28 @@ async function waitFor(url, name, timeoutMs = 90_000) {
   throw new Error(`${name} did not become healthy at ${url}`);
 }
 
-await Promise.all([requirePort('PostgreSQL', 5433), requirePort('Redis', 6379)]);
+await Promise.all([
+  requirePort('PostgreSQL', 5433),
+  requirePort('Redis', 6379),
+  requirePort('Neo4j', 7474),
+]);
 
 const local = loadEnvironment(path.join(root, '.env'));
 const env = {
   ...process.env, ...local, NODE_ENV: 'development',
   DATABASE_URL: local.DATABASE_URL ?? 'postgresql://tellann:password@127.0.0.1:5433/tellann?schema=public',
   REDIS_URL: local.REDIS_URL ?? 'redis://127.0.0.1:6379',
+  NEO4J_URL: 'http://127.0.0.1:7474', NEO4J_USERNAME: 'neo4j',
+  NEO4J_PASSWORD: local.NEO4J_PASSWORD ?? 'tellann-local-graph',
   JWT_SECRET: local.JWT_SECRET ?? 'tellann-default-jwt-secret-change-in-production',
   AUTH_API_URL: 'http://127.0.0.1:3013', ONBOARDING_API_URL: 'http://127.0.0.1:3006',
   FDRS_API_URL: 'http://127.0.0.1:3008', API_GATEWAY_INTERNAL_URL: 'http://127.0.0.1:3000',
   TELLANN_API_URL: 'http://127.0.0.1:3000', TELLANN_AUTH_URL: 'http://127.0.0.1:3000',
   NEXT_PUBLIC_APP_URL: local.NEXT_PUBLIC_APP_URL ?? 'http://127.0.0.1:3010',
   BACKGROUND_WORKERS_METRICS_PORT: '3022', KAFKA_ENABLED: 'false', CLICKHOUSE_ENABLED: 'false',
+  // Deep-analysis archives remain on this machine during local development.
+  STORAGE_S3_ENDPOINT: '', STORAGE_S3_BUCKET: '', STORAGE_S3_ACCESS_KEY_ID: '', STORAGE_S3_SECRET_ACCESS_KEY: '',
+  STORAGE_FIREBASE_SERVICE_ACCOUNT_JSON: '', STORAGE_FIREBASE_BUCKET: '',
 };
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const services = [
@@ -69,7 +78,16 @@ function stopAll() {
   for (const child of children) if (child.exitCode === null) child.kill('SIGTERM');
 }
 for (const [name, filter] of services) {
-  const child = spawn(command, ['--filter', filter, 'dev'], { cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(command, ['--filter', filter, 'dev'], {
+    cwd: root,
+    env,
+    windowsHide: true,
+    // Windows command shims are batch files and must be launched through the
+    // command processor. Service names and arguments are fixed above rather
+    // than derived from user input.
+    shell: process.platform === 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   children.push(child);
   const log = fs.createWriteStream(path.join(logDirectory, `${name}.log`), { flags: 'w' });
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });

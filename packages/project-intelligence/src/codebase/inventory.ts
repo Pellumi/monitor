@@ -27,6 +27,20 @@ const LANGUAGE_BY_FILENAME: Record<string, string> = {
   dockerfile: 'Dockerfile', makefile: 'Makefile', 'docker-compose.yml': 'YAML',
 };
 
+/**
+ * Languages that carry application logic this analyzer cannot yet read. Only
+ * these count as a coverage gap.
+ *
+ * Stylesheets, markup, config formats and shell scripts are deliberately absent:
+ * they hold no symbols, calls, or side effects for the graph, so reporting them
+ * as "not deeply analysed" would mark almost every web project incomplete for no
+ * reason. Prisma and GraphQL are absent too, because their schemas are read.
+ */
+const DEEP_ANALYSIS_GAP_LANGUAGES = new Set([
+  'Python', 'Java', 'Go', 'Rust', 'C#', 'PHP', 'Ruby', 'Kotlin', 'Swift',
+  'Scala', 'C', 'C++', 'Objective-C', 'Vue', 'Svelte',
+]);
+
 /** Text we are willing to place in a cloud snapshot. */
 const ARCHIVABLE = new Set([
   ...ANALYZABLE,
@@ -53,6 +67,8 @@ const SECRET_LITERAL =
 
 export type ExclusionReason =
   | 'ignored-directory' | 'symlink' | 'secret-path' | 'oversized'
+  /** An analyzable source file too large to read: a genuine coverage gap. */
+  | 'oversized-source'
   | 'binary' | 'unreadable' | 'file-budget' | 'archive-budget';
 
 export type InventoryFile = {
@@ -146,7 +162,7 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
   const unsupportedLanguageFiles: Record<string, number> = {};
   const exclusions: Record<ExclusionReason, number> = {
     'ignored-directory': 0, symlink: 0, 'secret-path': 0, oversized: 0,
-    binary: 0, unreadable: 0, 'file-budget': 0, 'archive-budget': 0,
+    'oversized-source': 0, binary: 0, unreadable: 0, 'file-budget': 0, 'archive-budget': 0,
   };
   let truncated = false;
   const manifestPaths: string[] = [];
@@ -186,14 +202,18 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
         exclusions.unreadable += 1;
         continue;
       }
-      if (bytes > maxFileBytes) { exclusions.oversized += 1; continue; }
-
       const extension = path.extname(relative).toLowerCase();
       const base = path.basename(relative).toLowerCase();
+      if (bytes > maxFileBytes) {
+        // A source file we cannot read leaves a hole in the graph; an oversized
+        // lockfile or asset does not.
+        exclusions[ANALYZABLE.has(extension) ? 'oversized-source' : 'oversized'] += 1;
+        continue;
+      }
       const language = classifyLanguage(relative, extension);
       const analyzable = ANALYZABLE.has(extension);
       if (language) languageBytes[language] = (languageBytes[language] ?? 0) + bytes;
-      if (!analyzable && language && !['JSON', 'YAML', 'Markdown', 'TOML'].includes(language)) {
+      if (!analyzable && language && DEEP_ANALYSIS_GAP_LANGUAGES.has(language)) {
         unsupportedLanguageFiles[language] = (unsupportedLanguageFiles[language] ?? 0) + 1;
       }
       if (base === 'package.json') manifestPaths.push(absolute);

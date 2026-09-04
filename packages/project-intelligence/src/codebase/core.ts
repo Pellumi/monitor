@@ -106,6 +106,7 @@ export class GraphBuilder {
   readonly relationships: CodeRelationship[] = [];
   readonly findings: CodebaseFinding[] = [];
   readonly warnings: string[] = [];
+  readonly notices: string[] = [];
 
   private readonly entityById = new Map<string, CodeEntity>();
   private readonly edgeIds = new Set<string>();
@@ -236,8 +237,21 @@ export class GraphBuilder {
     return this.edgeTargetIndex.has([type, target].join(' '));
   }
 
+  /**
+   * A genuine coverage gap: something the analyzers could not read, so the graph
+   * is incomplete. Only these make an analysis PARTIAL.
+   */
   warn(message: string): void {
     if (!this.warnings.includes(message)) this.warnings.push(message);
+  }
+
+  /**
+   * Something worth telling the user that is not a gap - a redaction that worked,
+   * a policy that applied. Reporting these as warnings would mark almost every
+   * repository partial and make the status meaningless.
+   */
+  notice(message: string): void {
+    if (!this.notices.includes(message)) this.notices.push(message);
   }
 
   finding(finding: CodebaseFinding): void {

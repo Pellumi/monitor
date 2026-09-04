@@ -7,7 +7,12 @@ import type {
   FlowReviewPreview,
   FlowSuggestionsResponse,
   DocumentAccess,
+  AppEvent,
+  CodebaseUploadConsentRequest,
+  CreateApplicationInput,
   DesktopApplication,
+  DesktopNotification,
+  DesktopOrganization,
   DesktopSession,
   QARunSummary,
   QualityReport,
@@ -67,6 +72,8 @@ declare global {
       };
       projects: {
         list(): Promise<DesktopApplication[]>;
+        listOrganizations(): Promise<DesktopOrganization[]>;
+        create(input: CreateApplicationInput): Promise<{ id: string; name: string; organizationId: string }>;
         getLocalWorkspace(applicationId: string): Promise<{
           id: string;
           path: string;
@@ -104,7 +111,9 @@ declare global {
           stashRestored: boolean;
           reason: string | null;
         }>;
-        onAppUpdated(callback: (event: { action: string; applicationId: string; name?: string; summary?: string }) => void): () => void;
+        onUploadConsentRequested(callback: (request: CodebaseUploadConsentRequest) => void): () => void;
+        resolveUploadConsent(requestId: string, consented: boolean): Promise<{ resolved: boolean }>;
+        onAppUpdated(callback: (event: AppEvent) => void): () => void;
       };
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
@@ -176,6 +185,21 @@ declare global {
         apply(applicationId: string, planId: string): Promise<Record<string, unknown>>;
         validate(applicationId: string, planId: string): Promise<InstrumentationValidationResult>;
         rollback(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+      };
+      notifications: {
+        setActiveOrganization(organizationId: string | null): Promise<void>;
+        fetch(input?: { cursor?: string; filter?: string }): Promise<{
+          notifications: DesktopNotification[];
+          unreadCount: number;
+          nextCursor: string | null;
+        }>;
+        markRead(id: string): Promise<unknown>;
+        markAllRead(): Promise<unknown>;
+        dismiss(id: string): Promise<unknown>;
+        open(id: string): Promise<unknown>;
+        /** A notification arrived while this window was in the foreground. */
+        onReceived(callback: (row: DesktopNotification) => void): () => void;
+        onOpenDeepLink(callback: (payload: { deepLink: string }) => void): () => void;
       };
       system: {
         getVersion(): Promise<string>;

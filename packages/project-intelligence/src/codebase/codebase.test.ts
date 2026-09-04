@@ -6,8 +6,9 @@ import zlib from 'node:zlib';
 import test from 'node:test';
 import type { CodebaseAnalysis, CodeEntity } from '@tellann/desktop-contracts';
 import {
-  analyzeCodebase, blastRadius, buildSanitizedSourceArchive, canonicalRoute,
-  compareAnalyses, previewSanitizedSourceArchive, redactSecrets,
+  analyzeCodebase, answerFromAnalysis, blastRadius, blastRadiusInAnalysis,
+  buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
+  hierarchyChildren, previewSanitizedSourceArchive, projectAnalysis, redactSecrets,
 } from './index';
 
 const WORKSPACE = '00000000-0000-4000-8000-000000000005';
@@ -515,6 +516,113 @@ test('reports truncation explicitly instead of silently dropping files', () => {
   // Source is kept in preference to documentation when the budget is tight.
   const kept = zlib.gunzipSync(tiny.buffer).toString('utf8');
   assert.equal(kept.includes('architecture.md'), false);
+});
+
+
+test('a clean TypeScript project is COMPLETE, not partial', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-clean-')));
+  write(root, 'package.json', JSON.stringify({ name: 'web', dependencies: { react: '^19.0.0' } }));
+  write(root, 'src/App.tsx', [
+    'export function App() {',
+    '  return <div className="app">hello</div>;',
+    '}',
+  ].join('\n'));
+  write(root, 'src/styles.css', '.app { color: red; }');
+  write(root, 'index.html', '<!doctype html><div id="root"></div>');
+  write(root, 'README.md', '# Web');
+  // Credentials are excluded, which is the redaction working, not a gap.
+  write(root, '.env', 'API_KEY=sk_live_aaaaaaaaaaaaaaaaaaaa\n');
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+
+  assert.equal(analysis.status, 'COMPLETED', `expected COMPLETED, got PARTIAL: ${analysis.warnings.join(' | ')}`);
+  assert.deepEqual(analysis.warnings, [], 'stylesheets and markup are not coverage gaps');
+  assert.ok(
+    analysis.notices.some((notice) => /credential/i.test(notice)),
+    'the excluded .env should be reported as a notice',
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('marks an analysis partial only when real application logic went unread', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gap-')));
+  write(root, 'package.json', JSON.stringify({ name: 'mixed' }));
+  write(root, 'src/index.ts', 'export const value = 1;');
+  write(root, 'worker/main.py', 'def run():\n    return 1\n');
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+
+  assert.equal(analysis.status, 'PARTIAL');
+  assert.ok(analysis.warnings.some((warning) => /Python/.test(warning)));
+  assert.equal(analysis.coverage!.unsupportedLanguageFiles.Python, 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('does not count schema files it actually reads as unread languages', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-schema-')));
+  write(root, 'package.json', JSON.stringify({ name: 'api' }));
+  write(root, 'src/index.ts', 'export const value = 1;');
+  write(root, 'prisma/schema.prisma', 'model Order { id String @id }');
+  write(root, 'schema.graphql', 'type Query {\n  orders: [String]\n}');
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+
+  assert.equal(analysis.coverage!.unsupportedLanguageFiles.Prisma, undefined);
+  assert.equal(analysis.coverage!.unsupportedLanguageFiles.GraphQL, undefined);
+  assert.ok(
+    analysis.entities.some((entity) => entity.type === 'database_model' && entity.name === 'Order'),
+    'the Prisma schema is read, so it cannot also be an unread language',
+  );
+  assert.equal(analysis.status, 'COMPLETED');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+
+test('answers questions from the analysis alone, with citations', () => {
+  const { analysis } = analyze();
+
+  const answer = answerFromAnalysis(analysis, 'How does checkout work?');
+  assert.ok(answer.features.length >= 1, 'checkout should be retrieved');
+  assert.ok(answer.features[0].citations.length > 0, 'every answer carries evidence');
+  assert.ok(answer.answer.length > 0);
+
+  // An offline answer is never presented as model-written.
+  assert.equal(answer.grounded, false);
+});
+
+test('reports an unknown subject instead of guessing', () => {
+  const { analysis } = analyze();
+  const answer = answerFromAnalysis(analysis, 'kubernetes helm chart rollout');
+  assert.equal(answer.features.length, 0);
+  assert.match(answer.answer, /not discovered in this snapshot/i);
+  assert.equal(answer.grounded, false);
+});
+
+test('serves graph, hierarchy, entity and blast-radius queries offline', () => {
+  const { analysis } = analyze();
+
+  const projection = projectAnalysis(analysis, {
+    types: ['endpoint', 'external_service'], depth: 1, limit: 50,
+  });
+  assert.ok(projection.nodes.length > 0);
+  const ids = new Set(projection.nodes.map((node) => node.id));
+  assert.ok(
+    projection.edges.every((edge) => ids.has(edge.source) && ids.has(edge.target)),
+    'a projection must not return an edge whose endpoints it omitted',
+  );
+
+  const roots = hierarchyChildren(analysis, null);
+  assert.ok(roots.length > 0);
+  assert.ok(hierarchyChildren(analysis, roots[0].id).length > 0, 'the root expands');
+
+  const charge = analysis.entities.find(
+    (entity) => entity.type === 'function' && entity.name === 'chargeCard',
+  )!;
+  assert.ok(describeEntity(analysis, charge.id)!.callers.length >= 1);
+  assert.equal(describeEntity(analysis, 'missing-entity-id'), null);
+
+  const radius = blastRadiusInAnalysis(analysis, charge.id);
+  assert.ok(radius.affected.functions + radius.affected.endpoints > 0);
 });
 
 /** Rebuild a queryable graph from a finished analysis, for traversal helpers. */

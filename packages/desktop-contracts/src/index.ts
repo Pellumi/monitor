@@ -311,7 +311,10 @@ export const CodebaseAnalysisSchema = z.object({
     coveragePercent: z.number().min(0).max(100),
     confidence: z.number().min(0).max(1),
   }),
+  /** Genuine coverage gaps. A non-empty list is what makes an analysis PARTIAL. */
   warnings: z.array(z.string()),
+  /** Informational: policies that applied, not gaps in the result. */
+  notices: z.array(z.string()).default([]),
 });
 
 export const AnalysisChangeSchema = z.object({
@@ -943,6 +946,8 @@ export const IPC = {
   cancelSignIn: 'tellann:auth:cancel-sign-in',
   signOut: 'tellann:auth:sign-out',
   getApplications: 'tellann:cloud:applications',
+  getOrganizations: 'tellann:cloud:organizations',
+  createApplication: 'tellann:cloud:applications:create',
   appUpdated: 'tellann:cloud:app-updated',
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
@@ -1005,6 +1010,10 @@ export const IPC = {
   grantQaBranchCheckout: 'tellann:workspace:branch:grant',
   switchToQaBranch: 'tellann:workspace:branch:switch',
   restoreWorkspaceBranch: 'tellann:workspace:branch:restore',
+  /** main → renderer: ask, in-app, whether source may be uploaded for analysis. */
+  uploadConsentRequested: 'tellann:workspace:upload-consent:request',
+  /** renderer → main: the answer to one `uploadConsentRequested`. */
+  uploadConsentResolve: 'tellann:workspace:upload-consent:resolve',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
   endGuidedRun: 'tellann:run:end',
@@ -1098,6 +1107,59 @@ export const DesktopApplicationSchema = z.object({
   })).optional(),
 });
 
+/**
+ * An organisation the signed-in member belongs to. Desktop needs this to create
+ * an application, which is always owned by exactly one organisation.
+ */
+export const DesktopOrganizationSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  slug: z.string().nullable().optional(),
+});
+
+/**
+ * Creating an application from Desktop hits the same cloud endpoint the web
+ * dashboard uses, so plan limits, role checks, the default Development
+ * environment and the APP_CREATED broadcast all behave identically.
+ */
+export const CreateApplicationInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  summary: z.string().max(500).nullable().optional(),
+});
+
+/**
+ * Everything the in-app upload consent modal needs to state exactly what would
+ * leave the device. The numbers come from planning the archive first, so they
+ * describe the real payload rather than a general promise.
+ */
+export const CodebaseUploadConsentRequestSchema = z.object({
+  requestId: z.string(),
+  applicationId: z.string(),
+  workspaceName: z.string(),
+  fileCount: z.number().int().nonnegative(),
+  compressedBytes: z.number().int().nonnegative(),
+  /** How the repository should be described: bound to the application, or just this folder. */
+  repositoryLabel: z.string(),
+  branch: z.string().nullable(),
+  revision: z.string().nullable(),
+  dirty: z.boolean(),
+  languages: z.array(z.string()),
+  redactions: z.number().int().nonnegative(),
+  redactedFiles: z.number().int().nonnegative(),
+  exclusions: z.array(z.object({ reason: z.string(), count: z.number().int() })),
+  truncated: z.boolean(),
+});
+
+/** main → renderer: an application was created, renamed or deleted in the cloud. */
+export const AppEventSchema = z.object({
+  action: z.enum(['APP_CREATED', 'APP_UPDATED', 'APP_DELETED']),
+  applicationId: z.string(),
+  organizationId: z.string().nullable().optional(),
+  name: z.string().optional(),
+  summary: z.string().nullable().optional(),
+});
+
 export type DesktopDevice = z.infer<typeof DesktopDeviceSchema>;
 export type DesktopPermission = z.infer<typeof DesktopPermissionSchema>;
 export type RepositorySnapshotSummary = z.infer<typeof RepositorySnapshotSummarySchema>;
@@ -1149,3 +1211,7 @@ export type StartGuidedRunInput = z.infer<typeof StartGuidedRunInputSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
 export type DesktopEntitlements = z.infer<typeof DesktopEntitlementsSchema>;
 export type DesktopApplication = z.infer<typeof DesktopApplicationSchema>;
+export type DesktopOrganization = z.infer<typeof DesktopOrganizationSchema>;
+export type CreateApplicationInput = z.infer<typeof CreateApplicationInputSchema>;
+export type AppEvent = z.infer<typeof AppEventSchema>;
+export type CodebaseUploadConsentRequest = z.infer<typeof CodebaseUploadConsentRequestSchema>;

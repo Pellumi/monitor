@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { usePathname } from 'next/navigation';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { ApplicationEventsProvider } from '@/components/application-events-provider';
 import { NotificationsProvider } from '@/components/notifications-provider';
 import { PreferencesProvider } from '@/components/preferences-provider';
 import { ThemeProvider } from '@/components/theme-provider';
@@ -140,7 +141,9 @@ function SessionBridge({ children }: { children: React.ReactNode }) {
   return (
     <PreferencesProvider userId={user?.id ?? null}>
       <NotificationsProvider organizationId={selectedOrgId} userId={user?.id ?? null}>
-        {children}
+        <ApplicationEventsProvider organizationId={selectedOrgId}>
+          {children}
+        </ApplicationEventsProvider>
       </NotificationsProvider>
     </PreferencesProvider>
   );
