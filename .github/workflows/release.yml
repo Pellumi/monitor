@@ -53,7 +53,13 @@ jobs:
           title: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NODE_AUTH_TOKEN is what the .npmrc written by setup-node interpolates.
+          # NPM_TOKEN is what changesets/action itself looks for: without it the
+          # action reports "No NPM_TOKEN found" and falls back to OIDC trusted
+          # publishing, which the npm bundled with Node 22 is too old to support.
+          # Both point at the same secret.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           # Uncomment to attach npm provenance (needs id-token: write, npm >= 9.5,
           # and a public repo or npm's private-repo provenance enabled):
           # NPM_CONFIG_PROVENANCE: "true"
