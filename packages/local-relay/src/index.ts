@@ -25,6 +25,7 @@ export type LocalRelayOptions = {
   correlation: RelayCorrelation;
   initialQueue?: BufferedRelayRequest[];
   onQueueChanged?: (queue: BufferedRelayRequest[]) => void;
+  onEvents?: (events: Array<Record<string, unknown>>) => Promise<void> | void;
 };
 
 const SENSITIVE_KEY = /(authorization|cookie|password|passwd|secret|token|api[-_]?key|private[-_]?key|credit[-_]?card|card[-_]?number|cvv|ssn)/i;
@@ -76,6 +77,7 @@ export class LocalRunRelay {
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private options: LocalRelayOptions | null = null;
   private flushPromise: Promise<void> | null = null;
+  private paused = false;
 
   async start(options: LocalRelayOptions): Promise<{ endpoint: string; relayToken: string }> {
     if (this.server) throw new Error('LOCAL_RELAY_ALREADY_RUNNING');
@@ -83,6 +85,7 @@ export class LocalRunRelay {
     this.options = { ...options, allowedOrigin: origin, collectorBaseUrl: options.collectorBaseUrl.replace(/\/$/, '') };
     this.queue = [...(options.initialQueue ?? [])].slice(-5_000);
     this.relayToken = crypto.randomBytes(32).toString('base64url');
+    this.paused = false;
     this.server = http.createServer((request, response) => void this.handle(request, response));
     await new Promise<void>((resolve, reject) => {
       this.server!.once('error', reject);
@@ -99,6 +102,7 @@ export class LocalRunRelay {
   async stop(): Promise<void> {
     if (this.retryTimer) clearInterval(this.retryTimer);
     this.retryTimer = null;
+    this.paused = false;
     await this.flush();
     await new Promise<void>((resolve) => this.server?.close(() => resolve()) ?? resolve());
     this.server = null;
@@ -110,6 +114,11 @@ export class LocalRunRelay {
     return this.queue.map((item) => ({ ...item }));
   }
 
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+    if (!paused) void this.flush();
+  }
+
   async emit(eventType: string, metadata: Record<string, unknown> = {}): Promise<void> {
     if (!this.options) throw new Error('LOCAL_RELAY_NOT_RUNNING');
     const item: BufferedRelayRequest = {
@@ -119,7 +128,8 @@ export class LocalRunRelay {
         eventType, timestamp: new Date().toISOString(), metadata,
       }, this.options.correlation),
     };
-    if (!await this.forward(item)) {
+    await this.options.onEvents?.([item.body as Record<string, unknown>]);
+    if (this.paused || !await this.forward(item)) {
       this.queue.push(item);
       this.queue = this.queue.slice(-5_000);
       this.options.onQueueChanged?.(this.getQueue());
@@ -161,7 +171,10 @@ export class LocalRunRelay {
       body: payloadFor(request.url as BufferedRelayRequest['path'], body, this.options.correlation),
       createdAt: new Date().toISOString(), attempts: 0,
     };
-    const delivered = await this.forward(item);
+    const record = item.body as { events?: unknown[] } | Record<string, unknown>[];
+    const events = Array.isArray(record) ? record : Array.isArray(record?.events) ? record.events : [record];
+    await this.options.onEvents?.(events.filter((event): event is Record<string, unknown> => Boolean(event) && typeof event === 'object' && !Array.isArray(event)));
+    const delivered = this.paused ? false : await this.forward(item);
     if (!delivered) {
       this.queue.push(item);
       this.queue = this.queue.slice(-5_000);
@@ -186,6 +199,7 @@ export class LocalRunRelay {
   }
 
   async flush(): Promise<void> {
+    if (this.paused) return;
     if (this.flushPromise) return this.flushPromise;
     this.flushPromise = this.flushQueue().finally(() => { this.flushPromise = null; });
     return this.flushPromise;

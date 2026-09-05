@@ -36,6 +36,8 @@ export const RunStatusSchema = z.enum([
 ]);
 export const ArtifactTypeSchema = z.enum([
   'SCREENSHOT',
+  'INSPECT_SCREENSHOT',
+  'SANITIZED_FINAL_SCREENSHOT',
   'PLAYWRIGHT_TRACE',
   'ACCESSIBILITY_SNAPSHOT',
   'CONSOLE_LOG',
@@ -48,6 +50,106 @@ export const PrivacyClassificationSchema = z.enum([
   'SENSITIVE',
   'RESTRICTED',
 ]);
+
+export const QACapturePhaseSchema = z.enum(['PRE_BOUNDARY', 'IN_FLOW', 'FINALIZING', 'COMPLETE']);
+export const QAEvidenceScopeSchema = z.enum(['PRE_BOUNDARY', 'IN_FLOW']);
+export const QAInteractionModeSchema = z.enum(['NAVIGATE', 'INSPECT']);
+export const QAReportStatusSchema = z.enum(['PENDING', 'RECONCILING', 'ANALYZING', 'GENERATING', 'READY', 'FAILED']);
+export const QAEvidenceEventTypeSchema = z.enum([
+  'QA_ROUTE_CHANGED',
+  'QA_VIEWPORT_CHANGED',
+  'QA_REQUEST',
+  'QA_WEBSOCKET',
+  'QA_CONSOLE',
+  'QA_RUNTIME_ERROR',
+  'QA_PAGE_CRASH',
+  'QA_CONTROL_CLICKED',
+  'QA_FORM_SUBMIT_INTENT',
+  'QA_FORM_SUBMITTED',
+  'QA_FIELD_CHANGED',
+  'QA_STORAGE_MUTATION',
+  'QA_CLIENT_STATE_MUTATION',
+  'QA_PAGE_PERFORMANCE',
+  'QA_FLOW_EVENT',
+  'QA_CAPTURE_DEGRADED',
+]);
+
+export const QAPendingProtectedValueSchema = z.object({
+  keyPath: z.string().min(1).max(300),
+  kind: z.enum(['ORDINARY', 'DIRECT_IDENTIFIER', 'SECRET']),
+  value: z.string().max(16_384).optional(),
+  valueLength: z.number().int().nonnegative(),
+});
+
+export const QAEvidenceEventSchema = z.object({
+  schemaVersion: z.literal('2.0').default('2.0'),
+  eventId: z.string().uuid(),
+  runId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  traceId: z.string().uuid().nullable(),
+  applicationId: z.string().uuid(),
+  environmentId: z.string().uuid(),
+  localSequence: z.number().int().nonnegative(),
+  timestamp: z.string().datetime(),
+  eventType: QAEvidenceEventTypeSchema,
+  source: z.enum(['DESKTOP_BROWSER', 'FRONTEND_SDK', 'BACKEND_SDK', 'DESKTOP_AGENT']),
+  scope: QAEvidenceScopeSchema,
+  privacyClassification: PrivacyClassificationSchema.default('INTERNAL'),
+  pageUrl: z.string().max(2_000).nullable().default(null),
+  normalizedRoute: z.string().max(1_000).nullable().default(null),
+  acceptedFlowStateKey: z.string().max(200).nullable().default(null),
+  viewport: z.object({ width: z.number().int().nonnegative(), height: z.number().int().nonnegative() }).nullable().default(null),
+  interactionGroupId: z.string().max(100).nullable().default(null),
+  causedByEventId: z.string().max(100).nullable().default(null),
+  metadata: z.record(z.unknown()).default({}),
+  protectedValues: z.array(QAPendingProtectedValueSchema).max(100).default([]),
+});
+
+export const QAMentionableMemberSchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string().min(1).max(200),
+  avatarUrl: z.string().nullable(),
+  role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']),
+});
+
+export const QAElementFingerprintSchema = z.object({
+  tag: z.string().max(50),
+  role: z.string().max(100).nullable(),
+  accessibleName: z.string().max(500),
+  id: z.string().max(300).nullable(),
+  testId: z.string().max(300).nullable(),
+  cssPath: z.string().max(2_000),
+  frameUrl: z.string().max(2_000),
+  domFingerprint: z.string().max(200),
+});
+
+export const CreateQARunAnnotationSchema = z.object({
+  pageUrl: z.string().max(2_000),
+  normalizedRoute: z.string().max(1_000),
+  flowStateKey: z.string().max(200).nullable(),
+  scope: QAEvidenceScopeSchema,
+  comment: z.string().trim().min(1).max(2_000),
+  elementFingerprint: QAElementFingerprintSchema,
+  documentBounds: z.record(z.number()).nullable(),
+  viewportBounds: z.record(z.number()),
+  windowResolution: z.record(z.number()),
+  screenshotArtifactId: z.string().uuid().nullable().default(null),
+  mentionedUserIds: z.array(z.string().uuid()).max(50).default([]),
+});
+
+export const RunLifecycleEventSchema = z.object({
+  runId: z.string().uuid(),
+  applicationId: z.string().uuid(),
+  phase: QACapturePhaseSchema,
+  localStatus: z.string(),
+  cloudStatus: z.string().nullable(),
+  completionReason: z.string().nullable(),
+  terminalStateKey: z.string().nullable(),
+  evidenceCounts: z.record(z.number().int().nonnegative()),
+  reportStatus: QAReportStatusSchema.nullable(),
+  safeError: z.string().nullable(),
+  timestamp: z.string().datetime(),
+});
 
 export const DesktopDeviceSchema = z.object({
   id: z.string().uuid(),
@@ -499,6 +601,9 @@ export const BrowserFindingSchema = z.object({
   evidenceArtifactIds: z.array(z.string().uuid()),
   reproductionSteps: z.array(z.string()),
   recommendation: z.string().nullable(),
+  scope: QAEvidenceScopeSchema.nullable().optional(),
+  dedupeKey: z.string().nullable().optional(),
+  generatorSource: z.enum(['BROWSER', 'RULES', 'AI']).optional(),
 });
 
 export const QARunSchema = z.object({
@@ -526,6 +631,10 @@ export const QARunSchema = z.object({
   startedAt: z.string().datetime().nullable(),
   endedAt: z.string().datetime().nullable(),
   failureReason: z.string().nullable(),
+  synchronizationStatus: z.string().nullable().optional(),
+  reportStatus: QAReportStatusSchema.nullable().optional(),
+  evidenceCounts: z.record(z.number().int().nonnegative()).optional(),
+  annotationCount: z.number().int().nonnegative().optional(),
 });
 
 export const QARunSummarySchema = QARunSchema.extend({
@@ -1032,6 +1141,12 @@ export const IPC = {
   uploadConsentResolve: 'tellann:workspace:upload-consent:resolve',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
+  resumeGuidedRun: 'tellann:run:resume',
+  setRunInteractionMode: 'tellann:run:interaction-mode',
+  retryRunSynchronization: 'tellann:run:synchronization:retry',
+  revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  searchRunMentionableMembers: 'tellann:run:members:search',
+  runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
   detectInstrumentation: 'tellann:instrumentation:detect',
@@ -1224,6 +1339,16 @@ export type InstrumentationValidationResult = z.infer<typeof InstrumentationVali
 export type QARunArtifact = z.infer<typeof QARunArtifactSchema>;
 export type BrowserFinding = z.infer<typeof BrowserFindingSchema>;
 export type StartGuidedRunInput = z.infer<typeof StartGuidedRunInputSchema>;
+export type QACapturePhase = z.infer<typeof QACapturePhaseSchema>;
+export type QAEvidenceScope = z.infer<typeof QAEvidenceScopeSchema>;
+export type QAInteractionMode = z.infer<typeof QAInteractionModeSchema>;
+export type QAReportStatus = z.infer<typeof QAReportStatusSchema>;
+export type QAEvidenceEvent = z.infer<typeof QAEvidenceEventSchema>;
+export type QAPendingProtectedValue = z.infer<typeof QAPendingProtectedValueSchema>;
+export type QAMentionableMember = z.infer<typeof QAMentionableMemberSchema>;
+export type QAElementFingerprint = z.infer<typeof QAElementFingerprintSchema>;
+export type CreateQARunAnnotation = z.infer<typeof CreateQARunAnnotationSchema>;
+export type RunLifecycleEvent = z.infer<typeof RunLifecycleEventSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
 export type DesktopEntitlements = z.infer<typeof DesktopEntitlementsSchema>;
 export type DesktopApplication = z.infer<typeof DesktopApplicationSchema>;

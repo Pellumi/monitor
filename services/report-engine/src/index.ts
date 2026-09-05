@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('report-engine');
 
 import express, { Request, Response } from 'express';
-import { PrismaClient } from '@tellann/db';
+import { PrismaClient, QAReportStatus } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   Feature,
@@ -547,9 +547,30 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
           include: { evidence: { include: { artifact: true } } },
           orderBy: [{ severity: 'asc' }, { createdAt: 'asc' }],
         },
+        report: true,
       },
     });
     if (!run) return res.status(404).json({ error: 'QA_RUN_NOT_FOUND' });
+    if (run.report) {
+      if (run.report.status === QAReportStatus.READY && run.report.payload) {
+        res.setHeader('Cache-Control', 'private, max-age=60');
+        return res.json(run.report.payload);
+      }
+      if (run.report.status === QAReportStatus.FAILED) {
+        return res.status(503).json({
+          reportId: run.report.id,
+          status: run.report.status,
+          error: 'QA_REPORT_GENERATION_FAILED',
+          message: run.report.failureReasonSafe || 'Report generation failed safely.',
+          retryEligible: true,
+        });
+      }
+      return res.status(202).json({
+        reportId: run.report.id,
+        status: run.report.status,
+        retryEligible: false,
+      });
+    }
 
     const reconciliation = await prisma.reconciliationReport.findMany({
       where: {

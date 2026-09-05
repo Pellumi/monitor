@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/index.test.js"
+    "test": "tsc && node --test dist/index.test.js"
   },
   "dependencies": {
     "@tellann/agent-policy": "workspace:*",

@@ -19,6 +19,7 @@
     "push": "prisma db push",
     "seed:plans": "tsx src/seed-plans.ts",
     "seed:rulesets": "ts-node prisma/seeds/rulesets.ts",
-    "seed:admin": "ts-node prisma/seeds/system-admin.ts"
+    "seed:admin": "ts-node prisma/seeds/system-admin.ts",
+    "test": "tsc && node --test dist/qa-flow-boundary.test.js"
   }
 }

@@ -4,6 +4,7 @@ import { app, safeStorage } from "electron";
 type Statement = {
   run(...values: unknown[]): unknown;
   get(...values: unknown[]): Record<string, unknown> | undefined;
+  all(...values: unknown[]): Record<string, unknown>[];
 };
 
 type Database = {
@@ -59,6 +60,24 @@ export function writeLocalState(key: string, value: unknown): void {
   `,
     )
     .run(key, encrypted, new Date().toISOString());
+}
+
+/**
+ * Keys currently held in the encrypted store, optionally restricted to a
+ * prefix. Used at startup to find work (such as an interrupted QA evidence
+ * synchronization) that a previous session left behind.
+ */
+export function listLocalStateKeys(prefix = ""): string[] {
+  const rows = getDatabase()
+    .prepare(
+      prefix
+        ? "SELECT key FROM encrypted_state WHERE key LIKE ? ESCAPE '\\' ORDER BY updated_at ASC"
+        : "SELECT key FROM encrypted_state ORDER BY updated_at ASC",
+    )
+    .all(...(prefix ? [`${prefix.replace(/[\\%_]/g, "\\$&")}%`] : []));
+  return rows
+    .map((row) => row.key)
+    .filter((key): key is string => typeof key === "string");
 }
 
 export function deleteLocalState(key: string): void {

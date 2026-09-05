@@ -115,8 +115,8 @@ test('TELLANN Frontend SDK Tests', async (t) => {
     };
 
     const sanitized = sanitizeMetadata(rawMeta);
-    assert.strictEqual(sanitized.password, '[REDACTED]');
-    assert.strictEqual(sanitized.credit_card, '[REDACTED]');
+    assert.strictEqual(sanitized.password, '[NOT CAPTURED]');
+    assert.strictEqual(sanitized.credit_card, '[NOT CAPTURED]');
     assert.strictEqual(sanitized.safeKey, 'perfectly-fine-value');
   });
 

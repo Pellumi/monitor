@@ -38,7 +38,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
-    "test": "node --test dist/index.test.js",
+    "test": "tsc && node --test dist/index.test.js",
     "prepack": "pnpm build"
   },
   "dependencies": {

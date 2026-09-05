@@ -2,24 +2,58 @@ import crypto from 'crypto';
 import { Router, raw, type NextFunction, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import {
+  AuditAction,
   EnvironmentType,
   MemberRole,
+  Prisma,
   PrismaClient,
+  QAEvidenceScope,
+  QAProtectedValueKind,
+  QAReportJobStatus,
+  QAReportStatus,
   QARunArtifactType,
   QACaptureTrack,
   QARunMode,
   QARunStatus,
   PrivacyClassification,
+  processQaFlowBoundaryEvent,
+  EmailCategory,
 } from '@tellann/db';
+import { NotificationEmailService, NotificationOrchestrator } from '@tellann/email';
+import { CreateQARunAnnotationSchema, QAEvidenceEventSchema } from '@tellann/desktop-contracts';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import type { StorageClient } from '@tellann/storage';
+import {
+  assertQaEncryptionConfigured,
+  protectQaValue,
+  reclassifyQaProtectedValue,
+  revealQaValue,
+  sanitizeQaMetadata,
+  sanitizeQaUrl,
+} from './qa-privacy';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
 
 export function productionRunModeAllowed(environmentType: EnvironmentType, mode: QARunMode): boolean {
   return environmentType !== EnvironmentType.PRODUCTION || mode === QARunMode.OBSERVATION_ONLY;
+}
+
+/**
+ * Who may reveal an encrypted ordinary value: the person who ran the capture,
+ * plus organization Owners and Admins. Membership in the run's organization is
+ * a precondition — a null role means the caller is not a member at all.
+ */
+export function canRevealProtectedValue(input: {
+  requestingUserId: string;
+  runCreatedByUserId: string;
+  role: MemberRole | null;
+}): boolean {
+  if (input.role === null) return false;
+  return input.requestingUserId === input.runCreatedByUserId
+    || input.role === MemberRole.OWNER
+    || input.role === MemberRole.ADMIN;
 }
 
 const TERMINAL_STATUSES = new Set<QARunStatus>([
@@ -84,6 +118,21 @@ export function createDesktopRouter(input: {
 }) {
   const { prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret, storage } = input;
   const router = Router();
+  /**
+   * Per-process reveal throttle. Swept on write so an operator who reveals a
+   * handful of values across many runs cannot grow the map without bound; the
+   * durable record of every reveal is the QA_EVIDENCE_REVEALED audit entry.
+   */
+  const revealAttempts = new Map<string, number[]>();
+  const REVEAL_WINDOW_MS = 60_000;
+
+  function sweepRevealAttempts(now: number): void {
+    for (const [key, timestamps] of revealAttempts) {
+      const live = timestamps.filter((timestamp) => now - timestamp < REVEAL_WINDOW_MS);
+      if (live.length) revealAttempts.set(key, live);
+      else revealAttempts.delete(key);
+    }
+  }
 
   /** The caller's role in the organisation that owns this application, if any. */
   async function orgRoleForApp(userId: string, appId: string): Promise<MemberRole | null> {
@@ -116,7 +165,42 @@ export function createDesktopRouter(input: {
         flowScan: true,
         flowDrift: true,
         artifacts: true,
+        progressEvents: { orderBy: { occurredAt: 'asc' } },
         findings: { include: { evidence: { include: { artifact: true } } } },
+        report: true,
+        annotations: {
+          include: {
+            author: { select: { id: true, displayName: true, avatarUrl: true } },
+            mentions: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+  }
+
+  /**
+   * Tenant-scoped run lookup that loads only the columns the high-frequency
+   * capture endpoints need. `authorizedRun` eagerly hydrates every artifact,
+   * progress event, finding and annotation, which is far too expensive for
+   * paths hit every couple of seconds for the whole length of a run.
+   */
+  async function authorizedRunLite(runId: string, userId: string) {
+    return prisma.qARun.findFirst({
+      where: { id: runId, organization: { memberships: { some: { userId } } } },
+      select: {
+        id: true,
+        organizationId: true,
+        applicationId: true,
+        environmentId: true,
+        createdByUserId: true,
+        status: true,
+        boundaryStartedAt: true,
+        boundaryCompletedAt: true,
+        completionReason: true,
+        lastObservedStateKey: true,
+        environment: { select: { id: true, type: true } },
+        report: { select: { id: true, status: true, failureReasonSafe: true, generatedAt: true } },
       },
     });
   }
@@ -499,6 +583,7 @@ export function createDesktopRouter(input: {
         environmentId, workspaceId, deviceSessionId, repositorySnapshotId,
         flowId, flowBindingId, flowInitializationId, flowScanId, flowDriftId,
         expectedGraphVersionId, patchSetId, mode = QARunMode.GUIDED, captureTracks = ['FRONTEND'], targetUrl, retryOfRunId, timeoutSeconds,
+        captureVersion,
       } = req.body ?? {};
       if (!environmentId || !targetUrl || !flowId || !flowBindingId || !flowInitializationId || !flowScanId || !expectedGraphVersionId) {
         return res.status(400).json({ error: 'FLOW_SCOPED_RUN_CONTEXT_REQUIRED', message: 'environmentId, targetUrl, flowId, flowBindingId, flowInitializationId, flowScanId, and expectedGraphVersionId are required' });
@@ -597,6 +682,7 @@ export function createDesktopRouter(input: {
           timeoutAt: Number(timeoutSeconds) > 0 ? new Date(Date.now() + Math.min(Number(timeoutSeconds), 86_400) * 1_000) : undefined,
           targetUrl: String(targetUrl),
           retryOfRunId: retryOfRunId ? String(retryOfRunId) : undefined,
+          browserMetadata: { captureVersion: captureVersion === '2.0' ? '2.0' : '1.0' },
         },
       });
       res.status(201).json(run);
@@ -624,14 +710,342 @@ export function createDesktopRouter(input: {
   router.get('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const groupedEvidence = await prisma.qARunEvidenceEvent.groupBy({
+      by: ['eventType'],
+      where: { runId: run.id },
+      _count: { _all: true },
+    });
     res.json({
       ...run,
+      synchronizationStatus: run.report?.status === QAReportStatus.FAILED ? 'FAILED' : run.report ? 'SYNCHRONIZED' : 'PENDING',
+      reportStatus: run.report?.status ?? null,
+      evidenceCounts: Object.fromEntries(groupedEvidence.map((item) => [item.eventType, item._count._all])),
+      annotationCount: run.annotations.length,
       artifacts: run.artifacts.map(safeArtifact),
       findings: run.findings.map((finding) => ({
         ...finding,
         evidence: finding.evidence.map((link) => ({ ...link, artifact: safeArtifact(link.artifact) })),
       })),
     });
+  });
+
+  router.post('/qa-runs/:runId/evidence-events/batch', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const rawEvents = Array.isArray(req.body?.events) ? req.body.events : Array.isArray(req.body) ? req.body : [];
+    const batchBytes = Buffer.byteLength(JSON.stringify(rawEvents));
+    if (batchBytes > 5 * 1024 * 1024) {
+      await prisma.browserFinding.upsert({
+        where: { runId_dedupeKey: { runId: run.id, dedupeKey: 'capture-degraded:batch-size' } },
+        create: {
+          runId: run.id, category: 'CAPTURE_DEGRADED', severity: 'HIGH', confidence: 1,
+          title: 'Evidence batch exceeded the capture limit',
+          description: 'A desktop evidence batch was larger than 5 MB and was rejected explicitly.',
+          reproductionSteps: [], recommendation: 'Repeat the run after reducing captured payload size.',
+          scope: run.boundaryStartedAt ? QAEvidenceScope.IN_FLOW : QAEvidenceScope.PRE_BOUNDARY,
+          dedupeKey: 'capture-degraded:batch-size', generatorSource: 'RULES',
+        },
+        update: {},
+      });
+      return res.status(413).json({ error: 'EVIDENCE_BATCH_TOO_LARGE', captureDegraded: true });
+    }
+    if (!rawEvents.length || rawEvents.length > 500) return res.status(400).json({ error: 'EVIDENCE_BATCH_INVALID' });
+    const parsed = (rawEvents as unknown[]).map((event) => QAEvidenceEventSchema.safeParse(event));
+    const firstInvalid = parsed.find((result) => !result.success);
+    if (firstInvalid && !firstInvalid.success) {
+      return res.status(400).json({ error: 'EVIDENCE_EVENT_INVALID', details: firstInvalid.error.flatten() });
+    }
+    const events = parsed.map((result) => result.success ? result.data : null).filter(Boolean) as Array<ReturnType<typeof QAEvidenceEventSchema.parse>>;
+    if (events.some((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId)) {
+      return res.status(403).json({ error: 'EVIDENCE_CONTEXT_MISMATCH' });
+    }
+    const production = run.environment.type === EnvironmentType.PRODUCTION;
+    if (production && events.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
+      return res.status(422).json({ error: 'PRODUCTION_PROTECTED_VALUES_REJECTED', captureDegraded: true });
+    }
+    // Fail closed rather than persisting under a derived fallback key that the
+    // reveal endpoint would later refuse to decrypt.
+    try {
+      assertQaEncryptionConfigured();
+    } catch {
+      return res.status(503).json({ error: 'QA_EVIDENCE_ENCRYPTION_NOT_CONFIGURED' });
+    }
+    const oversized = events.find((event) => Buffer.byteLength(JSON.stringify(event)) > 32 * 1024);
+    if (oversized) {
+      await prisma.browserFinding.upsert({
+        where: { runId_dedupeKey: { runId: run.id, dedupeKey: `capture-degraded:event-size:${oversized.eventId}` } },
+        create: {
+          runId: run.id, category: 'CAPTURE_DEGRADED', severity: 'MEDIUM', confidence: 1,
+          title: 'Evidence event exceeded the capture limit', description: 'One evidence event exceeded 32 KB and was rejected explicitly.',
+          reproductionSteps: [], recommendation: 'Reduce captured structured values and repeat the affected step.', scope: oversized.scope,
+          dedupeKey: `capture-degraded:event-size:${oversized.eventId}`, generatorSource: 'RULES',
+        }, update: {},
+      });
+      return res.status(413).json({ error: 'EVIDENCE_EVENT_TOO_LARGE', eventId: oversized.eventId, captureDegraded: true });
+    }
+    let inserted = 0;
+    let duplicates = 0;
+    // Each event is its own short transaction rather than one interactive
+    // transaction spanning up to 500 events: that shape blew past the default
+    // interactive-transaction timeout, and its check-then-insert raced a
+    // concurrent retry of the same batch into a P2002 that surfaced as a 500.
+    // A unique-violation here simply means the event already landed, which is
+    // exactly what an idempotent re-upload should report.
+    for (const event of events) {
+      const sanitized = sanitizeQaMetadata(event.metadata, { production });
+      // Client-declared kinds are a hint, never the decision: re-derive the
+      // server floor so a recorder that mislabels a password as ORDINARY
+      // cannot get it encrypted-and-revealable.
+      const supplied = event.protectedValues
+        .map((value) => reclassifyQaProtectedValue({
+          keyPath: value.keyPath,
+          kind: value.kind,
+          value: value.value,
+          valueLength: value.valueLength ?? value.value?.length ?? 0,
+        }))
+        .map((value) => protectQaValue(value, { production }));
+      const protectedValues = [...sanitized.protectedValues, ...supplied]
+        .filter((value) => !production || value.kind === 'SECRET')
+        .slice(0, 100);
+      try {
+        await prisma.qARunEvidenceEvent.create({
+          data: {
+            runId: run.id,
+            eventId: event.eventId,
+            sessionId: event.sessionId,
+            traceId: event.traceId,
+            localSequence: event.localSequence,
+            eventType: event.eventType,
+            source: event.source,
+            scope: event.scope,
+            privacyClassification: event.privacyClassification,
+            pageUrl: sanitizeQaUrl(event.pageUrl),
+            normalizedRoute: event.normalizedRoute,
+            acceptedFlowStateKey: event.acceptedFlowStateKey,
+            viewport: event.viewport ?? undefined,
+            interactionGroupId: event.interactionGroupId,
+            causedByEventId: event.causedByEventId,
+            metadata: sanitized.metadata as Prisma.InputJsonValue,
+            occurredAt: new Date(event.timestamp),
+            protectedValues: {
+              create: protectedValues.map((value) => ({
+                keyPath: value.keyPath,
+                kind: value.kind as QAProtectedValueKind,
+                displayValue: value.displayValue,
+                valueLength: value.valueLength,
+                fingerprint: value.fingerprint,
+                keyVersion: value.keyVersion,
+                iv: value.iv,
+                ciphertext: value.ciphertext,
+                authTag: value.authTag,
+              })),
+            },
+          },
+        });
+        inserted += 1;
+      } catch (error) {
+        // P2002 on (runId, eventId) or (runId, sessionId, localSequence):
+        // this event is already durable, so the re-upload is a no-op.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          duplicates += 1;
+          continue;
+        }
+        throw error;
+      }
+    }
+    return res.status(202).json({ accepted: inserted, duplicates, rejected: 0 });
+  });
+
+  /**
+   * Minimal boundary projection for the desktop's in-run poll. The full run
+   * detail payload is far too heavy to fetch every couple of seconds for the
+   * whole length of a capture.
+   */
+  router.get('/qa-runs/:runId/boundary-status', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    res.json({
+      runId: run.id,
+      status: run.status,
+      boundaryStartedAt: run.boundaryStartedAt,
+      boundaryCompletedAt: run.boundaryCompletedAt,
+      completionReason: run.completionReason,
+      lastObservedStateKey: run.lastObservedStateKey,
+    });
+  });
+
+  router.get('/qa-runs/:runId/evidence-summary', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const [byType, byScope, protectedValueCount] = await Promise.all([
+      prisma.qARunEvidenceEvent.groupBy({ by: ['eventType'], where: { runId: run.id }, _count: { _all: true } }),
+      prisma.qARunEvidenceEvent.groupBy({ by: ['scope'], where: { runId: run.id }, _count: { _all: true } }),
+      prisma.qARunProtectedValue.count({ where: { evidenceEvent: { runId: run.id } } }),
+    ]);
+    res.json({
+      runId: run.id,
+      counts: Object.fromEntries(byType.map((item) => [item.eventType, item._count._all])),
+      scopes: Object.fromEntries(byScope.map((item) => [item.scope, item._count._all])),
+      protectedValueCount,
+      captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED'),
+      reportStatus: run.report?.status ?? null,
+    });
+  });
+
+  router.get('/qa-runs/:runId/mentionable-members', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const query = String(req.query.q ?? '').trim().slice(0, 100);
+    const memberships = await prisma.organizationMembership.findMany({
+      where: {
+        organizationId: run.organizationId,
+        userId: { not: req.user!.id },
+        user: {
+          deletedAt: null,
+          ...(query ? { displayName: { contains: query, mode: 'insensitive' } } : {}),
+        },
+      },
+      select: { role: true, user: { select: { id: true, displayName: true, avatarUrl: true } } },
+      orderBy: { user: { displayName: 'asc' } },
+      take: 20,
+    });
+    res.json(memberships.map((membership) => ({
+      id: membership.user.id,
+      displayName: membership.user.displayName || 'Tellann member',
+      avatarUrl: membership.user.avatarUrl,
+      role: membership.role,
+    })));
+  });
+
+  router.post('/qa-runs/:runId/annotations', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const parsed = CreateQARunAnnotationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'ANNOTATION_INVALID', details: parsed.error.flatten() });
+    const input = parsed.data;
+    const mentionedUserIds = [...new Set(input.mentionedUserIds)].filter((id) => id !== req.user!.id);
+    const acceptedMembers = mentionedUserIds.length ? await prisma.organizationMembership.findMany({
+      where: { organizationId: run.organizationId, userId: { in: mentionedUserIds }, user: { deletedAt: null } },
+      select: { user: { select: { id: true, displayName: true } } },
+    }) : [];
+    if (acceptedMembers.length !== mentionedUserIds.length) {
+      return res.status(422).json({ error: 'ANNOTATION_MENTION_INVALID' });
+    }
+    const annotation = await prisma.qARunAnnotation.create({
+      data: {
+        runId: run.id,
+        authorId: req.user!.id,
+        scope: input.scope,
+        flowStateKey: input.flowStateKey,
+        pageUrl: sanitizeQaUrl(input.pageUrl) || input.normalizedRoute,
+        normalizedRoute: input.normalizedRoute,
+        comment: input.comment,
+        // The accessible name is derived from rendered text, so annotating a
+        // profile row or invoice line can otherwise pull a real name, email or
+        // phone number straight into the report. Run it through the same
+        // classifier as every other captured value.
+        elementFingerprint: sanitizeQaMetadata(
+          { ...input.elementFingerprint, frameUrl: sanitizeQaUrl(input.elementFingerprint.frameUrl) ?? '' },
+          { production: run.environment.type === EnvironmentType.PRODUCTION },
+        ).metadata as Prisma.InputJsonValue,
+        documentBounds: input.documentBounds ?? undefined,
+        viewportBounds: input.viewportBounds,
+        windowResolution: input.windowResolution,
+        screenshotArtifactId: input.screenshotArtifactId,
+        mentions: {
+          create: acceptedMembers.map((membership) => ({
+            userId: membership.user.id,
+            displayNameSnapshot: membership.user.displayName || 'Tellann member',
+          })),
+        },
+      },
+      include: {
+        author: { select: { id: true, displayName: true, avatarUrl: true } },
+        mentions: true,
+      },
+    });
+    res.status(201).json(annotation);
+  });
+
+  router.get('/qa-runs/:runId/annotations', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    res.json(run.annotations);
+  });
+
+  router.get('/qa-runs/:runId/report-status', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (!run.report) return res.status(202).json({ runId: run.id, status: 'PENDING', progress: 0, retryEligible: false });
+    const progressByStatus: Record<string, number> = { PENDING: 10, RECONCILING: 30, ANALYZING: 55, GENERATING: 80, READY: 100, FAILED: 100 };
+    res.status(run.report.status === QAReportStatus.READY ? 200 : 202).json({
+      runId: run.id,
+      reportId: run.report.id,
+      status: run.report.status,
+      progress: progressByStatus[run.report.status] ?? 0,
+      retryEligible: run.report.status === QAReportStatus.FAILED,
+      failureReason: run.report.failureReasonSafe,
+      generatedAt: run.report.generatedAt,
+    });
+  });
+
+  router.post('/qa-runs/:runId/report/retry', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (!run.report || run.report.status !== QAReportStatus.FAILED) return res.status(409).json({ error: 'REPORT_NOT_RETRYABLE' });
+    await prisma.$transaction([
+      prisma.qAReport.update({ where: { id: run.report.id }, data: { status: QAReportStatus.PENDING, failureReasonSafe: null } }),
+      prisma.qAReportGenerationJob.upsert({
+        where: { reportId: run.report.id },
+        create: { reportId: run.report.id, status: QAReportJobStatus.QUEUED },
+        update: { status: QAReportJobStatus.QUEUED, attempts: 0, scheduledAt: new Date(), startedAt: null, completedAt: null, failureReasonSafe: null },
+      }),
+    ]);
+    res.status(202).json({ reportId: run.report.id, status: QAReportStatus.PENDING });
+  });
+
+  router.post('/qa-runs/:runId/protected-values/:valueId/reveal', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: req.user!.id, organizationId: run.organizationId } },
+      select: { role: true },
+    });
+    const authorized = canRevealProtectedValue({
+      requestingUserId: req.user!.id,
+      runCreatedByUserId: run.createdByUserId,
+      role: membership?.role ?? null,
+    });
+    if (!authorized) return res.status(403).json({ error: 'PROTECTED_VALUE_REVEAL_FORBIDDEN' });
+    const now = Date.now();
+    const rateKey = `${req.user!.id}:${run.id}`;
+    sweepRevealAttempts(now);
+    const recent = (revealAttempts.get(rateKey) ?? []).filter((timestamp) => now - timestamp < REVEAL_WINDOW_MS);
+    if (recent.length >= 10) return res.status(429).json({ error: 'REVEAL_RATE_LIMITED' });
+    recent.push(now);
+    revealAttempts.set(rateKey, recent);
+    const protectedValue = await prisma.qARunProtectedValue.findFirst({
+      where: { id: req.params.valueId, evidenceEvent: { runId: run.id } },
+    });
+    if (!protectedValue) return res.status(404).json({ error: 'PROTECTED_VALUE_NOT_FOUND' });
+    let value: string | null;
+    try {
+      value = revealQaValue(protectedValue);
+    } catch {
+      return res.status(503).json({ error: 'QA_EVIDENCE_ENCRYPTION_NOT_CONFIGURED' });
+    }
+    if (value === null) return res.status(409).json({ error: 'PROTECTED_VALUE_NOT_REVEALABLE' });
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user!.id,
+        organizationId: run.organizationId,
+        action: AuditAction.QA_EVIDENCE_REVEALED,
+        metadata: { runId: run.id, protectedValueId: protectedValue.id, evidenceEventId: protectedValue.evidenceEventId },
+      },
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.json({ id: protectedValue.id, value });
   });
 
   router.post('/qa-runs/:runId/start', verifyJwt, async (req: DesktopRequest, res: Response) => {
@@ -649,35 +1063,27 @@ export function createDesktopRouter(input: {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
     if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
-    const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    const stateKey = normalize(req.body?.stateKey ?? req.body?.stateName);
-    if (!stateKey) return res.status(400).json({ error: 'STATE_KEY_REQUIRED' });
-    const snapshot = run.expectedGraphVersion?.snapshot as any;
-    const expectedStates = Array.isArray(snapshot?.states) ? snapshot.states : [];
-    const knownKeys = new Set(expectedStates.map((state: any) => normalize(state.behaviorKey ?? state.stateName ?? state.name)));
-    const initialKey = normalize(run.initialStateKey);
-    const terminals = new Set(run.terminalStateKeys.map(normalize));
-    const waiting = !run.boundaryStartedAt && run.status !== QARunStatus.RECORDING;
-    const accepted = knownKeys.has(stateKey) && (!waiting || stateKey === initialKey);
-    const reason = !knownKeys.has(stateKey) ? 'OUTSIDE_FLOW_SCOPE' : waiting && stateKey !== initialKey ? 'BEFORE_INITIAL_BOUNDARY' : null;
-    const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : crypto.randomUUID();
-    await prisma.qARunProgressEvent.upsert({
-      where: { id: eventId },
-      create: { id: eventId, runId: run.id, eventType: String(req.body?.eventType ?? 'STATE_ENTERED'), stateKey, accepted, reason, metadata: req.body?.metadata ?? undefined, occurredAt: req.body?.timestamp ? new Date(String(req.body.timestamp)) : new Date() },
-      update: {},
+    const metadata = req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : '';
+    const eventType = String(req.body?.eventType ?? '');
+    const flowVersionId = String(req.body?.flowVersionId ?? metadata.flowVersionId ?? '');
+    const stateKey = String(req.body?.stateKey ?? metadata.stateKey ?? req.body?.toStateKey ?? metadata.toStateKey ?? '');
+    if (!eventId || !stateKey || !eventType || !flowVersionId) {
+      return res.status(400).json({ error: 'FLOW_EVENT_CONTEXT_REQUIRED', message: 'eventId, eventType, flowVersionId, and stateKey are required' });
+    }
+    const result = await processQaFlowBoundaryEvent(prisma, run.id, {
+      eventId,
+      eventType,
+      flowVersionId,
+      stateKey,
+      fromStateKey: req.body?.fromStateKey ?? metadata.fromStateKey,
+      toStateKey: req.body?.toStateKey ?? metadata.toStateKey,
+      action: req.body?.action ?? metadata.action,
+      timestamp: req.body?.timestamp,
+      metadata,
     });
-    if (!accepted) return res.status(202).json({ accepted: false, quarantined: true, reason, shouldStop: false });
-
-    const now = new Date();
-    const terminalReached = terminals.has(stateKey);
-    const updated = await prisma.qARun.update({ where: { id: run.id }, data: {
-      status: terminalReached ? QARunStatus.PROCESSING : QARunStatus.RECORDING,
-      boundaryStartedAt: run.boundaryStartedAt ?? now,
-      boundaryCompletedAt: terminalReached ? now : undefined,
-      lastObservedStateKey: stateKey,
-      completionReason: terminalReached ? 'TERMINAL_STATE_REACHED' : undefined,
-    } });
-    return res.json({ accepted: true, shouldStop: terminalReached, run: updated });
+    if (result.kind === 'RUN_TERMINAL') return res.status(409).json({ error: result.reason });
+    return res.status(result.accepted ? 200 : 202).json(result);
   });
 
   router.post('/qa-runs/:runId/pause', verifyJwt, async (req: DesktopRequest, res: Response) => {
@@ -802,6 +1208,8 @@ export function createDesktopRouter(input: {
       }
       const contentTypes: Record<QARunArtifactType, string> = {
         SCREENSHOT: 'image/png',
+        INSPECT_SCREENSHOT: 'image/png',
+        SANITIZED_FINAL_SCREENSHOT: 'image/png',
         PLAYWRIGHT_TRACE: 'application/zip',
         ACCESSIBILITY_SNAPSHOT: 'text/plain; charset=utf-8',
         CONSOLE_LOG: 'application/json',
@@ -810,6 +1218,8 @@ export function createDesktopRouter(input: {
       };
       const extensions: Record<QARunArtifactType, string> = {
         SCREENSHOT: 'png',
+        INSPECT_SCREENSHOT: 'png',
+        SANITIZED_FINAL_SCREENSHOT: 'png',
         PLAYWRIGHT_TRACE: 'zip',
         ACCESSIBILITY_SNAPSHOT: 'txt',
         CONSOLE_LOG: 'json',
@@ -942,22 +1352,22 @@ export function createDesktopRouter(input: {
     const allObservations = Array.isArray(req.body?.observations) ? req.body.observations : [];
     const allObservedTransitions = Array.isArray(req.body?.observedTransitions) ? req.body.observedTransitions : [];
     const normalizeBoundaryKey = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    const initialKey = normalizeBoundaryKey(run.initialStateKey);
-    const terminalKeys = new Set(run.terminalStateKeys.map(normalizeBoundaryKey));
-    const initialIndex = allObservations.findIndex((item: any) => normalizeBoundaryKey(item?.behaviorKey ?? item?.stateName) === initialKey);
-    const terminalOffset = initialIndex >= 0
-      ? allObservations.slice(initialIndex).findIndex((item: any) => terminalKeys.has(normalizeBoundaryKey(item?.behaviorKey ?? item?.stateName)))
-      : -1;
-    const terminalIndex = terminalOffset >= 0 ? initialIndex + terminalOffset : -1;
-    const observations = initialIndex >= 0 ? allObservations.slice(initialIndex, terminalIndex >= 0 ? terminalIndex + 1 : undefined) : [];
+    const initialAccepted = run.progressEvents.find((event) => event.accepted && event.eventType === 'FLOW_INITIAL_STATE');
+    const terminalAccepted = run.progressEvents.find((event) => event.accepted && event.eventType === 'FLOW_TERMINAL_STATE');
+    const boundaryStartMs = initialAccepted?.occurredAt.getTime() ?? run.boundaryStartedAt?.getTime() ?? null;
+    const boundaryEndMs = terminalAccepted?.occurredAt.getTime() ?? run.boundaryCompletedAt?.getTime() ?? null;
+    const observations = boundaryStartMs === null ? [] : allObservations.filter((item: any) => {
+      const timestamp = new Date(String(item?.timestamp ?? 0)).getTime();
+      return Number.isFinite(timestamp) && timestamp >= boundaryStartMs && (boundaryEndMs === null || timestamp <= boundaryEndMs);
+    });
     const scopedStateNames = new Set(observations.map((item: any) => normalizeBoundaryKey(item?.stateName ?? item?.behaviorKey)));
     const observedTransitions = allObservedTransitions.filter((item: any) => scopedStateNames.has(normalizeBoundaryKey(item?.fromState)) && scopedStateNames.has(normalizeBoundaryKey(item?.toState)));
-    const terminalBoundaryConfirmed = terminalIndex >= 0 || (run.completionReason === 'TERMINAL_STATE_REACHED' && Boolean(run.boundaryCompletedAt));
+    const terminalBoundaryConfirmed = Boolean(terminalAccepted || (run.completionReason === 'TERMINAL_STATE_REACHED' && run.boundaryCompletedAt));
     const completionReason = terminalBoundaryConfirmed
       ? 'TERMINAL_STATE_REACHED'
       : req.body?.completionReason === 'TIMEOUT' || (run.timeoutAt && run.timeoutAt.getTime() <= Date.now())
         ? 'TIMEOUT'
-        : 'MANUAL_STOP_BEFORE_TERMINAL';
+        : initialAccepted ? 'MANUAL_STOP_BEFORE_TERMINAL' : 'MANUAL_STOP_BEFORE_INITIAL';
     const completedStatus = terminalBoundaryConfirmed ? QARunStatus.COMPLETED : QARunStatus.COMPLETED_INCOMPLETE;
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : crypto.randomUUID();
     const traceId = typeof req.body?.traceId === 'string' ? req.body.traceId : null;
@@ -1073,23 +1483,60 @@ export function createDesktopRouter(input: {
       });
     }
 
-    const completed = await prisma.qARun.update({
-      where: { id: run.id },
-      data: {
+    const completed = await prisma.$transaction(async (tx) => {
+      const updated = await tx.qARun.update({
+        where: { id: run.id },
+        data: {
         status: completedStatus,
         endedAt,
-        boundaryStartedAt: run.boundaryStartedAt ?? (initialIndex >= 0 ? new Date(String(observations[0]?.timestamp ?? endedAt.toISOString())) : null),
-        boundaryCompletedAt: run.boundaryCompletedAt ?? (terminalIndex >= 0 ? new Date(String(observations[observations.length - 1]?.timestamp ?? endedAt.toISOString())) : null),
+        boundaryStartedAt: run.boundaryStartedAt,
+        boundaryCompletedAt: run.boundaryCompletedAt,
         lastObservedStateKey: observations.length ? String((observations[observations.length - 1] as any).behaviorKey ?? (observations[observations.length - 1] as any).stateName ?? '') : null,
         completionReason,
         browserMetadata: req.body?.browserMetadata ?? undefined,
         artifactManifest: req.body?.artifactManifest ?? undefined,
-      },
+        },
+      });
+      const report = await tx.qAReport.upsert({
+        where: { runId: run.id },
+        create: { runId: run.id, status: QAReportStatus.PENDING, schemaVersion: '2.0' },
+        update: {},
+      });
+      await tx.qAReportGenerationJob.upsert({
+        where: { reportId: report.id },
+        create: { reportId: report.id, status: QAReportJobStatus.QUEUED },
+        update: {},
+      });
+      return tx.qARun.update({ where: { id: updated.id }, data: { reportId: report.id } });
     });
-    await prisma.notificationEvent.createMany({ data: [
-      { organizationId: completed.organizationId, applicationId: completed.applicationId, eventType: 'QA_RUN_COMPLETED', severity: completedStatus === QARunStatus.COMPLETED ? 'INFO' : 'WARNING', payload: { runId: completed.id, flowId: completed.flowId, flowVersionId: completed.expectedGraphVersionId, completionReason } },
-      { organizationId: completed.organizationId, applicationId: completed.applicationId, eventType: 'FLOW_QA_REPORT_READY', severity: completedStatus === QARunStatus.COMPLETED ? 'INFO' : 'WARNING', payload: { runId: completed.id, flowId: completed.flowId, reportUrl: `/qa-runs/${completed.id}` } },
-    ] });
+    await prisma.notificationEvent.create({ data:
+      { organizationId: completed.organizationId, applicationId: completed.applicationId, eventType: 'QA_RUN_COMPLETED', severity: completedStatus === QARunStatus.COMPLETED ? 'INFO' : 'WARNING', payload: { runId: completed.id, flowId: completed.flowId, flowVersionId: completed.expectedGraphVersionId, completionReason, reportStatus: 'PENDING' } },
+    });
+    // In-app notification for the person who ran the capture. Idempotent on the
+    // run id, so a replayed completion after a desktop restart never notifies
+    // twice. The desktop also shows this locally the instant Chromium closes;
+    // this is the durable record for the notification centre.
+    if (terminalBoundaryConfirmed) {
+      try {
+        await new NotificationOrchestrator({ prisma, emailService: new NotificationEmailService(prisma) })
+          .createNotification({
+            organizationId: completed.organizationId,
+            applicationId: completed.applicationId,
+            runId: completed.id,
+            type: 'QA_TERMINAL_REACHED',
+            category: EmailCategory.REPORTS,
+            severity: 'INFO',
+            title: 'Terminal state reached',
+            body: 'Chromium was closed and your QA report is being prepared.',
+            deepLink: `/applications/${completed.applicationId}/qa-runs/${completed.id}`,
+            sourceEventType: 'QA_TERMINAL_REACHED',
+            sourceEventId: completed.id,
+            recipients: [{ userId: completed.createdByUserId }],
+          });
+      } catch {
+        // A notification failure must never fail an otherwise complete run.
+      }
+    }
     await markDemonstrationCompleted(completed);
     res.json(completed);
   });

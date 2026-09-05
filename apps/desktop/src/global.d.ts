@@ -27,6 +27,9 @@ import type {
   IntentDraftJobCreated,
   InstrumentationDetection,
   InstrumentationValidationResult,
+  QAInteractionMode,
+  QAMentionableMember,
+  RunLifecycleEvent,
 } from '@tellann/desktop-contracts';
 import type { GuidedRunState } from '@tellann/browser-observer';
 
@@ -168,6 +171,12 @@ declare global {
         getReport(runId: string): Promise<QualityReport>;
         start(input: StartGuidedRunInput): Promise<GuidedRunState>;
         pause(): Promise<GuidedRunState>;
+        resume(): Promise<GuidedRunState>;
+        setInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
+        retrySynchronization(runId: string): Promise<Record<string, unknown>>;
+        revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
+        searchMentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]>;
+        onLifecycleEvent(callback: (event: RunLifecycleEvent) => void): () => void;
         end(): Promise<GuidedRunState>;
         getActive(): Promise<GuidedRunState | null>;
       };

@@ -1,4 +1,5 @@
 import { initTracing } from '@tellann/telemetry';
+import { processQaReportJobs } from './qa-report-worker';
 initTracing('background-workers');
 
 import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@tellann/db';
@@ -315,6 +316,7 @@ interface JobDefinition {
 }
 
 const JOB_DEFINITIONS: JobDefinition[] = [
+  { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },
   { name: 'ruleset-cache-warmer',             handler: runRulesetCacheWarmer,       every: 600_000 },

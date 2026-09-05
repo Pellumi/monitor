@@ -1,5 +1,6 @@
 import { KeyRound, ShieldCheck } from 'lucide-react';
-import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
+import type { RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { DesktopProvider, useDesktop } from './desktop-context';
@@ -155,6 +156,7 @@ function AuthenticatedApp() {
   return (
     <HashRouter>
       <SetupHandoffResolver />
+      <RunLifecycleResolver />
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<RootResolver />} />
@@ -202,6 +204,35 @@ function AuthenticatedApp() {
         </Route>
       </Routes>
     </HashRouter>
+  );
+}
+
+function RunLifecycleResolver() {
+  const navigate = useNavigate();
+  const [notice, setNotice] = useState<RunLifecycleEvent | null>(null);
+  useEffect(() => {
+    if (!window.tellann?.runs.onLifecycleEvent) return;
+    return window.tellann.runs.onLifecycleEvent((event) => {
+      if (event.localStatus !== 'CHROMIUM_CLOSED') return;
+      setNotice(event);
+      navigate(`/applications/${event.applicationId}/qa-runs/${event.runId}`, { replace: true });
+      window.setTimeout(() => setNotice((current) => current?.runId === event.runId ? null : current), 8_000);
+    });
+  }, [navigate]);
+  if (!notice) return null;
+  const terminal = notice.completionReason === 'TERMINAL_STATE_REACHED';
+  return (
+    <div className="run-lifecycle-toast" role="status" aria-live="polite">
+      <strong>{terminal ? 'Terminal state reached' : 'QA run ended'}</strong>
+      <span>
+        {terminal
+          ? 'Chromium was closed and your QA report is being prepared.'
+          : notice.completionReason === 'MANUAL_STOP_BEFORE_INITIAL'
+            ? 'Chromium was closed. The initial Flow boundary was not reached, so the report will be incomplete.'
+            : 'Chromium was closed before a terminal state. The available in-Flow evidence is being prepared.'}
+      </span>
+      {notice.safeError ? <small>{notice.safeError}</small> : null}
+    </div>
   );
 }
 

@@ -3,7 +3,7 @@ initTracing('event-collector');
 
 import express, { Request, Response } from 'express';
 import { TellannEventSchema, EventBatchSchema, Topics, Feature } from '@tellann/shared';
-import { PrismaClient } from '@tellann/db';
+import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
 
@@ -125,6 +125,32 @@ function applyRunCorrelation<T extends Record<string, unknown>>(event: T, req: R
   };
 }
 
+async function processRunFlowBoundaries(
+  events: Array<Record<string, unknown>>,
+  req: Request,
+): Promise<void> {
+  const credential = runCredential(req);
+  if (!credential) return;
+  for (const event of events) {
+    const eventType = String(event.eventType ?? '');
+    if (!['FLOW_INITIAL_STATE', 'FLOW_STATE_REACHED', 'FLOW_TRANSITION', 'FLOW_TERMINAL_STATE'].includes(eventType)) continue;
+    const metadata = event.metadata && typeof event.metadata === 'object'
+      ? event.metadata as Record<string, unknown>
+      : {};
+    await processQaFlowBoundaryEvent(entitlementPrisma, credential.runId, {
+      eventId: String(event.eventId ?? ''),
+      eventType,
+      flowVersionId: String(metadata.flowVersionId ?? ''),
+      stateKey: String(metadata.stateKey ?? metadata.toStateKey ?? ''),
+      fromStateKey: typeof metadata.fromStateKey === 'string' ? metadata.fromStateKey : null,
+      toStateKey: typeof metadata.toStateKey === 'string' ? metadata.toStateKey : null,
+      action: typeof metadata.action === 'string' ? metadata.action : null,
+      timestamp: typeof event.timestamp === 'string' ? event.timestamp : null,
+      metadata,
+    });
+  }
+}
+
 /**
  * Sends events to Kafka (when enabled) or persists canonical session records
  * directly to Postgres for local/development stacks.
@@ -232,6 +258,7 @@ app.post('/v1/events', async (req: Request, res: Response) => {
     const enriched = applyRunCorrelation(applyGatewayIdentity(event, req), req);
 
     await publishEvents([enriched], event.sessionId);
+    await processRunFlowBoundaries([enriched], req);
 
     res.status(202).json({ accepted: true, eventCount: 1 });
   } catch (error) {
@@ -277,6 +304,7 @@ app.post('/v1/events/batch', async (req: Request, res: Response) => {
 
     const enriched = validEvents.map((e) => applyRunCorrelation(applyGatewayIdentity(e, req), req));
     await publishEvents(enriched, enriched[0].sessionId);
+    await processRunFlowBoundaries(enriched, req);
 
     res.status(202).json({ accepted: true, eventCount: validEvents.length });
   } catch (error) {

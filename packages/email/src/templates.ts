@@ -12,6 +12,8 @@ export type EmailTemplateKey =
   | 'demo-start-reminder'
   | 'demo-completed-processing'
   | 'demo-report-ready'
+  | 'qa-report-ready'
+  | 'qa-report-mentioned'
   | 'report-export-ready'
   | 'demo-analysis-failed'
   | 'coverage-degraded'
@@ -204,6 +206,34 @@ export const builtinTemplates: BuiltinEmailTemplate[] = [
     purpose: 'Tellann generated a QA report from your demonstration.',
     primaryCtaLabel: 'Open report',
     primaryUrlVariable: 'reportUrl',
+  },
+  {
+    key: 'qa-report-ready',
+    category: EmailCategory.REPORTS,
+    subject: '{{applicationName}} QA report is ready',
+    preheader: 'Review the captured Flow evidence and prioritized improvements.',
+    requiredVariables: ['applicationName', 'flowName', 'reportUrl'],
+    defaultFrom: 'reports',
+    purpose: 'A durable QA report finished generating from your captured Flow run.',
+    primaryCtaLabel: 'Review QA report',
+    primaryUrlVariable: 'reportUrl',
+    designLabel: 'QA // Ready',
+    headline: 'Evidence reconciled',
+    emphasisVariable: 'flowName',
+  },
+  {
+    key: 'qa-report-mentioned',
+    category: EmailCategory.REPORTS,
+    subject: 'You were mentioned in {{applicationName}} QA',
+    preheader: 'A teammate tagged you in a generated QA report.',
+    requiredVariables: ['applicationName', 'flowName', 'annotationCount', 'reportUrl'],
+    defaultFrom: 'reports',
+    purpose: 'A QA report contains annotations that mention you.',
+    primaryCtaLabel: 'Open annotations',
+    primaryUrlVariable: 'reportUrl',
+    designLabel: 'QA // Mention',
+    headline: 'Review requested',
+    emphasisVariable: 'annotationCount',
   },
   {
     key: 'report-export-ready',

@@ -26,6 +26,9 @@ import type {
   InstrumentationPlan,
   InstrumentationApplyResult,
   InstrumentationValidationResult,
+  QAEvidenceEvent,
+  CreateQARunAnnotation,
+  QAMentionableMember,
 } from "@tellann/desktop-contracts";
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
 import type { GuidedRunState } from "@tellann/browser-observer";
@@ -143,7 +146,7 @@ type LocalArtifact = {
   filePath: string;
   bytes: number;
   checksum: string;
-  type: "SCREENSHOT" | "PLAYWRIGHT_TRACE" | "ACCESSIBILITY_SNAPSHOT";
+  type: "SCREENSHOT" | "INSPECT_SCREENSHOT" | "SANITIZED_FINAL_SCREENSHOT" | "PLAYWRIGHT_TRACE" | "ACCESSIBILITY_SNAPSHOT";
 };
 
 export class DesktopCloudClient {
@@ -959,6 +962,80 @@ export class DesktopCloudClient {
     });
   }
 
+  async uploadEvidenceBatch(runId: string, events: QAEvidenceEvent[]): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/evidence-events/batch`, {
+      method: "POST",
+      body: JSON.stringify({ events }),
+    });
+  }
+
+  async evidenceSummary(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/evidence-summary`);
+  }
+
+  /**
+   * Minimal boundary projection for the in-run poll. `run()` hydrates every
+   * artifact, finding and annotation, which is far too heavy to fetch
+   * repeatedly for the whole length of a capture.
+   */
+  async boundaryStatus(runId: string): Promise<{
+    boundaryStartedAt: string | null;
+    boundaryCompletedAt: string | null;
+    completionReason: string | null;
+    lastObservedStateKey: string | null;
+  }> {
+    return this.request(`/qa-runs/${runId}/boundary-status`);
+  }
+
+  async pauseRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/pause`, { method: "POST" });
+  }
+
+  async resumeRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/resume`, { method: "POST" });
+  }
+
+  async reportStatus(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/report-status`);
+  }
+
+  async retryReport(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/report/retry`, { method: "POST" });
+  }
+
+  async revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }> {
+    return this.request(`/qa-runs/${runId}/protected-values/${valueId}/reveal`, { method: "POST" });
+  }
+
+  async mentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]> {
+    return this.request(`/qa-runs/${runId}/mentionable-members?q=${encodeURIComponent(query.slice(0, 100))}`);
+  }
+
+  async saveAnnotation(
+    runId: string,
+    input: CreateQARunAnnotation & { screenshotPath?: string | null },
+  ): Promise<Json> {
+    let screenshotArtifactId: string | null = input.screenshotArtifactId;
+    if (input.screenshotPath) {
+      const fs = await import("node:fs/promises");
+      const content = await fs.readFile(input.screenshotPath);
+      const checksum = crypto.createHash("sha256").update(content).digest("hex");
+      const artifact = await this.uploadArtifact(runId, {
+        name: `inspect-${checksum.slice(0, 12)}.png`,
+        filePath: input.screenshotPath,
+        bytes: content.length,
+        checksum,
+        type: "INSPECT_SCREENSHOT",
+      });
+      screenshotArtifactId = typeof artifact.id === "string" ? artifact.id : null;
+    }
+    const { screenshotPath: _localOnly, ...annotation } = input;
+    return this.request(`/qa-runs/${runId}/annotations`, {
+      method: "POST",
+      body: JSON.stringify({ ...annotation, screenshotArtifactId }),
+    });
+  }
+
   async documents(applicationId: string): Promise<SourceDocumentSummary[]> {
     return this.request<SourceDocumentSummary[]>(
       `/applications/${applicationId}/source-documents`,
@@ -1603,8 +1680,8 @@ export class DesktopCloudClient {
           runId: state.runId,
         }),
       },
-    );
-    return this.request<Json>(`/qa-runs/${state.runId}/report`);
+    ).catch(() => undefined);
+    return completed;
   }
 
   async failRun(runId: string, reason: string) {
@@ -1661,8 +1738,10 @@ export class DesktopCloudClient {
       name: artifact.name,
       filePath: path.join(state.artifactDirectory, artifact.name),
       type:
-        artifact.name === "final.png"
-          ? "SCREENSHOT"
+        artifact.name === "final-sanitized.png"
+          ? "SANITIZED_FINAL_SCREENSHOT"
+          : artifact.name === "final.png"
+            ? "SCREENSHOT"
           : artifact.name === "trace.zip"
             ? "PLAYWRIGHT_TRACE"
             : "ACCESSIBILITY_SNAPSHOT",

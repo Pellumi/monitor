@@ -54,6 +54,11 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { EntitlementModal } from "./components/entitlement-modal";
+import {
+  describeQaRunStartFailure,
+  QaRunStartErrorModal,
+  type QaRunStartFailure,
+} from "./components/qa-run-start-error-modal";
 import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
@@ -9062,6 +9067,7 @@ export function NewRunPage() {
     workspace,
     startRun,
     busy,
+    clearError,
     getDeclaredFlows,
     listInstrumentationPlans,
   } = useProject();
@@ -9101,6 +9107,9 @@ export function NewRunPage() {
   const launchCommands = workspace?.snapshot.launchCommands ?? [];
   const [launchCommandId, setLaunchCommandId] = useState("");
   const [launchApproved, setLaunchApproved] = useState(false);
+  const [runStartFailure, setRunStartFailure] =
+    useState<QaRunStartFailure | null>(null);
+  const targetUrlInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const nextEnvironment = application?.environments.find(
       (item) => item.id === environmentId,
@@ -9172,46 +9181,62 @@ export function NewRunPage() {
       />
     );
   const begin = async () => {
-    const selectedFlow = flows.find(
-      (flow) => flow.id === selectedFlowId,
-    ) as any;
-    const binding = selectedFlow?.projectBindings?.[0];
-    const initialization = binding?.initializations?.[0];
-    const scan = binding?.scans?.[0];
-    if (
-      !selectedFlow ||
-      !binding ||
-      binding.status !== "ACTIVE" ||
-      initialization?.status !== "COMPLETED" ||
-      !scan
-    ) {
-      throw new Error(
-        "Initialize this published Flow in the selected application and environment before starting a QA run.",
+    setRunStartFailure(null);
+    try {
+      const selectedFlow = flows.find(
+        (flow) => flow.id === selectedFlowId,
+      ) as any;
+      const binding = selectedFlow?.projectBindings?.[0];
+      const initialization = binding?.initializations?.[0];
+      const scan = binding?.scans?.[0];
+      if (
+        !selectedFlow ||
+        !binding ||
+        binding.status !== "ACTIVE" ||
+        initialization?.status !== "COMPLETED" ||
+        !scan
+      ) {
+        throw new Error(
+          "Initialize this published Flow in the selected application and environment before starting a QA run.",
+        );
+      }
+      const run = await startRun({
+        applicationId: projectId,
+        environmentId,
+        workspaceId: workspace?.id ?? null,
+        flowId: selectedFlow.id,
+        flowBindingId: binding.id,
+        flowInitializationId: initialization.id,
+        flowScanId: scan.id,
+        flowDriftId: binding.latestDriftId ?? null,
+        expectedGraphVersionId,
+        captureTracks:
+          captureMode === "COMBINED"
+            ? ["FRONTEND", "BACKEND"]
+            : [captureMode],
+        patchSetId: patchSetId || null,
+        environmentType: environment?.type ?? "STAGING",
+        mode,
+        productionObservationApproved:
+          environment?.type === "PRODUCTION" && productionObservationApproved,
+        targetUrl,
+        launchCommandId: launchCommandId || undefined,
+        launchApproved: Boolean(launchCommandId) && launchApproved,
+      });
+      navigate(`/applications/${projectId}/qa-runs/${run.runId}/live`);
+    } catch (cause) {
+      setRunStartFailure(
+        describeQaRunStartFailure(cause, targetUrl, launchCommands.length > 0),
       );
+      // startRun also reports through the shell for unscoped operations. This
+      // failure has a dedicated recovery dialog, so avoid showing it twice.
+      clearError();
     }
-    const run = await startRun({
-      applicationId: projectId,
-      environmentId,
-      workspaceId: workspace?.id ?? null,
-      flowId: selectedFlow.id,
-      flowBindingId: binding.id,
-      flowInitializationId: initialization.id,
-      flowScanId: scan.id,
-      flowDriftId: binding.latestDriftId ?? null,
-      expectedGraphVersionId,
-      captureTracks:
-        captureMode === "COMBINED" ? ["FRONTEND", "BACKEND"] : [captureMode],
-      patchSetId: patchSetId || null,
-      environmentType: environment?.type ?? "STAGING",
-      mode,
-      productionObservationApproved:
-        environment?.type === "PRODUCTION" && productionObservationApproved,
-      targetUrl,
-      launchCommandId: launchCommandId || undefined,
-      launchApproved: Boolean(launchCommandId) && launchApproved,
-    });
-    navigate(`/applications/${projectId}/qa-runs/${run.runId}/live`);
   };
+  const reviewRunSettings = useCallback(() => {
+    setRunStartFailure(null);
+    window.requestAnimationFrame(() => targetUrlInputRef.current?.focus());
+  }, []);
   return (
     <Page
       title="New QA run"
@@ -9268,6 +9293,7 @@ export function NewRunPage() {
           <label className="full">
             Application URL
             <input
+              ref={targetUrlInputRef}
               type="url"
               value={targetUrl}
               onChange={(event) => setTargetUrl(event.target.value)}
@@ -9382,7 +9408,7 @@ export function NewRunPage() {
             </span>
           </label>
         ) : null}
-        <div className="permission-summary">
+        {/* <div className="permission-summary">
           <KeyRound />
           <div>
             <strong>Capture policy</strong>
@@ -9393,7 +9419,7 @@ export function NewRunPage() {
               package script runs only when selected and approved above.
             </p>
           </div>
-        </div>
+        </div> */}
         {environment?.type === "PRODUCTION" ? (
           <>
             <div className="context-banner">
@@ -9440,13 +9466,19 @@ export function NewRunPage() {
             : "Start guided run"}
         </button>
       </section>
+      <QaRunStartErrorModal
+        failure={runStartFailure}
+        busy={busy}
+        onClose={reviewRunSettings}
+        onRetry={() => void begin()}
+      />
     </Page>
   );
 }
 
 export function LiveRunPage() {
   const { projectId } = useParams();
-  const { activeRun: run, pauseRun, endRun, busy } = useDesktop();
+  const { activeRun: run, pauseRun, resumeRun, setRunInteractionMode, endRun, busy } = useDesktop();
   const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACCESSIBILITY">(
     "CONSOLE",
   );
@@ -9481,20 +9513,20 @@ export function LiveRunPage() {
             ? `Reconciling against accepted graph version ${run.expectedGraphVersionId.slice(0, 8)}.`
             : "No accepted intent selected. This is an observational run."}
         </p>
-        <div className="flow-step complete">
+        <div className={`flow-step ${run.phase === "IN_FLOW" ? "complete" : "active"}`}>
           <span>
-            <Check />
+            {run.phase === "IN_FLOW" ? <Check /> : 1}
           </span>
           <div>
-            <strong>Application opened</strong>
-            <small>Entry observed</small>
+            <strong>Initial Flow boundary</strong>
+            <small>{run.phase === "IN_FLOW" ? "Accepted by Tellann" : "Waiting for FLOW_INITIAL_STATE"}</small>
           </div>
         </div>
         <div className="flow-step active">
           <span>2</span>
           <div>
-            <strong>Demonstrate workflow</strong>
-            <small>In progress</small>
+            <strong>Verify states and transitions</strong>
+            <small>{run.phase === "IN_FLOW" ? "Meticulous capture is active" : "Detailed values remain off until the boundary"}</small>
           </div>
         </div>
       </section>
@@ -9559,10 +9591,28 @@ export function LiveRunPage() {
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
             <>
+              <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
+                <button
+                  className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
+                  aria-pressed={run.interactionMode === "NAVIGATE"}
+                  disabled={busy || run.status === "PAUSED"}
+                  onClick={() => void setRunInteractionMode("NAVIGATE")}
+                >
+                  Navigate
+                </button>
+                <button
+                  className={run.interactionMode === "INSPECT" ? "selected" : ""}
+                  aria-pressed={run.interactionMode === "INSPECT"}
+                  disabled={busy || run.status === "PAUSED"}
+                  onClick={() => void setRunInteractionMode("INSPECT")}
+                >
+                  Inspect
+                </button>
+              </div>
               <button
-                className="button primary"
+                className="button"
                 disabled={busy}
-                onClick={() => void pauseRun()}
+                onClick={() => void (run.status === "PAUSED" ? resumeRun() : pauseRun())}
               >
                 {run.status === "PAUSED" ? <Play /> : <CirclePause />}
                 {run.status === "PAUSED" ? "Resume" : "Pause"}
@@ -9578,7 +9628,7 @@ export function LiveRunPage() {
             </>
           ) : null}
         </div>
-        <div>Capture protected</div>
+        <div>{run.phase === "IN_FLOW" ? "In-Flow capture protected" : "Pre-boundary metadata only"}</div>
       </footer>
     </div>
   );
@@ -9597,6 +9647,7 @@ function EvidenceRow({ item }: { item: LiveEvidence }) {
 const RUN_TABS = [
   { value: "evidence", label: "Evidence" },
   { value: "findings", label: "Findings" },
+  { value: "annotations", label: "Annotations" },
   { value: "replay", label: "Replay" },
   { value: "graph", label: "Graph" },
   { value: "reconciliation", label: "Reconciliation" },
@@ -10121,7 +10172,7 @@ function ReconciliationLayout({
 export function RunDetailPage() {
   const { projectId, runId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { getRun, getRunReplay } = useDesktop();
+  const { getRun, getRunReplay, retryRunSynchronization } = useDesktop();
   const [run, setRun] = useState<Record<string, unknown> | null>(null);
   const [replay, setReplay] = useState<Record<string, unknown> | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -10134,26 +10185,30 @@ export function RunDetailPage() {
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
+    let timer = 0;
+    let delay = 1_500;
     setLoading(true);
     setRunError(null);
-    void Promise.resolve()
-      .then(() => getRun(runId))
-      .then((nextRun) => {
-        if (!cancelled) setRun(nextRun);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setRunError(
-            error instanceof Error
-              ? error.message
-              : "The run could not be loaded.",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const poll = () => void Promise.resolve()
+        .then(() => getRun(runId))
+        .then((nextRun) => {
+          if (cancelled) return;
+          setRun(nextRun);
+          setRunError(null);
+          const reportStatus = String(nextRun.reportStatus ?? "PENDING");
+          if (!["READY", "FAILED"].includes(reportStatus)) {
+            timer = window.setTimeout(poll, delay);
+            delay = Math.min(15_000, Math.round(delay * 1.6));
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setRunError(error instanceof Error ? error.message : "The run could not be loaded.");
+        })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    poll();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [getRun, runId]);
 
@@ -10201,6 +10256,21 @@ export function RunDetailPage() {
   const status = String(run.status ?? "UNKNOWN");
   const artifacts = Array.isArray(run.artifacts) ? run.artifacts : [];
   const findings = Array.isArray(run.findings) ? run.findings : [];
+  const annotations = Array.isArray(run.annotations) ? run.annotations : [];
+  const evidenceCounts = asRecord(run.evidenceCounts);
+  const evidenceTotal = Object.values(evidenceCounts).reduce<number>(
+    (sum, value) => sum + Number(value || 0),
+    0,
+  );
+  const reportStatus = String(run.reportStatus ?? (run.reportId ? "READY" : "PENDING"));
+  const processingLabels: Record<string, string> = {
+    PENDING: "Uploading evidence",
+    RECONCILING: "Reconciling Flow",
+    ANALYZING: "Analyzing findings",
+    GENERATING: "Generating improvements",
+    READY: "Ready",
+    FAILED: "Failed",
+  };
   return (
     <Page
       title={`QA run ${runId.slice(0, 8)}`}
@@ -10208,20 +10278,32 @@ export function RunDetailPage() {
       actions={<Status>{status}</Status>}
     >
       <div className="metric-grid">
-        <Metric label="Artifacts" value={artifacts.length} />
+        <Metric label="Evidence events" value={evidenceTotal} />
         <Metric label="Findings" value={findings.length} />
-        <Metric label="Mode" value={String(run.mode ?? "GUIDED")} />
+        <Metric label="Annotations" value={annotations.length} />
         <Metric
           label="Report"
           value={
-            run.reportId
-              ? "Ready"
-              : status === "COMPLETED"
-                ? "Generating"
-                : "Pending"
+            processingLabels[reportStatus] ?? reportStatus
           }
         />
       </div>
+      {reportStatus !== "READY" ? (
+        <section className={`run-processing-card ${reportStatus === "FAILED" ? "failed" : ""}`} role={reportStatus === "FAILED" ? "alert" : "status"} aria-live="polite">
+          <div>
+            <small>Report pipeline</small>
+            <strong>{processingLabels[reportStatus] ?? reportStatus}</strong>
+            <p>
+              {reportStatus === "FAILED"
+                ? "Captured evidence remains safe. Retry synchronization or report generation without repeating the run."
+                : "You can review the synchronized counts now. This page updates while the durable report is prepared."}
+            </p>
+          </div>
+          {reportStatus === "FAILED" || run.synchronizationStatus === "FAILED" ? (
+            <button className="button primary" onClick={() => void retryRunSynchronization(runId)}>Retry processing</button>
+          ) : <span className="processing-spinner" aria-hidden="true" />}
+        </section>
+      ) : null}
       <Tabs
         value={activeTab}
         onValueChange={(tab) =>
@@ -10235,6 +10317,8 @@ export function RunDetailPage() {
               <span>
                 {tab.value === "findings"
                   ? findings.length
+                  : tab.value === "annotations"
+                    ? annotations.length
                   : tab.value === "artifacts" || tab.value === "evidence"
                     ? artifacts.length
                     : ""}
@@ -10247,6 +10331,28 @@ export function RunDetailPage() {
         </TabsContent>
         <TabsContent value="findings">
           <FindingsLayout items={findings} />
+        </TabsContent>
+        <TabsContent value="annotations">
+          {annotations.length ? (
+            <div className="annotation-list" id="annotations">
+              {annotations.map((raw, index) => {
+                const annotation = asRecord(raw);
+                const author = asRecord(annotation.author);
+                const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
+                return (
+                  <article className="annotation-card" key={String(annotation.id ?? index)}>
+                    <div className="annotation-pin">{index + 1}</div>
+                    <div>
+                      <strong>{String(author.displayName ?? "Tellann member")}</strong>
+                      <small>{formatDate(annotation.createdAt)} · {String(annotation.normalizedRoute ?? "/")}</small>
+                      <p>{String(annotation.comment ?? "")}</p>
+                      {mentions.length ? <div className="annotation-mentions">Mentioned: {mentions.map((item) => `@${String(asRecord(item).displayNameSnapshot ?? "member")}`).join(", ")}</div> : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : <EmptyRunSection title="No annotations" description="Use Inspect mode during a QA run to pin comments to elements." />}
         </TabsContent>
         <TabsContent value="replay">
           <ReplayLayout data={replay} error={replayError} />
@@ -10265,7 +10371,7 @@ export function RunDetailPage() {
           />
         </TabsContent>
       </Tabs>
-      {run.reportId ? (
+      {run.reportId && reportStatus === "READY" ? (
         <Link
           className="button primary mt-4"
           to={`/applications/${projectId}/reports/${encodeURIComponent(String(run.reportId))}?runId=${runId}`}
@@ -10367,9 +10473,12 @@ export function ReportDetailPage() {
   const { projectId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get("runId");
-  const { getReport } = useDesktop();
+  const { getReport, revealProtectedValue } = useDesktop();
   const [report, setReport] = useState<QualityReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
+  const [revealBusy, setRevealBusy] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState<string | null>(null);
   useEffect(() => {
     if (runId)
       void getReport(runId)
@@ -10386,6 +10495,50 @@ export function ReportDetailPage() {
         description="The report is still processing, expired, or the source run was not provided."
       />
     );
+  const sections = asRecord(report.sections);
+  const flowSummary = asRecord(sections.flowSummary);
+  const runSummary = asRecord(sections.runSummary);
+  const inFlow = asRecord(sections.inFlowFindings);
+  const appendix = asRecord(sections.evidenceAppendix);
+  const recommendations = Array.isArray(inFlow.recommendedNextActions)
+    ? inFlow.recommendedNextActions.map(asRecord)
+    : [];
+  const detailedFindings = Array.isArray(inFlow.findings)
+    ? inFlow.findings.map(asRecord)
+    : [];
+  const criticalFindings = Array.isArray(sections.criticalSystemWideFindings)
+    ? sections.criticalSystemWideFindings.map(asRecord)
+    : [];
+  const annotations = Array.isArray(sections.userAnnotations)
+    ? sections.userAnnotations.map(asRecord)
+    : [];
+  const evidenceEvents = Array.isArray(appendix.events)
+    ? appendix.events.map(asRecord)
+    : [];
+  const limitations = Array.isArray(appendix.limitations)
+    ? appendix.limitations.map(String)
+    : [];
+  const protectedValues = evidenceEvents.flatMap((event) =>
+    Array.isArray(event.protectedValues)
+      ? event.protectedValues.map((value) => ({ event, value: asRecord(value) }))
+      : [],
+  );
+  const eventCounts = asRecord(runSummary.eventCounts);
+
+  const reveal = async (valueId: string) => {
+    if (!runId || revealBusy) return;
+    setRevealBusy(valueId);
+    setRevealError(null);
+    try {
+      const result = await revealProtectedValue(runId, valueId);
+      setRevealedValues((current) => ({ ...current, [valueId]: result.value }));
+    } catch (error) {
+      setRevealError(normalizeDesktopError(error));
+    } finally {
+      setRevealBusy(null);
+    }
+  };
+
   return (
     <Page
       title="Quality report"
@@ -10414,38 +10567,79 @@ export function ReportDetailPage() {
           value={report.summary.criticalOrHighFindings}
         />
       </div>
-      <div className="two-column">
-        <section className="content-card">
-          <h2>Evidence and findings</h2>
-          <p>
-            {report.summary.artifactCount} approved artifacts and{" "}
-            {report.summary.findingCount} evidence-backed findings.
-          </p>
-          <div className="w-full flex justify-end">
-            <Link
-              className="button mt-4 primary"
-              to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}
-            >
-              Review evidence
-            </Link>
+      <section className="content-card report-section">
+        <div className="card-heading">
+          <div><small>1 · Flow summary</small><h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2></div>
+          <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status>
+        </div>
+        <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
+        <dl className="detail-list report-detail-grid">
+          <div><dt>Scope</dt><dd>{String(flowSummary.scope ?? report.flow?.scopeStatement ?? "Not declared")}</dd></div>
+          <div><dt>Initial state</dt><dd>{String(flowSummary.initialState ?? report.flow?.initialStateKey ?? "Not declared")}</dd></div>
+          <div><dt>Terminal states</dt><dd>{Array.isArray(flowSummary.terminalStates) ? flowSummary.terminalStates.map(String).join(", ") : report.flow?.terminalStateKeys.join(", ") || "Not declared"}</dd></div>
+          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
+          <div><dt>Provenance</dt><dd>{String(flowSummary.provenance ?? report.expectedIntent?.provenance ?? "Not recorded")}</dd></div>
+        </dl>
+      </section>
+
+      <section className="content-card report-section">
+        <div className="card-heading"><div><small>2 · QA run summary</small><h2>Capture scope and boundary outcome</h2></div><Status>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</Status></div>
+        <dl className="detail-list report-detail-grid">
+          <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
+          <div><dt>Environment</dt><dd>{String(asRecord(runSummary.environment).name ?? report.environment.name)} · {String(asRecord(runSummary.environment).type ?? report.environment.type)}</dd></div>
+          <div><dt>Capture tracks</dt><dd>{Array.isArray(runSummary.captureTracks) ? runSummary.captureTracks.map(String).join(", ") : report.captureTracks.join(", ")}</dd></div>
+          <div><dt>Duration</dt><dd>{runSummary.durationMs == null ? "Not recorded" : `${(Number(runSummary.durationMs) / 1000).toFixed(1)} seconds`}</dd></div>
+          <div><dt>Repository revision</dt><dd>{String(runSummary.repositoryRevision ?? report.repository?.revision ?? "Not attached")}</dd></div>
+          <div><dt>Instrumentation</dt><dd>{runSummary.instrumentationAvailable ? "Validated instrumentation attached" : "Browser-level evidence only"}</dd></div>
+        </dl>
+        {runSummary.captureDegraded ? <div className="report-warning" role="alert"><AlertTriangle size={18} /> Capture was degraded. Review limitations and capture findings before relying on coverage.</div> : null}
+        {Object.keys(eventCounts).length ? <div className="report-counts" aria-label="Evidence counts">{Object.entries(eventCounts).map(([type, count]) => <span key={type}><strong>{Number(count)}</strong>{type.replace(/^QA_/, "").replaceAll("_", " ").toLowerCase()}</span>)}</div> : null}
+      </section>
+
+      <section className="content-card report-section">
+        <div className="card-heading"><div><small>3 · In-Flow findings</small><h2>Recommended next actions</h2></div><Status>{recommendations.length} prioritized</Status></div>
+        {recommendations.length ? (
+          <ol className="report-recommendations">
+            {recommendations.map((item, index) => (
+              <li key={String(item.id ?? index)}>
+                <div className="report-priority"><span>{index + 1}</span><Status>{String(item.priority ?? "MEDIUM")}</Status><small>{String(item.generator ?? "RULES")}</small></div>
+                <div><h3>{String(item.title ?? item.suggestedAction ?? "Recommended improvement")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>Next step: {String(item.suggestedAction ?? "Investigate and repeat the affected step.")}</strong><small>Expected outcome: {String(item.expectedOutcome ?? "The Flow completes reliably.")} · Confidence {Math.round(Number(item.confidence ?? 0) * 100)}%</small></div>
+              </li>
+            ))}
+          </ol>
+        ) : <EmptyRunSection title="No prioritized improvements" description="The deterministic analysis found no in-Flow recommendation for this run." />}
+        {detailedFindings.length ? (
+          <details className="report-details" open>
+            <summary>Detailed findings by state and transition ({detailedFindings.length})</summary>
+            <div className="report-finding-list">{detailedFindings.map((item, index) => <article key={String(item.id ?? index)}><div><Status>{String(item.priority ?? "INFO")}</Status><small>{String(item.generator ?? "RULES")}</small></div><h3>{String(item.title ?? "Finding")}</h3><p>{String(item.rationale ?? item.impact ?? "No rationale recorded.")}</p><small>State: {String(item.affectedState ?? "not linked")} · Transition: {String(item.affectedTransition ?? "not linked")} · Effort: {String(item.effort ?? "unknown")}</small></article>)}</div>
+          </details>
+        ) : null}
+      </section>
+
+      <section className="content-card report-section">
+        <div className="card-heading"><div><small>4 · Critical system-wide findings</small><h2>Risks outside the selected Flow</h2></div><Status>{criticalFindings.length}</Status></div>
+        {criticalFindings.length ? <div className="report-finding-list">{criticalFindings.map((item, index) => <article key={String(item.id ?? index)}><Status>{String(item.priority ?? "HIGH")}</Status><h3>{String(item.title ?? "Critical finding")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>{String(item.suggestedAction ?? "Investigate immediately.")}</strong></article>)}</div> : <p>No high-confidence high-severity out-of-Flow failures were recorded.</p>}
+      </section>
+
+      <section className="content-card report-section" id="annotations">
+        <div className="card-heading"><div><small>5 · User annotations</small><h2>Inspect-mode feedback</h2></div><Status>{annotations.length}</Status></div>
+        {annotations.length ? <div className="annotation-list">{annotations.map((annotation, index) => { const author = asRecord(annotation.author); const mentioned = Array.isArray(annotation.mentionedTeammates) ? annotation.mentionedTeammates.map(asRecord) : []; return <article className="annotation-card" key={String(annotation.id ?? index)}><div className="annotation-pin">{String(annotation.pin ?? index + 1)}</div><div><p>{String(annotation.comment ?? "")}</p><small>{String(author.displayName ?? "QA author")} · {formatDate(annotation.timestamp)} · {String(annotation.route ?? "unknown route")} · state {String(annotation.flowState ?? "outside boundary")}</small>{mentioned.length ? <div className="annotation-mentions">Mentioned: {mentioned.map((member) => `@${String(member.displayName ?? "member")}`).join(", ")}</div> : null}</div></article>; })}</div> : <p>No inspect-mode annotations were added during this run.</p>}
+      </section>
+
+      <section className="content-card report-section">
+        <div className="card-heading"><div><small>6 · Evidence appendix</small><h2>Auditable capture record</h2></div><Status>{evidenceEvents.length} events</Status></div>
+        <div className="report-links"><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>Review evidence timeline</Link><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>View Flow reconciliation</Link></div>
+        {limitations.length ? <div className="report-limitations"><strong>Capture limitations</strong><ul>{limitations.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+        {protectedValues.length ? (
+          <div className="protected-values">
+            <h3>Protected values</h3>
+            <p>Values stay masked. Authorized reveals are individual, rate limited, audited, and never cached.</p>
+            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
+            {protectedValues.map(({ event, value }, index) => { const valueId = String(value.id ?? ""); const canReveal = String(value.kind) === "ENCRYPTED"; return <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}><div><strong>{String(value.keyPath ?? "protected value")}</strong><small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>{revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}</div>{canReveal && valueId && revealedValues[valueId] === undefined ? <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}><Unlock size={15} />{revealBusy === valueId ? "Authorizing…" : "Reveal"}</button> : <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>}</div>; })}
           </div>
-        </section>
-        <section className="content-card">
-          <h2>Correlation</h2>
-          <p>
-            Run {report.correlation.runId.slice(0, 8)} ·{" "}
-            {report.correlation.sessions.length} observed session(s)
-          </p>
-          <div className="w-full flex justify-end">
-            <Link
-              className="button mt-4 primary"
-              to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}
-            >
-              View reconciliation
-            </Link>
-          </div>
-        </section>
-      </div>
+        ) : null}
+        <details className="report-details"><summary>Evidence index (showing up to 100 of {evidenceEvents.length})</summary><div className="evidence-index">{evidenceEvents.slice(0, 100).map((event, index) => <div key={String(event.id ?? index)}><span>{formatDate(event.timestamp)}</span><strong>{String(event.type ?? "EVENT")}</strong><span>{String(event.route ?? "No route")}</span><Status>{String(event.scope ?? "IN_FLOW")}</Status></div>)}</div></details>
+      </section>
       {report.instrumentation ? (
         <section className="content-card mt-4">
           <div className="card-heading">
@@ -10481,14 +10675,14 @@ export function ReportDetailPage() {
           </dl>
         </section>
       ) : null}
-      {report.findings.length ? (
+      {!sections.inFlowFindings && report.findings.length ? (
         <FindingsLayout items={report.findings} />
-      ) : (
+      ) : !sections.inFlowFindings ? (
         <EmptyRunSection
           title="No findings"
           description="This report did not identify any evidence-backed issues that need your attention."
         />
-      )}
+      ) : null}
     </Page>
   );
 }

@@ -33,6 +33,7 @@ import type {
   IntentDraftJobCreated,
   InstrumentationDetection,
   InstrumentationValidationResult,
+  QAInteractionMode,
 } from '@tellann/desktop-contracts';
 import type { GuidedRunState } from '@tellann/browser-observer';
 
@@ -172,6 +173,10 @@ type DesktopContextValue = {
   rollbackInstrumentation(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   startRun(input: StartGuidedRunInput): Promise<GuidedRunState>;
   pauseRun(): Promise<GuidedRunState>;
+  resumeRun(): Promise<GuidedRunState>;
+  setRunInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
+  retryRunSynchronization(runId: string): Promise<Record<string, unknown>>;
+  revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
   endRun(): Promise<GuidedRunState>;
   clearError(): void;
 };
@@ -284,7 +289,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeRun || ['COMPLETED', 'FAILED'].includes(activeRun.status)) return;
     const timer = window.setInterval(() => {
-      void bridge().runs.getActive().then((state) => state && setActiveRun(state)).catch(() => undefined);
+      void bridge().runs.getActive().then((state) => setActiveRun(state)).catch(() => undefined);
     }, 1_500);
     return () => window.clearInterval(timer);
   }, [activeRun?.status]);
@@ -512,6 +517,18 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
+  useEffect(() => {
+    if (!window.tellann?.runs.onLifecycleEvent) return;
+    return window.tellann.runs.onLifecycleEvent((event) => {
+      if (event.localStatus === 'CHROMIUM_CLOSED') {
+        setActiveRun(null);
+        void refreshRuns(event.applicationId).catch(() => undefined);
+      } else {
+        void window.tellann?.runs.getActive().then((state) => setActiveRun(state)).catch(() => undefined);
+      }
+    });
+  }, [refreshRuns]);
+
   const startRun = useCallback(async (input: StartGuidedRunInput) => perform(async () => {
     const next = await bridge().runs.start(input);
     setActiveRun(next);
@@ -523,6 +540,24 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     setActiveRun(next);
     return next;
   }, []);
+
+  const resumeRun = useCallback(async () => {
+    const next = await bridge().runs.resume();
+    setActiveRun(next);
+    return next;
+  }, []);
+
+  const setRunInteractionMode = useCallback(async (mode: QAInteractionMode) => {
+    const next = await bridge().runs.setInteractionMode(mode);
+    setActiveRun(next);
+    return next;
+  }, []);
+
+  const retryRunSynchronization = useCallback((runId: string) =>
+    perform(() => bridge().runs.retrySynchronization(runId)), [perform]);
+
+  const revealProtectedValue = useCallback((runId: string, valueId: string) =>
+    bridge().runs.revealProtectedValue(runId, valueId), []);
 
   const endRun = useCallback(async () => perform(async () => {
     const next = await bridge().runs.end();
@@ -618,11 +653,15 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     rollbackInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.rollback(applicationId, planId)),
     startRun,
     pauseRun,
+    resumeRun,
+    setRunInteractionMode,
+    retryRunSynchronization,
+    revealProtectedValue,
     endRun,
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);

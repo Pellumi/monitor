@@ -4,6 +4,74 @@ export type { EventType, TellannEvent } from './event-types';
 import { WorkflowTracker } from './workflow-tracker.js';
 import { setupAutoTrack, sanitizeMetadata } from './auto-track.js';
 
+const CLIENT_STATE_SECRET_KEY = /password|passwd|passcode|secret|token|authorization|cookie|session|auth|private.?key|cvv|cvc|card/i;
+
+/** Shape-only description; always safe to send regardless of environment. */
+function describeClientStateValue(value: unknown) {
+  return {
+    type: value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value,
+    length: typeof value === 'string' || Array.isArray(value) ? value.length : null,
+    populated: value !== null && value !== undefined && value !== '',
+  };
+}
+
+/**
+ * True only while a desktop QA run credential is present on the page. Outside a
+ * run — and in any observation-only run — client state values never leave the
+ * page at all.
+ */
+function qaRunActive(): boolean {
+  const run = (globalThis as Record<string, any>).__TELLANN_RUN__;
+  return Boolean(run && run.runId && run.relayToken);
+}
+
+function serializeCandidate(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') return value.slice(0, 16_384);
+  try { return JSON.stringify(value)?.slice(0, 16_384); } catch { return undefined; }
+}
+
+/**
+ * Attaches candidate protected values for the QA pipeline. These are proposals,
+ * not decisions: the browser observer re-derives a classification and the
+ * ingestion API applies the authoritative server-side floor before persisting.
+ * Anything whose key looks like a secret is dropped here as well, so a secret
+ * never leaves the page even as a candidate.
+ */
+function qaCandidateValues(key: string, previous: unknown, next: unknown) {
+  if (!qaRunActive() || CLIENT_STATE_SECRET_KEY.test(String(key))) return {};
+  const previousValue = serializeCandidate(previous);
+  const nextValue = serializeCandidate(next);
+  if (previousValue === undefined && nextValue === undefined) return {};
+  return {
+    qaProtectedCandidates: [
+      ...(previousValue === undefined ? [] : [{ keyPath: `clientState.${key}.previousValue`, value: previousValue }]),
+      ...(nextValue === undefined ? [] : [{ keyPath: `clientState.${key}.newValue`, value: nextValue }]),
+    ],
+  };
+}
+
+function safeState(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+/** Top-level slice keys whose reference actually changed. */
+function changedSlicePaths(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].filter((key) => before[key] !== after[key]);
+}
+
+function pickPaths(source: Record<string, unknown>, paths: string[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const path of paths.slice(0, 50)) result[path] = source[path];
+  return result;
+}
+
 export interface TellannConfig {
   endpoint: string;
   tenantId?: string;
@@ -97,6 +165,22 @@ class TellannFrontendSDK {
       return;
     }
 
+    // Enforce the contract against the caller's payload before redaction. A
+    // multi-kilobyte value must not become an apparently valid tiny event just
+    // because the privacy layer replaced it with a marker.
+    try {
+      const rawPayload = JSON.stringify({ eventType, metadata });
+      const rawSize = typeof Blob !== 'undefined' ? new Blob([rawPayload]).size : rawPayload.length;
+      const rawLimit = eventType.includes('REPLAY') ? MAX_REPLAY_SIZE_BYTES : MAX_EVENT_SIZE_BYTES;
+      if (rawSize > rawLimit) {
+        console.error(`[Tellann] Event of type "${eventType}" discarded. Size (${rawSize} bytes) exceeds limit of ${rawLimit} bytes.`);
+        return;
+      }
+    } catch (err) {
+      console.error('[Tellann] Failed to compute size of event, discarding', err);
+      return;
+    }
+
     // Apply privacy-by-default metadata sanitization
     const sanitizedMetadata = sanitizeMetadata(metadata);
 
@@ -176,6 +260,124 @@ class TellannFrontendSDK {
       toState,
       action: action || 'NAVIGATE',
     });
+  }
+
+  trackFlowInitialState(flowVersionId: string, stateKey: string) {
+    this.trackEvent('FLOW_INITIAL_STATE', { flowVersionId, stateKey });
+  }
+
+  trackFlowStateReached(flowVersionId: string, stateKey: string) {
+    this.trackEvent('FLOW_STATE_REACHED', { flowVersionId, stateKey });
+  }
+
+  trackFlowTransition(
+    flowVersionId: string,
+    fromStateKey: string,
+    toStateKey: string,
+    action: string,
+  ) {
+    this.trackEvent('FLOW_TRANSITION', { flowVersionId, stateKey: toStateKey, fromStateKey, toStateKey, action });
+  }
+
+  trackFlowTerminalState(flowVersionId: string, stateKey: string) {
+    this.trackEvent('FLOW_TERMINAL_STATE', { flowVersionId, stateKey });
+  }
+
+  /**
+   * Explicit adapter for Zustand, MobX, custom Context, and other stores.
+   *
+   * Shape metadata (type, length, populated) always travels. Actual values are
+   * only attached while a QA run credential is present on the page and the run
+   * is not observation-only, and even then they are carried as *candidate*
+   * protected values: the browser observer and the ingestion API both classify
+   * and encrypt them before anything is persisted. Nothing raw is ever written
+   * to the generic telemetry wire.
+   */
+  trackClientState(store: string, key: string, previous: unknown, next: unknown) {
+    this.trackEvent('BUSINESS_EVENT', {
+      businessEventType: 'QA_CLIENT_STATE_MUTATION',
+      store: String(store).slice(0, 100),
+      key: String(key).slice(0, 200),
+      previous: describeClientStateValue(previous),
+      next: describeClientStateValue(next),
+      ...qaCandidateValues(key, previous, next),
+    });
+  }
+
+  /**
+   * Redux middleware. Records the action type, which top-level slice paths
+   * actually changed, and protected before/after values for those slices.
+   *
+   *   const store = configureStore({
+   *     reducer,
+   *     middleware: (get) => get().concat(TELLANN.createReduxMiddleware()),
+   *   });
+   */
+  createReduxMiddleware() {
+    const sdk = this;
+    return (store: { getState(): unknown }) =>
+      (next: (action: unknown) => unknown) =>
+        (action: unknown) => {
+          const before = safeState(store.getState());
+          const result = next(action);
+          const after = safeState(store.getState());
+          const type = String((action as { type?: unknown } | null)?.type ?? 'UNKNOWN_ACTION');
+          const changed = changedSlicePaths(before, after);
+          if (changed.length) {
+            sdk.trackEvent('BUSINESS_EVENT', {
+              businessEventType: 'QA_CLIENT_STATE_MUTATION',
+              store: 'redux',
+              key: type.slice(0, 200),
+              actionType: type.slice(0, 200),
+              changedSlicePaths: changed.slice(0, 50),
+              previous: describeClientStateValue(before),
+              next: describeClientStateValue(after),
+              ...qaCandidateValues(
+                type,
+                pickPaths(before, changed),
+                pickPaths(after, changed),
+              ),
+            });
+          }
+          return result;
+        };
+  }
+
+  /**
+   * React Context adapter. Only providers explicitly identified and approved in
+   * the validated Flow instrumentation manifest should call this — there is no
+   * blanket interception of React internals, because that cannot be done
+   * reliably and would misreport what was actually captured.
+   *
+   *   useEffect(() => TELLANN.trackContextValue('AuthContext', 'user', value), [value]);
+   */
+  trackContextValue(providerName: string, key: string, value: unknown) {
+    this.trackClientState(`context:${providerName}`, key, undefined, value);
+  }
+
+  /**
+   * Wraps an approved `useState` setter so Flow-relevant state changes are
+   * recorded. Intended to be applied to the specific setters identified during
+   * static analysis, not to every setter in the application.
+   *
+   *   const [email, setEmail] = useState('');
+   *   const setTracked = TELLANN.trackStateSetter('CheckoutForm', 'email', setEmail, email);
+   */
+  trackStateSetter<T>(
+    componentName: string,
+    key: string,
+    setter: (value: T) => void,
+    current?: T,
+  ): (value: T) => void {
+    let previous = current;
+    return (value: T) => {
+      const resolved = typeof value === 'function'
+        ? (value as unknown as (prior: T | undefined) => T)(previous)
+        : value;
+      this.trackClientState(`useState:${componentName}`, key, previous, resolved);
+      previous = resolved;
+      setter(resolved);
+    };
   }
 
   startWorkflow(workflowName: string): string {

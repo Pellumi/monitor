@@ -12,7 +12,7 @@ interface AutoTrackConfig {
 function shouldIgnore(element: HTMLElement | null): boolean {
   let curr = element;
   while (curr) {
-    if (curr.hasAttribute && curr.hasAttribute('data-tellann-ignore')) {
+    if (curr.hasAttribute && (curr.hasAttribute('data-tellann-ignore') || curr.hasAttribute('data-tellann-sensitive'))) {
       return true;
     }
     // Ignore password inputs completely
@@ -50,27 +50,45 @@ export function sanitizeMetadata(metadata: Record<string, any>): Record<string, 
     'secret',
     'private_key',
     'access_token',
-    'authorization'
+    'authorization',
+    'cookie',
+    'session_id',
+    'sessionid',
+    'card_number',
+    'file_content'
   ];
+  const identifierKeys = ['email', 'phone', 'mobile', 'user_id', 'userid', 'account_id', 'accountid'];
+  const sanitizeUrl = (value: string) => {
+    try {
+      const parsed = new URL(value, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
+      const names = [...new Set([...parsed.searchParams.keys()])];
+      parsed.search = names.length ? `?${names.map((name) => `${encodeURIComponent(name)}=`).join('&')}` : '';
+      parsed.hash = '';
+      return parsed.toString();
+    } catch { return value.slice(0, 2_000); }
+  };
 
-  const sanitize = (val: any): any => {
+  const sanitize = (val: any, keyPath = ''): any => {
     if (val === null || val === undefined) return val;
     if (Array.isArray(val)) {
-      return val.map(sanitize);
+      return val.map((item, index) => sanitize(item, `${keyPath}.${index}`));
     }
     if (typeof val === 'object') {
       const result: Record<string, any> = {};
       for (const key of Object.keys(val)) {
         const lowerKey = key.toLowerCase();
         if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
-          result[key] = '[REDACTED]';
+          result[key] = '[NOT CAPTURED]';
+        } else if (identifierKeys.some(identifier => lowerKey === identifier || lowerKey.endsWith(`_${identifier}`))) {
+          result[key] = '[PSEUDONYMIZED BY QA INGESTION]';
         } else {
-          result[key] = sanitize(val[key]);
+          result[key] = sanitize(val[key], keyPath ? `${keyPath}.${key}` : key);
         }
       }
       return result;
     }
-    return val;
+    if (typeof val === 'string' && /(^|\.)(url|href|from|to|referrer)$/i.test(keyPath)) return sanitizeUrl(val);
+    return typeof val === 'string' ? val.slice(0, 2_000) : val;
   };
 
   return sanitize(metadata);

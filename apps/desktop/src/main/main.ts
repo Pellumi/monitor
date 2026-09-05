@@ -5,8 +5,8 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
+import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import {
   answerFromAnalysis,
@@ -19,11 +19,11 @@ import {
   projectAnalysis,
   scanWorkspace,
 } from '@tellann/project-intelligence';
-import { BrowserObserver } from '@tellann/browser-observer';
+import { BrowserObserver, type GuidedRunState } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
-import { closeLocalStore, deleteLocalState, readLocalState, writeLocalState } from './local-store';
+import { closeLocalStore, deleteLocalState, listLocalStateKeys, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@tellann/document-intelligence';
 import { InstrumentationController, type SelectedWorkspace } from './instrumentation-controller';
 import { workspaceLocalId } from './device-identity';
@@ -107,43 +107,300 @@ function captureSetupDeepLink(values: string[]): void {
 }
 
 captureSetupDeepLink(process.argv);
+const evidenceQueues = new Map<string, QAEvidenceEvent[]>();
+const evidenceFlushes = new Map<string, Promise<void>>();
+/**
+ * Rollout gate for the V2 capture pipeline (evidence spool and upload, Inspect
+ * mode, durable report). Defaults on so existing installs are unaffected; set
+ * `QA_CAPTURE_V2=false` to fall back to route observations and the legacy
+ * report assembler while V2 is validated for an organization.
+ *
+ * Route observations and findings are written either way, so the dual-write
+ * validation period described in the rollout plan works with the gate off.
+ */
+const QA_CAPTURE_V2_ENABLED = process.env.QA_CAPTURE_V2 !== 'false';
+let evidenceFlushTimer: NodeJS.Timeout | null = null;
+let boundaryPollTimer: NodeJS.Timeout | null = null;
+
+function evidenceQueueKey(runId: string): string { return `qa-evidence-queue:${runId}`; }
+
+function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEvent> = {}): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC.runLifecycleEvent, {
+    runId: state.runId,
+    applicationId: state.applicationId,
+    phase: state.phase,
+    localStatus: state.status,
+    cloudStatus: null,
+    completionReason: null,
+    terminalStateKey: null,
+    evidenceCounts: state.evidenceCounts,
+    reportStatus: null,
+    safeError: null,
+    timestamp: new Date().toISOString(),
+    ...input,
+  } satisfies RunLifecycleEvent);
+}
+
+function enqueueEvidence(event: QAEvidenceEvent): void {
+  if (!QA_CAPTURE_V2_ENABLED) return;
+  const queue = evidenceQueues.get(event.runId) ?? readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(event.runId)) ?? [];
+  queue.push(event);
+  if (queue.length > 5_000) {
+    const removed = queue.splice(0, queue.length - 4_999);
+    const template = removed[0] ?? event;
+    queue.unshift({
+      ...template,
+      eventId: crypto.randomUUID(),
+      eventType: 'QA_CAPTURE_DEGRADED',
+      privacyClassification: 'INTERNAL',
+      interactionGroupId: null,
+      causedByEventId: null,
+      metadata: { reason: 'LOCAL_SPOOL_QUOTA', droppedEventCount: removed.length, maximumEvents: 5_000 },
+      protectedValues: [],
+    });
+  }
+  evidenceQueues.set(event.runId, queue);
+  scheduleSpoolPersist(event.runId);
+  if (queue.length >= 100) void flushEvidence(event.runId);
+}
+
+/**
+ * Persisting the spool is coalesced rather than done per event. `writeLocalState`
+ * runs `safeStorage.encryptString` over the whole queue plus a synchronous
+ * SQLite write, so writing on every captured event re-encrypted the entire
+ * backlog each time and stalled the main process during interaction-heavy runs.
+ * The spool only has to survive a crash or restart, and at most `SPOOL_PERSIST_MS`
+ * of already-uploaded-or-recoverable events can be lost.
+ */
+const SPOOL_PERSIST_MS = 1_000;
+const spoolPersistTimers = new Map<string, NodeJS.Timeout>();
+
+function persistSpoolNow(runId: string): void {
+  const pending = spoolPersistTimers.get(runId);
+  if (pending) { clearTimeout(pending); spoolPersistTimers.delete(runId); }
+  const queue = evidenceQueues.get(runId);
+  try {
+    if (queue?.length) writeLocalState(evidenceQueueKey(runId), queue);
+    else deleteLocalState(evidenceQueueKey(runId));
+  } catch { /* spool persistence is best-effort; uploads remain authoritative */ }
+}
+
+function scheduleSpoolPersist(runId: string): void {
+  if (spoolPersistTimers.has(runId)) return;
+  const timer = setTimeout(() => persistSpoolNow(runId), SPOOL_PERSIST_MS);
+  timer.unref();
+  spoolPersistTimers.set(runId, timer);
+}
+
+function stopRunMaintenance(): void {
+  if (evidenceFlushTimer) clearInterval(evidenceFlushTimer);
+  if (boundaryPollTimer) clearTimeout(boundaryPollTimer);
+  evidenceFlushTimer = null;
+  boundaryPollTimer = null;
+}
+
+function startRunMaintenance(runId: string): void {
+  stopRunMaintenance();
+  evidenceFlushTimer = setInterval(() => void flushEvidence(runId).catch(() => undefined), 2_000);
+  evidenceFlushTimer.unref();
+  // Fallback path for boundaries accepted through the SDK rather than the
+  // relay. Backs off from 1.5s to 15s while nothing changes so a long run does
+  // not hammer the API, and resets the moment the boundary actually moves.
+  const MIN_POLL_MS = 1_500;
+  const MAX_POLL_MS = 15_000;
+  let pollDelay = MIN_POLL_MS;
+  const poll = async () => {
+    const local = observer.getState();
+    if (!local || local.runId !== runId || runCompletionInProgress) return;
+    const remote = await cloud.boundaryStatus(runId);
+    const started = Boolean(remote.boundaryStartedAt);
+    const completed = Boolean(remote.boundaryCompletedAt) && remote.completionReason === 'TERMINAL_STATE_REACHED';
+    if (started && local.phase === 'PRE_BOUNDARY') {
+      pollDelay = MIN_POLL_MS;
+      await observer.acceptBoundaryOutcome({
+        accepted: true,
+        phase: 'IN_FLOW',
+        stateKey: typeof remote.lastObservedStateKey === 'string' ? remote.lastObservedStateKey : undefined,
+      });
+      const updated = observer.getState();
+      if (updated) emitRunLifecycle(updated, { cloudStatus: 'BOUNDARY_ACCEPTED_BY_SDK' });
+    } else {
+      pollDelay = Math.min(MAX_POLL_MS, Math.round(pollDelay * 1.5));
+    }
+    if (completed) await completeActiveRun('TERMINAL_STATE_REACHED');
+  };
+  const schedule = () => {
+    boundaryPollTimer = setTimeout(() => {
+      void poll().catch(() => undefined).finally(() => {
+        if (boundaryPollTimer) schedule();
+      });
+    }, pollDelay);
+    boundaryPollTimer.unref();
+  };
+  schedule();
+}
+
+async function flushEvidence(runId: string, drain = false): Promise<void> {
+  const existing = evidenceFlushes.get(runId);
+  if (existing) return existing;
+  const operation = (async () => {
+    const queue = evidenceQueues.get(runId) ?? readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? [];
+    evidenceQueues.set(runId, queue);
+    do {
+      if (!queue.length) break;
+      const batch: QAEvidenceEvent[] = [];
+      let bytes = 0;
+      for (const event of queue.slice(0, 100)) {
+        const eventBytes = Buffer.byteLength(JSON.stringify(event));
+        if (batch.length && bytes + eventBytes > 4.5 * 1024 * 1024) break;
+        batch.push(event);
+        bytes += eventBytes;
+      }
+      if (!batch.length) break;
+      await cloud.uploadEvidenceBatch(runId, batch);
+      queue.splice(0, batch.length);
+      persistSpoolNow(runId);
+    } while (drain && queue.length);
+  })().finally(() => evidenceFlushes.delete(runId));
+  evidenceFlushes.set(runId, operation);
+  return operation;
+}
+
+const RECOVERY_KEY_PREFIX = 'qa-run-recovery:';
+
+/**
+ * Completes any run whose Chromium closed cleanly but whose evidence upload or
+ * cloud completion was interrupted — a crash, a quit, or a network outage.
+ * Every step is idempotent (`/complete` returns the existing run, and evidence
+ * batches deduplicate on `eventId`), so replaying is safe and never produces a
+ * duplicate run, report, finding, annotation or email.
+ */
+async function resumeInterruptedRunSynchronization(): Promise<void> {
+  let keys: string[] = [];
+  try {
+    keys = listLocalStateKeys(RECOVERY_KEY_PREFIX);
+  } catch { return; }
+  for (const key of keys) {
+    const runId = key.slice(RECOVERY_KEY_PREFIX.length);
+    if (!runId) continue;
+    try {
+      const recovery = readLocalState<{ state: GuidedRunState; completionReason: string }>(key);
+      if (!recovery) { deleteLocalState(key); continue; }
+      evidenceQueues.set(runId, readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? []);
+      await flushEvidence(runId, true);
+      await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason });
+      deleteLocalState(key);
+      evidenceQueues.delete(runId);
+      emitRunLifecycle(recovery.state, {
+        phase: 'COMPLETE',
+        localStatus: 'CHROMIUM_CLOSED',
+        cloudStatus: 'SYNCHRONIZED',
+        completionReason: recovery.completionReason,
+        reportStatus: 'PENDING',
+      });
+    } catch {
+      // Leave the journal in place: the user can retry from run detail, and the
+      // next launch will try again.
+    }
+  }
+}
+
+async function handleRelayedEvents(events: Array<Record<string, unknown>>): Promise<void> {
+  const supported = new Set(['FLOW_INITIAL_STATE', 'FLOW_STATE_REACHED', 'FLOW_TRANSITION', 'FLOW_TERMINAL_STATE']);
+  for (const event of events) {
+    const eventType = String(event.eventType ?? '');
+    const active = observer.getState();
+    if (!active || event.runId !== active.runId) continue;
+    // Framework-state evidence from the SDK instrumentation adapters (Redux,
+    // approved Context providers and useState setters, trackClientState).
+    const businessEventType = (event.metadata as Record<string, unknown> | undefined)?.businessEventType;
+    if (eventType === 'BUSINESS_EVENT' && businessEventType === 'QA_CLIENT_STATE_MUTATION') {
+      await observer.recordClientStateEvent(event);
+      continue;
+    }
+    if (!supported.has(eventType)) continue;
+    const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {};
+    await observer.recordFlowEvent(event);
+    const stateKey = String(metadata.stateKey ?? metadata.toStateKey ?? '');
+    const boundary = await cloud.boundaryEvent(active.runId, {
+      eventId: event.eventId,
+      eventType,
+      timestamp: event.timestamp,
+      flowVersionId: metadata.flowVersionId,
+      stateKey,
+      fromStateKey: metadata.fromStateKey,
+      toStateKey: metadata.toStateKey,
+      metadata,
+    }) as { accepted?: boolean; shouldStop?: boolean; phase?: 'PRE_BOUNDARY' | 'IN_FLOW'; reason?: string };
+    await observer.acceptBoundaryOutcome({ accepted: Boolean(boundary.accepted), phase: boundary.phase, stateKey });
+    const updated = observer.getState();
+    if (updated) emitRunLifecycle(updated, { cloudStatus: boundary.accepted ? 'ACCEPTED' : `QUARANTINED:${boundary.reason ?? 'unknown'}` });
+    if (boundary.shouldStop) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
+  }
+}
+
 const observer = new BrowserObserver({
   executablePath: app.isPackaged ? packagedChromiumPath : undefined,
   // Headless mode is reserved for deterministic installed-application
   // acceptance. Normal desktop runs always show the managed browser.
   headless: process.env.TELLANN_BROWSER_HEADLESS === 'true',
   onUnexpectedTermination: async (state) => {
+    stopRunMaintenance();
+    emitRunLifecycle(state, { localStatus: 'FAILED', safeError: 'Managed Chromium closed unexpectedly.' });
     await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
     await applicationLauncher.stop().catch(() => undefined);
     await relay.stop().catch(() => undefined);
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
-  onObservation: async (runId, observation) => {
-    const boundary = await cloud.boundaryEvent(runId, {
-      eventId: observation.eventId,
-      stateKey: observation.stateName,
-      stateName: observation.stateName,
-      timestamp: observation.timestamp,
-      source: 'DESKTOP_BROWSER',
-    }).catch(() => undefined) as { shouldStop?: boolean } | undefined;
-    if (boundary?.shouldStop) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
-  },
+  onObservation: async () => undefined,
+  onEvidenceEvent: async (event) => enqueueEvidence(event),
+  searchMentionableMembers: (runId, query) => cloud.mentionableMembers(runId, query),
+  onAnnotation: (runId, annotation) => cloud.saveAnnotation(runId, annotation),
 });
 let runCompletionInProgress = false;
 
 async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'MANUAL_STOP_BEFORE_TERMINAL') {
   if (runCompletionInProgress || !observer.getState()) return null;
   runCompletionInProgress = true;
+  const before = observer.getState()!;
+  const resolvedReason = completionReason === 'TERMINAL_STATE_REACHED'
+    ? completionReason
+    : before.phase === 'PRE_BOUNDARY' ? 'MANUAL_STOP_BEFORE_INITIAL' : 'MANUAL_STOP_BEFORE_TERMINAL';
   try {
+    emitRunLifecycle(before, { phase: 'FINALIZING', localStatus: 'FINALIZING', completionReason: resolvedReason });
     const state = await observer.end();
-    await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length, completionReason });
+    stopRunMaintenance();
+    // Force the coalesced spool to disk before the recovery journal is written,
+    // so a crash during synchronization cannot lose the final second of
+    // capture — the one moment where staleness would actually cost evidence.
+    persistSpoolNow(state.runId);
+    writeLocalState(`qa-run-recovery:${state.runId}`, { state, completionReason: resolvedReason });
+    emitRunLifecycle(state, {
+      phase: 'COMPLETE', localStatus: 'CHROMIUM_CLOSED', cloudStatus: 'UPLOADING',
+      completionReason: resolvedReason, terminalStateKey: resolvedReason === 'TERMINAL_STATE_REACHED' ? state.currentFlowStateKey : null,
+      reportStatus: 'PENDING',
+    });
+    if (resolvedReason === 'TERMINAL_STATE_REACHED' && ElectronNotification.isSupported()) {
+      new ElectronNotification({
+        title: 'Terminal state reached',
+        body: 'Chromium was closed and your QA report is being prepared.',
+      }).show();
+    }
+    await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length, completionReason: resolvedReason });
     await applicationLauncher.stop();
     await relay.stop();
-    await cloud.completeRun({ ...state, completionReason });
+    await flushEvidence(state.runId, true);
+    await cloud.completeRun({ ...state, completionReason: resolvedReason });
+    deleteLocalState(`qa-run-recovery:${state.runId}`);
+    evidenceQueues.delete(state.runId);
+    emitRunLifecycle(state, { cloudStatus: 'SYNCHRONIZED', completionReason: resolvedReason, reportStatus: 'PENDING' });
     return state;
   } catch (error) {
-    const state = observer.getState();
-    if (state) await cloud.failRun(state.runId, error instanceof Error ? error.message : 'Run synchronization failed').catch(() => undefined);
+    emitRunLifecycle(before, {
+      phase: 'COMPLETE', localStatus: 'CHROMIUM_CLOSED', cloudStatus: 'FAILED', completionReason: resolvedReason,
+      reportStatus: 'PENDING', safeError: 'The browser closed safely, but evidence synchronization needs to be retried.',
+    });
     throw error;
   } finally {
     runCompletionInProgress = false;
@@ -1777,6 +2034,7 @@ function registerIpc(): void {
       patchSetId: parsed.patchSetId ?? null,
       mode: parsed.mode,
       targetUrl: parsed.targetUrl,
+      captureVersion: QA_CAPTURE_V2_ENABLED ? '2.0' : '1.0',
     });
     const runId = String(run.id);
     if (typeof run.organizationId !== 'string') throw new Error('RUN_ORGANIZATION_CONTEXT_MISSING');
@@ -1784,6 +2042,8 @@ function registerIpc(): void {
     const traceId = crypto.randomUUID();
     const started = await cloud.startRun(runId, sessionId, traceId);
     const queueKey = `run-relay-queue:${runId}`;
+    evidenceQueues.set(runId, readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? []);
+    void flushEvidence(runId);
     try {
       const relaySession = await relay.start({
         collectorBaseUrl: (process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, ''),
@@ -1797,6 +2057,7 @@ function registerIpc(): void {
         },
         initialQueue: readLocalState<BufferedRelayRequest[]>(queueKey) ?? [],
         onQueueChanged: (queue) => writeLocalState(queueKey, queue),
+        onEvents: handleRelayedEvents,
       });
       await relay.emit('QA_RUN_STARTED', { mode: parsed.mode });
       if (parsed.launchCommandId) {
@@ -1815,7 +2076,7 @@ function registerIpc(): void {
           agentVersion: app.getVersion(),
         });
       }
-      return await observer.start({
+      const state = await observer.start({
         ...parsed,
         runId,
         sessionId,
@@ -1824,7 +2085,11 @@ function registerIpc(): void {
         relayToken: relaySession.relayToken,
         agentVersion: app.getVersion(),
       }, path.join(app.getPath('userData'), 'qa-runs'));
+      startRunMaintenance(runId);
+      emitRunLifecycle(state, { cloudStatus: 'WAITING_FOR_INITIAL' });
+      return state;
     } catch (error) {
+      stopRunMaintenance();
       await applicationLauncher.stop().catch(() => undefined);
       await relay.emit('QA_RUN_FAILED', { reason: 'browser_start_failed' }).catch(() => undefined);
       await relay.stop().catch(() => undefined);
@@ -1834,7 +2099,62 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.pauseGuidedRun, async (event) => {
     assertTrustedSender(event);
-    return observer.pause();
+    const state = observer.getState();
+    if (!state) throw new Error('NO_ACTIVE_RUN');
+    relay.setPaused(true);
+    const local = await observer.pause(true);
+    try {
+      await cloud.pauseRun(state.runId);
+      emitRunLifecycle(local, { cloudStatus: 'PAUSED' });
+      return local;
+    } catch (error) {
+      relay.setPaused(false);
+      await observer.pause(false);
+      throw error;
+    }
+  });
+  ipcMain.handle(IPC.resumeGuidedRun, async (event) => {
+    assertTrustedSender(event);
+    const state = observer.getState();
+    if (!state) throw new Error('NO_ACTIVE_RUN');
+    const cloudState = await cloud.resumeRun(state.runId);
+    relay.setPaused(false);
+    const local = await observer.pause(false);
+    emitRunLifecycle(local, { cloudStatus: String(cloudState.status ?? 'RECORDING') });
+    return local;
+  });
+  ipcMain.handle(IPC.setRunInteractionMode, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const mode = QAInteractionModeSchema.parse(input);
+    if (mode === 'INSPECT' && !QA_CAPTURE_V2_ENABLED) throw new Error('QA_CAPTURE_V2_DISABLED');
+    return observer.setInteractionMode(mode);
+  });
+  ipcMain.handle(IPC.retryRunSynchronization, async (event, runId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof runId !== 'string') throw new Error('RUN_ID_REQUIRED');
+    const recovery = readLocalState<{ state: GuidedRunState; completionReason: string }>(`qa-run-recovery:${runId}`);
+    if (recovery) {
+      await flushEvidence(runId, true);
+      const completed = await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason });
+      deleteLocalState(`qa-run-recovery:${runId}`);
+      evidenceQueues.delete(runId);
+      return completed;
+    }
+    return cloud.retryReport(runId);
+  });
+  ipcMain.handle(IPC.revealRunProtectedValue, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { runId?: unknown; valueId?: unknown };
+    if (typeof value.runId !== 'string' || typeof value.valueId !== 'string') {
+      throw new Error('RUN_AND_VALUE_ID_REQUIRED');
+    }
+    return cloud.revealProtectedValue(value.runId, value.valueId);
+  });
+  ipcMain.handle(IPC.searchRunMentionableMembers, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { runId?: unknown; query?: unknown };
+    if (typeof value.runId !== 'string') throw new Error('RUN_ID_REQUIRED');
+    return cloud.mentionableMembers(value.runId, typeof value.query === 'string' ? value.query : '');
   });
   ipcMain.handle(IPC.endGuidedRun, async (event) => {
     assertTrustedSender(event);
@@ -1857,6 +2177,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // window regains focus (the access token may have been refreshed since).
   void syncNotificationOrganization();
   mainWindow?.on('focus', () => void syncNotificationOrganization());
+  void resumeInterruptedRunSynchronization();
   await initializeUpdater().catch((error) => {
     console.error('Desktop update check failed', error instanceof Error ? error.message : error);
   });

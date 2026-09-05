@@ -84,6 +84,12 @@ const IPC = {
   uploadConsentResolve: 'tellann:workspace:upload-consent:resolve',
   startGuidedRun: 'tellann:run:start',
   pauseGuidedRun: 'tellann:run:pause',
+  resumeGuidedRun: 'tellann:run:resume',
+  setRunInteractionMode: 'tellann:run:interaction-mode',
+  retryRunSynchronization: 'tellann:run:synchronization:retry',
+  revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  searchRunMentionableMembers: 'tellann:run:members:search',
+  runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
   detectInstrumentation: 'tellann:instrumentation:detect',
@@ -224,6 +230,17 @@ contextBridge.exposeInMainWorld('tellann', {
     getReport: (runId: string) => ipcRenderer.invoke(IPC.getRunReport, runId),
     start: (input: unknown) => ipcRenderer.invoke(IPC.startGuidedRun, input),
     pause: () => ipcRenderer.invoke(IPC.pauseGuidedRun),
+    resume: () => ipcRenderer.invoke(IPC.resumeGuidedRun),
+    setInteractionMode: (mode: 'NAVIGATE' | 'INSPECT') => ipcRenderer.invoke(IPC.setRunInteractionMode, mode),
+    retrySynchronization: (runId: string) => ipcRenderer.invoke(IPC.retryRunSynchronization, runId),
+    revealProtectedValue: (runId: string, valueId: string) =>
+      ipcRenderer.invoke(IPC.revealRunProtectedValue, { runId, valueId }),
+    searchMentionableMembers: (runId: string, query: string) => ipcRenderer.invoke(IPC.searchRunMentionableMembers, { runId, query }),
+    onLifecycleEvent: (callback: (event: unknown) => void) => {
+      const subscription = (_: unknown, data: unknown) => callback(data);
+      ipcRenderer.on(IPC.runLifecycleEvent, subscription);
+      return () => ipcRenderer.removeListener(IPC.runLifecycleEvent, subscription);
+    },
     end: () => ipcRenderer.invoke(IPC.endGuidedRun),
     getActive: () => ipcRenderer.invoke(IPC.getRunState),
   },
