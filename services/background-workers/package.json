@@ -4,11 +4,11 @@
   "version": "0.0.1",
   "main": "src/index.ts",
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/qa-report-worker.test.ts"
+    "test": "tsc && node --test dist/qa-report-worker.test.js"
   },
   "dependencies": {
     "@tellann/ai": "workspace:*",
