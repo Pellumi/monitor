@@ -5985,7 +5985,7 @@ function FlowRoadmap({
         </div>
       ) : null}
 
-      {graph ? (
+      {/* {graph ? (
         <div className="flow-graph" aria-label="Flow checkpoint graph">
           <div className="flow-graph-canvas-wrap">
             <div
@@ -6167,7 +6167,7 @@ function FlowRoadmap({
             </li>
           ))}
         </ol>
-      )}
+      )} */}
 
       <div className="card-actions mt-4">
         <button

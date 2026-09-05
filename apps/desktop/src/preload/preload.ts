@@ -68,6 +68,7 @@ const IPC = {
   chooseWorkspace: 'tellann:workspace:choose',
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
+  beginWorkspaceAnalysis: 'tellann:workspace:analysis:begin',
   getCodebaseAnalysis: 'tellann:workspace:analysis:get',
   cancelCodebaseAnalysis: 'tellann:workspace:analysis:cancel',
   rescanCodebase: 'tellann:workspace:analysis:rescan',
@@ -128,9 +129,11 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.invoke(IPC.createApplication, input),
     getLocalWorkspace: (applicationId: string) => ipcRenderer.invoke(IPC.getLocalWorkspace, applicationId),
     chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
-    scanWorkspace: (input: { path: string; applicationId: string }) =>
-      ipcRenderer.invoke(IPC.scanWorkspace, input),
-    getCodebaseAnalysis: (applicationId: string) =>
+      scanWorkspace: (input: { path: string; applicationId: string }) =>
+        ipcRenderer.invoke(IPC.scanWorkspace, input),
+      beginWorkspaceAnalysis: (applicationId: string) =>
+        ipcRenderer.invoke(IPC.beginWorkspaceAnalysis, applicationId),
+      getCodebaseAnalysis: (applicationId: string) =>
       ipcRenderer.invoke(IPC.getCodebaseAnalysis, applicationId),
     cancelCodebaseAnalysis: (applicationId: string) =>
       ipcRenderer.invoke(IPC.cancelCodebaseAnalysis, applicationId),

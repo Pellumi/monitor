@@ -1014,6 +1014,7 @@ export const IPC = {
   chooseWorkspace: 'tellann:workspace:choose',
   getLocalWorkspace: 'tellann:workspace:local-state',
   scanWorkspace: 'tellann:workspace:scan',
+  beginWorkspaceAnalysis: 'tellann:workspace:analysis:begin',
   getCodebaseAnalysis: 'tellann:workspace:analysis:get',
   cancelCodebaseAnalysis: 'tellann:workspace:analysis:cancel',
   rescanCodebase: 'tellann:workspace:analysis:rescan',

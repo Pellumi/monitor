@@ -468,6 +468,11 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     const workspace = { id: scanned.id, ...selected, snapshot: scanned.snapshot };
     setWorkspaces((current) => ({ ...current, [applicationId]: workspace }));
     void refreshBranchCompliance(applicationId);
+    // Attachment is complete at this point. Consent and analysis use a separate
+    // IPC request so they cannot keep the folder picker action globally busy.
+    void bridge().projects.beginWorkspaceAnalysis(applicationId).catch((cause) => {
+      setError(normalizeDesktopError(cause));
+    });
     return workspace;
   }), [perform, refreshBranchCompliance]);
 

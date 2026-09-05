@@ -590,6 +590,27 @@ async function beginCloudCodebaseAnalysis(
 }
 
 /**
+ * Consent and analysis are follow-up work to attachment, not part of it. Keeping
+ * this whole sequence out of the scan IPC guarantees Electron can deliver the
+ * attached workspace to the renderer before archive work or network requests
+ * begin. It also means the consent dialog describes a folder that is already
+ * visibly attached, instead of holding the UI in a misleading global busy state.
+ */
+async function beginCodebaseAnalysisWithConsent(
+  applicationId: string,
+  selectedPath: string,
+  snapshot: RepositorySnapshotSummary,
+  registered: { workspaceId: string; repositorySnapshotId: string },
+): Promise<void> {
+  const consented = await requestUploadConsent(applicationId, selectedPath, snapshot);
+  if (consented) {
+    await beginCloudCodebaseAnalysis(applicationId, selectedPath, snapshot, registered);
+    return;
+  }
+  beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
+}
+
+/**
  * Electron drops every property but `message` when an `ipcMain.handle` rejection
  * crosses to the renderer, so the parts the renderer needs to build the
  * "wrong folder" modal — the code and the repository the application is bound
@@ -641,18 +662,6 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
     branchPolicy: registered.branchPolicy ?? policy ?? null,
   };
   writeLocalState(localWorkspaceKey(applicationId), workspace);
-  // Exactly one analysis runs per workspace. With consent the worker service
-  // owns it; without consent it runs here. Doing both would mean the same job
-  // being written by two producers.
-  const consented = await requestUploadConsent(applicationId, selectedPath, snapshot);
-  if (consented) {
-    // Let the scan IPC resolve before archive creation/upload begins. The
-    // renderer can now show the attached folder even if the cloud is slow.
-    setImmediate(() => void beginCloudCodebaseAnalysis(applicationId, selectedPath, snapshot, registered));
-    return workspace;
-  }
-
-  beginLocalCodebaseAnalysis(applicationId, selectedPath, snapshot);
   return workspace;
 }
 
@@ -1296,6 +1305,16 @@ function registerIpc(): void {
     if (!applicationId) throw new Error('APPLICATION_SELECTION_REQUIRED');
     const workspace = await registerSelectedWorkspace(applicationId, parsed.path);
     return { id: workspace.id, snapshot: workspace.snapshot, branchPolicy: workspace.branchPolicy ?? null };
+  });
+  ipcMain.handle(IPC.beginWorkspaceAnalysis, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('WORKSPACE_NOT_ATTACHED');
+    await beginCodebaseAnalysisWithConsent(applicationId, workspace.path, workspace.snapshot, {
+      workspaceId: workspace.cloudId,
+      repositorySnapshotId: workspace.snapshotId,
+    });
   });
   ipcMain.handle(IPC.getCodebaseAnalysis, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

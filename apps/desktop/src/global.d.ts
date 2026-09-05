@@ -81,12 +81,13 @@ declare global {
           snapshot: RepositorySnapshotSummary;
         } | null>;
         chooseWorkspace(): Promise<{ path: string; name: string } | null>;
-        scanWorkspace(input: { path: string; applicationId: string }): Promise<{
-          id: string;
-          snapshot: RepositorySnapshotSummary;
-          branchPolicy: BranchPolicy | null;
-        }>;
-        getCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisView | null>;
+         scanWorkspace(input: { path: string; applicationId: string }): Promise<{
+            id: string;
+            snapshot: RepositorySnapshotSummary;
+            branchPolicy: BranchPolicy | null;
+          }>;
+          beginWorkspaceAnalysis(applicationId: string): Promise<void>;
+          getCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisView | null>;
         cancelCodebaseAnalysis(applicationId: string): Promise<{ cancelled: boolean }>;
         rescanCodebase(applicationId: string): Promise<{ rescanned: boolean; requiresReattach: boolean }>;
         codebaseQuery(input: {
