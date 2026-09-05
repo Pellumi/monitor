@@ -24,9 +24,11 @@ jobs:
           fetch-depth: 0 # changesets needs full history to diff against baseBranch
 
       - name: Setup pnpm
+        # No `version:` here on purpose. action-setup@v4 reads the version from
+        # the root package.json "packageManager" field, and errors out if both
+        # are set rather than guessing which one wins. Bump pnpm in
+        # package.json and this workflow follows automatically.
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - name: Setup Node
         uses: actions/setup-node@v4
