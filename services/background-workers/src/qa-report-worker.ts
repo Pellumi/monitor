@@ -350,6 +350,24 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // Report what was actually captured rather than inferring it from whether a
   // patch set happened to be attached.
   const hasClientStateEvidence = run.evidenceEvents.some((event) => event.eventType === 'QA_CLIENT_STATE_MUTATION');
+  const viewportHistory = run.evidenceEvents
+    .filter((event) => event.eventType === 'QA_VIEWPORT_CHANGED')
+    .map((event) => {
+      const metadata = event.metadata && typeof event.metadata === 'object'
+        ? event.metadata as Record<string, unknown> : {};
+      return {
+        timestamp: event.occurredAt,
+        route: event.normalizedRoute ?? routeFromUrl(event.pageUrl),
+        innerWidth: Number(metadata.innerWidth) || null,
+        innerHeight: Number(metadata.innerHeight) || null,
+        outerWidth: Number(metadata.outerWidth) || null,
+        outerHeight: Number(metadata.outerHeight) || null,
+        screenWidth: Number(metadata.screenWidth) || null,
+        screenHeight: Number(metadata.screenHeight) || null,
+        devicePixelRatio: Number(metadata.devicePixelRatio) || null,
+        orientation: metadata.orientation == null ? null : String(metadata.orientation),
+      };
+    });
   const payload = {
     id: report.id,
     runId: run.id,
@@ -390,7 +408,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     summary: { sessionCount: run.observedSessions.length, observedStateCount: observedStateKeys.size, observedTransitionCount: observedTransitionKeys.size, artifactCount: run.artifacts.length, findingCount: run.findings.length, criticalOrHighFindings: run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length },
     sections: {
       flowSummary: { name: run.expectedGraphVersion?.graph.name ?? 'Selected Flow', purpose: run.expectedGraphVersion?.graph.purpose ?? null, scope: run.expectedGraphVersion?.graph.scopeStatement ?? null, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion?.version ?? null, provenance: run.expectedGraphVersion?.graph.sourceType ?? null },
-      runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
+      runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       inFlowFindings: { recommendedNextActions: improvements.slice(0, 10), findings: improvements, missingStates, missingTransitions, unexpectedStates },
       criticalSystemWideFindings: criticalOutOfFlow,
       userAnnotations: run.annotations.map((annotation, index) => ({ id: annotation.id, pin: index + 1, comment: annotation.comment, author: annotation.author, timestamp: annotation.createdAt, route: annotation.normalizedRoute, flowState: annotation.flowStateKey, resolution: annotation.windowResolution, element: annotation.elementFingerprint, screenshotArtifactId: annotation.screenshotArtifactId, mentionedTeammates: annotation.mentions.map((mention) => ({ id: mention.userId, displayName: mention.displayNameSnapshot })) })),

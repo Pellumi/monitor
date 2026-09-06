@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
 } from "react";
 import {
   Accessibility,
@@ -9479,9 +9481,64 @@ export function NewRunPage() {
 export function LiveRunPage() {
   const { projectId } = useParams();
   const { activeRun: run, pauseRun, resumeRun, setRunInteractionMode, endRun, busy } = useDesktop();
-  const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACCESSIBILITY">(
+  const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACTIVITY">(
     "CONSOLE",
   );
+  const [flowWidth, setFlowWidth] = useState<number>(() => {
+    const saved = localStorage.getItem("tellann:live-flow-width");
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(parsed) && parsed >= 180 && parsed <= 600 ? parsed : 240;
+  });
+  const [evidenceWidth, setEvidenceWidth] = useState<number>(() => {
+    const saved = localStorage.getItem("tellann:live-evidence-width");
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 340;
+  });
+
+  const beginFlowResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = flowWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - startX;
+      setFlowWidth(Math.min(600, Math.max(180, startWidth + delta)));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("flow-resizing");
+      setFlowWidth((current) => {
+        localStorage.setItem("tellann:live-flow-width", String(current));
+        return current;
+      });
+    };
+    document.body.classList.add("flow-resizing");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = evidenceWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = startX - moveEvent.clientX;
+      setEvidenceWidth(Math.min(600, Math.max(240, startWidth + delta)));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("evidence-resizing");
+      setEvidenceWidth((current) => {
+        localStorage.setItem("tellann:live-evidence-width", String(current));
+        return current;
+      });
+    };
+    document.body.classList.add("evidence-resizing");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
   if (!projectId) return <ApplicationRequired />;
   if (!run)
     return (
@@ -9500,13 +9557,33 @@ export function LiveRunPage() {
       />
     );
   const visible = run.evidence.filter((item) =>
-    tab === "ACCESSIBILITY"
-      ? item.kind === "ACCESSIBILITY" || item.kind === "PAGE"
+    tab === "ACTIVITY"
+      ? item.kind !== "CONSOLE" && item.kind !== "NETWORK"
       : item.kind === tab,
   );
+  const consoleCount = run.evidence.filter((item) => item.kind === "CONSOLE").length;
+  const networkCount = run.evidence.filter((item) => item.kind === "NETWORK").length;
+  const activityCount = run.evidence.length - consoleCount - networkCount;
+  const currentObservation = run.observations.at(-1);
+  const resolution = run.windowResolution;
   return (
-    <div className="live-run-page">
+    <div
+      className="live-run-page"
+      style={
+        {
+          "--flow-width": `${flowWidth}px`,
+          "--evidence-width": `${evidenceWidth}px`,
+        } as CSSProperties
+      }
+    >
       <section className="live-flow">
+        <div
+          className="flow-resize-handle"
+          role="separator"
+          aria-label="Resize flow panel"
+          aria-orientation="vertical"
+          onPointerDown={beginFlowResize}
+        />
         <h2>Expected flow</h2>
         <p>
           {run.expectedGraphVersionId
@@ -9537,15 +9614,78 @@ export function LiveRunPage() {
           <Status>{run.status}</Status>
         </div>
         <div className="browser-canvas">
-          <Activity size={42} />
-          <h2>Managed browser is running</h2>
-          <p>
-            Complete the workflow in the isolated Chromium window. Evidence
-            streams here without using your personal browser profile.
-          </p>
+          <div className="run-live-overview">
+            <div className="run-live-overview-heading">
+              <div>
+                <small>Live run snapshot</small>
+                <h2>{currentObservation?.title || "Managed browser is running"}</h2>
+              </div>
+              <Status>{run.phase.replaceAll("_", " ")}</Status>
+            </div>
+            <div className="run-live-metrics">
+              <article>
+                <Globe2 size={18} />
+                <small>Current route</small>
+                <strong>{currentObservation?.stateName || "Waiting for route"}</strong>
+                <span>{currentObservation?.url || run.targetUrl}</span>
+              </article>
+              <article>
+                <Accessibility size={18} />
+                <small>Window resolution</small>
+                <strong>
+                  {resolution
+                    ? `${resolution.innerWidth} × ${resolution.innerHeight}`
+                    : "Detecting…"}
+                </strong>
+                <span>
+                  {resolution
+                    ? `${resolution.outerWidth} × ${resolution.outerHeight} outer · ${resolution.screenWidth} × ${resolution.screenHeight} screen · ${resolution.devicePixelRatio}× DPR`
+                    : "The initial viewport event has not arrived yet."}
+                </span>
+              </article>
+              <article>
+                <Network size={18} />
+                <small>Captured requests</small>
+                <strong>{run.evidenceCounts.QA_REQUEST ?? 0}</strong>
+                <span>{networkCount} currently retained in the live panel</span>
+              </article>
+              <article>
+                <Activity size={18} />
+                <small>Interaction mode</small>
+                <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+                <span>
+                  {run.interactionMode === "INSPECT"
+                    ? "Select an element in Chromium to add a comment."
+                    : "Application controls perform their normal actions."}
+                </span>
+              </article>
+            </div>
+            <div className={`run-capture-disclosure ${run.phase === "IN_FLOW" ? "active" : ""}`}>
+              <ShieldCheck size={17} />
+              <div>
+                <strong>
+                  {run.phase === "IN_FLOW"
+                    ? "Detailed protected capture is active"
+                    : "Pre-boundary metadata capture is active"}
+                </strong>
+                <span>
+                  {run.phase === "IN_FLOW"
+                    ? "Buttons, forms, protected fields, approved state adapters, storage, requests, routes, and performance are being recorded."
+                    : "Routes, requests, console errors, viewport, performance, and Inspect comments are recorded now. Field and state values remain off until FLOW_INITIAL_STATE is accepted."}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
       <aside className="live-evidence">
+        <div
+          className="evidence-resize-handle"
+          role="separator"
+          aria-label="Resize evidence panel"
+          aria-orientation="vertical"
+          onPointerDown={beginResize}
+        />
         <div className="evidence-heading">
           <h2>Live evidence</h2>
           <span>{run.evidence.length}</span>
@@ -9556,21 +9696,21 @@ export function LiveRunPage() {
             onClick={() => setTab("CONSOLE")}
           >
             <TerminalSquare size={14} />
-            Console
+            Console <span>{consoleCount}</span>
           </button>
           <button
             className={tab === "NETWORK" ? "selected" : ""}
             onClick={() => setTab("NETWORK")}
           >
             <Network size={14} />
-            Network
+            Network <span>{networkCount}</span>
           </button>
           <button
-            className={tab === "ACCESSIBILITY" ? "selected" : ""}
-            onClick={() => setTab("ACCESSIBILITY")}
+            className={tab === "ACTIVITY" ? "selected" : ""}
+            onClick={() => setTab("ACTIVITY")}
           >
-            <Accessibility size={14} />
-            A11y
+            <Activity size={14} />
+            Activity <span>{activityCount}</span>
           </button>
         </div>
         <div className="evidence-list">
@@ -9609,6 +9749,9 @@ export function LiveRunPage() {
                   Inspect
                 </button>
               </div>
+              <span className="run-mode-status" role="status" aria-live="polite">
+                {run.interactionMode === "INSPECT" ? "Inspect active in Chromium" : "Navigate active"}
+              </span>
               <button
                 className="button"
                 disabled={busy}
@@ -9639,7 +9782,19 @@ function EvidenceRow({ item }: { item: LiveEvidence }) {
     <div className={`evidence-row evidence-${item.level.toLowerCase()}`}>
       <time>{new Date(item.timestamp).toLocaleTimeString()}</time>
       <span>{item.level}</span>
-      <p>{item.message}</p>
+      <div className="evidence-row-body">
+        <p>{item.message}</p>
+        {item.details?.length ? (
+          <dl>
+            {item.details.map((entry) => (
+              <div key={`${entry.label}:${entry.value}`}>
+                <dt>{entry.label}</dt>
+                <dd>{entry.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -10524,6 +10679,10 @@ export function ReportDetailPage() {
       : [],
   );
   const eventCounts = asRecord(runSummary.eventCounts);
+  const viewportHistory = Array.isArray(runSummary.viewportHistory)
+    ? runSummary.viewportHistory.map(asRecord)
+    : [];
+  const latestViewport = viewportHistory.at(-1);
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -10591,6 +10750,7 @@ export function ReportDetailPage() {
           <div><dt>Duration</dt><dd>{runSummary.durationMs == null ? "Not recorded" : `${(Number(runSummary.durationMs) / 1000).toFixed(1)} seconds`}</dd></div>
           <div><dt>Repository revision</dt><dd>{String(runSummary.repositoryRevision ?? report.repository?.revision ?? "Not attached")}</dd></div>
           <div><dt>Instrumentation</dt><dd>{runSummary.instrumentationAvailable ? "Validated instrumentation attached" : "Browser-level evidence only"}</dd></div>
+          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px · ${String(latestViewport.devicePixelRatio ?? 1)}× DPR` : "Not recorded"}{viewportHistory.length > 1 ? ` · ${viewportHistory.length - 1} resize ${viewportHistory.length === 2 ? "change" : "changes"}` : ""}</dd></div>
         </dl>
         {runSummary.captureDegraded ? <div className="report-warning" role="alert"><AlertTriangle size={18} /> Capture was degraded. Review limitations and capture findings before relying on coverage.</div> : null}
         {Object.keys(eventCounts).length ? <div className="report-counts" aria-label="Evidence counts">{Object.entries(eventCounts).map(([type, count]) => <span key={type}><strong>{Number(count)}</strong>{type.replace(/^QA_/, "").replaceAll("_", " ").toLowerCase()}</span>)}</div> : null}

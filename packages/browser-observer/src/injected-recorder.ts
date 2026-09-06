@@ -464,7 +464,15 @@ export function installQaRecorder(config: {
   const host = document.createElement('div');
   host.dataset.tellannOverlay = 'true';
   host.style.display = 'none';
-  document.documentElement.append(host);
+  // Playwright init scripts execute before the parser creates <html>. Mount the
+  // overlay as soon as the root exists instead of aborting the entire recorder
+  // (which also disables interaction, field, storage, viewport, and mode hooks).
+  const mountHost = () => {
+    if (host.isConnected || !document.documentElement) return;
+    document.documentElement.append(host);
+  };
+  mountHost();
+  if (!host.isConnected) document.addEventListener('DOMContentLoaded', mountHost, { once: true });
   const shadow = host.attachShadow({ mode: 'closed' });
   shadow.innerHTML = `<style>:host{all:initial}.outline{position:fixed;pointer-events:none;border:2px solid #22c55e;background:#22c55e18;z-index:2147483646}.panel{position:fixed;right:20px;top:20px;width:340px;z-index:2147483647;background:#0b0f14;color:#f8fafc;border:1px solid #334155;border-radius:12px;padding:16px;font:14px/1.4 system-ui;box-shadow:0 18px 60px #000a}.panel h2{font-size:16px;margin:0 0 4px}.panel p{color:#94a3b8;margin:0 0 10px}.panel textarea,.panel input{box-sizing:border-box;width:100%;background:#111827;color:white;border:1px solid #475569;border-radius:7px;padding:9px;margin:6px 0}.panel button{border:1px solid #475569;background:#1e293b;color:white;border-radius:7px;padding:8px 11px;margin:6px 6px 0 0;cursor:pointer}.panel button.primary{background:#16a34a;border-color:#22c55e}.panel :focus-visible{outline:3px solid #facc15;outline-offset:2px}.chips{display:flex;gap:5px;flex-wrap:wrap}.chip{font-size:12px;background:#334155;padding:4px 7px;border-radius:999px}.results{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}.results button{font-size:12px;padding:4px 7px;margin:0}.shield{position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:transparent}.live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style><div class="shield" hidden></div><div class="outline" hidden></div><div class="panel" hidden role="dialog" aria-modal="true" aria-labelledby="tellann-title"><h2 id="tellann-title">Annotate selected element</h2><p class="preview"></p><textarea maxlength="2000" rows="5" aria-label="Annotation comment" placeholder="Describe the change or issue"></textarea><input aria-label="Search organization members" placeholder="Mention a teammate"><div class="chips"></div><div class="results" role="listbox" aria-label="Member search results"></div><div><button class="primary">Save annotation</button><button class="reselect">Reselect</button><button class="cancel">Cancel</button></div></div><div class="live" aria-live="polite"></div>`;
   const shield = shadow.querySelector('.shield') as HTMLElement;
@@ -674,10 +682,13 @@ export function installQaRecorder(config: {
     value: (next: typeof phase, stateKey?: string | null) => {
       phase = next;
       (globalThis as any).__tellannQaFlowState = stateKey ?? null;
+      return true;
     },
     configurable: false,
   });
   Object.defineProperty(globalThis, '__tellannQaSetMode', {
+    // Returns true so the desktop can tell a delivered command from one that
+    // reached a page with no recorder installed.
     value: (next: typeof mode) => {
       mode = next;
       host.style.display = next === 'INSPECT' ? 'block' : 'none';
@@ -685,6 +696,7 @@ export function installQaRecorder(config: {
       if (next === 'NAVIGATE') cancelInspect();
       else live.textContent = 'Inspect mode active. Point to an element and click, or focus it and press Enter.';
       showShield();
+      return true;
     },
     configurable: false,
   });

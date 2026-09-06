@@ -19,7 +19,19 @@ export type LiveEvidence = {
   kind: 'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW';
   level: 'INFO' | 'WARN' | 'ERROR';
   message: string;
+  details?: Array<{ label: string; value: string }>;
   timestamp: string;
+};
+
+export type BrowserWindowResolution = {
+  innerWidth: number;
+  innerHeight: number;
+  outerWidth: number;
+  outerHeight: number;
+  screenWidth: number;
+  screenHeight: number;
+  devicePixelRatio: number;
+  orientation: string | null;
 };
 
 export type BrowserObservation = {
@@ -54,6 +66,8 @@ export type GuidedRunState = {
   currentFlowStateKey: string | null;
   evidenceCounts: Record<string, number>;
   targetUrl: string;
+  /** Updated by the injected recorder on initial load and every resize. */
+  windowResolution?: BrowserWindowResolution | null;
   evidence: LiveEvidence[];
   observations: BrowserObservation[];
   observedTransitions: BrowserObservedTransition[];
@@ -107,7 +121,7 @@ type BridgePayload = {
 
 const PRE_BOUNDARY_TYPES = new Set<QAEvidenceEvent['eventType']>([
   'QA_ROUTE_CHANGED', 'QA_VIEWPORT_CHANGED', 'QA_REQUEST', 'QA_CONSOLE',
-  'QA_RUNTIME_ERROR', 'QA_PAGE_CRASH', 'QA_FLOW_EVENT', 'QA_CAPTURE_DEGRADED',
+  'QA_RUNTIME_ERROR', 'QA_PAGE_CRASH', 'QA_PAGE_PERFORMANCE', 'QA_FLOW_EVENT', 'QA_CAPTURE_DEGRADED',
 ]);
 const SAFE_REQUEST_HEADERS = new Set([
   'accept', 'content-type', 'content-length', 'origin', 'referer', 'user-agent', 'x-requested-with',
@@ -174,6 +188,145 @@ function safeMessage(raw: string): string {
 
 function normalizedRoute(urlValue: string): string | null {
   try { return new URL(urlValue).pathname || '/'; } catch { return null; }
+}
+
+function detail(label: string, value: unknown): { label: string; value: string } | null {
+  if (value === null || value === undefined || value === '') return null;
+  return { label, value: safeMessage(String(value)) };
+}
+
+function compactDetails(
+  items: Array<{ label: string; value: string } | null>,
+): Array<{ label: string; value: string }> {
+  return items.filter((item): item is { label: string; value: string } => Boolean(item));
+}
+
+/**
+ * Converts recorder messages into a privacy-safe live row. Raw field, storage,
+ * request, and framework-state values are intentionally never copied here.
+ */
+export function liveEvidenceForBridgePayload(
+  payload: BridgePayload,
+): Omit<LiveEvidence, 'id' | 'timestamp'> | null {
+  const metadata = payload.metadata ?? {};
+  const type = String(payload.type ?? '');
+  const target = safeMessage(String(
+    metadata.accessibleName ?? metadata.label ?? metadata.name ?? metadata.id ?? metadata.tag ?? 'unnamed element',
+  ));
+  if (type === 'route') {
+    const url = sanitizeCapturedUrl(String(metadata.url ?? ''));
+    return {
+      kind: 'PAGE', level: 'INFO',
+      message: `Navigated to ${normalizedRoute(url) ?? url ?? 'unknown route'}`,
+      details: compactDetails([
+        detail('Navigation', metadata.kind), detail('Title', metadata.title), detail('URL', url),
+      ]),
+    };
+  }
+  if (type === 'viewport') {
+    return {
+      kind: 'ACCESSIBILITY', level: 'INFO',
+      message: `Window ${metadata.innerWidth ?? '?'} × ${metadata.innerHeight ?? '?'} CSS px`,
+      details: compactDetails([
+        detail('Outer window', metadata.outerWidth != null && metadata.outerHeight != null
+          ? `${metadata.outerWidth} × ${metadata.outerHeight}` : null),
+        detail('Screen', metadata.screenWidth != null && metadata.screenHeight != null
+          ? `${metadata.screenWidth} × ${metadata.screenHeight}` : null),
+        detail('Pixel ratio', metadata.devicePixelRatio), detail('Orientation', metadata.orientation),
+      ]),
+    };
+  }
+  if (type === 'click') {
+    const action = metadata.type === 'submit' ? 'Submit form' : metadata.role === 'link' || metadata.tag === 'a' ? 'Navigate' : 'Activate control';
+    return {
+      kind: 'INTERACTION', level: 'INFO', message: `Clicked ${target}`,
+      details: compactDetails([
+        detail('Action', action), detail('Element', metadata.tag), detail('Role', metadata.role),
+        detail('ID', metadata.id), detail('Name', metadata.name), detail('Form', metadata.formId),
+      ]),
+    };
+  }
+  if (type === 'submit_intent' || type === 'submit') {
+    return {
+      kind: 'INTERACTION', level: 'INFO',
+      message: type === 'submit_intent' ? `Form submission started${target === 'unnamed element' ? '' : ` from ${target}`}` : 'Form submitted',
+      details: compactDetails([
+        detail('Form ID', metadata.formId), detail('Form name', metadata.formName),
+        detail('Method', metadata.method), detail('Action', metadata.action), detail('Valid', metadata.valid),
+      ]),
+    };
+  }
+  if (type === 'field') {
+    return {
+      kind: 'INTERACTION', level: 'INFO', message: `Field changed: ${target}`,
+      details: compactDetails([
+        detail('Type', metadata.type), detail('ID', metadata.id), detail('Name', metadata.name),
+        detail('Form', metadata.formId), detail('Populated', metadata.populated),
+        detail('Length', metadata.valueLength), detail('Valid', metadata.valid),
+        detail('Protection', payload.valueKind === 'SECRET' ? 'Not captured' : payload.valueKind === 'DIRECT_IDENTIFIER' ? 'Pseudonymized' : 'Encrypted'),
+      ]),
+    };
+  }
+  if (type === 'storage') {
+    return {
+      kind: 'STORAGE', level: 'INFO',
+      message: `${metadata.store ?? 'Browser storage'} ${metadata.operation ?? 'changed'}${metadata.key ? `: ${metadata.key}` : ''}`,
+      details: compactDetails([
+        detail('Previous length', metadata.previousLength), detail('New length', metadata.valueLength),
+        detail('Protection', payload.valueKind === 'SECRET' ? 'Not captured' : payload.valueKind === 'DIRECT_IDENTIFIER' ? 'Pseudonymized' : payload.valueKind ? 'Encrypted' : 'Metadata only'),
+      ]),
+    };
+  }
+  if (type === 'performance') {
+    return {
+      kind: 'PERFORMANCE', level: 'INFO',
+      message: `Performance snapshot for ${metadata.route ?? 'current route'}`,
+      details: compactDetails([
+        detail('Data ready', metadata.dataReadyMs != null ? `${metadata.dataReadyMs} ms` : null),
+        detail('Visually stable', metadata.visuallyStableMs != null ? `${metadata.visuallyStableMs} ms` : null),
+        detail('DOM content loaded', metadata.domContentLoadedMs != null ? `${metadata.domContentLoadedMs} ms` : null),
+        detail('Page load', metadata.loadMs != null ? `${metadata.loadMs} ms` : null),
+        detail('FCP', metadata.fcp != null ? `${Math.round(Number(metadata.fcp))} ms` : null),
+        detail('LCP', metadata.lcp != null ? `${Math.round(Number(metadata.lcp))} ms` : null),
+        detail('CLS', metadata.cls), detail('Resources', metadata.resourceCount),
+      ]),
+    };
+  }
+  if (type === 'runtime_error') {
+    return { kind: 'PAGE', level: 'ERROR', message: safeMessage(String(metadata.message ?? 'Runtime error')) };
+  }
+  return null;
+}
+
+export function liveEvidenceForNetworkRequest(input: {
+  method: string;
+  url: string;
+  status: number | null;
+  failed: boolean;
+  blockedByPolicy: boolean;
+  durationMs: number;
+  resourceType: string;
+  transferredBytes: number | null;
+  failure?: string | null;
+}): Omit<LiveEvidence, 'id' | 'timestamp'> {
+  const outcome = input.blockedByPolicy
+    ? 'blocked by observation policy'
+    : input.failed
+      ? input.failure || 'failed'
+      : String(input.status ?? 'completed');
+  const level: LiveEvidence['level'] = input.failed || (input.status ?? 0) >= 500
+    ? 'ERROR'
+    : (input.status ?? 0) >= 400
+      ? 'WARN'
+      : 'INFO';
+  return {
+    kind: 'NETWORK', level,
+    message: `${input.method} ${sanitizeCapturedUrl(input.url)} — ${outcome}`,
+    details: compactDetails([
+      detail('Type', input.resourceType), detail('Duration', `${input.durationMs} ms`),
+      detail('Transferred', input.transferredBytes == null ? null : `${input.transferredBytes} bytes`),
+    ]),
+  };
 }
 
 function protectStructuredPayload(value: unknown, rootPath = 'payload'): {
@@ -337,6 +490,22 @@ export class BrowserObserver {
     };
     const type = map[String(payload.type)];
     if (!type) return;
+    if (payload.type === 'viewport') {
+      const metadata = payload.metadata ?? {};
+      const values = [
+        metadata.innerWidth, metadata.innerHeight, metadata.outerWidth, metadata.outerHeight,
+        metadata.screenWidth, metadata.screenHeight, metadata.devicePixelRatio,
+      ];
+      if (values.every((value) => Number.isFinite(Number(value)))) {
+        controller.state.windowResolution = {
+          innerWidth: Number(metadata.innerWidth), innerHeight: Number(metadata.innerHeight),
+          outerWidth: Number(metadata.outerWidth), outerHeight: Number(metadata.outerHeight),
+          screenWidth: Number(metadata.screenWidth), screenHeight: Number(metadata.screenHeight),
+          devicePixelRatio: Number(metadata.devicePixelRatio),
+          orientation: metadata.orientation == null ? null : String(metadata.orientation),
+        };
+      }
+    }
     const protectedValues: QAPendingProtectedValue[] = [];
     if (payload.valueKind && payload.valuePath) {
       protectedValues.push({
@@ -348,10 +517,14 @@ export class BrowserObserver {
     }
     const eventId = this.emit(controller, type, payload.metadata ?? {}, {
       eventId: payload.eventId,
+      pageUrl: payload.type === 'route' && payload.metadata?.url
+        ? sanitizeCapturedUrl(String(payload.metadata.url)) : undefined,
       protectedValues,
       interactionGroupId: payload.interactionGroupId ?? null,
       causedByEventId: payload.causedByEventId ?? null,
     });
+    const liveEvidence = eventId ? liveEvidenceForBridgePayload(payload) : null;
+    if (liveEvidence) this.addLive(controller.state, liveEvidence);
     if (eventId && ['click', 'submit_intent', 'submit', 'route'].includes(String(payload.type))) {
       controller.recentCause = { eventId, interactionGroupId: payload.interactionGroupId ?? null, at: Date.now() };
     }
@@ -393,6 +566,7 @@ export class BrowserObserver {
       mode: observationOnly ? 'OBSERVATION_ONLY' : 'GUIDED',
       status: 'RUNNING', phase: 'PRE_BOUNDARY', interactionMode: 'NAVIGATE', currentFlowStateKey: null,
       evidenceCounts: {}, targetUrl: input.targetUrl, evidence: [], observations: [], observedTransitions: [],
+      windowResolution: null,
       findings: [], artifactDirectory, startedAt: new Date().toISOString(), endedAt: null,
     };
     const controller: RunController = {
@@ -473,6 +647,27 @@ export class BrowserObserver {
     // snapshots intentionally remain disabled for this V2 observer.
     const page = await context.newPage();
     controller.page = page;
+
+    const captureWindowResolution = async (target: Page) => {
+      if (target.isClosed()) return;
+      const metadata = await target.evaluate(() => ({
+        innerWidth, innerHeight, outerWidth, outerHeight,
+        screenWidth: screen.width, screenHeight: screen.height,
+        devicePixelRatio, orientation: screen.orientation?.type ?? null,
+      })).catch(() => null);
+      if (!metadata) return;
+      const previous = controller.state.windowResolution;
+      const unchanged = previous
+        && previous.innerWidth === metadata.innerWidth
+        && previous.innerHeight === metadata.innerHeight
+        && previous.outerWidth === metadata.outerWidth
+        && previous.outerHeight === metadata.outerHeight
+        && previous.screenWidth === metadata.screenWidth
+        && previous.screenHeight === metadata.screenHeight
+        && previous.devicePixelRatio === metadata.devicePixelRatio
+        && previous.orientation === metadata.orientation;
+      if (!unchanged) await this.handleBridge(controller, { type: 'viewport', metadata });
+    };
 
     const captureObservation = async () => {
       if (page.isClosed()) return;
@@ -575,18 +770,20 @@ export class BrowserObserver {
           return owner.isClosed() ? null : owner;
         } catch { return null; }
       })();
+      const durationMs = Date.now() - record.startedAt;
+      const transferredBytes = await request.sizes()
+        .then((sizes) => sizes.responseBodySize + sizes.responseHeadersSize)
+        .catch(() => Number(response?.headers()['content-length'] ?? 0) || null);
       this.emit(controller, 'QA_REQUEST', {
         method: record.method, url: record.url, resourceType: record.resourceType,
         redirectedFrom: record.redirectedFrom, status, failed, blockedByPolicy,
         failure: failed ? safeMessage(request.failure()?.errorText ?? 'Request failed') : null,
-        durationMs: Date.now() - record.startedAt, timing: request.timing(),
+        durationMs, timing: request.timing(),
         responseContentType: contentType.slice(0, 200),
         // Prefer the driver's real transfer size (which accounts for
         // compression and headers) and fall back to Content-Length only when
         // sizes are unavailable, e.g. for a failed request.
-        transferredBytes: await request.sizes()
-          .then((sizes) => sizes.responseBodySize + sizes.responseHeadersSize)
-          .catch(() => Number(response?.headers()['content-length'] ?? 0) || null),
+        transferredBytes,
         headers: record.safeHeaders,
         ...(record.metadataBody === undefined ? {} : { requestBody: record.metadataBody }),
         ...(responseBody === undefined ? {} : { responseBody }),
@@ -594,12 +791,22 @@ export class BrowserObserver {
         pageUrl: record.url, protectedValues: record.protectedValues,
         interactionGroupId: record.interactionGroupId, causedByEventId: record.causedByEventId,
       });
+      this.addLive(state, liveEvidenceForNetworkRequest({
+        method: record.method,
+        url: record.url,
+        status,
+        failed,
+        blockedByPolicy,
+        durationMs,
+        resourceType: record.resourceType,
+        transferredBytes,
+        failure: failed ? safeMessage(request.failure()?.errorText ?? 'Request failed') : null,
+      }));
       // A request this observer aborted under observation-only policy is an
       // expected outcome of the capture track, never an application defect.
       if (!blockedByPolicy && (failed || (status !== null && status >= 400))) {
         const severity = failed || (status ?? 0) >= 500 ? 'HIGH' : 'MEDIUM';
         const description = `${record.method} ${record.url} — ${failed ? request.failure()?.errorText ?? 'failed' : status}`;
-        this.addLive(state, { kind: 'NETWORK', level: severity === 'HIGH' ? 'ERROR' : 'WARN', message: description });
         state.findings.push({
           id: uuid(), runId, category: failed ? 'NETWORK_REQUEST_FAILED' : 'HTTP_ERROR_RESPONSE', severity,
           confidence: 0.98, title: failed ? 'Network request failed' : `Request returned ${status}`,
@@ -646,15 +853,24 @@ export class BrowserObserver {
       socket.on('close', () => this.emit(controller, 'QA_WEBSOCKET', { lifecycle: 'CLOSE', url: socketUrl }, { pageUrl: socketUrl }));
       });
       target.on('framenavigated', (frame) => {
+        const routeUrl = sanitizeCapturedUrl(frame.url());
         this.emit(controller, 'QA_ROUTE_CHANGED', {
-          kind: frame === target.mainFrame() ? 'document' : 'frame', url: sanitizeCapturedUrl(frame.url()),
+          kind: frame === target.mainFrame() ? 'document' : 'frame', url: routeUrl,
         }, { pageUrl: frame.url() });
+        if (/^https?:\/\//.test(routeUrl)) {
+          this.addLive(state, {
+            kind: 'PAGE', level: 'INFO',
+            message: `${frame === target.mainFrame() ? 'Page' : 'Frame'} navigated to ${normalizedRoute(routeUrl) ?? routeUrl}`,
+            details: [{ label: 'URL', value: routeUrl }],
+          });
+        }
         if (frame === target.mainFrame() && target === controller.page) void captureObservation();
         // A frame that attaches or navigates after the boundary was accepted
         // starts at the recorder's PRE_BOUNDARY/NAVIGATE defaults, so replay
         // the current capture state into it.
         void this.syncFrameState(controller, frame);
       });
+      target.on('domcontentloaded', () => void captureWindowResolution(target));
       target.on('crash', () => {
         if (!this.active || controller.stopping) return;
         this.emit(controller, 'QA_PAGE_CRASH', { reason: 'Managed browser page crashed' });
@@ -683,6 +899,10 @@ export class BrowserObserver {
     });
     try {
       await navigateToRunTarget(page, input.targetUrl, input.launchCommandId ? 30_000 : 0);
+      // The injected recorder normally reports this itself. This fallback also
+      // covers apps whose own startup/runtime error prevents the recorder from
+      // reaching its initial viewport emission.
+      await captureWindowResolution(page);
       await captureObservation();
       this.addLive(state, {
         kind: 'PAGE', level: 'INFO',
@@ -703,12 +923,18 @@ export class BrowserObserver {
     const metadata = event.metadata && typeof event.metadata === 'object'
       ? event.metadata as Record<string, unknown> : {};
     const eventId = typeof event.eventId === 'string' ? event.eventId : uuid();
-    this.emit(this.active, 'QA_FLOW_EVENT', {
+    const emitted = this.emit(this.active, 'QA_FLOW_EVENT', {
       eventType: String(event.eventType ?? ''), stateKey: String(metadata.stateKey ?? ''),
       fromStateKey: metadata.fromStateKey ? String(metadata.fromStateKey) : null,
       action: metadata.action ? String(metadata.action) : null,
       flowVersionId: String(metadata.flowVersionId ?? ''),
     }, { eventId });
+    if (emitted) {
+      this.addLive(this.active.state, {
+        kind: 'FLOW', level: 'INFO',
+        message: `${String(event.eventType ?? 'FLOW_EVENT')} · ${String(metadata.stateKey ?? metadata.toStateKey ?? 'unknown state')}`,
+      });
+    }
     if (String(event.eventType) === 'FLOW_TRANSITION') {
       this.active.recentCause = {
         eventId, interactionGroupId: this.active.recentCause?.interactionGroupId ?? null, at: Date.now(),
@@ -741,14 +967,20 @@ export class BrowserObserver {
   }
 
   private async broadcastToFrames(
-    fn: (argument: any) => void,
+    fn: (argument: any) => boolean | void,
     argument: unknown,
-  ): Promise<void> {
-    if (!this.active) return;
+  ): Promise<number> {
+    if (!this.active) return 0;
     const frames = this.active.context.pages()
       .filter((page) => !page.isClosed())
       .flatMap((page) => page.frames());
-    await Promise.all(frames.map((frame) => frame.evaluate(fn, argument).catch(() => undefined)));
+    const results = await Promise.all(
+      frames.map((frame) => frame.evaluate(fn, argument).catch(() => undefined)),
+    );
+    // Frames without the recorder (cross-origin, or navigated away from the
+    // application origin) return undefined. The count of real acknowledgements
+    // is what tells us whether the command actually landed anywhere.
+    return results.filter((result) => result === true).length;
   }
 
   /**
@@ -786,7 +1018,7 @@ export class BrowserObserver {
       }];
     });
     const { qaProtectedCandidates: _candidates, ...safeMetadata } = metadata;
-    this.emit(controller, 'QA_CLIENT_STATE_MUTATION', {
+    const emitted = this.emit(controller, 'QA_CLIENT_STATE_MUTATION', {
       store: String(safeMetadata.store ?? 'unknown').slice(0, 100),
       key: String(safeMetadata.key ?? '').slice(0, 200),
       actionType: safeMetadata.actionType ? String(safeMetadata.actionType).slice(0, 200) : null,
@@ -801,6 +1033,19 @@ export class BrowserObserver {
       interactionGroupId: controller.recentCause?.interactionGroupId ?? null,
       causedByEventId: controller.recentCause?.eventId ?? null,
     });
+    if (emitted) {
+      const store = String(safeMetadata.store ?? 'application state').slice(0, 100);
+      const key = String(safeMetadata.key ?? '').slice(0, 200);
+      this.addLive(controller.state, {
+        kind: 'STORAGE', level: 'INFO', message: `${store} state changed${key ? `: ${key}` : ''}`,
+        details: compactDetails([
+          detail('Action', safeMetadata.actionType),
+          detail('Changed paths', Array.isArray(safeMetadata.changedSlicePaths)
+            ? (safeMetadata.changedSlicePaths as unknown[]).slice(0, 10).join(', ') : null),
+          detail('Protection', protectedValues.length ? 'Protected values recorded' : 'Shape metadata only'),
+        ]),
+      });
+    }
   }
 
   async acceptBoundaryOutcome(input: {
@@ -823,8 +1068,30 @@ export class BrowserObserver {
 
   async setInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState> {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    const acknowledged = await this.broadcastToFrames(
+      (next: QAInteractionMode) => (globalThis as any).__tellannQaSetMode?.(next) === true,
+      mode,
+    );
+    // The recorder only installs on the application's own origin. If the page
+    // has navigated somewhere else (an external identity provider, say), no
+    // frame can host the overlay — report that instead of leaving the button
+    // looking like it worked while nothing appears in the browser.
+    if (!acknowledged && mode === 'INSPECT') {
+      this.addLive(this.active.state, {
+        kind: 'PAGE',
+        level: 'WARN',
+        message: `Interaction mode ${mode} could not be applied: the QA recorder is not present on the current page.`,
+      });
+      throw new Error('QA_RECORDER_NOT_PRESENT_ON_PAGE');
+    }
     this.active.state.interactionMode = mode;
-    await this.broadcastToFrames((next: QAInteractionMode) => (globalThis as any).__tellannQaSetMode?.(next), mode);
+    this.addLive(this.active.state, {
+      kind: 'ACCESSIBILITY', level: 'INFO',
+      message: mode === 'INSPECT'
+        ? 'Inspect mode active. Select an element in the managed browser to add a comment.'
+        : 'Navigate mode active. Browser controls will perform their normal actions.',
+    });
+    if (mode === 'INSPECT') await this.active.page.bringToFront().catch(() => undefined);
     return this.snapshot();
   }
 
@@ -886,6 +1153,7 @@ export class BrowserObserver {
       applicationId: state.applicationId, environmentId: state.environmentId,
       expectedGraphVersionId: state.expectedGraphVersionId, mode: state.mode,
       status: state.status, phase: state.phase, targetUrl: sanitizeCapturedUrl(state.targetUrl),
+      windowResolution: state.windowResolution ?? null,
       evidenceCounts: state.evidenceCounts, observations: state.observations,
       observedTransitions: state.observedTransitions, findings: state.findings,
       startedAt: state.startedAt, endedAt: state.endedAt,

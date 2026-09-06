@@ -7,6 +7,8 @@ import {
   isObservationOnlyRequestAllowed,
   isRetryableTargetConnectionError,
   isSecretKeyPath,
+  liveEvidenceForBridgePayload,
+  liveEvidenceForNetworkRequest,
   navigateToRunTarget,
   sanitizeCapturedUrl,
 } from './index';
@@ -102,4 +104,80 @@ test('captured urls drop fragments and parameter values but keep parameter names
     sanitizeCapturedUrl('https://app.test/orders?token=abc&q=shoes#pii'),
     'https://app.test/orders?q=&token=',
   );
+});
+
+test('the injected mode and phase setters acknowledge delivery', () => {
+  // setInteractionMode distinguishes "applied" from "reached a page with no
+  // recorder" by the boolean these return. If they stop returning true, the
+  // desktop would report every successful switch as a failure.
+  const source = installQaRecorder.toString();
+  for (const setter of ['__tellannQaSetMode', '__tellannQaSetPhase']) {
+    const start = source.indexOf(setter);
+    assert.ok(start > 0, `${setter} must be defined`);
+    const body = source.slice(start, start + 700);
+    assert.ok(body.includes('return true'), `${setter} must acknowledge delivery`);
+  }
+});
+
+test('the inspect overlay waits for the document root before mounting', () => {
+  const source = installQaRecorder.toString();
+  assert.match(source, /document\.documentElement/);
+  assert.match(source, /DOMContentLoaded/);
+  assert.match(source, /host\.isConnected/);
+});
+
+test('successful network requests are represented in the live panel', () => {
+  const live = liveEvidenceForNetworkRequest({
+    method: 'GET',
+    url: 'https://app.test/api/orders?account=123#private',
+    status: 200,
+    failed: false,
+    blockedByPolicy: false,
+    durationMs: 42,
+    resourceType: 'fetch',
+    transferredBytes: 512,
+  });
+  assert.equal(live.kind, 'NETWORK');
+  assert.equal(live.level, 'INFO');
+  assert.match(live.message, /GET https:\/\/app\.test\/api\/orders\?account= — 200/);
+  assert.ok(!live.message.includes('123'));
+  assert.deepEqual(live.details, [
+    { label: 'Type', value: 'fetch' },
+    { label: 'Duration', value: '42 ms' },
+    { label: 'Transferred', value: '512 bytes' },
+  ]);
+});
+
+test('live interaction rows expose element context without copying field values', () => {
+  const live = liveEvidenceForBridgePayload({
+    type: 'field',
+    valueKind: 'DIRECT_IDENTIFIER',
+    value: 'person@example.test',
+    metadata: {
+      label: 'Email address',
+      id: 'email',
+      name: 'email',
+      type: 'email',
+      formId: 'signup',
+      populated: true,
+      valueLength: 19,
+      valid: true,
+    },
+  });
+  assert.equal(live?.kind, 'INTERACTION');
+  assert.match(live?.message ?? '', /Email address/);
+  assert.match(JSON.stringify(live), /Pseudonymized/);
+  assert.ok(!JSON.stringify(live).includes('person@example.test'));
+});
+
+test('route, viewport, storage, and performance recorder messages have live activity rows', () => {
+  const payloads: Array<Parameters<typeof liveEvidenceForBridgePayload>[0]> = [
+    { type: 'route', metadata: { kind: 'pushState', url: 'https://app.test/orders/123?q=secret', title: 'Order' } },
+    { type: 'viewport', metadata: { innerWidth: 1280, innerHeight: 720, outerWidth: 1296, outerHeight: 759 } },
+    { type: 'storage', valueKind: 'ORDINARY', metadata: { store: 'localStorage', operation: 'setItem', key: 'cart' } },
+    { type: 'performance', metadata: { route: '/orders', dataReadyMs: 320, visuallyStableMs: 580 } },
+  ];
+  for (const payload of payloads) {
+    assert.ok(liveEvidenceForBridgePayload(payload), `${payload.type} should be visible in live activity`);
+  }
 });

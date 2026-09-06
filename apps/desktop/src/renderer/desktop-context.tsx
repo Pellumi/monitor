@@ -547,11 +547,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return next;
   }, []);
 
-  const setRunInteractionMode = useCallback(async (mode: QAInteractionMode) => {
+  // Routed through `perform` so a failure surfaces in the UI. Previously the
+  // caller did `void setRunInteractionMode(...)`, so anything thrown here
+  // became an unhandled rejection and the button appeared to do nothing.
+  const setRunInteractionMode = useCallback((mode: QAInteractionMode) => perform(async () => {
     const next = await bridge().runs.setInteractionMode(mode);
     setActiveRun(next);
     return next;
-  }, []);
+  }), [perform]);
 
   const retryRunSynchronization = useCallback((runId: string) =>
     perform(() => bridge().runs.retrySynchronization(runId)), [perform]);

@@ -162,7 +162,10 @@ function enqueueEvidence(event: QAEvidenceEvent): void {
   }
   evidenceQueues.set(event.runId, queue);
   scheduleSpoolPersist(event.runId);
-  if (queue.length >= 100) void flushEvidence(event.runId);
+  // Upload failures are recoverable because the evidence remains in the local
+  // spool. Avoid turning a missing/temporarily unavailable cloud encryption
+  // configuration into an unhandled-rejection loop while a run is active.
+  if (queue.length >= 100) void flushEvidence(event.runId).catch(() => undefined);
 }
 
 /**

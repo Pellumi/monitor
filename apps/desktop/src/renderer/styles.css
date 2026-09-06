@@ -2360,6 +2360,18 @@ button {
   border-bottom-color: #ffffff;
   font-weight: 700;
 }
+.evidence-tabs button > span {
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: #202020;
+  color: #a7aaac;
+  font: 9px/1.4 "JetBrains Mono", monospace;
+}
+.evidence-tabs button.selected > span {
+  background: #ededed;
+  color: #090909;
+}
 .evidence-list {
   flex: 1;
   overflow: auto;
@@ -2384,6 +2396,28 @@ button {
 .evidence-row p {
   margin: 0;
   color: #c4c7c8;
+  overflow-wrap: anywhere;
+}
+.evidence-row-body {
+  min-width: 0;
+}
+.evidence-row-body dl {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+}
+.evidence-row-body dl > div {
+  display: grid;
+  grid-template-columns: minmax(68px, auto) minmax(0, 1fr);
+  gap: 7px;
+}
+.evidence-row-body dt {
+  color: #747779;
+}
+.evidence-row-body dd {
+  min-width: 0;
+  margin: 0;
+  color: #aeb1b3;
   overflow-wrap: anywhere;
 }
 .evidence-error span,
@@ -4096,7 +4130,7 @@ button:disabled {
 .live-run-page {
   height: 100%;
   display: grid;
-  grid-template: minmax(0, 1fr) 64px / 240px minmax(360px, 1fr) 340px;
+  grid-template: minmax(0, 1fr) 64px / var(--flow-width, 240px) minmax(360px, 1fr) var(--evidence-width, 340px);
 }
 .live-flow,
 .live-browser,
@@ -4105,8 +4139,40 @@ button:disabled {
   min-height: 0;
 }
 .live-flow {
+  position: relative;
   padding: 18px;
   border-right: 1px solid var(--border);
+}
+.flow-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 30;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.flow-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.flow-resize-handle:hover::after,
+.flow-resizing .flow-resize-handle::after {
+  background: #fff;
+}
+.flow-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.flow-resizing * {
+  cursor: col-resize !important;
 }
 .live-flow h2,
 .live-evidence h2 {
@@ -4130,7 +4196,8 @@ button:disabled {
 .live-browser .browser-canvas {
   display: flex;
   flex-direction: column;
-  text-align: center;
+  justify-content: center;
+  text-align: left;
 }
 .live-browser .browser-canvas h2 {
   color: var(--strong);
@@ -4141,10 +4208,128 @@ button:disabled {
   line-height: 1.6;
   font-size: 12px;
 }
+.run-live-overview {
+  width: min(880px, calc(100% - 44px));
+  margin: auto;
+  border: 1px solid #292929;
+  border-radius: 8px;
+  background: rgba(8, 8, 8, 0.94);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+.run-live-overview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #242424;
+}
+.run-live-overview-heading small,
+.run-live-metrics small {
+  display: block;
+  color: #777b7d;
+  font: 10px/1.4 "JetBrains Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.run-live-overview-heading h2 {
+  margin: 5px 0 0;
+  font-size: 17px;
+}
+.run-live-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.run-live-metrics article {
+  min-width: 0;
+  padding: 18px 20px;
+  border-right: 1px solid #242424;
+  border-bottom: 1px solid #242424;
+}
+.run-live-metrics article:nth-child(2n) {
+  border-right: 0;
+}
+.run-live-metrics svg {
+  float: right;
+  color: #85898b;
+}
+.run-live-metrics strong {
+  display: block;
+  margin: 8px 0 5px;
+  color: #f5f5f5;
+  font-size: 16px;
+}
+.run-live-metrics span {
+  display: block;
+  color: #939799;
+  font: 10px/1.55 "JetBrains Mono", monospace;
+  overflow-wrap: anywhere;
+}
+.run-capture-disclosure {
+  display: flex;
+  gap: 11px;
+  padding: 15px 20px;
+  color: #d8c994;
+  background: #18150d;
+}
+.run-capture-disclosure.active {
+  color: #a8dfb9;
+  background: #0e1811;
+}
+.run-capture-disclosure svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.run-capture-disclosure strong,
+.run-capture-disclosure span {
+  display: block;
+}
+.run-capture-disclosure strong {
+  font-size: 12px;
+}
+.run-capture-disclosure span {
+  margin-top: 3px;
+  color: #9d9b91;
+  font-size: 10px;
+  line-height: 1.55;
+}
 .live-evidence {
+  position: relative;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+}
+.evidence-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  bottom: 0;
+  z-index: 30;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.evidence-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.evidence-resize-handle:hover::after,
+.evidence-resizing .evidence-resize-handle::after {
+  background: #fff;
+}
+.evidence-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.evidence-resizing * {
+  cursor: col-resize !important;
 }
 .run-controls {
   grid-column: 1 / -1;
@@ -4168,6 +4353,24 @@ button:disabled {
 .run-controls svg {
   width: 16px;
   height: 16px;
+}
+.run-mode-status {
+  color: #85898b;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  .run-live-metrics {
+    grid-template-columns: 1fr;
+  }
+  .run-live-metrics article,
+  .run-live-metrics article:nth-child(2n) {
+    border-right: 0;
+  }
+  .run-mode-status {
+    display: none;
+  }
 }
 
 .source-status {
@@ -6321,7 +6524,11 @@ button:disabled {
   color: var(--muted);
   cursor: pointer;
 }
-.run-mode-selector button.active {
+/* `selected` matches the class the mode buttons actually set, and the
+   convention used by every other selector in this file (.evidence-tabs
+   button.selected, .replay-track button.selected, and so on). Styling
+   `.active` here meant the chosen mode never looked chosen. */
+.run-mode-selector button.selected {
   background: #f1f1f1;
   color: #090909;
   font-weight: 650;
