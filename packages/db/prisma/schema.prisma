@@ -3698,3 +3698,21 @@ model ContactSubmission {
   @@index([createdAt])
   @@index([email])
 }
+
+/// An anonymous helpful/not-helpful vote from the documentation site.
+/// The browser-generated feedbackId is not a product identity and no request
+/// body, name, email address, or raw network address is retained.
+model DocsPageFeedback {
+  id          String   @id @default(uuid())
+  feedbackId  String
+  pageId      String
+  docsVersion String
+  helpful     Boolean
+  ipHash      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([feedbackId, pageId, docsVersion])
+  @@index([pageId, docsVersion, createdAt])
+  @@index([ipHash, createdAt])
+}

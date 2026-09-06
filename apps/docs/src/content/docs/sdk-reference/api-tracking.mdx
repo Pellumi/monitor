@@ -1,0 +1,43 @@
+---
+id: "sdk-reference-api-tracking"
+slug: "sdk-reference/api-tracking"
+title: "API Tracking"
+description: "Learn how api tracking works within SDK Reference and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["developer"]
+tags: ["sdk-reference","api-tracking"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# API Tracking
+
+Learn how api tracking works within SDK Reference and how to apply it safely in Tellann.
+
+## Purpose
+
+The **API Tracking** reference covers the public SDK contract that participates in the currently exported SDK surface; callable examples are limited to methods present in released packages. A name appearing in an earlier design document is not callable unless it is exported by the installed frontend or backend package.
+
+## Current contract
+
+Use the installed package's TypeScript declarations as the exact signature authority. Stable exported capabilities include initialization, session start and end, event capture, state and transition capture, workflow lifecycle methods, diagnostics, and teardown where supported.
+
+## Configuration
+
+Pass environment-specific configuration at initialization and keep ingestion keys outside committed source. Privacy rules should be in place before sensitive screens or payload fields can produce telemetry.
+
+## Example
+
+Start with one minimal, named behavior and verify it reaches the intended application and environment. Add framework helpers and automatic instrumentation only after the base connection is observable.
+
+## Errors
+
+Treat invalid configuration, rejected events, delivery exhaustion, unsupported runtimes, and teardown failures as distinct conditions. Diagnostics may describe state, but they must not leak credentials or captured sensitive values.
+
+## Compatibility
+
+Check package versions against this documentation version and the application's runtime support. Planned methods are described as product direction only and are disabled in executable examples.
+
+

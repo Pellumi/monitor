@@ -68,7 +68,7 @@ function bearerIdentity(request: FastifyRequest): { client?: string; key?: strin
 }
 
 // Routes that bypass API key authentication
-const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/internal/app-events', '/v1/desktop/app-events', '/v1/app-events'];
+const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/docs/feedback', '/internal/app-events', '/v1/desktop/app-events', '/v1/app-events'];
 
 // Routes that bypass rate limiting. See the allowList note on the plugin below.
 const RATE_LIMIT_EXEMPT_PATHS = new Set(['/auth/refresh', '/auth/desktop/refresh']);
@@ -797,6 +797,7 @@ async function main() {
   // Public contact form on the marketing site. Unauthenticated by design;
   // onboarding-api does its own validation and rate limiting.
   fastify.all('/contact', forwardToOnboarding);
+  fastify.all('/docs/feedback', forwardToOnboarding);
 
   fastify.all('/v1/rules/*', forwardToFdrs);
   fastify.all('/v1/admin/rules/*', forwardToFdrs);

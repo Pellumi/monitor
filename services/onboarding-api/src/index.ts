@@ -30,6 +30,7 @@ import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
 import { createFlowLifecycleRouter } from './flow-lifecycle-routes';
 import { createContactRouter } from './contact-routes';
+import { createDocsFeedbackRouter } from './docs-feedback-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@tellann/storage';
 
@@ -325,6 +326,9 @@ app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
 app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));
 // Public: the marketing contact form posts here without a session.
 app.use(createContactRouter({ prisma, emailService }));
+// Public and anonymous by design; the router owns its strict docs-origin CORS,
+// schema validation, keyed IP hashing, and route-specific rate limit.
+app.use(createDocsFeedbackRouter({ prisma }));
 // User-facing notification feed, preferences, push subscriptions, devices, SSE.
 app.use(createNotificationRouter({
   prisma,

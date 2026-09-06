@@ -1,0 +1,42 @@
+---
+id: "api-reference-notifications"
+slug: "api-reference/notifications"
+title: "Notifications"
+description: "Learn how notifications works within API Reference and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["developer"]
+tags: ["api-reference","notifications"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# Notifications
+
+Learn how notifications works within API Reference and how to apply it safely in Tellann.
+
+## Contract
+
+This reference describes the **Notifications** surface as exposed through Tellann's API gateway. Canonical paths are derived from implemented gateway and service routes; roadmap-only operations remain labeled Planned rather than shown as live calls.
+
+## Authentication and scope
+
+Use the authentication mechanism required by the endpoint family and the narrowest applicable organization, application, and environment scope. Ingestion keys and user access tokens are not interchangeable.
+
+## Request
+
+Encode every path value, validate required query parameters, and send JSON only when the operation accepts a body. Preserve the request ID returned by the gateway for investigation and support.
+
+## Response
+
+Successful responses use the endpoint's documented status and JSON representation. Collection responses should be interpreted with their pagination metadata rather than assuming a complete dataset from one page.
+
+## Errors and rate limits
+
+Handle validation, authentication, authorization, not-found, conflict, rate-limit, and service errors explicitly. Back off after a rate-limit response and do not automatically repeat a non-idempotent mutation without confirming its outcome.
+
+## Interactive use
+
+Static request and response examples remain useful without credentials. The interactive console keeps its masked credential in component memory, sends only to the configured gateway origin, and requires confirmation for mutations.
+

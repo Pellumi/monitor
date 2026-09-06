@@ -1,0 +1,43 @@
+---
+id: "reports-missing-state-report"
+slug: "reports/missing-state-report"
+title: "Missing State Report"
+description: "Learn how missing state report works within Reports and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["qa","engineering-manager","product"]
+tags: ["reports","missing-state-report"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# Missing State Report
+
+Learn how missing state report works within Reports and how to apply it safely in Tellann.
+
+## Purpose
+
+**Missing State Report** turns shareable interpretations of graphs, coverage, gaps, sessions, and endpoint evidence into a reviewable artifact for engineering, QA, product, or administrative decisions. Each conclusion should remain traceable to a graph, workflow, session, endpoint, or coverage observation.
+
+## When to use it
+
+Use this report when its evidence matches the decision being made. Executive summaries communicate risk and trend; flow, graph, gap, session, and endpoint reports support deeper diagnosis.
+
+## Included evidence
+
+The report includes the applicable scope, time window, environment, processing status, source artifacts, and findings. Retention and plan entitlements can limit the historical evidence available to regenerate it.
+
+## Metrics and interpretation
+
+Interpret percentages with their denominators and collection conditions. High observed coverage does not prove correctness, and a missing path can indicate either a real quality gap or behavior that was outside the observed scenario.
+
+## Filters and exports
+
+Apply environment, application, workflow, session, or time filters before export. Exported data should preserve labels and provenance so reviewers can reproduce the view without receiving product credentials.
+
+## Limitations and related reports
+
+Reports summarize observed evidence; they do not replace assertions, security review, accessibility testing, or human validation. Compare adjacent report types when a single metric cannot explain the underlying behavior.
+
+

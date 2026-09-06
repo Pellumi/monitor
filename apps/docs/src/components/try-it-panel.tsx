@@ -1,202 +1,109 @@
 'use client';
 
-import { useState } from 'react';
-import { Play, ChevronDown, ChevronRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { CheckCircle, ChevronDown, Loader2, Play, XCircle } from 'lucide-react';
 
 export interface TryItPanelProps {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   pathParams?: string[];
   defaultBody?: string;
+  status?: 'ga' | 'beta' | 'preview' | 'planned';
 }
 
-const DEFAULT_API_KEY = 'tellann_dev_key_12345';
-const DEFAULT_GATEWAY_URL = 'http://localhost:3000';
-
-export function TryItPanel({ method, path, pathParams = [], defaultBody = '' }: TryItPanelProps) {
+export function TryItPanel({ method, path, pathParams = [], defaultBody = '', status = 'ga' }: TryItPanelProps) {
+  const gateway = process.env.NEXT_PUBLIC_API_GATEWAY_URL;
+  const confirmationRef = useRef<HTMLDialogElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [open, setOpen] = useState(false);
-  const [apiKey, setApiKey] = useState(DEFAULT_API_KEY);
+  const [credential, setCredential] = useState('');
   const [body, setBody] = useState(defaultBody);
-  const [paramValues, setParamValues] = useState<Record<string, string>>(
-    Object.fromEntries(pathParams.map((p) => [p, '']))
-  );
-
+  const [params, setParams] = useState<Record<string, string>>(() => Object.fromEntries(pathParams.map((name) => [name, ''])));
   const [loading, setLoading] = useState(false);
-  const [response, setResponse] = useState<{
-    status: number;
-    data: unknown;
-  } | null>(null);
+  const [response, setResponse] = useState<{ status: number; data: unknown; kind: 'success' | 'api-error' | 'invalid-response' } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const resolvedPath = pathParams.reduce(
-    (p, param) => p.replace(`{${param}}`, encodeURIComponent(paramValues[param] || `{${param}}`)),
-    path
-  );
-
   const hasBody = ['POST', 'PUT', 'PATCH'].includes(method);
+  const mutation = method !== 'GET';
+  const resolvedPath = useMemo(() => pathParams.reduce((value, name) => value.replace('{' + name + '}', encodeURIComponent(params[name] || '')), path), [params, path, pathParams]);
+  const finalUrl = gateway ? gateway.replace(/\/$/, '') + resolvedPath : '';
+  const missingParams = pathParams.filter((name) => !params[name]?.trim());
 
-  const handleSend = async () => {
+  function validate() {
+    if (!gateway) return 'Interactive requests are unavailable because the gateway origin is not configured.';
+    if (status === 'planned') return 'Planned endpoints cannot execute requests.';
+    if (missingParams.length) return 'Complete required path values: ' + missingParams.join(', ') + '.';
+    if (!credential.trim()) return 'Enter a credential. It is kept in component memory only.';
+    if (hasBody && body.trim()) {
+      try { JSON.parse(body); } catch { return 'The request body must be valid JSON.'; }
+    }
+    return null;
+  }
+
+  function requestSend() {
+    const issue = validate();
+    if (issue) { setError(issue); return; }
+    setError(null);
+    if (mutation) confirmationRef.current?.showModal();
+    else void send();
+  }
+
+  async function send() {
+    confirmationRef.current?.close();
+    const issue = validate();
+    if (issue) { setError(issue); return; }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort('timeout'), 15000);
     setLoading(true);
     setResponse(null);
     setError(null);
     try {
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-      };
-      if (hasBody && body.trim()) {
-        headers['Content-Type'] = 'application/json';
-      }
-
-      const gatewayUrl = process.env.NEXT_PUBLIC_API_GATEWAY_URL || DEFAULT_GATEWAY_URL;
-      const res = await fetch(`${gatewayUrl}${resolvedPath}`, {
+      const result = await fetch(finalUrl, {
         method,
-        headers,
-        body: hasBody && body.trim() ? body : undefined,
+        signal: controller.signal,
+        headers: {
+          Authorization: 'Bearer ' + credential.trim(),
+          ...(hasBody && body.trim() ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: hasBody && body.trim() ? JSON.stringify(JSON.parse(body)) : undefined,
       });
-
-      let data: unknown;
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('application/json')) {
-        data = await res.json();
-      } else {
-        data = await res.text();
+      const raw = await result.text();
+      let data: unknown = raw;
+      let kind: 'success' | 'api-error' | 'invalid-response' = result.ok ? 'success' : 'api-error';
+      if (raw) {
+        try { data = JSON.parse(raw); }
+        catch { if ((result.headers.get('content-type') || '').includes('application/json')) kind = 'invalid-response'; }
       }
-      setResponse({ status: res.status, data });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setResponse({ status: result.status, data, kind });
+    } catch (requestError) {
+      const message = requestError instanceof Error && requestError.name === 'AbortError' ? 'Request cancelled or timed out.' : 'Network request failed. Check connectivity and the configured gateway.';
+      setError(message);
     } finally {
+      window.clearTimeout(timeout);
+      abortRef.current = null;
       setLoading(false);
     }
-  };
+  }
 
-  const isSuccess = response && response.status >= 200 && response.status < 300;
-
-  return (
-    <div className="my-6 rounded-lg border border-border overflow-hidden bg-muted/30 backdrop-blur-sm transition-colors duration-200">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-5 py-3.5 bg-muted/60 hover:bg-accent/80 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <Play className="w-3.5 h-3.5 text-blue-400" />
-          <span className="text-xs font-semibold text-foreground">Try it out</span>
-          <span className="hidden sm:inline text-[11px] font-mono text-muted-foreground truncate">{resolvedPath}</span>
-        </div>
-        {open ? (
-          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-        )}
-      </button>
-
-      {open && (
-        <div className="p-5 space-y-5 border-t border-border bg-background/40">
-          {/* Authorization Header */}
-          <div className="space-y-2">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Authentication</p>
-            <div className="space-y-1">
-              <label className="text-[10px] text-muted-foreground/60 font-mono">Authorization (Bearer Token)</label>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors placeholder:text-muted-foreground/30"
-                placeholder="API Key"
-                spellCheck={false}
-              />
-            </div>
-          </div>
-
-          {/* Path Params */}
-          {pathParams.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Path Parameters</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {pathParams.map((param) => (
-                  <div key={param} className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground/60 font-mono">{param}</label>
-                    <input
-                      value={paramValues[param]}
-                      onChange={(e) =>
-                        setParamValues((prev) => ({ ...prev, [param]: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors placeholder:text-muted-foreground/30"
-                      placeholder={`Enter ${param}`}
-                      spellCheck={false}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Request Body */}
-          {hasBody && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Request Body (JSON)</p>
-              <textarea
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={Math.min(15, Math.max(5, (body.match(/\n/g) || []).length + 2))}
-                className="w-full px-3 py-3 rounded-lg bg-background border border-border text-foreground text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 resize-y transition-colors leading-relaxed"
-                spellCheck={false}
-              />
-            </div>
-          )}
-
-          {/* Send Action */}
-          <button
-            onClick={handleSend}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors shadow-lg shadow-blue-500/10"
-          >
-            {loading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            {loading ? 'Sending…' : 'Send Request'}
-          </button>
-
-          {/* Response / Errors */}
-          {(response || error) && (
-            <div className="space-y-2 pt-2 border-t border-border">
-              <div className="flex items-center gap-2">
-                {isSuccess ? (
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                ) : (
-                  <XCircle className="w-3.5 h-3.5 text-rose-500" />
-                )}
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Response</p>
-                {response && (
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${
-                      isSuccess
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                        : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                    }`}
-                  >
-                    {response.status}
-                  </span>
-                )}
-              </div>
-
-              {error && (
-                <div className="rounded-lg bg-rose-950/20 border border-rose-900/30 px-4 py-3 text-rose-400 text-xs font-mono">
-                  {error}
-                </div>
-              )}
-
-              {response && (
-                <pre className="rounded-lg bg-background border border-border px-4 py-4 text-[11px] text-muted-foreground font-mono overflow-x-auto max-h-96 overflow-y-auto leading-relaxed whitespace-pre-wrap break-all shadow-inner">
-                  {typeof response.data === 'string'
-                    ? response.data
-                    : JSON.stringify(response.data, null, 2)}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <section className="docs-try-panel" aria-label={'Try ' + method + ' ' + path}>
+    <button type="button" className="docs-try-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <Play aria-hidden="true" /><span>Try this request</span><small>{method}</small><ChevronDown aria-hidden="true" />
+    </button>
+    {open ? <div className="docs-try-content">
+      {!gateway ? <p className="docs-try-notice">Interactive requests are disabled until <code>NEXT_PUBLIC_API_GATEWAY_URL</code> is configured. Static examples remain available.</p> : null}
+      <label>Credential<input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Enter for this request only" /></label>
+      {pathParams.map((name) => <label key={name}>{name}<input value={params[name]} required onChange={(event) => setParams((current) => ({ ...current, [name]: event.target.value }))} /></label>)}
+      {hasBody ? <label>JSON body<textarea value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label> : null}
+      <div className="docs-try-url"><span>Final URL</span><code>{finalUrl || 'Gateway not configured'}{missingParams.length ? ' — missing ' + missingParams.join(', ') : ''}</code></div>
+      {error ? <p className="docs-try-state docs-try-error"><XCircle aria-hidden="true" />{error}</p> : null}
+      {response ? <div className={'docs-try-response docs-try-' + response.kind}><p>{response.kind === 'success' ? <CheckCircle aria-hidden="true" /> : <XCircle aria-hidden="true" />} HTTP {response.status}</p><pre>{typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2)}</pre></div> : null}
+      <div className="docs-try-actions">
+        <button type="button" onClick={requestSend} disabled={loading || status === 'planned' || !gateway}>{loading ? <Loader2 aria-hidden="true" className="spin" /> : <Play aria-hidden="true" />} Send request</button>
+        {loading ? <button type="button" onClick={() => abortRef.current?.abort()}>Cancel</button> : null}
+      </div>
+    </div> : null}
+    <dialog ref={confirmationRef} className="docs-confirm-dialog">
+      <form method="dialog"><h3>Confirm API mutation</h3><p>This request can change data. Review it before sending.</p><dl><dt>Method</dt><dd>{method}</dd><dt>Final URL</dt><dd><code>{finalUrl}</code></dd><dt>Payload</dt><dd>{hasBody && body.trim() ? body.length + ' characters of JSON' : 'No request body'}</dd></dl><div><button value="cancel">Cancel</button><button type="button" onClick={() => void send()}>Confirm and send</button></div></form>
+    </dialog>
+  </section>;
 }

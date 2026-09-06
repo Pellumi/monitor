@@ -1,0 +1,43 @@
+---
+id: "events-telemetry-canonical-schema"
+slug: "events-telemetry/canonical-schema"
+title: "Canonical Schema"
+description: "Learn how canonical schema works within Events & Telemetry and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["developer"]
+tags: ["events-and-telemetry","canonical-schema"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# Canonical Schema
+
+Learn how canonical schema works within Events & Telemetry and how to apply it safely in Tellann.
+
+## Overview
+
+**Canonical Schema** is part of the canonical event contract, delivery behavior, validation rules, and privacy controls. It gives teams a shared way to describe what the application actually did and which evidence supports a quality conclusion.
+
+## Mental model
+
+Read this topic in the sequence Connect → Observe → Demonstrate → Model → Analyze → Investigate → Act. The same event can contribute to a session, a state transition, a workflow, a graph edge, coverage, and a report without those artifacts becoming interchangeable.
+
+## How to use it
+
+Choose the application and environment first, then narrow the evidence by workflow, session, time, endpoint, or event type. Use labels and metadata to make the captured behavior explainable to someone who did not run the original scenario.
+
+## Interpretation
+
+Interpret the result together with its source events and collection conditions. Observed means Tellann received evidence for the behavior; it does not independently prove that the behavior is correct, secure, accessible, or complete.
+
+## Limitations and responsibilities
+
+Customers remain responsible for instrumentation scope, lawful data collection, credential handling, privacy rules, and decisions made from the evidence. Tellann masks and isolates data according to configuration, but cannot infer every domain-specific sensitive field.
+
+## Related concepts
+
+Continue with the adjacent pages in Events & Telemetry to connect this concept to its inputs, derived artifacts, and operational checks. The previous and next links follow the canonical learning order.
+
+

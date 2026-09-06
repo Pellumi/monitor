@@ -1,0 +1,5065 @@
+{
+  "groups": [
+    {
+      "id": "start",
+      "title": "START",
+      "sections": [
+        {
+          "id": "overview",
+          "title": "Overview",
+          "pages": [
+            {
+              "id": "overview-what-is-tellann",
+              "slug": "overview/what-is-tellann",
+              "title": "What is Tellann?",
+              "description": "Understand behavioral quality intelligence and how Tellann turns real software behavior into actionable evidence.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "overview",
+                "what-is-tellann"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "overview-how-tellann-works",
+              "slug": "overview/how-tellann-works",
+              "title": "How Tellann Works",
+              "description": "Follow the lifecycle from captured events to sessions, workflows, graphs, coverage, and reports.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "overview",
+                "how-tellann-works"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "overview-what-tellann-produces",
+              "slug": "overview/what-tellann-produces",
+              "title": "What Tellann Produces",
+              "description": "Explore the behavior graphs, workflow inventories, coverage findings, replays, endpoint insights, and reports Tellann creates.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "overview",
+                "what-tellann-produces"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "overview-supported-platforms",
+              "slug": "overview/supported-platforms",
+              "title": "Supported Platforms",
+              "description": "Learn how supported platforms works within Overview and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "overview",
+                "supported-platforms"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "overview-feature-availability",
+              "slug": "overview/feature-availability",
+              "title": "Feature Availability",
+              "description": "See which Tellann capabilities are generally available, beta, preview, planned, or limited to specific plans.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "overview",
+                "feature-availability"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "get-started",
+          "title": "Get Started",
+          "pages": [
+            {
+              "id": "get-started-quickstart",
+              "slug": "get-started/quickstart",
+              "title": "Quickstart",
+              "description": "Connect an application and confirm your first behavioral event in about five minutes.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "quickstart"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-prerequisites",
+              "slug": "get-started/prerequisites",
+              "title": "Prerequisites",
+              "description": "Learn how prerequisites works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "prerequisites"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-create-an-organization",
+              "slug": "get-started/create-an-organization",
+              "title": "Create an Organization",
+              "description": "Learn how create an organization works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "create-an-organization"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-create-an-application",
+              "slug": "get-started/create-an-application",
+              "title": "Create an Application",
+              "description": "Learn how create an application works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "create-an-application"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-create-an-environment",
+              "slug": "get-started/create-an-environment",
+              "title": "Create an Environment",
+              "description": "Learn how create an environment works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "create-an-environment"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-create-an-ingestion-key",
+              "slug": "get-started/create-an-ingestion-key",
+              "title": "Create an Ingestion Key",
+              "description": "Learn how create an ingestion key works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "create-an-ingestion-key"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-install-the-sdk",
+              "slug": "get-started/install-the-sdk",
+              "title": "Install the SDK",
+              "description": "Learn how install the sdk works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "install-the-sdk"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-verify-your-integration",
+              "slug": "get-started/verify-your-integration",
+              "title": "Verify Your Integration",
+              "description": "Learn how verify your integration works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "verify-your-integration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-first-demonstration",
+              "slug": "get-started/first-demonstration",
+              "title": "First Demonstration",
+              "description": "Learn how first demonstration works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "first-demonstration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-first-behavior-graph",
+              "slug": "get-started/first-behavior-graph",
+              "title": "First Behavior Graph",
+              "description": "Learn how first behavior graph works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "first-behavior-graph"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-first-report",
+              "slug": "get-started/first-report",
+              "title": "First Report",
+              "description": "Learn how first report works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "first-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "get-started-next-steps",
+              "slug": "get-started/next-steps",
+              "title": "Next Steps",
+              "description": "Learn how next steps works within Get Started and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "get-started",
+                "next-steps"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "understand",
+      "title": "UNDERSTAND",
+      "sections": [
+        {
+          "id": "concepts",
+          "title": "Core Concepts",
+          "pages": [
+            {
+              "id": "concepts-behavioral-quality-intelligence",
+              "slug": "concepts/behavioral-quality-intelligence",
+              "title": "Behavioral Quality Intelligence",
+              "description": "Learn how behavioral quality intelligence works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "behavioral-quality-intelligence"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-events",
+              "slug": "concepts/events",
+              "title": "Events",
+              "description": "Learn how events works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-sessions",
+              "slug": "concepts/sessions",
+              "title": "Sessions",
+              "description": "Learn how sessions works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "sessions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-states",
+              "slug": "concepts/states",
+              "title": "States",
+              "description": "Learn how states works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-actions",
+              "slug": "concepts/actions",
+              "title": "Actions",
+              "description": "Learn how actions works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "actions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-transitions",
+              "slug": "concepts/transitions",
+              "title": "Transitions",
+              "description": "Learn how transitions works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "transitions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-workflows",
+              "slug": "concepts/workflows",
+              "title": "Workflows",
+              "description": "Learn how workflows works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "workflows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-behavior-graphs",
+              "slug": "concepts/behavior-graphs",
+              "title": "Behavior Graphs",
+              "description": "Learn how behavior graphs works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "behavior-graphs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-behavioral-coverage",
+              "slug": "concepts/behavioral-coverage",
+              "title": "Behavioral Coverage",
+              "description": "Learn how behavioral coverage works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "behavioral-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-missing-states",
+              "slug": "concepts/missing-states",
+              "title": "Missing States",
+              "description": "Learn how missing states works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "missing-states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-missing-flows",
+              "slug": "concepts/missing-flows",
+              "title": "Missing Flows",
+              "description": "Learn how missing flows works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "missing-flows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "concepts-endpoint-intelligence",
+              "slug": "concepts/endpoint-intelligence",
+              "title": "Endpoint Intelligence",
+              "description": "Learn how endpoint intelligence works within Core Concepts and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "beta",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "core-concepts",
+                "endpoint-intelligence"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "demonstration",
+          "title": "Demonstration Mode",
+          "pages": [
+            {
+              "id": "demonstration-overview",
+              "slug": "demonstration/overview",
+              "title": "Overview",
+              "description": "A practical overview of demonstration mode in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-how-demonstrations-work",
+              "slug": "demonstration/how-demonstrations-work",
+              "title": "How Demonstrations Work",
+              "description": "Learn how how demonstrations work works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "how-demonstrations-work"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-start-stop",
+              "slug": "demonstration/start-stop",
+              "title": "Start / Stop",
+              "description": "Learn how start / stop works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "start-stop"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-guided",
+              "slug": "demonstration/guided",
+              "title": "Guided demonstrations",
+              "description": "Use a defined workflow to capture repeatable behavioral evidence.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "guided"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-exploratory",
+              "slug": "demonstration/exploratory",
+              "title": "Exploratory",
+              "description": "Learn how exploratory works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "exploratory"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-validation",
+              "slug": "demonstration/validation",
+              "title": "Validation",
+              "description": "Learn how validation works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "validation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-workflow-labels",
+              "slug": "demonstration/workflow-labels",
+              "title": "Workflow Labels",
+              "description": "Learn how workflow labels works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "workflow-labels"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-processing",
+              "slug": "demonstration/processing",
+              "title": "Processing",
+              "description": "Learn how processing works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "processing"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-results",
+              "slug": "demonstration/results",
+              "title": "Results",
+              "description": "Learn how results works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "results"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "demonstration-best-practices",
+              "slug": "demonstration/best-practices",
+              "title": "Best Practices",
+              "description": "Learn how best practices works within Demonstration Mode and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "demonstration-mode",
+                "best-practices"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "behavior-workflows",
+          "title": "Behavior & Workflows",
+          "pages": [
+            {
+              "id": "behavior-workflows-behavior-graph-overview",
+              "slug": "behavior-workflows/behavior-graph-overview",
+              "title": "Behavior Graph Overview",
+              "description": "Learn how behavior graph overview works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "behavior-graph-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-graph-viewer",
+              "slug": "behavior-workflows/graph-viewer",
+              "title": "Graph Viewer",
+              "description": "Learn how graph viewer works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "graph-viewer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-state-discovery",
+              "slug": "behavior-workflows/state-discovery",
+              "title": "State Discovery",
+              "description": "Learn how state discovery works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "state-discovery"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-action-discovery",
+              "slug": "behavior-workflows/action-discovery",
+              "title": "Action Discovery",
+              "description": "Learn how action discovery works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "action-discovery"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-transition-discovery",
+              "slug": "behavior-workflows/transition-discovery",
+              "title": "Transition Discovery",
+              "description": "Learn how transition discovery works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "transition-discovery"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-workflow-discovery",
+              "slug": "behavior-workflows/workflow-discovery",
+              "title": "Workflow Discovery",
+              "description": "Learn how workflow discovery works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "workflow-discovery"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-workflow-inventory",
+              "slug": "behavior-workflows/workflow-inventory",
+              "title": "Workflow Inventory",
+              "description": "Learn how workflow inventory works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "workflow-inventory"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-entry-and-exit-points",
+              "slug": "behavior-workflows/entry-and-exit-points",
+              "title": "Entry & Exit Points",
+              "description": "Learn how entry & exit points works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "entry-and-exit-points"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-success-paths",
+              "slug": "behavior-workflows/success-paths",
+              "title": "Success Paths",
+              "description": "Learn how success paths works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "success-paths"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-failure-paths",
+              "slug": "behavior-workflows/failure-paths",
+              "title": "Failure Paths",
+              "description": "Learn how failure paths works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "failure-paths"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "behavior-workflows-graph-metrics",
+              "slug": "behavior-workflows/graph-metrics",
+              "title": "Graph Metrics",
+              "description": "Learn how graph metrics works within Behavior & Workflows and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "behavior-and-workflows",
+                "graph-metrics"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "coverage-quality",
+          "title": "Coverage & Quality",
+          "pages": [
+            {
+              "id": "coverage-quality-coverage-overview",
+              "slug": "coverage-quality/coverage-overview",
+              "title": "Coverage Overview",
+              "description": "Learn how coverage overview works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "coverage-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-workflow-coverage",
+              "slug": "coverage-quality/workflow-coverage",
+              "title": "Workflow Coverage",
+              "description": "Learn how workflow coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "workflow-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-state-coverage",
+              "slug": "coverage-quality/state-coverage",
+              "title": "State Coverage",
+              "description": "Learn how state coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "state-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-transition-coverage",
+              "slug": "coverage-quality/transition-coverage",
+              "title": "Transition Coverage",
+              "description": "Learn how transition coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "transition-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-endpoint-coverage",
+              "slug": "coverage-quality/endpoint-coverage",
+              "title": "Endpoint Coverage",
+              "description": "Learn how endpoint coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "endpoint-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-error-coverage",
+              "slug": "coverage-quality/error-coverage",
+              "title": "Error Coverage",
+              "description": "Learn how error coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "error-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-observed-paths",
+              "slug": "coverage-quality/observed-paths",
+              "title": "Observed Paths",
+              "description": "Learn how observed paths works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "observed-paths"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-missing-paths",
+              "slug": "coverage-quality/missing-paths",
+              "title": "Missing Paths",
+              "description": "Learn how missing paths works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "missing-paths"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-missing-states",
+              "slug": "coverage-quality/missing-states",
+              "title": "Missing States",
+              "description": "Learn how missing states works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "missing-states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-missing-flows",
+              "slug": "coverage-quality/missing-flows",
+              "title": "Missing Flows",
+              "description": "Learn how missing flows works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "missing-flows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-critical-gaps",
+              "slug": "coverage-quality/critical-gaps",
+              "title": "Critical Gaps",
+              "description": "Learn how critical gaps works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "critical-gaps"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-coverage-comparison",
+              "slug": "coverage-quality/coverage-comparison",
+              "title": "Coverage Comparison",
+              "description": "Learn how coverage comparison works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "coverage-comparison"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "coverage-quality-interpreting-coverage",
+              "slug": "coverage-quality/interpreting-coverage",
+              "title": "Interpreting Coverage",
+              "description": "Learn how interpreting coverage works within Coverage & Quality and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "coverage-and-quality",
+                "interpreting-coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "sessions-replay",
+          "title": "Sessions & Replay",
+          "pages": [
+            {
+              "id": "sessions-replay-sessions-overview",
+              "slug": "sessions-replay/sessions-overview",
+              "title": "Sessions Overview",
+              "description": "Learn how sessions overview works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "sessions-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-find-sessions",
+              "slug": "sessions-replay/find-sessions",
+              "title": "Find Sessions",
+              "description": "Learn how find sessions works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "find-sessions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-session-timeline",
+              "slug": "sessions-replay/session-timeline",
+              "title": "Session Timeline",
+              "description": "Learn how session timeline works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "session-timeline"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-session-events",
+              "slug": "sessions-replay/session-events",
+              "title": "Session Events",
+              "description": "Learn how session events works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "session-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-replay-overview",
+              "slug": "sessions-replay/replay-overview",
+              "title": "Replay Overview",
+              "description": "Learn how replay overview works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "replay-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-replay-viewer",
+              "slug": "sessions-replay/replay-viewer",
+              "title": "Replay Viewer",
+              "description": "Learn how replay viewer works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "replay-viewer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-timeline-navigation",
+              "slug": "sessions-replay/timeline-navigation",
+              "title": "Timeline Navigation",
+              "description": "Learn how timeline navigation works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "timeline-navigation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-workflow-activity",
+              "slug": "sessions-replay/workflow-activity",
+              "title": "Workflow Activity",
+              "description": "Learn how workflow activity works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "workflow-activity"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-api-activity",
+              "slug": "sessions-replay/api-activity",
+              "title": "API Activity",
+              "description": "Learn how api activity works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "api-activity"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-error-activity",
+              "slug": "sessions-replay/error-activity",
+              "title": "Error Activity",
+              "description": "Learn how error activity works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "error-activity"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-investigating-failures",
+              "slug": "sessions-replay/investigating-failures",
+              "title": "Investigating Failures",
+              "description": "Learn how investigating failures works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "investigating-failures"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sessions-replay-replay-privacy",
+              "slug": "sessions-replay/replay-privacy",
+              "title": "Replay Privacy",
+              "description": "Learn how replay privacy works within Sessions & Replay and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "sessions-and-replay",
+                "replay-privacy"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "endpoint-intelligence",
+          "title": "Endpoint Intelligence",
+          "pages": [
+            {
+              "id": "endpoint-intelligence-overview",
+              "slug": "endpoint-intelligence/overview",
+              "title": "Overview",
+              "description": "A practical overview of endpoint intelligence in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-endpoint-inventory",
+              "slug": "endpoint-intelligence/endpoint-inventory",
+              "title": "Endpoint Inventory",
+              "description": "Learn how endpoint inventory works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "endpoint-inventory"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-request-volume",
+              "slug": "endpoint-intelligence/request-volume",
+              "title": "Request Volume",
+              "description": "Learn how request volume works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "request-volume"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-response-time",
+              "slug": "endpoint-intelligence/response-time",
+              "title": "Response Time",
+              "description": "Learn how response time works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "response-time"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-error-rates",
+              "slug": "endpoint-intelligence/error-rates",
+              "title": "Error Rates",
+              "description": "Learn how error rates works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "error-rates"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-slow-endpoints",
+              "slug": "endpoint-intelligence/slow-endpoints",
+              "title": "Slow Endpoints",
+              "description": "Learn how slow endpoints works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "slow-endpoints"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-rankings",
+              "slug": "endpoint-intelligence/rankings",
+              "title": "Rankings",
+              "description": "Learn how rankings works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "rankings"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "endpoint-intelligence-recommendations",
+              "slug": "endpoint-intelligence/recommendations",
+              "title": "Recommendations",
+              "description": "Learn how recommendations works within Endpoint Intelligence and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "beta",
+              "audiences": [
+                "developer",
+                "qa",
+                "product"
+              ],
+              "tags": [
+                "endpoint-intelligence",
+                "recommendations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "reports",
+          "title": "Reports",
+          "pages": [
+            {
+              "id": "reports-reports-overview",
+              "slug": "reports/reports-overview",
+              "title": "Reports Overview",
+              "description": "Learn how reports overview works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "reports-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-executive-quality-report",
+              "slug": "reports/executive-quality-report",
+              "title": "Executive Quality Report",
+              "description": "Learn how executive quality report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "executive-quality-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-flow-coverage-report",
+              "slug": "reports/flow-coverage-report",
+              "title": "Flow Coverage Report",
+              "description": "Learn how flow coverage report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "flow-coverage-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-behavior-graph-report",
+              "slug": "reports/behavior-graph-report",
+              "title": "Behavior Graph Report",
+              "description": "Learn how behavior graph report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "behavior-graph-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-missing-flow-report",
+              "slug": "reports/missing-flow-report",
+              "title": "Missing Flow Report",
+              "description": "Learn how missing flow report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "missing-flow-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-missing-state-report",
+              "slug": "reports/missing-state-report",
+              "title": "Missing State Report",
+              "description": "Learn how missing state report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "missing-state-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-session-analysis-report",
+              "slug": "reports/session-analysis-report",
+              "title": "Session Analysis Report",
+              "description": "Learn how session analysis report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "session-analysis-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-endpoint-intelligence-report",
+              "slug": "reports/endpoint-intelligence-report",
+              "title": "Endpoint Intelligence Report",
+              "description": "Learn how endpoint intelligence report works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "beta",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "endpoint-intelligence-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "reports-export-reports",
+              "slug": "reports/export-reports",
+              "title": "Export Reports",
+              "description": "Learn how export reports works within Reports and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "qa",
+                "engineering-manager",
+                "product"
+              ],
+              "tags": [
+                "reports",
+                "export-reports"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "title": "BUILD",
+      "sections": [
+        {
+          "id": "integrations",
+          "title": "Integrate Tellann",
+          "pages": [
+            {
+              "id": "integrations-integration-overview",
+              "slug": "integrations/integration-overview",
+              "title": "Integration Overview",
+              "description": "Learn how integration overview works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "integration-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-react",
+              "slug": "integrations/react",
+              "title": "React",
+              "description": "Learn how react works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "react"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-nextjs",
+              "slug": "integrations/nextjs",
+              "title": "Next.js",
+              "description": "Learn how next.js works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "nextjs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-javascript-typescript",
+              "slug": "integrations/javascript-typescript",
+              "title": "JavaScript / TypeScript",
+              "description": "Learn how javascript / typescript works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "javascript-typescript"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-nodejs",
+              "slug": "integrations/nodejs",
+              "title": "Node.js",
+              "description": "Learn how node.js works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "nodejs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-express",
+              "slug": "integrations/express",
+              "title": "Express",
+              "description": "Learn how express works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "express"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-nestjs",
+              "slug": "integrations/nestjs",
+              "title": "NestJS",
+              "description": "Learn how nestjs works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "nestjs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-fastify",
+              "slug": "integrations/fastify",
+              "title": "Fastify",
+              "description": "Learn how fastify works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "fastify"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-full-stack-correlation",
+              "slug": "integrations/full-stack-correlation",
+              "title": "Full-stack Correlation",
+              "description": "Learn how full-stack correlation works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "full-stack-correlation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-configuration",
+              "slug": "integrations/configuration",
+              "title": "Configuration",
+              "description": "Learn how configuration works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "configuration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-environments",
+              "slug": "integrations/environments",
+              "title": "Environments",
+              "description": "Learn how environments works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "environments"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-automatic-tracking",
+              "slug": "integrations/automatic-tracking",
+              "title": "Automatic Tracking",
+              "description": "Learn how automatic tracking works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "automatic-tracking"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-custom-events",
+              "slug": "integrations/custom-events",
+              "title": "Custom Events",
+              "description": "Learn how custom events works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "custom-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-custom-states",
+              "slug": "integrations/custom-states",
+              "title": "Custom States",
+              "description": "Learn how custom states works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "custom-states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-custom-transitions",
+              "slug": "integrations/custom-transitions",
+              "title": "Custom Transitions",
+              "description": "Learn how custom transitions works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "custom-transitions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-custom-workflows",
+              "slug": "integrations/custom-workflows",
+              "title": "Custom Workflows",
+              "description": "Learn how custom workflows works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "custom-workflows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-error-capture",
+              "slug": "integrations/error-capture",
+              "title": "Error Capture",
+              "description": "Learn how error capture works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "error-capture"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-api-tracking",
+              "slug": "integrations/api-tracking",
+              "title": "API Tracking",
+              "description": "Learn how api tracking works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "api-tracking"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-privacy-configuration",
+              "slug": "integrations/privacy-configuration",
+              "title": "Privacy Configuration",
+              "description": "Learn how privacy configuration works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "privacy-configuration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "integrations-diagnostics",
+              "slug": "integrations/diagnostics",
+              "title": "Diagnostics",
+              "description": "Learn how diagnostics works within Integrate Tellann and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "integrate-tellann",
+                "diagnostics"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "events-telemetry",
+          "title": "Events & Telemetry",
+          "pages": [
+            {
+              "id": "events-telemetry-event-model",
+              "slug": "events-telemetry/event-model",
+              "title": "Event Model",
+              "description": "Learn how event model works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "event-model"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-canonical-schema",
+              "slug": "events-telemetry/canonical-schema",
+              "title": "Canonical Schema",
+              "description": "Learn how canonical schema works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "canonical-schema"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-event-naming",
+              "slug": "events-telemetry/event-naming",
+              "title": "Event Naming",
+              "description": "Learn how event naming works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "event-naming"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-session-events",
+              "slug": "events-telemetry/session-events",
+              "title": "Session Events",
+              "description": "Learn how session events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "session-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-navigation-events",
+              "slug": "events-telemetry/navigation-events",
+              "title": "Navigation Events",
+              "description": "Learn how navigation events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "navigation-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-ui-events",
+              "slug": "events-telemetry/ui-events",
+              "title": "UI Events",
+              "description": "Learn how ui events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "ui-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-form-events",
+              "slug": "events-telemetry/form-events",
+              "title": "Form Events",
+              "description": "Learn how form events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "form-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-state-events",
+              "slug": "events-telemetry/state-events",
+              "title": "State Events",
+              "description": "Learn how state events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "state-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-api-events",
+              "slug": "events-telemetry/api-events",
+              "title": "API Events",
+              "description": "Learn how api events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "api-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-error-events",
+              "slug": "events-telemetry/error-events",
+              "title": "Error Events",
+              "description": "Learn how error events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "error-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-workflow-events",
+              "slug": "events-telemetry/workflow-events",
+              "title": "Workflow Events",
+              "description": "Learn how workflow events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "workflow-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-custom-events",
+              "slug": "events-telemetry/custom-events",
+              "title": "Custom Events",
+              "description": "Learn how custom events works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "custom-events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-metadata",
+              "slug": "events-telemetry/metadata",
+              "title": "Metadata",
+              "description": "Learn how metadata works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "metadata"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-ordering",
+              "slug": "events-telemetry/ordering",
+              "title": "Ordering",
+              "description": "Learn how ordering works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "ordering"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-batching",
+              "slug": "events-telemetry/batching",
+              "title": "Batching",
+              "description": "Learn how batching works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "batching"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-delivery-and-retry",
+              "slug": "events-telemetry/delivery-and-retry",
+              "title": "Delivery & Retry",
+              "description": "Learn how delivery & retry works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "delivery-and-retry"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-validation",
+              "slug": "events-telemetry/validation",
+              "title": "Validation",
+              "description": "Learn how validation works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "validation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "events-telemetry-event-versioning",
+              "slug": "events-telemetry/event-versioning",
+              "title": "Event Versioning",
+              "description": "Learn how event versioning works within Events & Telemetry and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "events-and-telemetry",
+                "event-versioning"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "sdk-reference",
+          "title": "SDK Reference",
+          "pages": [
+            {
+              "id": "sdk-reference-overview",
+              "slug": "sdk-reference/overview",
+              "title": "Overview",
+              "description": "A practical overview of sdk reference in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-initialization",
+              "slug": "sdk-reference/initialization",
+              "title": "Initialization",
+              "description": "Learn how initialization works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "initialization"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-configuration",
+              "slug": "sdk-reference/configuration",
+              "title": "Configuration",
+              "description": "Learn how configuration works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "configuration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-core",
+              "slug": "sdk-reference/core",
+              "title": "Core",
+              "description": "Learn how core works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "core"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-events",
+              "slug": "sdk-reference/events",
+              "title": "Events",
+              "description": "Learn how events works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-sessions",
+              "slug": "sdk-reference/sessions",
+              "title": "Sessions",
+              "description": "Learn how sessions works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "sessions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-states",
+              "slug": "sdk-reference/states",
+              "title": "States",
+              "description": "Learn how states works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-workflows",
+              "slug": "sdk-reference/workflows",
+              "title": "Workflows",
+              "description": "Learn how workflows works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "workflows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-api-tracking",
+              "slug": "sdk-reference/api-tracking",
+              "title": "API Tracking",
+              "description": "Learn how api tracking works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "api-tracking"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-errors",
+              "slug": "sdk-reference/errors",
+              "title": "Errors",
+              "description": "Learn how errors works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "errors"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-replay",
+              "slug": "sdk-reference/replay",
+              "title": "Replay",
+              "description": "Learn how replay works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "replay"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-privacy",
+              "slug": "sdk-reference/privacy",
+              "title": "Privacy",
+              "description": "Learn how privacy works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "privacy"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-plugins",
+              "slug": "sdk-reference/plugins",
+              "title": "Plugins",
+              "description": "Learn how plugins works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "plugins"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-diagnostics",
+              "slug": "sdk-reference/diagnostics",
+              "title": "Diagnostics",
+              "description": "Learn how diagnostics works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "diagnostics"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-sdk-errors",
+              "slug": "sdk-reference/sdk-errors",
+              "title": "SDK Errors",
+              "description": "Learn how sdk errors works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "sdk-errors"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "sdk-reference-version-compatibility",
+              "slug": "sdk-reference/version-compatibility",
+              "title": "Version Compatibility",
+              "description": "Learn how version compatibility works within SDK Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "sdk-reference",
+                "version-compatibility"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "api-reference",
+          "title": "API Reference",
+          "pages": [
+            {
+              "id": "api-reference-overview",
+              "slug": "api-reference/overview",
+              "title": "Overview",
+              "description": "A practical overview of api reference in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-base-urls",
+              "slug": "api-reference/base-urls",
+              "title": "Base URLs",
+              "description": "Learn how base urls works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "base-urls"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-authentication",
+              "slug": "api-reference/authentication",
+              "title": "Authentication",
+              "description": "Learn how authentication works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "authentication"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-responses",
+              "slug": "api-reference/responses",
+              "title": "Responses",
+              "description": "Learn how responses works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "responses"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-errors",
+              "slug": "api-reference/errors",
+              "title": "Errors",
+              "description": "Learn how errors works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "errors"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-pagination",
+              "slug": "api-reference/pagination",
+              "title": "Pagination",
+              "description": "Learn how pagination works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "pagination"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-rate-limits",
+              "slug": "api-reference/rate-limits",
+              "title": "Rate Limits",
+              "description": "Learn how rate limits works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "rate-limits"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-organizations",
+              "slug": "api-reference/organizations",
+              "title": "Organizations",
+              "description": "Learn how organizations works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "organizations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-users",
+              "slug": "api-reference/users",
+              "title": "Users",
+              "description": "Learn how users works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "users"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-applications",
+              "slug": "api-reference/applications",
+              "title": "Applications",
+              "description": "Learn how applications works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "applications"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-api-keys",
+              "slug": "api-reference/api-keys",
+              "title": "API Keys",
+              "description": "Learn how api keys works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "api-keys"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-events",
+              "slug": "api-reference/events",
+              "title": "Events",
+              "description": "Learn how events works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "events"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-sessions",
+              "slug": "api-reference/sessions",
+              "title": "Sessions",
+              "description": "Learn how sessions works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "sessions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-demonstrations",
+              "slug": "api-reference/demonstrations",
+              "title": "Demonstrations",
+              "description": "Learn how demonstrations works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "demonstrations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-behavior-graphs",
+              "slug": "api-reference/behavior-graphs",
+              "title": "Behavior Graphs",
+              "description": "Learn how behavior graphs works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "behavior-graphs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-workflows",
+              "slug": "api-reference/workflows",
+              "title": "Workflows",
+              "description": "Learn how workflows works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "workflows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-coverage",
+              "slug": "api-reference/coverage",
+              "title": "Coverage",
+              "description": "Learn how coverage works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-missing-states",
+              "slug": "api-reference/missing-states",
+              "title": "Missing States",
+              "description": "Learn how missing states works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "missing-states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-missing-flows",
+              "slug": "api-reference/missing-flows",
+              "title": "Missing Flows",
+              "description": "Learn how missing flows works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "missing-flows"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-endpoints",
+              "slug": "api-reference/endpoints",
+              "title": "Endpoints",
+              "description": "Learn how endpoints works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "endpoints"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-dashboard",
+              "slug": "api-reference/dashboard",
+              "title": "Dashboard",
+              "description": "Learn how dashboard works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "dashboard"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-reports",
+              "slug": "api-reference/reports",
+              "title": "Reports",
+              "description": "Learn how reports works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "reports"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-notifications",
+              "slug": "api-reference/notifications",
+              "title": "Notifications",
+              "description": "Learn how notifications works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "notifications"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-webhooks",
+              "slug": "api-reference/webhooks",
+              "title": "Webhooks",
+              "description": "Learn how webhooks works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "webhooks"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-privacy-rules",
+              "slug": "api-reference/privacy-rules",
+              "title": "Privacy Rules",
+              "description": "Learn how privacy rules works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "privacy-rules"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-retention-policies",
+              "slug": "api-reference/retention-policies",
+              "title": "Retention Policies",
+              "description": "Learn how retention policies works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "retention-policies"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-audit-logs",
+              "slug": "api-reference/audit-logs",
+              "title": "Audit Logs",
+              "description": "Learn how audit logs works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "audit-logs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "api-reference-health",
+              "slug": "api-reference/health",
+              "title": "Health",
+              "description": "Learn how health works within API Reference and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "api-reference",
+                "health"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "operate",
+      "title": "OPERATE",
+      "sections": [
+        {
+          "id": "workspace-admin",
+          "title": "Workspace & Administration",
+          "pages": [
+            {
+              "id": "workspace-admin-organizations",
+              "slug": "workspace-admin/organizations",
+              "title": "Organizations",
+              "description": "Learn how organizations works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "organizations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-applications",
+              "slug": "workspace-admin/applications",
+              "title": "Applications",
+              "description": "Learn how applications works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "applications"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-environments",
+              "slug": "workspace-admin/environments",
+              "title": "Environments",
+              "description": "Learn how environments works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "environments"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-members",
+              "slug": "workspace-admin/members",
+              "title": "Members",
+              "description": "Learn how members works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "members"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-invitations",
+              "slug": "workspace-admin/invitations",
+              "title": "Invitations",
+              "description": "Learn how invitations works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "invitations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-roles-and-permissions",
+              "slug": "workspace-admin/roles-and-permissions",
+              "title": "Roles & Permissions",
+              "description": "Learn how roles & permissions works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "roles-and-permissions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-rbac",
+              "slug": "workspace-admin/rbac",
+              "title": "RBAC",
+              "description": "Learn how rbac works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "rbac"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-api-keys",
+              "slug": "workspace-admin/api-keys",
+              "title": "API Keys",
+              "description": "Learn how api keys works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "api-keys"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-audit-logs",
+              "slug": "workspace-admin/audit-logs",
+              "title": "Audit Logs",
+              "description": "Learn how audit logs works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "audit-logs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-notifications",
+              "slug": "workspace-admin/notifications",
+              "title": "Notifications",
+              "description": "Learn how notifications works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "notifications"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "workspace-admin-retention",
+              "slug": "workspace-admin/retention",
+              "title": "Retention",
+              "description": "Learn how retention works within Workspace & Administration and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "workspace-and-administration",
+                "retention"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "security-privacy",
+          "title": "Security & Privacy",
+          "pages": [
+            {
+              "id": "security-privacy-security-overview",
+              "slug": "security-privacy/security-overview",
+              "title": "Security Overview",
+              "description": "Learn how security overview works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "security-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-privacy-overview",
+              "slug": "security-privacy/privacy-overview",
+              "title": "Privacy Overview",
+              "description": "Learn how privacy overview works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "privacy-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-what-tellann-collects",
+              "slug": "security-privacy/what-tellann-collects",
+              "title": "What Tellann Collects",
+              "description": "Learn how what tellann collects works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "what-tellann-collects"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-what-tellann-masks",
+              "slug": "security-privacy/what-tellann-masks",
+              "title": "What Tellann Masks",
+              "description": "Learn how what tellann masks works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "what-tellann-masks"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-what-tellann-never-collects",
+              "slug": "security-privacy/what-tellann-never-collects",
+              "title": "What Tellann Never Collects",
+              "description": "Learn how what tellann never collects works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "what-tellann-never-collects"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-pii-handling",
+              "slug": "security-privacy/pii-handling",
+              "title": "PII Handling",
+              "description": "Learn how pii handling works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "pii-handling"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-custom-privacy-rules",
+              "slug": "security-privacy/custom-privacy-rules",
+              "title": "Custom Privacy Rules",
+              "description": "Learn how custom privacy rules works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "custom-privacy-rules"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-replay-privacy",
+              "slug": "security-privacy/replay-privacy",
+              "title": "Replay Privacy",
+              "description": "Learn how replay privacy works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "replay-privacy"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-encryption",
+              "slug": "security-privacy/encryption",
+              "title": "Encryption",
+              "description": "Learn how encryption works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "encryption"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-authentication",
+              "slug": "security-privacy/authentication",
+              "title": "Authentication",
+              "description": "Learn how authentication works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "authentication"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-mfa",
+              "slug": "security-privacy/mfa",
+              "title": "MFA",
+              "description": "Learn how mfa works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "mfa"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-sso",
+              "slug": "security-privacy/sso",
+              "title": "SSO",
+              "description": "Learn how sso works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "plans": [
+                "enterprise"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "sso"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-api-key-security",
+              "slug": "security-privacy/api-key-security",
+              "title": "API Key Security",
+              "description": "Learn how api key security works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "api-key-security"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-tenant-isolation",
+              "slug": "security-privacy/tenant-isolation",
+              "title": "Tenant Isolation",
+              "description": "Learn how tenant isolation works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "tenant-isolation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-access-control",
+              "slug": "security-privacy/access-control",
+              "title": "Access Control",
+              "description": "Learn how access control works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "access-control"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-audit-logging",
+              "slug": "security-privacy/audit-logging",
+              "title": "Audit Logging",
+              "description": "Learn how audit logging works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "audit-logging"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-data-retention",
+              "slug": "security-privacy/data-retention",
+              "title": "Data Retention",
+              "description": "Learn how data retention works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "data-retention"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-data-deletion",
+              "slug": "security-privacy/data-deletion",
+              "title": "Data Deletion",
+              "description": "Learn how data deletion works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "data-deletion"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-data-residency",
+              "slug": "security-privacy/data-residency",
+              "title": "Data Residency",
+              "description": "Learn how data residency works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "plans": [
+                "enterprise"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "data-residency"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "security-privacy-compliance",
+              "slug": "security-privacy/compliance",
+              "title": "Compliance",
+              "description": "Learn how compliance works within Security & Privacy and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "plans": [
+                "enterprise"
+              ],
+              "tags": [
+                "security-and-privacy",
+                "compliance"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "billing-usage",
+          "title": "Billing & Usage",
+          "pages": [
+            {
+              "id": "billing-usage-overview",
+              "slug": "billing-usage/overview",
+              "title": "Overview",
+              "description": "A practical overview of billing & usage in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-plans",
+              "slug": "billing-usage/plans",
+              "title": "Plans",
+              "description": "Learn how plans works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "plans"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-plan-comparison",
+              "slug": "billing-usage/plan-comparison",
+              "title": "Plan Comparison",
+              "description": "Learn how plan comparison works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "plan-comparison"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-entitlements",
+              "slug": "billing-usage/entitlements",
+              "title": "Entitlements",
+              "description": "Learn how entitlements works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "entitlements"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-application-limits",
+              "slug": "billing-usage/application-limits",
+              "title": "Application Limits",
+              "description": "Learn how application limits works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "application-limits"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-member-limits",
+              "slug": "billing-usage/member-limits",
+              "title": "Member Limits",
+              "description": "Learn how member limits works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "member-limits"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-storage",
+              "slug": "billing-usage/storage",
+              "title": "Storage",
+              "description": "Learn how storage works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "storage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-retention",
+              "slug": "billing-usage/retention",
+              "title": "Retention",
+              "description": "Learn how retention works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "retention"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-demonstration-usage",
+              "slug": "billing-usage/demonstration-usage",
+              "title": "Demonstration Usage",
+              "description": "Learn how demonstration usage works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "demonstration-usage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-usage-warnings",
+              "slug": "billing-usage/usage-warnings",
+              "title": "Usage Warnings",
+              "description": "Learn how usage warnings works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "usage-warnings"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-upgrade-downgrade",
+              "slug": "billing-usage/upgrade-downgrade",
+              "title": "Upgrade / Downgrade",
+              "description": "Learn how upgrade / downgrade works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "upgrade-downgrade"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "billing-usage-billing-faq",
+              "slug": "billing-usage/billing-faq",
+              "title": "Billing FAQ",
+              "description": "Learn how billing faq works within Billing & Usage and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "admin",
+                "engineering-manager"
+              ],
+              "tags": [
+                "billing-and-usage",
+                "billing-faq"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "deployment",
+          "title": "Deployment",
+          "pages": [
+            {
+              "id": "deployment-overview",
+              "slug": "deployment/overview",
+              "title": "Overview",
+              "description": "A practical overview of deployment in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-tellann-cloud",
+              "slug": "deployment/tellann-cloud",
+              "title": "Tellann Cloud",
+              "description": "Learn how tellann cloud works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "tellann-cloud"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-self-hosted",
+              "slug": "deployment/self-hosted",
+              "title": "Self-Hosted",
+              "description": "Learn how self-hosted works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "developer"
+              ],
+              "plans": [
+                "enterprise"
+              ],
+              "tags": [
+                "deployment",
+                "self-hosted"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-requirements",
+              "slug": "deployment/requirements",
+              "title": "Requirements",
+              "description": "Learn how requirements works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "requirements"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-kubernetes",
+              "slug": "deployment/kubernetes",
+              "title": "Kubernetes",
+              "description": "Learn how kubernetes works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "kubernetes"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-helm",
+              "slug": "deployment/helm",
+              "title": "Helm",
+              "description": "Learn how helm works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "helm"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-network-configuration",
+              "slug": "deployment/network-configuration",
+              "title": "Network Configuration",
+              "description": "Learn how network configuration works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "network-configuration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-environment-variables",
+              "slug": "deployment/environment-variables",
+              "title": "Environment Variables",
+              "description": "Learn how environment variables works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "environment-variables"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-secrets",
+              "slug": "deployment/secrets",
+              "title": "Secrets",
+              "description": "Learn how secrets works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "secrets"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-storage",
+              "slug": "deployment/storage",
+              "title": "Storage",
+              "description": "Learn how storage works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "storage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-backups",
+              "slug": "deployment/backups",
+              "title": "Backups",
+              "description": "Learn how backups works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "backups"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-disaster-recovery",
+              "slug": "deployment/disaster-recovery",
+              "title": "Disaster Recovery",
+              "description": "Learn how disaster recovery works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "disaster-recovery"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-scaling",
+              "slug": "deployment/scaling",
+              "title": "Scaling",
+              "description": "Learn how scaling works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "scaling"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-upgrades",
+              "slug": "deployment/upgrades",
+              "title": "Upgrades",
+              "description": "Learn how upgrades works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "upgrades"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-private-networking",
+              "slug": "deployment/private-networking",
+              "title": "Private Networking",
+              "description": "Learn how private networking works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "deployment",
+                "private-networking"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "deployment-data-residency",
+              "slug": "deployment/data-residency",
+              "title": "Data Residency",
+              "description": "Learn how data residency works within Deployment and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "planned",
+              "audiences": [
+                "developer"
+              ],
+              "plans": [
+                "enterprise"
+              ],
+              "tags": [
+                "deployment",
+                "data-residency"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "architecture",
+          "title": "Platform Architecture",
+          "pages": [
+            {
+              "id": "architecture-architecture-overview",
+              "slug": "architecture/architecture-overview",
+              "title": "Architecture Overview",
+              "description": "Learn how architecture overview works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "architecture-overview"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-capture-layer",
+              "slug": "architecture/capture-layer",
+              "title": "Capture Layer",
+              "description": "Learn how capture layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "capture-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-ingestion-layer",
+              "slug": "architecture/ingestion-layer",
+              "title": "Ingestion Layer",
+              "description": "Learn how ingestion layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "ingestion-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-streaming-layer",
+              "slug": "architecture/streaming-layer",
+              "title": "Streaming Layer",
+              "description": "Learn how streaming layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "streaming-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-processing-layer",
+              "slug": "architecture/processing-layer",
+              "title": "Processing Layer",
+              "description": "Learn how processing layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "processing-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-storage-layer",
+              "slug": "architecture/storage-layer",
+              "title": "Storage Layer",
+              "description": "Learn how storage layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "storage-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-presentation-layer",
+              "slug": "architecture/presentation-layer",
+              "title": "Presentation Layer",
+              "description": "Learn how presentation layer works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "presentation-layer"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-event-pipeline",
+              "slug": "architecture/event-pipeline",
+              "title": "Event Pipeline",
+              "description": "Learn how event pipeline works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "event-pipeline"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-session-engine",
+              "slug": "architecture/session-engine",
+              "title": "Session Engine",
+              "description": "Learn how session engine works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "session-engine"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-replay-engine",
+              "slug": "architecture/replay-engine",
+              "title": "Replay Engine",
+              "description": "Learn how replay engine works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "replay-engine"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-graph-engine",
+              "slug": "architecture/graph-engine",
+              "title": "Graph Engine",
+              "description": "Learn how graph engine works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "graph-engine"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-coverage-engine",
+              "slug": "architecture/coverage-engine",
+              "title": "Coverage Engine",
+              "description": "Learn how coverage engine works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "coverage-engine"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-multi-tenancy",
+              "slug": "architecture/multi-tenancy",
+              "title": "Multi-Tenancy",
+              "description": "Learn how multi-tenancy works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "multi-tenancy"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "architecture-data-flow",
+              "slug": "architecture/data-flow",
+              "title": "Data Flow",
+              "description": "Learn how data flow works within Platform Architecture and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer"
+              ],
+              "tags": [
+                "platform-architecture",
+                "data-flow"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "resources",
+      "title": "RESOURCES",
+      "sections": [
+        {
+          "id": "tutorials",
+          "title": "Tutorials",
+          "pages": [
+            {
+              "id": "tutorials-first-integration",
+              "slug": "tutorials/first-integration",
+              "title": "First Integration",
+              "description": "Learn how first integration works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "first-integration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-e-commerce",
+              "slug": "tutorials/e-commerce",
+              "title": "E-commerce",
+              "description": "Learn how e-commerce works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "e-commerce"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-saas",
+              "slug": "tutorials/saas",
+              "title": "SaaS",
+              "description": "Learn how saas works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "saas"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-lms",
+              "slug": "tutorials/lms",
+              "title": "LMS",
+              "description": "Learn how lms works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "lms"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-registration",
+              "slug": "tutorials/registration",
+              "title": "Registration",
+              "description": "Learn how registration works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "registration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-authentication",
+              "slug": "tutorials/authentication",
+              "title": "Authentication",
+              "description": "Learn how authentication works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "authentication"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-checkout",
+              "slug": "tutorials/checkout",
+              "title": "Checkout",
+              "description": "Learn how checkout works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "checkout"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-missing-error-paths",
+              "slug": "tutorials/missing-error-paths",
+              "title": "Missing Error Paths",
+              "description": "Learn how missing error paths works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "missing-error-paths"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-missing-states",
+              "slug": "tutorials/missing-states",
+              "title": "Missing States",
+              "description": "Learn how missing states works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "missing-states"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-failed-session-investigation",
+              "slug": "tutorials/failed-session-investigation",
+              "title": "Failed Session Investigation",
+              "description": "Learn how failed session investigation works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "failed-session-investigation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-slow-endpoint-investigation",
+              "slug": "tutorials/slow-endpoint-investigation",
+              "title": "Slow Endpoint Investigation",
+              "description": "Learn how slow endpoint investigation works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "slow-endpoint-investigation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-privacy-configuration",
+              "slug": "tutorials/privacy-configuration",
+              "title": "Privacy Configuration",
+              "description": "Learn how privacy configuration works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "privacy-configuration"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "tutorials-generate-a-qa-report",
+              "slug": "tutorials/generate-a-qa-report",
+              "title": "Generate a QA Report",
+              "description": "Learn how generate a qa report works within Tutorials and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "tutorials",
+                "generate-a-qa-report"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        },
+        {
+          "id": "troubleshooting",
+          "title": "Troubleshooting",
+          "pages": [
+            {
+              "id": "troubleshooting-installation",
+              "slug": "troubleshooting/installation",
+              "title": "Installation",
+              "description": "Learn how installation works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "installation"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-connectivity",
+              "slug": "troubleshooting/connectivity",
+              "title": "Connectivity",
+              "description": "Learn how connectivity works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "connectivity"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-api-keys",
+              "slug": "troubleshooting/api-keys",
+              "title": "API Keys",
+              "description": "Learn how api keys works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "api-keys"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-sessions",
+              "slug": "troubleshooting/sessions",
+              "title": "Sessions",
+              "description": "Learn how sessions works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "sessions"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-demonstrations",
+              "slug": "troubleshooting/demonstrations",
+              "title": "Demonstrations",
+              "description": "Learn how demonstrations works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "demonstrations"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-behavior-graphs",
+              "slug": "troubleshooting/behavior-graphs",
+              "title": "Behavior Graphs",
+              "description": "Learn how behavior graphs works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "behavior-graphs"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-coverage",
+              "slug": "troubleshooting/coverage",
+              "title": "Coverage",
+              "description": "Learn how coverage works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "coverage"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-session-replay",
+              "slug": "troubleshooting/session-replay",
+              "title": "Session Replay",
+              "description": "Learn how session replay works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "session-replay"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            },
+            {
+              "id": "troubleshooting-api-errors",
+              "slug": "troubleshooting/api-errors",
+              "title": "API Errors",
+              "description": "Learn how api errors works within Troubleshooting and how to apply it safely in Tellann.",
+              "version": "v1",
+              "status": "ga",
+              "audiences": [
+                "developer",
+                "qa"
+              ],
+              "tags": [
+                "troubleshooting",
+                "api-errors"
+              ],
+              "related": [],
+              "updatedAt": "2026-09-06"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "standalone": [
+    {
+      "id": "glossary",
+      "slug": "glossary",
+      "title": "Glossary",
+      "description": "Definitions for Tellann concepts, product language, events, workflows, coverage, sessions, and platform terms.",
+      "version": "v1",
+      "status": "ga",
+      "audiences": [
+        "developer",
+        "qa",
+        "engineering-manager",
+        "product",
+        "admin"
+      ],
+      "tags": [
+        "reference",
+        "terminology"
+      ],
+      "related": [
+        "concepts-behavioral-quality-intelligence"
+      ],
+      "updatedAt": "2026-09-06"
+    },
+    {
+      "id": "faq",
+      "slug": "faq",
+      "title": "FAQ",
+      "description": "Answers to common questions about Tellann capabilities, integration, privacy, plans, deployment, and support.",
+      "version": "v1",
+      "status": "ga",
+      "audiences": [
+        "developer",
+        "qa",
+        "engineering-manager",
+        "product",
+        "admin"
+      ],
+      "tags": [
+        "support",
+        "questions"
+      ],
+      "related": [
+        "overview-feature-availability"
+      ],
+      "updatedAt": "2026-09-06"
+    }
+  ],
+  "external": [
+    {
+      "id": "changelog",
+      "title": "Changelog",
+      "href": "/changelog",
+      "env": "NEXT_PUBLIC_MARKETING_URL"
+    },
+    {
+      "id": "roadmap",
+      "title": "Roadmap",
+      "href": "/roadmap",
+      "env": "NEXT_PUBLIC_MARKETING_URL"
+    },
+    {
+      "id": "status",
+      "title": "System Status",
+      "href": "",
+      "env": "NEXT_PUBLIC_STATUS_URL"
+    },
+    {
+      "id": "support",
+      "title": "Contact Support",
+      "href": "/contact",
+      "env": "NEXT_PUBLIC_MARKETING_URL"
+    }
+  ]
+}

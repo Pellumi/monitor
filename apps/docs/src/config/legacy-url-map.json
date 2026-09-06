@@ -1,0 +1,502 @@
+[
+  {
+    "source": "/what-is-tellann",
+    "destination": "/overview/what-is-tellann",
+    "external": false
+  },
+  {
+    "source": "/why-exists",
+    "destination": "/overview/what-is-tellann",
+    "external": false
+  },
+  {
+    "source": "/getting-started",
+    "destination": "/get-started/quickstart",
+    "external": false
+  },
+  {
+    "source": "/quick-start",
+    "destination": "/get-started/quickstart",
+    "external": false
+  },
+  {
+    "source": "/concepts",
+    "destination": "/concepts/behavioral-quality-intelligence",
+    "external": false
+  },
+  {
+    "source": "/first-demonstration",
+    "destination": "/get-started/first-demonstration",
+    "external": false
+  },
+  {
+    "source": "/first-report",
+    "destination": "/get-started/first-report",
+    "external": false
+  },
+  {
+    "source": "/concepts/behavioral-qa",
+    "destination": "/concepts/behavioral-quality-intelligence",
+    "external": false
+  },
+  {
+    "source": "/concepts/demonstration-mode",
+    "destination": "/demonstration/overview",
+    "external": false
+  },
+  {
+    "source": "/concepts/behavior-graphs",
+    "destination": "/concepts/behavior-graphs",
+    "external": false
+  },
+  {
+    "source": "/concepts/workflows",
+    "destination": "/concepts/workflows",
+    "external": false
+  },
+  {
+    "source": "/concepts/states",
+    "destination": "/concepts/states",
+    "external": false
+  },
+  {
+    "source": "/concepts/transitions",
+    "destination": "/concepts/transitions",
+    "external": false
+  },
+  {
+    "source": "/concepts/coverage",
+    "destination": "/concepts/behavioral-coverage",
+    "external": false
+  },
+  {
+    "source": "/concepts/missing-states",
+    "destination": "/concepts/missing-states",
+    "external": false
+  },
+  {
+    "source": "/concepts/missing-flows",
+    "destination": "/concepts/missing-flows",
+    "external": false
+  },
+  {
+    "source": "/concepts/reconciliation-engine",
+    "destination": "/concepts/behavioral-quality-intelligence",
+    "external": false
+  },
+  {
+    "source": "/concepts/expected-vs-observed",
+    "destination": "/coverage-quality/coverage-comparison",
+    "external": false
+  },
+  {
+    "source": "/guides/developer",
+    "destination": "/integrations/integration-overview",
+    "external": false
+  },
+  {
+    "source": "/guides/qa",
+    "destination": "/demonstration/guided",
+    "external": false
+  },
+  {
+    "source": "/guides/product-manager",
+    "destination": "/behavior-workflows/workflow-inventory",
+    "external": false
+  },
+  {
+    "source": "/guides/admin",
+    "destination": "/workspace-admin/organizations",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/introduction",
+    "destination": "/demonstration/overview",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/recording",
+    "destination": "/demonstration/start-stop",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/guided",
+    "destination": "/demonstration/guided",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/exploratory",
+    "destination": "/demonstration/exploratory",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/validation",
+    "destination": "/demonstration/validation",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/learning-behavior",
+    "destination": "/demonstration/processing",
+    "external": false
+  },
+  {
+    "source": "/demo-mode/best-practices",
+    "destination": "/demonstration/best-practices",
+    "external": false
+  },
+  {
+    "source": "/analysis/behavior-graphs",
+    "destination": "/behavior-workflows/behavior-graph-overview",
+    "external": false
+  },
+  {
+    "source": "/analysis/coverage",
+    "destination": "/coverage-quality/coverage-overview",
+    "external": false
+  },
+  {
+    "source": "/analysis/missing-behavior",
+    "destination": "/coverage-quality/missing-paths",
+    "external": false
+  },
+  {
+    "source": "/analysis/reports",
+    "destination": "/reports/reports-overview",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/overview",
+    "destination": "/concepts/behavioral-quality-intelligence",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/expected-graphs",
+    "destination": "/coverage-quality/coverage-comparison",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/demonstrated-graphs",
+    "destination": "/behavior-workflows/graph-viewer",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/observed-graphs",
+    "destination": "/behavior-workflows/graph-viewer",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/gap-detection",
+    "destination": "/coverage-quality/critical-gaps",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/coverage-scoring",
+    "destination": "/coverage-quality/interpreting-coverage",
+    "external": false
+  },
+  {
+    "source": "/reconciliation/release-confidence",
+    "destination": "/reports/executive-quality-report",
+    "external": false
+  },
+  {
+    "source": "/session-replay/overview",
+    "destination": "/sessions-replay/replay-overview",
+    "external": false
+  },
+  {
+    "source": "/session-replay/timeline",
+    "destination": "/sessions-replay/timeline-navigation",
+    "external": false
+  },
+  {
+    "source": "/session-replay/errors",
+    "destination": "/sessions-replay/error-activity",
+    "external": false
+  },
+  {
+    "source": "/session-replay/workflow-analysis",
+    "destination": "/sessions-replay/workflow-activity",
+    "external": false
+  },
+  {
+    "source": "/session-replay/privacy",
+    "destination": "/sessions-replay/replay-privacy",
+    "external": false
+  },
+  {
+    "source": "/sdk-reference/frontend",
+    "destination": "/sdk-reference/overview",
+    "external": false
+  },
+  {
+    "source": "/sdk-reference/backend",
+    "destination": "/sdk-reference/overview",
+    "external": false
+  },
+  {
+    "source": "/sdk-reference/event-reference",
+    "destination": "/sdk-reference/events",
+    "external": false
+  },
+  {
+    "source": "/api-reference/authentication",
+    "destination": "/api-reference/authentication",
+    "external": false
+  },
+  {
+    "source": "/api-reference/organizations",
+    "destination": "/api-reference/organizations",
+    "external": false
+  },
+  {
+    "source": "/api-reference/applications",
+    "destination": "/api-reference/applications",
+    "external": false
+  },
+  {
+    "source": "/api-reference/api-keys",
+    "destination": "/api-reference/api-keys",
+    "external": false
+  },
+  {
+    "source": "/api-reference/events",
+    "destination": "/api-reference/events",
+    "external": false
+  },
+  {
+    "source": "/api-reference/sessions",
+    "destination": "/api-reference/sessions",
+    "external": false
+  },
+  {
+    "source": "/api-reference/demonstrations",
+    "destination": "/api-reference/demonstrations",
+    "external": false
+  },
+  {
+    "source": "/api-reference/graphs",
+    "destination": "/api-reference/behavior-graphs",
+    "external": false
+  },
+  {
+    "source": "/api-reference/coverage",
+    "destination": "/api-reference/coverage",
+    "external": false
+  },
+  {
+    "source": "/api-reference/reports",
+    "destination": "/api-reference/reports",
+    "external": false
+  },
+  {
+    "source": "/administration/organizations",
+    "destination": "/workspace-admin/organizations",
+    "external": false
+  },
+  {
+    "source": "/administration/applications",
+    "destination": "/workspace-admin/applications",
+    "external": false
+  },
+  {
+    "source": "/administration/environments",
+    "destination": "/workspace-admin/environments",
+    "external": false
+  },
+  {
+    "source": "/administration/team-members",
+    "destination": "/workspace-admin/members",
+    "external": false
+  },
+  {
+    "source": "/administration/rbac",
+    "destination": "/workspace-admin/rbac",
+    "external": false
+  },
+  {
+    "source": "/administration/audit-logs",
+    "destination": "/workspace-admin/audit-logs",
+    "external": false
+  },
+  {
+    "source": "/administration/retention-policies",
+    "destination": "/workspace-admin/retention",
+    "external": false
+  },
+  {
+    "source": "/security-privacy/security",
+    "destination": "/security-privacy/security-overview",
+    "external": false
+  },
+  {
+    "source": "/security-privacy/privacy",
+    "destination": "/security-privacy/privacy-overview",
+    "external": false
+  },
+  {
+    "source": "/billing/pricing-overview",
+    "destination": "/billing-usage/overview",
+    "external": false
+  },
+  {
+    "source": "/billing/plans-comparison",
+    "destination": "/billing-usage/plan-comparison",
+    "external": false
+  },
+  {
+    "source": "/billing/entitlements",
+    "destination": "/billing-usage/entitlements",
+    "external": false
+  },
+  {
+    "source": "/billing/usage-limits",
+    "destination": "/billing-usage/usage-warnings",
+    "external": false
+  },
+  {
+    "source": "/billing/storage-limits",
+    "destination": "/billing-usage/storage",
+    "external": false
+  },
+  {
+    "source": "/billing/retention-limits",
+    "destination": "/billing-usage/retention",
+    "external": false
+  },
+  {
+    "source": "/architecture/system-architecture",
+    "destination": "/architecture/architecture-overview",
+    "external": false
+  },
+  {
+    "source": "/architecture/event-pipeline",
+    "destination": "/architecture/event-pipeline",
+    "external": false
+  },
+  {
+    "source": "/architecture/behavior-graph-engine",
+    "destination": "/architecture/graph-engine",
+    "external": false
+  },
+  {
+    "source": "/architecture/coverage-engine",
+    "destination": "/architecture/coverage-engine",
+    "external": false
+  },
+  {
+    "source": "/architecture/session-replay-engine",
+    "destination": "/architecture/replay-engine",
+    "external": false
+  },
+  {
+    "source": "/architecture/deployment-models",
+    "destination": "/deployment/overview",
+    "external": false
+  },
+  {
+    "source": "/architecture/self-hosted",
+    "destination": "/deployment/self-hosted",
+    "external": false
+  },
+  {
+    "source": "/why-tellann/why-tellann",
+    "destination": "/overview/what-is-tellann",
+    "external": false
+  },
+  {
+    "source": "/why-tellann/vs-datadog",
+    "destination": "/compare/datadog",
+    "external": true
+  },
+  {
+    "source": "/why-tellann/vs-sentry",
+    "destination": "/compare/sentry",
+    "external": true
+  },
+  {
+    "source": "/why-tellann/vs-posthog",
+    "destination": "/compare/posthog",
+    "external": true
+  },
+  {
+    "source": "/why-tellann/vs-replay-io",
+    "destination": "/compare/replay-io",
+    "external": true
+  },
+  {
+    "source": "/why-tellann/behavioral-quality",
+    "destination": "/concepts/behavioral-quality-intelligence",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/sdk-not-sending",
+    "destination": "/troubleshooting/connectivity",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/demo-not-processing",
+    "destination": "/troubleshooting/demonstrations",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/missing-states-not-appearing",
+    "destination": "/troubleshooting/behavior-graphs",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/replay-not-loading",
+    "destination": "/troubleshooting/session-replay",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/api-key-errors",
+    "destination": "/troubleshooting/api-keys",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/coverage-looks-wrong",
+    "destination": "/troubleshooting/coverage",
+    "external": false
+  },
+  {
+    "source": "/troubleshooting/faq",
+    "destination": "/faq",
+    "external": false
+  },
+  {
+    "source": "/tutorials/ecommerce",
+    "destination": "/tutorials/ecommerce",
+    "external": false
+  },
+  {
+    "source": "/tutorials/saas",
+    "destination": "/tutorials/saas",
+    "external": false
+  },
+  {
+    "source": "/tutorials/lms",
+    "destination": "/tutorials/lms",
+    "external": false
+  },
+  {
+    "source": "/tutorials/checkout",
+    "destination": "/tutorials/checkout",
+    "external": false
+  },
+  {
+    "source": "/tutorials/missing-auth",
+    "destination": "/tutorials/missing-error-paths",
+    "external": false
+  },
+  {
+    "source": "/tutorials/first-graph",
+    "destination": "/tutorials/first-integration",
+    "external": false
+  },
+  {
+    "source": "/tutorials/compare-expected-observed",
+    "destination": "/tutorials/generate-a-qa-report",
+    "external": false
+  }
+]

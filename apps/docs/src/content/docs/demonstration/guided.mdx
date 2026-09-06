@@ -1,0 +1,64 @@
+---
+id: "demonstration-guided"
+slug: "demonstration/guided"
+title: "Guided demonstrations"
+description: "Use a defined workflow to capture repeatable behavioral evidence."
+version: v1
+status: ga
+audiences: ["developer","qa","product"]
+tags: ["demonstration-mode","guided","workflow","repeatable"]
+related: ["demonstration-how-demonstrations-work","demonstration-best-practices","demonstration-results"]
+updatedAt: "2026-09-06"
+---
+
+# Guided demonstrations
+
+Use a defined workflow to capture repeatable behavioral evidence.
+
+## Overview
+
+Guided demonstrations capture a scenario whose start, intended actions, and completion condition are already known. Tellann records the resulting events in one scoped session, derives states and transitions from that evidence, and associates the run with the workflow label you provide.
+
+Unlike a screen recording, the result is structured telemetry. Reviewers can inspect event order, API activity, errors, graph changes, and coverage without relying on pixels or video playback.
+
+## When to use guided mode
+
+Choose a guided demonstration when the team has a specific journey to verify end to end, such as registration, sign-in, checkout, password recovery, or a known failure-and-recovery path. It is especially useful when the same workflow must be compared across builds or environments.
+
+Use Exploratory mode when the route is intentionally open-ended. Use Validation mode when an existing workflow and its expected boundaries are already established and the goal is to check new evidence against them.
+
+## Before you begin
+
+Confirm that the application is connected, the intended non-production environment is selected, and a minimal test event appears in Tellann. Write down the initial state, completion state, expected alternative or failure branches, and the evidence that will count as success.
+
+Apply privacy rules before opening screens that can contain credentials, personal information, payment details, or customer content. A demonstration inherits the collection behavior of the installed SDK; it does not override masking or retention policy.
+
+## Run a guided demonstration
+
+1. Open the application and environment that own the workflow.
+2. Start a new demonstration and choose **Guided**.
+3. Add a concise workflow label that describes the business outcome, not the tester or build number.
+4. Begin from the documented initial state and perform only the actions required by the scenario.
+5. Include the intended terminal state. If the scenario covers a failure, continue through the recovery outcome instead of stopping at the error.
+6. Stop the demonstration and wait for processing to complete before opening its graph or coverage result.
+
+> [!TIP]
+> Keep the walkthrough focused. Unrelated navigation can create extra states and transitions that make comparison less useful.
+
+## Review the results
+
+Open the session timeline first. Verify the environment, workflow label, start and end times, event order, and any API or error activity. Then inspect the derived graph and confirm that its states and transitions can be traced back to those events.
+
+Coverage reports show which known behavior was observed in this run. They do not prove the workflow is correct or complete. Treat an unexpected path as a prompt to inspect evidence, not as an automatic defect classification.
+
+## Common errors
+
+- **No events received:** verify the ingestion key, environment, SDK diagnostics, and collector reachability.
+- **Processing does not finish:** preserve the demonstration and request identifiers, then check service health before retrying.
+- **States or transitions are missing:** inspect the timeline for absent or out-of-order source events.
+- **Too many unrelated states:** repeat the run from a clean initial state and avoid actions outside the labeled workflow.
+- **Sensitive values are visible:** stop using the capture, correct privacy rules, rotate any exposed credential, and follow the data-deletion procedure.
+
+## Next steps
+
+Use [Demonstration results](/demonstration/results) to interpret generated artifacts, [Best practices](/demonstration/best-practices) to improve repeatability, and [Coverage comparison](/coverage-quality/coverage-comparison) when comparing evidence across runs. For a failure that cannot be explained from the graph, continue with [Investigating failures](/sessions-replay/investigating-failures).

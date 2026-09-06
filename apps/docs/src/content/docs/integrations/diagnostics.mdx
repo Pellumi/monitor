@@ -1,0 +1,43 @@
+---
+id: "integrations-diagnostics"
+slug: "integrations/diagnostics"
+title: "Diagnostics"
+description: "Learn how diagnostics works within Integrate Tellann and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["developer"]
+tags: ["integrate-tellann","diagnostics"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# Diagnostics
+
+Learn how diagnostics works within Integrate Tellann and how to apply it safely in Tellann.
+
+## Before you begin
+
+Before working with **Diagnostics**, identify the organization, application, environment, plan, and role that own the change. Use a non-production environment for initial verification whenever the task can affect telemetry or access.
+
+## Procedure
+
+Follow the task in order and preserve the boundary between public application configuration and secret material. Make one scoped change, record its visible result, then continue to the next step.
+
+## Verify the result
+
+Verify the nearest authoritative signal: SDK diagnostics for capture, an accepted event for ingestion, a session timeline for correlation, a graph or report for processing, and an audit record for administrative mutations.
+
+## Expected result
+
+The task is complete when the intended Tellann object or behavior exists in the correct scope and a second reader can identify how it was verified. A successful button click without persisted evidence is not completion.
+
+## Common errors
+
+If verification fails, check permissions, entitlement, environment selection, credential scope, network destination, and processing status. Correct the earliest failing boundary before repeating downstream actions.
+
+## Next steps
+
+Continue to the related concept or reference page to understand the resulting data, then use the relevant troubleshooting runbook if the verification signal remains absent.
+
+

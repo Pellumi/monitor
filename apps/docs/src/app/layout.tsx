@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Header } from '@/components/header';
+import { logoIconSvg } from '@/lib/image';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.domain-name.com';
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.tellann.co';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
     template: '%s | Tellann Docs',
   },
   description:
-    'Complete Tellann documentation for QA teams, developers, project managers, administrators, SDK integration, reconciliation, reports, billing, and security.',
+    'Task-oriented Tellann documentation for integrations, demonstrations, behavior graphs, coverage, sessions, reports, administration, security, billing, and deployment.',
   alternates: {
     canonical: '/',
   },
@@ -26,21 +27,19 @@ export const metadata: Metadata = {
     type: 'website',
   },
   icons: {
-    icon: '/logo_hex.svg',
-    shortcut: '/logo_hex.svg',
-    apple: '/logo_hex.svg',
+    icon: logoIconSvg.src,
+    shortcut: logoIconSvg.src,
+    apple: logoIconSvg.src,
   },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} min-h-screen bg-neutral-950 text-neutral-100 antialiased`}>
-        <div className="relative flex flex-col min-h-screen">
+    <html lang="en" className="dark" data-theme="dark" data-scroll-behavior="smooth" suppressHydrationWarning>
+      <body className={inter.className}>
+        <div className="docs-site-frame">
           <Header />
-          <div className="flex-1">
-            {children}
-          </div>
+          {children}
         </div>
       </body>
     </html>

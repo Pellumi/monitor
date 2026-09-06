@@ -1,0 +1,43 @@
+---
+id: "troubleshooting-coverage"
+slug: "troubleshooting/coverage"
+title: "Coverage"
+description: "Learn how coverage works within Troubleshooting and how to apply it safely in Tellann."
+version: v1
+status: ga
+audiences: ["developer","qa"]
+tags: ["troubleshooting","coverage"]
+related: []
+updatedAt: "2026-09-06"
+---
+
+
+# Coverage
+
+Learn how coverage works within Troubleshooting and how to apply it safely in Tellann.
+
+## Symptom
+
+Use this runbook when **coverage** prevents telemetry, analysis, or a documentation workflow from completing as expected. Record the exact environment and timestamp before changing configuration.
+
+## Likely causes
+
+Common causes include an inactive or incorrectly scoped key, an environment mismatch, unsupported runtime behavior, blocked network delivery, malformed event data, delayed processing, or insufficient workspace permissions.
+
+## Diagnostic sequence
+
+Check the browser or service console, SDK diagnostic state, request status and request ID, ingestion environment, and the most recent accepted event. Work from capture toward presentation so a downstream symptom is not mistaken for the source.
+
+## Resolution
+
+Correct the first failing boundary, rotate exposed credentials, and retry with one minimal event or workflow. Avoid changing several privacy, network, and SDK settings at once because that obscures the evidence.
+
+## Verify the fix
+
+Confirm a new event is accepted, attached to the intended session, processed in chronological order, and visible in the expected graph or report. Recheck the original scenario after the minimal signal succeeds.
+
+## Escalation evidence
+
+Include UTC timestamps, request IDs, SDK and runtime versions, environment name, redacted configuration, status codes, and the smallest reproducible sequence. Never include ingestion keys, access tokens, raw PII, or unredacted payloads.
+
+

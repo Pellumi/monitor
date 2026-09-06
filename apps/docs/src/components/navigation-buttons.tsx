@@ -10,40 +10,36 @@ interface NavigationButtonsProps {
 
 export function NavigationButtons({ previousLabel, previousHref, nextLabel, nextHref }: NavigationButtonsProps) {
   return (
-    <div className="mt-12 flex flex-col sm:flex-row gap-4 border-t border-border pt-8 transition-colors duration-200">
+    <nav className="docs-page-navigation" aria-label="Previous and next documentation pages">
       {previousLabel && previousHref ? (
         <Link
           href={previousHref}
-          className="flex-1 flex items-center justify-between px-4 py-3 rounded-lg border border-border bg-muted/10 hover:bg-accent/50 transition-colors group text-left"
+          className="docs-page-navigation-link docs-page-navigation-previous"
         >
-          <div className="flex items-center gap-2.5">
-            <ChevronLeft className="w-4 h-4 text-muted-foreground group-hover:text-blue-400 transition-colors" />
+          <ChevronLeft aria-hidden="true" />
             <div>
-              <p className="text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">Previous</p>
-              <p className="text-xs font-semibold text-foreground">{previousLabel}</p>
+            <span>Previous</span>
+            <strong>{previousLabel}</strong>
             </div>
-          </div>
         </Link>
       ) : (
-        <div className="flex-1 hidden sm:block" />
+        <div className="docs-page-navigation-spacer" />
       )}
       
       {nextLabel && nextHref ? (
         <Link
           href={nextHref}
-          className="flex-1 flex items-center justify-between px-4 py-3 rounded-lg border border-border bg-muted/10 hover:bg-accent/50 transition-colors group text-right"
+          className="docs-page-navigation-link docs-page-navigation-next"
         >
-          <div className="flex items-center justify-end w-full gap-2.5">
             <div>
-              <p className="text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">Next</p>
-              <p className="text-xs font-semibold text-foreground">{nextLabel}</p>
+            <span>Next</span>
+            <strong>{nextLabel}</strong>
             </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-blue-400 transition-colors" />
-          </div>
+          <ChevronRight aria-hidden="true" />
         </Link>
       ) : (
-        <div className="flex-1 hidden sm:block" />
+        <div className="docs-page-navigation-spacer" />
       )}
-    </div>
+    </nav>
   );
 }

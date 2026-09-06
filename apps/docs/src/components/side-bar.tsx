@@ -1,109 +1,143 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
-import { docs, CATEGORY_ORDER } from '@/lib/docs';
+import { ChevronDown, ExternalLink, Menu, X } from 'lucide-react';
+import { docsNavigation, externalDocsLinks, standalonePages } from '@/config/docs-navigation';
+import { CommandSearch } from '@/components/command-search';
+import { StatusBadges } from '@/components/status-badge';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { logoIconText, logoIconTextBlack } from '@/lib/image';
+
+const STORAGE_KEY = 'tellann-docs:nav:v1';
+
+function currentSection(pathname: string) {
+  const slug = pathname.replace(/^\//, '').replace(/\/$/, '');
+  for (const group of docsNavigation) {
+    for (const section of group.sections) {
+      if (section.pages.some((page) => page.slug === slug)) return section.id;
+    }
+  }
+  return pathname === '/' ? 'overview' : null;
+}
+
+function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  const activeSection = currentSection(pathname);
+  const [expanded, setExpanded] = useState<string[]>([activeSection || 'overview']);
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') as string[];
+        setExpanded([...new Set([...stored, activeSection].filter(Boolean) as string[])]);
+      } catch {
+        setExpanded([activeSection || 'overview']);
+      }
+      hydrated.current = true;
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSection]);
+
+  useEffect(() => {
+    if (!activeSection) return;
+    const timer = window.setTimeout(() => setExpanded((sections) => sections.includes(activeSection) ? sections : [...sections, activeSection]), 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSection]);
+
+  function toggle(sectionId: string) {
+    setExpanded((sections) => {
+      const next = sections.includes(sectionId) ? sections.filter((id) => id !== sectionId) : [...sections, sectionId];
+      if (hydrated.current) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  const marketing = (process.env.NEXT_PUBLIC_MARKETING_URL || 'https://tellann.co').replace(/\/$/, '');
+  const status = process.env.NEXT_PUBLIC_STATUS_URL || 'https://status.tellann.co';
+  const externalHref = (link: (typeof externalDocsLinks)[number]) => link.id === 'status' ? status : marketing + link.href;
+
+  return <div className="docs-sidebar-content">
+    <div className="docs-sidebar-tools">
+      <div className="docs-version-row"><span>Tellann Docs</span><button type="button" aria-label="Documentation version">v1 <small>current</small></button></div>
+      <CommandSearch />
+    </div>
+    <nav className="docs-sidebar-nav" aria-label="Documentation pages">
+      {docsNavigation.map((group) => <section className="docs-nav-region" key={group.id}>
+        <h2>{group.title}</h2>
+        {group.sections.map((section) => {
+          const open = expanded.includes(section.id);
+          return <div className="docs-nav-section" key={section.id}>
+            <button type="button" aria-expanded={open} onClick={() => toggle(section.id)}>
+              <ChevronDown aria-hidden="true" /><span>{section.title}</span>
+            </button>
+            {open ? <div className="docs-nav-pages">
+              {section.pages.map((page) => {
+                const active = pathname === '/' + page.slug;
+                return <Link key={page.id} href={'/' + page.slug} aria-current={active ? 'page' : undefined} onClick={onNavigate}>
+                  <span>{page.title}</span>
+                  {page.status !== 'ga' || page.plans?.includes('enterprise') ? <StatusBadges status={page.status} plans={page.plans} /> : null}
+                </Link>;
+              })}
+            </div> : null}
+          </div>;
+        })}
+        {group.id === 'resources' ? <div className="docs-nav-standalone">
+          {standalonePages.map((page) => <Link key={page.id} href={'/' + page.slug} aria-current={pathname === '/' + page.slug ? 'page' : undefined} onClick={onNavigate}>{page.title}</Link>)}
+        </div> : null}
+      </section>)}
+    </nav>
+    <nav className="docs-sidebar-external" aria-label="Product and support links">
+      {externalDocsLinks.map((link) => <a key={link.id} href={externalHref(link)}>{link.title}<ExternalLink aria-hidden="true" /></a>)}
+    </nav>
+  </div>;
+}
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [search, setSearch] = useState('');
-  const [expandedSections, setExpandedSections] = useState<string[]>(CATEGORY_ORDER);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  const toggleSection = (section: string) => {
-    setExpandedSections((prev) =>
-      prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section]
-    );
-  };
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const panel = panelRef.current;
+    const focusable = panel?.querySelectorAll<HTMLElement>('a,button,input,[tabindex]:not([tabindex="-1"])');
+    focusable?.[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+      if (event.key === 'Tab' && focusable?.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = previous; document.removeEventListener('keydown', onKey); };
+  }, [mobileOpen]);
 
-  // Group pages by category
-  const grouped = docs.reduce((acc, doc) => {
-    if (!acc[doc.category]) {
-      acc[doc.category] = [];
-    }
-    acc[doc.category].push(doc);
-    return acc;
-  }, {} as Record<string, typeof docs>);
-
-  // Filter based on search query
-  const filteredCategories = CATEGORY_ORDER.map((category) => {
-    const items = grouped[category] || [];
-    const filteredItems = items.filter(
-      (item) =>
-        item.title.toLowerCase().includes(search.toLowerCase()) ||
-        item.description.toLowerCase().includes(search.toLowerCase())
-    );
-    return { category, items: filteredItems };
-  }).filter((group) => group.items.length > 0);
-
-  const isActive = (slug: string) => {
-    const normalizedPath = pathname.replace(/^\//, '');
-    return normalizedPath === slug;
-  };
-
-  return (
-    <aside className="w-72 border-r border-border bg-muted flex flex-col h-[calc(100vh-4rem)] sticky top-16 overflow-y-auto z-10 transition-colors duration-200">
-      {/* Search Input */}
-      <div className="p-4 border-b border-border flex-shrink-0 bg-muted">
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Filter documentation..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-500 transition-colors"
-          />
-        </div>
+  return <>
+    <aside className="docs-sidebar"><Navigation pathname={pathname} /></aside>
+    <div className="docs-mobile-bar">
+      <button type="button" onClick={() => setMobileOpen(true)} aria-expanded={mobileOpen}><Menu aria-hidden="true" /> Browse docs</button>
+      <CommandSearch compact />
+    </div>
+    {mobileOpen ? <div className="docs-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileOpen(false); }}>
+      <div ref={panelRef} className="docs-drawer" role="dialog" aria-modal="true" aria-label="Documentation navigation">
+        <header>
+          <span className="docs-drawer-brand">
+            <Image src={logoIconText} alt="Tellann" width={112} className="docs-logo docs-logo-dark" />
+            <Image src={logoIconTextBlack} alt="Tellann" width={112} className="docs-logo docs-logo-light" />
+            <b>Docs</b>
+          </span>
+          <span><ThemeToggle /><button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X aria-hidden="true" /></button></span>
+        </header>
+        <Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} />
       </div>
-
-      {/* Nav List */}
-      <nav className="flex-1 p-4 overflow-y-auto space-y-5 bg-muted">
-        {filteredCategories.map(({ category, items }) => (
-          <div key={category} className="space-y-1">
-            <button
-              onClick={() => toggleSection(category)}
-              className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest hover:text-foreground transition-colors"
-            >
-              <span>{category}</span>
-              {expandedSections.includes(category) ? (
-                <ChevronDown className="w-3 h-3 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="w-3 h-3 text-muted-foreground" />
-              )}
-            </button>
-            {expandedSections.includes(category) && (
-              <div className="space-y-0.5">
-                {items.map((item) => {
-                  const active = isActive(item.slug);
-                  return (
-                    <Link
-                      key={item.slug}
-                      href={`/${item.slug}`}
-                      className={`group flex items-center px-3 py-1.5 text-xs rounded transition-all ${
-                        active
-                          ? 'bg-accent text-foreground font-semibold border-l-2 border-blue-400 rounded-l-none -ml-px'
-                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                      }`}
-                    >
-                      <span className="truncate">{item.title}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
-      </nav>
-
-      {/* Version Tag */}
-      <div className="p-4 border-t border-border bg-background/20 flex-shrink-0">
-        {/* <div className="flex items-center gap-2 px-2.5 py-1.5 rounded bg-background border border-border text-[10px] text-muted-foreground">
-          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-          <span className="font-medium">v1.0.0 (Latest Release)</span>
-        </div> */}
-      </div>
-    </aside>
-  );
+    </div> : null}
+  </>;
 }

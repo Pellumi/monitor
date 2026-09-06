@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
-import { docs } from '@/lib/docs';
+import { docsManifest } from '@/generated/docs-manifest';
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.domain-name.com';
+const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://docs.tellann.co').replace(/\/$/, '');
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
@@ -11,11 +11,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'weekly',
       priority: 1,
     },
-    ...docs.map((doc) => ({
-      url: `${siteUrl}/${doc.slug}`,
-      lastModified: new Date(),
+    ...docsManifest.map((doc) => ({
+      url: siteUrl + '/' + doc.slug,
+      lastModified: new Date(doc.updatedAt),
       changeFrequency: 'monthly' as const,
-      priority: 0.8,
+      priority: doc.status === 'planned' ? 0.5 : 0.8,
     })),
   ];
 }

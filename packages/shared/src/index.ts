@@ -3,5 +3,6 @@ export * from './events/schema';
 export * from './constants/services';
 export * from './constants/topics';
 export * from './constants/plans';
+export * from './constants/docs-pages';
 export * from './constants/entitlements';
 export * from './metrics';

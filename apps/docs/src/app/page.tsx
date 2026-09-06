@@ -1,110 +1,60 @@
 import Link from 'next/link';
-import { ArrowRight, BookOpen, Cpu, Terminal, Shield, RefreshCw, BarChart2 } from 'lucide-react';
+import { ArrowRight, Blocks, ChartNoAxesCombined, CirclePlay, GitBranch, Radar, Settings2 } from 'lucide-react';
 import { Sidebar } from '@/components/side-bar';
 
+const lifecycle = ['Connect', 'Observe', 'Demonstrate', 'Model', 'Analyze', 'Investigate', 'Act'];
+const tasks = [
+  { title: 'Integrate Tellann', description: 'Install the SDK, configure an environment, and verify telemetry.', href: '/integrations/integration-overview', icon: Blocks },
+  { title: 'Run a demonstration', description: 'Capture a guided walkthrough and inspect the resulting behavior.', href: '/demonstration/guided', icon: CirclePlay },
+  { title: 'Understand a behavior graph', description: 'Read states, transitions, actions, and workflow boundaries.', href: '/behavior-workflows/behavior-graph-overview', icon: GitBranch },
+  { title: 'Investigate a failed session', description: 'Trace events, errors, API activity, and recovery paths.', href: '/sessions-replay/investigating-failures', icon: Radar },
+  { title: 'Review coverage and gaps', description: 'Interpret observed paths, missing behavior, and critical gaps.', href: '/coverage-quality/interpreting-coverage', icon: ChartNoAxesCombined },
+  { title: 'Operate your workspace', description: 'Manage applications, roles, keys, retention, privacy, and usage.', href: '/workspace-admin/organizations', icon: Settings2 },
+];
+const personas = [
+  ['Developers', 'Integrate Tellann and investigate behavior.', '/integrations/integration-overview'],
+  ['QA Engineers', 'Run demonstrations and analyze coverage.', '/demonstration/guided'],
+  ['Engineering Managers', 'Understand quality reports and release risk.', '/reports/executive-quality-report'],
+  ['Product Teams', 'Understand workflows and user journeys.', '/behavior-workflows/workflow-inventory'],
+  ['Administrators', 'Manage teams, security, and billing.', '/workspace-admin/organizations'],
+];
+
 export default function DocsHome() {
-  const cards = [
-    {
-      title: 'Getting Started',
-      description: 'Learn Tellann basics and set up your organization and environment.',
-      href: '/getting-started',
-      icon: BookOpen,
-    },
-    {
-      title: 'Core Concepts',
-      description: 'Understand the mental model of behavior graphs, states, and transitions.',
-      href: '/concepts',
-      icon: Cpu,
-    },
-    {
-      title: 'Developer Guide',
-      description: 'Integrate the frontend and backend SDKs to start sending telemetry.',
-      href: '/guides/developer',
-      icon: Terminal,
-    },
-    {
-      title: 'Reconciliation Engine',
-      description: 'Compare declared behavior against actual telemetry to find gaps.',
-      href: '/reconciliation/overview',
-      icon: RefreshCw,
-    },
-    {
-      title: 'Session Replay',
-      description: 'Reconstruct visual timelines and analyze errors from captured logs.',
-      href: '/session-replay/overview',
-      icon: BarChart2,
-    },
-    {
-      title: 'Security & Privacy',
-      description: 'Understand domain boundaries, tenant isolation, and PII masking.',
-      href: '/security-privacy/security',
-      icon: Shield,
-    },
-  ];
-
-  return (
-    <div className="flex w-full min-h-[calc(100vh-4rem)]">
-      {/* Navigation Sidebar */}
-      <Sidebar />
-
-      {/* Main Content Pane */}
-      <main className="flex-1 overflow-y-auto px-6 py-12 sm:px-12 bg-background transition-colors duration-200">
-        <div className="max-w-4xl mx-auto space-y-12">
-          {/* Hero Banner */}
-          <div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-foreground tracking-tight mb-4">
-              Welcome to <span className="text-blue-400">Tellann</span> Docs
-            </h1>
-            <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-2xl">
-              Understand, model, and validate your software behavior. Learn how to declare behavior graphs,
-              instrument telemetry SDKs, and reconcile your release confidence.
-            </p>
-          </div>
-
-          {/* Guide Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {cards.map((card) => {
-              const Icon = card.icon;
-              return (
-                <Link
-                  key={card.href}
-                  href={card.href}
-                  className="p-6 rounded-xl border border-border bg-muted/20 hover:bg-muted/50 hover:border-border/80 hover:shadow-md transition-all group"
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <Icon className="w-5 h-5 text-blue-400 group-hover:text-blue-300 transition-colors" />
-                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                      {card.title}
-                      <ArrowRight className="w-3.5 h-3.5 text-blue-400 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
-                    </h3>
-                  </div>
-                  <p className="text-muted-foreground text-xs leading-relaxed">
-                    {card.description}
-                  </p>
-                </Link>
-              );
-            })}
-          </div>
-
-          {/* Quickstart Callout */}
-          <div className="p-8 rounded-xl bg-muted/40 border border-border">
-            <h3 className="text-sm font-bold text-foreground mb-2">
-              Behavioral Quality Intelligence
-            </h3>
-            <p className="text-muted-foreground text-xs leading-relaxed mb-4">
-              Need assistance with your integration or environment settings? Explore our tutorials section or check
-              troubleshooting guides to resolve API key authorization or telemetry pipeline issues.
-            </p>
-            <Link
-              href="/quick-start"
-              className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors font-semibold"
-            >
-              <span>Get started in 5 minutes</span>
-              <ArrowRight className="w-3 h-3" />
-            </Link>
+  return <div className="docs-shell">
+    <Sidebar />
+    <main className="docs-home">
+      <section className="docs-home-hero" aria-labelledby="docs-home-title">
+        <div>
+          <p className="docs-kicker">Tellann documentation · v1</p>
+          <h1 id="docs-home-title">Build confidence from <span>real software behavior.</span></h1>
+          <p className="docs-home-lede">Learn how to connect Tellann, capture behavioral evidence, model workflows, measure coverage, investigate failures, and turn findings into clear action.</p>
+          <div className="docs-home-actions">
+            <Link href="/get-started/quickstart" className="docs-button docs-button-primary">Start in 5 minutes <ArrowRight aria-hidden="true" /></Link>
+            <Link href="/overview/how-tellann-works" className="docs-button docs-button-secondary">Explore how Tellann works <ArrowRight aria-hidden="true" /></Link>
           </div>
         </div>
-      </main>
-    </div>
-  );
+        <div className="docs-lifecycle" aria-label="Tellann lifecycle">
+          <p>Behavior intelligence lifecycle</p>
+          <ol>{lifecycle.map((step, index) => <li key={step}><span>{String(index + 1).padStart(2, '0')}</span>{step}</li>)}</ol>
+        </div>
+      </section>
+
+      <section className="docs-task-section" aria-labelledby="task-heading">
+        <header><p className="docs-kicker">Start with a task</p><h2 id="task-heading">Move from question to evidence.</h2><p>Each path leads to a complete workflow, then connects you to the underlying reference.</p></header>
+        <div className="docs-task-grid">{tasks.map(({ icon: Icon, ...task }, index) => <Link key={task.href} href={task.href} className="docs-task-card">
+          <span className="docs-card-index">{String(index + 1).padStart(2, '0')}</span><Icon aria-hidden="true" /><h3>{task.title}</h3><p>{task.description}</p><span>Open guide <ArrowRight aria-hidden="true" /></span>
+        </Link>)}</div>
+      </section>
+
+      <section className="docs-personas" aria-labelledby="persona-heading">
+        <header><p className="docs-kicker">Documentation for every role</p><h2 id="persona-heading">Enter through the work you own.</h2></header>
+        <div>{personas.map(([title, description, href]) => <Link href={href} key={title}><strong>{title}</strong><span>{description}</span><ArrowRight aria-hidden="true" /></Link>)}</div>
+      </section>
+
+      <section className="docs-quickstart" aria-labelledby="quickstart-heading">
+        <div><p className="docs-kicker">Ready to connect?</p><h2 id="quickstart-heading">From SDK install to verified evidence in five minutes.</h2><p>Use a non-production environment, send one named event, and verify it all the way through the session timeline.</p></div>
+        <div><Link href="/get-started/quickstart" className="docs-button docs-button-primary">Open quickstart <ArrowRight aria-hidden="true" /></Link><Link href="/overview/feature-availability">Feature Availability</Link></div>
+      </section>
+    </main>
+  </div>;
 }
