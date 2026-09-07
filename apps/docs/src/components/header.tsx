@@ -23,7 +23,7 @@ export function Header() {
       </nav>
       <div className="docs-header-actions">
         <ThemeToggle />
-        <a href={marketingUrl}>Tellann.com <ArrowUpRight aria-hidden="true" /></a>
+        <a href={marketingUrl}>Tellann.co <ArrowUpRight aria-hidden="true" /></a>
         <a href={dashboardUrl} className="docs-dashboard-link">Open Dashboard</a>
       </div>
     </div>

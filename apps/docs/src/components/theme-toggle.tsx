@@ -27,7 +27,7 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      className="docs-theme-toggle"
+      className="docs-theme-toggle rounded-full!"
       onClick={toggleTheme}
       aria-label="Toggle color theme"
       title="Toggle color theme"

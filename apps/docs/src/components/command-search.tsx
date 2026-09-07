@@ -78,7 +78,7 @@ export function CommandSearch({ compact = false }: { compact?: boolean }) {
 
   return <>
     <button type="button" className={'docs-search-trigger' + (compact ? ' docs-search-trigger-compact' : '')} onClick={open}>
-      <Search aria-hidden="true" /><span>Search documentation</span><kbd>⌘ K</kbd>
+      <Search aria-hidden="true" /><span>Search documentation</span>
     </button>
     <dialog ref={dialogRef} className="docs-command" onClose={() => setQuery('')}>
       <div className="docs-command-box">

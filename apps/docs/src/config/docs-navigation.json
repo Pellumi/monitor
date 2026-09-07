@@ -5044,18 +5044,6 @@
       "env": "NEXT_PUBLIC_MARKETING_URL"
     },
     {
-      "id": "roadmap",
-      "title": "Roadmap",
-      "href": "/roadmap",
-      "env": "NEXT_PUBLIC_MARKETING_URL"
-    },
-    {
-      "id": "status",
-      "title": "System Status",
-      "href": "",
-      "env": "NEXT_PUBLIC_STATUS_URL"
-    },
-    {
       "id": "support",
       "title": "Contact Support",
       "href": "/contact",
