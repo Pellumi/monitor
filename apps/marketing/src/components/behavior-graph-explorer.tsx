@@ -2,6 +2,14 @@
 
 import { useState } from "react";
 import { ProductPlaceholder } from "@/components/product-tour";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const workflows = {
   Checkout: {
@@ -44,17 +52,27 @@ export function BehaviorGraphExplorer() {
   return (
     <div className="graph-explorer">
       <header className="graph-explorer-bar">
-        <label>
-          <span>Workflow</span>
-          <select
+        <div className="graph-explorer-workflow">
+          <label htmlFor="graph-explorer-workflow">Workflow</label>
+          <Select
             value={workflow}
-            onChange={(event) => setWorkflow(event.target.value as Workflow)}
+            onValueChange={(value) => setWorkflow(value as Workflow)}
+            className="graph-select"
           >
-            {Object.keys(workflows).map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        </label>
+            <SelectTrigger id="graph-explorer-workflow" className="graph-select-trigger">
+              <SelectValue placeholder="Choose workflow">{workflow}</SelectValue>
+            </SelectTrigger>
+            <SelectContent className="graph-select-content">
+              <SelectGroup>
+                {(Object.keys(workflows) as Workflow[]).map((item) => (
+                  <SelectItem key={item} value={item} className="graph-select-item">
+                    {item}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
         <div aria-label="Graph controls">
           <button type="button">Fit graph</button>
           <button type="button" aria-label="Zoom in">

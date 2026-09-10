@@ -193,3 +193,22 @@ export const sitemapRoutes = [
   ...placeholderRoutes.map(({ href }) => href),
   '/pricing',
 ].filter((href, index, routes) => routes.indexOf(href) === index);
+
+const knownHrefs = new Set(sitemapRoutes);
+
+export function isRouteActive(pathname: string, href: string) {
+  if (pathname === href) return true;
+  if (href === '/' || !pathname.startsWith(`${href}/`)) return false;
+
+  // A more specific navigation route owns the highlight, so /product/how-it-works
+  // does not also mark the /product overview link as active.
+  for (
+    let candidate = pathname;
+    candidate.length > href.length;
+    candidate = candidate.slice(0, candidate.lastIndexOf('/'))
+  ) {
+    if (knownHrefs.has(candidate)) return false;
+  }
+
+  return true;
+}

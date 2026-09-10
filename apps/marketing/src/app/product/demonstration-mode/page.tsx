@@ -138,7 +138,7 @@ export default function DemonstrationModePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
       />
       <main className="demo-page">
-        <section className="demo-hero">
+        <section className="demo-hero pt-20!">
           <div className="demo-shell">
             <p className="demo-kicker">Developer Demonstration Mode</p>
             <h1>Teach Tellann how your application behaves.</h1>

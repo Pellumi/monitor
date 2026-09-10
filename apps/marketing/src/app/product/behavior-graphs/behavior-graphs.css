@@ -74,7 +74,6 @@
 }
 .graph-actions a:focus-visible,
 .graph-explorer button:focus-visible,
-.graph-explorer select:focus-visible,
 .graph-faq summary:focus-visible {
   outline: 2px solid var(--foreground);
   outline-offset: 3px;
@@ -367,28 +366,67 @@
   padding: 12px 18px;
   border-bottom: 1px solid var(--line);
 }
-.graph-explorer-bar label {
+.graph-explorer-bar .graph-explorer-workflow {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.graph-explorer-bar label span {
+.graph-explorer-bar label {
   color: var(--muted);
   font:
     9px ui-monospace,
     monospace;
   text-transform: uppercase;
 }
-.graph-explorer select,
 .graph-explorer button {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--foreground);
   font: 700 10px inherit;
 }
-.graph-explorer select {
+.graph-select {
   min-width: 170px;
-  padding: 10px;
+}
+.graph-explorer .graph-select-trigger {
+  gap: 12px;
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 0;
+  background: transparent;
+}
+.graph-explorer .graph-select-trigger:hover {
+  background: var(--surface-soft);
+}
+.graph-explorer .graph-select-trigger svg,
+.graph-explorer .graph-select-item svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.graph-select-content {
+  margin-top: -1px;
+  padding: 0;
+  border-radius: 0;
+  background: var(--background);
+  box-shadow: none;
+}
+.graph-explorer .graph-select-item {
+  border-width: 0 0 1px;
+  font: inherit;
+  padding: 12px;
+}
+.graph-explorer .graph-select-item:last-child {
+  border-bottom-width: 0;
+}
+.graph-explorer .graph-select-item:hover {
+  background: var(--surface-soft);
+}
+.graph-explorer .graph-select-item[aria-selected="true"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+.graph-explorer .graph-select-item:focus-visible {
+  outline-offset: -2px;
 }
 .graph-explorer-bar > div {
   display: flex;
@@ -818,8 +856,8 @@
     align-items: flex-start;
     flex-direction: column;
   }
-  .graph-explorer-bar label,
-  .graph-explorer select {
+  .graph-explorer-bar .graph-explorer-workflow,
+  .graph-select {
     width: 100%;
   }
   .graph-explorer-body {

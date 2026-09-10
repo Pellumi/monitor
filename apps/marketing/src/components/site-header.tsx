@@ -9,6 +9,7 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import {
   companyRoutes,
   developerGroups,
+  isRouteActive,
   productGroups,
   resourceGroups,
   solutionGroups,
@@ -31,10 +32,6 @@ const menuSections = [
 
 type MenuKey = (typeof menuSections)[number]['key'];
 
-function routeIsActive(pathname: string, href: string) {
-  return pathname === href || (href !== '/' && pathname.startsWith(`${href}/`));
-}
-
 function MenuGroups({
   groups,
   pathname,
@@ -53,7 +50,7 @@ function MenuGroups({
           <p>{group.label}</p>
           <div className={mobile ? 'mobile-nav-links' : 'mega-menu-links'}>
             {group.routes.map((item) => {
-              const isActive = routeIsActive(pathname, item.href);
+              const isActive = isRouteActive(pathname, item.href);
 
               return (
                 <Link
@@ -114,7 +111,7 @@ function DesktopNavigation({
         );
       })}
 
-      <Link href="/pricing" aria-current={routeIsActive(pathname, '/pricing') ? 'page' : undefined} onClick={onClose}>
+      <Link href="/pricing" aria-current={isRouteActive(pathname, '/pricing') ? 'page' : undefined} onClick={onClose}>
         Pricing
       </Link>
 
@@ -160,7 +157,7 @@ function MobileMenu({ pathname, menuRef }: { pathname: string; menuRef: React.Re
           </details>
         ))}
 
-        <Link href="/pricing" aria-current={routeIsActive(pathname, '/pricing') ? 'page' : undefined} onClick={closeMobileMenu}>
+        <Link href="/pricing" aria-current={isRouteActive(pathname, '/pricing') ? 'page' : undefined} onClick={closeMobileMenu}>
           Pricing
         </Link>
 

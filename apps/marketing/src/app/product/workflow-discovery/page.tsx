@@ -121,7 +121,7 @@ export default function WorkflowDiscoveryPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
       />
 
-      <section className="workflow-hero">
+      <section className="workflow-hero p-20!">
         <div className="workflow-shell workflow-hero-copy">
           <p className="workflow-kicker">Workflow discovery</p>
           <h1>See the workflows hidden inside application behavior.</h1>
