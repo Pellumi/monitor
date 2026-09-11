@@ -11,13 +11,13 @@ const dashboardUrl =
 
 export const metadata: Metadata = {
   title:
-    "Behavioral Coverage — Measure Application Workflow Coverage | Tellann",
+    "Behavioral Coverage | Measure Application Workflow Coverage | Tellann",
   description:
-    "Measure demonstrated software behavior with Tellann across workflows, states, transitions, endpoints, errors, observed paths, and missing paths—and trace coverage back to supporting sessions.",
+    "Measure demonstrated software behavior with Tellann across workflows, states, transitions, endpoints, errors, observed paths, and missing paths, and trace coverage back to supporting sessions.",
   alternates: { canonical: "/product/coverage" },
   openGraph: {
     title:
-      "Behavioral Coverage — Measure Application Workflow Coverage | Tellann",
+      "Behavioral Coverage | Measure Application Workflow Coverage | Tellann",
     description:
       "Turn demonstrated behavior into measurable, traceable workflow coverage.",
     url: `${siteUrl}/product/coverage`,
@@ -117,7 +117,7 @@ const comparisonMetrics: [string, string, string][] = [
 const faqs: [string, string][] = [
   [
     "What is behavioral coverage?",
-    "Behavioral coverage measures which parts of a reconstructed workflow were actually exercised—its states, transitions, endpoints, errors, and paths—rather than which lines of source code ran.",
+    "Behavioral coverage measures which parts of a reconstructed workflow were actually exercised, its states, transitions, endpoints, errors, and paths, rather than which lines of source code ran.",
   ],
   [
     "How is Tellann coverage different from code coverage?",
@@ -157,7 +157,7 @@ const faqs: [string, string][] = [
   ],
   [
     "How are missing paths discovered?",
-    "They emerge from the behavioral model around a discovered workflow—failure, alternative, recovery, and edge-case branches that connect to observed structure but were never exercised.",
+    "They emerge from the behavioral model around a discovered workflow, failure, alternative, recovery, and edge-case branches that connect to observed structure but were never exercised.",
   ],
   [
     "Can I see the sessions behind a coverage result?",
@@ -210,9 +210,9 @@ function MediaSection({
       id={id}
     >
       <div className="coverage-shell coverage-heading">
-        <p className="coverage-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="coverage-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       {children ? (
         <div className="coverage-shell coverage-section-detail">{children}</div>
@@ -256,16 +256,16 @@ function AsideSection({
       id={id}
     >
       <div className="coverage-shell coverage-heading">
-        <p className="coverage-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="coverage-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       <div
         className={`${wide ? "coverage-shell-wide" : "coverage-shell"} coverage-aside-grid`}
         style={{ "--media-w": `${mediaWidth}px` } as CSSProperties}
       >
         <VisualPlaceholder {...visual} />
-        <div className="coverage-aside-panel">{children}</div>
+        <div className="coverage-aside-panel" data-aos="tellann-panel">{children}</div>
       </div>
     </section>
   );
@@ -289,12 +289,12 @@ export default function CoveragePage() {
 
       <section className="coverage-hero pt-20!">
         <div className="coverage-shell coverage-hero-copy">
-          <p className="coverage-kicker">Behavioral coverage</p>
-          <h1>Know what your workflow covered—and what it didn&apos;t.</h1>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Behavioral coverage</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">Know what your workflow covered, and what it didn&apos;t.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann turns demonstrated behavior into measurable workflow
             coverage across states, transitions, endpoints, errors, and
-            paths—then shows the evidence behind what was observed and what
+            paths, then shows the evidence behind what was observed and what
             remains unseen.
           </p>
           <div className="coverage-actions">
@@ -309,7 +309,7 @@ export default function CoveragePage() {
             </Link>
           </div>
         </div>
-        <div className="coverage-shell-wide coverage-hero-media coverage-desktop-media">
+        <div className="coverage-shell-wide coverage-hero-media coverage-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero coverage graph / observed and unobserved workflow paths"
             master="1920 × 1120"
@@ -335,9 +335,9 @@ export default function CoveragePage() {
 
       <section className="coverage-meaning">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">What behavioral coverage means</p>
-          <h2>Coverage becomes useful when it describes behavior.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">What behavioral coverage means</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Coverage becomes useful when it describes behavior.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Raw event volume is not coverage. Coverage begins after events
             become a session, a session becomes a workflow, and that workflow
             has states, transitions, and paths worth measuring.
@@ -387,9 +387,9 @@ export default function CoveragePage() {
 
       <section className="coverage-denominator">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Never a number on its own</p>
-          <h2>Every percentage should carry its behavioral model with it.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Never a number on its own</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Every percentage should carry its behavioral model with it.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A coverage score is only meaningful when you can walk from the
             number down to the paths and sessions underneath it.
           </p>
@@ -416,12 +416,12 @@ export default function CoveragePage() {
 
       <section className="coverage-versus-section">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Coverage vs code coverage</p>
-          <h2>
+          <p className="coverage-kicker" data-aos="fade-up">Coverage vs code coverage</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             Code coverage asks what executed. Tellann asks what behavior you
             exercised.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             These are not competing numbers. They answer different QA questions,
             and a team can reasonably want both.
           </p>
@@ -450,8 +450,7 @@ export default function CoveragePage() {
             <p>Workflow behavior observed across states, paths, and errors.</p>
           </article>
         </div>
-        <div
-          className="coverage-shell coverage-compare-table"
+        <div className="coverage-shell coverage-compare-table" data-aos="tellann-panel"
           role="table"
           aria-label="Code coverage compared with Tellann behavioral coverage"
         >
@@ -470,14 +469,14 @@ export default function CoveragePage() {
 
       <section className="coverage-dimensions" id="dimensions">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Five dimensions</p>
-          <h2>Coverage has more than one dimension.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Five dimensions</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Coverage has more than one dimension.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             One percentage cannot describe a workflow. Tellann measures five
             distinct dimensions and keeps each of them separately inspectable.
           </p>
         </div>
-        <div className="coverage-shell coverage-dimension-cards">
+        <div className="coverage-shell coverage-dimension-cards" data-aos="tellann-panel">
           {coverageDimensions.map(([title, question, master]) => (
             <article key={title}>
               <span>{title}</span>
@@ -495,7 +494,7 @@ export default function CoveragePage() {
       <AsideSection
         wide
         eyebrow="Workflow coverage"
-        title="Did you exercise the workflow—or only its happy path?"
+        title="Did you exercise the workflow, or only its happy path?"
         copy="A demonstrated success path is a start, not a finished measurement. Workflow coverage separates the route you took from the routes that remain unexercised."
         mediaWidth={1000}
         visual={{
@@ -504,7 +503,7 @@ export default function CoveragePage() {
           display: "1000 × 625",
         }}
       >
-        <p className="coverage-kicker">Checkout</p>
+        <p className="coverage-kicker" data-aos="fade-up">Checkout</p>
         <div className="coverage-metric-block">
           <span>
             <small>Coverage</small>
@@ -520,14 +519,14 @@ export default function CoveragePage() {
           </span>
         </div>
         <p className="coverage-panel-label">Observed</p>
-        <ul className="coverage-status-list">
+        <ul className="coverage-status-list" data-aos="tellann-panel">
           <li>
             <i aria-hidden="true">✓</i> Product → Cart → Checkout → Payment
             success
           </li>
         </ul>
         <p className="coverage-panel-label">Not observed</p>
-        <ul className="coverage-status-list is-unobserved">
+        <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
           {[
             "Payment failure",
             "Session timeout",
@@ -556,7 +555,7 @@ export default function CoveragePage() {
         }}
       >
         <p className="coverage-panel-label">Observed</p>
-        <ul className="coverage-status-list">
+        <ul className="coverage-status-list" data-aos="tellann-panel">
           {[
             "PRODUCT_VIEW",
             "CART_ACTIVE",
@@ -570,7 +569,7 @@ export default function CoveragePage() {
           ))}
         </ul>
         <p className="coverage-panel-label">Not observed</p>
-        <ul className="coverage-status-list is-unobserved">
+        <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
           {[
             "PAYMENT_FAILURE",
             "EMPTY_CART",
@@ -595,7 +594,7 @@ export default function CoveragePage() {
           display: "900 × 480",
         }}
       >
-        <div className="coverage-edge-list">
+        <div className="coverage-edge-list" data-aos="tellann-panel">
           {[
             ["CART_ACTIVE → CHECKOUT", "observed"],
             ["CHECKOUT → PAYMENT_SUCCESS", "observed"],
@@ -617,16 +616,15 @@ export default function CoveragePage() {
 
       <section className="coverage-endpoints">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Endpoint coverage</p>
-          <h2>See which backend behavior supported the demonstrated workflow.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Endpoint coverage</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">See which backend behavior supported the demonstrated workflow.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Interface behavior and backend behavior belong to the same
             measurement. Endpoint coverage reports the requests that actually
             participated in the observed workflow.
           </p>
         </div>
-        <div
-          className="coverage-shell coverage-aside-grid"
+        <div className="coverage-shell coverage-aside-grid" data-aos="tellann-panel"
           style={{ "--media-w": "760px" } as CSSProperties}
         >
           <VisualPlaceholder
@@ -649,8 +647,7 @@ export default function CoveragePage() {
             </Link>
           </div>
         </div>
-        <div
-          className="coverage-shell coverage-endpoint-table"
+        <div className="coverage-shell coverage-endpoint-table" data-aos="tellann-panel"
           role="table"
           aria-label="Checkout workflow endpoint coverage"
         >
@@ -692,8 +689,8 @@ export default function CoveragePage() {
           display: "900 × 531",
         }}
       >
-        <p className="coverage-kicker">Payment</p>
-        <div className="coverage-edge-list">
+        <p className="coverage-kicker" data-aos="fade-up">Payment</p>
+        <div className="coverage-edge-list" data-aos="tellann-panel">
           {[
             ["Successful payment", "observed"],
             ["Payment rejected", "unobserved"],
@@ -712,9 +709,9 @@ export default function CoveragePage() {
 
       <section className="coverage-language">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Observed vs unobserved</p>
-          <h2>Coverage is a map of evidence and absence.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Observed vs unobserved</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Coverage is a map of evidence and absence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             The same visual language runs through every coverage surface, and it
             never relies on color alone to carry the meaning.
           </p>
@@ -736,7 +733,7 @@ export default function CoveragePage() {
         </div>
         <div className="coverage-shell coverage-panels">
           <article>
-            <p className="coverage-kicker">Selecting an observed path</p>
+            <p className="coverage-kicker" data-aos="fade-up">Selecting an observed path</p>
             <b>PRODUCT → CART → CHECKOUT → SUCCESS</b>
             <dl>
               {[
@@ -756,7 +753,7 @@ export default function CoveragePage() {
             </span>
           </article>
           <article className="is-gap">
-            <p className="coverage-kicker">Selecting an unobserved path</p>
+            <p className="coverage-kicker" data-aos="fade-up">Selecting an unobserved path</p>
             <b>CHECKOUT → PAYMENT_FAILURE</b>
             <dl>
               {[
@@ -784,16 +781,16 @@ export default function CoveragePage() {
 
       <section className="coverage-explorer-section" id="explorer">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Interactive coverage explorer</p>
-          <h2>Explore coverage from score to evidence.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Interactive coverage explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Explore coverage from score to evidence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Choose a workflow, switch between the five dimensions, filter to
             observed or unobserved paths, and open the finding behind any one of
             them. The graph canvas remains a dimension-accurate placeholder for
             the final renderer.
           </p>
         </div>
-        <div className="coverage-shell-wide">
+        <div className="coverage-shell-wide" data-aos="tellann-panel">
           <CoverageExplorer />
         </div>
         <p className="coverage-shell coverage-note">
@@ -840,14 +837,14 @@ export default function CoveragePage() {
 
       <section className="coverage-incomplete">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Incomplete workflows</p>
-          <h2>A workflow can exist without being fully exercised.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Incomplete workflows</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A workflow can exist without being fully exercised.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Discovering a workflow and exercising a workflow are different
             achievements. Incomplete coverage describes the second one honestly.
           </p>
         </div>
-        <div className="coverage-shell coverage-incomplete-cards">
+        <div className="coverage-shell coverage-incomplete-cards" data-aos="tellann-panel">
           {incompleteWorkflows.map(
             ([name, coverage, observed, unobserved, gaps]) => (
               <article key={name}>
@@ -882,9 +879,9 @@ export default function CoveragePage() {
 
       <section className="coverage-critical">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Critical gaps</p>
-          <h2>Not every uncovered path deserves equal attention.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Critical gaps</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Not every uncovered path deserves equal attention.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Low coverage on a critical workflow is a different signal from low
             coverage on a peripheral one. Priority comes from configured
             workflow importance rather than an inferred guess.
@@ -892,7 +889,7 @@ export default function CoveragePage() {
         </div>
         <div className="coverage-shell coverage-critical-grid">
           <article>
-            <p className="coverage-kicker">Critical workflow</p>
+            <p className="coverage-kicker" data-aos="fade-up">Critical workflow</p>
             <b>Checkout</b>
             <dl>
               {[
@@ -907,7 +904,7 @@ export default function CoveragePage() {
               ))}
             </dl>
             <small>Potential gaps</small>
-            <ul className="coverage-status-list is-unobserved">
+            <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
               {["Payment failure", "Session timeout", "Inventory change"].map(
                 (item) => (
                   <li key={item}>
@@ -918,7 +915,7 @@ export default function CoveragePage() {
             </ul>
           </article>
           <div className="coverage-priority">
-            <p className="coverage-kicker">Workflow priority</p>
+            <p className="coverage-kicker" data-aos="fade-up">Workflow priority</p>
             {["Critical", "High", "Normal", "Low"].map((level, index) => (
               <span key={level} className={index === 0 ? "is-active" : ""}>
                 {level}
@@ -945,9 +942,9 @@ export default function CoveragePage() {
         }}
       >
         <div>
-          <p className="coverage-kicker">Search</p>
+          <p className="coverage-kicker" data-aos="fade-up">Search</p>
           <p className="coverage-panel-label">Observed</p>
-          <ul className="coverage-status-list">
+          <ul className="coverage-status-list" data-aos="tellann-panel">
             <li>
               <i aria-hidden="true">✓</i> Results populated
             </li>
@@ -955,7 +952,7 @@ export default function CoveragePage() {
         </div>
         <div>
           <p className="coverage-panel-label">Potential missing states</p>
-          <ul className="coverage-status-list is-unobserved">
+          <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
             {["Loading", "Empty results", "API error"].map((item) => (
               <li key={item}>
                 <i aria-hidden="true">○</i> {item}
@@ -972,7 +969,7 @@ export default function CoveragePage() {
         surface
         eyebrow="Missing flows + coverage"
         title="Sometimes the missing piece is an entire branch."
-        copy="A missing flow is a complete path the model expects but the demonstration never took—grouped into error, alternative, and recovery flows rather than a flat list."
+        copy="A missing flow is a complete path the model expects but the demonstration never took, grouped into error, alternative, and recovery flows rather than a flat list."
         note="Master 1600 × 900 px · Display 1000 × 562 px · Observed branch, then unobserved branches extend from the same entry state"
         visual={{
           label: "Missing flow analysis / animated SVG design",
@@ -981,9 +978,9 @@ export default function CoveragePage() {
         }}
       >
         <div>
-          <p className="coverage-kicker">Login</p>
+          <p className="coverage-kicker" data-aos="fade-up">Login</p>
           <p className="coverage-panel-label">Observed</p>
-          <ul className="coverage-status-list">
+          <ul className="coverage-status-list" data-aos="tellann-panel">
             <li>
               <i aria-hidden="true">✓</i> Credentials → Authenticated
             </li>
@@ -991,7 +988,7 @@ export default function CoveragePage() {
         </div>
         <div>
           <p className="coverage-panel-label">Unobserved</p>
-          <ul className="coverage-status-list is-unobserved">
+          <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
             {[
               "Invalid password",
               "Account locked",
@@ -1021,8 +1018,8 @@ export default function CoveragePage() {
         }}
       >
         <div>
-          <p className="coverage-kicker">Observed path</p>
-          <ul className="coverage-status-list">
+          <p className="coverage-kicker" data-aos="fade-up">Observed path</p>
+          <ul className="coverage-status-list" data-aos="tellann-panel">
             <li>
               <i aria-hidden="true">✓</i> Product → Cart → Checkout → Success
             </li>
@@ -1059,8 +1056,7 @@ export default function CoveragePage() {
           display: "1100 × 611",
         }}
       >
-        <div
-          className="coverage-comparison-table"
+        <div className="coverage-comparison-table" data-aos="tellann-panel"
           role="table"
           aria-label="Coverage compared across two demonstration sessions"
         >
@@ -1079,7 +1075,7 @@ export default function CoveragePage() {
         </div>
         <div>
           <p className="coverage-panel-label">Newly observed</p>
-          <ul className="coverage-status-list">
+          <ul className="coverage-status-list" data-aos="tellann-panel">
             <li>
               <i aria-hidden="true">✓</i> PAYMENT_FAILURE
             </li>
@@ -1096,7 +1092,7 @@ export default function CoveragePage() {
         reverse
         eyebrow="Coverage report"
         title="Turn coverage into a QA artifact."
-        copy="The Flow Coverage Report packages workflow completeness—coverage across all five dimensions, observed paths, and missing paths—into something a team can circulate and act on."
+        copy="The Flow Coverage Report packages workflow completeness, coverage across all five dimensions, observed paths, and missing paths, into something a team can circulate and act on."
         mediaWidth={600}
         visual={{
           label: "Flow Coverage Report / portrait report UI design",
@@ -1134,7 +1130,7 @@ export default function CoveragePage() {
           ))}
         </dl>
         <p className="coverage-panel-label">Missing</p>
-        <ul className="coverage-status-list is-unobserved">
+        <ul className="coverage-status-list is-unobserved" data-aos="tellann-panel">
           {[
             "Payment failure",
             "Out of stock",
@@ -1202,15 +1198,15 @@ export default function CoveragePage() {
 
       <section className="coverage-caveats">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">What coverage does not mean</p>
-          <h2>Coverage is evidence—not a guarantee.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">What coverage does not mean</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Coverage is evidence, not a guarantee.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A coverage score describes the behavioral surface you exercised
             against the model Tellann is analyzing. It does not describe
             correctness.
           </p>
         </div>
-        <div className="coverage-shell coverage-caveat-grid">
+        <div className="coverage-shell coverage-caveat-grid" data-aos="tellann-panel">
           {[
             [
               "90% coverage",
@@ -1236,7 +1232,7 @@ export default function CoveragePage() {
           ))}
         </div>
         <div className="coverage-shell coverage-vocabulary">
-          <p className="coverage-kicker">Status vocabulary</p>
+          <p className="coverage-kicker" data-aos="fade-up">Status vocabulary</p>
           <dl>
             {statusVocabulary.map(([term, meaning]) => (
               <div key={term}>
@@ -1255,15 +1251,15 @@ export default function CoveragePage() {
 
       <section className="coverage-future">
         <div className="coverage-shell coverage-heading">
-          <p className="coverage-kicker">Where coverage goes next</p>
-          <h2>Current measurement stays separate from planned intelligence.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">Where coverage goes next</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Current measurement stays separate from planned intelligence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Phase 1 measures demonstrated behavior. Production coverage and
             release-level analysis are labelled as planned rather than blended
             into what exists today.
           </p>
         </div>
-        <div className="coverage-shell coverage-phase-grid">
+        <div className="coverage-shell coverage-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Behavioral QA</span>
             <p>
@@ -1292,8 +1288,8 @@ export default function CoveragePage() {
       <section className="coverage-faq">
         <div className="coverage-shell coverage-faq-grid">
           <div>
-            <p className="coverage-kicker">FAQ</p>
-            <h2>Questions behind the percentage.</h2>
+            <p className="coverage-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the percentage.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -1311,11 +1307,11 @@ export default function CoveragePage() {
 
       <section className="coverage-final">
         <div className="coverage-shell">
-          <p className="coverage-kicker">See what you haven&apos;t exercised</p>
-          <h2>Turn one workflow into measurable behavioral coverage.</h2>
-          <p>
+          <p className="coverage-kicker" data-aos="fade-up">See what you haven&apos;t exercised</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Turn one workflow into measurable behavioral coverage.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Demonstrate an application workflow and see which states,
-            transitions, endpoints, errors, and paths Tellann observed—and where
+            transitions, endpoints, errors, and paths Tellann observed, and where
             the remaining gaps may be.
           </p>
           <div className="coverage-actions">

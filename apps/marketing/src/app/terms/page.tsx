@@ -4,6 +4,7 @@ import Link from 'next/link';
 export const metadata: Metadata = {
   title: 'Terms',
   description: 'Tellann terms placeholder for MVP launch preparation.',
+  alternates: { canonical: '/terms' },
 };
 
 export default function TermsPage() {

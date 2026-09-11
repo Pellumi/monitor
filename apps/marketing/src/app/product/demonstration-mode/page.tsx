@@ -49,9 +49,9 @@ function Feature({
   return (
     <section className={`demo-feature${reverse ? " is-reverse" : ""}`}>
       <div className="demo-shell demo-feature-copy">
-        <p className="demo-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="demo-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
         {children}
         {href && label ? (
           <Link href={href}>
@@ -140,9 +140,9 @@ export default function DemonstrationModePage() {
       <main className="demo-page">
         <section className="demo-hero pt-20!">
           <div className="demo-shell">
-            <p className="demo-kicker">Developer Demonstration Mode</p>
-            <h1>Teach Tellann how your application behaves.</h1>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">Developer Demonstration Mode</p>
+            <h1 data-aos="fade-up" data-aos-delay="60">Teach Tellann how your application behaves.</h1>
+            <p data-aos="fade-up" data-aos-delay="120">
               Start a demonstration session, perform the workflows that matter,
               and let Tellann observe navigation, interactions, state changes,
               API activity, and errors. When the session ends, Tellann
@@ -174,9 +174,9 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-concept">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">The core idea</p>
-            <h2>A walkthrough becomes structured behavioral evidence.</h2>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">The core idea</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">A walkthrough becomes structured behavioral evidence.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               You are not writing tests or manually documenting every edge case.
               Perform a workflow and let Tellann reconstruct the states,
               transitions and quality evidence around it.
@@ -208,26 +208,26 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-live" id="live-recorder">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">Live demonstration experience</p>
-            <h2>Record the workflow while you actually perform it.</h2>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">Live demonstration experience</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Record the workflow while you actually perform it.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Use this illustrative recorder to see application actions become
               events, states, API context and a completed behavioral session.
             </p>
           </div>
-          <div className="demo-shell-wide">
+          <div className="demo-shell-wide" data-aos="tellann-panel">
             <DemonstrationRecorder />
           </div>
         </section>
         <section className="demo-types">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">Three session types</p>
-            <h2>Demonstrate with a purpose or explore freely.</h2>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">Three session types</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Demonstrate with a purpose or explore freely.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Choose the mode that matches what your team needs to understand.
             </p>
           </div>
-          <div className="demo-shell demo-type-grid">
+          <div className="demo-shell demo-type-grid" data-aos="tellann-panel">
             {[
               [
                 "01",
@@ -259,12 +259,12 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-capture">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">What Tellann captures</p>
-            <h2>
+            <p className="demo-kicker" data-aos="fade-up">What Tellann captures</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               The demonstration is captured as behavior, not raw application
               content.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Structured event categories preserve the operational story of the
               workflow.
             </p>
@@ -307,7 +307,7 @@ export default function DemonstrationModePage() {
             dimensions: "1600 × 900",
           }}
         >
-          <div className="demo-flow">
+          <div className="demo-flow" data-aos="tellann-panel">
             <span>Action</span>
             <i>→</i>
             <span>Event</span>
@@ -349,7 +349,7 @@ export default function DemonstrationModePage() {
           href="/product/behavior-graphs"
           label="Explore Behavior Graphs"
         >
-          <div className="demo-flow">
+          <div className="demo-flow" data-aos="tellann-panel">
             <span>Anonymous</span>
             <i>→</i>
             <span>Authenticated</span>
@@ -361,15 +361,15 @@ export default function DemonstrationModePage() {
         </Feature>
         <section className="demo-results">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">Coverage and gaps</p>
-            <h2>See what you demonstrated and what you never showed.</h2>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">Coverage and gaps</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">See what you demonstrated and what you never showed.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Observed evidence creates measurable coverage while adjacent
               error, recovery and alternative paths become potential quality
               gaps.
             </p>
           </div>
-          <div className="demo-results-grid">
+          <div className="demo-results-grid" data-aos="tellann-panel">
             <article>
               <MasterPlaceholder
                 label="Demonstration coverage dashboard / UI placeholder"
@@ -387,7 +387,7 @@ export default function DemonstrationModePage() {
               <p>Payment failure · Retry payment · Session timeout</p>
             </article>
           </div>
-          <div className="demo-shell demo-state-cards">
+          <div className="demo-shell demo-state-cards" data-aos="tellann-panel">
             {[
               "EMPTY_CART",
               "NO_RESULTS",
@@ -412,7 +412,7 @@ export default function DemonstrationModePage() {
           href="/product/session-replay"
           label="Explore Session Replay"
         >
-          <div className="demo-timeline">
+          <div className="demo-timeline" data-aos="tellann-panel">
             00:00 SESSION_STARTED ─ 00:14 STATE_TRANSITION ─ 00:16 API_ERROR
           </div>
         </Feature>
@@ -473,7 +473,7 @@ export default function DemonstrationModePage() {
             dimensions: "1600 × 900",
           }}
         >
-          <div className="demo-flow">
+          <div className="demo-flow" data-aos="tellann-panel">
             <span>Demo 01</span>
             <i>+</i>
             <span>Demo 02</span>
@@ -485,14 +485,14 @@ export default function DemonstrationModePage() {
         </Feature>
         <section className="demo-privacy">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">Privacy by default</p>
-            <h2>Demonstrate behavior without sending Tellann your secrets.</h2>
-            <p>
+            <p className="demo-kicker" data-aos="fade-up">Privacy by default</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Demonstrate behavior without sending Tellann your secrets.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Privacy controls operate before protected telemetry leaves the
               client.
             </p>
           </div>
-          <div className="demo-shell demo-privacy-grid">
+          <div className="demo-shell demo-privacy-grid" data-aos="tellann-panel">
             <article>
               <span>Captured</span>
               <p>
@@ -520,11 +520,11 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-uses">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">When to use it</p>
-            <h2>Use it whenever behavior matters more than assumptions.</h2>
-            <p>Begin with the situation your team needs to understand.</p>
+            <p className="demo-kicker" data-aos="fade-up">When to use it</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Use it whenever behavior matters more than assumptions.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">Begin with the situation your team needs to understand.</p>
           </div>
-          <div className="demo-shell demo-use-grid">
+          <div className="demo-shell demo-use-grid" data-aos="tellann-panel">
             {[
               ["01", "Initial application mapping"],
               ["02", "Feature QA"],
@@ -547,13 +547,13 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-honesty">
           <div className="demo-shell demo-heading">
-            <p className="demo-kicker">Clear boundaries</p>
-            <h2>
+            <p className="demo-kicker" data-aos="fade-up">Clear boundaries</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Demonstration Mode does not pretend to be something it isn’t.
             </h2>
-            <p>Honest product boundaries make the evidence more useful.</p>
+            <p data-aos="fade-up" data-aos-delay="120">Honest product boundaries make the evidence more useful.</p>
           </div>
-          <div className="demo-shell demo-honesty-grid">
+          <div className="demo-shell demo-honesty-grid" data-aos="tellann-panel">
             <article>
               <h3>It is</h3>
               {[
@@ -583,8 +583,8 @@ export default function DemonstrationModePage() {
         <section className="demo-faq">
           <div className="demo-shell demo-faq-grid">
             <div>
-              <p className="demo-kicker">FAQ</p>
-              <h2 className="mt-4">Before you press record.</h2>
+              <p className="demo-kicker" data-aos="fade-up">FAQ</p>
+              <h2 data-aos="fade-up" data-aos-delay="60" className="mt-4">Before you press record.</h2>
             </div>
             <div>
               {faqs.map(([q, a]) => (
@@ -601,12 +601,12 @@ export default function DemonstrationModePage() {
         </section>
         <section className="demo-final">
           <div className="demo-shell">
-            <p className="demo-kicker">Demonstrate your first workflow</p>
-            <h2>
+            <p className="demo-kicker" data-aos="fade-up">Demonstrate your first workflow</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Your application already contains the behavior. Tellann helps you
               see it.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Connect the SDK, start a demonstration, perform a real workflow,
               and turn that session into a clearer behavioral model of your
               software.

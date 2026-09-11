@@ -89,15 +89,15 @@ export default function BrandPage() {
       <section className="brand-hero" id="overview">
         <div className="brand-shell brand-hero-grid !pt-8">
           <div className="brand-hero-copy">
-            <p className="brand-kicker">Tellann brand</p>
-            <h1>
+            <p className="brand-kicker" data-aos="fade-up">Tellann brand</p>
+            <h1 data-aos="fade-up" data-aos-delay="60">
               Built to make
               <br />
               invisible behavior
               <br />
               <span>visible.</span>
             </h1>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               These guidelines define how Tellann is represented across product,
               web, media, partnerships, documentation, and communications.
             </p>
@@ -137,7 +137,7 @@ export default function BrandPage() {
       </section>
 
       <section className="brand-quick">
-        <div className="brand-shell brand-quick-grid">
+        <div className="brand-shell brand-quick-grid" data-aos="tellann-panel">
           <a href="#logo">
             <span>01</span>
             <b>Logos</b>
@@ -168,14 +168,14 @@ export default function BrandPage() {
       <section className="brand-essence">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Brand essence</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Brand essence</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               What Tellann
               <br />
               should feel like.
             </h2>
           </header>
-          <div className="brand-essence-grid">
+          <div className="brand-essence-grid" data-aos="tellann-panel">
             {essence.map(([title, copy], index) => (
               <article key={title}>
                 <span>{String(index + 1).padStart(2, "0")}</span>
@@ -186,7 +186,7 @@ export default function BrandPage() {
           </div>
           <div className="brand-personality">
             <div>
-              <p className="brand-kicker">We are</p>
+              <p className="brand-kicker" data-aos="fade-up">We are</p>
               <p>
                 Technical
                 <br />
@@ -200,7 +200,7 @@ export default function BrandPage() {
               </p>
             </div>
             <div>
-              <p className="brand-kicker">We are not</p>
+              <p className="brand-kicker" data-aos="fade-up">We are not</p>
               <p>
                 Sci-fi fantasy
                 <br />
@@ -220,9 +220,9 @@ export default function BrandPage() {
       <section className="brand-logo" id="logo">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Logo system</p>
-            <h2>The Tellann mark.</h2>
-            <p>
+            <p className="brand-kicker" data-aos="fade-up">Logo system</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">The Tellann mark.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Use the primary horizontal lockup by default. The symbol and
               wordmark are supporting variants for constrained, approved
               contexts.
@@ -291,10 +291,10 @@ export default function BrandPage() {
       <section className="brand-rules">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Logo usage</p>
-            <h2>Keep the mark intact.</h2>
+            <p className="brand-kicker" data-aos="fade-up">Logo usage</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Keep the mark intact.</h2>
           </header>
-          <div className="brand-rule-grid">
+          <div className="brand-rule-grid" data-aos="tellann-panel">
             <article className="is-correct">
               <span>Correct / approved</span>
               <Image
@@ -341,7 +341,7 @@ export default function BrandPage() {
           </div>
           <div className="brand-clear-space">
             <div>
-              <p className="brand-kicker">Clear space</p>
+              <p className="brand-kicker" data-aos="fade-up">Clear space</p>
               <h3>Give the mark room.</h3>
               <p>
                 Keep a consistent exclusion zone around every lockup. Do not
@@ -371,18 +371,18 @@ export default function BrandPage() {
       <section className="brand-color" id="color">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Color system</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Color system</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Luminance is
               <br />
               the accent.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Tellann creates hierarchy through brightness, tonal separation,
               and deliberate contrast.
             </p>
           </header>
-          <div className="brand-color-grid">
+          <div className="brand-color-grid" data-aos="tellann-panel">
             {colors.map(([name, hex, use, rgb]) => (
               <article
                 key={hex}
@@ -425,14 +425,14 @@ export default function BrandPage() {
       <section className="brand-type" id="type">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Typography</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Typography</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Human language.
               <br />
               Machine language.
             </h2>
           </header>
-          <div className="brand-type-grid">
+          <div className="brand-type-grid" data-aos="tellann-panel">
             <article>
               <header>
                 <span>01 / Human layer</span>
@@ -481,14 +481,14 @@ export default function BrandPage() {
       <section className="brand-visuals">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Visual language</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Visual language</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Technical without
               <br />
               becoming theatrical.
             </h2>
           </header>
-          <div className="brand-visual-grid">
+          <div className="brand-visual-grid" data-aos="tellann-panel">
             <article>
               <span>Surface</span>
               <div className="brand-surface-stack">
@@ -528,19 +528,19 @@ export default function BrandPage() {
       <section className="brand-product">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Product representation</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Product representation</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Show evidence,
               <br />
               not theatre.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Use current product views with realistic, non-sensitive demo data.
               Never fabricate metrics or present roadmap concepts as released
               functionality.
             </p>
           </header>
-          <div className="brand-product-grid">
+          <div className="brand-product-grid" data-aos="tellann-panel">
             {["Behavior Graph", "Session Replay", "Coverage", "QA Reports"].map(
               (name, index) => (
                 <article key={name}>
@@ -565,14 +565,14 @@ export default function BrandPage() {
       <section className="brand-voice" id="voice">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Tone of voice</p>
-            <h2>
+            <p className="brand-kicker" data-aos="fade-up">Tone of voice</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Calm. Precise.
               <br />
               Evidence-driven.
             </h2>
           </header>
-          <div className="brand-voice-grid">
+          <div className="brand-voice-grid" data-aos="tellann-panel">
             <article>
               <span>Say what the product does.</span>
               <p>“Tellann maps observed application workflows.”</p>
@@ -595,10 +595,10 @@ export default function BrandPage() {
       <section className="brand-messaging">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Approved messaging</p>
-            <h2>How to describe Tellann.</h2>
+            <p className="brand-kicker" data-aos="fade-up">Approved messaging</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">How to describe Tellann.</h2>
           </header>
-          <div className="brand-message-list">
+          <div className="brand-message-list" data-aos="tellann-panel">
             {messages.map(([label, text], index) => (
               <article key={label}>
                 <span>
@@ -610,7 +610,7 @@ export default function BrandPage() {
           </div>
           <div className="brand-naming">
             <div>
-              <p className="brand-kicker">Naming</p>
+              <p className="brand-kicker" data-aos="fade-up">Naming</p>
               <h3>Tellann</h3>
               <p>
                 The public company and product name uses this capitalization.
@@ -629,15 +629,15 @@ export default function BrandPage() {
       <section className="brand-downloads" id="downloads">
         <div className="brand-shell">
           <header className="brand-section-head">
-            <p className="brand-kicker">Approved assets</p>
-            <h2>Use the current files.</h2>
-            <p>
+            <p className="brand-kicker" data-aos="fade-up">Approved assets</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Use the current files.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Only published exports are available below. Broader press,
               screenshot, social, and guideline packages will appear when
               formally approved.
             </p>
           </header>
-          <div className="brand-download-grid">
+          <div className="brand-download-grid" data-aos="tellann-panel">
             <a href="/logo_icon_text.svg" download>
               <span>01 / Logo</span>
               <h3>White horizontal lockup</h3>
@@ -671,7 +671,7 @@ export default function BrandPage() {
 
       <section className="brand-legal">
         <div className="brand-shell brand-legal-grid">
-          <p className="brand-kicker">External use</p>
+          <p className="brand-kicker" data-aos="fade-up">External use</p>
           <p>
             You may use these Tellann assets to accurately refer to Tellann,
             subject to these guidelines. Use does not imply endorsement,
@@ -682,13 +682,13 @@ export default function BrandPage() {
 
       <section className="brand-contact">
         <div className="brand-shell">
-          <p className="brand-kicker">Brand contact</p>
-          <h2>
+          <p className="brand-kicker" data-aos="fade-up">Brand contact</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             Not sure whether
             <br />
             your use fits?
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             For press, partnership, or brand-use questions, contact the Tellann
             team.
           </p>

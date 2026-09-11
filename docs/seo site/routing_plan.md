@@ -75,29 +75,57 @@ I would **not** put 10–12 links directly in the navbar. Product and Resources 
 
 # 3. Complete route structure
 
-My recommended public sitemap is:
+> **Implemented.** This tree is the live contract, held in
+> `apps/marketing/src/config/site-routes.ts`. Every route below exists today —
+> either as a real page or as a `planned` stub rendered by the `[...slug]`
+> catch-all. See section 47 for how status is tracked and how to promote a stub.
+>
+> Legend: `*` = page built · everything else = stub awaiting content.
 
 ```text
-/
+/                                          *
 │
-├── /product
-│   ├── /product/how-it-works
-│   ├── /product/demonstration-mode
-│   ├── /product/behavior-graphs
-│   ├── /product/workflow-discovery
-│   ├── /product/coverage
-│   ├── /product/missing-flows
-│   ├── /product/missing-states
-│   ├── /product/session-replay
-│   ├── /product/endpoint-intelligence
-│   └── /product/qa-reports
+├── /product                               *
+│   ├── /product/how-it-works              *
+│   ├── /product/demonstration-mode        *
+│   │
+│   ├── Declare & verify
+│   │   ├── /product/flow-declaration
+│   │   ├── /product/reconciliation
+│   │   ├── /product/graph-drift
+│   │   ├── /product/automated-instrumentation
+│   │   ├── /product/document-flow-inference
+│   │   └── /product/guided-qa-runs
+│   │
+│   ├── Understand behavior
+│   │   ├── /product/behavior-graphs       *
+│   │   ├── /product/workflow-discovery    *
+│   │   └── /product/session-replay        *
+│   │
+│   ├── Analyze & report
+│   │   ├── /product/coverage              *
+│   │   ├── /product/missing-flows         *
+│   │   ├── /product/missing-states        *
+│   │   ├── /product/endpoint-intelligence *
+│   │   └── /product/qa-reports
+│   │
+│   └── Operate
+│       ├── /product/environments
+│       ├── /product/team-access
+│       ├── /product/audit-logs
+│       ├── /product/notifications
+│       ├── /product/integrations
+│       └── /product/data-retention
 │
-├── /desktop
-│   ├── /desktop/download
-│   ├── /desktop/releases
-│   │   └── /desktop/releases/[version]
-│   ├── /desktop/security
-│   └── /desktop/requirements
+├── /desktop                               *
+│   ├── /desktop/download                  *
+│   ├── /desktop/releases                  *
+│   │   └── /desktop/releases/[version]    *
+│   ├── /desktop/security                  *
+│   ├── /desktop/requirements              *
+│   ├── /desktop/windows
+│   ├── /desktop/troubleshooting
+│   └── /desktop/updates
 │
 ├── /solutions
 │   ├── /solutions/developers
@@ -105,7 +133,9 @@ My recommended public sitemap is:
 │   ├── /solutions/engineering-leaders
 │   ├── /solutions/product-teams
 │   ├── /solutions/startups
-│   └── /solutions/saas
+│   ├── /solutions/saas
+│   ├── /solutions/enterprise
+│   └── /solutions/agencies
 │
 ├── /use-cases
 │   ├── /use-cases/workflow-coverage
@@ -114,66 +144,125 @@ My recommended public sitemap is:
 │   ├── /use-cases/application-walkthrough
 │   ├── /use-cases/api-performance-analysis
 │   ├── /use-cases/qa-planning
-│   └── /use-cases/debug-user-workflows
+│   ├── /use-cases/debug-user-workflows
+│   ├── /use-cases/regression-detection
+│   ├── /use-cases/release-readiness
+│   ├── /use-cases/legacy-application-mapping
+│   ├── /use-cases/documenting-user-journeys
+│   └── /use-cases/onboarding-engineers
 │
 ├── /developers
-│   ├── /developers
-│   ├── /developers/sdk
-│   ├── /developers/react
-│   ├── /developers/nextjs
-│   ├── /developers/nodejs
-│   ├── /developers/express
-│   ├── /developers/nestjs
 │   ├── /developers/quickstart
-│   └── /developers/api
+│   ├── /developers/sdk
+│   ├── /developers/api
+│   ├── /developers/examples
+│   │
+│   ├── Frameworks
+│   │   ├── /developers/react
+│   │   ├── /developers/nextjs
+│   │   ├── /developers/nodejs
+│   │   ├── /developers/express
+│   │   ├── /developers/fastify
+│   │   └── /developers/nestjs          ← no adapter ships yet; see §48
+│   │
+│   └── Platform
+│       ├── /developers/events
+│       ├── /developers/webhooks
+│       └── /developers/self-hosting
 │
-├── /docs → docs.tellann.co
+├── /docs → docs.tellann.co              * (redirect, next.config.ts)
 │
-├── /pricing
+├── /pricing                               *
 │
-├── /security
+├── /security                              *
 │   ├── /security/privacy
 │   ├── /security/data-collection
 │   ├── /security/session-replay
-│   └── /security/enterprise
+│   ├── /security/enterprise
+│   ├── /security/architecture
+│   ├── /security/authentication
+│   ├── /security/access-control
+│   ├── /security/audit-logging
+│   ├── /security/responsible-disclosure
+│   └── /security/compliance
 │
 ├── /resources
 │   ├── /blog
+│   │   ├── /blog/behavioral-testing
+│   │   ├── /blog/software-quality
+│   │   ├── /blog/qa-engineering
+│   │   ├── /blog/session-replay
+│   │   ├── /blog/application-observability
+│   │   ├── /blog/testing-strategy
+│   │   └── /blog/release-quality
 │   ├── /guides
 │   ├── /case-studies
 │   ├── /research
 │   ├── /glossary
+│   │   ├── /glossary/behavior-graph
+│   │   ├── /glossary/workflow-coverage
+│   │   ├── /glossary/session-replay
+│   │   ├── /glossary/application-state
+│   │   ├── /glossary/state-transition
+│   │   ├── /glossary/user-workflow
+│   │   ├── /glossary/behavioral-testing
+│   │   ├── /glossary/qa-coverage
+│   │   ├── /glossary/declared-flow
+│   │   ├── /glossary/reconciliation
+│   │   ├── /glossary/missing-flow
+│   │   ├── /glossary/missing-state
+│   │   ├── /glossary/graph-drift
+│   │   ├── /glossary/demonstration-mode
+│   │   └── /glossary/endpoint-intelligence
 │   ├── /templates
-│   └── /changelog
+│   ├── /changelog
+│   └── /faq
 │
 ├── /compare
 │   ├── /compare/sentry
 │   ├── /compare/posthog
 │   ├── /compare/datadog
 │   ├── /compare/new-relic
-│   └── /compare/replay
+│   ├── /compare/replay
+│   ├── /compare/playwright
+│   ├── /compare/cypress
+│   ├── /compare/logrocket
+│   ├── /compare/fullstory
+│   └── /compare/mabl
 │
-├── /company
-│   ├── /about
-│   ├── /careers
-│   ├── /contact
-│   ├── /brand
-│   └── /roadmap
+├── /company                               *
+│   ├── /about → /company                  * (redirect)
+│   ├── /careers                           *
+│   ├── /contact                           *
+│   ├── /brand                             *
+│   ├── /roadmap                           *
+│   ├── /demo
+│   ├── /press
+│   └── /partners
 │
 ├── /legal
-│   ├── /privacy
-│   ├── /terms
+│   ├── /privacy                           *
+│   ├── /terms                             *
 │   ├── /cookies
 │   ├── /dpa
 │   ├── /subprocessors
-│   └── /acceptable-use
+│   ├── /acceptable-use
+│   ├── /sla
+│   └── /accessibility
 │
-├── /login
-│   └── → app.tellann.co/login
-│
-└── /signup
-    └── → app.tellann.co/signup
+├── /login  → app.tellann.co/auth/login    * (redirect, next.config.ts)
+└── /signup → app.tellann.co/auth/login    * (redirect, next.config.ts)
 ```
+
+Menu grouping is a presentation concern and does not always follow the URL
+tree — the Product menu's *Platform* column carries `/desktop` and
+`/desktop/security` alongside the `/product` entry points, because that is how
+a reader looks for them. Section 50 covers the menu layout rules.
+
+Service and operational routes also exist outside the marketing tree:
+`/offline`, `/maintenance`, `/rate-limited`, `/forbidden`, `/service-unavailable`,
+`/status`, `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest` and
+`/.well-known/security.txt`.
 
 This gives you both a **good human navigation architecture** and a very strong SEO foundation.
 
@@ -1856,3 +1945,256 @@ The resulting site has a very clear narrative:
 > **Tellann observes how your application behaves → reconstructs its workflows → builds a behavior graph → measures what you demonstrated → identifies what you missed → gives your team evidence about application quality.**
 
 That is both faithful to the current MVP and considerably stronger for SEO than a conventional **Home / Product / About / Pricing / Contact** five-page SaaS website.   
+
+
+---
+
+# 47. Route status — how the tree is maintained
+
+Every route lives in one file:
+
+```text
+apps/marketing/src/config/site-routes.ts
+```
+
+Each entry carries a status:
+
+```ts
+export type SiteRoute = {
+  href: string;
+  label: string;
+  description: string;
+  status: 'live' | 'planned';
+};
+```
+
+Two helpers create them — `live(...)` for a page that exists under `src/app`,
+and `route(...)` for a route reserved for launch.
+
+**Status controls how search engines see a route**, so promoting a page is a
+one-word change:
+
+```text
+status: 'planned'
+  ├── excluded from sitemap.xml
+  └── served with <meta name="robots" content="noindex, follow">
+
+status: 'live'
+  ├── included in sitemap.xml
+  └── indexable
+```
+
+**Navigation is deliberately separate.** Planned routes stay in the header and
+footer while the site is being built: the menus show the full intended
+structure, nothing is lost track of, and every link lands on a coming-soon stub
+instead of a 404. Search engines are already protected by the two rules above,
+so there is no need to hide the routes from people.
+
+## Promoting a stub
+
+1. Build the real page at `src/app/<route>/page.tsx`.
+2. Change its `route(` to `live(` in `site-routes.ts`.
+3. Give the page a self-referencing canonical:
+   `alternates: { canonical: '/your-route' }`.
+
+Step 3 matters — the root layout sets `canonical: '/'`, so a page without its
+own canonical tells search engines it is a duplicate of the homepage.
+
+## Hiding planned routes at launch
+
+When the site goes live you may want visitors to see only finished pages. One
+flag drops every planned route from the header and footer:
+
+```bash
+NEXT_PUBLIC_HIDE_PLANNED_ROUTES=true
+```
+
+It changes navigation only — stub URLs stay reachable either way, and the
+routes stay in `site-routes.ts` as the build checklist. Leave it unset while
+building.
+
+## Structural rules
+
+- **Redirects are not stubs.** `/login`, `/signup` and `/docs` are handled in
+  `next.config.ts` and must never be registered in `site-routes.ts`, or the
+  catch-all would render a coming-soon page for them. `/about` redirects to
+  `/company` and is unregistered for the same reason.
+- **Dynamic collections need real route files.** `/blog/[slug]`,
+  `/glossary/[term]`, `/guides/[slug]`, `/case-studies/[slug]` and
+  `/careers/[slug]` cannot be represented as stubs. The index and category
+  routes are registered now; the `[slug]` handlers arrive with the content layer.
+- **Blog categories and glossary terms** are exported separately
+  (`blogCategoryRoutes`, `glossaryRoutes`) and deliberately kept out of the
+  navigation groups so the Resources mega-menu stays readable. Their index
+  pages link them.
+- **Empty groups disappear.** A navigation section left with no visible routes
+  is dropped rather than rendered as an empty mega-menu or footer column. This
+  only has an effect once NEXT_PUBLIC_HIDE_PLANNED_ROUTES is on.
+
+---
+
+# 48. Why these routes exist — product coverage
+
+The route set was reconciled against what the dashboard (`apps/dashboard`) and
+desktop application (`apps/desktop`) actually ship. Several shipped
+capabilities had no marketing page at all, and several were sold on `/pricing`
+with nowhere to link.
+
+## The declared-intent half of the product
+
+The original plan described Tellann as *demonstrate → observe → discover*. The
+product now also asks a team to **declare intended behavior first, then prove
+it**. These routes cover that half:
+
+```text
+/product/flow-declaration            ← dashboard /declare, desktop Intent
+/product/reconciliation              ← dashboard /reconciliation (FDRS)
+/product/graph-drift                 ← dashboard /graph-drift
+/product/automated-instrumentation   ← desktop instrumentation-controller
+/product/document-flow-inference     ← desktop document → intent drafts
+/product/guided-qa-runs              ← desktop guided runs, dashboard /qa-runs
+```
+
+## The workspace and platform layer
+
+Each of these is a paid row on `/pricing` that previously had no destination:
+
+```text
+/product/environments      ← settings/environments
+/product/team-access       ← settings/members, application permissions
+/product/audit-logs        ← settings/audit-logs
+/product/notifications     ← the notification pipeline (in-app, push, email)
+/product/integrations      ← management API tokens, outbound webhooks
+/product/data-retention    ← settings/data
+```
+
+## Accuracy constraints
+
+Three limits were applied deliberately, and should be rechecked before launch:
+
+- **No integrations directory.** Only outbound webhooks and management API
+  tokens exist. There is no Slack, GitHub, Jira or Linear integration, so no
+  `/integrations/<vendor>` routes were created.
+- **`/developers/nestjs` has no adapter.** `packages/backend-sdk/src/integrations`
+  ships `express` and `fastify` only. Build the adapter or drop the route —
+  do not publish the page as-is. Vue, Angular and Svelte pages should wait until
+  the frontend SDK documents them.
+- **Desktop ships Windows only.** `/desktop/windows` is registered;
+  `/desktop/macos` and `/desktop/linux` should be added when those builds ship.
+- **`/security/compliance`** should stay a stub until there is something
+  factual to state.
+
+---
+
+# 49. Recommended build order
+
+The launch list in section 46 still holds, reordered for what is now known:
+
+```text
+1  /product/qa-reports
+   The homepage and /product already link to it. Highest-value fix.
+
+2  /product/flow-declaration
+   /product/reconciliation
+   Without these the site describes a product Tellann no longer ships.
+
+3  /security/privacy
+   /security/data-collection
+   The trust gate for a developer audience.
+
+4  /developers
+   /developers/quickstart
+   Mostly links into docs.tellann.co, which is already written.
+
+5  /product/environments, /product/team-access, /product/audit-logs,
+   /product/notifications, /product/integrations, /product/data-retention
+   Gives every pricing row a destination.
+
+6  /product/automated-instrumentation
+   /product/document-flow-inference
+   /product/guided-qa-runs
+   The paid gates buyers cannot currently read about.
+
+7  /solutions/*  then  /use-cases/*
+   SEO layers 3 and 4.
+
+8  /compare/*, /blog/*, /glossary/*
+   The content engine.
+```
+
+
+---
+
+# 50. Mega-menu layout rules
+
+With 138 routes registered, the navigation needs rules or it grows past the
+screen. Three constraints keep every menu to **one row, no scrolling**, at every
+desktop width down to 1101px.
+
+## 1. One column per group, capped at five
+
+The header sets `--mega-cols` from the group count and the grid reads it:
+
+```css
+grid-template-columns: repeat(min(var(--mega-cols, 4), 5), minmax(0, 1fr));
+```
+
+A menu is then exactly as wide as it needs to be — Company gets 2 columns,
+Solutions 3, Product 5 — and never wraps onto a second row. The practical
+consequence: **a menu section must not exceed five groups.** If a sixth is
+needed, merge two or move a group to another section.
+
+## 2. A group shows at most six routes
+
+Longer groups are capped in the menu and finish with a "See all" link:
+
+```ts
+{
+  label: 'Use cases',
+  limit: 6,
+  seeAll: '/use-cases',
+  routes: [ /* 13 entries, ordered by priority */ ],
+}
+```
+
+Declaration order is priority order — the first `limit` entries are what the
+menu shows. The footer and the group's index page still list everything, so
+nothing becomes unreachable. Mobile ignores the cap; it is a scrolling list
+already.
+
+## 3. Descriptions are clamped to two lines
+
+`.mega-menu-link-copy > span` uses `-webkit-line-clamp: 2`, which bounds every
+item at roughly 64px no matter how narrow the column gets. Write descriptions
+under about 40 characters so the clamp never actually truncates.
+
+## Resulting geometry
+
+Measured at 1400×900 and again at the tightest desktop size, 1102×720:
+
+```text
+Menu         Groups  Columns  Scrolls
+Product         5        5       no
+Solutions       3        3       no
+Developers      3        3       no
+Resources       2        2       no
+Company         2        2       no
+```
+
+The Product menu went from 1046px tall (scrolling, two rows) to 542px in a
+single row by merging seven groups into five:
+
+```text
+before                          after
+─────────────────────────────   ─────────────────────────────
+Platform                        Platform
+Desktop                           + Desktop app, Desktop security
+Declare & verify                Declare & verify
+Understand behavior             Understand behavior
+Analyze quality                 Analyze & report
+Communicate                       + QA reports
+Operate                         Operate
+```
+
+No routes were removed to achieve this — all 138 remain registered, in the
+footer, and reachable.

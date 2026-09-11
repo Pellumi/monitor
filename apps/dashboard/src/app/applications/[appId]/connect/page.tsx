@@ -199,7 +199,7 @@ const FRAMEWORKS: FrameworkOption[] = [
       [
         `import { TELLANN } from '${ctx.packageName}';`,
         "",
-        "// Initialize before your HTTP server starts — keep this at the very top of your entry file",
+        "// Initialize before your HTTP server starts, keep this at the very top of your entry file",
         "TELLANN.initialize({",
         `    endpoint: process.env.TELLANN_GATEWAY_URL || '${ctx.endpoint}',`,
         "    apiKey: process.env.TELLANN_INGESTION_KEY,",

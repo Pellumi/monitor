@@ -3,16 +3,16 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import {
-  companyRoutes,
-  developerGroups,
   isRouteActive,
-  productGroups,
-  resourceGroups,
-  solutionGroups,
+  navCompanyGroups,
+  navDeveloperGroups,
+  navProductGroups,
+  navResourceGroups,
+  navSolutionGroups,
   type RouteGroup,
 } from '@/config/site-routes';
 import { logoIconText, logoIconTextBlack } from '@/lib/image';
@@ -21,16 +21,27 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.domain-name.com';
 const docsUrl = process.env.NEXT_PUBLIC_DOCS_URL || 'https://docs.domain-name.com';
 const DESKTOP_BREAKPOINT = '(min-width: 1101px)';
 const CLOSE_DELAY_MS = 150;
+const SCROLLED_AFTER_PX = 8;
+const UNPIN_AFTER_PX = 140;
 
-const menuSections = [
-  { key: 'product', label: 'Product', groups: productGroups },
-  { key: 'solutions', label: 'Solutions', groups: solutionGroups },
-  { key: 'developers', label: 'Developers', groups: developerGroups },
-  { key: 'resources', label: 'Resources', groups: resourceGroups },
-  { key: 'company', label: 'Company', groups: [{ label: 'Tellann', routes: companyRoutes }] },
-] as const;
+// Sections whose routes are all still planned are dropped entirely, so the
+// navigation never opens onto an empty mega-menu.
+const menuSections = (
+  [
+    { key: 'product', label: 'Product', groups: navProductGroups },
+    { key: 'solutions', label: 'Solutions', groups: navSolutionGroups },
+    { key: 'developers', label: 'Developers', groups: navDeveloperGroups },
+    { key: 'resources', label: 'Resources', groups: navResourceGroups },
+    { key: 'company', label: 'Company', groups: navCompanyGroups },
+  ] as const
+).filter((section) => section.groups.some((group) => group.routes.length > 0));
 
 type MenuKey = (typeof menuSections)[number]['key'];
+
+// Pricing sits between the feature menus and Company, so the split is by key
+// rather than index — filtering a section out must not reorder the rest.
+const leadingSections = menuSections.filter((section) => section.key !== 'company');
+const trailingSections = menuSections.filter((section) => section.key === 'company');
 
 function MenuGroups({
   groups,
@@ -44,32 +55,51 @@ function MenuGroups({
   onNavigate?: () => void;
 }) {
   return (
-    <div className={mobile ? 'mobile-nav-groups' : 'mega-menu-grid'}>
-      {groups.map((group) => (
-        <section key={group.label} className={mobile ? 'mobile-nav-group' : 'mega-menu-group'}>
-          <p>{group.label}</p>
-          <div className={mobile ? 'mobile-nav-links' : 'mega-menu-links'}>
-            {group.routes.map((item) => {
-              const isActive = isRouteActive(pathname, item.href);
+    <div
+      className={mobile ? 'mobile-nav-groups' : 'mega-menu-grid'}
+      // One column per group, so a menu is exactly as wide as it needs to be
+      // and never wraps onto a second row the reader has to scroll to.
+      style={mobile ? undefined : ({ '--mega-cols': groups.length } as CSSProperties)}
+    >
+      {groups.map((group) => {
+        // The menu shows a group's most important routes; the rest stay one
+        // click away on its index page. Mobile is a scrolling list already, so
+        // it shows everything.
+        const shown = !mobile && group.limit ? group.routes.slice(0, group.limit) : group.routes;
+        const truncated = shown.length < group.routes.length;
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={isActive ? 'page' : undefined}
-                  onClick={onNavigate}
-                >
-                  <span className="mega-menu-link-copy">
-                    <strong>{item.label}</strong>
-                    <span>{item.description}</span>
-                  </span>
-                  <span className="mega-menu-arrow" aria-hidden="true">→</span>
+        return (
+          <section key={group.label} className={mobile ? 'mobile-nav-group' : 'mega-menu-group'}>
+            <p>{group.label}</p>
+            <div className={mobile ? 'mobile-nav-links' : 'mega-menu-links'}>
+              {shown.map((item) => {
+                const isActive = isRouteActive(pathname, item.href);
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={onNavigate}
+                  >
+                    <span className="mega-menu-link-copy">
+                      <strong>{item.label}</strong>
+                      <span>{item.description}</span>
+                    </span>
+                    <span className="mega-menu-arrow" aria-hidden="true">→</span>
+                  </Link>
+                );
+              })}
+              {truncated && group.seeAll ? (
+                <Link className="mega-menu-see-all" href={group.seeAll} onClick={onNavigate}>
+                  See all {group.label.toLowerCase()}
+                  <span aria-hidden="true">→</span>
                 </Link>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+              ) : null}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -91,7 +121,7 @@ function DesktopNavigation({
 }) {
   return (
     <nav className="desktop-nav" aria-label="Primary navigation">
-      {menuSections.slice(0, 4).map((section) => {
+      {leadingSections.map((section) => {
         const isOpen = activeMenu === section.key;
 
         return (
@@ -115,7 +145,7 @@ function DesktopNavigation({
         Pricing
       </Link>
 
-      {menuSections.slice(4).map((section) => {
+      {trailingSections.map((section) => {
         const isOpen = activeMenu === section.key;
 
         return (
@@ -147,7 +177,7 @@ function MobileMenu({ pathname, menuRef }: { pathname: string; menuRef: React.Re
     <details ref={menuRef} className="mobile-menu">
       <summary aria-label="Open navigation"><span /><span /><span /></summary>
       <nav aria-label="Mobile navigation">
-        {menuSections.slice(0, 4).map((section) => (
+        {leadingSections.map((section) => (
           <details key={section.key} className="mobile-nav-section">
             <summary>
               {section.label}
@@ -161,7 +191,7 @@ function MobileMenu({ pathname, menuRef }: { pathname: string; menuRef: React.Re
           Pricing
         </Link>
 
-        {menuSections.slice(4).map((section) => (
+        {trailingSections.map((section) => (
           <details key={section.key} className="mobile-nav-section">
             <summary>
               {section.label}
@@ -180,6 +210,54 @@ function MobileMenu({ pathname, menuRef }: { pathname: string; menuRef: React.Re
       </nav>
     </details>
   );
+}
+
+
+/**
+ * Tracks vertical scroll so the header can settle in (`data-scrolled`) and step
+ * out of the way while the visitor reads downward (`data-pinned`). Reads are
+ * batched into a rAF so the listener never measures layout per scroll event,
+ * and the first measurement is deferred for the same reason.
+ */
+function useHeaderScrollState() {
+  const [state, setState] = useState({ scrolled: false, pinned: true });
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    let lastY = window.scrollY;
+    let frame = 0;
+
+    const measure = () => {
+      frame = 0;
+      const y = window.scrollY;
+      const goingDown = y > lastY;
+      lastY = y;
+
+      setState((current) => {
+        const scrolled = y > SCROLLED_AFTER_PX;
+        const pinned = y <= UNPIN_AFTER_PX ? true : !goingDown;
+        return current.scrolled === scrolled && current.pinned === pinned
+          ? current
+          : { scrolled, pinned };
+      });
+    };
+
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(measure);
+    };
+
+    frame = window.requestAnimationFrame(measure);
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  return state;
 }
 
 export function SiteHeader() {
@@ -248,6 +326,8 @@ export function SiteHeader() {
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
   const activeSection = menuSections.find((section) => section.key === visibleActiveMenu);
+  const { scrolled, pinned } = useHeaderScrollState();
+  const headerPinned = Boolean(activeSection) || pinned;
 
   return (
     <>
@@ -257,6 +337,8 @@ export function SiteHeader() {
       <header
         ref={headerRef}
         className={`site-header${activeSection ? ' mega-menu-open' : ''}`}
+        data-scrolled={scrolled}
+        data-pinned={headerPinned}
         onPointerEnter={clearCloseTimer}
         onPointerLeave={scheduleClose}
         onBlur={(event) => {

@@ -10,13 +10,13 @@ const dashboardUrl =
 
 export const metadata: Metadata = {
   title:
-    "Workflow Discovery — Automatically Map Application Workflows | Tellann",
+    "Workflow Discovery | Automatically Map Application Workflows",
   description:
     "See how Tellann discovers application workflows from observed behavior, identifies entry and exit points, maps states and transitions, measures coverage, exposes missing paths, and connects workflows to sessions and API activity.",
   alternates: { canonical: "/product/workflow-discovery" },
   openGraph: {
     title:
-      "Workflow Discovery — Automatically Map Application Workflows | Tellann",
+      "Workflow Discovery | Automatically Map Application Workflows",
     description:
       "Turn observed application behavior into structured, evidence-backed workflows.",
     url: `${siteUrl}/product/workflow-discovery`,
@@ -95,9 +95,9 @@ function SplitSection({
     <section className={`workflow-split${reverse ? " is-reverse" : ""}`}>
       <div className="workflow-shell workflow-split-grid">
         <div className="workflow-copy">
-          <p className="workflow-kicker">{eyebrow}</p>
-          <h2>{title}</h2>
-          <p>{copy}</p>
+          <p className="workflow-kicker" data-aos="fade-up">{eyebrow}</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+          <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
           {children}
         </div>
         <VisualPlaceholder {...visual} />
@@ -123,12 +123,12 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-hero p-20!">
         <div className="workflow-shell workflow-hero-copy">
-          <p className="workflow-kicker">Workflow discovery</p>
-          <h1>See the workflows hidden inside application behavior.</h1>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Workflow discovery</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">See the workflows hidden inside application behavior.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann reconstructs observed sessions into states and transitions,
             then identifies the connected regions that represent meaningful
-            processes—giving engineering and QA teams workflows they can
+            processes, giving engineering and QA teams workflows they can
             explore, measure, and trace back to evidence.
           </p>
           <div className="workflow-actions">
@@ -140,7 +140,7 @@ export default function WorkflowDiscoveryPage() {
             </a>
           </div>
         </div>
-        <div className="workflow-shell-wide workflow-hero-media workflow-desktop-media">
+        <div className="workflow-shell-wide workflow-hero-media workflow-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero workflow discovery / SVG or canvas design"
             master="1920 × 1150"
@@ -165,9 +165,9 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-transformation">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">From events to objectives</p>
-          <h2>Workflows emerge from observed behavior.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">From events to objectives</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Workflows emerge from observed behavior.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Events say something happened. States explain where the application
             was. Transitions describe movement. Workflow Discovery identifies
             which connected sequences represent a meaningful process.
@@ -200,15 +200,15 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-anatomy">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Workflow anatomy</p>
-          <h2>A workflow is behavior with an objective.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Workflow anatomy</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A workflow is behavior with an objective.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A workflow contains an entry state, a connected set of states and
             transitions, success and failure branches, and one or more
             meaningful outcomes.
           </p>
         </div>
-        <div className="workflow-shell workflow-anatomy-grid">
+        <div className="workflow-shell workflow-anatomy-grid" data-aos="tellann-panel">
           {[
             ["01", "Entry", "Where the process begins.", "PRODUCT_VIEW"],
             [
@@ -244,9 +244,9 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-discovery" id="discovery">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Automatic discovery</p>
-          <h2>The workflow is discovered not manually wired together.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Automatic discovery</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">The workflow is discovered not manually wired together.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann observes repeated connected behavior, proposes boundaries
             around meaningful paths, and keeps the proposed workflow linked to
             the sessions that produced it.
@@ -286,7 +286,7 @@ export default function WorkflowDiscoveryPage() {
           display: "900 × 450",
         }}
       >
-        <div className="workflow-chip-row">
+        <div className="workflow-chip-row" data-aos="tellann-panel">
           <span>PRODUCT_VIEW</span>
           <span>LOGIN_FORM</span>
           <span>SETTINGS</span>
@@ -327,7 +327,7 @@ export default function WorkflowDiscoveryPage() {
           display: "1100 × 611",
         }}
       >
-        <ul className="workflow-list">
+        <ul className="workflow-list" data-aos="tellann-panel">
           <li>Recognize repeated connected paths</li>
           <li>Identify entry and exit markers</li>
           <li>Preserve alternate branches</li>
@@ -337,15 +337,15 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-paths">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Paths and outcomes</p>
-          <h2>Real workflows branch.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Paths and outcomes</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Real workflows branch.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Success is only one path. Failures, retries, recoveries, and
             alternate outcomes often reveal the states that teams most need to
             demonstrate and validate.
           </p>
         </div>
-        <div className="workflow-shell workflow-path-grid">
+        <div className="workflow-shell workflow-path-grid" data-aos="tellann-panel">
           {[
             ["Success", "Observed completion path"],
             ["Failure", "Observed unsuccessful outcome"],
@@ -376,7 +376,7 @@ export default function WorkflowDiscoveryPage() {
           display: "960 × 512",
         }}
       >
-        <div className="workflow-stat-row">
+        <div className="workflow-stat-row" data-aos="tellann-panel">
           <span>
             <small>Observed sessions</small>
             <b>143</b>
@@ -390,31 +390,30 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-explorer-section" id="explorer">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Interactive workflow explorer</p>
-          <h2>Explore discovered workflows as living structures.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Interactive workflow explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Explore discovered workflows as living structures.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Select a workflow, compare observed and missing paths, inspect
             boundaries and metrics, and reveal associated API context around a
             dimension-accurate placeholder for the final graph renderer.
           </p>
         </div>
-        <div className="workflow-shell-wide">
+        <div className="workflow-shell-wide" data-aos="tellann-panel">
           <WorkflowExplorer />
         </div>
       </section>
 
       <section className="workflow-inventory">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Workflow inventory</p>
-          <h2>Turn an application into an inventory of behavior.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Workflow inventory</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Turn an application into an inventory of behavior.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A structured inventory lets teams find critical workflows,
             understand their current evidence, and choose where another
             demonstration is needed.
           </p>
         </div>
-        <div
-          className="workflow-shell workflow-table"
+        <div className="workflow-shell workflow-table" data-aos="tellann-panel"
           role="table"
           aria-label="Illustrative workflow inventory"
         >
@@ -525,11 +524,11 @@ export default function WorkflowDiscoveryPage() {
       <section className="workflow-evidence">
         <div className="workflow-shell workflow-evidence-grid">
           <article>
-            <p className="workflow-kicker">Workflow + sessions</p>
-            <h2>
+            <p className="workflow-kicker" data-aos="fade-up">Workflow + sessions</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Every discovered workflow should lead back to what was observed.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Open the supporting sessions and move from the workflow into the
               reconstructed timeline that produced it.
             </p>
@@ -540,9 +539,9 @@ export default function WorkflowDiscoveryPage() {
             />
           </article>
           <article>
-            <p className="workflow-kicker">Workflow + endpoints</p>
-            <h2>See the APIs involved in a workflow.</h2>
-            <p>
+            <p className="workflow-kicker" data-aos="fade-up">Workflow + endpoints</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">See the APIs involved in a workflow.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Reveal backend requests on the transitions where they
               participated, keeping interface and endpoint behavior connected.
             </p>
@@ -566,7 +565,7 @@ export default function WorkflowDiscoveryPage() {
           display: "1100 × 611",
         }}
       >
-        <div className="workflow-stat-row">
+        <div className="workflow-stat-row" data-aos="tellann-panel">
           <span>
             <small>Workflows</small>
             <b>4 → 6</b>
@@ -588,7 +587,7 @@ export default function WorkflowDiscoveryPage() {
           display: "760 × 973",
         }}
       >
-        <ul className="workflow-list">
+        <ul className="workflow-list" data-aos="tellann-panel">
           <li>Workflow graph</li>
           <li>State and transition inventory</li>
           <li>Success and failure paths</li>
@@ -598,11 +597,11 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-comparison">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">Observed, not manually maintained</p>
-          <h2>
+          <p className="workflow-kicker" data-aos="fade-up">Observed, not manually maintained</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             The map should follow the application.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann derives workflow structure from evidence while keeping the
             distinction between observed behavior and expected requirements
             explicit.
@@ -656,17 +655,17 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-relationships">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">The quality reasoning chain</p>
-          <h2>
+          <p className="workflow-kicker" data-aos="fade-up">The quality reasoning chain</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             Behavior Graphs provide the map. Workflow Discovery gives the map
             meaning.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             A discovered workflow becomes the unit that coverage, missing-path
             analysis, evidence review, and QA reporting can reason about.
           </p>
         </div>
-        <div className="workflow-shell workflow-relation-flow">
+        <div className="workflow-shell workflow-relation-flow" data-aos="tellann-panel">
           {[
             "Behavior Graph",
             "Workflow Discovery",
@@ -689,16 +688,16 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-future">
         <div className="workflow-shell workflow-heading">
-          <p className="workflow-kicker">
+          <p className="workflow-kicker" data-aos="fade-up">
             Where workflow intelligence goes next
           </p>
-          <h2>The model can support progressively deeper intelligence.</h2>
-          <p>
+          <h2 data-aos="fade-up" data-aos-delay="60">The model can support progressively deeper intelligence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Future capabilities stay explicitly labelled as planned rather than
             being blended into the current demonstration-led product.
           </p>
         </div>
-        <div className="workflow-shell workflow-phase-grid">
+        <div className="workflow-shell workflow-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Product direction</span>
             <p>
@@ -726,8 +725,8 @@ export default function WorkflowDiscoveryPage() {
       <section className="workflow-faq">
         <div className="workflow-shell workflow-faq-grid">
           <div>
-            <p className="workflow-kicker">FAQ</p>
-            <h2>Questions behind discovery.</h2>
+            <p className="workflow-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind discovery.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -745,9 +744,9 @@ export default function WorkflowDiscoveryPage() {
 
       <section className="workflow-final">
         <div className="workflow-shell">
-          <p className="workflow-kicker">Discover your first workflow</p>
-          <h2>Show Tellann what happens. Let the workflow emerge.</h2>
-          <p>
+          <p className="workflow-kicker" data-aos="fade-up">Discover your first workflow</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Show Tellann what happens. Let the workflow emerge.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Record a demonstration and turn observed states and transitions into
             structured workflows your team can explore, measure, and use as QA
             evidence.

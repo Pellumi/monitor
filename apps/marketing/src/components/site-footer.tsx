@@ -2,14 +2,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { logoIconText, logoIconTextBlack } from "@/lib/image";
 import {
-  companyRoutes,
-  desktopRoutes,
-  developerGroups,
-  legalRoutes,
-  productGroups,
-  resourceGroups,
-  securityRoutes,
-  solutionGroups,
+  isRouteVisible,
+  navCompanyRoutes,
+  navDesktopRoutes,
+  navDeveloperGroups,
+  navLegalRoutes,
+  navProductGroups,
+  navResourceGroups,
+  navSecurityRoutes,
+  navSolutionGroups,
   type SiteRoute,
 } from "@/config/site-routes";
 
@@ -29,21 +30,23 @@ type FooterGroup = {
   links: FooterLink[];
 };
 
+// Curated picks. A planned route silently drops out of the footer until its
+// page is built, so this list can name routes ahead of time.
 const selectRoutes = (routes: SiteRoute[], hrefs: string[]) =>
   hrefs.flatMap((href) => {
     const item = routes.find((route) => route.href === href);
-    return item ? [{ href: item.href, label: item.label }] : [];
+    return item && isRouteVisible(item) ? [{ href: item.href, label: item.label }] : [];
   });
 
-const allSolutionRoutes = solutionGroups.flatMap((group) => group.routes);
-const allDeveloperRoutes = developerGroups.flatMap((group) => group.routes);
-const allResourceRoutes = resourceGroups.flatMap((group) => group.routes);
+const allSolutionRoutes = navSolutionGroups.flatMap((group) => group.routes);
+const allDeveloperRoutes = navDeveloperGroups.flatMap((group) => group.routes);
+const allResourceRoutes = navResourceGroups.flatMap((group) => group.routes);
 
 const footerNavigation: FooterGroup[] = [
   {
     title: "Product",
     links: [
-      ...productGroups.flatMap((group) =>
+      ...navProductGroups.flatMap((group) =>
         group.routes.map((route, index) => ({
         href: route.href,
         label: route.label,
@@ -86,7 +89,7 @@ const footerNavigation: FooterGroup[] = [
         "/developers/nextjs",
         "/developers/nodejs",
       ]),
-      ...selectRoutes(desktopRoutes, ["/desktop/requirements"]),
+      ...selectRoutes(navDesktopRoutes, ["/desktop/requirements"]),
       { label: "Documentation", href: docsUrl, external: true },
       { label: "System status", href: statusUrl, external: true },
     ],
@@ -101,29 +104,29 @@ const footerNavigation: FooterGroup[] = [
         "/glossary",
         "/changelog",
       ]),
-      ...selectRoutes(desktopRoutes, ["/desktop/releases"]),
+      ...selectRoutes(navDesktopRoutes, ["/desktop/releases"]),
       ...selectRoutes(allResourceRoutes, ["/roadmap"]),
     ],
   },
   {
     title: "Company",
     links: [
-      ...selectRoutes(companyRoutes, ["/company", "/careers", "/contact", "/brand", "/roadmap"]),
+      ...selectRoutes(navCompanyRoutes, ["/company", "/careers", "/contact", "/brand", "/roadmap"]),
       { label: "Pricing", href: "/pricing" },
     ],
   },
   {
     title: "Trust & legal",
     links: [
-      ...selectRoutes(securityRoutes, [
+      ...selectRoutes(navSecurityRoutes, [
         "/security",
         "/security/privacy",
         "/security/data-collection",
         "/security/session-replay",
         "/security/enterprise",
       ]),
-      ...selectRoutes(desktopRoutes, ["/desktop/security"]),
-      ...selectRoutes(legalRoutes, [
+      ...selectRoutes(navDesktopRoutes, ["/desktop/security"]),
+      ...selectRoutes(navLegalRoutes, [
         "/terms",
         "/privacy",
         "/cookies",
@@ -137,6 +140,10 @@ const footerNavigation: FooterGroup[] = [
     ],
   },
 ];
+
+// A column whose routes are all still planned is dropped rather than rendered
+// as an empty heading.
+const visibleFooterNavigation = footerNavigation.filter((group) => group.links.length > 0);
 
 function FooterNavLink({ link }: { link: FooterLink }) {
   return (
@@ -220,13 +227,13 @@ export function SiteFooter() {
         </div>
 
         <nav className="footer-grid footer-nav-desktop" aria-label="Footer">
-          {footerNavigation.map((group) => (
+          {visibleFooterNavigation.map((group) => (
             <FooterColumn key={group.title} group={group} />
           ))}
         </nav>
 
         <nav className="footer-nav-mobile" aria-label="Footer">
-          {footerNavigation.map((group) => (
+          {visibleFooterNavigation.map((group) => (
             <details key={group.title}>
               <summary>
                 {group.title} <span aria-hidden="true">+</span>

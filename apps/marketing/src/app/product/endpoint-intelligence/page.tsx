@@ -217,9 +217,9 @@ function MediaSection({
       id={id}
     >
       <div className="endpoint-shell endpoint-heading">
-        <p className="endpoint-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="endpoint-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       {children ? (
         <div className="endpoint-shell endpoint-section-detail">{children}</div>
@@ -261,12 +261,11 @@ function AsideSection({
       id={id}
     >
       <div className="endpoint-shell endpoint-heading">
-        <p className="endpoint-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="endpoint-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
-      <div
-        className="endpoint-shell endpoint-aside-grid"
+      <div className="endpoint-shell endpoint-aside-grid" data-aos="tellann-panel"
         style={{ "--media-w": `${mediaWidth}px` } as CSSProperties}
       >
         <VisualPlaceholder {...visual} />
@@ -294,9 +293,9 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-hero pt-20!">
         <div className="endpoint-shell endpoint-hero-copy">
-          <p className="endpoint-kicker">Endpoint intelligence</p>
-          <h1>See the backend behavior behind every workflow.</h1>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Endpoint intelligence</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">See the backend behavior behind every workflow.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann captures endpoint activity during observed application
             sessions and connects requests, responses, latency, and errors back
             to the workflows and states they supported.
@@ -313,7 +312,7 @@ export default function EndpointIntelligencePage() {
             </Link>
           </div>
         </div>
-        <div className="endpoint-shell-wide endpoint-hero-media endpoint-desktop-media">
+        <div className="endpoint-shell-wide endpoint-hero-media endpoint-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero workflow and endpoint graph / requests attached to each state transition"
             master="1920 × 1120"
@@ -352,7 +351,7 @@ export default function EndpointIntelligencePage() {
         <div className="endpoint-contrast">
           <article>
             <span>Without workflow context</span>
-            <div className="endpoint-metric-stack">
+            <div className="endpoint-metric-stack" data-aos="tellann-panel">
               <b>POST /payment</b>
               <b>891 ms</b>
               <b>503</b>
@@ -385,14 +384,14 @@ export default function EndpointIntelligencePage() {
         <div className="endpoint-capture">
           <div>
             <p className="endpoint-panel-label">Frontend SDK</p>
-            <ul className="endpoint-plain-list">
+            <ul className="endpoint-plain-list" data-aos="tellann-panel">
               <li>Session context</li>
               <li>Interface behavior</li>
             </ul>
           </div>
           <div>
             <p className="endpoint-panel-label">Backend SDK</p>
-            <ul className="endpoint-plain-list">
+            <ul className="endpoint-plain-list" data-aos="tellann-panel">
               {[
                 "Request capture",
                 "Response capture",
@@ -437,7 +436,7 @@ export default function EndpointIntelligencePage() {
         </div>
         <div>
           <p className="endpoint-panel-label">Observed summary</p>
-          <div className="endpoint-summary-grid">
+          <div className="endpoint-summary-grid" data-aos="tellann-panel">
             {[
               ["Endpoints observed", "4"],
               ["Requests", "6"],
@@ -456,16 +455,15 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-inventory">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">Endpoint inventory</p>
-          <h2>Turn observed API activity into an endpoint inventory.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Endpoint inventory</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Turn observed API activity into an endpoint inventory.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             The inventory is built from what was actually captured. Frequency,
             average response, error rate, and workflow participation all come
             from observed requests rather than a declared route list.
           </p>
         </div>
-        <div
-          className="endpoint-shell endpoint-inventory-table"
+        <div className="endpoint-shell endpoint-inventory-table" data-aos="tellann-panel"
           role="table"
           aria-label="Observed endpoint inventory"
         >
@@ -530,7 +528,7 @@ export default function EndpointIntelligencePage() {
           </span>
         </div>
         <p className="endpoint-panel-label">Observed durations</p>
-        <div className="endpoint-duration-list">
+        <div className="endpoint-duration-list" data-aos="tellann-panel">
           {["742 ms", "801 ms", "856 ms", "890 ms", "912 ms", "1,043 ms"].map(
             (value) => (
               <span key={value}>{value}</span>
@@ -554,7 +552,7 @@ export default function EndpointIntelligencePage() {
           display: "800 × 500",
         }}
       >
-        <div className="endpoint-rank-list">
+        <div className="endpoint-rank-list" data-aos="tellann-panel">
           {[
             ["1", "POST /payment", "891 ms", "Checkout"],
             ["2", "POST /checkout", "418 ms", "Checkout"],
@@ -585,7 +583,7 @@ export default function EndpointIntelligencePage() {
           display: "800 × 500",
         }}
       >
-        <div className="endpoint-rank-list">
+        <div className="endpoint-rank-list" data-aos="tellann-panel">
           {[
             ["1", "GET /products", "48", "Checkout · Search"],
             ["2", "GET /search", "31", "Search"],
@@ -629,7 +627,7 @@ export default function EndpointIntelligencePage() {
           </span>
         </div>
         <div className="endpoint-error-card">
-          <p className="endpoint-kicker">API error</p>
+          <p className="endpoint-kicker" data-aos="fade-up">API error</p>
           <dl>
             {[
               ["Endpoint", "POST /payment"],
@@ -664,7 +662,7 @@ export default function EndpointIntelligencePage() {
         }}
       >
         <div className="endpoint-health-card">
-          <p className="endpoint-kicker">POST /payment</p>
+          <p className="endpoint-kicker" data-aos="fade-up">POST /payment</p>
           <b>Slow · elevated errors</b>
           <dl>
             {[
@@ -696,16 +694,16 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-explorer-section" id="explorer">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">Interactive endpoint explorer</p>
-          <h2>Move from endpoint metrics to behavioral context.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Interactive endpoint explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Move from endpoint metrics to behavioral context.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Choose a workflow, filter by category and method, and select an
             endpoint to see its observed activity, the states it touched, and
             the sessions behind it. The graph canvas remains a
             dimension-accurate placeholder for the final renderer.
           </p>
         </div>
-        <div className="endpoint-shell-wide">
+        <div className="endpoint-shell-wide" data-aos="tellann-panel">
           <EndpointExplorer />
         </div>
         <p className="endpoint-shell endpoint-note">
@@ -762,7 +760,7 @@ export default function EndpointIntelligencePage() {
           display: "1000 × 562",
         }}
       >
-        <div className="endpoint-workflow-cards">
+        <div className="endpoint-workflow-cards" data-aos="tellann-panel">
           {[
             [
               "Checkout",
@@ -822,7 +820,7 @@ export default function EndpointIntelligencePage() {
         </div>
         <div>
           <p className="endpoint-panel-label">What replay shows</p>
-          <ul className="endpoint-plain-list">
+          <ul className="endpoint-plain-list" data-aos="tellann-panel">
             {[
               "API_REQUEST at the captured timestamp",
               "API_ERROR with the response status",
@@ -865,7 +863,7 @@ export default function EndpointIntelligencePage() {
           </span>
         </div>
         <p className="endpoint-panel-label">Observed</p>
-        <ul className="endpoint-status-list">
+        <ul className="endpoint-status-list" data-aos="tellann-panel">
           {["POST /cart", "POST /checkout", "POST /payment"].map((item) => (
             <li key={item}>
               <i aria-hidden="true">✓</i> {item}
@@ -875,7 +873,7 @@ export default function EndpointIntelligencePage() {
         <p className="endpoint-panel-label">
           Not observed in selected demonstrations
         </p>
-        <ul className="endpoint-status-list is-unobserved">
+        <ul className="endpoint-status-list is-unobserved" data-aos="tellann-panel">
           {["POST /payment/retry", "DELETE /cart/item"].map((item) => (
             <li key={item}>
               <i aria-hidden="true">○</i> {item}
@@ -894,9 +892,9 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-gaps">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">Endpoint + missing states and flows</p>
-          <h2>Backend outcomes can explain where behavior may be missing.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Endpoint + missing states and flows</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Backend outcomes can explain where behavior may be missing.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A consistently successful response is itself a signal. Rule-based
             analysis proposes the states and paths around it—as questions worth
             demonstrating, not as proof that the failed branch exists.
@@ -904,7 +902,7 @@ export default function EndpointIntelligencePage() {
         </div>
         <div className="endpoint-shell endpoint-gap-grid">
           <article>
-            <p className="endpoint-kicker">Potential missing state</p>
+            <p className="endpoint-kicker" data-aos="fade-up">Potential missing state</p>
             <div className="endpoint-chain">
               <b>
                 POST /payment<i>200</i>
@@ -925,7 +923,7 @@ export default function EndpointIntelligencePage() {
             </Link>
           </article>
           <article>
-            <p className="endpoint-kicker">Potential missing flow</p>
+            <p className="endpoint-kicker" data-aos="fade-up">Potential missing flow</p>
             <div className="endpoint-chain is-gap">
               <b>PAYMENT_FAILURE</b>
               <b>RETRY_PAYMENT</b>
@@ -964,9 +962,9 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-rankings-section">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">Endpoint rankings</p>
-          <h2>Find the endpoints that deserve attention first.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Endpoint rankings</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Find the endpoints that deserve attention first.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Three orderings over the same observed data—slowest, most observed,
             and highest error rate—each keeping the workflow attached.
           </p>
@@ -989,7 +987,7 @@ export default function EndpointIntelligencePage() {
         }}
       >
         <div className="endpoint-recommendation">
-          <p className="endpoint-kicker">Rule-based recommendation</p>
+          <p className="endpoint-kicker" data-aos="fade-up">Rule-based recommendation</p>
           <b>GET /products</b>
           <dl>
             <div>
@@ -1010,7 +1008,7 @@ export default function EndpointIntelligencePage() {
           </dl>
         </div>
         <p className="endpoint-panel-label">Phase 1 suggestion types</p>
-        <div className="endpoint-suggestion-list">
+        <div className="endpoint-suggestion-list" data-aos="tellann-panel">
           {recommendations.map(([observation, action, basis]) => (
             <span key={observation}>
               <b>{observation}</b>
@@ -1100,7 +1098,7 @@ export default function EndpointIntelligencePage() {
         }}
       >
         <p className="endpoint-panel-label">Captured</p>
-        <ul className="endpoint-status-list">
+        <ul className="endpoint-status-list" data-aos="tellann-panel">
           {capturedMetadata.map(([item]) => (
             <li key={item}>
               <i aria-hidden="true">✓</i> {item}
@@ -1108,7 +1106,7 @@ export default function EndpointIntelligencePage() {
           ))}
         </ul>
         <p className="endpoint-panel-label">Not captured</p>
-        <ul className="endpoint-status-list is-unobserved">
+        <ul className="endpoint-status-list is-unobserved" data-aos="tellann-panel">
           {notCaptured.map((item) => (
             <li key={item}>
               <i aria-hidden="true">✕</i> {item}
@@ -1122,18 +1120,18 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-boundaries">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">What endpoint intelligence is not</p>
-          <h2>
+          <p className="endpoint-kicker" data-aos="fade-up">What endpoint intelligence is not</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             Backend context without pretending to be an entire observability
             stack.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann cares about the API because of the behavior it enabled or
             disrupted. That keeps this feature part of the behavioral QA model
             rather than a generic monitoring product.
           </p>
         </div>
-        <div className="endpoint-shell endpoint-boundary-grid">
+        <div className="endpoint-shell endpoint-boundary-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 1 is</span>
             <ul>
@@ -1155,9 +1153,9 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-pipeline-section">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">Phase 1 implementation</p>
-          <h2>From a click to a QA report.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Phase 1 implementation</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">From a click to a QA report.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             The complete Phase 1 path, from the interface action through backend
             capture and correlation to every surface the endpoint appears on.
           </p>
@@ -1184,17 +1182,17 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-future">
         <div className="endpoint-shell endpoint-heading">
-          <p className="endpoint-kicker">
+          <p className="endpoint-kicker" data-aos="fade-up">
             Where endpoint intelligence goes next
           </p>
-          <h2>Observed behavior first. Production and intelligence later.</h2>
-          <p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Observed behavior first. Production and intelligence later.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Phase 1 works from controlled demonstrations. Continuous monitoring,
             database intelligence, and autonomous analysis stay named as
             planned.
           </p>
         </div>
-        <div className="endpoint-shell endpoint-phase-grid">
+        <div className="endpoint-shell endpoint-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Behavioral QA</span>
             <p>
@@ -1226,8 +1224,8 @@ export default function EndpointIntelligencePage() {
       <section className="endpoint-faq">
         <div className="endpoint-shell endpoint-faq-grid">
           <div>
-            <p className="endpoint-kicker">FAQ</p>
-            <h2>Questions behind the requests.</h2>
+            <p className="endpoint-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the requests.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -1245,9 +1243,9 @@ export default function EndpointIntelligencePage() {
 
       <section className="endpoint-final">
         <div className="endpoint-shell">
-          <p className="endpoint-kicker">Connect behavior to the backend</p>
-          <h2>See what your APIs were doing when the workflow changed.</h2>
-          <p>
+          <p className="endpoint-kicker" data-aos="fade-up">Connect behavior to the backend</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">See what your APIs were doing when the workflow changed.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Connect Tellann&apos;s backend SDK, demonstrate a workflow, and
             inspect the requests, responses, latency, errors, and endpoint
             activity behind the behavior you observed.

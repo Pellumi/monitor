@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Script from 'next/script';
+import { AosProvider } from '@/components/aos-provider';
 import { SiteFooter } from '@/components/site-footer';
 import { SiteHeader } from '@/components/site-header';
 import { logoIconSvg } from '@/lib/image';
@@ -24,6 +25,24 @@ const themeScript = `
       document.documentElement.classList.add('dark');
       document.documentElement.dataset.theme = 'dark';
     }
+  })();
+`;
+
+/*
+ * Runs before first paint so reveal-on-scroll content starts hidden instead of
+ * flashing in place. If AOS never boots (script blocked, chunk failed), the
+ * timeout releases the class and the page renders as ordinary static content.
+ */
+const motionScript = `
+  (() => {
+    try {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const root = document.documentElement;
+      root.classList.add('aos-ready');
+      window.setTimeout(() => {
+        if (!root.classList.contains('aos-loaded')) root.classList.remove('aos-ready');
+      }, 2500);
+    } catch {}
   })();
 `;
 
@@ -66,8 +85,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Script id="tellann-theme-bootstrap" strategy="beforeInteractive">
           {themeScript}
         </Script>
+        <Script id="tellann-motion-bootstrap" strategy="beforeInteractive">
+          {motionScript}
+        </Script>
       </head>
       <body className={inter.className}>
+        <AosProvider />
         <SiteHeader />
         {children}
         <SiteFooter />

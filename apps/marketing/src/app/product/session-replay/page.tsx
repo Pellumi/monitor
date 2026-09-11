@@ -9,12 +9,12 @@ const dashboardUrl =
   process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Session Replay — Reconstruct Application Behavior | Tellann",
+  title: "Session Replay | Reconstruct Application Behavior",
   description:
     "Reconstruct application sessions with Tellann and inspect chronological navigation, interactions, state transitions, workflows, API activity, and errors behind your behavioral QA insights.",
   alternates: { canonical: "/product/session-replay" },
   openGraph: {
-    title: "Session Replay — Reconstruct Application Behavior | Tellann",
+    title: "Session Replay | Reconstruct Application Behavior",
     description:
       "Replay observed sessions as structured behavioral timelines instead of opaque screen footage.",
     url: `${siteUrl}/product/session-replay`,
@@ -180,9 +180,9 @@ function FeatureSection({
       id={id}
     >
       <div className="replay-shell replay-heading">
-        <p className="replay-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="replay-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       {children ? (
         <div className="replay-shell replay-feature-detail">{children}</div>
@@ -213,9 +213,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-hero pt-20!">
         <div className="replay-shell replay-hero-copy">
-          <p className="replay-kicker">Session replay</p>
-          <h1>Replay the behavior behind the insight.</h1>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Session replay</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">Replay the behavior behind the insight.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Reconstruct observed sessions as chronological behavioral timelines.
             Inspect navigation, interface interactions, state changes, workflow
             activity, API calls, and errors without relying on incomplete
@@ -233,7 +233,7 @@ export default function SessionReplayPage() {
             </Link>
           </div>
         </div>
-        <div className="replay-shell-wide replay-hero-media replay-desktop-media">
+        <div className="replay-shell-wide replay-hero-media replay-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero replay viewer / product recording"
             master="1920 × 1200"
@@ -259,9 +259,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-definition">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">What replay actually is</p>
-          <h2>A reconstruction of behavior, not another screen recording.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">What replay actually is</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A reconstruction of behavior, not another screen recording.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann Session Replay is a behavioral reconstruction generated from
             captured telemetry. The events stay structured, so a session remains
             something you can query, filter, and trace rather than footage you
@@ -295,9 +295,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-construction" id="construction">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">From events to replay</p>
-          <h2>Replay begins with structured telemetry.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">From events to replay</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Replay begins with structured telemetry.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Captured events are grouped into a session, ordered into a
             chronology, assembled into a timeline, and persisted as a replay
             model the viewer can play back.
@@ -327,7 +327,7 @@ export default function SessionReplayPage() {
           />
         </div>
         <div className="replay-shell replay-ordering">
-          <p className="replay-kicker">Session ordering</p>
+          <p className="replay-kicker" data-aos="fade-up">Session ordering</p>
           <div>
             {["Timestamp", "Sequence number", "Arrival order"].map(
               (item, index) => (
@@ -348,16 +348,16 @@ export default function SessionReplayPage() {
 
       <section className="replay-explorer-section" id="explorer">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">The replay viewer</p>
-          <h2>One place to inspect the full behavioral session.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">The replay viewer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">One place to inspect the full behavioral session.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Play the session, filter to the evidence you need, select any event
             to move the replay position, and inspect the workflow, state, and
             API context attached to that moment. The canvas remains a
             dimension-accurate placeholder for the final replay renderer.
           </p>
         </div>
-        <div className="replay-shell-wide">
+        <div className="replay-shell-wide" data-aos="tellann-panel">
           <SessionReplayExplorer />
         </div>
         <p className="replay-shell replay-note">
@@ -370,9 +370,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-events">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Event timeline</p>
-          <h2>Every important moment remains inspectable.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Event timeline</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Every important moment remains inspectable.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             The replay model keeps events grouped by type, so a session can be
             read as navigation, interface activity, form behavior, state
             movement, workflow progression, API traffic, or errors.
@@ -397,8 +397,8 @@ export default function SessionReplayPage() {
             display="720 × 500"
           />
           <div className="replay-interaction">
-            <p className="replay-kicker">Selecting an event</p>
-            <ul className="replay-list">
+            <p className="replay-kicker" data-aos="fade-up">Selecting an event</p>
+            <ul className="replay-list" data-aos="tellann-panel">
               <li>Move the replay position</li>
               <li>Highlight the relevant application state</li>
               <li>Open the event metadata</li>
@@ -450,7 +450,7 @@ export default function SessionReplayPage() {
             ))}
           </div>
         </div>
-        <div className="replay-chip-row">
+        <div className="replay-chip-row" data-aos="tellann-panel">
           <span>WORKFLOW_STARTED · Checkout</span>
           <span>WORKFLOW_COMPLETED · Checkout</span>
           <span>WORKFLOW_FAILED · Checkout</span>
@@ -489,15 +489,15 @@ export default function SessionReplayPage() {
 
       <section className="replay-jump">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Jump to evidence</p>
-          <h2>Skip the hunt. Jump to the moment that matters.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Jump to evidence</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Skip the hunt. Jump to the moment that matters.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Filter a session down to the events you actually came for, then
             select one to seek the replay directly to it.
           </p>
         </div>
         <div className="replay-shell replay-jump-grid">
-          <div className="replay-jump-panel">
+          <div className="replay-jump-panel" data-aos="tellann-panel">
             <div className="replay-filter-preview" aria-hidden="true">
               {[
                 "All events",
@@ -528,8 +528,8 @@ export default function SessionReplayPage() {
             <small className="replay-sample-note">Sample application data</small>
           </div>
           <div className="replay-jump-copy">
-            <p className="replay-kicker">Selecting a result</p>
-            <ul className="replay-list">
+            <p className="replay-kicker" data-aos="fade-up">Selecting a result</p>
+            <ul className="replay-list" data-aos="tellann-panel">
               <li>Seek the replay straight to the event</li>
               <li>Highlight the state the application was in</li>
               <li>Open the event metadata</li>
@@ -560,12 +560,12 @@ export default function SessionReplayPage() {
           <article>
             <div className="replay-connection-head">
               <div>
-                <p className="replay-kicker">Replay + Behavior Graph</p>
-                <h2>
+                <p className="replay-kicker" data-aos="fade-up">Replay + Behavior Graph</p>
+                <h2 data-aos="fade-up" data-aos-delay="60">
                   Move between the behavioral map and the session that created
                   it.
                 </h2>
-                <p>
+                <p data-aos="fade-up" data-aos-delay="120">
                   Select a transition such as CHECKOUT → PAYMENT_FAILED, open
                   its supporting sessions, and land in the replay at the exact
                   timestamp that produced the edge.
@@ -596,9 +596,9 @@ export default function SessionReplayPage() {
           <article>
             <div className="replay-connection-head">
               <div>
-                <p className="replay-kicker">Replay + coverage</p>
-                <h2>Understand which paths produced your coverage.</h2>
-                <p>
+                <p className="replay-kicker" data-aos="fade-up">Replay + coverage</p>
+                <h2 data-aos="fade-up" data-aos-delay="60">Understand which paths produced your coverage.</h2>
+                <p data-aos="fade-up" data-aos-delay="120">
                   A coverage result should be traceable to observed behavior
                   rather than an arbitrary percentage, so every measured path
                   can lead back to the sessions behind it.
@@ -635,9 +635,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-integrity">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Replay integrity</p>
-          <h2>A replay should tell you how complete its evidence is.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Replay integrity</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A replay should tell you how complete its evidence is.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Incomplete data is reported, not hidden. Timeline completeness,
             ordering accuracy, missing-event counts, and privacy filtering
             travel with the replay so you know how much weight the evidence can
@@ -668,7 +668,7 @@ export default function SessionReplayPage() {
             <small>Sample application data</small>
           </div>
           <div className="replay-gap">
-            <p className="replay-kicker">Missing event representation</p>
+            <p className="replay-kicker" data-aos="fade-up">Missing event representation</p>
             <span>
               <small>00:03:08</small>
               <b>API_REQUEST</b>
@@ -700,15 +700,15 @@ export default function SessionReplayPage() {
 
       <section className="replay-privacy">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Privacy by default</p>
-          <h2>Replay behavior without replaying secrets.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Privacy by default</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Replay behavior without replaying secrets.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Privacy controls run before protected information enters storage or
             analytics, so authentication, financial, credential, and identity
             values never become part of a replay.
           </p>
         </div>
-        <div className="replay-shell replay-privacy-grid">
+        <div className="replay-shell replay-privacy-grid" data-aos="tellann-panel">
           <article>
             <span>Recorded</span>
             <ul>
@@ -762,7 +762,7 @@ export default function SessionReplayPage() {
         </div>
         <div className="replay-shell replay-privacy-demo">
           <div>
-            <p className="replay-kicker">Observed in the application</p>
+            <p className="replay-kicker" data-aos="fade-up">Observed in the application</p>
             <span>
               <small>Email</small>
               <b>user@example.com</b>
@@ -774,7 +774,7 @@ export default function SessionReplayPage() {
           </div>
           <i aria-hidden="true">→</i>
           <div>
-            <p className="replay-kicker">Available in replay</p>
+            <p className="replay-kicker" data-aos="fade-up">Available in replay</p>
             <span>
               <small>Email</small>
               <b>***@example.com</b>
@@ -800,14 +800,14 @@ export default function SessionReplayPage() {
 
       <section className="replay-summary">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Session summary</p>
-          <h2>See the session before you press play.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Session summary</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">See the session before you press play.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Duration, event volume, workflow count, error count, and API
             activity give a session shape before you commit to watching it.
           </p>
         </div>
-        <div className="replay-shell replay-summary-grid">
+        <div className="replay-shell replay-summary-grid" data-aos="tellann-panel">
           <div className="replay-summary-card">
             <p>Session SES-3817</p>
             <div>
@@ -855,7 +855,7 @@ export default function SessionReplayPage() {
           display: "1100 × 688",
         }}
       >
-        <div className="replay-flow-list">
+        <div className="replay-flow-list" data-aos="tellann-panel">
           {[
             "Start demonstration",
             "Perform workflow",
@@ -873,16 +873,15 @@ export default function SessionReplayPage() {
 
       <section className="replay-sessions">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Multiple session investigation</p>
-          <h2>One workflow can have many supporting sessions.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Multiple session investigation</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">One workflow can have many supporting sessions.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Checkout is not one recording. Select and inspect the separate
             sessions behind it—successes, payment failures, and validation
             failures all belong to the same evidence set.
           </p>
         </div>
-        <div
-          className="replay-shell replay-session-table"
+        <div className="replay-shell replay-session-table" data-aos="tellann-panel"
           role="table"
           aria-label="Supporting sessions for the Checkout workflow"
         >
@@ -915,9 +914,9 @@ export default function SessionReplayPage() {
       <section className="replay-structure">
         <div className="replay-shell replay-structure-grid">
           <article>
-            <p className="replay-kicker">Replay asset structure</p>
-            <h2>What a replay actually holds.</h2>
-            <p>
+            <p className="replay-kicker" data-aos="fade-up">Replay asset structure</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">What a replay actually holds.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               A replay is a structured asset rather than a media file. Each part
               stays addressable, which is what makes filtering, seeking, and
               linking back to the behavioral model possible.
@@ -951,7 +950,7 @@ export default function SessionReplayPage() {
         </div>
         <div className="replay-shell replay-retention">
           <div>
-            <p className="replay-kicker">Retention</p>
+            <p className="replay-kicker" data-aos="fade-up">Retention</p>
             <p>
               Replay retention depends on your plan and organization policy.
             </p>
@@ -964,15 +963,15 @@ export default function SessionReplayPage() {
 
       <section className="replay-exclusions">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Boundaries</p>
-          <h2>More data is not always better data.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Boundaries</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">More data is not always better data.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Some information should never reach a replay at all. Excluding it is
             a product decision, not a limitation—only appropriate metadata is
             retained for uploaded files.
           </p>
         </div>
-        <div className="replay-shell replay-exclusion-grid">
+        <div className="replay-shell replay-exclusion-grid" data-aos="tellann-panel">
           {[
             "Passwords",
             "OTP and PIN values",
@@ -992,14 +991,14 @@ export default function SessionReplayPage() {
 
       <section className="replay-questions">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Why this is useful</p>
-          <h2>Investigation questions, answered with evidence.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Why this is useful</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Investigation questions, answered with evidence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Replay earns its place when it shortens the distance between a
             question and the moment that answers it.
           </p>
         </div>
-        <div className="replay-shell replay-question-grid">
+        <div className="replay-shell replay-question-grid" data-aos="tellann-panel">
           {investigationQuestions.map(([question, answer], index) => (
             <article key={question}>
               <span>{String(index + 1).padStart(2, "0")}</span>
@@ -1012,16 +1011,16 @@ export default function SessionReplayPage() {
 
       <section className="replay-chain">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">The reasoning chain</p>
-          <h2>
+          <p className="replay-kicker" data-aos="fade-up">The reasoning chain</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             The graph gives you structure. The replay gives you evidence.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Each layer explains a little more about what happened, and every
             layer stays connected to the one beneath it.
           </p>
         </div>
-        <div className="replay-shell replay-chain-grid">
+        <div className="replay-shell replay-chain-grid" data-aos="tellann-panel">
           {[
             ["Event", "Something happened."],
             ["Session", "We know when it happened."],
@@ -1043,15 +1042,15 @@ export default function SessionReplayPage() {
 
       <section className="replay-future">
         <div className="replay-shell replay-heading">
-          <p className="replay-kicker">Where replay goes next</p>
-          <h2>Current capability stays separate from planned capability.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Where replay goes next</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Current capability stays separate from planned capability.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Today Tellann replays controlled demonstration sessions. Production
             replay, error correlation, and regression investigation are labelled
             as planned rather than blended into the current product.
           </p>
         </div>
-        <div className="replay-shell replay-phase-grid">
+        <div className="replay-shell replay-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Behavioral QA</span>
             <p>
@@ -1082,8 +1081,8 @@ export default function SessionReplayPage() {
       <section className="replay-faq">
         <div className="replay-shell replay-faq-grid">
           <div>
-            <p className="replay-kicker">FAQ</p>
-            <h2>Questions behind the evidence.</h2>
+            <p className="replay-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the evidence.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -1101,9 +1100,9 @@ export default function SessionReplayPage() {
 
       <section className="replay-final">
         <div className="replay-shell">
-          <p className="replay-kicker">Follow the evidence</p>
-          <h2>See the session behind the behavior.</h2>
-          <p>
+          <p className="replay-kicker" data-aos="fade-up">Follow the evidence</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">See the session behind the behavior.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Record a demonstration, reconstruct the session, and investigate the
             exact sequence of events, states, workflows, API activity, and
             errors behind what Tellann discovered.

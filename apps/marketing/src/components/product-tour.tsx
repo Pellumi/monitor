@@ -108,6 +108,7 @@ export function ProductPlaceholder({
   return (
     <div
       className={`${styles.placeholder} product-placeholder ${className}`}
+      data-aos="tellann-panel"
       style={{
         aspectRatio: displayRatio
           ? `${displayRatio[0]} / ${displayRatio[1]}`

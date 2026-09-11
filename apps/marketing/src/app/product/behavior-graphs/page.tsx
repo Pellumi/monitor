@@ -98,9 +98,9 @@ function SplitSection({
     <section className={`graph-split${reverse ? " is-reverse" : ""}`}>
       <div className="graph-shell graph-split-grid">
         <div className="graph-copy">
-          <p className="graph-kicker">{eyebrow}</p>
-          <h2>{title}</h2>
-          <p>{copy}</p>
+          <p className="graph-kicker" data-aos="fade-up">{eyebrow}</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+          <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
           {children}
         </div>
         <VisualPlaceholder {...visual} />
@@ -127,9 +127,9 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-hero pt-20!">
         <div className="graph-shell graph-hero-copy">
-          <p className="graph-kicker">Behavior graphs</p>
-          <h1>See your application as a network of behavior.</h1>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Behavior graphs</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">See your application as a network of behavior.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann reconstructs observed sessions into states, actions,
             transitions, and workflows—creating a Behavior Graph that shows how
             your application actually behaves and provides the foundation for
@@ -144,7 +144,7 @@ export default function BehaviorGraphsPage() {
             </a>
           </div>
         </div>
-        <div className="graph-shell-wide graph-hero-visual">
+        <div className="graph-shell-wide graph-hero-visual" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero Behavior Graph / SVG or canvas design"
             master="1920 × 1180"
@@ -159,9 +159,9 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-intro">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">A behavioral model</p>
-          <h2>A structural model of what your software actually does.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">A behavioral model</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A structural model of what your software actually does.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A Behavior Graph represents meaningful application states and the
             observed actions that move the application between them. Connected
             transitions form workflows, allowing teams to reason about business
@@ -186,7 +186,7 @@ export default function BehaviorGraphsPage() {
           ))}
           <strong>Behavior Graph</strong>
         </div>
-        <div className="graph-contained-visual">
+        <div className="graph-contained-visual" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Graph anatomy / animated SVG design"
             master="1600 × 900"
@@ -197,14 +197,14 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-anatomy">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Anatomy of behavior</p>
-          <h2>Four concepts describe the application.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Anatomy of behavior</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Four concepts describe the application.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             The model grows from a small vocabulary. Each layer adds context
             without breaking the connection to the observation beneath it.
           </p>
         </div>
-        <div className="graph-shell graph-concept-grid">
+        <div className="graph-shell graph-concept-grid" data-aos="tellann-panel">
           {concepts.map(([number, title, copy, example]) => (
             <article key={title}>
               <span>{number}</span>
@@ -228,7 +228,7 @@ export default function BehaviorGraphsPage() {
             </div>
           ))}
         </div>
-        <div className="graph-contained-visual">
+        <div className="graph-contained-visual" data-aos="tellann-panel">
           <VisualPlaceholder
             label="State categories / semantic node design"
             master="1440 × 900"
@@ -247,7 +247,7 @@ export default function BehaviorGraphsPage() {
           display: "900 × 450",
         }}
       >
-        <div className="graph-stat-row">
+        <div className="graph-stat-row" data-aos="tellann-panel">
           <span>
             <small>Frequency</small>
             <b>148</b>
@@ -261,7 +261,7 @@ export default function BehaviorGraphsPage() {
             <b>420ms</b>
           </span>
         </div>
-        <div className="graph-chip-row">
+        <div className="graph-chip-row" data-aos="tellann-panel">
           {["Success", "Failure", "Retry", "Loop", "Exit"].map((item) => (
             <span key={item}>{item}</span>
           ))}
@@ -279,7 +279,7 @@ export default function BehaviorGraphsPage() {
           display: "1100 × 611",
         }}
       >
-        <ul className="graph-definition-list">
+        <ul className="graph-definition-list" data-aos="tellann-panel">
           <li>Entry and exit state</li>
           <li>States and transitions</li>
           <li>Success and failure paths</li>
@@ -288,9 +288,9 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-construction" id="construction">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Graph construction</p>
-          <h2>The graph is discovered from sessions—not manually drawn.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Graph construction</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">The graph is discovered from sessions—not manually drawn.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Observed events are ordered into sessions, meaningful states are
             extracted, transitions connect them, and related paths become
             workflows.
@@ -312,7 +312,7 @@ export default function BehaviorGraphsPage() {
             </div>
           ))}
         </div>
-        <div className="graph-contained-visual">
+        <div className="graph-contained-visual" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Graph construction / SVG or HTML animation design"
             master="1920 × 1080"
@@ -323,30 +323,30 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-explorer-section" id="explorer">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Interactive graph explorer</p>
-          <h2>Explore behavior instead of staring at telemetry.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Interactive graph explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Explore behavior instead of staring at telemetry.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Choose an example workflow, inspect its evidence, and reveal the
             endpoint context attached to the selected state. The canvas remains
             a dimension-accurate placeholder for the final graph renderer.
           </p>
         </div>
-        <div className="graph-shell-wide">
+        <div className="graph-shell-wide" data-aos="tellann-panel">
           <BehaviorGraphExplorer />
         </div>
       </section>
 
       <section className="graph-evidence">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Evidence at every layer</p>
-          <h2>Every node and path carries evidence.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Evidence at every layer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Every node and path carries evidence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             State, transition, and workflow metrics turn the graph into a
             measurable model while preserving the demonstrations behind each
             result.
           </p>
         </div>
-        <div className="graph-shell graph-metric-grid">
+        <div className="graph-shell graph-metric-grid" data-aos="tellann-panel">
           <article>
             <span>State metrics</span>
             <h3>Where behavior happened.</h3>
@@ -363,7 +363,7 @@ export default function BehaviorGraphsPage() {
             <p>Completion · Coverage · Error paths · Demonstrated outcomes</p>
           </article>
         </div>
-        <div className="graph-contained-visual">
+        <div className="graph-contained-visual" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Graph metrics / product UI design"
             master="1600 × 1000"
@@ -400,7 +400,7 @@ export default function BehaviorGraphsPage() {
           display: "1000 × 562",
         }}
       >
-        <div className="graph-gap-list">
+        <div className="graph-gap-list" data-aos="tellann-panel">
           <span>
             PAYMENT_FAILURE <b>Not demonstrated</b>
           </span>
@@ -416,9 +416,9 @@ export default function BehaviorGraphsPage() {
       <section className="graph-context">
         <div className="graph-shell graph-context-grid">
           <article>
-            <p className="graph-kicker">Graph + replay</p>
-            <h2>Every graph path can lead back to behavioral evidence.</h2>
-            <p>
+            <p className="graph-kicker" data-aos="fade-up">Graph + replay</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Every graph path can lead back to behavioral evidence.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Select a transition, find the supporting session, and jump to the
               relevant moment in the reconstructed timeline.
             </p>
@@ -429,9 +429,9 @@ export default function BehaviorGraphsPage() {
             />
           </article>
           <article>
-            <p className="graph-kicker">Graph + endpoints</p>
-            <h2>Connect interface behavior to backend behavior.</h2>
-            <p>
+            <p className="graph-kicker" data-aos="fade-up">Graph + endpoints</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Connect interface behavior to backend behavior.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Reveal the API calls associated with a state change without
               splitting frontend and backend evidence into unrelated views.
             </p>
@@ -454,7 +454,7 @@ export default function BehaviorGraphsPage() {
           display: "1100 × 611",
         }}
       >
-        <div className="graph-chip-row">
+        <div className="graph-chip-row" data-aos="tellann-panel">
           <span>Demo 01 · Login</span>
           <span>Demo 02 · Cart</span>
           <span>Demo 03 · Checkout</span>
@@ -463,15 +463,15 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-application-map">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Application map</p>
-          <h2>Workflows connect into an application-wide behavioral map.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Application map</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Workflows connect into an application-wide behavioral map.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Registration, login, checkout, search, and profile behavior can sit
             inside one larger application model instead of becoming disconnected
             flowcharts.
           </p>
         </div>
-        <div className="graph-shell-wide">
+        <div className="graph-shell-wide" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Application-wide behavior map / canvas or SVG design"
             master="1920 × 1200"
@@ -483,9 +483,9 @@ export default function BehaviorGraphsPage() {
       <section className="graph-technical">
         <div className="graph-shell graph-technical-grid">
           <article>
-            <p className="graph-kicker">Versioning</p>
-            <h2>Behavior can be preserved as the application evolves.</h2>
-            <p>
+            <p className="graph-kicker" data-aos="fade-up">Versioning</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Behavior can be preserved as the application evolves.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Graph snapshots retain application-version and creation context so
               behavior can be compared and explained over time.
             </p>
@@ -496,9 +496,9 @@ export default function BehaviorGraphsPage() {
             />
           </article>
           <article>
-            <p className="graph-kicker">Traceability</p>
-            <h2>Every graph element should have evidence behind it.</h2>
-            <p>
+            <p className="graph-kicker" data-aos="fade-up">Traceability</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Every graph element should have evidence behind it.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               Move from graph node to transition, session, event, and endpoint
               while retaining the chain of evidence.
             </p>
@@ -513,17 +513,17 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-future">
         <div className="graph-shell graph-heading">
-          <p className="graph-kicker">Where the graph leads</p>
-          <h2>
+          <p className="graph-kicker" data-aos="fade-up">Where the graph leads</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             The same behavioral model can support progressively deeper
             intelligence.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Current product direction stays distinct from planned intelligence
             so the page does not promise capabilities before they exist.
           </p>
         </div>
-        <div className="graph-shell graph-phase-grid">
+        <div className="graph-shell graph-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Product direction</span>
             <p>
@@ -551,8 +551,8 @@ export default function BehaviorGraphsPage() {
       <section className="graph-faq">
         <div className="graph-shell graph-faq-grid">
           <div>
-            <p className="graph-kicker">FAQ</p>
-            <h2>Questions behind the graph.</h2>
+            <p className="graph-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the graph.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -570,9 +570,9 @@ export default function BehaviorGraphsPage() {
 
       <section className="graph-final">
         <div className="graph-shell">
-          <p className="graph-kicker">Build your first Behavior Graph</p>
-          <h2>Show Tellann a workflow. See the behavior emerge.</h2>
-          <p>
+          <p className="graph-kicker" data-aos="fade-up">Build your first Behavior Graph</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Show Tellann a workflow. See the behavior emerge.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Connect an application, demonstrate a real workflow, and turn the
             resulting session into a model your team can reason about.
           </p>

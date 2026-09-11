@@ -65,11 +65,11 @@ function ProcessStep({
         className={`hiw-shell hiw-step-grid${displayWidth >= 1000 ? " is-wide-visual" : ""}`}
       >
         <div className="hiw-step-copy">
-          <p className="hiw-kicker">
+          <p className="hiw-kicker" data-aos="fade-up">
             Step {number} · {eyebrow}
           </p>
-          <h2>{title}</h2>
-          <p>{copy}</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+          <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
           {children}
           {href && linkLabel ? (
             <Link className="hiw-text-link" href={href}>
@@ -164,11 +164,11 @@ export default function HowItWorksPage() {
       <main className="hiw-page">
         <section className="hiw-hero pt-20!">
           <div className="hiw-shell hiw-hero-copy">
-            <p className="hiw-kicker">How Tellann works</p>
-            <h1>
+            <p className="hiw-kicker" data-aos="fade-up">How Tellann works</p>
+            <h1 data-aos="fade-up" data-aos-delay="60">
               From one application walkthrough to a map of software behavior.
             </h1>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Connect the SDK, start a demonstration session, and use your
               application normally. Tellann captures behavioral events,
               reconstructs sessions, discovers workflows, builds a Behavior
@@ -200,14 +200,14 @@ export default function HowItWorksPage() {
         <section className="hiw-flow" aria-labelledby="flow-title">
           <div className="hiw-shell">
             <div className="hiw-heading">
-              <p className="hiw-kicker">End-to-end product flow</p>
-              <h2 id="flow-title">The entire process in twelve steps.</h2>
-              <p>
+              <p className="hiw-kicker" data-aos="fade-up">End-to-end product flow</p>
+              <h2 data-aos="fade-up" data-aos-delay="60" id="flow-title">The entire process in twelve steps.</h2>
+              <p data-aos="fade-up" data-aos-delay="120">
                 Follow a single interaction as it becomes structured quality
                 evidence.
               </p>
             </div>
-            <nav className="hiw-flow-grid" aria-label="How Tellann works steps">
+            <nav className="hiw-flow-grid" data-aos="tellann-panel" aria-label="How Tellann works steps">
               {steps.map(([id, label], index) => (
                 <Link href={`#${id}`} key={id}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
@@ -402,7 +402,7 @@ export default function HowItWorksPage() {
             href="/product/missing-states"
             linkLabel="Explore missing states"
           >
-            <div className="hiw-gap-list">
+            <div className="hiw-gap-list" data-aos="tellann-panel">
               <span>
                 <b>High</b> Payment failure
               </span>
@@ -451,7 +451,7 @@ export default function HowItWorksPage() {
             href="/product/session-replay"
             linkLabel="Explore Session Replay"
           >
-            <div className="hiw-timeline">
+            <div className="hiw-timeline" data-aos="tellann-panel">
               00:00 SESSION_STARTED <i /> 00:16 API_ERROR <i /> 00:18
               ERROR_OCCURRED
             </div>
@@ -481,9 +481,9 @@ export default function HowItWorksPage() {
         <section className="hiw-system">
           <div className="hiw-shell">
             <div className="hiw-heading">
-              <p className="hiw-kicker">Behind the pipeline</p>
-              <h2>One event stream. Multiple intelligence layers.</h2>
-              <p>
+              <p className="hiw-kicker" data-aos="fade-up">Behind the pipeline</p>
+              <h2 data-aos="fade-up" data-aos-delay="60">One event stream. Multiple intelligence layers.</h2>
+              <p data-aos="fade-up" data-aos-delay="120">
                 The same captured evidence moves through collection, session
                 reconstruction, behavioral processing, storage, investigation
                 and reporting.
@@ -500,17 +500,17 @@ export default function HowItWorksPage() {
         <section className="hiw-privacy">
           <div className="hiw-shell">
             <div className="hiw-heading">
-              <p className="hiw-kicker">Privacy throughout the flow</p>
-              <h2>
+              <p className="hiw-kicker" data-aos="fade-up">Privacy throughout the flow</p>
+              <h2 data-aos="fade-up" data-aos-delay="60">
                 Privacy filtering happens before behavioral data becomes
                 intelligence.
               </h2>
-              <p>
+              <p data-aos="fade-up" data-aos-delay="120">
                 Capture rules mask, hash, ignore or reject protected values
                 before behavioral metadata enters the Tellann pipeline.
               </p>
             </div>
-            <div className="hiw-privacy-grid">
+            <div className="hiw-privacy-grid" data-aos="tellann-panel">
               <ProductPlaceholder
                 label="Privacy filtering pipeline / animated SVG placeholder"
                 dimensions="1200 × 700"
@@ -545,9 +545,9 @@ export default function HowItWorksPage() {
         <section className="hiw-deepen">
           <div className="hiw-shell">
             <div className="hiw-heading">
-              <p className="hiw-kicker">A model that grows</p>
-              <h2>Every demonstration can deepen the behavioral model.</h2>
-              <p>
+              <p className="hiw-kicker" data-aos="fade-up">A model that grows</p>
+              <h2 data-aos="fade-up" data-aos-delay="60">Every demonstration can deepen the behavioral model.</h2>
+              <p data-aos="fade-up" data-aos-delay="120">
                 Additional controlled demonstrations contribute new observed
                 paths without implying continuous production learning.
               </p>
@@ -577,9 +577,9 @@ export default function HowItWorksPage() {
         <section className="hiw-sandbox-section">
           <div className="hiw-shell">
             <div className="hiw-heading">
-              <p className="hiw-kicker">Illustrative sandbox</p>
-              <h2>See the model build itself.</h2>
-              <p>
+              <p className="hiw-kicker" data-aos="fade-up">Illustrative sandbox</p>
+              <h2 data-aos="fade-up" data-aos-delay="60">See the model build itself.</h2>
+              <p data-aos="fade-up" data-aos-delay="120">
                 Perform three sample actions. The adjacent model updates as each
                 new state is observed.
               </p>
@@ -599,8 +599,8 @@ export default function HowItWorksPage() {
         <section className="hiw-faq">
           <div className="hiw-shell hiw-faq-grid">
             <div>
-              <p className="hiw-kicker">FAQ</p>
-              <h2 className="mt-4!">The operational questions, answered.</h2>
+              <p className="hiw-kicker" data-aos="fade-up">FAQ</p>
+              <h2 data-aos="fade-up" data-aos-delay="60" className="mt-4!">The operational questions, answered.</h2>
             </div>
             <div>
               {faqs.map(([question, answer]) => (
@@ -618,13 +618,13 @@ export default function HowItWorksPage() {
 
         <section className="hiw-final">
           <div className="hiw-shell">
-            <p className="hiw-kicker">Your first Behavior Graph</p>
-            <h2>
+            <p className="hiw-kicker" data-aos="fade-up">Your first Behavior Graph</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Start with one workflow.
               <br />
               See what Tellann learns.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Connect your application, record a demonstration, and turn real
               software behavior into workflows, coverage, gaps, replays,
               endpoint insights and QA reports.

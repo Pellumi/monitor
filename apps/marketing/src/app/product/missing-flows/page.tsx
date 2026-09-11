@@ -226,9 +226,9 @@ function MediaSection({
       id={id}
     >
       <div className="flows-shell flows-heading">
-        <p className="flows-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="flows-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       {children ? (
         <div className="flows-shell flows-section-detail">{children}</div>
@@ -270,12 +270,11 @@ function AsideSection({
       id={id}
     >
       <div className="flows-shell flows-heading">
-        <p className="flows-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="flows-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
-      <div
-        className="flows-shell flows-aside-grid"
+      <div className="flows-shell flows-aside-grid" data-aos="tellann-panel"
         style={{ "--media-w": `${mediaWidth}px` } as CSSProperties}
       >
         <VisualPlaceholder {...visual} />
@@ -303,9 +302,9 @@ export default function MissingFlowsPage() {
 
       <section className="flows-hero pt-20!">
         <div className="flows-shell flows-hero-copy">
-          <p className="flows-kicker">Missing flow detection</p>
-          <h1>See the paths your demonstration never reached.</h1>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">Missing flow detection</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">See the paths your demonstration never reached.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann analyzes demonstrated workflows to identify likely failure,
             alternative, recovery, and edge-case paths that were not
             observed—then connects those gaps back to the workflow, coverage
@@ -323,7 +322,7 @@ export default function MissingFlowsPage() {
             </Link>
           </div>
         </div>
-        <div className="flows-shell-wide flows-hero-media flows-desktop-media">
+        <div className="flows-shell-wide flows-hero-media flows-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero missing-flow graph / observed path branching into unobserved paths"
             master="1920 × 1120"
@@ -350,12 +349,12 @@ export default function MissingFlowsPage() {
 
       <section className="flows-definition">
         <div className="flows-shell flows-heading">
-          <p className="flows-kicker">What a missing flow is</p>
-          <h2>
+          <p className="flows-kicker" data-aos="fade-up">What a missing flow is</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             A missing flow is a meaningful path Tellann expected or inferred but
             did not observe.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Successful behavior tells Tellann what worked. Missing Flow
             Detection asks which other meaningful paths deserve to be exercised.
           </p>
@@ -370,7 +369,7 @@ export default function MissingFlowsPage() {
           </article>
           <article className="is-gap">
             <span>Not observed</span>
-            <div className="flows-branch-list">
+            <div className="flows-branch-list" data-aos="tellann-panel">
               {[
                 "Login failure",
                 "Password reset",
@@ -383,7 +382,7 @@ export default function MissingFlowsPage() {
           </article>
         </div>
         <div className="flows-shell flows-terminology">
-          <p className="flows-kicker">Critical terminology</p>
+          <p className="flows-kicker" data-aos="fade-up">Critical terminology</p>
           <dl>
             {terminology.map(([term, meaning]) => (
               <div key={term}>
@@ -479,15 +478,15 @@ export default function MissingFlowsPage() {
 
       <section className="flows-categories">
         <div className="flows-shell flows-heading">
-          <p className="flows-kicker">Four categories</p>
-          <h2>Not every missing path represents the same kind of behavior.</h2>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">Four categories</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Not every missing path represents the same kind of behavior.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Phase 1 groups findings into failure, alternative, recovery, and
             edge-case flows, so a list of gaps reads as distinct kinds of
             question rather than one undifferentiated backlog.
           </p>
         </div>
-        <div className="flows-shell flows-category-cards">
+        <div className="flows-shell flows-category-cards" data-aos="tellann-panel">
           {categories.map(([title, question, example, rule]) => (
             <article key={title}>
               <span>{title}</span>
@@ -529,7 +528,7 @@ export default function MissingFlowsPage() {
           <b>CHECKOUT</b>
           <b>PAYMENT_FAILURE</b>
         </div>
-        <ul className="flows-example-list">
+        <ul className="flows-example-list" data-aos="tellann-panel">
           {["Authentication failure", "Payment failure", "API failure"].map(
             (item) => (
               <li key={item}>{item}</li>
@@ -593,7 +592,7 @@ export default function MissingFlowsPage() {
           <b>RETRY_PAYMENT</b>
           <b>CHECKOUT</b>
         </div>
-        <ul className="flows-example-list">
+        <ul className="flows-example-list" data-aos="tellann-panel">
           {["Retry payment", "Retry login", "Reconnect session"].map((item) => (
             <li key={item}>{item}</li>
           ))}
@@ -675,9 +674,9 @@ export default function MissingFlowsPage() {
 
       <section className="flows-explorer-section" id="explorer">
         <div className="flows-shell flows-heading">
-          <p className="flows-kicker">Interactive missing-flow explorer</p>
-          <h2>Inspect every missing path in context.</h2>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">Interactive missing-flow explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Inspect every missing path in context.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Choose a workflow, filter by category and status, and open any
             finding to see the rule behind it. Mark a path demonstrated, not
             applicable, or dismissed—findings are a model your team curates, not
@@ -685,7 +684,7 @@ export default function MissingFlowsPage() {
             placeholder for the final renderer.
           </p>
         </div>
-        <div className="flows-shell-wide">
+        <div className="flows-shell-wide" data-aos="tellann-panel">
           <MissingFlowExplorer />
         </div>
         <p className="flows-shell flows-note">
@@ -792,7 +791,7 @@ export default function MissingFlowsPage() {
         }}
       >
         <div className="flows-coverage-block">
-          <p className="flows-kicker">Checkout</p>
+          <p className="flows-kicker" data-aos="fade-up">Checkout</p>
           <div>
             {[
               ["Coverage", "72%"],
@@ -839,8 +838,7 @@ export default function MissingFlowsPage() {
           display: "960 × 480",
         }}
       >
-        <div
-          className="flows-vs-table"
+        <div className="flows-vs-table" data-aos="tellann-panel"
           role="table"
           aria-label="Missing state compared with missing flow"
         >
@@ -956,7 +954,7 @@ export default function MissingFlowsPage() {
         }}
       >
         <div className="flows-demo-card">
-          <p className="flows-kicker">New demonstration</p>
+          <p className="flows-kicker" data-aos="fade-up">New demonstration</p>
           <dl>
             {[
               ["Target workflow", "Checkout"],
@@ -1001,7 +999,7 @@ export default function MissingFlowsPage() {
           display: "1000 × 562",
         }}
       >
-        <div className="flows-demo-timeline">
+        <div className="flows-demo-timeline" data-aos="tellann-panel">
           {[
             [
               "Demo 01",
@@ -1049,7 +1047,7 @@ export default function MissingFlowsPage() {
           display: "800 × 514",
         }}
       >
-        <div className="flows-priority-list">
+        <div className="flows-priority-list" data-aos="tellann-panel">
           {prioritizedFindings.map(([severity, name, workflow]) => (
             <span key={name}>
               <small>{severity}</small>
@@ -1091,7 +1089,7 @@ export default function MissingFlowsPage() {
             </span>
           ))}
         </div>
-        <div className="flows-report-list">
+        <div className="flows-report-list" data-aos="tellann-panel">
           {reportFindings.map(([severity, name, category]) => (
             <span key={name}>
               <small>{severity}</small>
@@ -1113,15 +1111,15 @@ export default function MissingFlowsPage() {
 
       <section className="flows-caveats">
         <div className="flows-shell flows-heading">
-          <p className="flows-kicker">What a missing flow does not mean</p>
-          <h2>A suggested path is a question—not automatically a defect.</h2>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">What a missing flow does not mean</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A suggested path is a question—not automatically a defect.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             A missing flow indicates that Tellann identified behavior worth
             considering that was not observed in the selected demonstrations.
             That is all it indicates.
           </p>
         </div>
-        <div className="flows-shell flows-not-list">
+        <div className="flows-shell flows-not-list" data-aos="tellann-panel">
           <p>A missing flow does not necessarily mean:</p>
           <ul>
             {notMeanings.map((item) => (
@@ -1142,7 +1140,7 @@ export default function MissingFlowsPage() {
           </article>
         </div>
         <div className="flows-shell flows-controls">
-          <p className="flows-kicker">Curation controls</p>
+          <p className="flows-kicker" data-aos="fade-up">Curation controls</p>
           <div>
             {["Demonstrate", "Mark expected", "Not applicable", "Dismiss"].map(
               (action) => (
@@ -1159,14 +1157,14 @@ export default function MissingFlowsPage() {
 
       <section className="flows-future">
         <div className="flows-shell flows-heading">
-          <p className="flows-kicker">Where detection goes next</p>
-          <h2>Explainable rules first. Intelligence later, and labelled.</h2>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">Where detection goes next</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Explainable rules first. Intelligence later, and labelled.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Phase 1 works without AI or machine learning by design. Later phases
             are named as planned rather than folded into what exists today.
           </p>
         </div>
-        <div className="flows-shell flows-phase-grid">
+        <div className="flows-shell flows-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Behavioral QA</span>
             <p>
@@ -1195,8 +1193,8 @@ export default function MissingFlowsPage() {
       <section className="flows-faq">
         <div className="flows-shell flows-faq-grid">
           <div>
-            <p className="flows-kicker">FAQ</p>
-            <h2>Questions behind the gaps.</h2>
+            <p className="flows-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the gaps.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -1214,9 +1212,9 @@ export default function MissingFlowsPage() {
 
       <section className="flows-final">
         <div className="flows-shell">
-          <p className="flows-kicker">Go beyond the happy path</p>
-          <h2>Find the path you haven&apos;t demonstrated yet.</h2>
-          <p>
+          <p className="flows-kicker" data-aos="fade-up">Go beyond the happy path</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Find the path you haven&apos;t demonstrated yet.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Show Tellann a workflow, inspect the failure, alternative, recovery,
             and edge-case paths that remain unobserved, and use those gaps to
             guide your next demonstration.

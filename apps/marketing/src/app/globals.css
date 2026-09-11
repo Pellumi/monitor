@@ -2405,8 +2405,31 @@ body {
 
 .mega-menu-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 30px;
+  /* One track per group (set inline by the header), capped at 5 so a very wide
+     menu still gets readable column widths. Keeps every menu to a single row. */
+  grid-template-columns: repeat(min(var(--mega-cols, 4), 5), minmax(0, 1fr));
+  gap: 30px 24px;
+  align-items: start;
+}
+
+.mega-menu-see-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+.mega-menu-see-all:hover,
+.mega-menu-see-all:focus-visible {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
 }
 
 .mega-menu-group > p {
@@ -2449,6 +2472,11 @@ body {
   line-height: 1.3;
 }
 .mega-menu-link-copy > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   color: var(--muted);
   font-size: 11px;
   font-weight: 400;
@@ -3936,7 +3964,12 @@ html.light .footer-mega-wordmark-image-light {
     display: none;
   }
   .mega-menu-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* Same one-row layout as full width, with tighter gutters to pay for it. */
+    gap: 24px 14px;
+  }
+  .mega-menu-inner {
+    gap: 26px;
+    padding: 26px 24px 30px;
   }
 }
 
@@ -6885,5 +6918,349 @@ a {
   .brand-orbit,
   .brand-motion-demo b {
     animation: none;
+  }
+}
+
+/* ============================================================
+   Motion
+   Scroll reveal (AOS) + micro-interactions.
+
+   The reveal vocabulary below replaces `aos/dist/aos.css`. AOS's JavaScript
+   only toggles `.aos-animate`, so owning the CSS lets the site keep a single
+   easing curve and distance scale instead of inheriting forty stock
+   animations and sixty duration steps.
+   ============================================================ */
+
+:root {
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+  --motion-ease-snap: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-duration: 620ms;
+  --motion-fast: 160ms;
+  --motion-rise: 24px;
+  --motion-rise-lg: 40px;
+}
+
+/*
+ * Reveals only engage once the bootstrap script in layout.tsx has confirmed
+ * motion is wanted, and that script releases the class again if AOS never
+ * loads. Without JavaScript, `[data-aos]` elements are plain visible content.
+ */
+html.aos-ready [data-aos] {
+  transition-property: opacity, transform, clip-path;
+  transition-duration: var(--motion-duration);
+  transition-timing-function: var(--motion-ease);
+  transition-delay: 0ms;
+  will-change: opacity, transform;
+}
+/*
+ * Only the pre-reveal state sets an opacity. Once revealed the element carries
+ * no opacity of ours at all, so the muted tones the design applies to eyebrows
+ * and secondary copy survive the animation instead of being flattened to 1.
+ */
+html.aos-ready [data-aos]:not(.aos-animate) {
+  opacity: 0;
+}
+html.aos-ready [data-aos].aos-animate {
+  transform: none;
+  will-change: auto;
+}
+
+/* Reveal vocabulary */
+html.aos-ready [data-aos="fade-up"] {
+  transform: translate3d(0, var(--motion-rise), 0);
+}
+html.aos-ready [data-aos="fade-down"] {
+  transform: translate3d(0, calc(var(--motion-rise) * -0.75), 0);
+}
+html.aos-ready [data-aos="fade-right"] {
+  transform: translate3d(calc(var(--motion-rise) * -1), 0, 0);
+}
+html.aos-ready [data-aos="fade-left"] {
+  transform: translate3d(var(--motion-rise), 0, 0);
+}
+html.aos-ready [data-aos="zoom-in"] {
+  transform: scale(0.96);
+}
+
+/* Section headings and hero copy: a longer, slower lift. */
+html.aos-ready [data-aos="tellann-rise"] {
+  transform: translate3d(0, var(--motion-rise-lg), 0);
+}
+
+/* Bordered cards and panels: lift plus a touch of scale, so the hard edges
+   settle into the grid rather than sliding across it. */
+html.aos-ready [data-aos="tellann-panel"] {
+  transform: translate3d(0, 20px, 0) scale(0.985);
+}
+
+/* Headline wipe: text is uncovered from below instead of drifting in. */
+html.aos-ready [data-aos="tellann-wipe"] {
+  clip-path: inset(0 0 100% 0);
+  transform: translate3d(0, 12px, 0);
+}
+html.aos-ready [data-aos="tellann-wipe"]:not(.aos-animate) {
+  opacity: 1;
+}
+html.aos-ready [data-aos="tellann-wipe"].aos-animate {
+  clip-path: inset(0 0 0 0);
+}
+
+/* Per-element easing overrides */
+html.aos-ready [data-aos][data-aos-easing="soft"] {
+  transition-timing-function: var(--motion-ease-soft);
+}
+html.aos-ready [data-aos][data-aos-easing="snap"] {
+  transition-timing-function: var(--motion-ease-snap);
+}
+html.aos-ready [data-aos][data-aos-easing="linear"] {
+  transition-timing-function: linear;
+}
+
+/* Durations — kept to the steps the site actually uses. */
+html.aos-ready [data-aos][data-aos-duration="200"] {
+  transition-duration: 200ms;
+}
+html.aos-ready [data-aos][data-aos-duration="300"] {
+  transition-duration: 300ms;
+}
+html.aos-ready [data-aos][data-aos-duration="400"] {
+  transition-duration: 400ms;
+}
+html.aos-ready [data-aos][data-aos-duration="500"] {
+  transition-duration: 500ms;
+}
+html.aos-ready [data-aos][data-aos-duration="600"] {
+  transition-duration: 600ms;
+}
+html.aos-ready [data-aos][data-aos-duration="700"] {
+  transition-duration: 700ms;
+}
+html.aos-ready [data-aos][data-aos-duration="800"] {
+  transition-duration: 800ms;
+}
+html.aos-ready [data-aos][data-aos-duration="900"] {
+  transition-duration: 900ms;
+}
+html.aos-ready [data-aos][data-aos-duration="1000"] {
+  transition-duration: 1000ms;
+}
+
+/* Stagger steps — 60ms apart reads as one wave rather than a queue. */
+html.aos-ready [data-aos][data-aos-delay="60"].aos-animate {
+  transition-delay: 60ms;
+}
+html.aos-ready [data-aos][data-aos-delay="120"].aos-animate {
+  transition-delay: 120ms;
+}
+html.aos-ready [data-aos][data-aos-delay="180"].aos-animate {
+  transition-delay: 180ms;
+}
+html.aos-ready [data-aos][data-aos-delay="240"].aos-animate {
+  transition-delay: 240ms;
+}
+html.aos-ready [data-aos][data-aos-delay="300"].aos-animate {
+  transition-delay: 300ms;
+}
+html.aos-ready [data-aos][data-aos-delay="360"].aos-animate {
+  transition-delay: 360ms;
+}
+html.aos-ready [data-aos][data-aos-delay="420"].aos-animate {
+  transition-delay: 420ms;
+}
+html.aos-ready [data-aos][data-aos-delay="480"].aos-animate {
+  transition-delay: 480ms;
+}
+html.aos-ready [data-aos][data-aos-delay="540"].aos-animate {
+  transition-delay: 540ms;
+}
+html.aos-ready [data-aos][data-aos-delay="600"].aos-animate {
+  transition-delay: 600ms;
+}
+
+/* ------------------------------------------------------------
+   Micro-interactions
+   Short, low-travel responses to pointer and focus. Durations stay
+   under 240ms so the interface feels answered, not animated.
+   ------------------------------------------------------------ */
+
+/* Header: settles into the page while scrolled, and steps out of the way
+   when the visitor is reading downward. */
+.site-header {
+  transition:
+    transform 260ms var(--motion-ease-soft),
+    background-color 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+.site-header[data-scrolled='true'] {
+  border-bottom-color: color-mix(in srgb, var(--foreground) 14%, var(--line));
+  box-shadow: 0 1px 24px color-mix(in srgb, var(--background) 65%, transparent);
+}
+.site-header[data-pinned='false'] {
+  transform: translateY(-100%);
+}
+.site-header[data-pinned='false'].mega-menu-open {
+  transform: translateY(0);
+}
+
+.brand {
+  transition: opacity var(--motion-fast) ease;
+}
+.brand:hover {
+  opacity: 0.78;
+}
+
+.sign-in {
+  transition: color var(--motion-fast) ease;
+}
+.sign-in:hover {
+  color: var(--foreground);
+}
+.start-free {
+  transition:
+    background-color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-soft);
+}
+.start-free:hover {
+  transform: translateY(-1px);
+}
+.start-free:active {
+  transform: translateY(0);
+}
+
+/* Buttons keep their existing lift on hover and gain a press response. */
+.home-button:active {
+  transform: translateY(0);
+}
+.home-button span[aria-hidden='true'] {
+  transition: transform var(--motion-fast) var(--motion-ease-soft);
+}
+.home-button:hover span[aria-hidden='true'] {
+  transform: translateX(3px);
+}
+
+/* Text links: the arrow already slides, the rule underneath draws with it. */
+.home-text-link {
+  position: relative;
+}
+.home-text-link::after {
+  content: '';
+  position: absolute;
+  right: 24px;
+  bottom: -4px;
+  left: 0;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0.5;
+  transition: transform 220ms var(--motion-ease);
+}
+.home-text-link:hover::after,
+.home-text-link:focus-visible::after {
+  transform: scaleX(1);
+}
+
+/* Cards that are not part of the animated problem grid still acknowledge
+   the pointer. */
+.home-card-grid:not(.home-problem-grid) .home-card {
+  transition:
+    background-color 220ms ease,
+    transform 220ms var(--motion-ease-soft);
+}
+.home-card-grid:not(.home-problem-grid) .home-card:hover {
+  background: var(--surface);
+  transform: translateY(-3px);
+}
+
+.home-tag-list > span {
+  transition:
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-soft);
+}
+.home-tag-list > span:hover {
+  border-color: var(--muted);
+  color: var(--foreground);
+  transform: translateY(-1px);
+}
+
+/* Metric and insight rows read as data; a pointer should only tighten them. */
+.home-metric-row > span,
+.home-insight-row > span {
+  transition:
+    border-color var(--motion-fast) ease,
+    transform 200ms var(--motion-ease-soft);
+}
+.home-metric-row > span:hover,
+.home-insight-row > span:hover {
+  border-color: var(--muted);
+  transform: translateY(-2px);
+}
+
+.home-result-list > span {
+  transition:
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-soft);
+}
+.home-result-list > span:hover {
+  border-color: var(--foreground);
+  color: var(--foreground);
+  transform: translateX(3px);
+}
+
+/* Keyboard users get the same affordances, drawn explicitly. */
+.home-button:focus-visible,
+.home-text-link:focus-visible,
+.start-free:focus-visible,
+.sign-in:focus-visible,
+.desktop-nav-trigger:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------
+   Reduced motion
+   Reveals are disabled at the source in aos-provider.tsx; these rules
+   cover the hover and scroll transitions that are pure CSS.
+   ------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  html.aos-ready [data-aos] {
+    transform: none;
+    clip-path: none;
+    transition: none;
+  }
+  html.aos-ready [data-aos]:not(.aos-animate) {
+    opacity: 1;
+  }
+  .site-header,
+  .site-header[data-pinned='false'] {
+    transform: none;
+    transition-duration: 0.01ms;
+  }
+  .home-button,
+  .home-button span[aria-hidden='true'],
+  .home-text-link::after,
+  .home-card-grid:not(.home-problem-grid) .home-card,
+  .home-tag-list > span,
+  .home-metric-row > span,
+  .home-insight-row > span,
+  .home-result-list > span,
+  .start-free,
+  .brand,
+  .sign-in {
+    transition-duration: 0.01ms;
+  }
+  .home-button:hover,
+  .home-card-grid:not(.home-problem-grid) .home-card:hover,
+  .home-tag-list > span:hover,
+  .home-metric-row > span:hover,
+  .home-insight-row > span:hover,
+  .home-result-list > span:hover,
+  .start-free:hover {
+    transform: none;
   }
 }

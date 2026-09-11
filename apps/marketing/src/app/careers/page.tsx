@@ -167,7 +167,7 @@ const candidateValues = [
   ],
   [
     "Constructive skepticism",
-    "Challenge a design—including ours—when the evidence says it is wrong.",
+    "Challenge a design, including ours, when the evidence says it is wrong.",
   ],
 ];
 
@@ -197,8 +197,8 @@ function SectionIntro({
 }) {
   return (
     <div className="careers-intro">
-      <p className="careers-eyebrow">{eyebrow}</p>
-      <h2>{title}</h2>
+      <p className="careers-eyebrow" data-aos="fade-up">{eyebrow}</p>
+      <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
       {copy ? <p>{copy}</p> : null}
     </div>
   );
@@ -209,14 +209,14 @@ export default function CareersPage() {
     <main className="careers-page">
       <section className="careers-hero " aria-labelledby="careers-heading">
         <div className="careers-hero-copy pt-12.5!">
-          <p className="careers-eyebrow">Careers at Tellann</p>
-          <h1 id="careers-heading">
+          <p className="careers-eyebrow" data-aos="fade-up">Careers at Tellann</p>
+          <h1 data-aos="fade-up" data-aos-delay="60" id="careers-heading">
             Help build software that can understand{" "}
             <span>its own behavior.</span>
           </h1>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann is building behavioral quality intelligence for software
-            teams—starting with application observation, workflow modeling,
+            teams, starting with application observation, workflow modeling,
             coverage analysis, session reconstruction, and quality reporting.
           </p>
           <div className="careers-actions">
@@ -261,13 +261,13 @@ export default function CareersPage() {
           eyebrow="Why work on Tellann"
           title="A difficult problem worth solving."
         />
-        <div className="careers-why-grid">
+        <div className="careers-why-grid" data-aos="tellann-panel">
           <article>
             <span>01</span>
             <h3>Software produces enormous evidence.</h3>
             <p>
               Routes, clicks, API activity, state changes, errors, timing, and
-              workflow outcomes exist—but remain fragmented.
+              workflow outcomes exist, but remain fragmented.
             </p>
           </article>
           <article>
@@ -298,8 +298,7 @@ export default function CareersPage() {
           title="We are not building another dashboard over telemetry."
           copy="The work begins where raw events become an explainable model of application behavior."
         />
-        <div
-          className="careers-processing-flow"
+        <div className="careers-processing-flow" data-aos="tellann-panel"
           aria-label="Tellann behavioral processing flow"
         >
           {[
@@ -318,7 +317,7 @@ export default function CareersPage() {
             </span>
           ))}
         </div>
-        <div className="careers-challenge-grid">
+        <div className="careers-challenge-grid" data-aos="tellann-panel">
           {challenges.map(([title, copy], index) => (
             <article key={title}>
               <span>0{index + 1}</span>
@@ -337,7 +336,7 @@ export default function CareersPage() {
           eyebrow="What we are building"
           title="Build across the behavioral intelligence stack."
         />
-        <div className="careers-phase-grid">
+        <div className="careers-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Current</span>
             <h3>Behavioral QA</h3>
@@ -375,7 +374,7 @@ export default function CareersPage() {
           title="Principles before perks."
           copy="The way we build should reflect the kind of intelligence we want Tellann to provide."
         />
-        <div className="careers-principle-grid">
+        <div className="careers-principle-grid" data-aos="tellann-panel">
           {principles.map(([label, title, copy], index) => (
             <article key={label}>
               <span>
@@ -388,8 +387,7 @@ export default function CareersPage() {
         </div>
       </section>
 
-      <section
-        className="careers-section careers-stack"
+      <section className="careers-section careers-stack" data-aos="tellann-panel"
         aria-labelledby="stack-heading"
       >
         <SectionIntro
@@ -419,7 +417,7 @@ export default function CareersPage() {
           eyebrow="Areas of work"
           title="Where difficult work lives."
         />
-        <div className="careers-area-grid">
+        <div className="careers-area-grid" data-aos="tellann-panel">
           {workAreas.map(([title, items], index) => (
             <article key={title as string}>
               <span>0{index + 1}</span>
@@ -433,7 +431,7 @@ export default function CareersPage() {
           ))}
         </div>
         <div className="careers-later">
-          <p className="careers-eyebrow">Later</p>
+          <p className="careers-eyebrow" data-aos="fade-up">Later</p>
           <div>
             {[
               "Regression systems",
@@ -453,7 +451,7 @@ export default function CareersPage() {
           eyebrow="Working at Tellann"
           title="What you can expect from the work."
         />
-        <div className="careers-expect-list">
+        <div className="careers-expect-list" data-aos="tellann-panel">
           {[
             "High ownership",
             "Small-team decision making",
@@ -479,11 +477,11 @@ export default function CareersPage() {
         className="careers-openings"
         aria-labelledby="open-roles-heading"
       >
-        <p className="careers-eyebrow">Open roles</p>
+        <p className="careers-eyebrow" data-aos="fade-up">Open roles</p>
         <div className="careers-empty-role">
           <span>Current hiring status</span>
           <h2 id="open-roles-heading">No open roles right now.</h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             We are still building. When Tellann opens new roles, they will
             appear here with the location, employment terms, responsibilities,
             and application process clearly defined.
@@ -502,7 +500,7 @@ export default function CareersPage() {
           eyebrow="Candidate principles"
           title="What matters here."
         />
-        <div className="careers-values-grid">
+        <div className="careers-values-grid" data-aos="tellann-panel">
           {candidateValues.map(([title, copy]) => (
             <article key={title}>
               <h3>{title}</h3>
@@ -517,7 +515,7 @@ export default function CareersPage() {
 
       <section className="careers-faq" aria-labelledby="careers-faq-heading">
         <SectionIntro eyebrow="Careers FAQ" title="What we can answer today." />
-        <div className="careers-faq-list">
+        <div className="careers-faq-list" data-aos="tellann-panel">
           <details>
             <summary>
               Are you currently hiring?<span aria-hidden="true">+</span>
@@ -564,9 +562,9 @@ export default function CareersPage() {
         className="careers-final"
         aria-labelledby="careers-final-heading"
       >
-        <p className="careers-eyebrow">The foundation comes first</p>
-        <h2 id="careers-final-heading">We are building the foundation now.</h2>
-        <p>
+        <p className="careers-eyebrow" data-aos="fade-up">The foundation comes first</p>
+        <h2 data-aos="fade-up" data-aos-delay="60" id="careers-final-heading">We are building the foundation now.</h2>
+        <p data-aos="fade-up" data-aos-delay="120">
           See the product, understand the problem, and follow where behavioral
           quality intelligence is going.
         </p>

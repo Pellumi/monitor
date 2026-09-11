@@ -120,11 +120,11 @@ export default function CompanyPage() {
 
       <section className="company-hero" aria-labelledby="company-heading">
         <div className="company-hero-copy pt-12.5!">
-          <p className="company-eyebrow">About Tellann</p>
-          <h1 id="company-heading">
+          <p className="company-eyebrow" data-aos="fade-up">About Tellann</p>
+          <h1 data-aos="fade-up" data-aos-delay="60" id="company-heading">
             Software should be able to explain <span>its own quality.</span>
           </h1>
-          <p className="company-lede">
+          <p data-aos="fade-up" data-aos-delay="120" className="company-lede">
             Tellann is building a behavioral quality intelligence platform that
             helps software teams understand how their applications behave, what
             they have actually validated, and where quality gaps remain.
@@ -163,8 +163,8 @@ export default function CompanyPage() {
         aria-labelledby="why-heading"
       >
         <div className="company-section-intro">
-          <p className="company-eyebrow">Why Tellann exists</p>
-          <h2 id="why-heading">
+          <p className="company-eyebrow" data-aos="fade-up">Why Tellann exists</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="why-heading">
             Quality became harder to understand as software became easier to
             change.
           </h2>
@@ -187,7 +187,7 @@ export default function CompanyPage() {
           Software now changes faster than teams can manually reason about its
           behavior.
         </p>
-        <div className="company-narrative-grid mt-6">
+        <div className="company-narrative-grid mt-6" data-aos="tellann-panel">
           <article>
             <span>01</span>
             <h3>Tests describe what teams expected.</h3>
@@ -217,19 +217,18 @@ export default function CompanyPage() {
 
       <section className="company-evidence" aria-labelledby="evidence-heading">
         <div className="company-section-intro">
-          <p className="company-eyebrow">The evidence already exists</p>
-          <h2 id="evidence-heading">
+          <p className="company-eyebrow" data-aos="fade-up">The evidence already exists</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="evidence-heading">
             Software leaves behind evidence of its own quality. Most teams just
             do not have a model for reading it.
           </h2>
         </div>
-        <div className="company-signal-grid">
+        <div className="company-signal-grid" data-aos="tellann-panel">
           {evidenceSignals.map((signal) => (
             <span key={signal}>{signal}</span>
           ))}
         </div>
-        <div
-          className="company-model-flow"
+        <div className="company-model-flow" data-aos="tellann-panel"
           aria-label="From behavioral evidence to Behavior Graph"
         >
           {[
@@ -249,12 +248,12 @@ export default function CompanyPage() {
       </section>
 
       <section className="company-belief" aria-labelledby="belief-heading">
-        <p className="company-eyebrow">Our core belief</p>
-        <h2 id="belief-heading">
+        <p className="company-eyebrow" data-aos="fade-up">Our core belief</p>
+        <h2 data-aos="fade-up" data-aos-delay="60" id="belief-heading">
           Applications generate enough behavioral data to reveal their own
           quality state.
         </h2>
-        <p>
+        <p data-aos="fade-up" data-aos-delay="120">
           If software behavior can be observed, reconstructed, and modeled,
           teams can reason about quality from evidenc, not only from what they
           remembered to test.
@@ -263,12 +262,12 @@ export default function CompanyPage() {
 
       <section className="company-section" aria-labelledby="building-heading">
         <div className="company-section-intro">
-          <p className="company-eyebrow">What we are building</p>
-          <h2 id="building-heading">
+          <p className="company-eyebrow" data-aos="fade-up">What we are building</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="building-heading">
             The behavioral intelligence layer for software quality.
           </h2>
         </div>
-        <div className="company-build-grid">
+        <div className="company-build-grid" data-aos="tellann-panel">
           {buildLayers.map(([number, title, copy]) => (
             <article key={title}>
               <span>{number}</span>
@@ -279,7 +278,7 @@ export default function CompanyPage() {
         </div>
         <div className="company-today">
           <div>
-            <p className="company-eyebrow">Today / Behavioral QA</p>
+            <p className="company-eyebrow" data-aos="fade-up">Today / Behavioral QA</p>
             <h3>Start with demonstrated behavior.</h3>
           </div>
           <ul>
@@ -302,12 +301,12 @@ export default function CompanyPage() {
 
       <section className="company-category" aria-labelledby="category-heading">
         <div className="company-section-intro">
-          <p className="company-eyebrow">Behavioral quality intelligence</p>
-          <h2 id="category-heading">
+          <p className="company-eyebrow" data-aos="fade-up">Behavioral quality intelligence</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="category-heading">
             Tellann sits between QA, observability, and product analytics.
           </h2>
         </div>
-        <div className="company-category-grid">
+        <div className="company-category-grid" data-aos="tellann-panel">
           {[
             ["Traditional QA", "What did we test?"],
             ["Observability", "What happened technically?"],
@@ -344,14 +343,14 @@ export default function CompanyPage() {
           />
           <span className="company-mission-shade" aria-hidden="true" />
           <div className="company-mission-topline">
-            <p className="company-eyebrow">Mission</p>
+            <p className="company-eyebrow" data-aos="fade-up">Mission</p>
             <span aria-hidden="true">→</span>
           </div>
           <h2>
             Help software teams discover, understand, and resolve quality issues
             before they impact users.
           </h2>
-          <p className="company-mission-detail">
+          <p data-aos="fade-up" data-aos-delay="120" className="company-mission-detail">
             Transform application behavior into continuously evolving quality
             intelligence.
           </p>
@@ -370,14 +369,14 @@ export default function CompanyPage() {
           />
           <span className="company-mission-shade" aria-hidden="true" />
           <div className="company-mission-topline">
-            <p className="company-eyebrow">Vision</p>
+            <p className="company-eyebrow" data-aos="fade-up">Vision</p>
             <span aria-hidden="true">→</span>
           </div>
           <h2>
             Become the intelligence layer that enables software applications to
             understand their own quality.
           </h2>
-          <p className="company-mission-detail">
+          <p data-aos="fade-up" data-aos-delay="120" className="company-mission-detail">
             Enable software to evaluate and communicate its operational quality.
           </p>
         </article>
@@ -388,10 +387,10 @@ export default function CompanyPage() {
         aria-labelledby="evolution-heading"
       >
         <div className="company-section-intro">
-          <p className="company-eyebrow">Product evolution</p>
-          <h2 id="evolution-heading">We are building this in stages.</h2>
+          <p className="company-eyebrow" data-aos="fade-up">Product evolution</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="evolution-heading">We are building this in stages.</h2>
         </div>
-        <div className="company-phase-grid">
+        <div className="company-phase-grid" data-aos="tellann-panel">
           <article>
             <span>01 / Now</span>
             <h3>Behavioral QA</h3>
@@ -422,10 +421,10 @@ export default function CompanyPage() {
 
       <section className="company-section" aria-labelledby="principles-heading">
         <div className="company-section-intro">
-          <p className="company-eyebrow">Company principles</p>
-          <h2 id="principles-heading">The ideas that shape how we build.</h2>
+          <p className="company-eyebrow" data-aos="fade-up">Company principles</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="principles-heading">The ideas that shape how we build.</h2>
         </div>
-        <div className="company-principles-grid">
+        <div className="company-principles-grid" data-aos="tellann-panel">
           {principles.map(([label, title, copy]) => (
             <article key={label}>
               <span>{label}</span>
@@ -441,13 +440,13 @@ export default function CompanyPage() {
         aria-labelledby="audiences-heading"
       >
         <div className="company-section-intro">
-          <p className="company-eyebrow">Who we build for</p>
-          <h2 id="audiences-heading">
+          <p className="company-eyebrow" data-aos="fade-up">Who we build for</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="audiences-heading">
             For the people accountable when software does not behave as
             expected.
           </h2>
         </div>
-        <div className="company-audience-grid">
+        <div className="company-audience-grid" data-aos="tellann-panel">
           {audiences.map(([title, copy]) => (
             <article key={title}>
               <h3>{title}</h3>
@@ -455,7 +454,7 @@ export default function CompanyPage() {
             </article>
           ))}
         </div>
-        <div className="company-org-row">
+        <div className="company-org-row" data-aos="tellann-panel">
           {[
             "Startups",
             "SaaS businesses",
@@ -469,10 +468,10 @@ export default function CompanyPage() {
 
       <section className="company-trust" aria-labelledby="trust-heading">
         <div className="company-section-intro">
-          <p className="company-eyebrow">Trust & responsibility</p>
-          <h2 id="trust-heading">Observation requires responsibility.</h2>
+          <p className="company-eyebrow" data-aos="fade-up">Trust & responsibility</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="trust-heading">Observation requires responsibility.</h2>
         </div>
-        <div className="company-trust-grid">
+        <div className="company-trust-grid" data-aos="tellann-panel">
           {[
             [
               "Privacy",
@@ -509,20 +508,20 @@ export default function CompanyPage() {
         aria-label="Learn more about Tellann"
       >
         <article>
-          <p className="company-eyebrow">Careers</p>
-          <h2 className="mt-2!">
+          <p className="company-eyebrow" data-aos="fade-up">Careers</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" className="mt-2!">
             Help build the intelligence layer for software quality.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             We are not currently listing open roles, but you can follow our
             progress and future opportunities.
           </p>
           <ArrowLink href="/careers">Explore careers</ArrowLink>
         </article>
         <article>
-          <p className="company-eyebrow">Brand & press</p>
-          <h2 className="mt-2!">Tellann in one sentence.</h2>
-          <p>
+          <p className="company-eyebrow" data-aos="fade-up">Brand & press</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" className="mt-2!">Tellann in one sentence.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann observes software behavior, models application workflows,
             measures behavioral coverage, and helps engineering teams identify
             quality gaps.
@@ -538,11 +537,11 @@ export default function CompanyPage() {
         className="company-final-cta"
         aria-labelledby="company-cta-heading"
       >
-        <p className="company-eyebrow">Start with one workflow</p>
-        <h2 id="company-cta-heading">
+        <p className="company-eyebrow" data-aos="fade-up">Start with one workflow</p>
+        <h2 data-aos="fade-up" data-aos-delay="60" id="company-cta-heading">
           See what your application’s behavior can tell you.
         </h2>
-        <p>
+        <p data-aos="fade-up" data-aos-delay="120">
           Connect Tellann, demonstrate a workflow, and begin turning observed
           behavior into quality evidence.
         </p>

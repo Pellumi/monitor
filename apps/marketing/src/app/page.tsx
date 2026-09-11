@@ -28,7 +28,7 @@ const problems = [
   ],
   [
     "Unknown coverage",
-    "You know code coverage—but not how much real application behavior you validated.",
+    "You know code coverage, but not how much real application behavior you validated.",
     ["Workflow", "State", "Transition", "Endpoint"],
   ],
   [
@@ -47,7 +47,7 @@ const steps = [
   [
     "02",
     "Demonstrate",
-    "Start a session and use your application normally—from registration through checkout.",
+    "Start a session and use your application normally, from registration through checkout.",
   ],
   [
     "03",
@@ -139,6 +139,7 @@ function VisualPlaceholder({
   return (
     <div
       className={`home-visual-placeholder ${className}`}
+      data-aos="tellann-panel"
       role="img"
       aria-label={`${label} placeholder, intended size ${dimensions}`}
       data-placeholder-width={width}
@@ -166,9 +167,15 @@ function SectionHeading({
 }) {
   return (
     <div className="home-section-heading">
-      <p>{eyebrow}</p>
-      <h2>{title}</h2>
-      {copy ? <span>{copy}</span> : null}
+      <p data-aos="fade-up">{eyebrow}</p>
+      <h2 data-aos="fade-up" data-aos-delay="60">
+        {title}
+      </h2>
+      {copy ? (
+        <span data-aos="fade-up" data-aos-delay="120">
+          {copy}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -181,7 +188,7 @@ function TextLink({
   children: React.ReactNode;
 }) {
   return (
-    <Link href={href} className="home-text-link">
+    <Link href={href} className="home-text-link" data-aos="fade-up">
       {children}
       <span aria-hidden="true">→</span>
     </Link>
@@ -224,18 +231,20 @@ export default function MarketingHome() {
       <section className="home-hero" aria-labelledby="home-hero-heading">
         <div className="home-hero-copy">
           <div className="home-hero-title-block">
-            <p className="home-eyebrow">Behavioral quality intelligence</p>
-            <h1 id="home-hero-heading">
+            <p className="home-eyebrow" data-aos="fade-up">
+              Behavioral quality intelligence
+            </p>
+            <h1 id="home-hero-heading" data-aos="tellann-wipe" data-aos-delay="60">
               Understand how your <span>software actually behaves.</span>
             </h1>
           </div>
           <div className="home-hero-body-block">
-            <p className="home-hero-lede">
+            <p className="home-hero-lede" data-aos="fade-up" data-aos-delay="120">
               Connect Tellann, demonstrate your application, and map its
               workflows, measure coverage, uncover missing states and flows,
               replay sessions, and inspect API behavior.
             </p>
-            <div className="home-actions">
+            <div className="home-actions" data-aos="fade-up" data-aos-delay="180">
               <a
                 href={`${appUrl}/auth/login`}
                 className="home-button home-button-primary"
@@ -249,7 +258,7 @@ export default function MarketingHome() {
                 See how it works <span aria-hidden="true">→</span>
               </Link>
             </div>
-            <p className="home-proof-note">
+            <p className="home-proof-note" data-aos="fade" data-aos-delay="240">
               No production traffic required. Start from a single demonstration
               session.
             </p>
@@ -258,6 +267,8 @@ export default function MarketingHome() {
 
         <div
           className="home-hero-video"
+          data-aos="fade"
+          data-aos-delay="180"
           role="img"
           aria-label="Placeholder for the Tellann demonstration video, intended size 240 by 656 pixels"
           data-placeholder-width="240"
@@ -277,7 +288,9 @@ export default function MarketingHome() {
           className="home-hero-audiences"
           aria-label="Teams Tellann is built for"
         >
-          <p>Built for the teams responsible for software quality.</p>
+          <p data-aos="fade-up" data-aos-delay="240">
+            Built for the teams responsible for software quality.
+          </p>
           <div>
             {[
               "Developers",
@@ -286,14 +299,22 @@ export default function MarketingHome() {
               "Startups",
               "Platform",
               "Engineering",
-            ].map((audience) => (
-              <strong key={audience}>{audience}</strong>
+            ].map((audience, index) => (
+              <strong
+                key={audience}
+                data-aos="fade-up"
+                data-aos-delay={300 + index * 60}
+              >
+                {audience}
+              </strong>
             ))}
           </div>
         </aside>
 
         <div
           className="home-transform-line"
+          data-aos="fade"
+          data-aos-delay="360"
           aria-label="Observe, model, analyze, understand"
         >
           {["Observe", "Model", "Analyze", "Understand"].map((item, index) => (
@@ -314,18 +335,20 @@ export default function MarketingHome() {
           title="Demonstrate once. See what you missed."
           copy="Tellann turns a developer walkthrough into a structured model of application behavior."
         />
-        <ProductPreviewCarousel />
+        <div data-aos="tellann-panel">
+          <ProductPreviewCarousel />
+        </div>
       </section>
 
       <section
         className="home-positioning"
         aria-labelledby="positioning-heading"
       >
-        <h2 id="positioning-heading">
+        <h2 id="positioning-heading" data-aos="fade-up">
           Testing tells you what you planned. Monitoring tells you what broke.{" "}
           <span>Tellann models what your software actually did.</span>
         </h2>
-        <div className="home-positioning-grid">
+        <div className="home-positioning-grid" data-aos="tellann-panel" data-aos-delay="120">
           {[
             ["Testing", "What did we test?"],
             ["Monitoring", "What failed?"],
@@ -345,7 +368,10 @@ export default function MarketingHome() {
           eyebrow="The problem"
           title="Software quality hides between the test cases."
         />
-        <div className="home-card-grid home-problem-grid">
+        <div
+          className="home-card-grid home-problem-grid"
+          data-aos="tellann-panel"
+        >
           {problems.map(([title, copy, tags], index) => (
             <article key={title as string} className="home-card">
               <span className="home-card-index">0{index + 1}</span>
@@ -369,7 +395,7 @@ export default function MarketingHome() {
           eyebrow="How Tellann works"
           title="From walkthrough to quality intelligence."
         />
-        <div className="home-step-grid">
+        <div className="home-step-grid" data-aos="tellann-panel">
           {steps.map(([number, title, copy]) => (
             <article key={number}>
               <span>{number}</span>
@@ -404,6 +430,8 @@ export default function MarketingHome() {
           />
           <div
             className="home-behavior-rail"
+            data-aos="fade-up"
+            data-aos-delay="120"
             aria-label="Behavior Graph summary"
           >
             <p>
@@ -425,10 +453,10 @@ export default function MarketingHome() {
         <div className="home-feature-copy">
           <SectionHeading
             eyebrow="Coverage analysis"
-            title="Know what you covered—and what you didn’t."
+            title="Know what you covered, and what you didn’t."
             copy="Measure workflow, state, transition, endpoint, and error coverage from behavior your team actually demonstrated."
           />
-          <div className="home-metric-row">
+          <div className="home-metric-row" data-aos="tellann-panel">
             {[
               ["Workflow", "72%"],
               ["State", "81%"],
@@ -455,7 +483,7 @@ export default function MarketingHome() {
           eyebrow="Missing intelligence"
           title="Find the parts of the experience nobody showed you."
         />
-        <div className="home-two-column">
+        <div className="home-two-column" data-aos="tellann-panel">
           <article className="home-result-panel">
             <p>Missing states</p>
             <h3>States the interface needs but no session reached.</h3>
@@ -525,7 +553,7 @@ export default function MarketingHome() {
           label="Endpoint intelligence table"
           dimensions="1200 × 520 px"
         />
-        <div className="home-insight-row">
+        <div className="home-insight-row" data-aos="tellann-panel">
           <span>
             <small>Slow endpoint</small>
             <strong>GET /search · 942 ms</strong>
@@ -551,8 +579,10 @@ export default function MarketingHome() {
             copy="Share workflow coverage, missing states and flows, session findings, and endpoint intelligence in the format your team needs."
           />
           <div className="home-tag-list">
-            {["PDF", "CSV", "JSON", "HTML"].map((tag) => (
-              <span key={tag}>{tag}</span>
+            {["PDF", "CSV", "JSON", "HTML"].map((tag, index) => (
+              <span key={tag} data-aos="fade-up" data-aos-delay={index * 60}>
+                {tag}
+              </span>
             ))}
           </div>
           <TextLink href="/product/qa-reports">Explore QA Reports</TextLink>
@@ -568,7 +598,7 @@ export default function MarketingHome() {
           eyebrow="Who it’s for"
           title="Built for teams responsible for software quality."
         />
-        <div className="home-card-grid">
+        <div className="home-card-grid" data-aos="tellann-panel">
           {personas.map(([title, copy, href]) => (
             <article key={title} className="home-card">
               <h3>{title}</h3>
@@ -586,7 +616,7 @@ export default function MarketingHome() {
             title="Observe behavior without collecting what you shouldn’t."
             copy="Privacy filtering happens before sensitive information enters Tellann’s analytics pipeline."
           />
-          <div className="home-security-grid">
+          <div className="home-security-grid" data-aos="tellann-panel">
             {[
               [
                 "Observes",
@@ -636,8 +666,10 @@ export default function MarketingHome() {
               "Encryption in transit",
               "Encryption at rest",
               "Role-based access",
-            ].map((item) => (
-              <span key={item}>✓ {item}</span>
+            ].map((item, index) => (
+              <span key={item} data-aos="fade-up" data-aos-delay={index * 60}>
+                ✓ {item}
+              </span>
             ))}
           </div>
           <TextLink href="/security">Read about Tellann Security</TextLink>
@@ -662,11 +694,13 @@ export default function MarketingHome() {
               "Express",
               "NestJS",
               "Fastify",
-            ].map((sdk) => (
-              <span key={sdk}>{sdk}</span>
+            ].map((sdk, index) => (
+              <span key={sdk} data-aos="fade-up" data-aos-delay={index * 60}>
+                {sdk}
+              </span>
             ))}
           </div>
-          <div className="home-actions">
+          <div className="home-actions" data-aos="fade-up">
             <Link
               href="/developers/quickstart"
               className="home-button home-button-primary"
@@ -678,7 +712,7 @@ export default function MarketingHome() {
             </a>
           </div>
         </div>
-        <pre className="home-code">
+        <pre className="home-code" data-aos="tellann-panel" data-aos-delay="120">
           <code>
             <span>$ npm install @tellann/react</span>
             {`\n\n`}Tellann.initialize({"{"}
@@ -689,6 +723,7 @@ export default function MarketingHome() {
         </pre>
         <div
           className="home-architecture"
+          data-aos="tellann-panel"
           aria-label="Tellann architecture overview"
         >
           {[
@@ -709,7 +744,7 @@ export default function MarketingHome() {
           eyebrow="Pricing"
           title="Start with one application. Scale when you need to."
         />
-        <div className="home-pricing-grid">
+        <div className="home-pricing-grid" data-aos="tellann-panel">
           {plans.map(([name, price, features], index) => (
             <article
               key={name as string}
@@ -732,7 +767,7 @@ export default function MarketingHome() {
             </article>
           ))}
         </div>
-        <p className="home-pricing-note">
+        <p className="home-pricing-note" data-aos="fade">
           Business and Enterprise plans are also available.
         </p>
         <TextLink href="/pricing">Compare all plans</TextLink>
@@ -743,7 +778,7 @@ export default function MarketingHome() {
           eyebrow="Resources"
           title="Learn about behavioral quality."
         />
-        <div className="home-resource-grid">
+        <div className="home-resource-grid" data-aos="tellann-panel">
           {resources.map(([title, copy, href]) => (
             <article key={title}>
               <span>Guide</span>
@@ -765,16 +800,20 @@ export default function MarketingHome() {
 
       <section className="home-roadmap" aria-labelledby="roadmap-heading">
         <div>
-          <p className="home-eyebrow">Product direction</p>
-          <h2 id="roadmap-heading">Behavior is only the beginning.</h2>
-          <p>
+          <p className="home-eyebrow" data-aos="fade-up">
+            Product direction
+          </p>
+          <h2 id="roadmap-heading" data-aos="fade-up" data-aos-delay="60">
+            Behavior is only the beginning.
+          </h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann begins with demonstrated application behavior. That
             foundation can later support production intelligence, release
             comparison, and autonomous validation.
           </p>
           <TextLink href="/roadmap">View roadmap</TextLink>
         </div>
-        <div className="home-roadmap-stages">
+        <div className="home-roadmap-stages" data-aos="tellann-panel" data-aos-delay="120">
           <span>
             <small>Now</small>
             <strong>Behavioral QA</strong>
@@ -791,13 +830,17 @@ export default function MarketingHome() {
       </section>
 
       <section className="home-final-cta" aria-labelledby="final-cta-heading">
-        <p className="home-eyebrow">Start with one session</p>
-        <h2 id="final-cta-heading">Show Tellann how your application works.</h2>
-        <p>
+        <p className="home-eyebrow" data-aos="fade-up">
+          Start with one session
+        </p>
+        <h2 id="final-cta-heading" data-aos="tellann-wipe" data-aos-delay="60">
+          Show Tellann how your application works.
+        </h2>
+        <p data-aos="fade-up" data-aos-delay="120">
           Start with a demonstration session and turn what happened into
           workflows, coverage, and QA insight.
         </p>
-        <div className="home-actions">
+        <div className="home-actions" data-aos="fade-up" data-aos-delay="180">
           <a
             href={`${appUrl}/auth/login`}
             className="home-button home-button-primary"
@@ -811,7 +854,9 @@ export default function MarketingHome() {
             Read the quickstart
           </Link>
         </div>
-        <small>No production traffic required.</small>
+        <small data-aos="fade" data-aos-delay="240">
+          No production traffic required.
+        </small>
       </section>
     </main>
   );

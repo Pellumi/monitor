@@ -6,7 +6,7 @@ import { PricingControls } from "@/components/pricing-controls";
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://tellann.co";
 
 export const metadata: Metadata = {
-  title: "Tellann Pricing — Free, Local, Solo, Team & Enterprise Plans",
+  title: "Tellann Pricing | Free, Local, Solo, Team & Enterprise Plans",
   description:
     "Compare Tellann plans for individual developers, QA teams and engineering organizations. Start free and scale into local project intelligence, automated instrumentation, collaboration and enterprise governance.",
   alternates: { canonical: "/pricing" },
@@ -81,7 +81,7 @@ const faqs = [
   ],
   [
     "Do you charge per event?",
-    "No. Current pricing is based primarily on applications, users, storage, and retention—not event volume.",
+    "No. Current pricing is based primarily on applications, users, storage, and retention, not event volume.",
   ],
   [
     "Can Tellann be self-hosted?",
@@ -125,13 +125,13 @@ export default function PricingPage() {
       />
 
       <section className="pricing-hero">
-        <p>Plans for every stage</p>
-        <h1>
+        <p data-aos="fade-up">Plans for every stage</p>
+        <h1 data-aos="fade-up" data-aos-delay="60">
           Understand your software.
           <br />
           <span>Pay for what your team needs.</span>
         </h1>
-        <div className="pricing-hero-bottom">
+        <div className="pricing-hero-bottom" data-aos="fade-up" data-aos-delay="120">
           <p>
             Start with core behavioral QA, then scale into local project
             intelligence, automated instrumentation, collaboration, governance,
@@ -146,10 +146,12 @@ export default function PricingPage() {
       </section>
 
       <section className="pricing-philosophy" aria-label="Pricing philosophy">
-        <span>Transparent by design</span>
-        <strong>Applications. Users. Storage. Retention.</strong>
+        <span data-aos="fade-up">Transparent by design</span>
+        <strong data-aos="fade-up" data-aos-delay="60">
+          Applications. Users. Storage. Retention.
+        </strong>
         <p>
-          Tellann’s current plans scale around understandable product limits—not
+          Tellann’s current plans scale around understandable product limits, not
           opaque credits.
         </p>
       </section>
@@ -161,10 +163,10 @@ export default function PricingPage() {
         aria-labelledby="decision-heading"
       >
         <div className="pricing-section-heading">
-          <p>Choose by outcome</p>
-          <h2 id="decision-heading">Which plan is right for me?</h2>
+          <p data-aos="fade-up">Choose by outcome</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="decision-heading">Which plan is right for me?</h2>
         </div>
-        <div className="pricing-decision-list">
+        <div className="pricing-decision-list" data-aos="tellann-panel">
           {decisionPaths.map(([need, plan, detail], index) => (
             <article key={plan}>
               <span>0{index + 1}</span>
@@ -189,7 +191,7 @@ export default function PricingPage() {
             what happens in the browser.
           </span>
         </div>
-        <div className="pricing-local-flow" aria-label="Local architecture">
+        <div className="pricing-local-flow" data-aos="tellann-panel" aria-label="Local architecture">
           {[
             "Approved project",
             "Local analysis",
@@ -203,7 +205,7 @@ export default function PricingPage() {
             </span>
           ))}
         </div>
-        <div className="pricing-local-columns">
+        <div className="pricing-local-columns" data-aos="tellann-panel">
           <article>
             <p>What stays local</p>
             <strong>
@@ -231,10 +233,10 @@ export default function PricingPage() {
         aria-labelledby="limits-heading"
       >
         <div className="pricing-section-heading">
-          <p>Usage and limits</p>
-          <h2 id="limits-heading">Know exactly where every plan changes.</h2>
+          <p data-aos="fade-up">Usage and limits</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="limits-heading">Know exactly where every plan changes.</h2>
         </div>
-        <div className="pricing-limit-grid">
+        <div className="pricing-limit-grid" data-aos="tellann-panel">
           {plans.map((plan) => (
             <article key={plan.type}>
               <p>{plan.name}</p>
@@ -275,8 +277,8 @@ export default function PricingPage() {
 
       <section className="pricing-band" aria-labelledby="reports-heading">
         <div>
-          <p>Reports and exports</p>
-          <h2 id="reports-heading">
+          <p data-aos="fade-up">Reports and exports</p>
+          <h2 id="reports-heading" data-aos="fade-up" data-aos-delay="60">
             Share intelligence in the format your workflow needs.
           </h2>
         </div>
@@ -295,8 +297,8 @@ export default function PricingPage() {
         aria-labelledby="enterprise-heading"
       >
         <div>
-          <p>Enterprise</p>
-          <h2 id="enterprise-heading">
+          <p data-aos="fade-up">Enterprise</p>
+          <h2 id="enterprise-heading" data-aos="fade-up" data-aos-delay="60">
             Control identity, infrastructure, governance, and support.
           </h2>
           <Link href="/contact?reason=enterprise">
@@ -329,8 +331,8 @@ export default function PricingPage() {
         aria-labelledby="upgrade-heading"
       >
         <div className="pricing-section-heading">
-          <p>Upgrade path</p>
-          <h2 id="upgrade-heading">Move when the reason becomes clear.</h2>
+          <p data-aos="fade-up">Upgrade path</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="upgrade-heading">Move when the reason becomes clear.</h2>
         </div>
         <div>
           {upgradePath.map(([plan, reason], index) => (
@@ -346,9 +348,11 @@ export default function PricingPage() {
       </section>
 
       <section className="pricing-transparency">
-        <p>Pricing transparency</p>
-        <h2>No surprise event bills. No opaque AI credits.</h2>
-        <span>
+        <p data-aos="fade-up">Pricing transparency</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">
+          No surprise event bills. No opaque AI credits.
+        </h2>
+        <span data-aos="fade-up" data-aos-delay="120">
           Current plans are defined by applications, users, storage, retention,
           product capabilities, and support. If usage-based production
           intelligence is introduced later, Tellann will publish clear units and
@@ -361,8 +365,8 @@ export default function PricingPage() {
         aria-labelledby="faq-heading"
       >
         <div className="pricing-section-heading">
-          <p>FAQ</p>
-          <h2 id="faq-heading">Questions before you choose.</h2>
+          <p data-aos="fade-up">FAQ</p>
+          <h2 data-aos="fade-up" data-aos-delay="60" id="faq-heading">Questions before you choose.</h2>
         </div>
         <div>
           {faqs.map(([question, answer]) => (
@@ -378,9 +382,11 @@ export default function PricingPage() {
       </section>
 
       <section className="pricing-final">
-        <p>Start with one application</p>
-        <h2>Choose the level of intelligence your work needs today.</h2>
-        <div>
+        <p data-aos="fade-up">Start with one application</p>
+        <h2 data-aos="tellann-wipe" data-aos-delay="60">
+          Choose the level of intelligence your work needs today.
+        </h2>
+        <div data-aos="fade-up" data-aos-delay="180">
           <a
             href={`${process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com"}/auth/login?plan=free`}
           >

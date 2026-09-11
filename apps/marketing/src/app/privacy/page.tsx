@@ -4,6 +4,7 @@ import Link from 'next/link';
 export const metadata: Metadata = {
   title: 'Privacy',
   description: 'Tellann privacy placeholder for MVP launch preparation.',
+  alternates: { canonical: '/privacy' },
 };
 
 export default function PrivacyPage() {

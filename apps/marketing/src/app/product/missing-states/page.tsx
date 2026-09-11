@@ -225,9 +225,9 @@ function MediaSection({
       id={id}
     >
       <div className="states-shell states-heading">
-        <p className="states-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="states-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
       {children ? (
         <div className="states-shell states-section-detail">{children}</div>
@@ -269,12 +269,11 @@ function AsideSection({
       id={id}
     >
       <div className="states-shell states-heading">
-        <p className="states-kicker">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{copy}</p>
+        <p className="states-kicker" data-aos="fade-up">{eyebrow}</p>
+        <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+        <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
       </div>
-      <div
-        className="states-shell states-aside-grid"
+      <div className="states-shell states-aside-grid" data-aos="tellann-panel"
         style={{ "--media-w": `${mediaWidth}px` } as CSSProperties}
       >
         <VisualPlaceholder {...visual} />
@@ -302,9 +301,9 @@ export default function MissingStatesPage() {
 
       <section className="states-hero pt-20!">
         <div className="states-shell states-hero-copy">
-          <p className="states-kicker">Missing state detection</p>
-          <h1>See the application states your demonstration never reached.</h1>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">Missing state detection</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">See the application states your demonstration never reached.</h1>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann analyzes demonstrated behavior to surface meaningful
             loading, empty, error, and recovery states that were not
             observed—then shows where those states belong in your workflow and
@@ -322,7 +321,7 @@ export default function MissingStatesPage() {
             </Link>
           </div>
         </div>
-        <div className="states-shell-wide states-hero-media states-desktop-media">
+        <div className="states-shell-wide states-hero-media states-desktop-media" data-aos="tellann-panel">
           <VisualPlaceholder
             label="Hero missing-state graph / observed search path expanding into potential states"
             master="1920 × 1120"
@@ -349,12 +348,12 @@ export default function MissingStatesPage() {
 
       <section className="states-definition">
         <div className="states-shell states-heading">
-          <p className="states-kicker">What a missing state is</p>
-          <h2>
+          <p className="states-kicker" data-aos="fade-up">What a missing state is</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             A missing state is a meaningful application condition Tellann
             expected or inferred but did not observe.
           </h2>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             The states you never see are often the states that expose how
             resilient your software really is. A workflow can look entirely
             successful while never exercising its loading, empty, error, or
@@ -374,7 +373,7 @@ export default function MissingStatesPage() {
           ))}
         </div>
         <div className="states-shell states-vocabulary">
-          <p className="states-kicker">Status vocabulary</p>
+          <p className="states-kicker" data-aos="fade-up">Status vocabulary</p>
           <dl>
             {vocabulary.map(([term, meaning]) => (
               <div key={term}>
@@ -476,15 +475,15 @@ export default function MissingStatesPage() {
 
       <section className="states-taxonomy">
         <div className="states-shell states-heading">
-          <p className="states-kicker">State taxonomy</p>
-          <h2>Four kinds of condition worth checking.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">State taxonomy</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Four kinds of condition worth checking.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Grouping findings by condition type keeps a list of gaps readable.
             Loading, empty, error, and recovery each ask a different question
             about the same workflow.
           </p>
         </div>
-        <div className="states-shell states-category-cards">
+        <div className="states-shell states-category-cards" data-aos="tellann-panel">
           {categories.map(([title, question, example, rule]) => (
             <article key={title}>
               <span>{title}</span>
@@ -530,7 +529,7 @@ export default function MissingStatesPage() {
         <div className="states-chain is-gap">
           <b>SEARCH_LOADING</b>
         </div>
-        <ul className="states-example-list">
+        <ul className="states-example-list" data-aos="tellann-panel">
           {["PRODUCT_LOADING", "CHECKOUT_LOADING", "SEARCH_LOADING"].map(
             (item) => (
               <li key={item}>{item}</li>
@@ -561,7 +560,7 @@ export default function MissingStatesPage() {
         <div className="states-chain is-gap">
           <b>NO_RESULTS</b>
         </div>
-        <ul className="states-example-list">
+        <ul className="states-example-list" data-aos="tellann-panel">
           {["EMPTY_CART", "NO_SEARCH_RESULTS", "NO_NOTIFICATIONS"].map(
             (item) => (
               <li key={item}>{item}</li>
@@ -597,7 +596,7 @@ export default function MissingStatesPage() {
             ))}
           </dl>
         </div>
-        <ul className="states-example-list">
+        <ul className="states-example-list" data-aos="tellann-panel">
           {["404", "500", "VALIDATION_ERROR", "AUTHENTICATION_ERROR"].map(
             (item) => (
               <li key={item}>{item}</li>
@@ -628,7 +627,7 @@ export default function MissingStatesPage() {
         </div>
         <div>
           <p className="states-panel-label">Examples</p>
-          <ul className="states-example-list">
+          <ul className="states-example-list" data-aos="tellann-panel">
             {["RETRY_PAYMENT", "RETRY_UPLOAD", "RETRY_SUBMISSION"].map(
               (item) => (
                 <li key={item}>{item}</li>
@@ -686,9 +685,9 @@ export default function MissingStatesPage() {
 
       <section className="states-explorer-section" id="explorer">
         <div className="states-shell states-heading">
-          <p className="states-kicker">Interactive missing-state explorer</p>
-          <h2>Inspect missing states where they belong in the workflow.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">Interactive missing-state explorer</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Inspect missing states where they belong in the workflow.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Choose a workflow, filter by condition type and status, and open any
             finding to see the rule that produced it. Mark a state demonstrated,
             not applicable, or dismissed—and record why when it does not apply.
@@ -696,7 +695,7 @@ export default function MissingStatesPage() {
             final renderer.
           </p>
         </div>
-        <div className="states-shell-wide">
+        <div className="states-shell-wide" data-aos="tellann-panel">
           <MissingStateExplorer />
         </div>
         <p className="states-shell states-note">
@@ -802,7 +801,7 @@ export default function MissingStatesPage() {
         }}
       >
         <div className="states-coverage-block">
-          <p className="states-kicker">Checkout</p>
+          <p className="states-kicker" data-aos="fade-up">Checkout</p>
           <div>
             {[
               ["State coverage", "81%"],
@@ -818,7 +817,7 @@ export default function MissingStatesPage() {
         </div>
         <div>
           <p className="states-panel-label">Observed</p>
-          <ul className="states-status-list">
+          <ul className="states-status-list" data-aos="tellann-panel">
             {["CART_ACTIVE", "CHECKOUT", "PAYMENT_SUCCESS"].map((item) => (
               <li key={item}>
                 <i aria-hidden="true">✓</i> {item}
@@ -826,7 +825,7 @@ export default function MissingStatesPage() {
             ))}
           </ul>
           <p className="states-panel-label">Potential / unobserved</p>
-          <ul className="states-status-list is-unobserved">
+          <ul className="states-status-list is-unobserved" data-aos="tellann-panel">
             {["CHECKOUT_LOADING", "PAYMENT_FAILURE", "RETRY_PAYMENT"].map(
               (item) => (
                 <li key={item}>
@@ -853,8 +852,7 @@ export default function MissingStatesPage() {
           display: "960 × 480",
         }}
       >
-        <div
-          className="states-vs-table"
+        <div className="states-vs-table" data-aos="tellann-panel"
           role="table"
           aria-label="Missing state compared with missing flow"
         >
@@ -976,7 +974,7 @@ export default function MissingStatesPage() {
         }}
       >
         <div className="states-demo-card">
-          <p className="states-kicker">New demonstration</p>
+          <p className="states-kicker" data-aos="fade-up">New demonstration</p>
           <dl>
             {[
               ["Workflow", "Cart"],
@@ -1021,7 +1019,7 @@ export default function MissingStatesPage() {
           display: "1000 × 562",
         }}
       >
-        <div className="states-demo-timeline">
+        <div className="states-demo-timeline" data-aos="tellann-panel">
           {[
             [
               "Demo 01",
@@ -1064,9 +1062,9 @@ export default function MissingStatesPage() {
 
       <section className="states-priority">
         <div className="states-shell states-heading">
-          <p className="states-kicker">Prioritization &amp; review</p>
-          <h2>Focus on the missing states that matter to important workflows.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">Prioritization &amp; review</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Focus on the missing states that matter to important workflows.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Priority comes from configured workflow importance, the condition
             type, and declared business criticality—not from an invented
             business-impact score.
@@ -1091,7 +1089,7 @@ export default function MissingStatesPage() {
             </dl>
           </article>
           <div className="states-review">
-            <p className="states-kicker">Review actions</p>
+            <p className="states-kicker" data-aos="fade-up">Review actions</p>
             <div className="states-review-actions">
               {["Demonstrate", "Mark expected", "Not applicable", "Dismiss"].map(
                 (action) => (
@@ -1165,15 +1163,15 @@ export default function MissingStatesPage() {
 
       <section className="states-caveats">
         <div className="states-shell states-heading">
-          <p className="states-kicker">What a missing state does not mean</p>
-          <h2>A missing state is a QA question—not automatically a bug.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">What a missing state does not mean</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">A missing state is a QA question—not automatically a bug.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann has identified a condition worth considering that was not
             observed in the selected behavioral evidence. That is the entire
             claim.
           </p>
         </div>
-        <div className="states-shell states-not-list">
+        <div className="states-shell states-not-list" data-aos="tellann-panel">
           <p>A missing state does not necessarily mean:</p>
           <ul>
             {notMeanings.map((item) => (
@@ -1199,7 +1197,7 @@ export default function MissingStatesPage() {
           </article>
         </div>
         <div className="states-shell states-dispositions">
-          <p className="states-kicker">
+          <p className="states-kicker" data-aos="fade-up">
             Detection and implementation are not the same thing
           </p>
           <div>
@@ -1221,14 +1219,14 @@ export default function MissingStatesPage() {
 
       <section className="states-future">
         <div className="states-shell states-heading">
-          <p className="states-kicker">Where state detection goes next</p>
-          <h2>Explainable rules first. Intelligence later, and labelled.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">Where state detection goes next</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Explainable rules first. Intelligence later, and labelled.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Phase 1 works without production traffic, machine learning, AI, or
             manual workflow modeling. Later phases stay named as planned.
           </p>
         </div>
-        <div className="states-shell states-phase-grid">
+        <div className="states-shell states-phase-grid" data-aos="tellann-panel">
           <article>
             <span>Phase 01 · Behavioral QA</span>
             <p>
@@ -1258,8 +1256,8 @@ export default function MissingStatesPage() {
       <section className="states-faq">
         <div className="states-shell states-faq-grid">
           <div>
-            <p className="states-kicker">FAQ</p>
-            <h2>Questions behind the conditions.</h2>
+            <p className="states-kicker" data-aos="fade-up">FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Questions behind the conditions.</h2>
           </div>
           <div>
             {faqs.map(([question, answer]) => (
@@ -1277,9 +1275,9 @@ export default function MissingStatesPage() {
 
       <section className="states-final">
         <div className="states-shell">
-          <p className="states-kicker">Look beyond the states you saw</p>
-          <h2>Find the application condition you haven&apos;t demonstrated yet.</h2>
-          <p>
+          <p className="states-kicker" data-aos="fade-up">Look beyond the states you saw</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">Find the application condition you haven&apos;t demonstrated yet.</h2>
+          <p data-aos="fade-up" data-aos-delay="120">
             Demonstrate a workflow and let Tellann surface loading, empty,
             error, and recovery states that remain unobserved—then turn those
             gaps into the next QA walkthrough.

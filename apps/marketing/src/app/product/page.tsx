@@ -10,12 +10,12 @@ const docsUrl =
   process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Tellann Product — Behavioral QA & Software Quality Intelligence",
+  title: "Tellann Product | Behavioral QA & Software Quality Intelligence",
   description:
     "See how Tellann turns demonstrated application behavior into workflow maps, behavior graphs, coverage analysis, session replays, missing-state detection, endpoint insights, and QA reports.",
   alternates: { canonical: "/product" },
   openGraph: {
-    title: "Tellann Product — Behavioral QA & Software Quality Intelligence",
+    title: "Tellann Product | Behavioral QA & Software Quality Intelligence",
     description:
       "Observe application behavior, reconstruct workflows, find quality gaps, and turn evidence into QA intelligence.",
     url: `${siteUrl}/product`,
@@ -67,9 +67,9 @@ function ProductSection({
     <section className={`product-feature${reverse ? " is-reverse" : ""}`}>
       <div className="product-shell product-feature-grid">
         <div className="product-feature-copy">
-          <p className="product-kicker">{eyebrow}</p>
-          <h2>{title}</h2>
-          <p>{copy}</p>
+          <p className="product-kicker" data-aos="fade-up">{eyebrow}</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">{title}</h2>
+          <p data-aos="fade-up" data-aos-delay="120">{copy}</p>
           {children}
           <Link href={href}>
             {linkLabel} <span>→</span>
@@ -106,17 +106,17 @@ export default function ProductPage() {
       />
       <section className="product-hero">
         <div className="product-shell product-hero-copy">
-          <p className="product-kicker">Behavioral QA platform</p>
-          <h1>
+          <p className="product-kicker" data-aos="fade-up">Behavioral QA platform</p>
+          <h1 data-aos="fade-up" data-aos-delay="60">
             See how your software <span>actually behaves.</span>
           </h1>
-          <p>
+          <p data-aos="fade-up" data-aos-delay="120">
             Tellann observes an application being used, reconstructs its
             behavior, turns that behavior into workflows, measures what was
             covered or missed, and gives engineering teams evidence about
             software quality.
           </p>
-          <div className="product-actions">
+          <div className="product-actions" data-aos="fade-up" data-aos-delay="180">
             <a className="product-button product-button-solid" href={appUrl}>
               Start a demonstration <span>↗</span>
             </a>
@@ -141,18 +141,18 @@ export default function ProductPage() {
       <section className="product-pipeline" id="overview">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Product intelligence pipeline</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">Product intelligence pipeline</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               From interaction
               <br />
               to understanding.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Every Tellann view begins with the same evidence: observed
               application behavior.
             </p>
           </header>
-          <div className="product-pipeline-flow">
+          <div className="product-pipeline-flow" data-aos="tellann-panel" data-aos-delay="120">
             {[
               "Connect",
               "Demonstrate",
@@ -179,13 +179,13 @@ export default function ProductPage() {
       <section className="product-overview">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">One platform</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">One platform</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Multiple views
               <br />
               of quality.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Move from demonstration to model, analysis, investigation, and
               communication without losing the evidence connecting them.
             </p>
@@ -205,7 +205,7 @@ export default function ProductPage() {
           dimensions: "1600 × 1000",
         }}
       >
-        <div className="product-mini-flow">
+        <div className="product-mini-flow" data-aos="tellann-panel">
           <span>Walkthrough</span>
           <i>→</i>
           <span>Events</span>
@@ -227,7 +227,7 @@ export default function ProductPage() {
           className: "product-placeholder-graph",
         }}
       >
-        <div className="product-definition">
+        <div className="product-definition" data-aos="tellann-panel">
           <span>State</span>
           <span>Action</span>
           <span>Transition</span>
@@ -246,7 +246,7 @@ export default function ProductPage() {
           dimensions: "1600 × 1000",
         }}
       >
-        <ul className="product-observed-list">
+        <ul className="product-observed-list" data-aos="fade-up" data-aos-delay="120">
           <li>Product view → Cart → Checkout</li>
           <li>Sign in → Workspace → Application</li>
           <li>Search → Result → Detail</li>
@@ -256,18 +256,18 @@ export default function ProductPage() {
       <section className="product-quality">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Coverage & quality gaps</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">Coverage & quality gaps</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Quality is also what
               <br />
               you never exercised.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Tellann measures observed coverage and surfaces important states
               and paths that remain absent from the evidence.
             </p>
           </header>
-          <div className="product-quality-grid">
+          <div className="product-quality-grid" data-aos="tellann-panel" data-aos-delay="120">
             <article>
               <ProductPlaceholder
                 label="Coverage dashboard / UI placeholder"
@@ -302,7 +302,7 @@ export default function ProductPage() {
         reverse
         eyebrow="Session Replay"
         title="Follow the evidence back to the session."
-        copy="Reconstruct what happened, in what order, which state changed, and which endpoints participated—without relying only on a screen recording."
+        copy="Reconstruct what happened, in what order, which state changed, and which endpoints participated, without relying only on a screen recording."
         href="/product/session-replay"
         linkLabel="Explore Session Replay"
         placeholder={{
@@ -310,7 +310,7 @@ export default function ProductPage() {
           dimensions: "1920 × 1200",
         }}
       >
-        <div className="product-timeline">
+        <div className="product-timeline" data-aos="tellann-panel">
           <span>00:04 Route change</span>
           <span>00:12 Add to cart</span>
           <span>00:21 Payment error</span>
@@ -320,7 +320,7 @@ export default function ProductPage() {
       <ProductSection
         eyebrow="Endpoint Intelligence"
         title="Connect user behavior to API behavior."
-        copy="Correlate captured demonstration activity with API requests, response times, errors, and endpoint metadata. This is demonstration analysis—not production monitoring."
+        copy="Correlate captured demonstration activity with API requests, response times, errors, and endpoint metadata. This is demonstration analysis, not production monitoring."
         href="/product/endpoint-intelligence"
         linkLabel="Explore Endpoint Intelligence"
         placeholder={{
@@ -328,7 +328,7 @@ export default function ProductPage() {
           dimensions: "1600 × 1000",
         }}
       >
-        <div className="product-endpoint-table">
+        <div className="product-endpoint-table" data-aos="tellann-panel">
           <span>
             GET /products <b>184 ms</b>
           </span>
@@ -344,13 +344,13 @@ export default function ProductPage() {
       <section className="product-reports">
         <div className="product-shell product-reports-grid">
           <div>
-            <p className="product-kicker">QA reports</p>
+            <p className="product-kicker" data-aos="fade-up">QA reports</p>
             <h2>From telemetry to something your team can act on.</h2>
             <p>
               Turn the same behavioral evidence into reports designed for
               different review and decision contexts.
             </p>
-            <div className="product-report-list">
+            <div className="product-report-list" data-aos="fade-up" data-aos-delay="120">
               {reports.map((report) => (
                 <span key={report}>{report}</span>
               ))}
@@ -358,7 +358,7 @@ export default function ProductPage() {
             <small>Export as PDF · CSV · JSON · HTML</small>
             <Link href="/product/qa-reports">Explore QA Reports →</Link>
           </div>
-          <div className="product-report-stack">
+          <div className="product-report-stack" data-aos="tellann-panel" data-aos-delay="180">
             <i />
             <i />
             <ProductPlaceholder
@@ -372,13 +372,13 @@ export default function ProductPage() {
       <section className="product-connected">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Connected intelligence</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">Connected intelligence</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               One behavior.
               <br />
               Multiple perspectives.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               These are not isolated tools. They are different views over the
               same observed application behavior.
             </p>
@@ -387,7 +387,7 @@ export default function ProductPage() {
             label="Connected product ecosystem / animated SVG placeholder"
             dimensions="1400 × 900"
           />
-          <div className="product-connected-labels">
+          <div className="product-connected-labels" data-aos="tellann-panel" data-aos-delay="120">
             {[
               "Session Replay",
               "Coverage",
@@ -406,18 +406,18 @@ export default function ProductPage() {
       <section className="product-audience">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Built for software teams</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">Built for software teams</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Shared evidence,
               <br />
               different questions.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Give every technical role a clearer view of the same application
               behavior.
             </p>
           </header>
-          <div className="product-audience-grid">
+          <div className="product-audience-grid" data-aos="tellann-panel" data-aos-delay="120">
             {[
               [
                 "Software engineers",
@@ -453,18 +453,18 @@ export default function ProductPage() {
       <section className="product-privacy">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Privacy by design</p>
-            <h2>
+            <p className="product-kicker" data-aos="fade-up">Privacy by design</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Observe behavior.
               <br />
               Not secrets.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Sensitive values should be filtered before behavioral evidence
               reaches Tellann.
             </p>
           </header>
-          <div className="product-privacy-grid">
+          <div className="product-privacy-grid" data-aos="tellann-panel" data-aos-delay="120">
             <ProductPlaceholder
               label="Privacy filtering pipeline / animated SVG placeholder"
               dimensions="1200 × 620"
@@ -512,7 +512,7 @@ export default function ProductPage() {
               </article>
             </div>
           </div>
-          <Link className="product-text-link" href="/security/privacy">
+          <Link className="product-text-link" data-aos="fade-up" href="/security/privacy">
             Read privacy principles →
           </Link>
         </div>
@@ -521,14 +521,14 @@ export default function ProductPage() {
       <section className="product-evolution">
         <div className="product-shell">
           <header className="product-section-head">
-            <p className="product-kicker">Product evolution</p>
-            <h2>Built to evolve with the software it observes.</h2>
-            <p>
+            <p className="product-kicker" data-aos="fade-up">Product evolution</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Built to evolve with the software it observes.</h2>
+            <p data-aos="fade-up" data-aos-delay="120">
               The current product establishes behavioral evidence. Future phases
               build production context and validation intelligence on top.
             </p>
           </header>
-          <div className="product-evolution-grid">
+          <div className="product-evolution-grid" data-aos="tellann-panel" data-aos-delay="120">
             <article>
               <span>Now · Available</span>
               <h3>Behavioral QA</h3>
@@ -575,7 +575,7 @@ export default function ProductPage() {
               </p>
             </article>
           </div>
-          <Link className="product-text-link" href="/roadmap">
+          <Link className="product-text-link" data-aos="fade-up" href="/roadmap">
             Explore the roadmap →
           </Link>
         </div>
@@ -590,7 +590,7 @@ export default function ProductPage() {
 
       <section className="product-feature-directory">
         <div className="product-shell">
-          <p className="product-kicker">Explore the platform</p>
+          <p className="product-kicker" data-aos="fade-up">Explore the platform</p>
           <div>
             {featureLinks.map(([label, href], index) => (
               <Link key={href} href={href}>
@@ -606,7 +606,7 @@ export default function ProductPage() {
       <section className="product-faq">
         <div className="product-shell product-faq-grid">
           <div>
-            <p className="product-kicker">Product FAQ</p>
+            <p className="product-kicker" data-aos="fade-up">Product FAQ</p>
             <h2>
               The model,
               <br />
@@ -654,13 +654,13 @@ export default function ProductPage() {
 
       <section className="product-final">
         <div className="product-shell">
-          <p className="product-kicker">Start observing</p>
+          <p className="product-kicker" data-aos="fade-up">Start observing</p>
           <h2>Teach Tellann how your application behaves.</h2>
           <p>
             Connect an application, record your first demonstration, and turn
             observed behavior into a clearer picture of software quality.
           </p>
-          <div className="product-actions">
+          <div className="product-actions" data-aos="fade-up" data-aos-delay="180">
             <a className="product-button product-button-solid" href={appUrl}>
               Start for free <span>↗</span>
             </a>

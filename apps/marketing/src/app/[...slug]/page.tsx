@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { placeholderRouteMap, placeholderRoutes } from "@/config/site-routes";
+import { allRouteMap, placeholderRouteMap, placeholderRoutes } from "@/config/site-routes";
 
 type PageProps = { params: Promise<{ slug: string[] }> };
 
@@ -25,9 +25,15 @@ export async function generateMetadata({
       robots: { index: false, follow: false },
     };
   }
+  // Stubs are deliberately kept out of the index: they carry no real content
+  // yet, and publishing dozens of near-identical pages would dilute the site.
+  // Promoting the route to `live` in site-routes.ts restores indexing.
   return {
     title: item.label,
     description: item.description,
+    robots: { index: false, follow: true },
+    // Self-referencing, so the stub does not inherit the root layout's
+    // canonical and claim to be the homepage.
     alternates: { canonical: item.href },
   };
 }
@@ -36,8 +42,10 @@ export default async function PlaceholderPage({ params }: PageProps) {
   const item = getRoute((await params).slug);
   if (!item) notFound();
 
+  // Resolved against every known route, not just the stubs, so a planned page
+  // can still link back to a parent that is already built.
   const parentHref = item.href.split("/").slice(0, -1).join("/") || "/";
-  const parent = placeholderRouteMap.get(parentHref);
+  const parent = allRouteMap.get(parentHref);
 
   return (
     <main className="placeholder-page">

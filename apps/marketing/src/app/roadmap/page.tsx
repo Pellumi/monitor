@@ -7,12 +7,12 @@ const docsUrl =
   process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Tellann Roadmap — Behavioral QA to Autonomous Validation",
+  title: "Tellann Roadmap | Behavioral QA to Autonomous Validation",
   description:
     "Explore the Tellann product roadmap, from behavioral QA and workflow intelligence to production monitoring, release validation, and future autonomous quality intelligence.",
   alternates: { canonical: "/roadmap" },
   openGraph: {
-    title: "Tellann Roadmap — Behavioral QA to Autonomous Validation",
+    title: "Tellann Roadmap | Behavioral QA to Autonomous Validation",
     description:
       "See what Tellann supports today, what is planned next, and what remains an exploratory product direction.",
     url: `${siteUrl}/roadmap`,
@@ -265,7 +265,7 @@ function CapabilityCard({
       </header>
       <h3>{item.title}</h3>
       <p>{item.description}</p>
-      <div className="roadmap-card-list">
+      <div className="roadmap-card-list" data-aos="tellann-panel">
         <span>Includes</span>
         {item.capabilities.map((capability) => (
           <b key={capability}>{capability}</b>
@@ -292,12 +292,12 @@ export default function RoadmapPage() {
       <section className="roadmap-hero">
         <div className="roadmap-shell roadmap-hero-grid pt-20!">
           <div className="roadmap-hero-copy">
-            <p className="roadmap-kicker">Tellann roadmap</p>
-            <h1>
+            <p className="roadmap-kicker" data-aos="fade-up">Tellann roadmap</p>
+            <h1 data-aos="fade-up" data-aos-delay="60">
               From observing behavior to continuously{" "}
               <span>understanding quality.</span>
             </h1>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Tellann begins by turning demonstrated application behavior into
               quality intelligence. From there, the platform expands into
               production understanding and eventually behavior-driven autonomous
@@ -340,7 +340,7 @@ export default function RoadmapPage() {
       </section>
 
       <section className="roadmap-legend">
-        <div className="roadmap-shell roadmap-legend-grid">
+        <div className="roadmap-shell roadmap-legend-grid" data-aos="tellann-panel">
           <div>
             <StatusMark status="AVAILABLE" />
             <p>Currently usable.</p>
@@ -364,7 +364,7 @@ export default function RoadmapPage() {
         <div className="roadmap-shell">
           <header className="roadmap-section-head">
             <div>
-              <p className="roadmap-kicker">Current product snapshot</p>
+              <p className="roadmap-kicker" data-aos="fade-up">Current product snapshot</p>
               <StatusMark status="AVAILABLE" />
             </div>
             <h2>
@@ -372,7 +372,7 @@ export default function RoadmapPage() {
               <br />
               is today.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Connect an application, record a demonstration, reconstruct its
               behavior, discover workflows, measure coverage, identify missing
               states and flows, inspect sessions and endpoints, and generate QA
@@ -422,12 +422,12 @@ export default function RoadmapPage() {
               <br />
               behavior.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Generate useful QA intelligence from developer-led application
               demonstrations.
             </p>
           </header>
-          <div className="roadmap-cards">
+          <div className="roadmap-cards" data-aos="tellann-panel">
             {phaseOne.map((item) => (
               <CapabilityCard key={item.id} item={item} phase="Phase 1" />
             ))}
@@ -452,12 +452,12 @@ export default function RoadmapPage() {
               <br />
               behavior.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Move from demonstrations to continuous understanding of how real
               software workflows behave in production.
             </p>
           </header>
-          <div className="roadmap-cards">
+          <div className="roadmap-cards" data-aos="tellann-panel">
             {phaseTwo.map((item) => (
               <CapabilityCard key={item.id} item={item} phase="Phase 2" />
             ))}
@@ -482,7 +482,7 @@ export default function RoadmapPage() {
               <br />
               validation.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Use accumulated graphs, production telemetry, historical failures,
               and release history to help validate future behavior.
             </p>
@@ -495,7 +495,7 @@ export default function RoadmapPage() {
               rationale, confidence, and traceability.
             </p>
           </div>
-          <div className="roadmap-cards">
+          <div className="roadmap-cards" data-aos="tellann-panel">
             {phaseThree.map((item) => (
               <CapabilityCard key={item.id} item={item} phase="Phase 3" />
             ))}
@@ -506,13 +506,13 @@ export default function RoadmapPage() {
       <section className="roadmap-dependencies">
         <div className="roadmap-shell">
           <header className="roadmap-section-head">
-            <p className="roadmap-kicker">Product dependencies</p>
-            <h2>
+            <p className="roadmap-kicker" data-aos="fade-up">Product dependencies</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Intelligence needs
               <br />
               evidence beneath it.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Later phases are built on the behavioral evidence and production
               context established before them.
             </p>
@@ -586,18 +586,18 @@ export default function RoadmapPage() {
       <section className="roadmap-ecosystem" id="sdk">
         <div className="roadmap-shell">
           <header className="roadmap-section-head">
-            <p className="roadmap-kicker">SDK evolution</p>
-            <h2>
+            <p className="roadmap-kicker" data-aos="fade-up">SDK evolution</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Expanding where
               <br />
               Tellann can observe.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Defined integrations and future platform coverage are shown
               separately from actual shipping status.
             </p>
           </header>
-          <div className="roadmap-sdk-grid">
+          <div className="roadmap-sdk-grid" data-aos="tellann-panel">
             <article>
               <span>Web / defined</span>
               {["JavaScript", "TypeScript", "React", "Next.js"].map((name) => (
@@ -637,7 +637,7 @@ export default function RoadmapPage() {
           </div>
           <div className="roadmap-enterprise">
             <div>
-              <p className="roadmap-kicker">Platform & enterprise</p>
+              <p className="roadmap-kicker" data-aos="fade-up">Platform & enterprise</p>
               <h3>More control where organizations need it.</h3>
             </div>
             <div>
@@ -662,8 +662,8 @@ export default function RoadmapPage() {
       <section className="roadmap-shipped" id="shipped">
         <div className="roadmap-shell roadmap-shipped-grid">
           <div>
-            <p className="roadmap-kicker">Recently shipped</p>
-            <h2>
+            <p className="roadmap-kicker" data-aos="fade-up">Recently shipped</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Roadmap is direction.
               <br />
               Changelog is evidence.
@@ -687,8 +687,8 @@ export default function RoadmapPage() {
       <section className="roadmap-desktop">
         <div className="roadmap-shell roadmap-desktop-grid">
           <div>
-            <p className="roadmap-kicker">Tellann Desktop</p>
-            <h2>A local connection layer for Tellann.</h2>
+            <p className="roadmap-kicker" data-aos="fade-up">Tellann Desktop</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">A local connection layer for Tellann.</h2>
           </div>
           <div>
             <span><b>Available</b> Windows desktop application</span>
@@ -702,18 +702,18 @@ export default function RoadmapPage() {
       <section className="roadmap-priorities">
         <div className="roadmap-shell">
           <header className="roadmap-section-head">
-            <p className="roadmap-kicker">How we prioritize</p>
-            <h2>
+            <p className="roadmap-kicker" data-aos="fade-up">How we prioritize</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               How we decide
               <br />
               what comes next.
             </h2>
-            <p>
+            <p data-aos="fade-up" data-aos-delay="120">
               Direction is shaped by product foundations, meaningful customer
               problems, evidence maturity, and trust.
             </p>
           </header>
-          <div className="roadmap-priority-grid">
+          <div className="roadmap-priority-grid" data-aos="tellann-panel">
             {[
               [
                 "Product foundation",
@@ -755,8 +755,8 @@ export default function RoadmapPage() {
       <section className="roadmap-feedback">
         <div className="roadmap-shell roadmap-feedback-grid">
           <div>
-            <p className="roadmap-kicker">Roadmap feedback</p>
-            <h2>Is something important missing?</h2>
+            <p className="roadmap-kicker" data-aos="fade-up">Roadmap feedback</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Is something important missing?</h2>
           </div>
           <div>
             <p>
@@ -781,8 +781,8 @@ export default function RoadmapPage() {
       <section className="roadmap-faq">
         <div className="roadmap-shell roadmap-faq-grid">
           <div>
-            <p className="roadmap-kicker">Roadmap FAQ</p>
-            <h2>
+            <p className="roadmap-kicker" data-aos="fade-up">Roadmap FAQ</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">
               Direction,
               <br />
               not promises.
@@ -841,15 +841,15 @@ export default function RoadmapPage() {
 
       <section className="roadmap-final">
         <div className="roadmap-shell">
-          <p className="roadmap-kicker">Start with evidence</p>
-          <h2>
+          <p className="roadmap-kicker" data-aos="fade-up">Start with evidence</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             Understand what
             <br />
             your software does
             <br />
             <span>today.</span>
           </h2>
-          <p>The future begins with a real application walkthrough.</p>
+          <p data-aos="fade-up" data-aos-delay="120">The future begins with a real application walkthrough.</p>
           <div className="roadmap-actions">
             <Link
               className="roadmap-button roadmap-button-solid"

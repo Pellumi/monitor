@@ -4,6 +4,7 @@ import Link from 'next/link';
 export const metadata: Metadata = {
   title: 'Security',
   description: 'How Tellann separates tenants, protects API keys, scopes authentication, and records sensitive actions.',
+  alternates: { canonical: '/security' },
 };
 
 export default function SecurityPage() {

@@ -66,8 +66,8 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <section className="contact-hero">
         <div className="contact-shell contact-hero-grid">
           <div>
-            <p className="contact-kicker">Contact Tellann</p>
-            <h1>
+            <p className="contact-kicker" data-aos="fade-up">Contact Tellann</p>
+            <h1 data-aos="fade-up" data-aos-delay="60">
               Talk to the
               <br />
               right team.
@@ -103,8 +103,8 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <section className="contact-support">
         <div className="contact-shell contact-support-grid">
           <div>
-            <p className="contact-kicker">Existing customers</p>
-            <h2>Already using Tellann?</h2>
+            <p className="contact-kicker" data-aos="fade-up">Existing customers</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Already using Tellann?</h2>
           </div>
           <div>
             <p>
@@ -126,10 +126,10 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <section className="contact-alternatives">
         <div className="contact-shell">
           <div className="contact-section-heading">
-            <p className="contact-kicker">Self-service paths</p>
-            <h2>Looking for something else?</h2>
+            <p className="contact-kicker" data-aos="fade-up">Self-service paths</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Looking for something else?</h2>
           </div>
-          <div className="contact-link-grid">
+          <div className="contact-link-grid" data-aos="tellann-panel">
             <a href={docsUrl}>
               <b>Documentation</b>
               <span>Technical guides and SDK reference.</span>
@@ -161,11 +161,11 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
 
       <section className="contact-trust">
         <div className="contact-shell">
-          <p className="contact-kicker">Security &amp; privacy</p>
+          <p className="contact-kicker" data-aos="fade-up">Security &amp; privacy</p>
           <div className="contact-trust-grid">
             <div>
               <h2>Sensitive questions take a separate path.</h2>
-              <p className="mt-4">
+              <p data-aos="fade-up" data-aos-delay="120" className="mt-4">
                 Security and privacy enquiries are routed separately from
                 general commercial requests.
               </p>
@@ -187,10 +187,10 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <section className="contact-expectations">
         <div className="contact-shell">
           <div className="contact-section-heading">
-            <p className="contact-kicker">What happens next</p>
-            <h2>Clear routing. Honest expectations.</h2>
+            <p className="contact-kicker" data-aos="fade-up">What happens next</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Clear routing. Honest expectations.</h2>
           </div>
-          <div className="contact-expectation-grid">
+          <div className="contact-expectation-grid" data-aos="tellann-panel">
             <article>
               <span>01</span>
               <h3>Sales</h3>
@@ -230,10 +230,10 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <section className="contact-faq">
         <div className="contact-shell contact-faq-grid">
           <div>
-            <p className="contact-kicker">Common questions</p>
-            <h2>Before you send.</h2>
+            <p className="contact-kicker" data-aos="fade-up">Common questions</p>
+            <h2 data-aos="fade-up" data-aos-delay="60">Before you send.</h2>
           </div>
-          <div className="contact-faq-list">
+          <div className="contact-faq-list" data-aos="tellann-panel">
             <details>
               <summary>
                 Can I try Tellann without talking to sales?<span>+</span>
@@ -287,13 +287,13 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
 
       <section className="contact-final">
         <div className="contact-shell">
-          <p className="contact-kicker">Still not sure?</p>
-          <h2>
+          <p className="contact-kicker" data-aos="fade-up">Still not sure?</p>
+          <h2 data-aos="fade-up" data-aos-delay="60">
             We&apos;ll route it
             <br />
             from here.
           </h2>
-          <p>Choose General Enquiry and give us the context you have.</p>
+          <p data-aos="fade-up" data-aos-delay="120">Choose General Enquiry and give us the context you have.</p>
           <Link
             className="contact-button contact-button-inverse"
             href="/contact?reason=general#contact-form"
