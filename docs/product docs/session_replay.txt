@@ -15,12 +15,12 @@ Its purpose is not merely to replay user interactions visually, but to provide b
 Session Replay serves as one of the foundational intelligence assets of TELLANN and acts as the bridge between raw behavioral events and explainable quality insights.
 2. Scope
 This specification applies to:
-Phase 1
-Behavioral QA Platform
-Phase 2
-Production Intelligence Platform
-Phase 3
-Autonomous Validation Engine
+Phase 1 — Behavioral QA & Intent Platform
+Replay of demonstration runs.
+Phase 2 — Production Monitoring, Feedback & Analysis
+Replay of production sessions.
+Phase 3 — Autonomous Behavioral Intelligence
+Replay as verification evidence for remediation and regression.
 Session Replay functionality must evolve without architectural redesign and remain compatible with all future behavioral intelligence systems.
 3. Objectives
 SRS-OBJ-001
@@ -84,7 +84,7 @@ Based on the Session Replay architecture defined within TELLANN.
 6. Session Replay Lifecycle
 Stage 1
 Capture Events
-Page Visit
+Page View
 Button Click
 Form Submit
 API Request
@@ -143,7 +143,7 @@ Purpose
 Define everything eligible for capture and replay.
 9. What Is Recorded
 Navigation Activity
-PAGE_VISIT
+PAGE_VIEW
 ROUTE_CHANGE
 PAGE_EXIT
 
@@ -316,8 +316,8 @@ access_token
 
 
 Consistent with privacy requirements and event governance rules.
-SRS-PRIV-005
-Organizations shall define custom privacy rules.
+SRS-PRIV-005 (Pre-Launch)
+Organizations shall define custom privacy rules. Depends on the Privacy Rule Engine, PDCS Section 13.
 Example:
 {
   "excludeFields": [
@@ -368,7 +368,7 @@ Example:
 12:00:00 Session Started
 
 
-12:00:04 Page Visit
+12:00:04 Page View
 Home
 
 
@@ -488,16 +488,19 @@ Next Event
 
 
 Speed Control
+0.5x
+
+
 1x
 
 
 2x
 
 
-5x
+4x
 
 
-10x
+Speeds are chosen for reading a behavioral timeline rather than watching a recording. 0.5x exists because the interesting part of a replay is usually three events in a row; 4x is the ceiling because beyond it the timeline stops being legible.
 
 
 21. Replay Investigation View
@@ -542,12 +545,33 @@ Responses
 Timeouts
 
 
+21.1 Run Replay
+A replay produced by a demonstration run carries run context that an ordinary session replay does not.
+Additional exposure:
+Run Mode
+Guided, Assisted or Observation Only.
+Capture Tracks
+Which tracks were enabled. A replay with no backend track shows no API timeline, and says so.
+Evidence Scope
+Each event marked PRE_BOUNDARY or IN_FLOW, so a reviewer can see where the declared flow began.
+Flow Boundary Markers
+The initial boundary and any terminal state reached.
+Protected Values
+Rendered as protected. Revealed only on an authorized, audited request.
+Browser Findings
+Accessibility and visual findings raised at the point in the timeline where they occurred.
+SRS-RUN-001
+A replay shall visually distinguish pre-boundary activity from in-flow activity, because coverage was computed from only one of them.
+SRS-RUN-002
+A replay of an incomplete run shall render the evidence that exists and state where the run ended.
 22. Phase 1 Replay Capabilities
 Supports:
-Demonstration Sessions
+Demonstration Runs
+Run Evidence Review
 QA Analysis
 Behavioral Graph Generation
 Coverage Analysis
+Reconciliation Review
 Missing State Detection
 Endpoint Analysis
 Primary Goal:
@@ -589,7 +613,7 @@ GET /sessions/{id}/timeline
 
 
 Defined by the Session Replay Engine design.
-26. Replay Integrity Metrics
+26. Replay Integrity Metrics (Pre-Launch)
 Every replay shall report:
 Timeline Completeness
 
@@ -604,6 +628,12 @@ Privacy Compliance Score
 
 
 Replay Accuracy Score
+
+
+Status
+The reconstruction rules in Section 12 are enforced. The metrics that would prove they were enforced are specified and scheduled for completion and verification before general availability.
+SRS-INT-001
+Until these metrics are emitted, a replay shall not claim completeness it has not measured. Absence of a completeness figure is preferable to an assumed one.
 
 
 27. Replay Governance Rules

@@ -5,9 +5,9 @@ These requirements establish the quality attributes, operational constraints, se
 The requirements contained herein apply to all system components including SDKs, ingestion services, processing pipelines, analytics engines, dashboards, reporting systems, intelligence engines, and future autonomous validation capabilities.
 2. Scope
 The requirements defined in this document apply to:
-Phase 1 — Behavioral QA Platform
-Phase 2 — Production Intelligence Platform
-Phase 3 — Autonomous Validation Engine
+Phase 1 — Behavioral QA & Intent Platform
+Phase 2 — Production Monitoring, Feedback & Analysis
+Phase 3 — Autonomous Behavioral Intelligence
 3. Requirement Classification
 The platform shall satisfy requirements in the following quality domains:
 * Performance
@@ -256,6 +256,46 @@ NFR-IQ-005
 Generated test scenarios shall be traceable to observed behaviors.
 NFR-IQ-006
 Autonomous recommendations shall include rationale for suggested actions.
+19.1 Local Agent Requirements (Phase 1)
+The desktop agent runs on a machine the platform does not control, alongside the developer's own work. Its resource behavior is a product quality attribute, not an implementation detail.
+Performance
+NFR-AGENT-001
+Codebase analysis shall be cancellable at any point, and cancellation shall take effect within five seconds.
+NFR-AGENT-002
+Codebase analysis shall be resumable, so that a cancelled or interrupted analysis does not restart from nothing.
+NFR-AGENT-003
+Analysis shall not render the agent interface unresponsive.
+NFR-AGENT-004
+The agent shall not prevent the developer from using their editor, terminal or version control during analysis.
+NFR-AGENT-005
+A demonstration run shall record evidence without perceptibly degrading the responsiveness of the application under test.
+Reliability
+NFR-AGENT-006
+An interrupted instrumentation apply shall leave the working tree in either its original state or a fully applied state, never partially applied.
+NFR-AGENT-007
+The agent shall restore the developer's original branch after a run, including where the run failed.
+NFR-AGENT-008
+Evidence shall be queued locally where the platform is unreachable, and transmitted when it returns.
+NFR-AGENT-009
+A run whose browser closes unexpectedly shall complete as incomplete and report the evidence gathered, rather than discarding it.
+Availability
+NFR-AGENT-010
+Codebase analysis, instrumentation planning and instrumentation application shall function without network connectivity.
+NFR-AGENT-011
+The agent shall degrade rather than block. A capability that is unavailable shall be reported as unavailable, with the reason.
+19.2 Assistive Intelligence Requirements (Phase 1)
+NFR-AI-001
+No analytical capability shall depend on a model provider being reachable.
+NFR-AI-002
+Where a model provider is unavailable, an assisted capability shall report unavailability within ten seconds and shall not block the workflow it was invoked from.
+NFR-AI-003
+Assisted output shall be schema-validated before use. Output that fails validation after repair shall be discarded, not partially applied.
+NFR-AI-004
+Assisted operations shall be cancellable.
+NFR-AI-005
+Every invocation shall be logged with feature, status, attribution and cost, within the same transaction boundary as the operation it served.
+NFR-AI-006
+The platform shall be operable end to end with the model provider disabled. This shall be verified, not assumed. See the MVP Scope Document, Section 9.1.
 20. Acceptance Criteria
 The platform shall satisfy this specification when:
 * All non-functional requirements are measurable.

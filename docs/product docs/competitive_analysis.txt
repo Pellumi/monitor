@@ -419,28 +419,38 @@ Behavior Modeling
 into one platform.
 11. Long-Term Competitive Moat
 Phase 1 Moat
-Developer Demonstration Mode
+Declared Intent Plus Demonstration
+Two things competitors do not have.
+Declared Intent
+Every other tool in this category can only tell a team what happened. None of them hold a statement of what was supposed to happen, so none of them can report a gap — only an absence, which is indistinguishable from a feature nobody used.
+A declared baseline is what turns "we saw no payment failures" into "you told us payment failure should be reachable and it was never reached."
+Desktop Demonstration
 Competitors require:
 * Production traffic
 * Existing telemetry
 * Manual instrumentation
 TELLANN requires:
-* One guided walkthrough
+* One guided walkthrough, driven by an agent that instruments the codebase itself
+The agent is also a distribution advantage. It sits on the developer's machine, holds their codebase, and is where the work happens — which is a harder position to displace than a dashboard.
 Phase 2 Moat
-Behavioral Knowledge Base
+Behavioral Knowledge Base And Guidance
 Over time TELLANN accumulates:
 * Workflow graphs
+* Declared intent
 * Journey models
 * Quality baselines
-Competitors do not build behavioral memory.
+Competitors do not build behavioral memory, and none of them can compare production reality against a human statement of intent.
+The Phase 2 output is not another dashboard. It is direction: what to build, fix or change next, with the evidence for it. Observability tools report; TELLANN advises.
 Phase 3 Moat
-Behavior-Driven Autonomous Validation
+Network Behavioral Intelligence And Remediation
 The graph becomes the foundation for:
+* Real-time remediation under customer authority
+* Cross-network structural comparison
+* Implementation suggestions
 * Test generation
 * Regression detection
 * Failure simulation
-* Quality recommendations
-Competitors would need years of behavioral data to replicate this.
+Competitors would need years of behavioral data across many customers to replicate this, and would need the declared intent to interpret it.
 12. Marketing Strategy Analysis
 Datadog Marketing
 Themes:
@@ -490,21 +500,34 @@ Lessons:
 Phase 1
 Do Not Say:
 AI Autonomous Testing Platform
+AI-Powered QA
+Our AI finds your bugs
 Say:
-Demonstrate your application once. Instantly discover missing flows, missing states, and QA coverage gaps.
+Declare what your application should do. Demonstrate it once. See the gap.
+Supporting message:
+Tellann Desktop reads your codebase, instruments it for you, and walks the flow with you. You keep your source. You approve every change.
+Positioning On Artificial Intelligence
+Tellann uses language models to help a team describe what their software is supposed to do. It does not use them to decide whether the software is any good.
+Every graph, every coverage figure, every reconciliation result and every finding is computed from recorded evidence and is reproducible from it. Turn the model off and the product still works.
+Say this plainly and early. In a market where every competitor is claiming AI, the credible differentiator is being specific about where it is and is not used.
 Phase 2
 Say:
-Understand how your software actually behaves in production.
+Understand how your software actually behaves in production — and what to do about it.
+Supporting message:
+Not another dashboard. Ranked guidance with the evidence behind it.
 Phase 3
 Say:
-Quality intelligence that learns from software behavior and validates releases automatically.
+Software that understands itself, fixes what it can, and tells you what to build next.
+Supporting message:
+Under your authority, revocable at any time, every action reversible and attributed.
 14. Competitive Positioning Statement
 Datadog observes infrastructure.
 New Relic observes performance.
 Sentry observes failures.
 PostHog observes users.
 Replay.io observes sessions.
-TELLANN observes software behavior itself, converts behavior into workflows, transforms workflows into quality intelligence, and ultimately enables software to understand and communicate its own quality state.
+TELLANN is the only one that knows what the software was supposed to do.
+It holds a human statement of intent, observes actual behavior, reconciles the two, and turns the difference into quality intelligence — ultimately enabling software to understand, communicate and correct its own quality state.
 15. Strategic Conclusion
 Today, TELLANN is not competing head-to-head with Datadog, New Relic, Sentry, PostHog, or Replay.io.
 Instead, it sits above them.
@@ -513,11 +536,14 @@ Those platforms answer:
 * Where did it happen?
 * How often did it happen?
 TELLANN answers:
+* What was this software supposed to do?
 * What behavior exists?
-* What behavior is missing?
+* What behavior is missing that someone asked for?
+* What behavior exists that nobody specified?
 * What workflows are degrading?
 * What quality risks are emerging?
 * What should be tested next?
+* What should be built next?
 * How confident should we be in this release?
 This positions TELLANN as a new category:
 Behavioral Quality Intelligence Platform (BQIP)

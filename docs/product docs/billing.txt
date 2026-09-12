@@ -28,21 +28,23 @@ Billing shall remain simple, transparent, and predictable.
 No hidden billing mechanisms are permitted.
 To support local adoption in Nigeria, TELLANN provides a Nigeria-only Local plan with reduced limits and localized pricing.
 3. Supported Billing Models
-Phase 1
+Phase 1 — Behavioral QA & Intent Platform
 Subscription Billing
 Based on:
 * Applications
 * Users
 * Storage
 * Retention
+* Environments
 No event billing.
 No AI billing.
-Phase 2
+Desktop agent capability varies by plan, but is not separately metered. It is included in the subscription.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Subscription Billing
 Plus:
 * Included Event Pool
 * Event Overages
-Phase 3
+Phase 3 — Autonomous Behavioral Intelligence
 Subscription Billing
 Plus:
 * Event Consumption
@@ -360,6 +362,22 @@ to the organization's billing contacts with the PDF attached. An unpaid invoice
 downloads as an invoice; once settled the same record downloads as a receipt.
 Upgrades and downgrades are available to every customer on every processor and
 in every supported currency.
+18.1 What Is Not Billed In Phase 1
+Stated explicitly, because the absence of a charge is only credible if it is written down.
+Not billed:
+* Telemetry events
+* Demonstration runs on paid plans
+* Session replays
+* Behavioral graphs
+* Reconciliation
+* Report generation
+* Report exports
+* Assisted intelligence consumption
+* The desktop agent itself
+BSS-P1-001
+Assisted intelligence is included in the subscription in Phase 1. A customer is not charged for describing their own software.
+BSS-P1-002
+Introducing a charge for anything on this list is a pricing change requiring review under the Pricing & Packaging Specification, Section 14, and an amendment to the Usage Metering Specification.
 19. Phase 2 Event Billing Framework
 Not Active During MVP.
 Future Support:
@@ -383,11 +401,18 @@ Generated Test Suite:
 2 AI Units
 Quality Assessment:
 1 AI Unit
+Remediation Proposal:
+3 AI Units
+Network Divergence Analysis:
+2 AI Units
+Excluded From AI Billing
+The Phase 1 assisted capabilities — flow drafting from documents, suggestion enrichment, domain inference, output repair — remain included in the subscription and are never charged as AI units, at any phase.
 All AI usage must display:
 * Units Consumed
 * Cost
 * Reason
 No opaque credit systems permitted.
+A failed AI operation consumes no units.
 21. Enterprise Billing
 Enterprise Customers Support:
 * Annual Contracts

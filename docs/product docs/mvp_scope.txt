@@ -13,18 +13,19 @@ This document is the authoritative source for Phase 1 feature inclusion and excl
 Any functionality not explicitly listed as Included shall be considered Out of Scope unless approved through formal scope review.
 2. MVP Vision
 The MVP exists to prove a single hypothesis:
-Software behavior can be observed, modeled, and analyzed automatically from a developer demonstration session.
+A team can state what their software is supposed to do, demonstrate it once, and have the platform show them the difference.
 The MVP is not intended to:
 * Replace QA teams
 * Replace observability platforms
 * Replace analytics platforms
 * Provide autonomous testing
-* Provide artificial intelligence recommendations
-Instead, the MVP demonstrates that application behavior can be converted into actionable quality intelligence.
+* Monitor production traffic
+* Generate software on the user's behalf
+Instead, the MVP demonstrates that declared intent and observed behavior can be reconciled automatically into actionable quality intelligence.
 3. MVP Market Position
 Positioning Statement
-Demonstrate your application once.
-Automatically generate QA coverage reports and identify missing user flows.
+Declare what your application should do. Demonstrate it once.
+Tellann shows you the gap.
 What We Do NOT Market
 Do not market TELLANN as:
 * AI-powered testing
@@ -32,26 +33,28 @@ Do not market TELLANN as:
 * Self-healing software
 * Autonomous validation
 * AI software engineer
-* Intent prediction platform
-* AI observability platform
-These capabilities belong to future phases.
+* An AI agent that writes your tests
+These capabilities belong to future phases, and the last of them is not a capability the platform is pursuing at all.
 What We Market
-Behavioral QA Platform
+Behavioral QA & Intent Platform
+Intent Declaration Platform
 Developer Demonstration Platform
 Workflow Discovery Platform
-Quality Visibility Platform
-Behavior-Based QA Analysis
+Behavior Reconciliation Platform
 4. MVP Business Objective
-The MVP must allow a developer to:
-1. Connect an application
-2. Record a demonstration session
-3. Generate behavioral intelligence
-4. Understand workflow coverage
-5. Identify missing states
-6. Identify missing flows
-7. Analyze API behavior
-8. Replay sessions
-The platform must demonstrate value immediately after a single recorded session.
+The MVP must allow a team to:
+1. Declare the flows an application is intended to support
+2. Connect a local codebase through the Tellann desktop agent
+3. Instrument the application under explicit review
+4. Demonstrate the application through a guided browser run
+5. Generate behavioral intelligence from that run
+6. Reconcile declared intent against observed behavior
+7. Understand workflow coverage
+8. Identify missing states and missing flows
+9. Analyze API behavior
+10. Replay sessions
+11. Export QA reports
+The platform must demonstrate value immediately after a single guided run.
 5. Target Users
 Primary Users
 * Software Engineers
@@ -67,20 +70,50 @@ Not Targeted In MVP
 * Data Science Teams
 * Security Operations Teams
 6. MVP User Workflow
-Developer
-Deploy Application
-↓
-Install SDK
-↓
-Configure Application
-↓
-Start Demonstration Recording
-↓
+The Phase 1 loop is:
+
+Declare Intent
+        ↓
+Bind Workspace
+        ↓
+Instrument
+        ↓
+Demonstrate
+        ↓
+Reconcile
+        ↓
+Report
+
+Expanded:
+
+Create Organization
+        ↓
+Create Application
+        ↓
+Declare Intended Flows
+   (dashboard or desktop)
+        ↓
+Install Tellann Desktop
+        ↓
+Bind Local Workspace
+   (select or clone repository)
+        ↓
+Analyze Codebase
+        ↓
+Review Instrumentation Plan
+        ↓
+Apply Instrumentation
+   (explicit approval, reversible)
+        ↓
+Start Guided QA Run
+   (managed browser session)
+        ↓
 Perform Application Walkthrough
-↓
-Upload Session
-↓
-Receive Analysis
+        ↓
+Run Completes
+        ↓
+Receive Reconciliation + QA Report
+
 Example Walkthrough
 Register
 ↓
@@ -93,12 +126,25 @@ View Product
 Add To Cart
 ↓
 Checkout
-The walkthrough becomes the behavioral baseline for analysis.
+The walkthrough is evidence. The declared flow is the baseline. The report is the difference between them.
+6.1 Where Demonstration Runs
+Demonstration is driven by the Tellann desktop agent, not by the browser dashboard.
+A QA run requires:
+* A device-bound desktop session
+* A bound local workspace
+* An instrumented application
+* A run target URL
+The dashboard cannot start a run. It presents run history, evidence, reconciliation, and reports, and hands off to the desktop agent when a user asks to start a demonstration.
+Rationale:
+* Flow boundaries, evidence scoping, and protected-value handling require a controlled browser.
+* Instrumentation must be applied to a real working tree under human review.
+* Raw source never leaves the developer's machine without explicit consent.
 7. Included Features
 The following features are mandatory MVP deliverables.
 Feature Group A — Frontend SDK
 Included
-* React SDK
+* JavaScript / TypeScript SDK
+* React and Next.js support
 * Session creation
 * Page visit capture
 * Route transition capture
@@ -107,15 +153,18 @@ Included
 * Form interaction capture
 * Form submission capture
 * UI interaction capture
+* State and transition capture
+* Workflow capture
 * Error event capture
 * Event buffering
 * Privacy filtering
 * Session identification
 Purpose
-Observe browser behavior without requiring manual instrumentation of workflows.
+Observe browser behavior.
 Feature Group B — Backend SDK
 Included
 * Node.js SDK
+* Express, Fastify and NestJS integrations
 * API request capture
 * API response capture
 * Response time capture
@@ -127,12 +176,15 @@ Capture server-side behavior associated with user workflows.
 Feature Group C — Demonstration Mode
 Included
 * Application onboarding
-* Demonstration session recording
-* Guided workflow recording
-* Exploratory workflow recording
+* Desktop-driven guided runs
+* Assisted runs
+* Observation-only runs
+* Flow boundary detection
+* Evidence scoping
+* Run pause, resume and completion
 * Session processing
 Purpose
-Teach TELLANN how an application behaves.
+Teach TELLANN how an application behaves, under controlled conditions.
 Feature Group D — Session Recording
 Included
 * Session creation
@@ -255,6 +307,8 @@ Included Reports
 * Missing State Report
 * Session Analysis Report
 * Endpoint Intelligence Report
+* Flow Reconciliation Report
+* QA Run Report
 Export Formats
 * PDF
 * JSON
@@ -263,23 +317,100 @@ Export Formats
 Feature Group M — Dashboard
 Included
 * Application overview
+* Flow declaration
 * Session viewer
 * Session replay viewer
 * Behavioral graph viewer
+* Reconciliation viewer
 * Coverage reports
 * Missing state reports
 * Missing flow reports
 * Endpoint analysis
+* QA run history
 * Report exports
+* Organization, member, environment and key administration
+* Billing, usage and entitlement visibility
 Technology
 Next.js
+Feature Group N — Flow Declaration & Reconciliation (FDRS)
+Included
+* Declared Intent Graph authoring
+* Per-flow draft and completion lifecycle
+* Flow versioning and revision history
+* Derivation Engine suggestions with explicit accept/reject
+* Whole-flow review with preview before apply
+* Ruleset compilation per application
+* Continuous reconciliation against observed behavior
+* Three-way classification: Confirmed, True Gap, Undeclared
+* Demonstration-time promotion of undeclared states
+* Flow Reconciliation Report
+Specified in full by the Behavior Graph Specification, Section 22.
+Purpose
+Give coverage analysis a human-declared baseline instead of inferring completeness from absence.
+Feature Group O — Desktop Agent & Guided Runs
+Included
+* Desktop application distribution and update channel
+* System-browser authentication with device-bound sessions
+* Local workspace binding, cloning and trust status
+* Repository binding and snapshots
+* Branch policy enforcement and time-boxed checkout grants
+* Managed browser guided runs
+* Run modes: Guided, Assisted, Observation Only
+* Frontend and backend capture tracks
+* Flow boundary detection and evidence scoping
+* Protected value capture with audited reveal
+* Run annotations and mentions
+* Run artifacts, replay, findings and reconciliation views
+* QA run report generation
+Purpose
+Provide a controlled environment in which an application can be demonstrated, instrumented and observed without exposing source or secrets to the platform.
+Feature Group P — Codebase & Document Intelligence
+Included
+* Local codebase analysis with staged analyzer runs
+* Codebase graph exploration
+* Code evidence lookup, blast radius and snapshot comparison
+* Source document import and processing
+* Consent-gated source archive upload
+* Instrumentation detection and planning
+* Reviewable instrumentation diffs
+* Instrumentation apply, validate and rollback
+* Flow initialization lifecycle with in-code checkpoint verification
+Purpose
+Locate where intended flows live in the code so instrumentation is targeted rather than blanket.
+Feature Group Q — Assisted Intelligence
+Included
+* Flow drafting from imported product documents
+* Flow suggestion enrichment where the deterministic rule library has no match
+* Domain inference
+* Structured output repair
+* AI invocation logging, attribution and cost aggregation
+* Administrative AI usage visibility
+Bounded by Section 9.1. Every output is a proposal requiring explicit human acceptance.
+Purpose
+Reduce the cost of stating intent. Not to generate quality judgements.
+Feature Group R — Platform Foundation
+Included
+* Organizations, applications and environments
+* User identity, OTP and password authentication
+* Multi-factor authentication
+* Session and device management
+* Membership, invitations and role assignment
+* Ingestion keys and programmatic access tokens
+* Audit logging
+* Entitlement resolution and enforcement
+* Subscription, billing, invoicing and usage metering
+* Notifications across email, in-app, web push and desktop
+* Administrative rulesets, rule candidates and job monitoring
+Purpose
+Everything required to operate the product commercially and safely. Not a differentiator, but not optional.
 8. Included Technology Stack
 Frontend SDK
-* React SDK
+* JavaScript / TypeScript, React, Next.js
 Backend SDK
-* Node.js SDK
-Telemetry
-* OpenTelemetry
+* Node.js, Express, Fastify, NestJS
+Desktop Agent
+* Electron
+* Managed Chromium browser session
 Messaging
 * Apache Kafka
 Operational Database
@@ -290,28 +421,20 @@ Storage
 * Object Storage
 Dashboard
 * Next.js
+Assisted Intelligence
+* External language model provider, accessed through a bounded internal interface
 Deployment
-* Kubernetes
+* Containerized services
+* Kubernetes for scaled deployment
 9. Explicitly Excluded Features
 The following features are NOT permitted in Phase 1.
-Artificial Intelligence Features
-Excluded
-* AI recommendations
-* AI optimization
-* AI assistants
-* AI debugging
-* AI workflow generation
-* AI quality scoring
-* AI root-cause analysis
-Reason
-Requires significant data maturity.
 Production Monitoring
 Excluded
 * Real user monitoring
 * Production workflow monitoring
 * Live workflow health
 * Production baselines
-* Continuous monitoring
+* Continuous production ingestion
 Belongs to Phase 2.
 User Journey Intelligence
 Excluded
@@ -345,7 +468,7 @@ Regression Detection
 Excluded
 * Release comparisons
 * Behavioral regression analysis
-* Behavioral baselines
+* Behavioral baselines across releases
 Belongs to Phase 3.
 Failure Simulation
 Excluded
@@ -354,56 +477,120 @@ Excluded
 * Timeout simulation
 * Chaos engineering
 Belongs to Phase 3.
-Anomaly Detection
+Autonomous Remediation
 Excluded
-* Behavioral anomalies
-* Latency anomalies
-* Error spike detection
-* Drift detection
+* Real-time fixes to customer systems
+* Autonomous code changes
+* Cross-network implementation suggestions
+* Feature modification proposals
 Belongs to Phase 3.
-Quality Intelligence
+Autonomous Quality Judgement
 Excluded
-* Intent prediction
 * Risk prediction
-* Corrective action generation
-* Autonomous recommendations
+* Corrective action generation without evidence
 * Quality intelligence assistant
-Belongs to Phase 3.
-10. MVP Success Criteria
-The MVP is considered successful when a developer can:
-1. Install the SDK.
-2. Record a demonstration session.
-3. Generate a behavioral graph.
-4. Discover workflows automatically.
-5. View session replay.
-6. Measure workflow coverage.
-7. Identify missing flows.
-8. Identify missing states.
-9. Analyze API performance.
-10. Export QA reports.
+* Generated quality scores
+Belongs to Phase 3. See Section 9.2.
+9.1 Assisted Intelligence Boundary
+Earlier revisions of this document excluded artificial intelligence from Phase 1 entirely. That exclusion is replaced by a boundary rather than a ban, because the capability that was actually needed — helping a human state what their software is supposed to do — is not the capability that was being guarded against.
+The guard remains. It is now specific.
+Permitted in Phase 1
+* Drafting candidate flows from documents the customer supplied
+* Suggesting branch states where the deterministic rule library returns no match
+* Inferring an application domain to select a rule pack
+* Repairing malformed structured output from a model
+Prohibited in Phase 1
+* Producing a behavioral graph
+* Producing coverage, reconciliation or missing-state results
+* Producing report findings or severity
+* Producing quality scores or risk judgements
+* Adding anything to a Declared Intent Graph without explicit human acceptance
+* Modifying customer source without an approved, reviewable, reversible plan
+Governing Rules
+MSD-AI-001
+Assisted intelligence proposes. Humans dispose. No model output enters a Declared Intent Graph, a ruleset, or a report without an explicit human acceptance action.
+MSD-AI-002
+The deterministic path is primary. The internal pattern library and structural matching are consulted first. A model is consulted only where they return no usable result.
+MSD-AI-003
+Every analytical output the platform publishes — graphs, coverage, reconciliation, findings, endpoint analysis — is computed from recorded evidence by deterministic code, and must be reproducible from the same evidence.
+MSD-AI-004
+Removing the model provider shall degrade the quality of assistance. It shall not stop the product from functioning. Declaration remains possible by hand, and every analytical capability continues to operate unchanged.
+MSD-AI-005
+Every model invocation is logged with its feature, status, attribution and cost, and is visible to platform administrators.
+MSD-AI-006
+Assisted intelligence is never marketed as the product. The product is behavioral evidence.
+The Wrapper Test
+At any point in Phase 1, the following must remain true:
+Disable the model provider.
+The platform still declares, instruments, demonstrates,
+reconciles, measures and reports.
+Only suggestion quality is reduced.
+If that ceases to be true, scope has drifted and requires formal review.
+9.2 Quality Scores
+Composite quality scores are excluded from Phase 1.
+The platform reports measured evidence and the state of that measurement. It does not synthesize a single number representing software quality from a single demonstration.
+See the QA Report Specification, Section 26, for the evidence-state model that replaces scoring.
+Composite scoring returns in Phase 3, when the platform has continuous production evidence and cross-release history to justify it.
+10. Phase 1 Structural Groundwork
+Phase 1 deliberately ships a small amount of structure belonging to later phases. This is scope-controlled and intentional: it validates the architecture early and lets customers see the direction of travel.
+Included as groundwork
+* Graph drift — comparison of behavioral graph versions over time, and coverage history trend. Phase 2 extends this to production baselines; Phase 3 extends it to anomaly detection.
+* Cross-tenant structural pattern index — anonymized graph shape aggregation, already governed by FDRS-PRIV-001 through FDRS-PRIV-004. Phase 3 extends this to network-wide behavioral intelligence.
+* Assisted intelligence — bounded per Section 9.1. Phase 3 extends this to behavioral reasoning.
+* Recommendation evidence and rule candidates — evidence capture and promotion pipeline for platform rules. Phase 3 extends this to implementation suggestions.
+Explicitly not included as groundwork
+* Any production traffic ingestion
+* Any automated change to a customer system
+* Any composite quality judgement
+Groundwork Rule
+MSD-GW-001
+A groundwork capability may be shipped only where it is useful on Phase 1 evidence alone. Capability that requires production data or cross-release history to be meaningful is deferred, not stubbed.
+11. MVP Success Criteria
+The MVP is considered successful when a team can:
+1. Declare an intended flow.
+2. Install the desktop agent and bind a local workspace.
+3. Apply reviewed instrumentation to that workspace.
+4. Complete a guided demonstration run.
+5. Generate a behavioral graph.
+6. Discover workflows automatically.
+7. View session replay.
+8. Measure workflow coverage.
+9. Reconcile declared intent against observed behavior.
+10. Identify missing flows.
+11. Identify missing states.
+12. Analyze API performance.
+13. Export QA reports.
 Without requiring:
 * Production traffic
 * Historical telemetry
-* Machine learning
-* Artificial intelligence
-* Manual workflow modeling
-11. MVP Exit Criteria
+* Machine learning models
+* Manual workflow modeling of observed behavior
+* Any model provider being reachable
+12. MVP Exit Criteria
 Phase 1 is complete when:
 * All included features are implemented.
 * All excluded features remain excluded.
-* Demonstration Mode operates end-to-end.
+* The declare → demonstrate → reconcile → report loop operates end to end.
+* Desktop-driven guided runs complete reliably and produce reports.
+* Instrumentation can be applied, validated and rolled back safely.
 * Behavioral graphs generate successfully.
+* Reconciliation reports generate successfully.
 * Coverage reports generate successfully.
 * Session replay functions correctly.
-* QA reports are exportable.
+* QA reports are exportable in all entitled formats.
 * Dashboard provides complete Phase 1 visibility.
+* The Wrapper Test in Section 9.1 passes.
 At that point the platform can begin Phase 2 development.
-12. Core MVP Principle
+13. Core MVP Principle
+Declare Intent
+↓
 Observe Behavior
 ↓
 Build Sessions
 ↓
 Generate Workflows
+↓
+Reconcile Intent Against Observation
 ↓
 Measure Coverage
 ↓
@@ -413,3 +600,11 @@ Identify Missing Flows
 ↓
 Generate QA Reports
 Any feature that does not directly support this workflow is outside MVP scope.
+14. Phase Roadmap Summary
+Phase 1 — Behavioral QA & Intent Platform
+Declare what the software should do. Demonstrate it once. See the difference.
+Phase 2 — Production Monitoring, Feedback & Analysis
+Observe the customer's system in production with real users, and convert that into guidance on what to build, fix or change next.
+Phase 3 — Autonomous Behavioral Intelligence
+Understand a running system continuously, remediate in real time as end users encounter problems, and use network-wide behavioral intelligence to propose implementation changes.
+Full definitions are held in the Functional Requirements Specification, Section 2.

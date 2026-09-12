@@ -4,11 +4,30 @@ This document defines the functional requirements for the Self-Observing Testing
 The purpose of this specification is to describe the behaviors, capabilities, and expected functionality of the platform across all planned product phases.
 This document serves as the authoritative reference for product implementation and feature validation.
 2. Product Scope
-The platform shall evolve through three phases:
-Phase 1 — Behavioral QA Platform
-Phase 2 — Production Intelligence Platform
-Phase 3 — Autonomous Validation Engine
-Each phase builds upon the capabilities introduced in previous phases.
+The platform shall evolve through three phases. Each phase builds upon the capabilities introduced in previous phases, and each is gated by the evidence it requires rather than by ambition.
+Phase 1 — Behavioral QA & Intent Platform
+Focus: behavioral QA, intent definition, and demonstration analysis.
+A team declares what an application is intended to do, demonstrates it once through the desktop agent, and receives a reconciliation of intent against observation.
+Evidence required: a single demonstration run.
+Phase 2 — Production Monitoring, Feedback & Analysis
+Focus: understanding the customer's system while it runs in production with real users, and converting that understanding into guidance on what to build, fix or change next.
+Evidence required: production traffic.
+Phase 3 — Autonomous Behavioral Intelligence
+Focus: complete and continuous behavioral understanding of a running system, real-time remediation as end users encounter problems, and network-wide behavioral intelligence driving implementation suggestions and feature modification proposals.
+Evidence required: continuous production traffic, release history, and network-scale structural patterns.
+2.1 Phase 1 Structural Groundwork
+Phase 1 delivers a deliberately limited subset of later-phase structure, so that the architecture is validated early and customers can see the direction of travel. Groundwork requirements are marked (Groundwork) and are scoped to what is useful on demonstration evidence alone.
+Groundwork in Phase 1:
+* Graph drift across behavioral graph versions (Module Y)
+* Bounded assisted intelligence (Module W)
+* Anonymized cross-tenant structural pattern matching (Module U)
+* Recommendation evidence capture (Module Y)
+Groundwork shall not include production traffic ingestion, automated change to a customer system, or composite quality judgement.
+2.2 Requirement Status Markers
+Requirements in this document carry an implementation status where it is not obvious from the phase:
+(Groundwork) — delivered in Phase 1 in reduced form, extended in a later phase.
+(Pre-Launch) — specified, scheduled for completion and verification before general availability.
+An unmarked Phase 1 requirement is delivered.
 3. User Roles
 UR-001 Developer
 A user responsible for integrating applications with TELLANN and reviewing quality insights.
@@ -70,7 +89,7 @@ FR-023
 The platform shall display recorded sessions as an event timeline.
 FR-024
 The platform shall allow filtering sessions by application.
-FR-025
+FR-025 (Pre-Launch)
 The platform shall allow filtering sessions by date range.
 Module D — Behavioral Graph Generation
 FR-026
@@ -114,7 +133,7 @@ FR-039
 The platform shall generate coverage reports.
 FR-040
 The platform shall highlight critical workflows with low coverage.
-FR-041
+FR-041 (Pre-Launch)
 The platform shall support coverage comparison between sessions.
 Module F — Missing State Detection
 FR-042
@@ -173,7 +192,190 @@ FR-064
 The dashboard shall display endpoint analysis.
 FR-065
 The dashboard shall display quality reports.
+Module U — Flow Declaration & Reconciliation
+Specified in full by the Behavior Graph Specification, Section 22.
+FR-123
+The platform shall allow a user to declare the flows an application is intended to support, before any telemetry exists.
+FR-124
+The platform shall maintain a Declared Intent Graph independently of the Observed Behavior Graph.
+FR-125
+The platform shall record provenance for every declared node.
+FR-126
+The platform shall hold a declared flow in draft status until explicitly marked complete.
+FR-127
+The platform shall allow a completed flow to be reopened for editing without discarding reconciliation history.
+FR-128
+The platform shall version declared flows and retain prior versions.
+FR-129
+The platform shall retain a revision history of declared flow drafts.
+FR-130
+The platform shall propose additional states, transitions and branch flows as nodes are added.
+FR-131
+The platform shall label every suggestion with the tier that produced it.
+FR-132
+The platform shall never add a suggested node without explicit user acceptance.
+FR-133
+The platform shall retain rejected suggestions to prevent re-suggestion.
+FR-134
+The platform shall allow a user to preview the effect of a whole-flow review before applying it.
+FR-135
+The platform shall compile a per-application ruleset from completed declared flows and generic QA rules.
+FR-136
+The platform shall recompile a ruleset whenever its source flows change.
+FR-137
+The platform shall version rulesets and retain prior versions.
+FR-138
+The platform shall reconcile the Declared Intent Graph against the Observed Behavior Graph continuously and incrementally.
+FR-139
+The platform shall classify every node and transition as Confirmed, True Gap, or Undeclared.
+FR-140
+The platform shall generate a Flow Reconciliation Report and support the standard export formats.
+FR-140a
+The platform shall allow a developer to promote an observed but undeclared state into the Declared Intent Graph, only on explicit confirmation.
+FR-140b (Groundwork)
+The platform shall maintain an anonymized cross-tenant structural pattern index that records state names, categories and transition topology only, subject to FDRS-PRIV-001 through FDRS-PRIV-004.
+Module V — Desktop Agent & Guided Demonstration
+FR-141
+The platform shall provide a locally installed desktop agent.
+FR-142
+The desktop agent shall authenticate through the system browser and hold a device-bound session.
+FR-143
+The desktop agent shall bind to a local codebase workspace.
+FR-144
+The desktop agent shall support cloning a repository into a new workspace.
+FR-145
+The desktop agent shall record repository binding, branch state and workspace trust status.
+FR-146
+The desktop agent shall enforce configured branch policy and support time-boxed checkout grants.
+FR-147
+The desktop agent shall restore the developer's original branch after a run.
+FR-148
+The desktop agent shall analyze a bound codebase and produce a navigable code graph.
+FR-149
+The desktop agent shall locate declared flow checkpoints within the codebase.
+FR-150
+The desktop agent shall support code evidence lookup, blast radius analysis and snapshot comparison.
+FR-151
+The desktop agent shall detect existing instrumentation.
+FR-152
+The desktop agent shall propose an instrumentation plan scoped to declared flows.
+FR-153
+The desktop agent shall present a reviewable diff of every proposed change, redacted of secrets.
+FR-154
+The platform shall not modify a customer working tree without an approved plan.
+FR-155
+The desktop agent shall validate an applied plan and report build or test failures attributable to it.
+FR-156
+Every applied instrumentation plan shall be reversible through a recorded rollback.
+FR-157
+The desktop agent shall drive a managed browser session for demonstration runs.
+FR-158
+The platform shall support Guided, Assisted and Observation Only run modes.
+FR-159
+The platform shall support frontend and backend capture tracks independently.
+FR-160
+The platform shall detect flow boundaries and scope evidence as pre-boundary or in-flow.
+FR-161
+The platform shall compute coverage and reconciliation from in-flow evidence only.
+FR-162
+The platform shall produce a report for a run that ended before a terminal state, labelled as incomplete.
+FR-163
+The platform shall support pausing and resuming a run.
+FR-164
+The platform shall classify and protect sensitive captured values, and shall audit every reveal.
+FR-165
+The platform shall support run annotations, member mentions, artifacts, replay and findings.
+FR-165a
+The desktop agent shall not transmit customer source without explicit consent for a named purpose.
+FR-165b
+The platform shall import customer product documents and process them into source document versions.
+FR-165c
+The platform shall generate a QA Run Report on run completion, and support retrying generation.
+Module W — Assisted Intelligence
+Bounded by the MVP Scope Document, Section 9.1.
+FR-166 (Groundwork)
+The platform shall draft candidate flows from customer-supplied product documents.
+FR-167 (Groundwork)
+The platform shall enrich flow suggestions where the deterministic pattern library returns no usable match.
+FR-168 (Groundwork)
+The platform shall infer an application domain in order to select a rule pack.
+FR-169
+The platform shall repair malformed structured output returned by a model provider.
+FR-170
+Every assisted output shall be a proposal requiring explicit human acceptance.
+FR-171
+The platform shall consult the deterministic pattern library before consulting a model provider.
+FR-172
+The platform shall not use a model to produce behavioral graphs, coverage results, reconciliation results, report findings or severity.
+FR-173
+The platform shall log every model invocation with feature, status, attribution and cost.
+FR-174
+The platform shall aggregate model usage and expose it to platform administrators.
+FR-175
+The platform shall continue to declare, instrument, demonstrate, reconcile, measure and report when no model provider is reachable.
+FR-175a
+The platform shall sanitize input before transmission to a model provider.
+FR-175b
+The platform shall allow a user to correct a generated draft and regenerate from that correction.
+Module X — Platform Foundation & Governance
+FR-176
+The platform shall support organizations, applications and environments.
+FR-177
+The platform shall authenticate users by one-time code and by password.
+FR-178
+The platform shall support multi-factor authentication.
+FR-179
+The platform shall support enterprise identity federation. (Pre-Launch for SAML)
+FR-180
+The platform shall allow a user to view and revoke their active sessions and devices.
+FR-181
+The platform shall support membership, invitation and role assignment within an organization.
+FR-182
+The platform shall issue and revoke SDK ingestion credentials per environment.
+FR-183
+The platform shall issue and revoke scoped programmatic access tokens.
+FR-184
+The platform shall record an audit log of security-sensitive actions.
+FR-185
+The platform shall resolve entitlements per organization and enforce them server-side.
+FR-186
+The platform shall warn administrators at 80% of a resource quota and block quota-consuming operations at 100%.
+FR-187
+The platform shall support subscription creation, upgrade, downgrade, cancellation and renewal.
+FR-188
+The platform shall support trials requiring a chargeable payment method.
+FR-189
+The platform shall generate invoices and receipts and make them downloadable.
+FR-190
+The platform shall meter usage per organization and expose it to customers.
+FR-191
+The platform shall deliver notifications by email, in-app, web push and desktop.
+FR-192
+The platform shall allow users to configure notification preferences per category.
+FR-193
+The platform shall allow an organization to request deletion of its data.
+FR-194
+The platform shall provide administrative visibility of rulesets, rule candidates and background jobs.
+FR-195
+The platform shall support promotion of a rule candidate into a published ruleset version.
+Module Y — Behavioral Drift & Evidence Groundwork
+Phase 1 groundwork for Phase 2 monitoring and Phase 3 intelligence.
+FR-196 (Groundwork)
+The platform shall version behavioral graphs and retain prior versions.
+FR-197 (Groundwork)
+The platform shall compare two behavioral graph versions and report added, removed and changed states and transitions.
+FR-198 (Groundwork)
+The platform shall retain coverage history and present it as a trend.
+FR-199 (Groundwork)
+The platform shall record drift of observed behavior against declared intent over time.
+FR-200 (Groundwork)
+The platform shall capture the evidence supporting each recommendation it makes.
+FR-201 (Groundwork)
+The platform shall record the outcome of each suggestion in order to improve future suggestion quality.
+FR-202
+Drift and trend requirements in this module operate on demonstration evidence in Phase 1. Extension to production baselines is Phase 2; extension to anomaly detection is Phase 3.
 5. Phase 2 Functional Requirements
+Phase 2 requires production traffic. Its purpose is to understand the customer's system while real users are using it, and to convert that understanding into guidance on what to build, fix or change next.
 Module J — Live Production Monitoring
 FR-066
 The platform shall support continuous monitoring of production environments.
@@ -231,7 +433,30 @@ FR-090
 The platform shall generate investigation reports.
 FR-091
 The platform shall provide contextual information for failures.
+Module N2 — Feedback & Guidance
+The distinguishing output of Phase 2. Monitoring produces data; this module produces direction.
+FR-203
+The platform shall compare observed production behavior against the Declared Intent Graph.
+FR-204
+The platform shall compare observed production behavior against demonstrated behavior.
+FR-205
+The platform shall distinguish a declared flow that is unreachable in production from one that is merely undemonstrated.
+FR-206
+The platform shall identify workflows where production behavior has degraded relative to an established baseline.
+FR-207
+The platform shall identify where production users repeatedly retry, abandon or divert within a workflow.
+FR-208
+The platform shall rank identified issues by observed user impact.
+FR-209
+The platform shall generate guidance describing what to build, fix or change next, with the evidence that supports it.
+FR-210
+Every item of guidance shall be traceable to the production evidence that produced it.
+FR-211
+The platform shall report when the available evidence is insufficient to support guidance, rather than issuing weakly supported guidance.
+FR-212
+The platform shall track whether guidance was acted upon and whether the behavior it described subsequently changed.
 6. Phase 3 Functional Requirements
+Phase 3 requires continuous production traffic, release history, and network-scale structural pattern data. Its purpose is complete behavioral understanding of a running system, and action taken on that understanding under the customer's authority.
 Module O — Automated Test Generation
 FR-092
 The platform shall generate test scenarios from observed behavior.
@@ -300,6 +525,40 @@ FR-121
 The platform shall generate continuous quality assessments.
 FR-122
 The platform shall provide an interactive quality intelligence assistant.
+Module U3 — Real-Time Remediation
+FR-213
+The platform shall detect a failure as an end user encounters it in production.
+FR-214
+The platform shall locate the probable root cause of that failure within the customer's codebase.
+FR-215
+The platform shall propose a remediation for that failure.
+FR-216
+The platform shall apply a remediation only within explicit, revocable, per-application customer authority.
+FR-217
+The platform shall verify a remediation against subsequent observed behavior.
+FR-218
+Every autonomous action shall be attributable, auditable and reversible.
+FR-219
+The platform shall halt autonomous action and escalate to a human where verification fails.
+FR-220
+The platform shall never acquire authority over a customer system by default.
+Module V3 — Network Behavioral Intelligence
+FR-221
+The platform shall aggregate anonymized behavioral patterns across all systems on the platform.
+FR-222
+The platform shall identify where an application diverges structurally from comparable systems.
+FR-223
+The platform shall express such divergence in frequency-weighted aggregate form only.
+FR-224
+The platform shall never reveal, directly or indirectly, which organization a pattern originated from.
+FR-225
+The platform shall generate implementation suggestions informed by network patterns and by the application's own evidence.
+FR-226
+The platform shall generate feature modification proposals.
+FR-227
+The platform shall generate update recommendations.
+FR-228
+Every suggestion shall present the evidence and pattern frequency supporting it, and shall remain a proposal.
 7. Functional Acceptance Criteria
 The platform shall be considered functionally complete when:
 * All functional requirements are implemented.

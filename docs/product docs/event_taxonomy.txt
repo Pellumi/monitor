@@ -24,7 +24,7 @@ UPPER_SNAKE_CASE
 
 
 Examples:
-PAGE_VISIT
+PAGE_VIEW
 
 
 BUTTON_CLICK
@@ -56,10 +56,17 @@ ETP-005 Traceability
 Every event must be traceable to:
 * Tenant
 * Application
+* Environment
 * Session
+* Run, where captured during a demonstration
 * Timestamp
 * Source
 Supports NFR-DATA requirements.
+ETP-006 Single Vocabulary
+One concept has one event name. Where two names for the same concept exist, one is canonical and the other is a recognized alias listed in Section 7.0; no third spelling is permitted.
+An alias exists only to preserve compatibility with a shipped SDK version. Aliases are not created for new concepts.
+ETP-007 Registered Types Only
+The platform shall accept only event types registered in Section 7. An unregistered type is rejected at validation rather than stored and ignored.
 3. Event Classification Model
 SYSTEM EVENTS
 │
@@ -73,13 +80,23 @@ SYSTEM EVENTS
 │
 ├── STATE EVENTS
 │
+├── FLOW EVENTS
+│
 ├── API EVENTS
 │
 ├── ERROR EVENTS
 │
-├── DATABASE EVENTS
+├── BUSINESS EVENTS
 │
 ├── WORKFLOW EVENTS
+│
+├── RUN EVENTS
+│
+├── BROWSER EVENTS
+│
+├── AGENT EVENTS
+│
+├── DATABASE EVENTS
 │
 ├── ANALYTICS EVENTS
 │
@@ -92,24 +109,26 @@ SYSTEM EVENTS
 Every event in TELLANN shall inherit from the canonical event model.
 {
   "eventId": "uuid",
-  "eventType": "PAGE_VISIT",
+  "eventType": "PAGE_VIEW",
   "eventVersion": "1.0",
   "timestamp": "2026-01-01T12:00:00Z",
 
 
   "tenantId": "uuid",
-  "organizationId": "uuid",
   "applicationId": "uuid",
+  "environmentId": "uuid",
 
 
   "sessionId": "uuid",
+  "runId": "uuid",
   "traceId": "uuid",
 
 
   "source": "frontend-sdk",
 
 
-  "environment": "production",
+  "agentVersion": "0.1.0",
+  "instrumentationManifestVersion": "3",
 
 
   "metadata": {}
@@ -119,29 +138,66 @@ Every event in TELLANN shall inherit from the canonical event model.
 5. Required Fields
 Field
 	Required
+	Notes
 	eventId
 	Yes
+	
 	eventType
 	Yes
+	Must be a registered type (Section 7)
+	eventVersion
+	Yes
+	
 	timestamp
 	Yes
+	
 	applicationId
 	Yes
+	
 	tenantId
 	Yes
+	
 	sessionId
 	Yes
+	
 	source
 	Yes
+	frontend-sdk, backend-sdk, browser-observer, desktop-agent
 	metadata
 	Yes
+	
+	environmentId
+	Conditional
+	Required where the application has more than one environment
+	runId
+	Conditional
+	Required for events captured during a demonstration run
+	traceId
+	Optional
+	Correlates frontend and backend activity
+	agentVersion
+	Conditional
+	Required where source is the desktop agent or browser observer
+	instrumentationManifestVersion
+	Conditional
+	Required where the event originates from applied instrumentation
 	Supports event integrity requirements.
+5.1 Run Correlation
+An event captured during a demonstration run carries runId, and the platform assigns it an evidence scope.
+PRE_BOUNDARY
+Captured after the run was armed but before the initial flow boundary was reached.
+IN_FLOW
+Captured within the declared flow.
+ETD-SCOPE-001
+Evidence scope is assigned by the platform from boundary events, not declared by the emitting SDK. An SDK cannot know where a flow begins.
+ETD-SCOPE-002
+Coverage and reconciliation consume IN_FLOW events only. Both scopes are retained for replay and evidence review.
 6. Event Naming Standard
 Format
 <NOUN>_<ACTION>
 
 
-PAGE_VISIT
+PAGE_VIEW
 
 
 FORM_SUBMIT
@@ -152,7 +208,7 @@ API_REQUEST
 
 Rules
 Allowed:
-PAGE_VISIT
+PAGE_VIEW
 
 
 BUTTON_CLICK
@@ -171,6 +227,26 @@ page_visit
 PageVisit
 
 
+7.0 Canonical Names And Recognized Aliases
+Two spellings entered circulation during Phase 1 development for three concepts. This table resolves them. The canonical name is what documentation, reports and new code use. The alias is accepted at ingestion and normalized to the canonical name before storage.
+Concept
+	Canonical
+	Recognized Alias
+	Page navigation
+	PAGE_VIEW
+	PAGE_VISIT
+	Form submission
+	FORM_SUBMIT
+	FORM_SUBMITTED
+	Generic error
+	ERROR_OCCURRED
+	ERROR_EVENT
+	ETD-ALIAS-001
+Ingestion shall normalize a recognized alias to its canonical name before storage, so that analysis, reporting and export see one vocabulary.
+ETD-ALIAS-002
+No new alias shall be introduced. The three above exist because SDK versions carrying them are in the field.
+ETD-ALIAS-003
+Aliases shall be removed once no supported SDK version emits them, following the deprecation policy in Section 8.
 7. Event Categories
 Category A — Session Events
 Purpose:
@@ -202,9 +278,9 @@ SESSION_TIMEOUT
 
 Category B — Navigation Events
 Supports FR-002 and FR-003.
-PAGE_VISIT
+PAGE_VIEW
 {
-  "eventType": "PAGE_VISIT",
+  "eventType": "PAGE_VIEW",
   "metadata": {
     "url": "/products",
     "title": "Products"
@@ -362,6 +438,103 @@ Example:
 }
 
 
+Category H2 — Flow Events
+Emitted by applied instrumentation. These are what make flow boundaries and evidence scoping possible.
+FLOW_INITIAL_STATE
+Marks the initial boundary of a declared flow. The platform switches evidence scope from PRE_BOUNDARY to IN_FLOW on receipt.
+{
+  "eventType": "FLOW_INITIAL_STATE",
+  "metadata": {
+    "flowId": "",
+    "stateName": "CART"
+  }
+}
+
+
+FLOW_STATE_REACHED
+{
+  "eventType": "FLOW_STATE_REACHED",
+  "metadata": {
+    "flowId": "",
+    "stateName": "CHECKOUT"
+  }
+}
+
+
+FLOW_TRANSITION
+{
+  "eventType": "FLOW_TRANSITION",
+  "metadata": {
+    "fromState": "CART",
+    "toState": "CHECKOUT",
+    "action": "CHECKOUT_CLICK"
+  }
+}
+
+
+FLOW_TERMINAL_STATE
+Marks a declared terminal state. Completes the run.
+{
+  "eventType": "FLOW_TERMINAL_STATE",
+  "metadata": {
+    "stateName": "ORDER_COMPLETE",
+    "terminalKind": "SUCCESS"
+  }
+}
+
+
+ETD-FLOW-001
+Flow events reference a declared flow. An application with no declared flow emits none of them, and its run is scoped by the platform's own heuristics instead.
+Category H3 — Business Events
+Application-defined milestones, emitted explicitly by the customer through the SDK.
+BUSINESS_EVENT
+{
+  "eventType": "BUSINESS_EVENT",
+  "metadata": {
+    "name": "ORDER_PLACED",
+    "payload": {}
+  }
+}
+
+
+ETD-BIZ-001
+The event type is BUSINESS_EVENT; the specific milestone is carried in metadata. This keeps the registered type set closed while allowing customers unlimited domain vocabulary.
+ETD-BIZ-002
+Business event payloads are subject to the same privacy classification as any other metadata.
+Category H4 — Run Events
+Emitted by the desktop agent during a demonstration run.
+QA_RUN_STARTED
+QA_RUN_COMPLETED
+QA_RUN_FAILED
+EXPECTED_FLOW_VERSION_SELECTED
+Records which declared flow version the run was measured against, so a report remains interpretable after the flow is revised.
+QA_CLIENT_STATE_MUTATION
+Records a client-side state change observed during the run.
+Category H5 — Browser Events
+Emitted by the browser observer during a managed session.
+BROWSER_PAGE_LOADED
+BROWSER_CONSOLE_ERROR
+BROWSER_NETWORK_FAILED
+VISUAL_ASSERTION_FAILED
+ACCESSIBILITY_FINDING
+{
+  "eventType": "ACCESSIBILITY_FINDING",
+  "metadata": {
+    "rule": "",
+    "severity": "MEDIUM",
+    "selector": ""
+  }
+}
+
+
+Category H6 — Agent Events
+Emitted by the desktop agent outside a run.
+TELLANN_INITIALIZED
+TELLANN_ONBOARDING_TEST
+Verifies an SDK connection during setup.
+INSTRUMENTATION_VERIFIED
+REPOSITORY_SNAPSHOT_CREATED
+BOOTSTRAP_INITIALIZED
 Category I — Database Events (Phase 2)
 Supports database intelligence.
 DB_QUERY_EXECUTED
@@ -389,6 +562,12 @@ ENDPOINT_HEALTH_CHANGED
 REPORT_GENERATED
 
 
+Category K2 — Guidance Events (Phase 2)
+Generated by the Guidance Engine.
+GUIDANCE_GENERATED
+GUIDANCE_ACKNOWLEDGED
+GUIDANCE_OUTCOME_OBSERVED
+IMPACT_RANKED
 Category L — Regression Events (Phase 3)
 Supports regression detection.
 BASELINE_CREATED
@@ -432,6 +611,16 @@ RECOMMENDATION_CREATED
 RISK_PRIORITIZED
 ROOT_CAUSE_IDENTIFIED
 INSIGHT_GENERATED
+
+
+Category Q — Remediation Events (Phase 3)
+Generated by the Remediation Engine. Every autonomous action produces events regardless of outcome.
+REMEDIATION_PROPOSED
+AUTHORITY_CHECKED
+REMEDIATION_APPLIED
+REMEDIATION_VERIFIED
+REMEDIATION_REVERTED
+REMEDIATION_ESCALATED
 
 
 8. Event Versioning Strategy
@@ -534,7 +723,7 @@ Matches the architecture and data flow design.
 
 
 13. Phase Evolution
-Phase 1
+Phase 1 — Behavioral QA & Intent Platform
 Core Event Types:
 SESSION_*
 
@@ -545,7 +734,7 @@ PAGE_*
 ROUTE_*
 
 
-BUTTON_*
+BUTTON_*  LINK_*
 
 
 FORM_*
@@ -554,16 +743,49 @@ FORM_*
 STATE_*
 
 
+FLOW_*
+
+
 API_*
 
 
 ERROR_*
 
 
-Supports behavioral QA platform capabilities.
+WORKFLOW_*
 
 
-Phase 2
+BUSINESS_EVENT
+
+
+QA_RUN_*
+
+
+BROWSER_*
+
+
+ACCESSIBILITY_FINDING
+
+
+VISUAL_ASSERTION_FAILED
+
+
+INSTRUMENTATION_VERIFIED
+
+
+REPOSITORY_SNAPSHOT_CREATED
+
+
+EXPECTED_FLOW_VERSION_SELECTED
+
+
+TELLANN_*
+
+
+Supports behavioral QA, intent declaration and demonstration analysis.
+
+
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional Event Types:
 JOURNEY_*
 
@@ -574,13 +796,13 @@ DB_*
 QUALITY_*
 
 
-WORKFLOW_*
+GUIDANCE_*
 
 
-Supports production intelligence capabilities.
+Supports production monitoring, feedback and analysis capabilities.
 
 
-Phase 3
+Phase 3 — Autonomous Behavioral Intelligence
 Additional Event Types:
 REGRESSION_*
 
@@ -597,7 +819,13 @@ INTELLIGENCE_*
 SIMULATION_*
 
 
-Supports autonomous validation and quality intelligence.
+REMEDIATION_*
+
+
+AUTHORITY_*
+
+
+Supports autonomous behavioral intelligence and remediation.
 
 
 14. Governance Rules
@@ -611,4 +839,30 @@ Any new event type must:
 6. Define privacy classification.
 7. Define versioning strategy.
 8. Be approved through architecture review.
-This ensures TELLANN maintains a consistent behavioral language across SDKs, collectors, analytics engines, workflow intelligence systems, production monitoring, and future autonomous quality intelligence capabilities.
+This ensures TELLANN maintains a consistent behavioral language across SDKs, collectors, analytics engines, workflow intelligence systems, production monitoring, and future autonomous behavioral intelligence capabilities.
+14.1 Event Registry (Pre-Launch)
+The governance rules above describe a controlled vocabulary. Controlling it by review alone is what allowed two spellings of three concepts to enter circulation during Phase 1 development.
+A machine-readable event registry shall be maintained as the single source of truth, holding for every registered type:
+* Canonical name
+* Recognized aliases, if any
+* Category
+* Owning component
+* Metadata schema
+* Privacy classification
+* Retention class
+* Introduced-in version
+* Deprecated-in version, if applicable
+ETD-REG-001 (Pre-Launch)
+Ingestion shall validate every event against the registry, and reject unregistered types rather than storing them.
+ETD-REG-002 (Pre-Launch)
+The SDK event type union, the collector's validation rules, and this document shall all be derived from the registry, so they cannot disagree.
+ETD-REG-003 (Pre-Launch)
+Adding a type shall require a registry entry. A type that exists in code but not in the registry is a defect.
+Status
+Specified. Scheduled for completion and verification before general availability. Section 7.0 records the aliases that exist in the meantime.
+15. Pre-Launch Taxonomy Checklist
+* Event registry and registry-backed validation — Section 14.1
+* Alias normalization at ingestion — ETD-ALIAS-001
+* Metadata schema defined per registered type — Section 9
+* Privacy classification assigned per registered type — Section 10
+* Retention class assigned per registered type — Section 11

@@ -78,7 +78,7 @@ Customers purchase:
 The primary value is behavioral intelligence rather than telemetry collection.
 5. Pricing Evolution Framework
 TELLANN pricing evolves through three eras.
-Era 1 — Behavioral QA Platform (Phase 1)
+Era 1 — Behavioral QA & Intent Platform (Phase 1)
 Pricing Objective
 Maximize adoption and category creation.
 The goal is to make it easy for developers to experience:
@@ -103,7 +103,7 @@ Strategic Rationale
 Event volume is not strongly correlated with customer value during Phase 1.
 Two customers may generate dramatically different event volumes while receiving similar quality intelligence.
 Charging based on events would create unnecessary pricing complexity and weaken product positioning.
-Era 2 — Production Intelligence Platform (Phase 2)
+Era 2 — Production Monitoring, Feedback & Analysis (Phase 2)
 Pricing Objective
 Align pricing with ongoing production monitoring value.
 New Customer Value
@@ -124,7 +124,7 @@ In Phase 2:
 * Customer value increases with observation volume
 Event volume becomes a meaningful value metric.
 Event-based pricing becomes appropriate because customers are receiving continuous behavioral intelligence from production traffic.
-Era 3 — Autonomous Quality Intelligence Platform (Phase 3)
+Era 3 — Autonomous Behavioral Intelligence (Phase 3)
 Pricing Objective
 Monetize computational intelligence.
 New Customer Value
@@ -134,7 +134,7 @@ Customers receive:
 * Failure Simulation
 * Quality Intelligence
 * AI Assistant
-* Autonomous Validation
+* Autonomous Behavioral Intelligence
 Pricing Model
 Base Subscription
 * Event Consumption

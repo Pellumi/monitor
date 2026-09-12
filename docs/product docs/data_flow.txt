@@ -26,32 +26,68 @@ All behavioral data should be associated with sessions whenever possible.
 DFP-006 Tenant Isolation
 Data flows must remain isolated per tenant.
 3. High-Level Data Flow
-User Interaction
+Declared Intent
       │
+      │ (human-authored, pre-traffic)
       ▼
-Frontend SDK
-      │
-      ▼
-Event Collector
-      │
-      ▼
-Kafka Event Stream
-      │
-      ▼
-Session Engine
-      │
-      ▼
-Behavior Processing Engines
-      │
-      ▼
-Storage Layer
-      │
-      ▼
-Dashboard
-      │
-      ▼
-Users
+Declared Intent Graph ──────────────┐
+                                    │
+User Interaction                    │
+      │                             │
+      ▼                             │
+Frontend SDK / Backend SDK /        │
+Managed Browser Session             │
+      │                             │
+      ▼                             │
+Event Collector                     │
+      │                             │
+      ▼                             │
+Kafka Event Stream                  │
+      │                             │
+      ▼                             │
+Session Engine                      │
+      │                             │
+      ▼                             │
+Behavior Processing Engines         │
+      │                             │
+      ▼                             ▼
+Observed Behavior Graph ──▶ Reconciliation Engine
+                                    │
+                                    ▼
+                              Storage Layer
+                                    │
+                                    ▼
+                                Dashboard
+                                    │
+                                    ▼
+                                  Users
+Two flows converge. One is authored by a human before any telemetry exists. The other is derived from evidence. The product is the comparison.
 4. Primary Data Sources
+Source 0 — Declared Intent
+Produced By:
+A human, in the dashboard or the desktop agent.
+Examples:
+* Declared flows
+* Declared states and transitions
+* Accepted suggestions
+* Promoted observations
+Defined by FR-123 through FR-140b.
+Unlike every other source in this document, this one is not derived from anything. It is an assertion, and it is the only input the platform treats as a statement of intent rather than a record of fact.
+Source 0a — Local Codebase Projections
+Produced By:
+Desktop agent codebase analysis.
+Examples:
+* Code graph topology
+* Flow checkpoint locations
+* Analysis warnings
+Source content remains on the developer's machine. Only projections enter the platform.
+Source 0b — Customer Documents
+Produced By:
+Customer upload through the desktop agent.
+Examples:
+* Product specifications
+* Requirement documents
+Processed into source document versions, then into intent drafts for human review.
 Source A — Frontend Events
 Produced By:
 Frontend SDK
@@ -280,6 +316,151 @@ Outputs
 * Error-prone endpoints
 * API rankings
 Supports FR-047 through FR-052 and FR-076 through FR-080.
+11.1 Flow Declaration Data Flow
+Flow DF-007a
+Purpose
+Turn a human statement of intent into a compiled baseline.
+User Adds Node
+      │
+      ▼
+Derivation Engine
+      │
+      ├── Tier 1: Pattern Library
+      ├── Tier 1.5: Structural Index
+      └── Tier 2: Assistive Enrichment
+      │
+      ▼
+Suggestion Queue
+      │
+      ▼
+Human Accept / Reject
+      │
+      ▼
+Declared Intent Graph
+      │
+      ▼
+Flow Marked Complete
+      │
+      ▼
+Ruleset Compiler
+      │
+      ▼
+Application Ruleset
+Outputs
+* Declared Intent Graph
+* Versioned declared flows
+* Compiled ruleset
+Nothing in this flow passes through without human acceptance. That is the property that keeps intent a human assertion rather than a generated one.
+Supports FR-123 through FR-140b.
+11.2 Codebase Analysis Data Flow
+Flow DF-007b
+Purpose
+Locate declared flows in code without transmitting code.
+Bound Workspace
+      │
+      ▼  (local)
+Codebase Analyzer
+      │
+      ▼  (local)
+Code Graph
+      │
+      ▼  (local)
+Flow Checkpoint Location
+      │
+      ▼  (transmitted)
+Analysis Projections
+      │
+      ▼
+Code Intelligence Engine
+      │
+      ▼
+Instrumentation Targeting
+Transmitted
+Projections, warnings, checkpoint locations.
+Not transmitted
+Source file contents, unless explicitly consented for a named purpose.
+11.3 Instrumentation Data Flow
+Flow DF-007c
+Purpose
+Apply reviewed, reversible instrumentation.
+Declared Flows + Code Projections
+      │
+      ▼
+Instrumentation Plan
+      │
+      ▼
+Redacted Diff Rendered
+      │
+      ▼
+Human Approval
+      │
+      ▼  (local)
+Patch Set Applied To Working Tree
+      │
+      ▼  (local)
+Validation
+      │
+      ├── Success ──▶ Results Recorded
+      │
+      └── Failure ──▶ Rollback ──▶ Branch Restored
+The platform records intent; the agent performs the operation locally; the agent reports results. The platform's record of the working tree stays honest even when the local operation fails.
+11.4 Guided Run Data Flow
+Flow DF-007d
+Purpose
+Produce scoped evidence from a demonstration.
+Run Armed
+      │
+      ▼
+Managed Browser Session
+      │
+      ▼
+Pre-Boundary Activity ──▶ scope: PRE_BOUNDARY
+      │
+      ▼
+Initial Flow Boundary Reached
+      │
+      ▼
+In-Flow Activity ──▶ scope: IN_FLOW
+      │
+      ├──▶ Protected Value Classification
+      ├──▶ Browser Findings
+      └──▶ Evidence Batches
+      │
+      ▼
+Terminal State Or Browser Closed
+      │
+      ▼
+Run Processing
+      │
+      ▼
+Behavior Graph + Reconciliation + Run Report
+Outputs
+* Scoped evidence events
+* Browser findings
+* Run artifacts
+* QA Run Report
+Coverage and reconciliation are computed from IN_FLOW evidence only.
+11.5 Reconciliation Data Flow
+Flow DF-007e
+Purpose
+Produce the three-way classification.
+Declared Intent Graph        Observed Behavior Graph
+         │                            │
+         └────────────┬───────────────┘
+                      ▼
+             Reconciliation Engine
+                      │
+      ┌───────────────┼───────────────┐
+      ▼               ▼               ▼
+  CONFIRMED       TRUE_GAP       UNDECLARED
+                      │
+                      ▼
+          Flow Reconciliation Report
+                      │
+                      ▼
+             Drift Record Over Time
+Runs incrementally as new evidence arrives.
+Supports FR-138 through FR-140.
 12. QA Report Generation Flow
 Flow DF-008
 Coverage Data
@@ -502,34 +683,53 @@ Outputs
 * Quality assessments
 Supports FR-117 through FR-122.
 23. Storage Data Flows
+Storage responsibility is defined by the System Architecture Document, Section 16. The authoritative schema is the versioned schema in the repository.
 PostgreSQL
 Stores
-Organizations
-Users
-Applications
-Configurations
-Reports Metadata
+Organizations, users and memberships
+Applications, environments and credentials
+Declared Intent Graphs, suggestions and rulesets
+Behavioral graphs, versions and drift records
+Reconciliation results
+Workspaces, repository bindings and codebase analysis
+Source documents and intent drafts
+Instrumentation plans and patch sets
+QA runs, evidence, artifacts and findings
+Reports and generation jobs
+Subscriptions, entitlements, invoices and usage
+Notifications and deliveries
+Audit logs
 ClickHouse
 Stores
-Events
-Sessions
-Metrics
-Behavior Graph Data
-Analytics Data
+Raw events
+Endpoint metrics
+Session analytics
+Behavioral graph data is stored relationally, not in ClickHouse. See ADR-001.
 Object Storage
 Stores
-Replay Assets
-Exports
-Historical Archives
-Snapshots
-
-
-Defined by the architecture specification.
+Replay assets
+Report exports
+Run artifacts
+Consented source archives
+Graph snapshots
+Historical archives
 24. End-to-End Data Lifecycle
-User Interaction
+Declared Intent
       │
       ▼
-SDK Capture
+Workspace Binding
+      │
+      ▼
+Codebase Analysis
+      │
+      ▼
+Instrumentation
+      │
+      ▼
+Guided Run
+      │
+      ▼
+SDK + Browser Capture
       │
       ▼
 Collector
@@ -544,10 +744,10 @@ Session Creation
 Behavior Modeling
       │
       ▼
-Analytics
+Reconciliation
       │
       ▼
-Quality Intelligence
+Analytics
       │
       ▼
 Reports
@@ -557,29 +757,65 @@ Dashboard
       │
       ▼
 Engineering Teams
-25. Future Autonomous Intelligence Lifecycle
+25. Phase 2 Feedback & Guidance Flow
+Flow DF-019
+Purpose
+Turn production observation into direction.
+Production Behavior
+      │
+      ├──▶ Compared Against Declared Intent
+      ├──▶ Compared Against Demonstrated Behavior
+      └──▶ Compared Against Workflow Health Baseline
+      │
+      ▼
+Classification
+      │
+      ├── DEFECT        (declared, reachable, failing)
+      ├── COVERAGE_GAP  (declared, never demonstrated)
+      ├── FRICTION      (completed, but with retries or diversions)
+      └── EMERGENT      (undeclared and heavily used)
+      │
+      ▼
+Ranked By Observed User Impact
+      │
+      ▼
+Guidance + Evidence Trace
+      │
+      ▼
+Outcome Tracking
+Supports FR-203 through FR-212.
+26. Phase 3 Autonomous Intelligence Lifecycle
+Declare Intent
+        │
+        ▼
 Observe Behavior
         │
         ▼
-Build Sessions
+Reconcile
         │
         ▼
-Construct Workflow Graphs
+Monitor Production
         │
         ▼
-Analyze Quality
+Analyze And Guide
         │
         ▼
-Detect Risks
+Understand Continuously
         │
         ▼
-Generate Tests
+Locate Root Cause
         │
         ▼
-Validate Releases
+Propose Remediation
         │
         ▼
-Recommend Improvements
+Check Authority
         │
         ▼
-Autonomous Quality Intelligence
+Apply And Verify
+        │
+        ▼
+Compare Against Network Patterns
+        │
+        ▼
+Suggest Implementation Changes

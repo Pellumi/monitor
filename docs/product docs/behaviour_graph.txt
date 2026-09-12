@@ -15,18 +15,25 @@ This document establishes:
 The Behavior Graph is the central intelligence model of TELLANN and serves as the primary representation of how software behaves in practice. It transforms raw events, sessions, and workflows into a continuously evolving behavioral map of an application.
 2. Scope
 This specification applies to:
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Behavior graphs generated from:
+* Desktop-driven demonstration runs
 * Recorded sessions
-* Demonstration workflows
 * SDK-captured interactions
-Phase 2 — Production Intelligence Platform
+And reconciled against:
+* Human-declared intent
+Phase 2 — Production Monitoring, Feedback & Analysis
 Behavior graphs generated from:
 * Live production users
 * Real-world workflows
 * Continuous monitoring streams
-Phase 3 — Autonomous Validation Engine
+And used to produce:
+* Guidance on what to build, fix or change next
+Phase 3 — Autonomous Behavioral Intelligence
 Behavior graphs used for:
+* Real-time remediation
+* Network-wide structural comparison
+* Implementation suggestions
 * Test generation
 * Regression detection
 * Failure simulation
@@ -157,7 +164,7 @@ PAYMENT_SUCCESS
 AUTHENTICATED
 BG-STATE-003
 States may originate from:
-* PAGE_VISIT
+* PAGE_VIEW
 * ROUTE_CHANGE
 * STATE_ENTERED
 * WORKFLOW events
@@ -282,7 +289,7 @@ A workflow contains:
 Behavior graphs are built automatically from session data.
 Step 1
 Capture Events
-PAGE_VISIT
+PAGE_VIEW
 BUTTON_CLICK
 FORM_SUBMITTED
 API_RESPONSE
@@ -360,11 +367,14 @@ HOME
 Transition frequency is incremented each time the transition is observed.
 Supports FR-033.
 13. Graph Storage Model
+Behavior graphs are persisted relationally. A dedicated graph database is deferred to Phase 3 and is recorded as ADR-001. Storage responsibility is defined in the System Architecture Document, Section 16; the authoritative schema is the versioned schema in the repository.
 Phase 1
-Store graph snapshots.
+Store versioned graph snapshots, per graph type.
 {
   "graphId": "graph_001",
-  "applicationId": "app_001"
+  "applicationId": "app_001",
+  "graphType": "DEMONSTRATED",
+  "version": 7
 }
 Phase 2
 Store continuously evolving workflow graphs.
@@ -378,21 +388,28 @@ Store:
 * Release-specific graphs
 * Behavioral baselines
 * Generated workflow models
-14. Graph Database Model
-Behavior graphs shall be persisted using graph storage.
+14. Graph Model
+The logical graph model below is the contract. It is implemented relationally in Phase 1 and Phase 2, and may be implemented on a dedicated graph store in Phase 3 without changing this model.
 Nodes
 Application
 State
 Workflow
 Session
-Release
+Run
+Release            (Pre-Launch — required for release-tagged versioning, 19.1)
 
 
 Relationships
 HAS_STATE
 
 
+DECLARED_HAS_STATE
+
+
 TRANSITIONS_TO
+
+
+DECLARED_TRANSITIONS_TO
 
 
 STARTS_AT
@@ -405,6 +422,10 @@ VISITED
 
 
 MODIFIED
+
+
+BG-MODEL-001
+Declared and Observed relationships shall remain distinct relationship types, so the two graph types stay independently queryable per FDRS-GOV-002. This holds regardless of the underlying store.
 15. Graph Metrics
 State Metrics
 Track:
@@ -435,8 +456,21 @@ Missing State Detection
 FR-042 – FR-046
 Session Replay Integration
 FR-018 – FR-025
+Flow Declaration & Reconciliation
+FR-123 – FR-140b
+Graph Drift (Groundwork)
+FR-196 – FR-202
 17. Phase 2 Graph Capabilities
 Supports:
+Production Graph Construction
+* PRODUCTION graph type populated from real user behavior
+* Comparison against the DEMONSTRATED graph
+* Comparison against the DECLARED graph
+Feedback & Guidance
+FR-203 – FR-212
+* Declared-but-unreachable distinguished from declared-but-undemonstrated
+* Issues ranked by observed user impact
+* Guidance traced to production evidence
 User Journey Intelligence
 * Common journeys
 * Abandonment analysis
@@ -475,10 +509,21 @@ Use graph evidence to:
 * Identify risks
 * Explain failures
 * Recommend actions
+Real-Time Remediation
+FR-213 – FR-220
+Use the graph to locate root cause and verify that a remediation restored expected behavior.
+Network Behavioral Intelligence
+FR-221 – FR-228
+Compare an application's graph shape against anonymized, frequency-weighted structural patterns drawn from every system on the platform.
+73% of CHECKOUT flows in this pattern class
+include an INVENTORY_CHANGED branch.
+This one does not.
+The Phase 1 cross-tenant structural index (22.4.2, Tier 1.5) is the groundwork for this capability and is governed by FDRS-PRIV-001 through FDRS-PRIV-004 at every phase.
 19. Graph Versioning
 Every graph shall be versioned.
 {
-  "graphVersion": "1.0",
+  "graphVersion": 7,
+  "graphType": "DEMONSTRATED",
   "createdAt": "timestamp",
   "applicationVersion": "v2.3.0"
 }
@@ -486,8 +531,36 @@ Every graph shall be versioned.
 
 Version snapshots shall support:
 * Historical comparison
+* Drift analysis
 * Release validation
 * Regression analysis
+19.1 Release Tagging
+BG-VER-001 (Pre-Launch)
+A graph version shall be taggable with the application release it was produced under.
+Release-tagged versioning is the substrate for release validation and regression analysis. Until a release entity exists, graph versions are ordered and comparable but are not attributable to a named release, and release-to-release comparison is therefore not available.
+19.2 Graph Drift (Phase 1 Groundwork)
+Two graph versions of the same type shall be comparable, producing:
+* Added states and transitions
+* Removed states and transitions
+* Changed transition frequency
+* Coverage delta
+Drift Scope By Phase
+Phase 1
+Drift between demonstration graph versions, and drift of observed behavior against declared intent.
+Phase 2
+Drift of production behavior against a production baseline, and against demonstrated behavior.
+Phase 3
+Drift as an anomaly signal, evaluated continuously.
+BG-VER-002
+Drift comparison shall be deterministic and shall report the evidence basis of each version compared.
+19.3 Declared Flow Revision History
+Declared flows are versioned independently of observed graphs.
+BG-VER-003
+A declared flow shall carry a monotonic version, and a draft sequence within that version.
+BG-VER-004
+Each revision of a declared flow draft shall be retained as a snapshot, so that a declarer can see how intent changed and can recover a prior statement of it.
+BG-VER-005
+A published flow version shall be frozen. Further edits create a new draft sequence rather than mutating the published version, so reconciliation history against a published version remains meaningful.
 20. Graph Governance Rules
 BG-GOV-001
 Every state must have a unique identifier.
@@ -575,22 +648,31 @@ A node or transition in the Declared Intent Graph carries a provenance field dis
 Valid provenance values:
 * USER_AUTHORED — typed or drawn directly by the QA/PM during declaration.
 * SUGGESTED_ACCEPTED — proposed by the Derivation Engine (22.4) and accepted by the user.
-* SUGGESTED_REJECTED — proposed and explicitly rejected. Retained (not deleted) so the system does not re-suggest it and so rejection patterns can improve future suggestions.
 * DEMONSTRATION_PROMOTED — originated as an Observed-graph node and was later promoted into the Declared graph because a developer confirmed it during demonstration review (see 22.7).
+* TELEMETRY_OBSERVED — recorded on Observed-graph nodes to mark that the node exists because evidence was witnessed, keeping the two graph types distinguishable in a shared store.
+Rejected suggestions are not a provenance value. A rejected suggestion never becomes a node, so it has nothing to carry provenance. Rejection is recorded on the suggestion record itself — with the rejecting user, the time, and a deduplication key — which satisfies FDRS-GOV-003 while keeping provenance a property of nodes that exist.
+Valid graph types:
+* DECLARED — the Declared Intent Graph.
+* DEMONSTRATED — the Observed Behavior Graph built from demonstration evidence.
+* PRODUCTION — the Observed Behavior Graph built from production evidence (Phase 2).
+Separating DEMONSTRATED from PRODUCTION at the graph-type level is what allows Phase 2 to compare demonstrated behavior against production behavior without either overwriting the other.
 Nodes in the Observed Behavior Graph keep their existing provenance model unchanged (Section 11, Section 12); FDRS does not alter how the Observed graph is built.
 22.3 Flow Declaration Lifecycle
-Flow declaration occurs during organization/application onboarding, as an extension of the existing onboarding sequence (FRS Module — Application Onboarding; DDMS Stage 1).
+Flow declaration is the first stage of onboarding, ahead of demonstration (DDMS Stage 1).
 Create Organization
         ↓
 Create Application
         ↓
-Generate API Keys
+Declare Intended Flows
         ↓
-Declare Intended Flow   ← NEW STAGE
+Bind Local Workspace
+   (Tellann Desktop)
         ↓
-Install SDK
+Instrument Application
         ↓
-Start Demonstration Recording
+Start Guided Demonstration Run
+Declaration may be performed in the dashboard or in the desktop agent. Both write to the same Declared Intent Graph.
+FDRS-LIFE-004 Declaration shall not require the desktop agent. A team may state intent before installing anything.
 
 
 Declaration is optional at the platform level but, if entered, follows this sequence per flow:
@@ -668,9 +750,16 @@ FDRS-PRIV-001 Cross-tenant structural matching shall never reveal, directly or i
 FDRS-PRIV-002 Cross-tenant structural matching shall operate only on state/category/transition shape data. Metadata, custom field names, business-specific terminology beyond standard category labels, and any payload content are excluded from the structural index.
 FDRS-PRIV-003 A tenant's Declared or Observed graph data shall contribute to the structural index only in aggregate, frequency-weighted form (e.g. "73% of CHECKOUT flows include an OUT_OF_STOCK branch"), never as a retrievable individual record.
 FDRS-PRIV-004 Participation in the cross-tenant structural index is part of standard platform operation, consistent with how the platform already aggregates non-identifying behavioral patterns; tenants requiring full exclusion may request it through organization-level configuration.
-Tier 2 — External Search Enrichment
-Used only when Tier 1 (library + structural index) returns no match or low-confidence results for a novel state name or category combination. External search results are used to enrich the suggestion candidate pool, not surfaced verbatim — results are normalized into the same suggestedBranches structure as Tier 1 before being shown to the user, and any matched content is paraphrased rather than quoted, consistent with platform-wide content handling standards.
-FDRS-DERIVE-001 External search shall be invoked only after internal lookup (Tier 1 / 1.5) is exhausted for a given node. FDRS-DERIVE-002 Suggestions surfaced to the user shall always be labeled with their source tier (Library, Cross-Tenant Pattern, or External Enrichment) so the user can weight their trust accordingly. FDRS-DERIVE-003 The Derivation Engine shall never auto-add a suggested node to the Declared Intent Graph without explicit user acceptance.
+Tier 2 — Assistive Enrichment
+Used only when Tier 1 (library + structural index) returns no match or low-confidence results for a novel state name or category combination.
+Tier 2 is served by the Assistive Intelligence Layer: a language model invoked through a bounded internal interface, with sanitized input and schema-validated output. Its results are used to enrich the suggestion candidate pool, never surfaced verbatim — they are normalized into the same suggestedBranches structure as Tier 1 before being shown to the user.
+An earlier revision of this specification described Tier 2 as external search enrichment. That approach was superseded: search returns documents, and what the Derivation Engine needs is a structured branch proposal for a state name it has never seen. The tier boundary, the invocation order, and the acceptance requirement are unchanged; only the mechanism behind Tier 2 is different.
+FDRS-DERIVE-001 Tier 2 shall be invoked only after internal lookup (Tier 1 / 1.5) is exhausted for a given node.
+FDRS-DERIVE-002 Suggestions surfaced to the user shall always be labeled with their source tier (Library, Cross-Tenant Pattern, or Assistive Enrichment) so the user can weight their trust accordingly.
+FDRS-DERIVE-003 The Derivation Engine shall never auto-add a suggested node to the Declared Intent Graph without explicit user acceptance.
+FDRS-DERIVE-004 Tier 2 output shall be schema-validated before entering the candidate pool, and discarded where validation fails after repair.
+FDRS-DERIVE-005 Every Tier 2 invocation shall be logged with its feature, status, attribution and cost.
+FDRS-DERIVE-006 Where Tier 2 is unavailable, the Derivation Engine shall return Tier 1 and Tier 1.5 results and state that enrichment was unavailable. It shall not fail, and it shall not block declaration.
 22.4.3 Suggestion Output Model
 {
   "suggestionId": "sug_881",
@@ -683,6 +772,23 @@ FDRS-DERIVE-001 External search shall be invoked only after internal lookup (Tie
 }
 
 
+22.4.4 Suggestion Queue
+Suggestions are not transient. Each flow holds a persistent queue.
+FDRS-QUEUE-001 A suggestion shall be deduplicated against prior suggestions for the same flow and graph state, so that regeneration does not produce repeats.
+FDRS-QUEUE-002 A suggestion shall record the graph version and graph hash it was generated against, so a stale suggestion can be identified when the flow has moved on.
+FDRS-QUEUE-003 Accepted and rejected suggestions shall retain their outcome, supporting FDRS-GOV-003 and future improvement of suggestion quality.
+22.4.5 Whole-Flow Review
+In addition to node-by-node suggestion, a declarer may request a review of an entire flow.
+Request Review
+      ↓
+Preview Proposed Changes
+      ↓
+   ┌──┴──┐
+   ▼     ▼
+Apply  Decline
+FDRS-REVIEW-001 A review shall present its complete proposed effect before any change is made.
+FDRS-REVIEW-002 A declarer shall be able to apply a selected subset of a review rather than all of it.
+FDRS-REVIEW-003 A declined review shall be retained with its reason, and shall not be re-proposed unchanged.
 22.5 Reconciliation Engine
 22.5.1 Purpose
 Once telemetry begins flowing (via demonstration sessions or, in later phases, production traffic), the Reconciliation Engine continuously diffs the Declared Intent Graph against the Observed Behavior Graph for the same application.
@@ -772,29 +878,65 @@ Declared Intent Graph  ──informs──▶  Demonstration Review
                    intended flow)
 
 
-During a demonstration session, if the developer's walkthrough produces an UNDECLARED node (22.5.2), the dashboard may prompt the developer: "This state wasn't in your declared flow — is it expected?" An affirmative response promotes the node into the Declared Intent Graph with provenance: DEMONSTRATION_PROMOTED (22.2) and triggers Ruleset recompilation (22.6.1).
+During a demonstration session, if the developer's walkthrough produces an UNDECLARED node (22.5.2), the desktop agent may prompt the developer: "This state wasn't in your declared flow — is it expected?" An affirmative response promotes the node into the Declared Intent Graph with provenance: DEMONSTRATION_PROMOTED (22.2) and triggers Ruleset recompilation (22.6.1).
 FDRS-DEMO-001 Demonstration-time promotion of an Observed node into the Declared Intent Graph shall require explicit developer confirmation; it shall never happen automatically. FDRS-DEMO-002 The existing Behavioral Graph Generation pipeline (BGS Sections 10–12) is unaffected by FDRS; demonstration sessions continue to build the Observed Behavior Graph exactly as specified, independent of whether a Declared Intent Graph exists.
 22.8 Manual Editing & Correction
 FDRS-EDIT-001 A Declared Intent Graph shall remain editable by users with appropriate role permissions (Developer, QA Engineer, Product Manager per SEAD Section 7.3) after initial completion. FDRS-EDIT-002 Manual edits to a completed flow shall trigger Ruleset recompilation (22.6.1) and shall be logged with the same audit standard as other security-sensitive configuration changes (SEAD Section 12). FDRS-EDIT-003 The system shall never overwrite a USER_AUTHORED node based on Observed-graph evidence; conflicting evidence is surfaced via the Reconciliation Report (22.5.3) as UNDECLARED, leaving the decision to the human.
 22.9 Governance Rules
 FDRS-GOV-001 Every Declared Intent Graph node must carry a provenance value (22.2). FDRS-GOV-002 Declared and Observed graphs must remain independently queryable; reconciliation is a derived view, not a merged storage model. FDRS-GOV-003 Rejected suggestions (SUGGESTED_REJECTED) must be retained, not deleted, to prevent re-suggestion loops and to support future improvement of the Derivation Engine. FDRS-GOV-004 Cross-tenant structural pattern data must satisfy FDRS-PRIV-001 through FDRS-PRIV-004 at all times, including during platform scaling and future Phase 2/3 enhancements. FDRS-GOV-005 FDRS must remain optional at the application level; an application with no Declared Intent Graph must continue to function exactly as specified in BGS Sections 1–21, with Coverage and Missing State analysis operating purely against the Observed Behavior Graph as today.
-22.10 Scope Note — Relationship to MVP Scope Document
-This capability is intended for Phase 1 / MVP inclusion per product direction. This creates a direct tension with the existing MVP Scope Document (MSD Section 9), which explicitly excludes "AI workflow generation" and "AI recommendations" from Phase 1, citing insufficient data maturity. The Derivation Engine's suggestion behavior — proposing branch states a human did not type — functions similarly to the excluded category even though it is implemented as a curated pattern library plus structural matching rather than a learned model.
-This section does not resolve that tension; it is flagged here for explicit product/business sign-off before implementation, since it changes what MSD Section 1 calls "the authoritative source for Phase 1 feature inclusion and exclusion decisions." If approved, MSD Section 7 should be amended with a new Feature Group for Flow Declaration & Reconciliation, and MSD Section 9's AI Features exclusion should be narrowed to explicitly carve out "curated/structural suggestion, as distinct from learned/generative AI recommendation."
+22.10 Scope Resolution — Relationship to MVP Scope Document
+This capability is included in Phase 1 / MVP.
+An earlier revision of this section flagged a conflict with the MVP Scope Document, which at that time excluded "AI workflow generation" and "AI recommendations" from Phase 1 outright, and asked for product sign-off before implementation.
+That sign-off has been given, and the MVP Scope Document has been amended. The resolution was not to weaken the guard but to make it specific.
+What was agreed
+The concern behind the original exclusion was building a product whose quality judgements come from a model rather than from evidence. That concern stands, and is now expressed as a boundary rather than a ban.
+Permitted
+* Proposing branch states a human did not type
+* Drafting candidate flows from customer-supplied documents
+* Inferring an application domain to select a rule pack
+Prohibited
+* Producing behavioral graphs, coverage, reconciliation or findings
+* Producing quality scores or risk judgements
+* Adding anything to a Declared Intent Graph without explicit human acceptance
+Amendments made
+MSD Section 7 gained Feature Group N (Flow Declaration & Reconciliation).
+MSD Section 9 replaced the blanket AI exclusion with Section 9.1, Assisted Intelligence Boundary, including the Wrapper Test.
+The Derivation Engine's behavior is unchanged by this resolution. FDRS-DERIVE-003 already required explicit user acceptance before any suggestion becomes part of the Declared Intent Graph, which is what kept the capability on the correct side of the boundary in the first place.
 22.11 Cross-Reference Summary
-Existing Document
-	Required Change
+The amendments this section required have been made. This table is retained as the record of what changed.
+Document
+	Change
+	Status
 	FRS
-	New Module (suggest: Module U) covering FR-123 through FR-13x for declaration, derivation, reconciliation, and ruleset compilation
+	Module U — FR-123 through FR-140b covering declaration, derivation, reconciliation and ruleset compilation
+	Done
 	DDMS
-	New onboarding stage inserted between Stage 1 (Application Connection) and Stage 2 (Demonstration Session); Section 19 (Demonstration QA Report) gains a Reconciliation subsection
+	Stage 1 (Intent Declaration) inserted ahead of demonstration; Section 14 (Reconciliation) added; Section 23 (Demonstration QA Report) gained a Reconciliation section
+	Done
 	QRS
-	New report type: Flow Reconciliation Report, added to Section 4 classification model and Section 28 phase evolution
-	Database Design
-	New PostgreSQL tables: declared_flows, declared_states, declared_transitions, suggestions, rulesets; new Neo4j relationship type DECLARED_HAS_STATE distinct from existing HAS_STATE to keep graph types queryable independently (per FDRS-GOV-002)
+	Flow Reconciliation Report added to the Section 4 classification model and to Section 28 phase evolution
+	Done
 	API Spec
-	New endpoint group: /applications/{id}/declared-flow/*, /applications/{id}/reconciliation, /applications/{id}/ruleset
+	Endpoint groups /applications/{id}/declared-flows/*, /applications/{id}/reconciliation, /v1/applications/{id}/flows/*
+	Done
 	MVP Scope
-	Requires explicit amendment per 22.10 before this can ship in Phase 1 as currently written
+	Feature Group N added; Section 9.1 replaces the blanket AI exclusion
+	Done
 	Security Architecture
-	New RBAC permission: "Declare/Edit Flow"; new audit event types for flow declaration and ruleset recompilation
+	Flow declaration and ruleset recompilation audit events; declaration permitted at MEMBER role and above
+	Done
+	System Architecture
+	Reconciliation Engine and Derivation Engine added to the processing layer; Assistive Intelligence Layer defined as structurally separate from the analytical path
+	Done
+	Data Model
+	No document change. The relational schema is authoritative and versioned in the repository; the standalone data-model specification has been retired. Declared and Observed relationships remain distinct relationship types per BG-MODEL-001 and FDRS-GOV-002.
+	N/A
+	
+22.12 Capability Delivered Beyond This Section
+The following were built as part of FDRS and are specified elsewhere in this document rather than in Section 22:
+* Declared flow versioning and frozen published versions — Section 19.3
+* Declared flow draft revision history — Section 19.3
+* Graph drift between versions — Section 19.2
+* Graph type separation (DECLARED / DEMONSTRATED / PRODUCTION) — Section 22.2
+* Persistent per-flow suggestion queue with deduplication — Section 22.4.4
+* Whole-flow review with preview before apply — Section 22.4.5

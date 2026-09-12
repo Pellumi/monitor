@@ -62,17 +62,26 @@ Exports:
 JSON Only
 Included Features
 Application Onboarding
+Flow Declaration & Reconciliation
+Tellann Desktop Agent
 Developer Demonstration Mode
 Session Recording
 Session Replay
 Behavior Graph Generation
+Graph Drift
 Workflow Discovery
 Coverage Analysis
 Missing State Detection
 Missing Flow Detection
 Endpoint Analysis
+Basic Visual & Accessibility Analysis
 Basic Dashboard
 Excluded Features
+Codebase Intelligence
+Document Flow Inference
+Automated Instrumentation
+Browser Trace Capture
+Multiple Environments
 API Access
 Advanced Exports
 Priority Support
@@ -107,11 +116,16 @@ JSON
 PDF
 Included Features
 Everything in Free
+Basic Codebase Intelligence
+Document Flow Inference
+Basic Browser Trace Capture
+Multiple Environments
 30-Day Historical Report Access
 Email Support
 Excluded Features
+Automated Instrumentation
 Advanced Reporting
-Multiple Environments
+Shared Run Governance
 Team Collaboration
 API Access
 Audit Logs
@@ -144,10 +158,13 @@ CSV
 JSON
 HTML
 Included Features
-Everything in Free
+Everything in Local
+Basic Automated Instrumentation
+Standard Codebase Intelligence
+Advanced Browser Trace Capture
+Advanced Visual & Accessibility Analysis
 Advanced Reporting
 Historical Report Access
-Multiple Environments
 Email Support
 7. Team Plan
 Purpose
@@ -173,6 +190,9 @@ Exports:
 All Formats
 Included Features
 Everything in Solo
+Advanced Automated Instrumentation
+Advanced Codebase Intelligence
+Shared Run Governance
 Team Collaboration
 Shared Dashboards
 Role-Based Access Control
@@ -236,22 +256,47 @@ Security Reviews
 Custom Integrations
 Architecture Assistance
 10. Feature Entitlement Matrix
+Core Capability
 Feature | Free | Local | Solo | Team | Business | Enterprise
+Flow Declaration | Yes | Yes | Yes | Yes | Yes | Yes
+Reconciliation | Yes | Yes | Yes | Yes | Yes | Yes
 Demonstration Mode | Yes | Yes | Yes | Yes | Yes | Yes
 Session Replay | Yes | Yes | Yes | Yes | Yes | Yes
 Behavior Graphs | Yes | Yes | Yes | Yes | Yes | Yes
+Graph Drift | Yes | Yes | Yes | Yes | Yes | Yes
 Coverage Analysis | Yes | Yes | Yes | Yes | Yes | Yes
 Missing States | Yes | Yes | Yes | Yes | Yes | Yes
 Missing Flows | Yes | Yes | Yes | Yes | Yes | Yes
 Endpoint Intelligence | Yes | Yes | Yes | Yes | Yes | Yes
 Report Exports | JSON | JSON/PDF | All | All | All | All
+
+Desktop Agent
+Capability | Free | Local | Solo | Team | Business | Enterprise
+Guided QA Runs | Yes | Yes | Yes | Yes | Yes | Yes
+Visual & Accessibility Analysis | Basic | Standard | Advanced | Advanced | Advanced | Advanced
+Browser Trace Capture | No | Basic | Advanced | Advanced | Advanced | Advanced
+Codebase Intelligence | No | Basic | Standard | Advanced | Advanced | Advanced
+Document Flow Inference | No | Standard | Advanced | Advanced | Advanced | Advanced
+Automated Instrumentation | No | No | Basic | Advanced | Advanced | Advanced
+Shared Run Governance | No | No | No | Yes | Yes | Yes
+Priority Processing | No | No | No | No | Yes | Yes
+
+Collaboration & Governance
+Capability | Free | Local | Solo | Team | Business | Enterprise
+Multiple Environments | No | Yes | Yes | Yes | Yes | Yes
 Team Collaboration | No | No | No | Yes | Yes | Yes
 API Access | No | No | No | No | Yes | Yes
 Audit Logs | No | No | No | No | Yes | Yes
 SSO/OIDC/SAML | No | No | No | No | No | Contracted
 Self Hosting | No | No | No | No | No | Contracted
 
+The Tellann desktop agent is free to download and is available on every plan, including Free. A customer cannot demonstrate an application without it, so gating the agent itself would gate the product. What plans differ on is how much the agent is allowed to do — specifically whether it may analyze the codebase, draft flows from documents, and instrument automatically.
+
+Automated Instrumentation is the clearest upgrade trigger. Without it a developer instruments by hand, following the plan the agent shows them, and the demonstration proceeds normally. With it the agent applies and rolls back the change itself. Free and Local customers get a complete product; paid customers get their time back.
+
 API Access means scoped programmatic access to management, reporting, graph, coverage, and export APIs. SDK ingestion credentials are available on every plan within the applicable credential limit.
+
+Capability tiers are defined in the Entitlement Specification, Section 6.
 
 11. Upgrade Path
 Expected progression:
@@ -278,6 +323,7 @@ Phase 2 introduces:
 * Production Monitoring
 * Workflow Health
 * Journey Intelligence
+* Guidance
 Additional packaging dimension:
 Included Event Pool
 Example:
@@ -290,7 +336,9 @@ The application-based model remains primary.
 Event metering becomes secondary.
 13. Phase 3 Packaging Evolution
 Phase 3 introduces:
-* Autonomous Validation
+* Autonomous Behavioral Intelligence
+* Real-Time Remediation
+* Network Behavioral Intelligence
 * Test Generation
 * Failure Simulation
 * Quality Intelligence Assistant

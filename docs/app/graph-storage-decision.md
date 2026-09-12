@@ -8,7 +8,7 @@
 
 ## Context
 
-The `database_design.txt` and `security_architecture.txt` documentation both reference Neo4j as the behavioral graph storage engine. However, a thorough audit of the codebase reveals that:
+The product documentation historically referenced Neo4j as the behavioral graph storage engine. However, a thorough audit of the codebase reveals that:
 
 1. All behavioral graph data (states, transitions, `BehaviorGraph`, `BehaviorGraphNode`, `BehaviorGraphEdge`, `BehaviorGraphVersion`, `PatternLibraryEntry`, `DeclaredStateSuggestion`, etc.) is stored **exclusively in PostgreSQL** via Prisma.
 2. No Neo4j client library, Bolt driver, or Cypher query exists anywhere in `services/` or `packages/`.
@@ -49,9 +49,11 @@ The first genuine use case for Neo4j's native graph query power arises in **Phas
 
 ### Immediate actions required
 
-1. Update `docs/database_design.txt` — sections 23–26 (Neo4j) to clearly label Neo4j as Phase 3 only.
-2. Update `docs/system_architecture.txt` — storage architecture section to annotate Neo4j as Phase 3.
+1. Update `docs/product docs/system_architecture.txt` — Section 16 (Storage Architecture) to record PostgreSQL as the behavioral graph store and Neo4j as Phase 3 only. **Done.**
+2. Update `docs/product docs/security_architecture.txt` — encryption-at-rest and isolation sections to match. **Done.**
 3. No code changes required. The existing PostgreSQL implementation remains authoritative.
+
+> The standalone data-model specification (`database_design.txt`) has since been retired. The versioned schema in `packages/db/prisma/schema.prisma` and its migration history are now the authoritative data model; storage *responsibility* is recorded in System Architecture §16 and §16.1.
 
 ### Phase 3 migration plan (future)
 
@@ -71,7 +73,7 @@ When Phase 3 begins:
 
 ## References
 
-- [system_architecture.txt — Section 16: Storage Architecture](./system_architecture.txt)
-- [database_design.txt — Sections 23–26: Neo4j Database](./database_design.txt)
-- [security_architecture.txt — Section 8.3: AES-256 Encryption at rest](./security_architecture.txt)
+- [system_architecture.txt — Section 16: Storage Architecture](../product%20docs/system_architecture.txt)
+- [security_architecture.txt — Section 8.3: AES-256 Encryption at rest](../product%20docs/security_architecture.txt)
+- [packages/db/prisma/schema.prisma](../../packages/db/prisma/schema.prisma)
 - [derivation-engine/src/index.ts](../packages/derivation-engine/src/index.ts)

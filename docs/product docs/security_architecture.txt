@@ -17,7 +17,7 @@ The Security Architecture establishes:
 The purpose of this document is to ensure that TELLANN can securely capture, process, analyze, store, and expose behavioral intelligence while protecting customer data, maintaining tenant isolation, and supporting future autonomous quality intelligence capabilities. This architecture aligns with the product vision, functional requirements, non-functional requirements, system architecture, database architecture, data flow architecture, and event governance specifications.
 2. Scope
 This specification applies to all TELLANN components:
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Secures:
 * Frontend SDK
 * Backend SDK
@@ -27,14 +27,14 @@ Secures:
 * Coverage analysis
 * QA reporting
 * Dashboard access
-Phase 2 — Production Intelligence Platform
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional security coverage for:
 * Production telemetry
 * User journey intelligence
 * Database intelligence
 * Error correlation
 * Workflow health monitoring
-Phase 3 — Autonomous Validation Engine
+Phase 3 — Autonomous Behavioral Intelligence
 Additional security coverage for:
 * Test generation
 * Regression analysis
@@ -167,6 +167,29 @@ Internal services shall authenticate using:
 * Mutual TLS (mTLS)
 * Service identities
 * Signed service tokens
+SEC-AUTH-006 Device-Bound Desktop Sessions
+The desktop agent authenticates through the user's system browser, never through an embedded browser view.
+Agent Requests Authorization
+        ↓
+System Browser Opens
+        ↓
+User Authenticates In A Browser They Control
+        ↓
+Authorization Request Completed
+        ↓
+Device Session Issued, Bound To Device Identity
+        ↓
+Tokens Stored In OS-Protected Storage
+Rationale
+An embedded authentication view asks a user to enter platform credentials into an application's own window, which is indistinguishable from a credential-harvesting pattern and trains users to accept it. Delegating to the system browser means the user authenticates in a context whose address bar and certificate they can verify.
+SEC-AUTH-006a
+A device session shall be bound to a device identity and individually revocable, without affecting the user's other sessions.
+SEC-AUTH-006b
+A user shall be able to enumerate every device holding a session and revoke any of them.
+SEC-AUTH-006c
+Desktop tokens shall be held in operating-system protected credential storage, never in plain configuration or application state.
+SEC-AUTH-006d
+A revoked device session shall be rejected at the gateway on its next request; revocation shall not depend on the agent cooperating.
 6.4 Multi-Factor Authentication
 SEC-AUTH-006 MFA
 Organization administrators shall be able to require MFA.
@@ -198,37 +221,69 @@ Resource Access
 
 
 7.3 RBAC Architecture
-Supports architectural requirements.
-Organization Admin
+Authorization is enforced through organization membership roles. Roles are deliberately coarse: four levels that an administrator can reason about and audit, rather than a permission matrix per job title.
+The product personas in the Functional Requirements Specification, Section 3 — Developer, QA Engineer, Engineering Manager, Product Manager — are job functions, not access levels. Several personas routinely share one role, and one person routinely performs several personas. Encoding personas as roles would require re-assigning access whenever someone's responsibilities shifted, without improving isolation.
+Membership Roles
+OWNER
 Permissions:
-* Manage organization
-* Manage users
-* Manage applications
-* Manage billing
-* Manage security settings
-Engineering Manager
+* Everything ADMIN can do
+* Manage billing and subscription
+* Transfer or delete the organization
+* Assign and revoke the OWNER role
+ADMIN
 Permissions:
-* View reports
-* View workflow health
-* View release intelligence
-* View quality assessments
-QA Engineer
+* Manage applications and environments
+* Manage members, invitations and roles below ADMIN
+* Manage ingestion and programmatic credentials
+* Manage security settings and branch policy
+* Declare and edit flows
+* Approve and roll back instrumentation
+* Start demonstration runs
+* Reveal protected values
+* View audit logs
+MEMBER
 Permissions:
-* View sessions
-* View behavioral graphs
-* Generate reports
-* Review coverage analysis
-Developer
+* Declare and edit flows
+* Bind workspaces
+* Approve and roll back instrumentation on their own workspace
+* Start demonstration runs
+* Annotate runs
+* Generate and export reports
+* View sessions, graphs, coverage and reconciliation
+VIEWER
 Permissions:
-* Manage applications
-* View telemetry
-* Investigate failures
-* Access session replay
-Product Manager
-Permissions:
-* View journey intelligence
-* View workflow health
-* View quality reports
+* View reports, coverage, reconciliation and graphs
+* View sessions and replay
+* Export where the plan entitles it
+No write access, no run execution, no credential access, no protected value reveal.
+Persona To Role Mapping
+Developer             → MEMBER or ADMIN
+QA Engineer           → MEMBER or ADMIN
+Product Manager       → MEMBER or VIEWER
+Engineering Manager   → VIEWER, MEMBER or ADMIN
+Organization Admin    → ADMIN or OWNER
+SEAD-RBAC-001
+Flow declaration and editing require MEMBER or above. This is the permission referenced by FDRS-EDIT-001.
+SEAD-RBAC-002
+Protected value reveal requires ADMIN or above and is always audited.
+SEAD-RBAC-003
+Instrumentation approval requires MEMBER or above, and applies only to a workspace the approving user has bound.
+SEAD-RBAC-004
+Role is necessary but not sufficient. Every gated capability additionally resolves the organization's entitlement. A MEMBER on the Free plan cannot use automated instrumentation regardless of role.
+7.3.1 Authorization Surfaces Beyond Role
+Role is one of five independent checks. All must pass.
+Tenant Ownership
+The resource belongs to the caller's organization.
+Membership Role
+The role permits the action.
+Entitlement
+The organization's plan includes the capability.
+Device Trust
+For desktop operations, the calling device holds a valid, unrevoked session.
+Workspace Trust
+For workspace operations, the bound workspace is trusted and matches the application.
+SEAD-RBAC-005
+A failure in any surface denies the request. Surfaces are not substitutable for one another.
 7.4 Resource Authorization
 Every request must validate:
 {
@@ -394,12 +449,109 @@ authorization
 
 
 Supports privacy requirements and event governance.
-10.4 SDK Integrity Validation
+10.4 SDK Integrity Validation (Pre-Launch)
 Each SDK shall:
 * Sign requests
 * Validate SDK keys
 * Detect tampering
 * Detect malformed payloads
+Status
+Key validation and payload validation are delivered. Request signing and tamper detection are specified and scheduled for completion before general availability. See the SDK Specification, Section 11.
+10.5 Desktop Agent Security Architecture
+The desktop agent is the platform's highest-privilege component. It holds a platform credential, reads customer source, drives a browser through which real credentials pass, and writes to a customer working tree. It is treated accordingly.
+Trust Model
+The agent is trusted by the user, not by the platform. The platform grants it a device-bound session and nothing more; every operation it performs against platform resources is authorized independently.
+Conversely, the platform is not trusted with the user's source. The agent transmits derived artifacts by default and raw source only on explicit consent.
+10.5.1 Process Isolation
+Renderer
+No credentials. No network access. No filesystem access.
+Communicates only through a capability-scoped bridge.
+Preload Bridge
+Exposes a fixed set of named channels. Inputs validated at the boundary.
+Main Process
+Holds credentials, filesystem access and network egress.
+SEAD-AGENT-001
+The renderer shall never hold a platform credential.
+SEAD-AGENT-002
+The bridge shall expose named, validated channels only. It shall not expose a general-purpose invoke, a filesystem handle, or a network client.
+SEAD-AGENT-003
+All outbound platform traffic shall pass through a single egress client, so the transmitted surface is auditable in one place.
+10.5.2 Workspace Trust
+Binding a workspace grants the agent read access to a customer's source and, on approval, write access to their working tree. That grant is explicit and revocable.
+SEAD-AGENT-004
+A workspace shall carry a trust status. Privileged operations against an untrusted workspace shall be refused.
+SEAD-AGENT-005
+The agent shall verify that the bound repository matches the application it is bound to, and refuse to operate on a mismatch.
+SEAD-AGENT-006
+Binding, trust changes and unbinding shall be recorded in the audit log.
+10.5.3 Branch Policy And Checkout Grants
+An organization may constrain where the agent is permitted to make changes.
+Branch Policy
+Declares whether the agent may check out a branch on the developer's behalf, and which branch instrumentation belongs on.
+Checkout Grant
+A time-boxed, revocable permission for the agent to switch branches. Expires automatically.
+SEAD-AGENT-007
+The agent shall record the developer's branch state before intervention and restore it afterwards.
+SEAD-AGENT-008
+A checkout grant shall expire on its own. An expired grant shall not be silently renewed.
+SEAD-AGENT-009
+Branch policy changes shall be recorded in the audit log.
+10.5.4 Source Handling
+SEAD-AGENT-010
+Source content shall be processed locally. Only projections — code graph topology, checkpoint locations, warnings — shall be transmitted by default.
+SEAD-AGENT-011
+Raw source or a source archive shall be transmitted only on explicit consent granted for a named purpose, recorded with the purpose, the granting user and the time.
+SEAD-AGENT-012
+Consent shall not generalize across purposes or sessions.
+SEAD-AGENT-013
+A consented archive shall be deleted once its purpose completes.
+10.5.5 Working Tree Modification
+Writing to a customer's working tree is the most consequential thing the platform does. It is constrained at every step.
+Plan Proposed
+      ↓
+Diff Rendered, Secrets Redacted
+      ↓
+Human Approval Recorded
+      ↓
+Patch Set Applied
+      ↓
+Validation Executed
+      ↓
+Success ──▶ Result Recorded
+Failure ──▶ Automatic Rollback ──▶ Branch Restored
+SEAD-AGENT-014
+No write shall occur without an approved plan.
+SEAD-AGENT-015
+Every applied plan shall have a recorded, executable rollback.
+SEAD-AGENT-016
+Displayed and exported diffs shall be redacted of secrets before rendering.
+SEAD-AGENT-017
+Approval, application, validation outcome and rollback shall each be recorded in the audit log with the acting user.
+10.5.6 Run Credential Handling
+SEAD-AGENT-018
+Credentials supplied to drive a demonstration run shall be held in OS-protected storage on the developer's machine and shall never be transmitted to the platform.
+SEAD-AGENT-019
+Values classified as protected during a run shall be stored protected and revealed only on an authorized, audited request.
+SEAD-AGENT-020
+In Observation Only mode, the agent shall restrict itself to read-safe interactions.
+10.5.7 Update Integrity
+SEAD-AGENT-021
+Agent binaries shall be signed, and updates shall be verified against that signature before application.
+SEAD-AGENT-022
+The update channel shall be authenticated and shall not be redirectable by local configuration.
+SEAD-AGENT-023
+An agent version shall be able to refuse to operate where the platform declares it unsupported.
+10.6 Assistive Intelligence Security
+SEAD-AI-001
+Input shall be sanitized before transmission to a model provider, using the same classification rules that govern capture. Source file contents, protected values, credentials and raw telemetry payloads shall never be transmitted.
+SEAD-AI-002
+Model output shall be schema-validated before use and shall never be executed, evaluated, or written to a customer system.
+SEAD-AI-003
+Model output shall never grant authorization, alter an entitlement, or modify a declared graph without explicit human acceptance.
+SEAD-AI-004
+Every invocation shall be logged with its feature, status, attribution and cost, and shall be administratively reviewable.
+SEAD-AI-005
+Content returned by a model provider is untrusted input. It shall be treated as data, never as instruction.
 11. Data Privacy Architecture
 Privacy Pipeline
 Event Captured
@@ -447,16 +599,63 @@ Session replay shall:
 Supports privacy requirements and replay architecture.
 12. Audit Logging Architecture
 Security Events Logged
+Identity And Access
 * Login success
 * Login failure
 * MFA events
 * Permission changes
 * User creation
 * User deletion
+* Invitation issued, accepted, revoked
 * API key creation
 * API key rotation
-* Report exports
+* Programmatic token issue and revoke
+* Device session issued
+* Device session revoked
+Configuration
 * Tenant configuration changes
+* Security settings changes
+* Branch policy changes
+* Notification preference changes
+* Subscription and plan changes
+Intent
+* Flow declared
+* Flow edited
+* Flow published
+* Flow reopened
+* Suggestion accepted
+* Suggestion rejected
+* Whole-flow review applied or declined
+* Observed state promoted into declared intent
+* Ruleset recompiled
+Local Agent
+* Workspace bound
+* Workspace trust changed
+* Workspace unbound
+* Repository mismatch detected
+* Checkout grant issued
+* Checkout grant expired or revoked
+* Source upload consent granted
+* Source archive uploaded
+* Source archive deleted
+Instrumentation
+* Plan proposed
+* Plan approved
+* Plan rejected
+* Patch set applied
+* Validation outcome recorded
+* Rollback executed
+Runs And Evidence
+* Run started
+* Run completed or failed
+* Protected value revealed
+* Report exported
+Assistive Intelligence
+* Model invocation, with feature, status, attribution and cost
+SEAD-AUDIT-001
+Every action that modifies a customer system, changes what the platform considers intended behavior, or exposes a protected value shall be audited with the acting user.
+SEAD-AUDIT-002
+An audit record for a working-tree modification shall identify the workspace, the plan, and the approving user.
 Audit Record Structure
 {
   "auditId": "uuid",
@@ -555,44 +754,87 @@ The platform shall support:
 * Data deletion requests
 Supports compliance requirements.
 17. Phase-Based Security Evolution
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Security Components Active:
 * OAuth/OIDC Authentication
-* RBAC
-* API Keys
+* Multi-factor authentication
+* Membership RBAC
+* Entitlement enforcement
+* Ingestion and programmatic credentials
+* Device-bound desktop sessions
+* Workspace trust and repository verification
+* Branch policy and time-boxed checkout grants
+* Purpose-named source upload consent
+* Protected value classification with audited reveal
+* Reversible working-tree modification
+* Assistive intelligence input sanitization
 * TLS Encryption
 * Privacy Filtering
 * Tenant Isolation
 * Audit Logging
 Goal:
-Secure behavioral data collection and QA intelligence generation.
-Phase 2 — Production Intelligence Platform
+Secure behavioral data collection, secure access to a customer's codebase, and safe modification of a customer's working tree.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional Security Components:
 * Production telemetry protection
 * Database telemetry protection
 * Advanced audit trails
 * Journey intelligence privacy controls
 * Error correlation access controls
+* Separation of production evidence from demonstration evidence at collection
 Goal:
 Secure production intelligence operations.
-Phase 3 — Autonomous Validation Engine
+Phase 3 — Autonomous Behavioral Intelligence
 Additional Security Components:
+* Authority model for autonomous action
+* Per-application, explicit, revocable authority grants
+* Remediation attribution and revert paths
+* Network pattern anonymization guarantees
 * Intelligence model protection
 * Test generation authorization
 * Simulation authorization
 * Recommendation governance
 * AI-assisted investigation controls
 Goal:
-Secure autonomous quality intelligence.
+Secure autonomous action on a customer system, under authority the customer granted and can withdraw.
+17.1 The Phase 3 Authority Model
+Phase 3 is the first phase in which the platform changes a customer's running system without a human initiating the change. That capability requires a security model that does not exist in Phase 1 or Phase 2, and it must be designed before it is built.
+SEAD-AUTH3-001
+The platform shall hold no authority over a customer system by default at any phase.
+SEAD-AUTH3-002
+Authority shall be granted explicitly, per application, and shall be revocable at any time with immediate effect.
+SEAD-AUTH3-003
+An authority grant shall state its scope: which classes of change, within which bounds, during which windows.
+SEAD-AUTH3-004
+Every autonomous action shall be attributable to the grant it was taken under, and shall carry a revert path.
+SEAD-AUTH3-005
+Verification failure shall halt autonomous action and escalate to a human rather than retry.
+SEAD-AUTH3-006
+Revoking authority shall stop pending actions, not merely prevent new ones.
 18. Security Acceptance Criteria
 The Security Architecture shall be considered complete when:
 1. All platform traffic is encrypted in transit.
 2. Sensitive data is encrypted at rest.
 3. All users and services are authenticated.
-4. Authorization is enforced for every protected resource.
-5. Tenant isolation is verifiably maintained.
+4. Authorization is enforced for every protected resource, across all five surfaces in Section 7.3.1.
+5. Tenant isolation is verifiably maintained, including in anonymized aggregate indexes.
 6. SDKs enforce privacy and security controls before transmission.
-7. Security-sensitive actions are fully auditable.
-8. Security monitoring generates actionable alerts.
-9. Compliance and retention controls are enforceable per tenant.
-10. The architecture supports secure evolution from Behavioral QA Platform to Production Intelligence Platform and Autonomous Validation Engine without requiring redesign.
+7. The desktop agent holds no platform credential in its renderer, and transmits all outbound traffic through one auditable egress point.
+8. Customer source does not leave the developer's machine without purpose-named consent.
+9. No write reaches a customer working tree without an approved, reversible plan.
+10. Protected values are never rendered in the clear, and every reveal is audited.
+11. A device session can be revoked independently and takes effect without the agent's cooperation.
+12. Assistive intelligence input is sanitized, its output is treated as untrusted data, and every invocation is logged.
+13. Security-sensitive actions are fully auditable, per Section 12.
+14. Security monitoring generates actionable alerts.
+15. Compliance and retention controls are enforceable per tenant.
+16. The architecture supports secure evolution from Behavioral QA & Intent Platform to Production Monitoring, Feedback & Analysis and Autonomous Behavioral Intelligence without requiring redesign.
+19. Pre-Launch Security Checklist
+Specified in this document and scheduled for completion and verification before general availability:
+* SDK request signing and tamper detection — Section 10.4
+* SAML federation — Section 6.3
+* Tenant-configurable retention enforcement — Section 16, and PDCS Section 14
+* Customer privacy rule engine — PDCS Section 13
+* Independent security assessment covering the desktop agent trust boundary — Sections 10.5 and 10.6
+SEAD-LAUNCH-001
+The desktop agent trust boundary shall be independently reviewed before general availability. It is the component with the broadest privilege and the least precedent in the original architecture.

@@ -31,14 +31,15 @@ Generate Insights
 Support Autonomous Validation
 The architecture must support progressive evolution from:
 Phase 1:
-Behavioral QA Platform
+Behavioral QA & Intent Platform
 to
 Phase 2:
-Production Intelligence Platform
+Production Monitoring, Feedback & Analysis
 to
 Phase 3:
-Autonomous Quality Intelligence Platform
+Autonomous Behavioral Intelligence
 without requiring architectural redesign.
+A defining property of the architecture is that it spans two trust zones. Part of the platform runs in Tellann's cloud. Part runs on the developer's own machine, holds their source code, and modifies their working tree. Those two zones exchange evidence and instructions, never raw source, unless the developer explicitly consents.
 3. Architectural Principles
 AP-001 Event-Driven Architecture
 All platform operations shall be driven by behavioral events.
@@ -56,16 +57,42 @@ AP-007 Extensibility
 New analytics modules shall be attachable without redesign.
 AP-008 AI-Ready Foundation
 Architectural decisions shall support future intelligence capabilities.
+AP-009 Local-First Source Handling
+Customer source code shall be processed on the developer's machine by default. Only derived artifacts, evidence, and explicitly consented uploads shall cross into the platform.
+AP-010 Deterministic Analysis
+Every analytical output the platform publishes shall be computed deterministically from recorded evidence and shall be reproducible from that evidence. Language models occupy an assistive path that is structurally separate from the analytical path.
+AP-011 Reversible Intervention
+Any change the platform makes to a customer system shall be planned, reviewed, recorded and reversible.
 4. High-Level Architecture
-┌───────────────────────┐
-│ Customer Application  │
-└──────────┬────────────┘
-           │
-           ▼
-┌───────────────────────┐
-│ Frontend SDK          │
-│ Backend SDK           │
-└──────────┬────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ DEVELOPER MACHINE                                        │
+│                                                          │
+│  ┌────────────────────┐      ┌────────────────────────┐  │
+│  │ Customer Codebase  │◀────▶│ Tellann Desktop Agent  │  │
+│  └────────────────────┘      │                        │  │
+│                              │ Workspace Binding      │  │
+│  ┌────────────────────┐      │ Codebase Analysis      │  │
+│  │ Managed Browser    │◀────▶│ Instrumentation        │  │
+│  │ (Guided QA Run)    │      │ Run Orchestration      │  │
+│  └────────────────────┘      │ Local Relay            │  │
+│                              └───────────┬────────────┘  │
+└──────────────────────────────────────────┼───────────────┘
+                                           │ evidence,
+                                           │ derived artifacts
+┌───────────────────────┐                  │ (never raw source
+│ Customer Application  │                  │  without consent)
+└──────────┬────────────┘                  │
+           │                               │
+           ▼                               │
+┌───────────────────────┐                  │
+│ Frontend SDK          │                  │
+│ Backend SDK           │                  │
+└──────────┬────────────┘                  │
+           │                               │
+           ▼                               ▼
+┌──────────────────────────────────────────────────────────┐
+│ API Gateway                                              │
+└──────────┬───────────────────────────────────────────────┘
            │
            ▼
 ┌───────────────────────┐
@@ -85,26 +112,57 @@ Architectural decisions shall support future intelligence capabilities.
 │ Behavioral Graph Engine            │
 │ Coverage Engine                    │
 │ Endpoint Analysis Engine           │
-│ Journey Intelligence Engine        │
-│ Error Correlation Engine           │
-│ Autonomous QA Engine               │
+│ Reconciliation Engine              │
+│ Derivation Engine                  │
+│ Code Intelligence Engine           │
+│ Document Intelligence Engine       │
+│ Journey Intelligence Engine  (P2)  │
+│ Error Correlation Engine     (P2)  │
+│ Guidance Engine              (P2)  │
+│ Autonomous QA Engine         (P3)  │
+│ Remediation Engine           (P3)  │
 └──────────┬─────────────────────────┘
            │
-           ▼
-┌───────────────────────┐
-│ Storage Layer         │
-└──────────┬────────────┘
-           │
+           ├──────────────────────────┐
+           │                          │
+           ▼                          ▼
+┌───────────────────────┐  ┌────────────────────────┐
+│ Storage Layer         │  │ Assistive Intelligence │
+└──────────┬────────────┘  │ (bounded, optional)    │
+           │               └────────────────────────┘
            ▼
 ┌───────────────────────┐
 │ Dashboard Platform    │
 └───────────────────────┘
+The Assistive Intelligence layer sits beside the analytical path, never inside it. Analysis does not call it, and does not depend on it being reachable.
 5. Core Architectural Layers
+Layer 0 — Local Agent Layer
+Runs on the developer's machine. Responsible for everything that requires access to source code, the working tree, or a controlled browser.
+Components:
+* Desktop Agent Shell
+* Workspace Manager
+* Codebase Analyzer
+* Document Processor
+* Instrumentation Controller
+* Browser Observer
+* Local Relay
+* Secure Credential Store
+Responsibilities:
+* Bind and trust a local workspace
+* Analyze source without transmitting it
+* Plan, apply, validate and roll back instrumentation
+* Drive managed browser demonstration runs
+* Detect flow boundaries and scope evidence
+* Protect sensitive captured values
+* Hold device-bound credentials
+Trust boundary:
+This layer holds customer source. It transmits evidence, derived artifacts and analysis projections. It transmits raw source only on explicit, purpose-named consent.
 Layer 1 — Capture Layer
 Responsible for observing applications.
 Components:
 * Frontend SDK
 * Backend SDK
+* Managed Browser Session (via Layer 0)
 Responsibilities:
 * Behavioral capture
 * Session creation
@@ -208,6 +266,84 @@ Responsibilities
 * Error tracking
 * Session correlation
 * Request tracing
+7.1 Desktop Agent Architecture
+Purpose:
+Provide the controlled local environment in which an application can be analyzed, instrumented and demonstrated.
+The desktop agent is not an optional convenience. It is where Phase 1's core loop executes. A demonstration run cannot be started anywhere else.
+Process Model
+Desktop Agent
+│
+├── Main Process
+│   ├── Authentication & Device Identity
+│   ├── Secure Credential Store
+│   ├── Workspace Manager
+│   ├── Git Checkpoint & Branch Policy
+│   ├── Codebase Analysis Worker
+│   ├── Document Processor
+│   ├── Instrumentation Controller
+│   ├── Run Orchestrator
+│   ├── Browser Observer
+│   ├── Local Relay
+│   ├── Cloud Client
+│   ├── Notification Client
+│   └── Update Manager
+│
+├── Preload Bridge
+│   └── Capability-scoped IPC surface
+│
+└── Renderer
+    ├── Applications
+    ├── Intent
+    ├── Instrumentation
+    ├── QA Runs
+    └── Reports
+Component Responsibilities
+Authentication & Device Identity
+Authenticates through the system browser. Holds a device-bound session. A session is valid for one machine and is revocable per device.
+Secure Credential Store
+Holds platform tokens and run credentials using operating-system protected storage. Run credentials are never persisted to platform storage.
+Workspace Manager
+Binds a local repository to an application, records trust status, takes repository snapshots, and supports cloning into a new workspace.
+Git Checkpoint & Branch Policy
+Records the developer's branch state before intervention, enforces configured branch policy, issues time-boxed checkout grants, and restores the original branch afterwards.
+Codebase Analysis Worker
+Builds a code graph from the bound workspace in staged, cancellable runs. Produces analysis projections, warnings and evidence references. Source is read locally; only projections leave the machine.
+Document Processor
+Imports customer product documents, versions them, and prepares them for intent drafting.
+Instrumentation Controller
+Detects existing instrumentation, resolves a plan against declared flows, renders redacted diffs for review, applies an approved patch set to the working tree, runs validation commands, and performs rollback.
+Run Orchestrator
+Manages the run lifecycle from ARMED through to COMPLETED or COMPLETED_INCOMPLETE, including pause, resume, boundary detection and evidence batching.
+Browser Observer
+Drives the managed browser session, captures interaction and network evidence, sanitizes URLs and payload keys, classifies protected values, and records browser findings.
+Local Relay
+Correlates backend SDK telemetry emitted by the locally running application with the active run session.
+Cloud Client
+The single egress point to the platform. Every outbound call passes through it, which makes the transmitted surface auditable in one place.
+Update Manager
+Manages agent version checks and update application under policy.
+Transmitted / Not Transmitted
+Transmitted:
+* Evidence events and run lifecycle state
+* Code graph projections and analysis warnings
+* Instrumentation plans, capabilities and results
+* Declared flow and suggestion data
+* Document-derived intent drafts
+* Findings, annotations and artifacts
+Not transmitted without explicit consent:
+* Raw source files
+* Source archives
+* Working tree diffs beyond the reviewed plan
+Never transmitted:
+* Run credentials
+* Protected values in the clear
+* Operating-system credential store contents
+Failure Posture
+The desktop agent degrades rather than blocks:
+* No model provider — assistance is unavailable, everything else works
+* No network — analysis and instrumentation continue locally, evidence queues
+* Validation failure — instrumentation rolls back, the workspace is restored
+* Browser closed mid-run — the run completes as COMPLETED_INCOMPLETE and reports the evidence it has
 8. Event Collector Architecture
 Purpose:
 Receive and validate all telemetry.
@@ -289,6 +425,108 @@ Outputs
 * Slow Endpoint Reports
 * API Rankings
 * Optimization Suggestions
+12.1 Reconciliation Engine
+Purpose:
+Diff the Declared Intent Graph against the Observed Behavior Graph.
+Inputs
+* Declared Intent Graph
+* Observed Behavior Graph
+* Compiled Ruleset
+Outputs
+* Three-way classification: Confirmed, True Gap, Undeclared
+* Flow Reconciliation Report
+* Drift record over time
+Runs incrementally as new evidence arrives, not only at flow completion.
+Specified in full by the Behavior Graph Specification, Section 22.5.
+12.2 Derivation Engine
+Purpose:
+Propose states, transitions and branch flows a declarer likely intends but has not entered.
+Lookup Order
+Tier 1 — Internal Pattern Library
+Curated, versioned QA patterns keyed by state category and semantic name.
+Tier 1.5 — Cross-Tenant Structural Match
+Anonymized, frequency-weighted graph shape index. Governed by FDRS-PRIV-001 through FDRS-PRIV-004.
+Tier 2 — Assisted Enrichment
+Consulted only where Tiers 1 and 1.5 return no usable result. Output is normalized into the same suggestion structure and labelled with its tier.
+Every suggestion is a proposal. Nothing enters a Declared Intent Graph without explicit acceptance.
+12.3 Code Intelligence Engine
+Purpose:
+Relate declared flows to locations in a customer codebase.
+Inputs
+* Code graph projections from the desktop agent
+* Declared flows
+Outputs
+* Flow checkpoint locations
+* Blast radius analysis
+* Snapshot comparison
+* Instrumentation targeting
+Operates on projections. It does not hold customer source.
+12.4 Document Intelligence Engine
+Purpose:
+Convert customer product documents into candidate declared flows.
+Inputs
+* Source document versions
+Outputs
+* Intent drafts for human review
+Assisted per Section 12.5. Drafts are never applied without review.
+12.5 Assistive Intelligence Layer
+Purpose:
+Reduce the cost of stating intent.
+Architectural Position
+This layer is invoked only by the Derivation Engine (Tier 2) and the Document Intelligence Engine. No analytical engine calls it.
+Session Engine        ──┐
+Behavioral Graph Engine ├── deterministic, never
+Coverage Engine         │   calls this layer
+Reconciliation Engine ──┘
+Derivation Engine     ──┐
+Document Intelligence ──┴── may call this layer
+Components
+Assistive Intelligence
+│
+├── Provider Interface
+├── Prompt Registry
+├── Input Sanitizer
+├── Schema Validator
+├── Output Repair
+├── Invocation Log
+└── Cost Aggregator
+Constraints
+* Input is sanitized before transmission
+* Output is schema-validated before use
+* Every invocation is logged with feature, status, attribution and cost
+* Unavailability degrades assistance quality and nothing else
+Bounded by the MVP Scope Document, Section 9.1.
+12.6 Guidance Engine (Phase 2)
+Purpose:
+Convert production observation into direction.
+Inputs
+* Production behavior
+* Declared Intent Graph
+* Demonstrated behavior
+* Workflow health baselines
+Outputs
+* Ranked issues by observed user impact
+* Guidance on what to build, fix or change next
+* Evidence trace for every item of guidance
+Where evidence is insufficient, the engine reports insufficiency rather than issuing weak guidance.
+12.7 Remediation Engine (Phase 3)
+Purpose:
+Act on understanding, under customer authority.
+Pipeline
+Failure Observed In Production
+        ↓
+Root Cause Located
+        ↓
+Remediation Proposed
+        ↓
+Authority Checked
+        ↓
+Applied
+        ↓
+Verified Against Behavior
+        ↓
+Escalated If Verification Fails
+Every action is attributable, auditable and reversible. Authority is explicit, per-application and revocable.
 13. User Journey Intelligence Engine (Phase 2)
 Purpose:
 Understand real user behavior.
@@ -339,58 +577,117 @@ Responsibilities
 * Simulate failures
 * Recommend improvements
 16. Storage Architecture
+Storage responsibilities are defined here at the architectural level. The authoritative schema is the migrated database schema in the repository, not a document. See Section 16.1.
 PostgreSQL
-Stores:
-* Organizations
-* Users
-* Applications
-* Configuration
-* Reports Metadata
+Operational and relational platform data, including:
+* Organizations, users, memberships and invitations
+* Applications, environments and credentials
+* Declared Intent Graphs, suggestions, rulesets and reconciliation results
+* Behavioral graphs, versions and drift records
+* Workspaces, repository bindings, codebase snapshots and analysis runs
+* Source documents and intent drafts
+* Instrumentation plans, capabilities and patch sets
+* QA runs, evidence, artifacts, findings and reports
+* Subscriptions, entitlements, invoices and usage
+* Notifications, deliveries and preferences
+* Audit logs and security configuration
 ClickHouse
-Stores:
-* Events
-* Sessions
-* Metrics
-* Analytics Data
+High-volume telemetry and analytics:
+* Raw events
+* Endpoint metrics
+* Session analytics
 Reason:
 Optimized for large-scale analytics workloads.
 Object Storage
-Stores:
+Large binary and exported assets:
 * Session Replay Assets
 * Graph Snapshots
 * Report Exports
+* Run Artifacts
+* Consented Source Archives
 * Historical Archives
+16.1 Schema Authority
+The platform's relational schema is defined and versioned in the repository, and evolves continuously with implementation.
+A separate prose data-model specification is not maintained. A document describing tables cannot be kept truthful at the rate the schema changes, and a schema document that has drifted is more damaging than no schema document, because it is trusted.
+Authoritative sources:
+Relational schema
+The versioned schema definition and its migration history in the repository.
+Analytics schema
+The ClickHouse table definitions maintained alongside the ingestion services.
+Storage responsibilities
+This section.
+Retention and classification
+The Privacy & Data Collection Specification.
+Architectural decisions about storage
+Recorded as Architecture Decision Records. ADR-001 records the decision to store behavioral graphs relationally rather than in a dedicated graph database, with a dedicated graph store deferred to Phase 3.
+SAD-DATA-001
+Any architectural change to storage responsibility — a new store, a change of ownership between stores, or a change of retention class — shall be recorded as an ADR and reflected in Section 16. Table-level change requires no document update.
 17. Dashboard Architecture
 Technology:
 Next.js
+The dashboard is the platform's presentation and administration surface. It does not drive demonstration runs; that is Layer 0.
 Modules:
 Dashboard
 │
-├── Workflow Health
-├── Session Replay
+├── Overview & Lifecycle
+├── Flow Declaration
 ├── Behavioral Graphs
-├── Coverage Reports
+├── Reconciliation
+├── Graph Drift
+├── Workflows
+├── Missing States & Flows
+├── Sessions & Session Replay
 ├── Endpoint Intelligence
-├── Journey Intelligence
-├── Error Correlation
-├── Release Validation
-└── Intelligence Assistant
+├── QA Runs
+├── Reports & Exports
+├── Settings & Administration
+│   ├── Organization, Members, Roles
+│   ├── Applications & Environments
+│   ├── Ingestion & Programmatic Keys
+│   ├── Notifications & Preferences
+│   ├── Security, Sessions & Devices
+│   ├── Storage & Retention
+│   └── Billing, Usage & Entitlements
+├── Platform Administration
+│   ├── Rulesets & Rule Candidates
+│   ├── Assisted Intelligence Usage
+│   └── Job Monitoring
+├── Journey Intelligence      (Phase 2)
+├── Error Correlation         (Phase 2)
+├── Guidance                  (Phase 2)
+└── Release Validation        (Phase 3)
 18. Security Architecture
 Authentication
-* OAuth 2.0
-* OIDC
-* SSO Integration
+* One-time code and password authentication
+* Multi-factor authentication
+* OIDC federation
+* SAML federation (Pre-Launch)
+* System-browser OAuth with device-bound sessions for the desktop agent
 Authorization
-RBAC Roles:
-* Developer
-* QA Engineer
-* Product Manager
-* Engineering Manager
-* Organization Admin
+The platform enforces authorization through organization membership roles. Roles are coarse and auditable by design; the product personas described in the Functional Requirements Specification, Section 3, are job functions rather than access levels, and several personas typically share one role.
+Membership Roles:
+* OWNER — full control, including billing and organization lifecycle
+* ADMIN — full operational control, excluding organization deletion
+* MEMBER — declare, demonstrate, review and report
+* VIEWER — read-only access to evidence and reports
+Persona to role mapping:
+Developer          → MEMBER or ADMIN
+QA Engineer        → MEMBER or ADMIN
+Product Manager    → MEMBER or VIEWER
+Engineering Manager → VIEWER, MEMBER or ADMIN
+Organization Admin → ADMIN or OWNER
+Additional authorization surfaces:
+* Per-device session authorization for the desktop agent
+* Per-workspace trust status
+* Per-application branch policy and time-boxed checkout grants
+* Scoped programmatic access tokens
+* Entitlement resolution gating feature access independently of role
 Data Protection
 * TLS 1.3
 * AES-256 Encryption
+* Operating-system protected credential storage on the desktop agent
 * Secret Management
+* Protected value classification with audited reveal
 * Audit Logging
 19. Multi-Tenant Architecture
 Tenant Isolation Model:
@@ -433,6 +730,22 @@ Supporting Services:
 * ClickHouse
 * Redis
 * Object Storage
+Desktop Agent Distribution:
+The desktop agent is not deployed to the cluster. It is distributed to developer machines and updated independently.
+Build & Sign
+    │
+    ▼
+Release Channel
+    │
+    ▼
+Update Feed
+    │
+    ▼
+Developer Machine
+    │
+    ▼
+Update Applied Under Policy
+The agent and the platform version independently. The platform must remain compatible with the agent versions in the field, and the agent must degrade gracefully against a newer platform.
 21. Scalability Strategy
 Horizontal Scaling Targets:
 Collector Layer
@@ -466,48 +779,91 @@ Monitored Metrics:
 * Error Rate
 * Session Processing Time
 23. Phase-Based Architectural Evolution
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Components Active:
+* Desktop Agent (Layer 0)
 * Frontend SDK
 * Backend SDK
+* API Gateway
 * Event Collector
+* Session Engine
 * Session Replay
 * Behavioral Graph Engine
 * Coverage Engine
 * Endpoint Analysis Engine
+* Reconciliation Engine
+* Derivation Engine
+* Code Intelligence Engine
+* Document Intelligence Engine
+* Assistive Intelligence Layer (bounded)
+* Report Engine
 * Dashboard
+* Platform Foundation services
 Goal:
-Generate QA intelligence from recorded demo sessions.
-Phase 2 — Production Intelligence Platform
+Establish what an application is supposed to do, observe what it actually does under demonstration, and report the difference.
+Structural groundwork shipped in Phase 1:
+* Graph versioning and drift comparison — extended to production baselines in Phase 2, to anomaly detection in Phase 3
+* Cross-tenant structural pattern index — extended to network behavioral intelligence in Phase 3
+* Assistive Intelligence Layer — extended to behavioral reasoning in Phase 3
+* Recommendation evidence capture — extended to implementation guidance in Phase 2 and 3
+Groundwork is scoped to what is useful on demonstration evidence alone. Nothing requiring production traffic is stubbed into Phase 1.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional Components:
-* Live Monitoring
-* Journey Intelligence
-* Database Intelligence
-* Error Correlation
+* Production Ingestion Path
+* Workflow Health Monitor
+* Journey Intelligence Engine
+* Database Intelligence Engine
+* Error Correlation Engine
+* Guidance Engine
+Architectural change required:
+The ingestion path must separate demonstration evidence from production evidence at collection time, because they are metered differently, retained differently, and compared against one another.
 Goal:
-Understand production behavior and workflow health.
-Phase 3 — Autonomous Validation Engine
+Understand the customer's system while real users are using it, and convert that understanding into guidance on what to build, fix or change next.
+Phase 3 — Autonomous Behavioral Intelligence
 Additional Components:
 * Test Generation Engine
 * Regression Engine
 * Failure Simulation Engine
-* Optimization Intelligence Engine
+* Behavioral Anomaly Engine
+* Network Behavioral Intelligence
+* Remediation Engine
+* Authority & Policy Service
 * Quality Intelligence Assistant
+Architectural change required:
+An authority model in which a customer grants explicit, revocable, per-application permission for the platform to act, and every action remains attributable and reversible.
 Goal:
-Transform behavioral intelligence into autonomous quality validation.
-24. Future Architecture Vision
+Understand a running system continuously, remediate in real time under customer authority, and use network-scale behavioral intelligence to propose implementation changes.
+24. Architectural Invariants
+The following must remain true at every phase. They are what separates the platform from a tool that guesses.
+SAD-INV-001
+Analytical output is deterministic and reproducible from recorded evidence.
+SAD-INV-002
+Assistive intelligence proposes; it never decides, and it is never on the analytical path.
+SAD-INV-003
+Customer source is processed locally and leaves the machine only on explicit, purpose-named consent.
+SAD-INV-004
+Any change made to a customer system is planned, reviewed, recorded and reversible.
+SAD-INV-005
+The platform holds no authority over a customer system by default.
+SAD-INV-006
+Tenant isolation holds across every store, every engine and every index, including anonymized aggregate indexes.
+SAD-INV-007
+Removing the model provider degrades assistance quality and nothing else.
+25. Future Architecture Vision
+Declare
+    ↓
 Observe
     ↓
-Capture
+Reconcile
     ↓
-Model
+Report
     ↓
-Understand
+Monitor
     ↓
-Predict
+Analyze
     ↓
-Recommend
+Guide
     ↓
-Validate
+Understand Continuously
     ↓
-Autonomously Improve
+Remediate Under Authority

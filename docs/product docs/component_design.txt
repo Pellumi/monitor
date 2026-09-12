@@ -13,9 +13,24 @@ The purpose of this document is to:
 * Support service-level testing
 * Support future extensibility
 2. Component Hierarchy
+Local Agent Layer                          Phase 1
+├── Desktop Agent Shell
+├── Device Identity & Secure Store
+├── Workspace Manager
+├── Git Checkpoint & Branch Policy
+├── Codebase Analyzer
+├── Document Processor
+├── Instrumentation Controller
+├── Run Orchestrator
+├── Browser Observer
+├── Local Relay
+└── Cloud Client
+
+
 Capture Layer
 ├── Frontend SDK
 ├── Backend SDK
+└── Managed Browser Session
 
 
 Ingestion Layer
@@ -30,29 +45,55 @@ Streaming Layer
 
 
 Processing Layer
-├── Session Engine
-├── Session Replay Engine
-├── Behavioral Graph Engine
-├── Coverage Analysis Engine
-├── Missing State Engine
-├── Endpoint Intelligence Engine
-├── User Journey Engine
-├── Database Intelligence Engine
-├── Error Correlation Engine
-├── Test Generation Engine
-├── Regression Engine
-├── Failure Simulation Engine
-├── Optimization Engine
-├── Behavioral Anomaly Engine
-├── Quality Intelligence Engine
+├── Session Engine                         Phase 1
+├── Session Replay Engine                  Phase 1
+├── Behavioral Graph Engine                Phase 1
+├── Coverage Analysis Engine               Phase 1
+├── Missing State Engine                   Phase 1
+├── Endpoint Intelligence Engine           Phase 1
+├── Reconciliation Engine                  Phase 1
+├── Derivation Engine                      Phase 1
+├── Ruleset Compiler                       Phase 1
+├── Code Intelligence Engine               Phase 1
+├── Document Intelligence Engine           Phase 1
+├── Graph Drift Engine                     Phase 1 (Groundwork)
+├── User Journey Engine                    Phase 2
+├── Database Intelligence Engine           Phase 2
+├── Error Correlation Engine               Phase 2
+├── Guidance Engine                        Phase 2
+├── Test Generation Engine                 Phase 3
+├── Regression Engine                      Phase 3
+├── Failure Simulation Engine              Phase 3
+├── Optimization Engine                    Phase 3
+├── Behavioral Anomaly Engine              Phase 3
+├── Network Behavioral Intelligence        Phase 3
+├── Remediation Engine                     Phase 3
+└── Quality Intelligence Engine            Phase 3
+
+
+Assistive Layer                            Phase 1 (bounded)
+└── Assistive Intelligence Service
+
+
+Platform Layer                             Phase 1
+├── Auth Service
+├── Onboarding Service
+├── Entitlement Service
+├── Billing Service
+├── Usage Tracker
+└── Background Workers
 
 
 Presentation Layer
 ├── Dashboard API
 ├── Dashboard UI
+├── Desktop Agent UI
 ├── Report Engine
 ├── Notification Service
-├── Intelligence Assistant
+└── Intelligence Assistant                 Phase 3
+2.1 Reading This Document
+Components are grouped by layer, not by delivery order. Every component carries its phase. A component marked Phase 2 or Phase 3 is designed here so that Phase 1 does not foreclose it; it is not implemented in Phase 1.
+The Assistive Layer is deliberately isolated. It is called by exactly two components — the Derivation Engine and the Document Intelligence Engine — and by nothing on the analytical path. See Section 25.1.
 3. Frontend SDK
 Service ID
 CDD-SDK-FE
@@ -147,6 +188,176 @@ Output Schema
   "statusCode":200,
   "durationMs":120
 }
+4.1 Desktop Agent
+Service ID
+CDD-AGENT-001
+Purpose
+Provide the controlled local environment in which an application is analyzed, instrumented and demonstrated.
+Required by FR-141 through FR-165c.
+Runs on
+Developer machine. Not deployed to the platform cluster.
+Responsibilities
+* Authenticate and hold a device-bound session
+* Bind, trust and snapshot a local workspace
+* Analyze the codebase locally
+* Plan, apply, validate and roll back instrumentation
+* Drive managed browser demonstration runs
+* Scope evidence by flow boundary
+* Protect sensitive captured values
+* Be the single egress point to the platform
+Internal Modules
+Desktop Agent
+│
+├── Main Process
+│   ├── Device Identity
+│   ├── Secure Credential Store
+│   ├── Workspace Manager
+│   ├── Git Checkpoint & Branch Policy
+│   ├── Codebase Analysis Worker
+│   ├── Document Processor
+│   ├── Instrumentation Controller
+│   ├── Run Orchestrator
+│   ├── Browser Observer
+│   ├── Local Relay
+│   ├── Notification Client
+│   ├── Update Manager
+│   └── Cloud Client
+│
+├── Preload Bridge
+│   └── Capability-scoped IPC surface
+│
+└── Renderer
+    ├── Applications
+    ├── Intent
+    ├── Instrumentation
+    ├── QA Runs
+    └── Reports
+Interface Model
+The renderer holds no credentials and makes no network calls. It communicates with the main process through a capability-scoped bridge. Every privileged operation is a named channel with validated inputs.
+Renderer
+   │  (named, validated channels)
+   ▼
+Preload Bridge
+   │
+   ▼
+Main Process
+   │
+   ▼
+Cloud Client ──▶ Platform
+Egress Contract
+CDD-AGENT-E01
+All outbound platform traffic passes through the Cloud Client, so the transmitted surface is auditable in one place.
+CDD-AGENT-E02
+Raw source, source archives and unreviewed working-tree diffs are not transmitted without explicit, purpose-named consent.
+CDD-AGENT-E03
+Run credentials and credential-store contents are never transmitted.
+4.2 Workspace Manager
+Service ID
+CDD-AGENT-WS
+Purpose
+Bind an application to a local repository and keep that binding trustworthy.
+Responsibilities
+* Select or clone a repository
+* Record repository binding and trust status
+* Take repository snapshots
+* Detect repository mismatch against the bound application
+* Enforce branch policy
+* Issue and expire time-boxed checkout grants
+* Restore the developer's original branch
+Outputs
+{
+  "workspaceId": "",
+  "repository": "",
+  "branch": "",
+  "trustStatus": "",
+  "snapshotId": ""
+}
+4.3 Codebase Analyzer
+Service ID
+CDD-AGENT-CA
+Purpose
+Build a navigable model of the bound codebase without transmitting it.
+Responsibilities
+* Staged, cancellable, resumable analysis runs
+* Code graph construction
+* Flow checkpoint location
+* Analysis projections, warnings and evidence references
+Outputs
+Projections only. Source content remains local.
+APIs
+Consumed by the Code Intelligence Engine (Section 11.3).
+4.4 Instrumentation Controller
+Service ID
+CDD-AGENT-IC
+Purpose
+Apply bounded, reviewable, reversible instrumentation to a customer working tree.
+Lifecycle
+Detect
+  ↓
+Propose Plan
+  ↓
+Render Redacted Diff
+  ↓
+Human Approval
+  ↓
+Apply Patch Set
+  ↓
+Validate
+  ↓
+Success ──▶ Record Result
+  │
+  └─ Failure ──▶ Rollback ──▶ Restore Branch
+Responsibilities
+* Detect existing instrumentation and installed SDKs
+* Resolve a plan scoped to declared flows
+* Redact secrets from displayed diffs
+* Apply, validate, and roll back
+* Record capability actions for audit
+Constraints
+CDD-AGENT-IC01
+No write to a customer working tree without an approved plan.
+CDD-AGENT-IC02
+Every applied plan has a recorded rollback.
+CDD-AGENT-IC03
+A validation failure attributable to the plan triggers rollback automatically.
+4.5 Run Orchestrator & Browser Observer
+Service ID
+CDD-AGENT-RUN
+Purpose
+Drive and observe a demonstration run.
+Run Lifecycle
+CREATED → ARMED → WAITING_FOR_INITIAL → RECORDING
+        → RUNNING ⇄ PAUSED
+        → PROCESSING
+        → COMPLETED | COMPLETED_INCOMPLETE | FAILED | CANCELLED
+Responsibilities
+* Launch and control the managed browser session
+* Detect the initial flow boundary and terminal states
+* Scope every evidence event as PRE_BOUNDARY or IN_FLOW
+* Batch and transmit evidence
+* Sanitize captured URLs and payload keys
+* Classify protected values
+* Record browser findings
+* Capture annotations and artifacts
+* Enforce read-safe interaction in Observation Only mode
+Outputs
+{
+  "runId": "",
+  "mode": "GUIDED",
+  "captureTracks": ["FRONTEND","BACKEND"],
+  "scope": "IN_FLOW",
+  "eventCount": 0
+}
+4.6 Local Relay
+Service ID
+CDD-AGENT-LR
+Purpose
+Correlate backend SDK telemetry from the locally running application with the active run session.
+Responsibilities
+* Accept local backend telemetry
+* Attach run and session correlation
+* Forward through the Cloud Client
+Without the relay, a locally running backend has no way to know which run its requests belong to.
 5. API Gateway
 Service ID
 CDD-GW-001
@@ -313,6 +524,146 @@ GET /endpoints/health
 
 
 GET /endpoints/rankings
+12.1 Reconciliation Engine
+Service ID
+CDD-REC-001
+Phase
+Phase 1
+Purpose
+Diff the Declared Intent Graph against the Observed Behavior Graph.
+Supports FR-138 through FR-140b.
+Responsibilities
+* Incremental reconciliation as evidence arrives
+* Three-way classification of every node and transition
+* True Gap attribution by originating provenance
+* Reconciliation report generation
+Inputs
+Declared Intent Graph
+Observed Behavior Graph
+Compiled Ruleset
+Outputs
+{
+  "workflow": "CHECKOUT",
+  "declaredStates": 14,
+  "observedStates": 12,
+  "confirmed": 11,
+  "trueGaps": 3,
+  "undeclared": 2
+}
+APIs
+GET /applications/{id}/reconciliation
+POST /applications/{id}/reconciliation/run
+12.2 Derivation Engine
+Service ID
+CDD-DER-001
+Phase
+Phase 1
+Purpose
+Propose states, transitions and branch flows the declarer likely intends.
+Supports FR-130 through FR-134.
+Lookup Order
+Tier 1 — Internal Pattern Library
+Tier 1.5 — Cross-Tenant Structural Match
+Tier 2 — Assistive Enrichment
+Responsibilities
+* Match declared nodes against curated patterns
+* Query the anonymized structural index
+* Escalate to the Assistive Layer only where Tiers 1 and 1.5 return nothing usable
+* Label every suggestion with its source tier
+* Deduplicate against previously rejected suggestions
+* Maintain a persistent suggestion queue per flow
+Constraints
+CDD-DER-001a
+Never adds a node without explicit human acceptance.
+CDD-DER-001b
+Retains rejected suggestions to prevent re-suggestion.
+12.3 Ruleset Compiler
+Service ID
+CDD-RULE-001
+Phase
+Phase 1
+Purpose
+Compile a per-application ruleset from declared flows and generic QA rules.
+Composition
+Generic QA Best-Practice Rules
+        +
+Declared-Flow-Derived Rules
+        +
+Accepted-Suggestion Rules
+        =
+Application Ruleset
+Responsibilities
+* Recompile on source flow change
+* Version rulesets and retain prior versions
+* Serve the Reconciliation, Coverage and Missing State engines
+12.4 Code Intelligence Engine
+Service ID
+CDD-CODE-001
+Phase
+Phase 1
+Purpose
+Relate declared flows to locations in a customer codebase.
+Inputs
+Code graph projections from the desktop agent
+Declared flows
+Outputs
+* Flow checkpoint locations
+* Blast radius analysis
+* Snapshot comparison
+* Instrumentation targeting
+Constraint
+Operates on projections. Holds no customer source.
+APIs
+GET  /applications/{id}/codebase/graph
+POST /applications/{id}/codebase/ask
+POST /applications/{id}/codebase/blast-radius
+POST /applications/{id}/codebase/compare
+12.5 Document Intelligence Engine
+Service ID
+CDD-DOC-001
+Phase
+Phase 1
+Purpose
+Convert customer product documents into candidate declared flows.
+Responsibilities
+* Version imported source documents
+* Run document processing jobs
+* Produce intent drafts for human review
+* Accept corrections and regenerate
+Constraint
+A draft is never applied without review. Assisted per Section 25.1.
+12.6 Graph Drift Engine
+Service ID
+CDD-DRIFT-001
+Phase
+Phase 1 (Groundwork)
+Purpose
+Show what changed between behavioral graph versions.
+Responsibilities
+* Version behavioral graphs
+* Diff two versions into added, removed and changed elements
+* Maintain coverage history as a trend
+* Record drift of observed behavior against declared intent
+Phase Extension
+Phase 2 extends drift to production baselines. Phase 3 extends it to anomaly detection.
+Groundwork Constraint
+Operates on demonstration evidence only in Phase 1.
+12.7 Platform Services
+Service IDs
+CDD-AUTH-001, CDD-ONB-001, CDD-ENT-001, CDD-BILL-001, CDD-USE-001
+Phase
+Phase 1
+Auth Service
+Identity, one-time codes, passwords, multi-factor challenges, sessions, devices, desktop authorization requests, audit logging.
+Onboarding Service
+Organizations, applications, environments, memberships, invitations, ingestion credentials, programmatic tokens, setup handoffs.
+Entitlement Service
+Resolves plan, subscription status, feature entitlements, tiers and resource limits into a single entitlement record per organization. Enforced server-side. Client-side checks are informational only.
+Billing Service
+Plans, checkout, trials, upgrades, downgrades, renewals, dunning, invoices, receipts, provider webhooks.
+Usage Tracker
+Usage records, daily aggregation, plan-limit snapshots, storage accounting.
+These components are not product differentiators. They are the reason the product can be operated commercially, and they are load-bearing.
 13. User Journey Intelligence Engine
 Service ID
 CDD-UJI-001
@@ -460,57 +811,166 @@ POST /quality/assistant/query
 Service ID
 CDD-RPT-001
 Purpose
-Generate all reports.
+Generate reports and exports.
 Supports FR-053 through FR-059.
+Report Model
+Phase 1 reports are of two kinds:
+Application Report
+The current analytical state of an application, derived on request from the latest evidence. Addressed by application, not by report identifier.
+Run Report
+The report produced by a specific demonstration run. Addressed by run identifier, generated asynchronously, and retryable.
+A versioned report catalogue with independently addressable report objects is specified in the API Specification, Section 24.1, and is scheduled for completion before general availability.
 Responsibilities
 * Coverage reports
-* Endpoint reports
-* Quality reports
-* Export generation
+* Missing state and missing flow reports
+* Behavioral graph reports
+* Session analysis reports
+* Endpoint intelligence reports
+* Reconciliation reports
+* Run reports
+* Export generation in JSON, CSV, HTML and PDF, subject to entitlement tier
+Constraints
+CDD-RPT-001a
+Report content is computed deterministically from recorded evidence and is reproducible from that evidence.
+CDD-RPT-001b
+Export format availability is resolved from the organization's entitlement tier by a single shared resolver, so the report engine, the settings service and the dashboard cannot disagree about what a customer may download.
 APIs
-GET /reports
+GET  /reports/{applicationId}/latest
 
 
-POST /reports/generate
+GET  /reports/{applicationId}/export?format=
 
 
-GET /reports/{id}/export
+GET  /reports/{applicationId}/endpoint-intelligence
+
+
+GET  /qa-runs/{runId}/report
+
+
+POST /qa-runs/{runId}/report/retry
 23. Dashboard Service
 Service ID
 CDD-DASH-001
 Purpose
-Unified presentation layer.
+Unified presentation and administration layer.
 Supports FR-060 through FR-065.
 Responsibilities
-* Data aggregation
+* Data aggregation across analytical services
 * Visualization delivery
-* User preferences
-* Dashboard APIs
+* Lifecycle state resolution for onboarding and first analysis
+* Entitlement-aware navigation
+* User preferences and theme
+* Notification centre and toasts
+* Organization, member, environment, credential and billing administration
+Constraints
+CDD-DASH-001a
+The dashboard cannot start a demonstration run. Where a user requests one, it hands off to the desktop agent.
+CDD-DASH-001b
+Client-side entitlement checks are presentation only. Every gate is enforced server-side.
 APIs
 GET /dashboard/overview
 
 
-GET /dashboard/workflows
+GET /applications/{id}/stats
 
 
-GET /dashboard/sessions
+GET /applications/{id}/onboarding-progress
 
 
-GET /dashboard/quality
+GET /organizations/{id}/entitlement
+23.1 Guidance Engine
+Service ID
+CDD-GUID-001
+Phase
+Phase 2
+Purpose
+Convert production observation into direction.
+Supports FR-203 through FR-212.
+Responsibilities
+* Compare production behavior against declared intent and demonstrated behavior
+* Distinguish an unreachable declared flow from an undemonstrated one
+* Rank issues by observed user impact
+* Produce guidance with an evidence trace
+* Report insufficiency rather than issuing weak guidance
+* Track whether guidance was acted upon and whether behavior changed
+Outputs
+{
+  "guidanceId": "",
+  "subject": "PASSWORD_RESET",
+  "finding": "Declared, reachable, never completed in production",
+  "classification": "DEFECT",
+  "impactedSessions": 412,
+  "evidence": []
+}
+23.2 Remediation Engine
+Service ID
+CDD-REM-001
+Phase
+Phase 3
+Purpose
+Act on behavioral understanding, under customer authority.
+Supports FR-213 through FR-220.
+Pipeline
+Failure Observed
+     ↓
+Root Cause Located
+     ↓
+Remediation Proposed
+     ↓
+Authority Checked
+     ↓
+Applied
+     ↓
+Verified Against Behavior
+     ↓
+Escalated If Verification Fails
+Constraints
+CDD-REM-001a
+Authority is explicit, per-application and revocable. It is never held by default.
+CDD-REM-001b
+Every action is attributable, auditable and reversible.
+CDD-REM-001c
+Verification failure halts autonomous action and escalates to a human.
+23.3 Network Behavioral Intelligence
+Service ID
+CDD-NBI-001
+Phase
+Phase 3
+Purpose
+Use anonymized structural patterns across all systems on the platform to inform what a given application is likely missing.
+Supports FR-221 through FR-228.
+Responsibilities
+* Aggregate anonymized behavioral patterns
+* Identify structural divergence from comparable systems
+* Express divergence in frequency-weighted aggregate form only
+* Generate implementation suggestions, feature modification proposals and update recommendations
+Privacy Constraint
+Inherits FDRS-PRIV-001 through FDRS-PRIV-004. Never reveals, directly or indirectly, which organization a pattern originated from. The Phase 1 cross-tenant structural index is the groundwork for this component and is governed by the same rules.
 24. Notification Service
 Service ID
 CDD-NOT-001
 Purpose
 Deliver alerts and insights.
 Responsibilities
-* Workflow degradation alerts
-* Anomaly alerts
-* Report notifications
-* Release regression alerts
+* Run lifecycle and report-ready notifications
+* Reconciliation and drift notifications
+* Instrumentation outcome notifications
+* Quota, billing and security notifications
+* Workflow degradation alerts (Phase 2)
+* Anomaly alerts (Phase 3)
 Channels
 * Email
-* Webhooks
 * In-App Notifications
+* Web Push
+* Desktop Agent
+* Outbound Customer Webhooks (Pre-Launch)
+Delivery Model
+Notification
+    │
+    ├── UserNotification (per recipient)
+    │
+    └── Delivery (per channel, per recipient)
+A notification is recorded once and delivered per recipient per channel, so read state, dismissal and delivery status are independently tracked.
 25. Intelligence Assistant
 Service ID
 CDD-IA-001
@@ -523,37 +983,114 @@ Responsibilities
 * Generate investigation summaries
 API
 POST /assistant/chat
+Constraint
+The assistant explains evidence the platform already holds. It does not generate findings, and it does not answer questions the evidence cannot support.
+25.1 Assistive Intelligence Service
+Service ID
+CDD-AI-001
+Phase
+Phase 1 (bounded)
+Purpose
+Reduce the cost of stating intent.
+Callers
+Exactly two components may call this service:
+* Derivation Engine (Tier 2 only)
+* Document Intelligence Engine
+No analytical engine may call it.
+Internal Modules
+Assistive Intelligence
+│
+├── Provider Interface
+├── Prompt Registry
+├── Input Sanitizer
+├── Schema Validator
+├── Output Repair
+├── Invocation Log
+└── Cost Aggregator
+Features
+* Flow generation from documents
+* Flow suggestion enrichment
+* Domain inference
+* Structured output repair
+Responsibilities
+* Sanitize input before transmission
+* Validate output against a schema before returning it
+* Repair malformed output, or fail closed
+* Log every invocation with feature, status, attribution and cost
+* Aggregate usage for administrative visibility
+Constraints
+CDD-AI-001a
+Output is always a proposal. It never enters a graph, ruleset or report without explicit human acceptance.
+CDD-AI-001b
+The deterministic path is consulted first. This service is a fallback, not a default.
+CDD-AI-001c
+Unavailability degrades assistance quality only. Every analytical component continues to operate.
+Design Consequence
+Because no analytical component depends on this service, the platform can be operated with the provider disabled. That property is tested, not assumed. See the MVP Scope Document, Section 9.1.
 26. Component Dependency Map
-Frontend SDK
+Phase 1
+Desktop Agent
       │
-Backend SDK
+      ├── Workspace Manager ──▶ Codebase Analyzer ──▶ Code Intelligence Engine
       │
-      ▼
-Event Collector
+      ├── Document Processor ──▶ Document Intelligence Engine ──▶ Assistive Intelligence
       │
-      ▼
-Kafka
+      ├── Instrumentation Controller ──▶ Customer Working Tree
       │
-      ▼
-Session Engine
-      │
-      ├── Session Replay
-      ├── Behavioral Graph Engine
-      ├── Coverage Engine
-      ├── Missing State Engine
-      ├── Endpoint Intelligence
-      ├── Journey Intelligence
-      ├── Database Intelligence
-      ├── Error Correlation
-      ├── Regression Engine
-      ├── Anomaly Engine
-      └── Quality Intelligence Engine
-                    │
-                    ▼
-              Report Engine
-                    │
-                    ▼
-                Dashboard
-                    │
-                    ▼
-         Intelligence Assistant
+      └── Run Orchestrator ──▶ Browser Observer
+                                     │
+Frontend SDK ──┐                     │
+Backend SDK  ──┤                     │
+Local Relay  ──┘                     │
+      │                              │
+      ▼                              ▼
+API Gateway ──▶ Event Collector ──▶ Kafka
+                                     │
+                                     ▼
+                              Session Engine
+                                     │
+      ┌──────────────────────────────┼──────────────────────────┐
+      ▼                              ▼                          ▼
+Session Replay        Behavioral Graph Engine          Endpoint Intelligence
+                                     │
+                      ┌──────────────┼──────────────┐
+                      ▼              ▼              ▼
+              Coverage Engine  Missing State   Graph Drift
+                      │         Engine              │
+                      └──────────────┬──────────────┘
+                                     ▼
+Declared Intent Graph ──▶ Reconciliation Engine ◀── Ruleset Compiler
+      ▲                              │                    ▲
+      │                              ▼                    │
+Derivation Engine              Report Engine        Accepted Suggestions
+      │                              │
+      ▼                              ▼
+Assistive Intelligence          Dashboard
+   (fallback only)                   │
+                                     ▼
+                            Notification Service
+Phase 2 additions
+Production Ingestion ──▶ Workflow Health Monitor ──┐
+                                                   ├──▶ Guidance Engine ──▶ Dashboard
+Journey Intelligence ──────────────────────────────┤
+Error Correlation ─────────────────────────────────┤
+Database Intelligence ─────────────────────────────┘
+Phase 3 additions
+Behavioral History ──▶ Regression Engine ─────────┐
+Anomaly Engine ───────────────────────────────────┤
+Network Behavioral Intelligence ──────────────────┼──▶ Remediation Engine
+Test Generation Engine ───────────────────────────┤          │
+Failure Simulation Engine ────────────────────────┘          ▼
+                                              Authority & Policy Service
+                                                             │
+                                                             ▼
+                                                  Customer System (under authority)
+27. Design Invariants
+CDD-INV-001
+The analytical path — Session, Behavioral Graph, Coverage, Missing State, Endpoint, Reconciliation, Report — contains no call to the Assistive Layer.
+CDD-INV-002
+The Cloud Client is the desktop agent's only egress point.
+CDD-INV-003
+No component writes to a customer working tree except the Instrumentation Controller, and only under an approved plan.
+CDD-INV-004
+Every Phase 2 and Phase 3 component listed here is designed so that Phase 1 does not foreclose it, and implemented in no earlier phase than its label.

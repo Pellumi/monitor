@@ -24,9 +24,9 @@ and paying for:
 * Local Plan
 The entitlement system must support future platform evolution without redesign.
 3. Entitlement Categories
-TELLANN entitlements are grouped into four categories.
+TELLANN entitlements are grouped into five categories.
 Category A
-Feature Entitlements
+Core Feature Entitlements
 Examples:
 * Demonstration Mode
 * Session Replay
@@ -39,6 +39,8 @@ Examples:
 * Users
 * Storage
 * Retention
+* Environments per application
+* Ingestion credentials
 Category C
 Governance Entitlements
 Examples:
@@ -47,12 +49,39 @@ Examples:
 * Audit Logs
 * SSO
 Category D
+Desktop Agent Entitlements
+Examples:
+* Desktop Guided Runs
+* Automated Instrumentation
+* Codebase Intelligence
+* Document Flow Inference
+Category E
 Intelligence Entitlements
 Examples:
 * Production Intelligence
+* Guidance
 * Test Generation
+* Autonomous Remediation
 * Quality Intelligence Assistant
 Reserved for future phases.
+3.1 Tiered Entitlements
+Some capabilities are not on/off. A tiered entitlement resolves to a level rather than a boolean.
+Tiers
+BASIC
+STANDARD
+ADVANCED
+Export tiers
+JSON_ONLY
+JSON_PDF
+ALL_FORMATS
+Report tiers
+BASIC
+STANDARD
+ADVANCED
+ES-TIER-001
+A tiered entitlement shall resolve to a single level per organization, and every consumer of that entitlement shall resolve the level through one shared resolver, so that the enforcing service, the settings surface and the dashboard cannot disagree about what a customer may do.
+ES-TIER-002
+An unrecognized truthy tier shall degrade to the most restrictive level, never to the most permissive.
 4. Plan Matrix
 Available Plans:
 * Free
@@ -167,7 +196,93 @@ Feature
 	180 Days
 	365 Days
 	Custom
-	6. Resource Entitlements
+6. Desktop Agent Entitlements
+The desktop agent is available on every plan, because without it a customer cannot demonstrate an application at all. What varies by plan is how much the agent is allowed to do.
+Capability
+	Free
+	Local
+	Solo
+	Team
+	Business
+	Enterprise
+	Desktop Guided Runs
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Yes
+	Visual & Accessibility Analysis
+	Basic
+	Standard
+	Advanced
+	Advanced
+	Advanced
+	Advanced
+	Browser Trace Capture
+	No
+	Basic
+	Advanced
+	Advanced
+	Advanced
+	Advanced
+	Codebase Intelligence
+	No
+	Basic
+	Standard
+	Advanced
+	Advanced
+	Advanced
+	Document Flow Inference
+	No
+	Standard
+	Advanced
+	Advanced
+	Advanced
+	Advanced
+	Automated Instrumentation
+	No
+	No
+	Basic
+	Advanced
+	Advanced
+	Advanced
+	Shared Run Governance
+	No
+	No
+	No
+	Yes
+	Yes
+	Yes
+	Priority Processing
+	No
+	No
+	No
+	No
+	Yes
+	Yes
+Capability Definitions
+Desktop Guided Runs
+Drive a demonstration run through the managed browser session. The core Phase 1 loop.
+Visual & Accessibility Analysis
+Findings raised during a run. BASIC covers a core rule set; higher tiers widen coverage and add remediation detail.
+Browser Trace Capture
+Network and interaction trace detail retained alongside evidence. BASIC retains summary trace; ADVANCED retains full request and response metadata within privacy rules.
+Codebase Intelligence
+Local codebase analysis and the code graph. BASIC covers analysis and checkpoint location; STANDARD adds blast radius; ADVANCED adds snapshot comparison and cross-snapshot queries.
+Document Flow Inference
+Drafting candidate flows from imported product documents. Bounded by the MVP Scope Document, Section 9.1.
+Automated Instrumentation
+Planned, reviewed and reversible instrumentation of a bound workspace. BASIC covers single-flow plans; ADVANCED covers multi-flow plans and bootstrap instrumentation.
+Shared Run Governance
+Shared workspace roster, branch policy enforcement across members, and time-boxed checkout grants. Requires more than one seat to be meaningful.
+Priority Processing
+Preferential queueing for analysis, report generation and drafting jobs.
+ES-DESK-001
+Where a tiered desktop capability is unavailable on a plan, the agent shall state which plan provides it rather than failing silently.
+ES-DESK-002
+Automated Instrumentation being unavailable shall not prevent a demonstration run. The developer instruments manually and the run proceeds.
+	7. Resource Entitlements
 Resource
 	Free
 	Local
@@ -210,7 +325,28 @@ Resource
 	Unlimited
 	Unlimited
 	Unlimited
-	7. Governance Entitlements
+	Environments Per Application
+	1
+	2
+	3
+	5
+	10
+	Custom
+	Ingestion Credentials
+	1
+	3
+	5
+	20
+	100
+	Custom
+	Resource Notes
+Environments Per Application
+Separate demonstration, staging and production targets for one application. The Free plan's single environment is why MULTIPLE_ENVIRONMENTS is a gated capability rather than a limit alone.
+Ingestion Credentials
+SDK ingestion credentials, scoped per application and environment. Available on every plan within the limit; distinct from programmatic API access, which is separately gated.
+Demonstration Sessions
+Counted per organization and subscription billing period. Unlimited on every paid plan.
+	8. Governance Entitlements
 Capability
 	Free
 	Local
@@ -288,7 +424,7 @@ Capability
 	No
 	No
 	Yes
-	8. Support Entitlements
+	9. Support Entitlements
 Support Level
 	Free
 	Local
@@ -338,14 +474,15 @@ Support Level
 	No
 	No
 	Yes
-	9. Phase 2 Entitlements
-Reserved for Production Intelligence.
+	10. Phase 2 Entitlements
+Reserved for Production Monitoring, Feedback & Analysis.
 Additional Features:
 * Workflow Health Monitoring
 * Journey Intelligence
 * Behavioral Trend Analysis
 * Error Correlation
 * Database Intelligence
+* Guidance
 Example:
 Feature
 	Free
@@ -382,14 +519,16 @@ Feature
 	No
 	Yes
 	Yes
-	10. Phase 3 Entitlements
-Reserved for Autonomous Validation.
+	11. Phase 3 Entitlements
+Reserved for Autonomous Behavioral Intelligence.
 Additional Features:
 * Test Generation
 * Regression Detection
 * Failure Simulation
 * Quality Intelligence Assistant
 * Behavioral Anomaly Detection
+* Autonomous Remediation
+* Network Behavioral Intelligence
 Example:
 Feature
 	Free
@@ -433,7 +572,7 @@ Feature
 	No
 	Yes
 	Yes
-11. Entitlement Enforcement Rules
+12. Entitlement Enforcement Rules
 Entitlements shall be enforced server-side.
 Client-side enforcement is informational only.
 Every protected operation must validate:
@@ -442,7 +581,7 @@ Every protected operation must validate:
 * Resource Limits
 * Feature Entitlements
 before execution.
-12. Entitlement Resolution Order
+13. Entitlement Resolution Order
 When determining access:
 1. Subscription Status
 2. Plan Type
@@ -454,7 +593,7 @@ Resource quotas warn organization administrators at 80% utilization and block ne
 The Users quota counts active organization members plus unexpired invitations.
 Demonstration Sessions are counted per organization and subscription billing period.
 API Access means scoped programmatic access to management, reporting, graph, coverage, and export APIs. SDK ingestion credentials are separate and remain available on every plan within the plan's credential limit.
-13. Enterprise Overrides
+14. Enterprise Overrides
 Enterprise agreements may override:
 * User Limits
 * Application Limits
@@ -462,21 +601,36 @@ Enterprise agreements may override:
 * Retention Policies
 * Support Levels
 Overrides shall be contract-driven.
-14. Future Entitlement Evolution
+15. Future Entitlement Evolution
 Phase 1
-Behavioral QA Platform
+Behavioral QA & Intent Platform
 Primary Entitlements:
 * Applications
 * Users
 * Storage
+* Retention
+* Environments
 * Behavioral Intelligence
+* Desktop Agent Capability
 Phase 2
 Adds:
 * Production Intelligence
+* Guidance
 Phase 3
 Adds:
-* Autonomous Intelligence
-15. Success Criteria
+* Autonomous Behavioral Intelligence
+* Remediation Authority
+15.1 Assisted Intelligence Entitlement Position
+Assisted intelligence is entitled through the capability it serves, not as a capability of its own.
+Document Flow Inference is a gated, tiered entitlement because drafting flows from documents is a distinct customer capability.
+Flow suggestion enrichment is not separately entitled. It is part of the Derivation Engine, which is available wherever flow declaration is available, and it is a fallback tier rather than a feature a customer chooses.
+ES-AI-001
+Assisted intelligence shall not be sold as a separate line item in Phase 1.
+ES-AI-002
+Where an assisted capability is unavailable — by entitlement or by provider outage — the underlying capability shall remain usable by hand.
+ES-AI-003
+Assisted consumption is metered internally for capacity and cost, and is not a customer-facing billing metric in Phase 1. Customer-facing AI metering begins in Phase 3, per the Usage Metering Specification, Section 11.
+16. Success Criteria
 The Entitlement System shall be considered successful when:
 1. Every feature maps to a plan.
 2. Every resource maps to a quota.

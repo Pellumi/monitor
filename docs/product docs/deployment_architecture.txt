@@ -21,7 +21,7 @@ This document establishes:
 The objective of this specification is to ensure TELLANN can operate reliably from early-stage MVP deployments through large-scale enterprise installations while maintaining architectural consistency across all phases of the product lifecycle.
 2. Scope
 This specification applies to:
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Deployment of:
 * Frontend SDK Infrastructure
 * Backend SDK Infrastructure
@@ -29,16 +29,22 @@ Deployment of:
 * Session Replay Services
 * Behavioral Graph Services
 * Coverage Analysis Services
+* Reconciliation Services
+* Code Intelligence Services
 * QA Reporting Services
-* Dashboard Services
-Phase 2 — Production Intelligence Platform
+* Dashboard, Marketing and Documentation Services
+* Platform Services — auth, onboarding, billing, usage, notifications
+Distribution of:
+* Tellann Desktop Agent
+The desktop agent is distributed to developer machines rather than deployed to infrastructure. It is in scope for this document because it must be built, signed, released and updated, and because the platform's compatibility obligations to it constrain how services may change. See Section 17.1.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional deployment of:
 * Live Monitoring Services
 * Journey Intelligence Services
 * Database Intelligence Services
 * Error Correlation Services
 * Workflow Health Monitoring Services
-Phase 3 — Autonomous Validation Engine
+Phase 3 — Autonomous Behavioral Intelligence
 Additional deployment of:
 * Test Generation Services
 * Regression Detection Services
@@ -133,7 +139,7 @@ Managed
                          │
         ┌────────────┬────────────┬───────────┐
         ▼            ▼            ▼           ▼
-   PostgreSQL   ClickHouse      Neo4j    Object Storage
+   PostgreSQL   ClickHouse   Object Storage   Graph Store (Phase 3)
 
 
 Derived from the system architecture.
@@ -292,8 +298,8 @@ StatefulSets
 Used for:
 * PostgreSQL
 * ClickHouse
-* Neo4j
 * Kafka
+* Dedicated graph store (Phase 3 only — see ADR-001)
 Jobs
 Used for:
 * Report generation
@@ -399,6 +405,11 @@ Stores:
 * Graph Snapshots
 * Archives
 17. Service Deployment Architecture
+Local Agent Layer
+Tellann Desktop Agent
+Runs on:
+* Developer workstations
+Not deployed to the cluster. Distributed and updated independently. See Section 17.1.
 Capture Layer
 Frontend SDK
 Runs inside:
@@ -411,6 +422,9 @@ Runs inside:
 * Express
 * NestJS
 * Fastify
+Managed Browser Session
+Runs on:
+* Developer workstations, driven by the desktop agent
 Ingestion Layer
 Services:
 api-gateway
@@ -439,6 +453,47 @@ coverage-engine
 endpoint-engine
 
 
+fdrs-api
+
+
+code-intelligence-worker
+
+
+report-engine
+
+
+Platform Layer
+Services:
+auth-api
+
+
+onboarding-api
+
+
+billing-api
+
+
+usage-tracker
+
+
+background-workers
+
+
+clickhouse-ingester
+
+
+Presentation Layer
+Applications:
+dashboard
+
+
+marketing
+
+
+docs
+
+
+Deployed independently, on separate domains. See Section 17.2.
 Intelligence Layer
 Phase 2:
 journey-engine
@@ -466,6 +521,65 @@ anomaly-engine
 quality-intelligence-engine
 
 
+17.1 Desktop Agent Distribution
+The desktop agent is the one component that is not deployed. It is shipped.
+Build
+    │
+    ▼
+Sign
+    │
+    ▼
+Publish To Release Channel
+    │
+    ▼
+Update Feed
+    │
+    ▼
+Developer Machine Checks Feed
+    │
+    ▼
+Update Downloaded And Verified
+    │
+    ▼
+Applied Under Policy
+Distribution
+* Signed installers per supported platform
+* Custom protocol handler registration for setup handoff from the dashboard
+* Authenticated update feed
+Release Channels
+Stable
+The default. What customers download.
+Beta
+Opt-in, for customers validating an upcoming agent against their own codebase.
+Version Independence
+The agent and the platform version independently, because the platform can be deployed in an afternoon and an agent takes as long as customers take to update.
+DEP-AGENT-001
+The platform shall remain compatible with every agent version still supported in the field.
+DEP-AGENT-002
+An agent shall degrade gracefully against a newer platform rather than failing.
+DEP-AGENT-003
+The platform shall be able to declare an agent version unsupported, and the agent shall refuse to operate when it is.
+DEP-AGENT-004
+Update packages shall be signature-verified before application, and the update feed shall not be redirectable by local configuration.
+Deployment Consequence
+A breaking change to any endpoint the agent consumes is a coordinated release, not a routine deploy. Those endpoints carry the /v1 prefix for exactly this reason. See the API Specification, Section 2, API-003.
+17.2 Multi-Application Deployment
+Three web applications deploy independently on separate domains.
+domain.com
+    Marketing site. Public, unauthenticated.
+
+app.domain.com
+    Dashboard. Authenticated product surface.
+
+docs.domain.com
+    Documentation. Public, unauthenticated.
+
+api.domain.com
+    API Gateway. SDK ingestion and desktop agent traffic.
+DEP-APP-001
+Authentication cookies shall be scoped to the application domain and shall not be shared with the marketing or documentation domains.
+DEP-APP-002
+Each application shall be independently deployable. A marketing content change shall not require a product deployment.
 18. Multi-Tenant Deployment Strategy
 Platform
    │
@@ -624,8 +738,9 @@ Clustering
 
 Derived from scalability strategy.
 25. Phase-Based Deployment Evolution
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Active Services:
+Tellann Desktop Agent (distributed, not deployed)
 Frontend SDK
 Backend SDK
 API Gateway
@@ -635,41 +750,69 @@ Replay Engine
 Graph Engine
 Coverage Engine
 Endpoint Engine
+FDRS API
+Code Intelligence Worker
 Report Engine
+Auth API
+Onboarding API
+Billing API
+Usage Tracker
+Background Workers
+ClickHouse Ingester
+Notification Service
 Dashboard
+Marketing
+Documentation
 
 
 Goal:
-Generate QA intelligence from demonstration sessions.
-Phase 2 — Production Intelligence Platform
+Establish what an application is supposed to do, observe what it does under demonstration, and report the difference.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional Services:
+Production Ingestion Path
 Workflow Health Monitor
 Journey Intelligence Engine
 Database Intelligence Engine
 Error Correlation Engine
-Notification Service
+Guidance Engine
 
 
+Deployment change required:
+The ingestion path must separate production evidence from demonstration evidence at collection time. They are metered differently, retained differently, and compared against one another, so they cannot share a topic and be untangled later.
+Expect ingestion volume to change by orders of magnitude. Phase 1 volume is bounded by how often developers run demonstrations; Phase 2 volume is bounded by how many end users a customer has.
 Goal:
-Continuously understand production behavior.
-Phase 3 — Autonomous Validation Engine
+Continuously understand production behavior and convert it into guidance.
+Phase 3 — Autonomous Behavioral Intelligence
 Additional Services:
 Test Generation Engine
 Regression Engine
 Failure Simulation Engine
 Optimization Engine
 Behavioral Anomaly Engine
+Network Behavioral Intelligence
+Remediation Engine
+Authority & Policy Service
 Quality Intelligence Engine
 Intelligence Assistant
 
 
+Deployment change required:
+An authority service that is consulted before any autonomous action and whose revocations take effect immediately. Authority cannot be cached.
+Failure Simulation requires isolated execution that cannot reach a customer's production system except where the customer has explicitly granted it.
 Goal:
-Provide autonomous quality intelligence.
+Understand a running system continuously, and act on that understanding under customer authority.
 26. Complete Deployment Stack
+Developer Machine
+        │
+        ├── Tellann Desktop Agent
+        │      ├── Customer Codebase (local)
+        │      └── Managed Browser Session
+        │
+        ▼
 Customer Application
         │
         ▼
-React SDK / Node SDK
+Frontend SDK / Backend SDK
         │
         ▼
 Internet / Private Network
@@ -698,11 +841,22 @@ Intelligence Layer
         ▼
 PostgreSQL
 ClickHouse
-Neo4j
 Object Storage
+Dedicated Graph Store (Phase 3 — see ADR-001)
         │
         ▼
 Dashboard
 Reports
-Assistant
 Notifications
+Assistant (Phase 3)
+27. Deployment Invariants
+DEP-INV-001
+The desktop agent is never deployed to the cluster. It ships to developer machines and updates on its own cadence.
+DEP-INV-002
+Customer source never reaches platform infrastructure except as an explicitly consented archive.
+DEP-INV-003
+Endpoints consumed by the desktop agent or the SDKs are versioned, and breaking changes to them are coordinated releases.
+DEP-INV-004
+The three web applications deploy independently and do not share authentication cookies.
+DEP-INV-005
+A model provider outage degrades assistance and nothing else. No deployment topology shall make an analytical service depend on provider availability.

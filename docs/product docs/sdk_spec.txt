@@ -16,30 +16,33 @@ The SDK serves as the primary observation layer of the TELLANN platform and is r
 * Quality Intelligence
 Scope
 The SDK supports:
-Phase 1
+Phase 1 — Behavioral QA & Intent Platform
 * Event Tracking
 * Session Tracking
 * Session Replay
 * Workflow Observation
 * State Tracking
+* Flow Boundary Marking
+* Run Correlation
 * API Tracking
 * Error Monitoring
 * Behavioral Graph Generation Support
 * Coverage Analysis Support
+* Reconciliation Support
 * Demonstration Mode
-Phase 2
+Phase 2 — Production Monitoring, Feedback & Analysis
 * Production Monitoring
 * User Journey Intelligence
 * Database Intelligence Integration
 * Error Correlation
 * Workflow Health Monitoring
-Phase 3
+Phase 3 — Autonomous Behavioral Intelligence
 * Behavioral Baseline Collection
 * Regression Detection Support
 * Test Generation Support
 * Failure Simulation Support
 * Anomaly Detection Support
-* Quality Intelligence Support
+* Remediation Verification Support
 Non-Goals
 The SDK shall not:
 * Execute business logic
@@ -169,32 +172,56 @@ Platform
 	iOS
 	Future
 	4. SDK Initialization Specification
-React SDK
-import { TELLANN } from "@tellann/react";
+Frontend SDK
+import { TELLANN } from "@tellann/frontend-sdk";
 
 
 TELLANN.initialize({
+    endpoint: "https://api.tellann.io",
     apiKey: "",
+    tenantId: "",
     applicationId: "",
+    environmentId: "",
     environment: "production"
 });
 
 
-Node SDK
-import { TELLANN } from "@tellann/node";
+Backend SDK
+import { TELLANN } from "@tellann/backend-sdk";
 
 
 TELLANN.initialize({
+    endpoint: "https://api.tellann.io",
     apiKey: "",
+    tenantId: "",
     applicationId: "",
+    environmentId: "",
     environment: "production"
 });
+
+
+Framework Integrations
+import { tellannExpressMiddleware } from "@tellann/backend-sdk";
+app.use(tellannExpressMiddleware());
+
+
+import { tellannFastifyPlugin } from "@tellann/backend-sdk";
+fastify.register(tellannFastifyPlugin);
+
+
+Instrumentation Note
+Most applications do not write these calls by hand. The Tellann desktop agent detects the framework, proposes an instrumentation plan, renders the diff for review, and applies it to the working tree on approval. This section documents the contract the agent writes to, and the interface a developer uses when instrumenting manually.
+See the Developer Demonstration Mode Specification, Stage 4.
 
 
 Required Parameters
 Parameter
 	Type
+	endpoint
+	string
 	apiKey
+	string
+	tenantId
 	string
 	applicationId
 	string
@@ -202,7 +229,7 @@ Parameter
 	string
 	Optional Parameters
 {
-  endpoint?: string;
+  environmentId?: string;
   region?: string;
   debug?: boolean;
   autoTrack?: boolean;
@@ -210,8 +237,8 @@ Parameter
   bufferSize?: number;
   retryCount?: number;
   sessionTimeout?: number;
-  privacyRules?: PrivacyRule[];
-  plugins?: Plugin[];
+  privacyRules?: PrivacyRule[];   // Pre-Launch, see Section 12
+  plugins?: Plugin[];             // Pre-Launch, see Section 12
 }
 
 
@@ -366,6 +393,54 @@ TELLANN.captureMessage(
 )
 
 
+5.1 Flow Boundary Interfaces
+These interfaces are what make evidence scoping possible. They are normally written by the desktop agent's instrumentation, not by hand.
+markFlowInitialState()
+TELLANN.markFlowInitialState({
+    flowId: "",
+    stateName: "CART"
+});
+
+
+Emits FLOW_INITIAL_STATE. The platform switches evidence scope from PRE_BOUNDARY to IN_FLOW on receipt.
+markFlowState()
+TELLANN.markFlowState({
+    flowId: "",
+    stateName: "CHECKOUT"
+});
+
+
+Emits FLOW_STATE_REACHED.
+markFlowTransition()
+TELLANN.markFlowTransition({
+    fromState: "CART",
+    toState: "CHECKOUT",
+    action: "CHECKOUT_CLICK"
+});
+
+
+Emits FLOW_TRANSITION.
+markFlowTerminalState()
+TELLANN.markFlowTerminalState({
+    stateName: "ORDER_COMPLETE",
+    terminalKind: "SUCCESS"
+});
+
+
+Emits FLOW_TERMINAL_STATE. Completes the run.
+SDKS-FLOW-001
+An application with no declared flows emits none of these. Its runs are scoped by platform heuristics instead, and its reports say so.
+5.2 Run Correlation
+During a demonstration run, the SDK attaches run context to every event so that evidence is attributable to the run that produced it.
+Attached automatically where present:
+runId
+environmentId
+agentVersion
+instrumentationManifestVersion
+SDKS-RUN-001
+The SDK shall not assign evidence scope. Scope is assigned by the platform from boundary events, because the SDK cannot know where a flow begins.
+
+
 6. Event Collection Specification
 Supported Event Categories
 Session Events
@@ -375,7 +450,7 @@ SESSION_TIMEOUT
 
 
 Navigation Events
-PAGE_VISIT
+PAGE_VIEW
 ROUTE_CHANGE
 PAGE_EXIT
 
@@ -558,14 +633,19 @@ Storage Encryption
 * AES-256
 Replay Encryption
 * AES-256
-Request Signing
+Request Signing (Pre-Launch)
 HMAC-SHA256
 
 
-Tamper Detection
+Tamper Detection (Pre-Launch)
 * SDK integrity validation
 * Signature verification
-12. Plugin Architecture
+Status
+API key handling, transport encryption and payload validation are delivered. Request signing and tamper detection are specified and scheduled for completion and verification before general availability.
+Until then, ingestion authenticity rests on the ingestion credential, which is scoped to one application and environment and is revocable.
+12. Plugin Architecture (Pre-Launch)
+Status
+Specified. Scheduled for completion and verification before general availability. The interfaces below are the target contract.
 Registration
 TELLANN.use(plugin);
 
@@ -687,9 +767,11 @@ Contract Tests
 * API compatibility
 18. SDK Distribution Specification
 NPM Packages
-@tellann/react
-@tellann/node
-@tellann/core
+@tellann/frontend-sdk
+    JavaScript, TypeScript, React, Next.js
+
+@tellann/backend-sdk
+    Node.js, Express, Fastify, NestJS
 
 
 Bundle Formats
@@ -698,12 +780,18 @@ CJS
 UMD
 
 
-CDN Distribution
+CDN Distribution (Pre-Launch)
 <script src="https://cdn.tellann.io/sdk/latest/tellann.min.js"></script>
 
 
-Integrity Verification
+Integrity Verification (Pre-Launch)
 integrity="sha384-..."
+
+
+Status
+Package distribution is delivered. CDN distribution with subresource integrity is specified and scheduled for completion before general availability.
+SDKS-DIST-001
+Package names are part of the public contract. Documentation, instrumentation plans and generated snippets shall all reference the names above.
 
 
 19. Developer Experience Requirements
@@ -728,23 +816,35 @@ Tooling
 * OpenAPI Examples
 * Migration Guides
 20. Phase Evolution Roadmap
-Phase 1 SDK
+Phase 1 SDK — Behavioral QA & Intent Platform
 * Event Capture
 * Session Replay
 * Workflow Discovery
 * State Tracking
+* Flow Boundary Marking
+* Run Correlation
 * API Tracking
 * Demonstration Mode
-Phase 2 SDK
+Phase 2 SDK — Production Monitoring, Feedback & Analysis
 Additional:
 * Production Monitoring
 * Journey Intelligence
 * Database Telemetry Integration
 * Error Correlation Support
-Phase 3 SDK
+* Production versus demonstration event separation
+Phase 3 SDK — Autonomous Behavioral Intelligence
 Additional:
 * Behavioral Baseline Collection
 * Regression Detection Support
 * Failure Simulation Hooks
-* Autonomous Validation Support
-* Quality Intelligence Support
+* Remediation Verification Support
+21. Pre-Launch SDK Checklist
+Specified in this document and scheduled for completion and verification before general availability:
+* Request signing and tamper detection — Section 11
+* Plugin architecture — Section 12
+* Customer privacy rules passed through initialization — Section 4, and PDCS Section 13
+* CDN distribution with subresource integrity — Section 18
+* Persistent queue limits and the full retry ladder verified under load — Section 9
+* Performance targets verified against the published budgets — Section 10
+SDKS-LAUNCH-001
+Until each item above is delivered and verified, no customer-facing surface or documentation shall represent it as available.

@@ -1,40 +1,71 @@
 API Specification Document (ASD)
 1. Purpose
-The API Specification Document (ASD) defines all external and internal API contracts for the Self-Observing Testing System (TELLANN).
+The API Specification Document (ASD) defines the API contracts for the Self-Observing Testing System (TELLANN).
 This document serves as the authoritative reference for:
 * SDK communication
+* Desktop agent communication
 * Telemetry ingestion
 * Session management
+* Flow declaration and reconciliation
+* Codebase and document intelligence
+* Instrumentation
+* QA run orchestration
 * Behavioral graph access
 * Coverage analysis
 * Missing state analysis
 * Endpoint intelligence
 * Reporting
+* Identity, organization and entitlement management
+* Billing and usage
+* Notifications
+* Administration
 * Production intelligence
-* Error investigation
-* Autonomous validation
-* Dashboard integration
-* Intelligence assistant interactions
+* Autonomous behavioral intelligence
 The APIs defined in this document support all capabilities across:
-* Phase 1 — Behavioral QA Platform
-* Phase 2 — Production Intelligence Platform
-* Phase 3 — Autonomous Validation Engine
-The specification is derived from the PRD, FRS, NFRS, System Architecture, Data Flow, Component Design, Event Taxonomy, Behavior Graph, QA Reporting, and Developer Demonstration specifications.
+* Phase 1 — Behavioral QA & Intent Platform
+* Phase 2 — Production Monitoring, Feedback & Analysis
+* Phase 3 — Autonomous Behavioral Intelligence
+1.1 Relationship To The Generated Specification
+This document describes API structure, grouping, conventions and phase coverage.
+The gateway publishes a machine-readable OpenAPI document that is generated from the running routes. Where the two disagree about the exact shape of a request or response, the generated document is authoritative, because it cannot drift.
+Generated specification
+GET /openapi.json
+Interactive documentation
+GET /docs
+This document is authoritative for: which endpoint groups exist, which phase each belongs to, what is delivered versus scheduled, and the conventions every route must follow.
+1.2 Status Markers
+(Pre-Launch)
+Specified, scheduled for completion and verification before general availability. Not currently served.
+(Phase 2) / (Phase 3)
+Designed here so that Phase 1 does not foreclose it. Not served in Phase 1.
+An unmarked endpoint is delivered.
 2. API Design Principles
 API-001 REST First
 All public APIs shall expose REST interfaces.
 API-002 OpenAPI Compliance
-All APIs shall be documented using OpenAPI 3.1.
+All APIs shall be reflected in the generated OpenAPI 3.1 document.
 API-003 Versioned APIs
-All public APIs shall be versioned.
-Example:
-/v1/events
-/v1/reports
-/v1/quality
+Public APIs shall be versioned.
+Version Policy
+The /v1 prefix marks a contract with an external, independently versioned consumer — the SDKs and the desktop agent — where a breaking change requires a coordinated release.
+/v1/events/*
+/v1/applications/{id}/flows/*
+/v1/applications/{id}/declared-flows/*
+/v1/applications/{id}/instrumentation/*
+/v1/applications/{id}/intent-drafts/*
+Routes consumed only by the first-party dashboard, which deploys with the platform, are served unversioned.
+/applications/*
+/organizations/*
+/sessions/*
+/reports/*
+/qa-runs/*
+/billing/*
+API-003a
+An unversioned route shall not be consumed by an independently released client. If such a consumer appears, the route is promoted to /v1 first.
 API-004 Tenant Isolation
 Every request shall be scoped to a tenant.
 API-005 Secure by Default
-All APIs require authenticated access except health endpoints.
+All APIs require authenticated access except health endpoints and the generated specification.
 API-006 Traceability
 Every request shall support:
 {
@@ -42,440 +73,591 @@ Every request shall support:
   "traceId": "",
   "tenantId": ""
 }
+API-007 Evidence Attribution
+Any response carrying an analytical result shall be able to state the evidence it was derived from.
 3. Base URL Structure
 Production
-https://api.tellann.io/v1
+https://api.tellann.io
 
 
 Staging
-https://staging-api.tellann.io/v1
+https://staging-api.tellann.io
 
 
 Local
-http://localhost:8080/v1
-4. Authentication APIs
-POST /auth/login
-Authenticate user.
-Request
-{
-  "email": "user@example.com",
-  "password": "********"
-}
-
-
+http://localhost:3000
+All traffic enters through the API Gateway, which authenticates, rate limits and routes to internal services.
+4. Authentication Model
+The platform authenticates three distinct classes of caller. They are not interchangeable.
+User Session
+A human in the dashboard. Bearer access token with refresh.
+Device Session
+The desktop agent on a specific machine. Bearer access token bound to a registered device, individually revocable.
+Ingestion Credential
+An SDK embedded in a customer application. Scoped to one application and environment, ingestion only.
+Programmatic Token
+Scoped machine access to management, reporting, graph, coverage and export APIs. Gated by the API_ACCESS entitlement.
+API-AUTH-001
+An ingestion credential shall not be able to read analytical results.
+API-AUTH-002
+A device session shall be individually revocable without affecting the user's other sessions.
+5. Authentication APIs
+POST /auth/send-otp
+Request a one-time login code.
+POST /auth/verify-otp
+Exchange a one-time code for a session.
 Response
 {
   "accessToken": "",
   "refreshToken": "",
   "expiresIn": 3600
 }
+POST /auth/login-password
+Authenticate with a password.
+POST /auth/identify
+Resolve whether an identity exists and which authentication modes it supports.
+GET /auth/preferred-auth-mode
+Retrieve the caller's preferred authentication mode.
+POST /auth/mfa/challenge/verify
+Verify a multi-factor challenge.
+POST /auth/mfa/challenge/resend
+Resend a multi-factor challenge.
 POST /auth/refresh
-Refresh access token.
+Refresh an access token.
 POST /auth/logout
-Invalidate session.
+Invalidate a session.
 GET /auth/me
-Retrieve authenticated user.
-5. Organization APIs
+Retrieve the authenticated user.
+PATCH /auth/password
+Change password.
+GET /auth/preferences
+PATCH /auth/preferences
+User preferences.
+POST /auth/me/avatar
+POST /auth/me/avatar/generated
+Avatar management.
+5.1 Desktop Authorization APIs
+POST /auth/desktop/authorize/complete
+Complete a desktop authorization request initiated in the system browser.
+GET /auth/desktop/devices
+DELETE /auth/desktop/devices/{deviceId}
+List and revoke registered devices.
+Flow
+Desktop Agent Requests Authorization
+        ↓
+System Browser Opens
+        ↓
+User Authenticates
+        ↓
+Authorization Completed
+        ↓
+Device Session Issued And Bound
+6. Organization APIs
 GET /organizations
 List organizations.
 POST /organizations
 Create organization.
-Request
-{
-  "name": "Acme Corp",
-  "planType": "PRO"
-}
 GET /organizations/{organizationId}
-Get organization details.
 PATCH /organizations/{organizationId}
-Update organization.
 DELETE /organizations/{organizationId}
-Deactivate organization.
-6. User Management APIs
-Supports user roles defined in FRS.
-GET /users
-List users.
-POST /users
-Invite user.
-GET /users/{userId}
-Get user.
-PATCH /users/{userId}
-Update user.
-DELETE /users/{userId}
-Deactivate user.
-7. API Key Management
-Supports SDK onboarding.
-GET /api-keys
-List keys.
-POST /api-keys
-Generate key.
-Response
-{
-  "apiKey": "tellann_xxxxxxxxx"
-}
+GET  /organizations/{organizationId}/settings
+PATCH /organizations/{organizationId}/settings
+Organization configuration.
+GET /organizations/{organizationId}/entitlement
+Resolved entitlement: plan, subscription status, feature map with tiers, resource limits and support level.
+GET /organizations/{organizationId}/audit-logs
+Security audit log.
+7. Membership APIs
+GET    /organizations/{organizationId}/members
+DELETE /organizations/{organizationId}/members/{memberId}
+PATCH  /organizations/{organizationId}/members/{memberId}/role
+GET    /organizations/{organizationId}/invitations
+POST   /organizations/{organizationId}/invitations
+DELETE /organizations/{organizationId}/invitations/{invitationId}
+GET    /organizations/{organizationId}/invitations/pending
+POST   /organizations/invitations/accept
+Roles: OWNER, ADMIN, MEMBER, VIEWER.
+See the Security Architecture Document, Section 7.3.
+8. Credential APIs
+GET    /organizations/{organizationId}/api-keys
+POST   /organizations/{organizationId}/api-keys
 DELETE /api-keys/{keyId}
-Revoke key.
-8. Application Management APIs
-Supports application onboarding and Developer Demonstration Mode.
-GET /applications
-List applications.
-POST /applications
-Create application.
-Request
-{
-  "name": "E-Commerce App",
-  "environment": "demo"
-}
-GET /applications/{applicationId}
-Get application.
-PATCH /applications/{applicationId}
-Update application.
+SDK ingestion credentials.
+GET    /organizations/{organizationId}/programmatic-tokens
+POST   /organizations/{organizationId}/programmatic-tokens
+DELETE /organizations/{organizationId}/programmatic-tokens/{tokenId}
+Scoped machine access. Requires the API_ACCESS entitlement.
+9. Application APIs
+GET    /organizations/{organizationId}/applications
+POST   /organizations/{organizationId}/applications
+GET    /applications/{applicationId}
+PATCH  /applications/{applicationId}
 DELETE /applications/{applicationId}
-Archive application.
-9. Telemetry Ingestion APIs
-Core ingestion endpoints defined by architecture and collector services.
-POST /events
-Submit single event.
-Request
-{
-  "eventId": "uuid",
-  "eventType": "BUTTON_CLICK",
-  "sessionId": "uuid",
-  "timestamp": "ISO8601",
-  "metadata": {}
-}
-
-
-Response
-{
-  "accepted": true
-}
-POST /events/batch
-Submit batch events.
+GET /applications/{applicationId}/stats
+GET /applications/{applicationId}/onboarding-progress
+GET    /applications/{applicationId}/environments
+POST   /applications/{applicationId}/environments
+GET    /environments/{environmentId}
+PATCH  /environments/{environmentId}
+DELETE /environments/{environmentId}
+GET  /applications/{applicationId}/environments/{environmentId}/sdk-settings
+PATCH /applications/{applicationId}/environments/{environmentId}/sdk-settings
+9.1 SDK Setup APIs
+GET  /applications/{applicationId}/sdk-setup
+Current connection state for an application.
+POST /applications/{applicationId}/sdk-setup/key
+Issue a setup credential.
+PATCH /applications/{applicationId}/sdk-setup/method
+Record the chosen setup method.
+POST /applications/{applicationId}/sdk-setup/handoffs
+Create a handoff from the dashboard into the desktop agent.
+POST /desktop/setup-handoffs/{handoffId}/consume
+Consume a handoff. Called by the desktop agent.
+10. Telemetry Ingestion APIs
+Authenticated with an ingestion credential.
+POST /v1/events/batch
+Submit a batch of events.
 Request
 {
   "events": []
 }
-
-
 Response
 {
   "accepted": true,
   "eventCount": 500
 }
-POST /events/validate
-Validate payload without ingestion.
-GET /events/schema
-Retrieve canonical event schema.
-GET /events/types
-Retrieve supported event types.
-Derived from Event Taxonomy.
-10. Session APIs
-Supports FR-018 through FR-025.
-GET /sessions
-Search sessions.
+POST /v1/app-events
+Submit first-party application events.
+POST /v1/events/validate (Pre-Launch)
+Validate a payload without ingesting it.
+GET /v1/events/schema (Pre-Launch)
+Retrieve the canonical event schema.
+GET /v1/events/types (Pre-Launch)
+Retrieve supported event types, derived from the Event Taxonomy.
+11. Session APIs
+GET /applications/{applicationId}/sessions
+List sessions. Supports pagination.
 Filters
 applicationId
-startDate
-endDate
-sessionType
+range
+startDate (Pre-Launch)
+endDate (Pre-Launch)
 GET /sessions/{sessionId}
-Retrieve session.
-GET /sessions/{sessionId}/timeline
-Get event timeline.
-GET /sessions/{sessionId}/events
-Get raw events.
+Retrieve a session.
 GET /sessions/{sessionId}/replay
-Retrieve replay model.
-GET /sessions/{sessionId}/summary
-Session summary.
-11. Developer Demonstration APIs
-Supports Developer Demonstration Mode.
-POST /demonstrations/start
-Start recording.
-Request
+Retrieve the replay model.
+GET /sessions/{sessionId}/timeline (Pre-Launch)
+GET /sessions/{sessionId}/events (Pre-Launch)
+GET /sessions/{sessionId}/summary (Pre-Launch)
+12. Flow Declaration APIs
+Supports FR-123 through FR-140b. Specified by the Behavior Graph Specification, Section 22.
+GET    /v1/applications/{applicationId}/flows
+POST   /v1/applications/{applicationId}/flows
+GET    /v1/applications/{applicationId}/flows/{flowId}
+PATCH  /v1/applications/{applicationId}/flows/{flowId}
+DELETE /v1/applications/{applicationId}/flows/{flowId}
+POST /v1/applications/{applicationId}/flows/{flowId}/publish
+Freeze the current draft as a published version.
+POST /v1/applications/{applicationId}/flows/{flowId}/versions/{versionId}/revise
+Open a new draft sequence from a published version.
+GET /v1/applications/{applicationId}/flows/{flowId}/versions/{versionId}/diagrams
+Rendered diagrams for a flow version.
+POST   /applications/{applicationId}/declared-flow/{flowId}/states
+PATCH  /applications/{applicationId}/declared-flow/{flowId}/states/{stateId}
+DELETE /applications/{applicationId}/declared-flow/{flowId}/states/{stateId}
+POST   /applications/{applicationId}/declared-flow/{flowId}/transitions
+Declared node and edge management.
+12.1 Derivation & Suggestion APIs
+GET  /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/generate
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/{suggestionId}/accept
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/{suggestionId}/reject
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/preview
+Preview the effect of a whole-flow review.
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/apply-selected
+Apply a selected subset of a review.
+POST /v1/applications/{applicationId}/declared-flows/{flowId}/suggestions/decline-review
+Decline a review.
+Every suggestion carries its source tier: INTERNAL_LIBRARY, CROSS_TENANT, or ASSISTIVE_ENRICHMENT.
+No endpoint in this group adds a node without an explicit accept or apply call.
+12.2 Intent Draft APIs
+Document-derived flow drafting.
+GET    /v1/applications/{applicationId}/intent-drafts
+POST   /v1/applications/{applicationId}/intent-drafts
+GET    /v1/applications/{applicationId}/intent-drafts/{draftId}
+DELETE /v1/applications/{applicationId}/intent-drafts/{draftId}
+POST   /v1/applications/{applicationId}/intent-drafts/{draftId}/review
+POST   /v1/applications/{applicationId}/intent-drafts/{draftId}/correct
+GET    /v1/applications/{applicationId}/intent-drafts/jobs
+GET    /v1/applications/{applicationId}/intent-drafts/jobs/{jobId}
+POST   /v1/applications/{applicationId}/intent-drafts/jobs/{jobId}/cancel
+Drafting is asynchronous and cancellable. A draft becomes declared intent only through the review endpoint.
+13. Reconciliation APIs
+GET  /applications/{applicationId}/reconciliation
+Current three-way classification.
+POST /applications/{applicationId}/reconciliation/run
+Trigger reconciliation.
+GET  /applications/{applicationId}/ruleset (Pre-Launch)
+Retrieve the compiled ruleset.
+Response
 {
-  "applicationId": "",
-  "releaseVersion": "2.1.0"
+  "workflow": "CHECKOUT",
+  "declaredStates": 14,
+  "observedStates": 12,
+  "confirmed": 11,
+  "trueGaps": 3,
+  "undeclared": 2
 }
-POST /demonstrations/{id}/stop
-Stop recording.
-GET /demonstrations
-List demonstrations.
-GET /demonstrations/{id}
-Retrieve demonstration.
-POST /demonstrations/{id}/analyze
-Generate QA intelligence.
-GET /demonstrations/{id}/results
-Retrieve generated outputs.
-12. Behavioral Graph APIs
-Supports FR-026 through FR-034.
+14. Workspace & Repository APIs
+Consumed by the desktop agent.
+GET  /applications/{applicationId}/workspaces
+POST /applications/{applicationId}/workspaces
+POST /applications/{applicationId}/workspaces/{workspaceId}/qa-branch-grant
+Issue a time-boxed branch checkout grant.
+GET   /applications/{applicationId}/branch-policy
+PATCH /applications/{applicationId}/branch-policy
+GET  /applications/{applicationId}/repository-binding
+POST /applications/{applicationId}/repository-snapshots
+GET  /applications/{applicationId}/workspace-roster
+Which members have a bound workspace for this application.
+15. Codebase Intelligence APIs
+GET  /applications/{applicationId}/codebase/analyses/latest
+POST /applications/{applicationId}/codebase/analyses/{analysisId}/cancel
+POST /applications/{applicationId}/codebase/analyses/{analysisId}/retry
+GET  /applications/{applicationId}/codebase/graph
+POST /applications/{applicationId}/codebase/ask
+POST /applications/{applicationId}/codebase/blast-radius
+POST /applications/{applicationId}/codebase/compare
+GET  /applications/{applicationId}/codebase/snapshots
+15.1 Consented Source Upload
+POST /applications/{applicationId}/codebase/uploads
+PUT  /applications/{applicationId}/codebase/uploads/{uploadId}/parts/{partNumber}
+POST /applications/{applicationId}/codebase/uploads/{uploadId}
+API-SRC-001
+An upload shall be created only after the developer has granted consent for a named purpose in the desktop agent.
+API-SRC-002
+The upload record shall retain the purpose and the granting user.
+16. Document APIs
+GET  /applications/{applicationId}/source-documents
+POST /applications/{applicationId}/source-documents/upload-intent
+GET  /applications/{applicationId}/source-documents/jobs/{jobId}
+17. Instrumentation APIs
+POST /v1/applications/{applicationId}/instrumentation/detect
+Detect existing instrumentation and installed SDKs.
+GET  /v1/applications/{applicationId}/instrumentation/plans
+POST /v1/applications/{applicationId}/instrumentation/plans
+GET  /v1/applications/{applicationId}/instrumentation/plans/{planId}
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/approve
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/reject
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/apply-intent
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/results
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/revalidate
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/rollback-intent
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/rollback-results
+POST /v1/applications/{applicationId}/instrumentation/plans/{planId}/fail
+Intent / Results Pattern
+The platform records an intent to apply or roll back, the desktop agent performs the operation locally, and the agent reports results.
+Record Apply Intent
+        ↓
+Agent Applies Locally
+        ↓
+Agent Reports Results
+This keeps the platform's record of the working tree honest even when the local operation fails or the agent is interrupted.
+API-INST-001
+A plan shall not reach an applied state without a corresponding results call.
+18. Flow Initialization APIs
+The lifecycle that binds a declared flow to code and verifies it.
+POST /flows/{flowId}/initializations
+GET  /flow-initializations/{initializationId}
+POST /flow-initializations/{initializationId}/analyze
+PATCH /flow-initializations/{initializationId}/mode
+POST /flow-initializations/{initializationId}/verification/start
+POST /flow-initializations/{initializationId}/verification/code-scan
+GET  /flow-initializations/{initializationId}/verification
+POST /flow-initializations/{initializationId}/approve
+POST /flow-initializations/{initializationId}/apply
+POST /flow-initializations/{initializationId}/validate
+POST /flow-bindings/{bindingId}/rescans
+Stages
+SDK_REQUIRED → SCANNING → REVIEW_READY → ROADMAP_READY
+→ AWAITING_APPROVAL → APPLYING → AWAITING_TELEMETRY
+→ COMPLETED | FAILED
+19. QA Run APIs
+GET  /applications/{applicationId}/qa-runs
+POST /applications/{applicationId}/qa-runs
+GET  /qa-runs/{runId}
+POST /qa-runs/{runId}/start
+POST /qa-runs/{runId}/pause
+POST /qa-runs/{runId}/resume
+POST /qa-runs/{runId}/complete
+POST /qa-runs/{runId}/fail
+GET  /qa-runs/{runId}/credentials
+POST /qa-runs/{runId}/evidence-events/batch
+GET  /qa-runs/{runId}/evidence-summary
+POST /qa-runs/{runId}/boundary-events
+GET  /qa-runs/{runId}/boundary-status
+GET  /qa-runs/{runId}/replay
+GET  /qa-runs/{runId}/artifacts
+GET  /qa-runs/{runId}/artifacts/{artifactId}/content
+GET  /qa-runs/{runId}/artifacts/{artifactId}/download
+GET  /qa-runs/{runId}/annotations
+POST /qa-runs/{runId}/annotations
+POST /qa-runs/{runId}/protected-values/{valueId}/reveal
+GET  /qa-runs/{runId}/report
+GET  /qa-runs/{runId}/report-status
+POST /qa-runs/{runId}/report/retry
+API-RUN-001
+A run may be opened only by a caller holding a device session.
+API-RUN-002
+Every evidence event shall carry its scope: PRE_BOUNDARY or IN_FLOW.
+API-RUN-003
+A protected value reveal shall be authorized and audited.
+20. Behavioral Graph APIs
 GET /applications/{applicationId}/graph
-Retrieve graph.
-GET /applications/{applicationId}/graph/states
-List states.
-GET /applications/{applicationId}/graph/transitions
-List transitions.
-GET /applications/{applicationId}/graph/workflows
-List workflows.
-GET /applications/{applicationId}/graph/metrics
-Graph metrics.
-GET /workflows/{workflowId}
-Workflow details.
-GET /workflows/{workflowId}/paths
-Workflow paths.
-GET /workflows/{workflowId}/states
-Workflow states.
-13. Coverage Analysis APIs
-Supports FR-035 through FR-041.
+Retrieve the behavioral graph.
+GET /applications/{applicationId}/workflows
+List discovered workflows.
+GET /applications/{applicationId}/graph/versions (Pre-Launch)
+GET /applications/{applicationId}/graph/diff (Pre-Launch)
+Graph drift comparison.
+GET /applications/{applicationId}/graph/states (Pre-Launch)
+GET /applications/{applicationId}/graph/transitions (Pre-Launch)
+GET /applications/{applicationId}/graph/metrics (Pre-Launch)
+GET /workflows/{workflowId} (Pre-Launch)
+GET /workflows/{workflowId}/paths (Pre-Launch)
+21. Coverage APIs
 GET /coverage
 Coverage overview.
-GET /coverage/workflows
-Workflow coverage.
-GET /coverage/workflows/{workflowId}
-Coverage details.
-GET /coverage/comparison
-Coverage comparison.
-Query
-sessionA
-sessionB
-
-
-14. Missing State APIs
-Supports FR-042 through FR-046.
-GET /missing-states
-List detected missing states.
-GET /missing-states/loading
-Loading states.
-GET /missing-states/error
-Error states.
-GET /missing-states/empty
-Empty states.
-GET /missing-flows
-Missing flows.
-15. Endpoint Intelligence APIs
-Supports FR-047–052 and FR-076–080.
-GET /endpoints
-Endpoint inventory.
-GET /endpoints/health
-Endpoint health.
-GET /endpoints/rankings
-Endpoint rankings.
-GET /endpoints/slow
-Slow endpoints.
-GET /endpoints/errors
-Error-prone endpoints.
-GET /endpoints/recommendations
-Optimization recommendations.
-16. Dashboard APIs
-Supports dashboard functionality.
-GET /dashboard/overview
-Executive dashboard.
-GET /dashboard/workflows
-Workflow dashboard.
-GET /dashboard/sessions
-Session dashboard.
-GET /dashboard/endpoints
-Endpoint dashboard.
-GET /dashboard/quality
-Quality dashboard.
-17. Report APIs
-Supports QRS reporting framework.
-GET /reports
-List reports.
-POST /reports/generate
-Generate report.
-Request
+GET /coverage/workflows (Pre-Launch)
+GET /coverage/workflows/{workflowId} (Pre-Launch)
+GET /coverage/comparison (Pre-Launch)
+Supports FR-041.
+22. Missing State & Missing Flow APIs
+Currently served as part of the application report payload. Dedicated endpoints are scheduled.
+GET /missing-states (Pre-Launch)
+GET /missing-states/loading (Pre-Launch)
+GET /missing-states/error (Pre-Launch)
+GET /missing-states/empty (Pre-Launch)
+GET /missing-flows (Pre-Launch)
+23. Endpoint Intelligence APIs
+GET /reports/{applicationId}/endpoint-intelligence
+Endpoint latency, volume, error rate and recommendations.
+GET /endpoints/{applicationId}/analysis
+Time-series endpoint metrics.
+GET /endpoints/health (Pre-Launch)
+GET /endpoints/rankings (Pre-Launch)
+GET /endpoints/slow (Pre-Launch)
+GET /endpoints/errors (Pre-Launch)
+GET /endpoints/recommendations (Pre-Launch)
+24. Report APIs
+GET /reports/{applicationId}/latest
+Current analytical state of an application.
+GET /reports/{applicationId}/export?format=
+Export. Formats: json, csv, html, pdf. Availability is resolved from the organization's REPORT_EXPORT tier.
+GET /qa-runs/{runId}/report
+The report for a specific demonstration run.
+24.1 Report Catalogue (Pre-Launch)
+A versioned, independently addressable report catalogue is specified and scheduled for completion before general availability.
+GET    /reports (Pre-Launch)
+POST   /reports/generate (Pre-Launch)
+GET    /reports/{reportId} (Pre-Launch)
+GET    /reports/{reportId}/download (Pre-Launch)
+DELETE /reports/{reportId} (Pre-Launch)
+Report metadata standard, per QRS Section 5:
 {
+  "reportId": "uuid",
   "reportType": "FLOW_COVERAGE",
-  "applicationId": ""
+  "applicationId": "uuid",
+  "generatedAt": "timestamp",
+  "generatedBy": "TELLANN",
+  "version": "1.0"
 }
-
-
-GET /reports/{reportId}
-Retrieve report.
-GET /reports/{reportId}/download
-Download report.
-Formats
-pdf
-csv
-json
-html
-
-
-DELETE /reports/{reportId}
-Delete report.
-18. Production Monitoring APIs (Phase 2)
-Supports FR-066 through FR-069.
-GET /monitoring/workflow-health
-Workflow health.
-GET /monitoring/live-sessions
-Active sessions.
-GET /monitoring/trends
-Behavior trends.
-GET /monitoring/health-score
-Application health score.
-19. User Journey APIs (Phase 2)
-Supports FR-070 through FR-075.
-GET /journeys
-Journey inventory.
-GET /journeys/common
-Common journeys.
-GET /journeys/abandonment
-Abandoned journeys.
-GET /journeys/friction
-Friction analysis.
-GET /journeys/bottlenecks
-Workflow bottlenecks.
-20. Database Intelligence APIs (Phase 2)
-Supports FR-081 through FR-085.
-GET /database/queries
-Query analysis.
-GET /database/slow-queries
-Slow queries.
-GET /database/indexes
-Index recommendations.
-GET /database/unused-fields
-Unused field analysis.
-GET /database/recommendations
-Optimization recommendations.
-21. Error Correlation APIs (Phase 2)
-Supports FR-086 through FR-091.
-GET /errors
-List errors.
-GET /errors/{errorId}
-Error details.
-GET /errors/{errorId}/investigation
-Full investigation package.
-Contains:
-* Session Replay
-* Workflow Path
-* API Trace
-* Logs
-* Database Activity
-GET /errors/{errorId}/replay
-Replay linked session.
-22. Release Management APIs (Phase 3)
-Supports release comparison and regression analysis.
-POST /releases
-Register release.
-GET /releases
-List releases.
-GET /releases/{releaseId}
-Release details.
-POST /releases/compare
-Compare releases.
-GET /releases/regressions
-Detected regressions.
-23. Automated Test Generation APIs (Phase 3)
-Supports FR-092 through FR-096.
-POST /tests/generate
-Generate tests.
-Request
-{
-  "workflowId": "",
-  "strategy": "FULL"
-}
-
-
-GET /tests/generated
-Generated suites.
-GET /tests/generated/{testSuiteId}
-Generated test suite.
-GET /tests/generated/{testSuiteId}/download
-Export test suite.
-24. Failure Simulation APIs (Phase 3)
-Supports FR-102 through FR-106.
-POST /simulation/network
-Network failure simulation.
-POST /simulation/service
-Service failure simulation.
-POST /simulation/timeout
-Timeout simulation.
-POST /simulation/workflow
-Workflow simulation.
-GET /simulation/results/{simulationId}
-Simulation results.
-25. Optimization Intelligence APIs (Phase 3)
-Supports FR-107 through FR-110.
-GET /optimization/apis
-API recommendations.
-GET /optimization/database
-Database recommendations.
-GET /optimization/workflows
-Workflow recommendations.
-GET /optimization/infrastructure
-Infrastructure recommendations.
-26. Behavioral Anomaly APIs (Phase 3)
-Supports FR-111 through FR-116.
-GET /anomalies
-All anomalies.
-GET /anomalies/workflows
-Workflow anomalies.
-GET /anomalies/errors
-Error spikes.
-GET /anomalies/latency
-Latency anomalies.
-GET /anomalies/drift
-Behavioral drift.
-27. Quality Intelligence APIs (Phase 3)
-Supports FR-117 through FR-122.
-GET /quality/assessment
-Quality assessment.
-GET /quality/risks
-Identified risks.
-GET /quality/recommendations
-Recommendations.
-GET /quality/priorities
-Prioritized issues.
-POST /quality/assistant/query
-Quality intelligence assistant.
-Request
-{
-  "question": "Why did checkout health decline?"
-}
-
-
-28. Notification APIs
-Supports workflow degradation alerts and report notifications.
-GET /notifications
-List notifications.
-PATCH /notifications/{id}/read
-Mark as read.
-POST /webhooks
-Create webhook.
-GET /webhooks
-List webhooks.
-DELETE /webhooks/{id}
-Delete webhook.
-29. Privacy & Retention APIs
-Supports privacy controls and retention management.
-GET /privacy-rules
-List privacy rules.
-POST /privacy-rules
-Create rule.
-PATCH /privacy-rules/{id}
-Update rule.
-GET /retention-policies
-List retention policies.
-PATCH /retention-policies/{id}
-Update retention.
-30. Administrative APIs
-GET /audit-logs
-Security audit logs.
-GET /system/metrics
-Platform metrics.
-GET /system/status
-Platform status.
+Until the catalogue is delivered, reports are addressed by application or by run, and are regenerated from evidence rather than retrieved by identifier.
+25. Dashboard APIs
+GET /dashboard/overview
+Aggregated overview for the authenticated user's selected application.
+GET /dashboard/workflows (Pre-Launch)
+GET /dashboard/sessions (Pre-Launch)
+GET /dashboard/quality (Pre-Launch)
+26. Notification APIs
+GET   /organizations/{organizationId}/notifications
+PATCH /organizations/{organizationId}/notifications/{id}/read
+POST  /organizations/{organizationId}/notifications/read-all
+GET   /organizations/{organizationId}/notification-stream
+Server-sent event stream for live delivery.
+GET   /organizations/{organizationId}/notification-preferences
+PATCH /organizations/{organizationId}/notification-preferences/{category}
+GET   /organizations/{organizationId}/push-config
+POST  /organizations/{organizationId}/push-subscriptions
+POST  /organizations/{organizationId}/push-subscriptions/test
+POST  /organizations/{organizationId}/push-subscriptions/unregister
+26.1 Outbound Webhooks (Pre-Launch)
+POST   /webhooks (Pre-Launch)
+GET    /webhooks (Pre-Launch)
+DELETE /webhooks/{id} (Pre-Launch)
+Customer-facing outbound webhooks are specified and scheduled. Inbound provider webhooks for billing are delivered and are not part of this group.
+27. Billing & Usage APIs
+GET  /billing/plans
+POST /billing/subscriptions/checkout
+GET  /billing/checkouts/{checkoutId}/status
+POST /billing/subscriptions/changes
+POST /billing/subscriptions/changes/preview
+POST /billing/subscriptions/retry
+POST /billing/trial/eligibility
+POST /billing/trial/start
+GET  /billing/organizations/{organizationId}/subscription
+POST /billing/organizations/{organizationId}/subscription/cancel
+GET  /billing/organizations/{organizationId}/invoices
+GET  /billing/invoices/{invoiceId}/document
+POST /billing/payment-method/session
+GET  /billing/users/me/profile
+PATCH /billing/users/me/profile
+POST /billing/organizations/{organizationId}/enterprise-sales-requests
+GET  /usage/organization/{organizationId}
+Usage records and plan-limit snapshots.
+28. Privacy & Retention APIs (Pre-Launch)
+Specified by the Privacy & Data Collection Specification, Sections 13 and 14.
+GET   /privacy-rules (Pre-Launch)
+POST  /privacy-rules (Pre-Launch)
+PATCH /privacy-rules/{id} (Pre-Launch)
+GET   /retention-policies (Pre-Launch)
+PATCH /retention-policies/{id} (Pre-Launch)
+Retention is currently resolved from the organization's plan entitlement and is readable through the entitlement endpoint. Tenant-configurable retention and the customer privacy rule engine are scheduled for completion before general availability.
+29. Administrative APIs
+Platform administration. Requires a system administrator scope.
+GET  /admin/rulesets
+POST /admin/rulesets/{rulesetId}/promote
+GET  /admin/rule-candidates
+POST /admin/rule-candidates/{candidateId}/{decision}
+GET  /admin/ai-usage
+GET  /admin/ai-usage/daily
+POST /admin/ai-usage/backfill
+GET  /admin/audit-logs
+GET  /admin/jobs
+Assisted intelligence usage is administratively visible by design. Per MSD-AI-005, every invocation is logged with its feature, status, attribution and cost.
+30. Platform APIs
 GET /health
 Health check.
 Response
 {
   "status": "UP"
 }
-
-
-31. Standard Response Model
+GET /openapi.json
+Generated specification.
+GET /docs
+Interactive documentation.
+GET /system/metrics (Pre-Launch)
+GET /system/status (Pre-Launch)
+31. Production Monitoring APIs (Phase 2)
+Supports FR-066 through FR-069.
+GET /monitoring/workflow-health
+GET /monitoring/live-sessions
+GET /monitoring/trends
+GET /monitoring/health-score
+32. User Journey APIs (Phase 2)
+Supports FR-070 through FR-075.
+GET /journeys
+GET /journeys/common
+GET /journeys/abandonment
+GET /journeys/friction
+GET /journeys/bottlenecks
+33. Guidance APIs (Phase 2)
+Supports FR-203 through FR-212. The distinguishing output of Phase 2.
+GET /guidance
+Ranked guidance for an application.
+GET /guidance/{guidanceId}
+A single item with its full evidence trace.
+POST /guidance/{guidanceId}/acknowledge
+Record that guidance was seen and what was decided.
+GET /guidance/outcomes
+Whether acted-upon guidance changed the behavior it described.
+Response
+{
+  "guidanceId": "",
+  "subject": "PASSWORD_RESET",
+  "finding": "Declared, reachable, never completed in production",
+  "classification": "DEFECT",
+  "impactedSessions": 412,
+  "evidence": []
+}
+34. Database Intelligence APIs (Phase 2)
+Supports FR-081 through FR-085.
+GET /database/queries
+GET /database/slow-queries
+GET /database/indexes
+GET /database/unused-fields
+GET /database/recommendations
+35. Error Correlation APIs (Phase 2)
+Supports FR-086 through FR-091.
+GET /errors
+GET /errors/{errorId}
+GET /errors/{errorId}/investigation
+GET /errors/{errorId}/replay
+36. Release Management APIs (Phase 3)
+POST /releases
+GET  /releases
+GET  /releases/{releaseId}
+POST /releases/compare
+GET  /releases/regressions
+Requires the release entity described in BGS Section 19.1.
+37. Automated Test Generation APIs (Phase 3)
+Supports FR-092 through FR-096.
+POST /tests/generate
+GET  /tests/generated
+GET  /tests/generated/{testSuiteId}
+GET  /tests/generated/{testSuiteId}/download
+38. Failure Simulation APIs (Phase 3)
+Supports FR-102 through FR-106.
+POST /simulation/network
+POST /simulation/service
+POST /simulation/timeout
+POST /simulation/workflow
+GET  /simulation/results/{simulationId}
+39. Behavioral Anomaly APIs (Phase 3)
+Supports FR-111 through FR-116.
+GET /anomalies
+GET /anomalies/workflows
+GET /anomalies/errors
+GET /anomalies/latency
+GET /anomalies/drift
+40. Remediation APIs (Phase 3)
+Supports FR-213 through FR-220.
+GET  /remediations
+Proposed and applied remediations.
+GET  /remediations/{remediationId}
+POST /remediations/{remediationId}/approve
+POST /remediations/{remediationId}/revert
+GET  /applications/{applicationId}/authority
+PATCH /applications/{applicationId}/authority
+Explicit, revocable, per-application authority for autonomous action.
+API-REM-001
+No remediation shall be applied without a matching authority grant for that application.
+API-REM-002
+Every applied remediation shall expose the action taken, the authority it was taken under, and a revert path.
+41. Network Behavioral Intelligence APIs (Phase 3)
+Supports FR-221 through FR-228.
+GET /intelligence/divergence
+Where this application diverges structurally from comparable systems.
+GET /intelligence/suggestions
+Implementation suggestions, feature modification proposals and update recommendations.
+Response
+{
+  "pattern": "CHECKOUT",
+  "observation": "73% of comparable flows include INVENTORY_CHANGED",
+  "present": false,
+  "confidence": 0.73
+}
+API-NBI-001
+Responses shall express patterns in frequency-weighted aggregate form only, and shall never permit identification of a source organization.
+42. Quality Intelligence APIs (Phase 3)
+Supports FR-117 through FR-122.
+GET  /quality/assessment
+GET  /quality/risks
+GET  /quality/recommendations
+GET  /quality/priorities
+POST /quality/assistant/query
+Composite quality assessment is a Phase 3 capability. See the QA Report Specification, Section 26.
+43. Standard Response Model
 Success
 {
   "success": true,
@@ -483,8 +665,6 @@ Success
   "meta": {},
   "requestId": ""
 }
-
-
 Error
 {
   "success": false,
@@ -494,50 +674,70 @@ Error
   },
   "requestId": ""
 }
-
-
-32. OpenAPI Deliverables
-The implementation shall publish:
-GET /openapi.json
-GET /swagger.json
-GET /docs
-
-
-Documentation UI:
-/swagger
-/redoc
-
-
-33. API Coverage by Phase
-Phase 1
-* Authentication
-* Organizations
-* Users
-* Applications
-* Event Ingestion
-* Sessions
-* Session Replay
-* Developer Demonstration Mode
-* Behavioral Graphs
-* Coverage Analysis
-* Missing States
-* Endpoint Intelligence
-* Reports
-* Dashboard
-Phase 2
+43.1 Measurement State
+Analytical responses do not report zero for something that was not measured.
+{
+  "stateCoverage": {
+    "status": "NOT_MEASURED",
+    "value": null,
+    "reason": "Backend capture track was not enabled for this run"
+  }
+}
+Valid status values:
+MEASURED
+Evidence was sufficient. A value is present.
+INSUFFICIENT_EVIDENCE
+Evidence exists but is too thin to report a value.
+NOT_MEASURED
+No evidence was gathered for this dimension.
+API-MEAS-001
+A consumer shall be able to distinguish "zero" from "unknown" from every analytical endpoint.
+44. API Coverage by Phase
+Phase 1 — Behavioral QA & Intent Platform
+* Authentication, devices and desktop authorization
+* Organizations, members and credentials
+* Applications, environments and SDK setup
+* Event ingestion
+* Sessions and session replay
+* Flow declaration, derivation and intent drafts
+* Reconciliation
+* Workspaces, repositories and branch policy
+* Codebase and document intelligence
+* Instrumentation and flow initialization
+* QA runs
+* Behavioral graphs and coverage
+* Endpoint intelligence
+* Reports and exports
+* Notifications
+* Billing, usage and entitlements
+* Administration
+Phase 2 — Production Monitoring, Feedback & Analysis
 Adds:
 * Production Monitoring
 * User Journey Intelligence
+* Guidance
 * Database Intelligence
 * Error Correlation
-* Workflow Health
-* Notifications
-Phase 3
+Phase 3 — Autonomous Behavioral Intelligence
 Adds:
 * Release Validation
 * Test Generation
-* Regression Detection
 * Failure Simulation
-* Optimization Intelligence
 * Behavioral Anomaly Detection
+* Remediation and Authority
+* Network Behavioral Intelligence
 * Quality Intelligence Assistant
+45. Pre-Launch API Checklist
+The following are specified in this document and scheduled for completion and verification before general availability. This list is the review checklist, not a backlog of ideas.
+* Event schema, type and validation endpoints — Section 10
+* Session date-range filtering and timeline/events/summary endpoints — Section 11
+* Ruleset retrieval — Section 13
+* Graph version, diff, states, transitions and metrics endpoints — Section 20
+* Coverage workflow and comparison endpoints — Section 21
+* Dedicated missing-state and missing-flow endpoints — Section 22
+* Endpoint health, ranking and recommendation endpoints — Section 23
+* Report catalogue and report metadata standard — Section 24.1
+* Dashboard workflow, session and quality endpoints — Section 25
+* Outbound customer webhooks — Section 26.1
+* Privacy rule engine and tenant-configurable retention — Section 28
+* System metrics and status — Section 30

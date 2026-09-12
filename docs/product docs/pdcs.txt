@@ -19,7 +19,7 @@ The objective of this specification is to ensure that TELLANN can generate behav
 This specification governs all data collected, processed, stored, analyzed, transmitted, exported, or displayed throughout the platform lifecycle. It applies across SDKs, ingestion systems, analytics engines, behavioral graphs, session replay, reporting systems, production monitoring systems, and autonomous intelligence systems.
 2. Scope
 This specification applies to:
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Privacy controls for:
 * Frontend SDK
 * Backend SDK
@@ -29,14 +29,14 @@ Privacy controls for:
 * Missing state detection
 * Endpoint analysis
 * QA reporting
-Phase 2 — Production Intelligence Platform
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional controls for:
 * Real user monitoring
 * User journey intelligence
 * Error correlation
 * Database intelligence
 * Workflow health monitoring
-Phase 3 — Autonomous Validation Engine
+Phase 3 — Autonomous Behavioral Intelligence
 Additional controls for:
 * Test generation
 * Regression detection
@@ -195,20 +195,52 @@ Collected or generated:
 * Workflow names
 * State names
 * Transition relationships
+* Declared intent and provenance
+* Reconciliation classifications
 * Completion rates
 * Abandonment rates
-* Coverage scores
+* Coverage measurements
 Supports behavior graph and workflow intelligence capabilities.
-7.6 Quality Intelligence Data
+7.6 Code-Derived Data
+Derived locally by the desktop agent and transmitted as projections:
+* File and symbol paths
+* Flow checkpoint locations
+* Code graph topology
+* Analysis warnings
+Never transmitted without consent:
+* Source file contents
+Supports codebase intelligence and instrumentation targeting.
+7.7 Assisted Intelligence Data
+Transmitted to a model provider only where an assisted capability is invoked:
+* Declared state and flow names
+* Customer-supplied document text
+* Sanitized structural context
+Never transmitted to a model provider:
+* Source file contents
+* Protected values
+* Credentials or secrets
+* Raw telemetry payloads
+PDCS-AI-001
+Input shall be sanitized before transmission to a model provider, using the same classification rules that govern capture.
+PDCS-AI-002
+Every model invocation shall be logged with its feature, status, attribution and cost.
+PDCS-AI-003
+No analytical output is produced by a model. See the MVP Scope Document, Section 9.1.
+7.8 Quality Intelligence Data
 Generated:
-* Quality scores
-* Risk scores
+* Quality scores (Phase 3)
+* Risk scores (Phase 3)
 * Recommendations
-* Regression findings
-* Anomaly findings
-Supports Phase 3 intelligence requirements.
-8. Masked Data Specification
+* Regression findings (Phase 3)
+* Anomaly findings (Phase 3)
+Composite quality scores are a Phase 3 capability. See the QA Report Specification, Section 26.
+8. Masked Data Specification (Pre-Launch)
 Masked data may be collected only after masking, hashing, tokenization, or redaction.
+Status
+Specified. Scheduled for completion and verification before general availability.
+Current behavior: the SDKs exclude sensitive fields by name and never capture password inputs (Section 11), and the desktop agent classifies and protects sensitive captured values (Section 12.1). The field-level transformation rules in 8.1 through 8.8 — hashing, pseudonymization, partial masking and redaction of the values that are captured — are not yet applied.
+PDCS-MASK-001
+Until this section is delivered, the platform shall not represent PII masking as available in any customer-facing surface, and the data collection matrix in Section 18 shall be read as the target state rather than the current state.
 8.1 Email Addresses
 Rule:
 Hash before storage.
@@ -423,8 +455,82 @@ X-API-Key
 Bearer
 
 
-13. Privacy Rule Engine
+12.1 Local Agent Privacy Controls
+The desktop agent introduces privacy surfaces that do not exist in an SDK-only product. It reads customer source code, drives a browser session that passes through real credentials, and writes to a customer working tree.
+Local-First Principle
+PDCS-LOCAL-001
+Customer source code shall be processed on the developer's machine. Only derived artifacts — code graph projections, analysis warnings, checkpoint locations — shall be transmitted by default.
+PDCS-LOCAL-002
+Raw source, source archives and unreviewed working-tree diffs shall be transmitted only on explicit consent granted for a named purpose.
+PDCS-LOCAL-003
+A consent grant shall record what was consented to, for what purpose, by which user, and when.
+PDCS-LOCAL-004
+Consent shall be per-purpose and shall not generalize. Consenting to upload an archive for one analysis does not consent to the next.
+Workspace Trust
+PDCS-LOCAL-005
+A bound workspace shall carry a trust status, and the agent shall refuse privileged operations against an untrusted workspace.
+PDCS-LOCAL-006
+The agent shall detect and refuse to operate where the bound repository does not match the application it is bound to.
+Protected Values
+A demonstration run passes through login forms, payment fields and API payloads containing values that must not be stored in the clear.
+Captured
+    ↓
+Classified
+    ↓
+Stored Protected
+    ↓
+Revealed Only On Explicit Request
+    ↓
+Reveal Audited
+PDCS-LOCAL-007
+Values classified as protected shall never appear in evidence, replay, findings, reports or exports in the clear.
+PDCS-LOCAL-008
+A reveal shall require an authenticated, authorized user, and shall be recorded in the audit log with the revealing user and the value revealed.
+PDCS-LOCAL-009
+Credentials supplied to drive a run shall be held in operating-system protected storage on the developer's machine and shall never be transmitted to the platform.
+Working Tree Safety
+PDCS-LOCAL-010
+Diffs displayed or exported shall be redacted of secrets before rendering.
+PDCS-LOCAL-011
+No write to a customer working tree shall occur without an approved plan, and every applied plan shall be reversible.
+Device Identity
+PDCS-LOCAL-012
+A desktop session shall be bound to a device and shall be individually revocable without affecting the user's other sessions.
+PDCS-LOCAL-013
+A user shall be able to see every device holding a session and revoke any of them.
+Local Data Collection Matrix
+Data Type
+	Processed Locally
+	Transmitted
+	Source files
+	✓
+	Only on consent
+	Code graph projections
+	✓
+	✓
+	Analysis warnings
+	✓
+	✓
+	Instrumentation diffs
+	✓
+	Approved plan only
+	Run credentials
+	✓
+	Never
+	Protected values
+	✓
+	Protected form only
+	Evidence events
+	✓
+	✓
+	Browser findings
+	✓
+	✓
+13. Privacy Rule Engine (Pre-Launch)
 Customers may define custom privacy rules.
+Status
+Specified. Scheduled for completion and verification before general availability.
+Current behavior: the SDKs enforce a sensitive-key denylist and password-field exclusion (Sections 11 and 12), and the desktop agent enforces protected-value classification (Section 12.1). Customer-defined rules are not yet configurable.
 Example:
 {
   "field": "customerEmail",
@@ -438,6 +544,8 @@ Supported Actions:
 * HASH
 * TOKENIZE
 * REDACT
+PDCS-RULE-001
+Until the rule engine is delivered, the platform shall not represent customer-defined privacy rules as available in any customer-facing surface.
 14. Data Retention Policy
 Supports retention requirements.
 Data Type
@@ -452,9 +560,19 @@ Data Type
 	24 Months
 	Reports
 	5 Years
+	Run Evidence
+	Plan Retention Window
+	Run Artifacts
+	90 Days
+	Consented Source Archives
+	Purpose Duration, Then Deleted
 	Quality Assessments
 	Unlimited
-	All retention periods shall be tenant configurable.
+	Retention is currently resolved from the organization's plan entitlement and is readable but not editable by the customer.
+PDCS-RET-001 (Pre-Launch)
+All retention periods shall be tenant configurable within the bounds the plan permits.
+PDCS-RET-002
+A consented source archive shall be deleted once the purpose it was consented for has completed, regardless of the plan retention window.
 15. Data Export Privacy Rules
 Exports shall:
 * Respect masking rules
@@ -468,15 +586,21 @@ Supported formats:
 * HTML
 Supports reporting requirements.
 16. Phase-Based Privacy Evolution
-Phase 1 — Behavioral QA Platform
+Phase 1 — Behavioral QA & Intent Platform
 Privacy Controls:
 * Event filtering
 * Sensitive field exclusion
 * Session replay masking
 * SDK privacy enforcement
+* Local-first source handling
+* Purpose-named consent for source upload
+* Workspace trust
+* Protected value classification with audited reveal
+* Device-bound session revocation
+* Sanitized assisted-intelligence input
 Goal:
-Safe behavioral capture.
-Phase 2 — Production Intelligence Platform
+Safe behavioral capture, and safe access to a customer's codebase.
+Phase 2 — Production Monitoring, Feedback & Analysis
 Additional Controls:
 * Real-user monitoring protections
 * Journey privacy controls
@@ -484,7 +608,7 @@ Additional Controls:
 * Database telemetry sanitization
 Goal:
 Safe production intelligence.
-Phase 3 — Autonomous Validation Engine
+Phase 3 — Autonomous Behavioral Intelligence
 Additional Controls:
 * Intelligence model privacy
 * Generated test sanitization
@@ -650,4 +774,17 @@ The Privacy & Data Collection Specification shall be considered complete when:
 7. Tenant-specific privacy rules are supported.
 8. Data retention policies are enforceable.
 9. Data exports respect privacy controls.
-10. The platform can generate behavioral intelligence, production intelligence, and autonomous quality intelligence without exposing sensitive customer information.
+10. Customer source code does not leave the developer's machine without purpose-named consent.
+11. Protected values are never rendered in the clear, and every reveal is audited.
+12. Assisted intelligence input is sanitized before transmission and every invocation is logged.
+13. The platform can generate behavioral intelligence, production intelligence, and autonomous behavioral intelligence without exposing sensitive customer information.
+20. Pre-Launch Privacy Checklist
+The following are specified in this document and scheduled for completion and verification before general availability. This list is the review checklist.
+* Masked Data Specification — Section 8. Field-level hashing, pseudonymization, partial masking and redaction of captured values.
+* Privacy Rule Engine — Section 13. Customer-defined rules with IGNORE, MASK, HASH, TOKENIZE and REDACT actions.
+* Tenant-configurable retention — Section 14, PDCS-RET-001.
+* Section 18 data collection matrix verified against actual behavior, with every row confirmed rather than intended.
+PDCS-LAUNCH-001
+Until each item above is delivered and verified, no customer-facing surface, marketing claim, or contractual commitment shall represent it as available.
+PDCS-LAUNCH-002
+This checklist shall be reviewed as a whole before general availability. Partial delivery of Section 8 is not delivery of Section 8.

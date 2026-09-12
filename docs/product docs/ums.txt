@@ -30,12 +30,14 @@ Measurement does not imply billing.
 During Phase 1, only a subset of measured resources are customer-facing billing metrics.
 3. Metering Evolution Framework
 Phase 1
-Behavioral QA Platform
+Behavioral QA & Intent Platform
 Customer-facing metrics:
 * Applications
 * Users
 * Storage
 * Retention
+* Environments per application
+* Ingestion credentials
 Internal-only metrics:
 * Events
 * Sessions
@@ -43,9 +45,13 @@ Internal-only metrics:
 * Replays
 * Workflows
 * Reports
+* Exports
+* API calls
+* Assisted intelligence consumption
 Event volume shall not be used as a customer-facing billing metric.
+Assisted intelligence consumption shall not be used as a customer-facing billing metric.
 Phase 2
-Production Intelligence Platform
+Production Monitoring, Feedback & Analysis
 Additional billable metric:
 * Production Events
 Pricing model:
@@ -55,7 +61,7 @@ Included Event Pool
 +
 Event Overage
 Phase 3
-Autonomous Quality Intelligence Platform
+Autonomous Behavioral Intelligence
 Additional billable metric:
 * AI Consumption
 Pricing model:
@@ -87,14 +93,18 @@ Users
 Definition
 An active user with access to an organization.
 Includes:
+* Owners
 * Admins
-* Developers
-* QA Engineers
-* Product Managers
+* Members
+* Viewers
 Measurement Unit:
 User Seat
 Calculation:
-Highest active seat count during billing period.
+Active organization members plus unexpired invitations, evaluated at the point of enforcement.
+An invitation consumes a seat from the moment it is issued, because a seat that can be claimed at any time is a seat that is committed. Expiring or revoking an invitation returns the seat.
+Quota enforcement is evaluated against current occupancy rather than a period peak. A customer who removes a member can immediately invite a replacement; they are not held to a high-water mark they have already reduced.
+UMS-SEAT-001
+The seat figure used for quota enforcement and the seat figure shown in the usage dashboard shall be the same figure, computed the same way.
 Storage
 Definition
 Total stored customer assets.
@@ -124,13 +134,13 @@ Examples:
 These metrics are collected but do not impact Phase 1 billing.
 Events
 Definition
-Canonical telemetry events captured by SDKs.
+Canonical telemetry events captured by SDKs and the desktop agent.
 Examples:
-* PAGE_VISIT
+* PAGE_VIEW
 * BUTTON_CLICK
-* FORM_SUBMITTED
+* FORM_SUBMIT
 * API_REQUEST
-* API_RESPONSE
+* FLOW_STATE_REACHED
 Purpose:
 * Capacity Planning
 * Abuse Detection
@@ -139,11 +149,11 @@ Customer Cost Impact:
 None (Phase 1)
 Demonstration Sessions
 Definition
-Recorded Developer Demonstration Mode sessions.
+Recorded demonstration runs, driven by the desktop agent.
 Examples:
-* Guided Demonstration
-* Exploratory Demonstration
-* Validation Demonstration
+* Guided Run
+* Assisted Run
+* Observation Only Run
 Purpose:
 * Product Analytics
 * Capacity Forecasting
@@ -184,23 +194,71 @@ Generated QA reports.
 Examples:
 * Coverage Reports
 * Missing Flow Reports
+* Reconciliation Reports
+* Run Reports
 * Endpoint Reports
 Purpose:
 * Platform analytics
 * Capacity forecasting
 Customer Cost Impact:
 None
+Exports
+Definition
+Report downloads in any entitled format.
+Purpose:
+* Platform analytics
+* Abuse detection
+Customer Cost Impact:
+None. Format availability is an entitlement, not a quota.
+API Calls
+Definition
+Requests made using a programmatic access token.
+Purpose:
+* Capacity planning
+* Abuse detection
+* Rate limit enforcement
+Customer Cost Impact:
+None in Phase 1. Programmatic access itself is gated by entitlement.
+Assisted Intelligence Consumption
+Definition
+Model invocations made on a customer's behalf — flow drafting, suggestion enrichment, domain inference, output repair.
+Measured:
+* Invocation count by feature
+* Token consumption
+* Provider cost
+* Success and failure status
+Purpose:
+* Capacity planning
+* Cost control
+* Feature viability assessment
+Customer Cost Impact:
+None in Phase 1.
+UMS-AI-001
+Assisted consumption is metered from the first invocation, even though it is not billed, so that Phase 3 AI billing can be introduced against real historical data rather than an estimate.
+UMS-AI-002
+Assisted consumption shall be attributable to an organization, a feature and an invoking user.
+UMS-AI-003
+Assisted consumption shall be visible to platform administrators. It shall not be surfaced to customers as a consumable balance in Phase 1, because presenting a meter for something that is not billed and cannot be exhausted creates a constraint that does not exist.
 6. Phase 1 Quota Enforcement
 Quota enforcement shall occur at the organization level.
 Hard Limits:
 * Applications
 * Users
 * Storage
+* Environments per application
+* Ingestion credentials
 Soft Limits:
 * Reports
 * Sessions
 * Demonstrations
 * Events
+* Exports
+* API calls
+* Assisted intelligence consumption
+Enforcement Thresholds
+Administrators are warned at 80% of a hard limit.
+Quota-consuming operations are blocked at 100%.
+Existing data remains readable and exportable, and billing, deletion and upgrade access are retained.
 Example:
 Storage exceeds plan limit:
 Status:
@@ -221,10 +279,18 @@ Events:
 Event Collector
 Sessions:
 Session Engine
+Demonstrations:
+Run Orchestration
 Replay Assets:
 Replay Service
 Reports:
 Report Engine
+Exports:
+Report Engine
+API Calls:
+API Gateway
+Assisted Consumption:
+Assistive Intelligence Service
 Usage data shall be aggregated daily.
 8. Customer Usage Visibility
 Every organization shall receive a usage dashboard.
@@ -235,6 +301,11 @@ Users Used
 Users Allowed
 Storage Used
 Storage Allowed
+Environments Used
+Environments Allowed
+Ingestion Credentials Used
+Ingestion Credentials Allowed
+Demonstration Sessions This Period
 Retention Policy
 Historical Usage Trend
 The dashboard must clearly indicate:
@@ -257,7 +328,7 @@ Production Events
 Definition:
 Any validated event ingested from production environments.
 Examples:
-* PAGE_VISIT
+* PAGE_VIEW
 * API_REQUEST
 * STATE_TRANSITION
 * ERROR_OCCURRED
@@ -270,18 +341,27 @@ Included:
 Overage:
 $5 per Additional 1,000,000 Events
 11. Phase 3 AI Metering
-AI-assisted capabilities consume AI units.
-Examples:
+Phase 3 is the first phase in which AI consumption becomes a customer-facing billing metric.
+Billable AI Capabilities
 * Test Generation
 * Regression Analysis
+* Failure Simulation Analysis
 * Quality Assessments
+* Remediation Proposals
+* Network Divergence Analysis
 * Intelligence Assistant Queries
+Not Billable
+The Phase 1 assisted capabilities — flow drafting, suggestion enrichment, domain inference, output repair — remain non-billable. They are part of declaring intent, and charging a customer to describe their own software is a tax on onboarding.
 AI usage must remain transparent.
 Opaque credit systems are prohibited.
-Every AI operation shall display:
+Every billable AI operation shall display:
 * Usage Consumed
 * Cost Impact
 * Billing Category
+UMS-AI3-001
+A customer shall be able to see what an AI operation will consume before invoking it.
+UMS-AI3-002
+A failed AI operation shall not consume billable units.
 12. Usage Governance
 All metered units must:
 * Be measurable
@@ -291,6 +371,14 @@ All metered units must:
 * Be visible to customers
 No hidden billable metrics are permitted.
 No undocumented billing dimensions are permitted.
+12.1 Internal Metric Disclosure
+An internal-only metric is not a hidden billable metric. It is a metric that is measured and not charged for.
+UMS-GOV-001
+No internal-only metric shall affect what a customer is charged, directly or indirectly, without being promoted to a customer-facing metric and documented here first.
+UMS-GOV-002
+Promoting a metric from internal to customer-facing is a pricing change and requires review under the Pricing & Packaging Specification, Section 14.
+UMS-GOV-003
+The complete list of measured metrics — billable and not — is Sections 4 and 5 of this document. There is no third list.
 13. Success Criteria
 The Usage Metering System shall be considered successful when:
 1. Customers understand usage limits immediately.
