@@ -943,6 +943,338 @@ export const docsManifest = [
     "sourcePath": "src/content/docs/get-started/next-steps.mdx"
   },
   {
+    "id": "desktop-installation",
+    "slug": "desktop/installation",
+    "title": "Install Tellann Desktop",
+    "description": "Install Tellann Desktop on Windows, sign in through your browser, and connect your first project.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa"
+    ],
+    "tags": [
+      "desktop",
+      "installation",
+      "windows"
+    ],
+    "related": [
+      "desktop-requirements",
+      "desktop-verify-download",
+      "desktop-troubleshooting"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "before-you-begin",
+        "title": "Before you begin",
+        "level": 2
+      },
+      {
+        "id": "download-and-verify-the-installer",
+        "title": "Download and verify the installer",
+        "level": 2
+      },
+      {
+        "id": "run-the-installer",
+        "title": "Run the installer",
+        "level": 2
+      },
+      {
+        "id": "sign-in",
+        "title": "Sign in",
+        "level": 2
+      },
+      {
+        "id": "connect-a-project",
+        "title": "Connect a project",
+        "level": 2
+      },
+      {
+        "id": "next-steps",
+        "title": "Next steps",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/installation.mdx"
+  },
+  {
+    "id": "desktop-requirements",
+    "slug": "desktop/requirements",
+    "title": "Desktop System Requirements",
+    "description": "Operating system, architecture, network, and development-tool requirements for Tellann Desktop.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa"
+    ],
+    "tags": [
+      "desktop",
+      "requirements",
+      "compatibility"
+    ],
+    "related": [
+      "desktop-installation",
+      "desktop-troubleshooting"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "operating-system",
+        "title": "Operating system",
+        "level": 2
+      },
+      {
+        "id": "hardware",
+        "title": "Hardware",
+        "level": 2
+      },
+      {
+        "id": "network",
+        "title": "Network",
+        "level": 2
+      },
+      {
+        "id": "development-tools",
+        "title": "Development tools",
+        "level": 2
+      },
+      {
+        "id": "permissions",
+        "title": "Permissions",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/requirements.mdx"
+  },
+  {
+    "id": "desktop-verify-download",
+    "slug": "desktop/verify-download",
+    "title": "Verify a Desktop Download",
+    "description": "Confirm a Tellann Desktop installer's file name, checksum, and signature before you run it.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa",
+      "admin"
+    ],
+    "tags": [
+      "desktop",
+      "security",
+      "checksum"
+    ],
+    "related": [
+      "desktop-installation",
+      "desktop-releases"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "what-to-compare",
+        "title": "What to compare",
+        "level": 2
+      },
+      {
+        "id": "check-the-sha-256-checksum",
+        "title": "Check the SHA-256 checksum",
+        "level": 2
+      },
+      {
+        "id": "check-the-signature",
+        "title": "Check the signature",
+        "level": 2
+      },
+      {
+        "id": "if-verification-fails",
+        "title": "If verification fails",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/verify-download.mdx"
+  },
+  {
+    "id": "desktop-updates",
+    "slug": "desktop/updates",
+    "title": "Desktop Updates",
+    "description": "How Tellann Desktop checks for and installs updates, which update channels exist, and why checks can be disabled.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa",
+      "admin"
+    ],
+    "tags": [
+      "desktop",
+      "updates",
+      "channels"
+    ],
+    "related": [
+      "desktop-releases",
+      "desktop-troubleshooting"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "how-updates-are-applied",
+        "title": "How updates are applied",
+        "level": 2
+      },
+      {
+        "id": "update-channels",
+        "title": "Update channels",
+        "level": 2
+      },
+      {
+        "id": "when-update-checks-are-disabled",
+        "title": "When update checks are disabled",
+        "level": 2
+      },
+      {
+        "id": "managed-environments",
+        "title": "Managed environments",
+        "level": 2
+      },
+      {
+        "id": "update-manually",
+        "title": "Update manually",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/updates.mdx"
+  },
+  {
+    "id": "desktop-releases",
+    "slug": "desktop/releases",
+    "title": "Desktop Releases",
+    "description": "How Tellann Desktop versions, release entries, and withdrawn builds are published.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa",
+      "admin"
+    ],
+    "tags": [
+      "desktop",
+      "releases",
+      "versioning"
+    ],
+    "related": [
+      "desktop-updates",
+      "desktop-verify-download"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "version-numbers",
+        "title": "Version numbers",
+        "level": 2
+      },
+      {
+        "id": "what-a-release-entry-contains",
+        "title": "What a release entry contains",
+        "level": 2
+      },
+      {
+        "id": "finding-the-current-release",
+        "title": "Finding the current release",
+        "level": 2
+      },
+      {
+        "id": "withdrawn-releases",
+        "title": "Withdrawn releases",
+        "level": 2
+      },
+      {
+        "id": "older-releases",
+        "title": "Older releases",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/releases.mdx"
+  },
+  {
+    "id": "desktop-troubleshooting",
+    "slug": "desktop/troubleshooting",
+    "title": "Desktop Troubleshooting",
+    "description": "Resolve installation, setup-link, sign-in, repository, update, and network problems in Tellann Desktop.",
+    "version": "v1",
+    "status": "preview",
+    "audiences": [
+      "developer",
+      "qa"
+    ],
+    "tags": [
+      "desktop",
+      "troubleshooting"
+    ],
+    "related": [
+      "desktop-installation",
+      "desktop-requirements",
+      "desktop-updates"
+    ],
+    "updatedAt": "2026-09-12",
+    "headings": [
+      {
+        "id": "windows-blocks-the-installer",
+        "title": "Windows blocks the installer",
+        "level": 2
+      },
+      {
+        "id": "a-setup-link-does-not-open-desktop",
+        "title": "A setup link does not open Desktop",
+        "level": 2
+      },
+      {
+        "id": "you-are-signed-out-every-time-desktop-starts",
+        "title": "You are signed out every time Desktop starts",
+        "level": 2
+      },
+      {
+        "id": "repository-features-fail",
+        "title": "Repository features fail",
+        "level": 2
+      },
+      {
+        "id": "no-updates-are-offered",
+        "title": "No updates are offered",
+        "level": 2
+      },
+      {
+        "id": "sign-in-or-synchronization-fails-with-a-network-error",
+        "title": "Sign-in or synchronization fails with a network error",
+        "level": 2
+      },
+      {
+        "id": "contact-support",
+        "title": "Contact support",
+        "level": 2
+      }
+    ],
+    "groupId": "start",
+    "sectionId": "desktop",
+    "sectionTitle": "Tellann Desktop",
+    "sourcePath": "src/content/docs/desktop/troubleshooting.mdx"
+  },
+  {
     "id": "concepts-behavioral-quality-intelligence",
     "slug": "concepts/behavioral-quality-intelligence",
     "title": "Behavioral Quality Intelligence",
@@ -14688,6 +15020,12 @@ export const docsImporters: Record<string, () => Promise<{ default: React.Compon
   "get-started-first-behavior-graph": () => import('../content/docs/get-started/first-behavior-graph.mdx'),
   "get-started-first-report": () => import('../content/docs/get-started/first-report.mdx'),
   "get-started-next-steps": () => import('../content/docs/get-started/next-steps.mdx'),
+  "desktop-installation": () => import('../content/docs/desktop/installation.mdx'),
+  "desktop-requirements": () => import('../content/docs/desktop/requirements.mdx'),
+  "desktop-verify-download": () => import('../content/docs/desktop/verify-download.mdx'),
+  "desktop-updates": () => import('../content/docs/desktop/updates.mdx'),
+  "desktop-releases": () => import('../content/docs/desktop/releases.mdx'),
+  "desktop-troubleshooting": () => import('../content/docs/desktop/troubleshooting.mdx'),
   "concepts-behavioral-quality-intelligence": () => import('../content/docs/concepts/behavioral-quality-intelligence.mdx'),
   "concepts-events": () => import('../content/docs/concepts/events.mdx'),
   "concepts-sessions": () => import('../content/docs/concepts/sessions.mdx'),

@@ -9,7 +9,6 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import {
   isRouteActive,
   navCompanyGroups,
-  navDeveloperGroups,
   navProductGroups,
   navResourceGroups,
   navSolutionGroups,
@@ -30,7 +29,6 @@ const menuSections = (
   [
     { key: 'product', label: 'Product', groups: navProductGroups },
     { key: 'solutions', label: 'Solutions', groups: navSolutionGroups },
-    { key: 'developers', label: 'Developers', groups: navDeveloperGroups },
     { key: 'resources', label: 'Resources', groups: navResourceGroups },
     { key: 'company', label: 'Company', groups: navCompanyGroups },
   ] as const
@@ -164,6 +162,12 @@ function DesktopNavigation({
           </button>
         );
       })}
+
+      {/* Developer material lives on the documentation site, which has its own
+          navigation, so the header links there instead of mirroring it. */}
+      <a href={docsUrl} onClick={onClose}>
+        Docs <span aria-hidden="true">↗</span>
+      </a>
     </nav>
   );
 }
@@ -201,7 +205,7 @@ function MobileMenu({ pathname, menuRef }: { pathname: string; menuRef: React.Re
           </details>
         ))}
 
-        <a href={docsUrl}>Documentation</a>
+        <a href={docsUrl}>Docs <span aria-hidden="true">↗</span></a>
         <div className="mobile-actions">
           <ThemeToggle />
           <a href={`${appUrl}/auth/login`}>Sign in</a>

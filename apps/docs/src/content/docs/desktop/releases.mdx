@@ -1,0 +1,52 @@
+---
+id: "desktop-releases"
+slug: "desktop/releases"
+title: "Desktop Releases"
+description: "How Tellann Desktop versions, release entries, and withdrawn builds are published."
+version: v1
+status: preview
+audiences: ["developer","qa","admin"]
+tags: ["desktop","releases","versioning"]
+related: ["desktop-updates","desktop-verify-download"]
+updatedAt: "2026-09-12"
+---
+
+
+# Desktop Releases
+
+Every Tellann Desktop release is published with the metadata you need to choose the right build and verify it. This page explains how versions are numbered, what each release entry contains, and what happens when a build is withdrawn.
+
+## Version numbers
+
+Versions use semantic versioning in the form `MAJOR.MINOR.PATCH`:
+
+- **MAJOR** changes alter existing workflows or compatibility.
+- **MINOR** changes add capabilities without breaking existing workflows.
+- **PATCH** changes contain fixes and small improvements.
+
+The version is part of the installer file name, for example `Tellann-X.Y.Z-x64.exe`.
+
+## What a release entry contains
+
+| Field | Description |
+| --- | --- |
+| Version | The semantic version of the build |
+| Publication date | When the build became available |
+| Channel | `stable`, `beta`, or `internal`; see [Desktop updates](/desktop/updates) |
+| Platform and architecture | The operating system and processor architecture the installer targets |
+| Installer | The file name and file size |
+| SHA-256 checksum | The value used to [verify the download](/desktop/verify-download) |
+| Signing status | Whether the installer carries a code signature |
+| Release notes | Improvements, fixes, and compatibility changes |
+
+## Finding the current release
+
+The Tellann Desktop download page on tellann.co offers the current stable release for each supported platform. Changes to the wider Tellann platform are recorded separately in the Tellann changelog at https://tellann.co/changelog.
+
+## Withdrawn releases
+
+A release can be withdrawn when a defect or security problem is found after publication. A withdrawn build is removed from the download page and from the update feed. Do not install a withdrawn build even if you already have a copy of the installer; install the newest available release on the same channel instead.
+
+## Older releases
+
+Only releases that remain supported are offered for download. If you need a specific older version for compatibility reasons, contact Tellann support at https://tellann.co/contact and describe the constraint.

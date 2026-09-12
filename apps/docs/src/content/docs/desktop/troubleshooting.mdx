@@ -1,0 +1,53 @@
+---
+id: "desktop-troubleshooting"
+slug: "desktop/troubleshooting"
+title: "Desktop Troubleshooting"
+description: "Resolve installation, setup-link, sign-in, repository, update, and network problems in Tellann Desktop."
+version: v1
+status: preview
+audiences: ["developer","qa"]
+tags: ["desktop","troubleshooting"]
+related: ["desktop-installation","desktop-requirements","desktop-updates"]
+updatedAt: "2026-09-12"
+---
+
+
+# Desktop Troubleshooting
+
+Use this page to resolve common problems with installing, signing in to, and running Tellann Desktop. Each section starts with the symptom you see.
+
+## Windows blocks the installer
+
+If Windows SmartScreen shows a "Windows protected your PC" message, [verify the download](/desktop/verify-download) before doing anything else. Continue only when the SHA-256 checksum matches the value published for the release. If the checksum does not match, delete the file and download it again.
+
+## A setup link does not open Desktop
+
+Links that start with `tellann://` are handled by the installed application.
+
+- Confirm that Desktop was installed from a release installer. Builds started from source code do not register the link scheme.
+- Allow your browser to open the Tellann application when it asks for permission.
+- Reinstall Desktop to repair the link registration.
+
+Setup links are short-lived. If a link has expired, start the connection again from the Tellann web application to get a new one.
+
+## You are signed out every time Desktop starts
+
+Desktop stores your session with Windows secure storage. When secure storage is unavailable for your Windows account, for example in some virtual desktop or temporary-profile configurations, Desktop cannot save the session and you must sign in on every launch. Use a standard, persistent Windows user profile to keep the session.
+
+## Repository features fail
+
+- **Git is not found.** Install Git for Windows, confirm that `git --version` works in a new terminal, then restart Desktop so it picks up the updated `PATH`.
+- **Cloning a private repository fails.** Desktop runs Git without interactive prompts, so it cannot ask for a username or password. Configure a credential helper such as Git Credential Manager and confirm that `git clone` works from a terminal first.
+- **A Git operation times out.** Individual Git commands stop after 30 seconds. For a very large repository, clone or fetch it from a terminal, then open the folder in Desktop.
+
+## No updates are offered
+
+Check the conditions in [Desktop updates](/desktop/updates#when-update-checks-are-disabled). Builds started from source code never check for updates, and an update feed that is not HTTPS is ignored. You can always install a newer release manually.
+
+## Sign-in or synchronization fails with a network error
+
+Desktop needs outbound HTTPS access to Tellann services. Check that a proxy, VPN, or firewall is not blocking or intercepting the connection, and that your system browser can open the Tellann sign-in page. See the network section of [Desktop system requirements](/desktop/requirements#network).
+
+## Contact support
+
+If a problem persists, contact Tellann support at https://tellann.co/contact. Include the Desktop version from the installer file name, your Windows version, and the steps that led to the problem. Never include access tokens, passwords, or repository secrets in a support request.

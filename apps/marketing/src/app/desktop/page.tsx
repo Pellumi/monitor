@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import {
   DesktopProjectSequence,
   DesktopProductGallery,
@@ -382,7 +383,7 @@ export default function DesktopPage() {
             <small>Linux</small>
             <b>Coming later</b>
           </div>
-          <Link href="/desktop/requirements">View system requirements →</Link>
+          <Link href={docsLinks.desktopRequirements.href}>View system requirements →</Link>
         </div>
       </section>
 
@@ -416,7 +417,7 @@ export default function DesktopPage() {
               >
                 Download page <span>→</span>
               </Link>
-              <Link className="desktop-button" href="/desktop/releases">
+              <Link className="desktop-button" href={docsLinks.desktopReleases.href}>
                 Release history <span>→</span>
               </Link>
             </div>
@@ -462,7 +463,7 @@ export default function DesktopPage() {
             >
               Download Tellann Desktop <span>→</span>
             </Link>
-            <Link className="desktop-button" href="/desktop/requirements">
+            <Link className="desktop-button" href={docsLinks.desktopRequirements.href}>
               View requirements <span>→</span>
             </Link>
           </div>

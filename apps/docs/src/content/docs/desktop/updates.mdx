@@ -1,0 +1,57 @@
+---
+id: "desktop-updates"
+slug: "desktop/updates"
+title: "Desktop Updates"
+description: "How Tellann Desktop checks for and installs updates, which update channels exist, and why checks can be disabled."
+version: v1
+status: preview
+audiences: ["developer","qa","admin"]
+tags: ["desktop","updates","channels"]
+related: ["desktop-releases","desktop-troubleshooting"]
+updatedAt: "2026-09-12"
+---
+
+
+# Desktop Updates
+
+Tellann Desktop can check an update feed for newer versions and install them. This page explains when checks run, what happens when an update is found, and why update checks can be disabled.
+
+## How updates are applied
+
+When update checks are enabled, Desktop asks its configured update feed whether a newer version exists on its channel as the application starts.
+
+- **Finding an update does not download it.** A newer version is not downloaded on its own when a check finds it.
+- **Installation happens on quit.** A downloaded update is installed the next time you quit Tellann Desktop, so work in progress is not interrupted.
+- **Checks use HTTPS only.** Desktop refuses an update feed address that does not use HTTPS.
+
+## Update channels
+
+| Channel | Intended for |
+| --- | --- |
+| `stable` | General use. This is the default channel. |
+| `beta` | Teams that want early access to upcoming changes. |
+| `internal` | Pre-release testing before a wider release. |
+
+See [Desktop releases](/desktop/releases) for what each published release includes.
+
+## When update checks are disabled
+
+| Reason | What it means |
+| --- | --- |
+| Development build | Checks never run in builds started from source code. Install a packaged release instead. |
+| No update feed configured | The build has no update feed address to check. |
+| Update feed is not HTTPS | The configured address does not use HTTPS, so it is ignored. |
+| Unknown channel | The configured channel is not `stable`, `beta`, or `internal`. |
+
+A disabled check does not affect the rest of the application. Desktop keeps running the installed version, and you can still update manually.
+
+## Managed environments
+
+Organizations that host their own update feed configure it with environment variables on the machine that runs Desktop:
+
+- `TELLANN_UPDATE_URL` sets the HTTPS address of the update feed.
+- `TELLANN_UPDATE_CHANNEL` sets the channel to `stable`, `beta`, or `internal`. When it is not set, Desktop uses `stable`.
+
+## Update manually
+
+You can install a newer version without the update feed. Download the installer from the Tellann Desktop download page, [verify the download](/desktop/verify-download), and run it over the existing installation. If an update does not appear when you expect one, see [Desktop troubleshooting](/desktop/troubleshooting).

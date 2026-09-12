@@ -1,0 +1,60 @@
+---
+id: "desktop-installation"
+slug: "desktop/installation"
+title: "Install Tellann Desktop"
+description: "Install Tellann Desktop on Windows, sign in through your browser, and connect your first project."
+version: v1
+status: preview
+audiences: ["developer","qa"]
+tags: ["desktop","installation","windows"]
+related: ["desktop-requirements","desktop-verify-download","desktop-troubleshooting"]
+updatedAt: "2026-09-12"
+---
+
+
+# Install Tellann Desktop
+
+Tellann Desktop connects projects on your computer to Tellann. It runs guided browser QA sessions, drafts expected flows from product documents, and proposes bounded SDK instrumentation that you review before any file changes.
+
+## Before you begin
+
+Confirm the following before you download the installer:
+
+- Your computer meets the [Desktop system requirements](/desktop/requirements). Tellann Desktop is published for 64-bit Windows only; macOS and Linux builds are not available.
+- You have a Tellann account with access to at least one organization and application. See [Create an application](/get-started/create-an-application) if you do not have one.
+- Git is installed and available on your `PATH` if you intend to attach a local repository. Browser-only workflows do not use Git.
+
+## Download and verify the installer
+
+Download the installer from the Tellann Desktop download page on tellann.co. Installer files follow the pattern `Tellann-VERSION-ARCH.exe`, for example `Tellann-X.Y.Z-x64.exe`.
+
+Before running it, [verify the download](/desktop/verify-download) by comparing the SHA-256 checksum of the file with the value published for that release. Do not run an installer whose checksum does not match.
+
+## Run the installer
+
+1. Open the downloaded `.exe` file.
+2. Review the installation location. The installer is an assisted installer, so you can choose a different directory instead of accepting the default.
+3. Complete the installer and start Tellann.
+
+Installation also registers the `tellann://` link scheme. Setup links that you open in a browser, such as a link to continue connecting a project, are handed to the installed application. If Tellann is already running, the link is passed to the open window instead of starting a second copy.
+
+## Sign in
+
+Tellann Desktop authenticates through your system browser and then returns you to the application. After a successful sign-in, the session is encrypted with Windows secure storage and saved in your user profile, so you stay signed in between launches. If Windows secure storage is unavailable, Desktop cannot keep the session; see [Desktop troubleshooting](/desktop/troubleshooting).
+
+## Connect a project
+
+Select the application you want to work with, then choose how to connect it:
+
+- **Open a folder** that already contains the project.
+- **Clone a repository** into a location you choose.
+- **Attach a staging URL** to observe a deployed environment.
+- **Start browser-only** without attaching any local files.
+
+Installing Desktop does not grant access to your files. Desktop begins with read-only workspace analysis, and write access and command execution are requested separately when a workflow needs them. Production environments are observation-only.
+
+## Next steps
+
+- Keep the application current with [Desktop updates](/desktop/updates).
+- Add the SDK to your application with [Install the SDK](/get-started/install-the-sdk).
+- Record your first walkthrough with [First demonstration](/get-started/first-demonstration).

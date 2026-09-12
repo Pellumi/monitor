@@ -338,6 +338,84 @@
               "updatedAt": "2026-09-06"
             }
           ]
+        },
+        {
+          "id": "desktop",
+          "title": "Tellann Desktop",
+          "pages": [
+            {
+              "id": "desktop-installation",
+              "slug": "desktop/installation",
+              "title": "Install Tellann Desktop",
+              "description": "Install Tellann Desktop on Windows, sign in through your browser, and connect your first project.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa"],
+              "tags": ["desktop", "installation", "windows"],
+              "related": ["desktop-requirements", "desktop-verify-download", "desktop-troubleshooting"],
+              "updatedAt": "2026-09-12"
+            },
+            {
+              "id": "desktop-requirements",
+              "slug": "desktop/requirements",
+              "title": "Desktop System Requirements",
+              "description": "Operating system, architecture, network, and development-tool requirements for Tellann Desktop.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa"],
+              "tags": ["desktop", "requirements", "compatibility"],
+              "related": ["desktop-installation", "desktop-troubleshooting"],
+              "updatedAt": "2026-09-12"
+            },
+            {
+              "id": "desktop-verify-download",
+              "slug": "desktop/verify-download",
+              "title": "Verify a Desktop Download",
+              "description": "Confirm a Tellann Desktop installer's file name, checksum, and signature before you run it.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa", "admin"],
+              "tags": ["desktop", "security", "checksum"],
+              "related": ["desktop-installation", "desktop-releases"],
+              "updatedAt": "2026-09-12"
+            },
+            {
+              "id": "desktop-updates",
+              "slug": "desktop/updates",
+              "title": "Desktop Updates",
+              "description": "How Tellann Desktop checks for and installs updates, which update channels exist, and why checks can be disabled.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa", "admin"],
+              "tags": ["desktop", "updates", "channels"],
+              "related": ["desktop-releases", "desktop-troubleshooting"],
+              "updatedAt": "2026-09-12"
+            },
+            {
+              "id": "desktop-releases",
+              "slug": "desktop/releases",
+              "title": "Desktop Releases",
+              "description": "How Tellann Desktop versions, release entries, and withdrawn builds are published.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa", "admin"],
+              "tags": ["desktop", "releases", "versioning"],
+              "related": ["desktop-updates", "desktop-verify-download"],
+              "updatedAt": "2026-09-12"
+            },
+            {
+              "id": "desktop-troubleshooting",
+              "slug": "desktop/troubleshooting",
+              "title": "Desktop Troubleshooting",
+              "description": "Resolve installation, setup-link, sign-in, repository, update, and network problems in Tellann Desktop.",
+              "version": "v1",
+              "status": "preview",
+              "audiences": ["developer", "qa"],
+              "tags": ["desktop", "troubleshooting"],
+              "related": ["desktop-installation", "desktop-requirements", "desktop-updates"],
+              "updatedAt": "2026-09-12"
+            }
+          ]
         }
       ]
     },

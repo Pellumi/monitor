@@ -1,0 +1,51 @@
+---
+id: "desktop-verify-download"
+slug: "desktop/verify-download"
+title: "Verify a Desktop Download"
+description: "Confirm a Tellann Desktop installer's file name, checksum, and signature before you run it."
+version: v1
+status: preview
+audiences: ["developer","qa","admin"]
+tags: ["desktop","security","checksum"]
+related: ["desktop-installation","desktop-releases"]
+updatedAt: "2026-09-12"
+---
+
+
+# Verify a Desktop Download
+
+Verify every Tellann Desktop installer before you run it. Verification confirms that the file on your computer is the file Tellann published for that release, and that it was not altered or replaced in transit.
+
+## What to compare
+
+Each published release lists the metadata below alongside its installer. Compare all of it against the file you downloaded.
+
+| Field | What to check |
+| --- | --- |
+| File name | Matches `Tellann-VERSION-ARCH.exe` for the version and architecture you selected |
+| File size | Matches the published size |
+| SHA-256 checksum | Matches the published value exactly |
+| Signature | Matches the signing status stated for the release |
+
+## Check the SHA-256 checksum
+
+Open PowerShell in the folder that contains the installer and run:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\Tellann-X.Y.Z-x64.exe
+```
+
+Compare the `Hash` value in the output with the checksum published for the release. Every character must match. A checksum that only matches in its first or last characters is not a match.
+
+## Check the signature
+
+In File Explorer, right-click the installer, select **Properties**, and open the **Digital Signatures** tab.
+
+- If the release states that the installer is signed, confirm that the tab lists Tellann as the signer and that Windows reports the signature as valid.
+- If the release does not state that the installer is signed, the tab is absent and Windows SmartScreen may warn before the installer starts. Rely on the checksum in that case, and continue only when it matches.
+
+## If verification fails
+
+Do not run the installer. Delete the file, download it again from the Tellann Desktop download page, and repeat the checks.
+
+If the mismatch persists after a fresh download, report it to Tellann support at https://tellann.co/contact. Include the file name, the checksum you computed, and where you downloaded the file from. See [Desktop releases](/desktop/releases) for how published builds and withdrawn builds are handled.

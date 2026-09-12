@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import { ProductPreviewCarousel } from "@/components/product-preview-carousel";
 import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 
@@ -78,9 +79,9 @@ const personas = [
     "/solutions/engineering-leaders",
   ],
   [
-    "Startup teams",
-    "Build stronger QA visibility without first building a large QA operation.",
-    "/solutions/startups",
+    "Product teams",
+    "Understand the journeys users actually take through your application.",
+    "/solutions/product-teams",
   ],
 ];
 
@@ -111,7 +112,7 @@ const resources = [
   [
     "What is behavioral testing?",
     "A practical introduction to testing software through observed states, actions, and workflows.",
-    "/guides",
+    `${docsUrl}/concepts/behavioral-quality-intelligence`,
   ],
   [
     "Workflow coverage vs code coverage",
@@ -702,7 +703,7 @@ export default function MarketingHome() {
           </div>
           <div className="home-actions" data-aos="fade-up">
             <Link
-              href="/developers/quickstart"
+              href={docsLinks.quickstart.href}
               className="home-button home-button-primary"
             >
               Read quickstart
@@ -848,7 +849,7 @@ export default function MarketingHome() {
             Start free <span aria-hidden="true">→</span>
           </a>
           <Link
-            href="/developers/quickstart"
+            href={docsLinks.quickstart.href}
             className="home-button home-button-secondary"
           >
             Read the quickstart

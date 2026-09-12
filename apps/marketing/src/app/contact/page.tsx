@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import { Suspense } from "react";
 import {
   ContactWorkspace,
@@ -140,7 +141,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
               <span>How Tellann protects application data.</span>
               <i>→</i>
             </Link>
-            <Link href="/security/privacy">
+            <Link href={docsLinks.privacy.href}>
               <b>Privacy</b>
               <span>What Tellann collects and excludes.</span>
               <i>→</i>

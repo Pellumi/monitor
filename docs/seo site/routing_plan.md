@@ -81,6 +81,10 @@ I would **not** put 10–12 links directly in the navbar. Product and Resources 
 > catch-all. See section 47 for how status is tracked and how to promote a stub.
 >
 > Legend: `*` = page built · everything else = stub awaiting content.
+>
+> **Updated 2026-09-12.** Setup, reference, administration, Desktop support and
+> glossary routes are no longer part of this tree. They permanently redirect to
+> docs.tellann.co — section 51 lists every moved route and explains the boundary.
 
 ```text
 /                                          *
@@ -102,89 +106,30 @@ I would **not** put 10–12 links directly in the navbar. Product and Resources 
 │   │   ├── /product/workflow-discovery    *
 │   │   └── /product/session-replay        *
 │   │
-│   ├── Analyze & report
-│   │   ├── /product/coverage              *
-│   │   ├── /product/missing-flows         *
-│   │   ├── /product/missing-states        *
-│   │   ├── /product/endpoint-intelligence *
-│   │   └── /product/qa-reports
-│   │
-│   └── Operate
-│       ├── /product/environments
-│       ├── /product/team-access
-│       ├── /product/audit-logs
-│       ├── /product/notifications
-│       ├── /product/integrations
-│       └── /product/data-retention
+│   └── Analyze & report
+│       ├── /product/coverage              *
+│       ├── /product/missing-flows         *
+│       ├── /product/missing-states        *
+│       ├── /product/endpoint-intelligence *
+│       └── /product/qa-reports
 │
 ├── /desktop                               *
 │   ├── /desktop/download                  *
-│   ├── /desktop/releases                  *
-│   │   └── /desktop/releases/[version]    *
-│   ├── /desktop/security                  *
-│   ├── /desktop/requirements              *
-│   ├── /desktop/windows
-│   ├── /desktop/troubleshooting
-│   └── /desktop/updates
+│   └── /desktop/security                  *
 │
 ├── /solutions
 │   ├── /solutions/developers
 │   ├── /solutions/qa-engineers
 │   ├── /solutions/engineering-leaders
-│   ├── /solutions/product-teams
-│   ├── /solutions/startups
-│   ├── /solutions/saas
-│   ├── /solutions/enterprise
-│   └── /solutions/agencies
-│
-├── /use-cases
-│   ├── /use-cases/workflow-coverage
-│   ├── /use-cases/find-missing-flows
-│   ├── /use-cases/find-missing-states
-│   ├── /use-cases/application-walkthrough
-│   ├── /use-cases/api-performance-analysis
-│   ├── /use-cases/qa-planning
-│   ├── /use-cases/debug-user-workflows
-│   ├── /use-cases/regression-detection
-│   ├── /use-cases/release-readiness
-│   ├── /use-cases/legacy-application-mapping
-│   ├── /use-cases/documenting-user-journeys
-│   └── /use-cases/onboarding-engineers
-│
-├── /developers
-│   ├── /developers/quickstart
-│   ├── /developers/sdk
-│   ├── /developers/api
-│   ├── /developers/examples
-│   │
-│   ├── Frameworks
-│   │   ├── /developers/react
-│   │   ├── /developers/nextjs
-│   │   ├── /developers/nodejs
-│   │   ├── /developers/express
-│   │   ├── /developers/fastify
-│   │   └── /developers/nestjs          ← no adapter ships yet; see §48
-│   │
-│   └── Platform
-│       ├── /developers/events
-│       ├── /developers/webhooks
-│       └── /developers/self-hosting
+│   └── /solutions/product-teams
 │
 ├── /docs → docs.tellann.co              * (redirect, next.config.ts)
 │
 ├── /pricing                               *
 │
 ├── /security                              *
-│   ├── /security/privacy
-│   ├── /security/data-collection
-│   ├── /security/session-replay
 │   ├── /security/enterprise
-│   ├── /security/architecture
-│   ├── /security/authentication
-│   ├── /security/access-control
-│   ├── /security/audit-logging
-│   ├── /security/responsible-disclosure
-│   └── /security/compliance
+│   └── /security/responsible-disclosure
 │
 ├── /resources
 │   ├── /blog
@@ -195,28 +140,9 @@ I would **not** put 10–12 links directly in the navbar. Product and Resources 
 │   │   ├── /blog/application-observability
 │   │   ├── /blog/testing-strategy
 │   │   └── /blog/release-quality
-│   ├── /guides
 │   ├── /case-studies
 │   ├── /research
-│   ├── /glossary
-│   │   ├── /glossary/behavior-graph
-│   │   ├── /glossary/workflow-coverage
-│   │   ├── /glossary/session-replay
-│   │   ├── /glossary/application-state
-│   │   ├── /glossary/state-transition
-│   │   ├── /glossary/user-workflow
-│   │   ├── /glossary/behavioral-testing
-│   │   ├── /glossary/qa-coverage
-│   │   ├── /glossary/declared-flow
-│   │   ├── /glossary/reconciliation
-│   │   ├── /glossary/missing-flow
-│   │   ├── /glossary/missing-state
-│   │   ├── /glossary/graph-drift
-│   │   ├── /glossary/demonstration-mode
-│   │   └── /glossary/endpoint-intelligence
-│   ├── /templates
-│   ├── /changelog
-│   └── /faq
+│   └── /changelog
 │
 ├── /compare
 │   ├── /compare/sentry
@@ -863,6 +789,10 @@ That makes this an extremely strong trust page because prospective customers can
 
 # 16. Solutions architecture
 
+> **Reduced 2026-09-12.** Solutions keeps only `/solutions` and the four role
+> pages. Organization pages and every `/use-cases/*` page were retired and
+> redirect to the closest existing page — see section 52.
+
 You need two different concepts.
 
 ### Product pages
@@ -958,6 +888,9 @@ Less technical installation detail.
 
 # 20. `/solutions/startups`
 
+> **Retired 2026-09-12.** `/solutions/startups` redirects to `/pricing`, where
+> the Free and Solo plans carry the lean-team message (section 52).
+
 This is commercially important.
 
 The MVP explicitly targets startup founders in addition to developers and QA engineers. 
@@ -971,6 +904,13 @@ Then explain demonstration → intelligence.
 ---
 
 # 21. Use-case SEO pages
+
+> **Retired 2026-09-12.** Each use case restated an existing `/product/*` page,
+> and two (regression detection, release readiness) implied Phase 3 capability.
+> The URLs redirect to their product pages. Problem-aware search intent is now
+> served by `/blog` articles that link into Product. The journeys and SEO layers
+> in sections 36, 41 and 42 that pass through `/use-cases` describe the retired
+> plan — see section 52.
 
 These are different from persona pages.
 
@@ -1015,6 +955,11 @@ That is a much stronger SEO architecture than expecting everyone to land on `/`.
 
 # 22. Developers hub
 
+> **Superseded 2026-09-12.** `/developers` and every `/developers/*` page now
+> redirect to docs.tellann.co, which already holds the quickstart, SDK, API and
+> framework guides. The header has no Developers menu — a single Docs link
+> replaces it. See section 51.
+
 Because Tellann is developer infrastructure, `/developers` should be almost a second homepage.
 
 ```text
@@ -1054,6 +999,10 @@ These have substantial SEO potential.
 ---
 
 # 23. Documentation
+
+> **Implemented.** `apps/docs` is live and section 51 defines exactly which
+> material lives there instead of on the marketing site. Docs also gained a
+> Tellann Desktop section.
 
 I'd separate documentation from the marketing website:
 
@@ -1182,6 +1131,11 @@ Tellann's design requires TLS protection, encryption at rest, tenant isolation, 
 
 # 26. `/security/privacy`
 
+> **Moved to docs 2026-09-12.** `/security/privacy` redirects to
+> docs.tellann.co/security-privacy/privacy-overview, and the collect / mask /
+> never-collect detail below belongs in that section. `/security` keeps the
+> short buyer-facing summary.
+
 Make this particularly detailed.
 
 Tellann has a strong differentiator here because the architecture specifies privacy filtering **before transmission**.
@@ -1276,6 +1230,10 @@ This creates topic authority.
 ---
 
 # 29. Glossary
+
+> **Moved to docs 2026-09-12.** `/glossary` and its term pages redirect to the
+> docs glossary and the matching `concepts/*` pages. Reconsider only if glossary
+> pages become a deliberate SEO investment on the main domain.
 
 This is particularly useful for SEO.
 
@@ -1432,6 +1390,24 @@ Media kit
 ---
 
 # 34. Footer architecture
+
+> **Redesigned 2026-09-12.** The footer no longer carries a CTA — every page
+> already ends with its own. Navigation is two aligned rows on a five-column
+> grid:
+>
+> ```text
+> [Brand]      Platform   Declare & verify   Understand behavior   Analyze & report
+> ─────────────────────────────────────────────────────────────────────────────────
+> Solutions    Developers        Resources          Company          Trust
+> ```
+>
+> Product, the longest section, is split into its four menu groups so it no
+> longer leaves empty space beside a single tall column. Developers is
+> Documentation, Quickstart, Download Desktop and System status; Resources lists
+> only marketing content; Company drops the duplicate Roadmap; Trust holds the
+> security pages plus docs privacy links. Policies (Terms, Privacy policy,
+> Cookies, DPA, Subprocessors, Acceptable use) moved to the bottom bar. Mobile
+> keeps one collapsible section per column, with Product labelled by group.
 
 I'd make the footer substantial.
 
@@ -1750,6 +1726,14 @@ That is exactly what you want.
 
 # 43. Header mega-menu structure
 
+> **Updated 2026-09-12.** The header is now
+> `Product ▾ · Solutions ▾ · Resources ▾ · Pricing · Company ▾ · Docs ↗`.
+> The Developers mega-menu was removed: it only mirrored the docs sidebar, and
+> docs has its own navigation and search. Download Desktop stays reachable from
+> Product → Desktop app and the `/desktop` page. Product has four groups
+> (Operate moved to docs), Resources lists only marketing content, and
+> Solutions is two small role groups (section 52).
+
 ### PRODUCT
 
 ```text
@@ -1776,20 +1760,14 @@ Communicate
 ### SOLUTIONS
 
 ```text
-By Role
+Build & Test
+├─ Solutions Overview
 ├─ Developers
-├─ QA Engineers
+└─ QA Engineers
+
+Lead & Plan
 ├─ Engineering Leaders
 └─ Product Teams
-
-By Organization
-├─ Startups
-└─ SaaS Teams
-
-Use Cases
-├─ Workflow Coverage
-├─ Missing Flows
-└─ QA Planning
 ```
 
 ### DEVELOPERS
@@ -1915,22 +1893,18 @@ PRODUCT
 SOLUTIONS
 /solutions/developers
 /solutions/qa-engineers
-/solutions/startups
 /solutions/engineering-leaders
+/solutions/product-teams
 
 DEVELOPERS
-/developers
-/developers/quickstart
-/docs
+/docs            → docs.tellann.co (quickstart, SDK and API live there)
 
 BUSINESS
 /pricing
 /security
-/security/privacy
 
 RESOURCES
 /blog
-/guides
 /changelog
 
 COMPANY
@@ -1938,7 +1912,7 @@ COMPANY
 /contact
 ```
 
-Then expand the `/use-cases`, `/compare`, `/glossary`, framework-specific developer pages and case studies as the content engine matures.
+Then expand `/compare`, `/blog` and case studies as the content engine matures. Framework guides, the glossary and privacy detail are documentation, not marketing pages (section 51); use-case and organization pages were retired (section 52).
 
 The resulting site has a very clear narrative:
 
@@ -1964,12 +1938,13 @@ export type SiteRoute = {
   href: string;
   label: string;
   description: string;
-  status: 'live' | 'planned';
+  status: 'live' | 'planned' | 'docs';
 };
 ```
 
-Two helpers create them — `live(...)` for a page that exists under `src/app`,
-and `route(...)` for a route reserved for launch.
+Three helpers create them — `live(...)` for a page that exists under `src/app`,
+`route(...)` for a route reserved for launch, and `docs(...)` for a navigation
+link to the documentation page that replaced a marketing route (section 51).
 
 **Status controls how search engines see a route**, so promoting a page is a
 one-word change:
@@ -1982,6 +1957,10 @@ status: 'planned'
 status: 'live'
   ├── included in sitemap.xml
   └── indexable
+
+status: 'docs'
+  ├── never rendered here, never in sitemap.xml
+  └── linked in navigation as an absolute docs.tellann.co URL
 ```
 
 **Navigation is deliberately separate.** Planned routes stay in the header and
@@ -2018,15 +1997,17 @@ building.
 - **Redirects are not stubs.** `/login`, `/signup` and `/docs` are handled in
   `next.config.ts` and must never be registered in `site-routes.ts`, or the
   catch-all would render a coming-soon page for them. `/about` redirects to
-  `/company` and is unregistered for the same reason.
+  `/company` and is unregistered for the same reason. Routes moved to the
+  documentation site are listed in `src/config/docs-redirects.json`, and routes
+  retired in favour of an existing marketing page in
+  `src/config/retired-redirects.json`; both follow the same rule.
 - **Dynamic collections need real route files.** `/blog/[slug]`,
-  `/glossary/[term]`, `/guides/[slug]`, `/case-studies/[slug]` and
-  `/careers/[slug]` cannot be represented as stubs. The index and category
-  routes are registered now; the `[slug]` handlers arrive with the content layer.
-- **Blog categories and glossary terms** are exported separately
-  (`blogCategoryRoutes`, `glossaryRoutes`) and deliberately kept out of the
-  navigation groups so the Resources mega-menu stays readable. Their index
-  pages link them.
+  `/case-studies/[slug]` and `/careers/[slug]` cannot be represented as stubs.
+  The index and category routes are registered now; the `[slug]` handlers
+  arrive with the content layer.
+- **Blog categories** are exported separately (`blogCategoryRoutes`) and
+  deliberately kept out of the navigation groups so the Resources mega-menu
+  stays readable. The `/blog` index links them.
 - **Empty groups disappear.** A navigation section left with no visible routes
   is dropped rather than rendered as an empty mega-menu or footer column. This
   only has an effect once NEXT_PUBLIC_HIDE_PLANNED_ROUTES is on.
@@ -2057,6 +2038,11 @@ it**. These routes cover that half:
 
 ## The workspace and platform layer
 
+> **Moved to docs 2026-09-12.** These routes now redirect to
+> docs.tellann.co (`workspace-admin/*`, `api-reference/webhooks`,
+> `security-privacy/data-retention`). A pricing row that needs a destination
+> should link to the docs page.
+
 Each of these is a paid row on `/pricing` that previously had no destination:
 
 ```text
@@ -2075,14 +2061,16 @@ Three limits were applied deliberately, and should be rechecked before launch:
 - **No integrations directory.** Only outbound webhooks and management API
   tokens exist. There is no Slack, GitHub, Jira or Linear integration, so no
   `/integrations/<vendor>` routes were created.
-- **`/developers/nestjs` has no adapter.** `packages/backend-sdk/src/integrations`
-  ships `express` and `fastify` only. Build the adapter or drop the route —
-  do not publish the page as-is. Vue, Angular and Svelte pages should wait until
-  the frontend SDK documents them.
-- **Desktop ships Windows only.** `/desktop/windows` is registered;
-  `/desktop/macos` and `/desktop/linux` should be added when those builds ship.
-- **`/security/compliance`** should stay a stub until there is something
-  factual to state.
+- **NestJS has no adapter.** `packages/backend-sdk/src/integrations` ships
+  `express` and `fastify` only. NestJS is left out of the Developers menu, but
+  `/developers/nestjs` redirects to docs `integrations/nestjs`, which is already
+  published and should be corrected or withdrawn. Vue, Angular and Svelte
+  guides should wait until the frontend SDK documents them.
+- **Desktop ships Windows only.** Installation is documented at docs
+  `desktop/installation` (`/desktop/windows` redirects there). Add macOS and
+  Linux instructions to the docs Desktop section when those builds ship.
+- **Compliance** is documented at docs `security-privacy/compliance`
+  (`/security/compliance` redirects there). Keep it limited to what is factual.
 
 ---
 
@@ -2094,40 +2082,32 @@ The launch list in section 46 still holds, reordered for what is now known:
 1  /product/qa-reports
    The homepage and /product already link to it. Highest-value fix.
 
-2  /product/flow-declaration
-   /product/reconciliation
-   Without these the site describes a product Tellann no longer ships.
+2  /product/guided-qa-runs
+   The last unbuilt page in Declare & verify.
 
-3  /security/privacy
-   /security/data-collection
-   The trust gate for a developer audience.
+3  /security/enterprise
+   /security/responsible-disclosure
+   The trust pages that stay on the main domain.
 
-4  /developers
-   /developers/quickstart
-   Mostly links into docs.tellann.co, which is already written.
+4  /solutions and the four role pages
+   The audience layer (section 52).
 
-5  /product/environments, /product/team-access, /product/audit-logs,
-   /product/notifications, /product/integrations, /product/data-retention
-   Gives every pricing row a destination.
-
-6  /product/automated-instrumentation
-   /product/document-flow-inference
-   /product/guided-qa-runs
-   The paid gates buyers cannot currently read about.
-
-7  /solutions/*  then  /use-cases/*
-   SEO layers 3 and 4.
-
-8  /compare/*, /blog/*, /glossary/*
+5  /compare/*, /blog/*
    The content engine.
 ```
+
+Flow declaration, reconciliation, graph drift, automated instrumentation and
+document flow inference are built. Developer pages, privacy detail, workspace
+administration, Desktop support pages and the glossary are no longer on this
+list — they are maintained in `apps/docs` (section 51).
 
 
 ---
 
 # 50. Mega-menu layout rules
 
-With 138 routes registered, the navigation needs rules or it grows past the
+With 69 routes registered (138 before sections 51 and 52),
+the navigation needs rules or it grows past the
 screen. Three constraints keep every menu to **one row, no scrolling**, at every
 desktop width down to 1101px.
 
@@ -2140,11 +2120,14 @@ grid-template-columns: repeat(min(var(--mega-cols, 4), 5), minmax(0, 1fr));
 ```
 
 A menu is then exactly as wide as it needs to be — Company gets 2 columns,
-Solutions 3, Product 5 — and never wraps onto a second row. The practical
+Solutions 2, Product 4 — and never wraps onto a second row. The practical
 consequence: **a menu section must not exceed five groups.** If a sixth is
 needed, merge two or move a group to another section.
 
 ## 2. A group shows at most six routes
+
+No group needs this today — the 13-entry Use cases group that motivated it was
+retired in section 52 — but the rule stays for future groups.
 
 Longer groups are capped in the menu and finish with a "See all" link:
 
@@ -2174,9 +2157,8 @@ Measured at 1400×900 and again at the tightest desktop size, 1102×720:
 
 ```text
 Menu         Groups  Columns  Scrolls
-Product         5        5       no
-Solutions       3        3       no
-Developers      3        3       no
+Product         4        4       no
+Solutions       2        2       no
 Resources       2        2       no
 Company         2        2       no
 ```
@@ -2196,5 +2178,179 @@ Communicate                       + QA reports
 Operate                         Operate
 ```
 
-No routes were removed to achieve this — all 138 remain registered, in the
-footer, and reachable.
+No routes were removed to achieve this — all 138 remained registered, in the
+footer, and reachable. Section 51 later moved 52 of them to the documentation
+site, which also removed the Operate group (Product is now 4 groups).
+
+---
+
+# 51. Marketing ↔ documentation boundary
+
+The marketing site had grown to 138 registered routes, most of them stubs, and
+many duplicated pages that already existed in `apps/docs`. A visitor evaluating
+Tellann had to get past setup guides, admin settings and reference material to
+find the product story.
+
+The rule is:
+
+```text
+tellann.co        explains the product    what it does, why it matters,
+                                          can I trust it, what it costs
+
+docs.tellann.co   explains how to use it  install, integrate, configure,
+                                          administer, troubleshoot, reference
+```
+
+If a page answers *"how do I…"* or *"what exactly is…"*, it belongs in docs.
+
+## What moved (2026-09-12)
+
+52 registered routes, served by 54 permanent redirects (the extra two are
+`/desktop/releases/:version` and `/developers/event-model`, which a page linked
+to without it being registered).
+
+| Area | Former marketing routes | Docs destination |
+| --- | --- | --- |
+| Developers (14) | `/developers`, `/developers/quickstart`, `sdk`, `api`, `examples`, `react`, `nextjs`, `nodejs`, `express`, `fastify`, `nestjs`, `events`, `webhooks`, `self-hosting` | docs home, `get-started/quickstart`, `sdk-reference/overview`, `api-reference/overview`, `tutorials/first-integration`, `integrations/*`, `events-telemetry/event-model`, `api-reference/webhooks`, `deployment/self-hosted` |
+| Workspace (6) | `/product/environments`, `team-access`, `audit-logs`, `notifications`, `integrations`, `data-retention` | `workspace-admin/environments`, `members`, `audit-logs`, `notifications`; `api-reference/webhooks`; `security-privacy/data-retention` |
+| Security detail (8) | `/security/privacy`, `data-collection`, `session-replay`, `architecture`, `authentication`, `access-control`, `audit-logging`, `compliance` | `security-privacy/*`, `architecture/architecture-overview` |
+| Desktop support (5) | `/desktop/requirements`, `releases` (and `releases/[version]`), `windows`, `troubleshooting`, `updates` | new docs section `desktop/*` |
+| Learn (19) | `/glossary` and its 15 term pages, `/faq`, `/guides`, `/templates` | `glossary`, the matching `concepts/*` pages, `faq`, `tutorials/*` |
+
+The exact mapping is `apps/marketing/src/config/docs-redirects.json`.
+
+## What stays on marketing
+
+Product and feature pages; `/desktop`, `/desktop/download` and
+`/desktop/security`; `/solutions` and its role pages; compare; blog, case studies,
+research, changelog and roadmap; pricing; `/security`, `/security/enterprise`
+and `/security/responsible-disclosure`; company and legal pages.
+
+Result: **86 registered routes (27 live, 59 planned)**, down from 138.
+Section 52 reduced this further to 69.
+
+## How it is wired
+
+```text
+src/config/docs-redirects.json     old marketing path → docs slug (one table)
+        │
+        ├── next.config.ts          permanent (308) redirects to NEXT_PUBLIC_DOCS_URL
+        │
+        └── src/config/site-routes.ts
+                docs(...) helper → `docsLinks` (status: 'docs')
+                │
+                ├── site-footer     a few curated links, rendered as external
+                                    (the header has one plain Docs ↗ link)
+                └── pages           href={docsLinks.privacy.href}, …
+```
+
+`docs(...)` is keyed by the old marketing path and throws at module load if
+that path is not in the JSON, so a navigation link cannot drift from the
+redirect table. Next.js runs redirects before the `[...slug]` catch-all, so a
+moved route never renders a stub.
+
+## Moving another route to docs
+
+1. Make sure the docs page exists: `apps/docs/src/content/docs/<slug>.mdx` plus
+   its entry in `apps/docs/src/config/docs-navigation.json`. Then
+   `pnpm --filter @tellann/docs docs:validate` must pass (update the page and
+   section counts in `scripts/generate-docs.mjs` and the tests when adding pages).
+2. Add `{ "source": "/old-route", "destination": "/docs-slug" }` to
+   `docs-redirects.json`.
+3. Remove the route from `site-routes.ts` and delete any page for it under
+   `src/app`.
+4. If navigation or a page should still link to it, add an entry to `docsLinks`
+   and reference `docsLinks.<name>.href`.
+
+## Documentation added to support the move
+
+Docs had no Desktop content, while `/desktop/download` already linked to docs
+`desktop/installation`, `desktop/verify-download` and `desktop/troubleshooting`.
+A **Tellann Desktop** section in the START group now holds six pages, all
+`status: preview`:
+
+```text
+desktop/installation       desktop/updates
+desktop/requirements       desktop/releases
+desktop/verify-download    desktop/troubleshooting
+```
+
+The docs validator and tests moved from 271 pages / 20 sections to
+277 pages / 21 sections.
+
+## Open follow-ups
+
+- Delete the stub page files that now sit unreachable behind redirects:
+  `apps/marketing/src/app/desktop/releases/`, `apps/marketing/src/app/desktop/requirements/`
+  and the now-unused `apps/marketing/src/components/coming-soon-page.tsx`.
+- Docs `integrations/nestjs` is published although no NestJS adapter ships.
+- Docs has no pages for flow declaration, reconciliation, graph drift,
+  automated instrumentation or document flow inference, which all have
+  marketing pages.
+- The Desktop updater sets `allowDowngrade = false` before assigning `channel`,
+  and electron-updater's channel setter turns downgrades back on. Fix the order
+  before the updates page claims downgrades are blocked.
+
+---
+
+# 52. Solutions consolidation
+
+The Solutions menu held 22 routes, none built. Most of them explained the same
+capabilities as the Product pages from a different angle, which added reading
+without adding understanding.
+
+## What stays
+
+```text
+/solutions                        overview
+/solutions/developers             ┐
+/solutions/qa-engineers           │ the core users named in the product
+/solutions/engineering-leaders    │ documents (section 16)
+/solutions/product-teams          ┘
+```
+
+The menu shows them as two groups — **Build & test** (overview, developers,
+QA engineers) and **Lead & plan** (engineering leaders, product teams) — so it
+renders two columns wide like Company instead of one stretched column.
+
+## What was retired (17 routes)
+
+| Retired route | Redirects to | Why |
+| --- | --- | --- |
+| `/solutions/startups` | `/pricing` | Free and Solo plans already tell the lean-team story |
+| `/solutions/saas` | `/product` | Nearly every customer is a SaaS team; no distinct story |
+| `/solutions/enterprise` | `/pricing` | Enterprise tier, `/security/enterprise` and `/contact` cover it |
+| `/solutions/agencies` | `/solutions` | Not a target user in the product documents |
+| `/use-cases` | `/product` | Index of the pages below |
+| `/use-cases/workflow-coverage` | `/product/coverage` | Same capability |
+| `/use-cases/find-missing-flows` | `/product/missing-flows` | Same capability |
+| `/use-cases/find-missing-states` | `/product/missing-states` | Same capability |
+| `/use-cases/qa-planning` | `/product/coverage` | Coverage and gaps are the planning input |
+| `/use-cases/debug-user-workflows` | `/product/session-replay` | Same capability |
+| `/use-cases/api-performance-analysis` | `/product/endpoint-intelligence` | Same capability |
+| `/use-cases/application-walkthrough` | `/product/demonstration-mode` | Same capability |
+| `/use-cases/regression-detection` | `/product/graph-drift` | Implied Phase 3 regression detection |
+| `/use-cases/release-readiness` | `/product/coverage` | Implied a release verdict Tellann does not give |
+| `/use-cases/legacy-application-mapping` | `/product/behavior-graphs` | Same capability |
+| `/use-cases/documenting-user-journeys` | `/product/workflow-discovery` | Same capability |
+| `/use-cases/onboarding-engineers` | `/product/behavior-graphs` | Same capability |
+
+The table lives in `apps/marketing/src/config/retired-redirects.json`.
+`next.config.ts` serves these as **temporary** (307) redirects: the routes were
+never built or indexed, so there is no ranking to consolidate, and a route can
+return as a real page later without fighting cached permanent redirects.
+
+## Links updated
+
+- The homepage persona cards link to the four role pages; the fourth card is
+  now Product teams instead of Startup teams.
+- The footer Solutions column lists the four role pages only.
+
+## Effect on the rest of this plan
+
+Sections 21, 36, 41 and 42 describe journeys and SEO layers that pass through
+`/use-cases`. Treat those as the retired plan: problem-aware search intent is
+served by `/blog` articles linking directly to `/product/*` pages, and audience
+intent by the four role pages.
+
+Result: **69 registered routes (27 live, 42 planned)**.

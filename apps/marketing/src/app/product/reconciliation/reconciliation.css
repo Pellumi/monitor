@@ -1,0 +1,1957 @@
+/* ---------------------------------------------------------------------------
+   /product/reconciliation
+
+   A marketing page, not documentation: plain-English outcomes first, product
+   terminology behind disclosures. Shares the Product route vocabulary —
+   monospace kicker, oversized editorial heading, hairline --line rules, and
+   dimension-accurate grey placeholders that render at exactly the display size
+   they are labelled with.
+--------------------------------------------------------------------------- */
+
+.recon-page {
+  --recon-max: 1280px;
+  --recon-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  background: var(--background);
+  color: var(--foreground);
+  overflow: clip;
+}
+.recon-shell {
+  width: min(var(--recon-max), calc(100% - 48px));
+  margin-inline: auto;
+}
+.recon-shell-wide {
+  width: min(1400px, calc(100% - 48px));
+  margin-inline: auto;
+}
+.recon-kicker {
+  margin: 0;
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-page a:focus-visible,
+.recon-page button:focus-visible,
+.recon-page summary:focus-visible,
+.recon-page select:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────── */
+.recon-hero {
+  padding: clamp(90px, 10vw, 150px) 0 0;
+  border-bottom: 1px solid var(--line);
+}
+/* Centred hero: eyebrow, H1, copy, CTAs, then the full-width visual. */
+.recon-hero-copy {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+.recon-hero h1 {
+  max-width: 15ch;
+  margin: 26px 0 24px;
+  font-size: clamp(46px, 6.4vw, 104px);
+  font-weight: 540;
+  letter-spacing: -0.075em;
+  line-height: 0.86;
+}
+.recon-hero-copy > p:not(.recon-kicker) {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.7;
+}
+.recon-actions {
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+  margin-top: 40px;
+  flex-wrap: wrap;
+}
+.recon-actions a {
+  display: flex;
+  min-width: 250px;
+  justify-content: space-between;
+  gap: 30px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: none;
+  transition:
+    background-color 180ms var(--recon-ease),
+    color 180ms var(--recon-ease),
+    border-color 180ms var(--recon-ease),
+    transform 180ms var(--recon-ease);
+}
+.recon-actions a span {
+  transition: transform 220ms var(--recon-ease);
+}
+.recon-actions a:hover {
+  border-color: var(--foreground);
+  transform: translateY(-2px);
+}
+.recon-actions a:hover span {
+  transform: translateX(4px);
+}
+.recon-actions a.is-primary {
+  background: var(--foreground);
+  color: var(--background);
+}
+.recon-actions a.is-quiet {
+  border-color: transparent;
+  color: var(--muted);
+}
+.recon-actions a.is-quiet:hover {
+  color: var(--foreground);
+}
+.recon-hero-media {
+  margin-top: 56px;
+}
+.recon-hero-media > .product-placeholder,
+.recon-mobile-media > .product-placeholder,
+.recon-media > .product-placeholder {
+  margin-inline: auto;
+}
+.recon-hero-media > p,
+.recon-mobile-media > p,
+.recon-media > p {
+  width: min(1320px, 100%);
+  margin: 12px auto 0;
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+  line-height: 1.7;
+  text-align: center;
+}
+.recon-mobile-media {
+  display: none;
+}
+
+/* Slim on-page index so a long marketing page stays navigable. */
+.recon-jump {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 44px;
+  padding-bottom: 40px;
+  flex-wrap: wrap;
+}
+.recon-jump a {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.1em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition:
+    border-color 180ms var(--recon-ease),
+    color 180ms var(--recon-ease);
+}
+.recon-jump a:hover {
+  border-color: var(--foreground);
+  color: var(--foreground);
+}
+
+/* ── Section frame ────────────────────────────────────────────────────── */
+.recon-section {
+  padding: clamp(96px, 10vw, 160px) 0;
+  border-bottom: 1px solid var(--line);
+}
+.recon-section.is-surface,
+.recon-faq {
+  background: var(--surface);
+}
+.recon-roles {
+  padding: clamp(104px, 12vw, 180px) 0;
+}
+.recon-heading {
+  display: grid;
+  grid-template-columns: 0.3fr 1fr 0.55fr;
+  gap: 35px;
+  align-items: end;
+  margin-bottom: 60px;
+}
+.recon-heading.is-narrow {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 900px;
+}
+.recon-heading h2 {
+  margin: 0;
+  font-size: clamp(36px, 4.6vw, 70px);
+  font-weight: 540;
+  letter-spacing: -0.065em;
+  line-height: 0.92;
+}
+.recon-heading > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.recon-media {
+  width: min(1400px, calc(100% - 48px));
+  margin: 56px auto 0;
+}
+
+/* ── Shared small parts ───────────────────────────────────────────────── */
+.recon-panel-label {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-panel-copy {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.recon-media-note {
+  width: min(1400px, 100%);
+  margin: 16px auto 0;
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+  line-height: 1.7;
+}
+.recon-sample-note {
+  display: block;
+  margin-top: 20px;
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-note {
+  margin-top: 40px;
+  padding: 20px;
+  border-left: 2px solid var(--foreground);
+  color: var(--muted);
+  line-height: 1.7;
+}
+.recon-note b {
+  color: var(--foreground);
+}
+.recon-inline-link {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 26px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: padding-left 200ms var(--recon-ease);
+}
+.recon-inline-link span {
+  flex: none;
+  transition: transform 220ms var(--recon-ease);
+}
+.recon-inline-link:hover {
+  padding-left: 6px;
+}
+.recon-inline-link:hover span {
+  transform: translateX(5px);
+}
+.recon-link-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+  margin-top: 20px;
+}
+/* A single related link spans the row rather than stopping halfway across. */
+.recon-link-row:has(> :only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Outcome pill — glyph plus label, never colour alone. */
+.recon-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.recon-pill i {
+  font-style: normal;
+}
+.recon-pill.is-confirmed {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
+}
+.recon-pill.is-true_gap {
+  border-style: dashed;
+}
+.recon-pill.is-undeclared {
+  border-color: var(--foreground);
+  color: var(--foreground);
+}
+
+@keyframes recon-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── 03 Problem ───────────────────────────────────────────────────────── */
+.recon-problem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 32px;
+  align-items: center;
+}
+.recon-problem article {
+  padding: 28px;
+  border: 1px solid var(--line);
+  background: var(--background);
+}
+.recon-problem span {
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-problem ul {
+  padding: 0;
+  margin: 18px 0 0;
+  list-style: none;
+}
+.recon-problem li {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+.recon-problem li:last-child {
+  border-bottom: 0;
+}
+.recon-problem li.is-open {
+  color: var(--muted);
+}
+.recon-problem i {
+  flex: none;
+  font-style: normal;
+}
+.recon-problem > b {
+  color: var(--muted);
+  font:
+    700 11px ui-monospace,
+    monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* ── 05 Outcome cards (380 × 320, 24 px gap) ──────────────────────────── */
+.recon-outcome-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 380px);
+  gap: 24px;
+  justify-content: center;
+}
+.recon-outcome-cards article {
+  display: grid;
+  width: 380px;
+  height: 320px;
+  padding: 26px;
+  /* Fixed card height with a flexible last row, so the summary line settles
+     against the bottom edge instead of floating mid-card. */
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  background: var(--background);
+  transition:
+    border-color 200ms var(--recon-ease),
+    transform 200ms var(--recon-ease);
+}
+.recon-outcome-cards article:hover {
+  border-color: var(--foreground);
+  transform: translateY(-3px);
+}
+.recon-outcome-cards span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font:
+    700 11px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-outcome-cards i {
+  font-size: 15px;
+  font-style: normal;
+}
+.recon-outcome-cards dl {
+  margin: 24px 0 0;
+}
+.recon-outcome-cards dl div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.recon-outcome-cards dt {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-outcome-cards dd {
+  margin: 0;
+  font:
+    700 11px ui-monospace,
+    monospace;
+}
+.recon-outcome-cards p {
+  align-self: end;
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ── 06 Four steps ────────────────────────────────────────────────────── */
+.recon-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+  list-style: none;
+}
+.recon-steps li {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 28px;
+  background: var(--background);
+}
+.recon-steps small {
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+}
+.recon-steps b {
+  font-size: 22px;
+  font-weight: 540;
+  letter-spacing: -0.03em;
+}
+.recon-steps p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ── 07 Persona switcher ──────────────────────────────────────────────── */
+.recon-persona-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+}
+.recon-persona-tabs button {
+  flex: 1 1 auto;
+  padding: 18px 22px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font:
+    700 11px ui-monospace,
+    monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background-color 180ms var(--recon-ease),
+    color 180ms var(--recon-ease);
+}
+.recon-persona-tabs button:last-child {
+  border-right: 0;
+}
+.recon-persona-tabs button:hover {
+  color: var(--foreground);
+}
+.recon-persona-tabs button.is-active {
+  background: var(--foreground);
+  color: var(--background);
+}
+.recon-persona-select {
+  display: none;
+}
+/* The media column is pinned to 900 px so the largest persona visual renders
+   at its exact size; the copy takes whatever is left. A fixed floor keeps the
+   section from jumping as personas change. */
+.recon-persona-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 900px;
+  gap: 56px;
+  min-height: 640px;
+  padding: 48px 0 0;
+  animation: recon-rise 380ms var(--recon-ease) both;
+}
+.recon-persona-copy h3 {
+  margin: 0;
+  font-size: clamp(26px, 2.4vw, 36px);
+  font-weight: 540;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+}
+.recon-persona-pain {
+  margin: 18px 0 26px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.recon-benefit-list {
+  margin: 0;
+}
+.recon-benefit-list div {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.recon-benefit-list dt {
+  font-size: 15px;
+  font-weight: 700;
+}
+.recon-benefit-list dd {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.recon-persona-visual {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+}
+.recon-persona-visual > .product-placeholder {
+  margin-inline: auto;
+}
+.recon-persona-panel-detail {
+  display: grid;
+  gap: 20px;
+}
+.recon-stat-row {
+  display: flex;
+  gap: 1px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-stat-row span {
+  display: grid;
+  flex: 1 1 120px;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--background);
+}
+.recon-stat-row small {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-stat-row b {
+  font-size: 19px;
+  font-weight: 540;
+  letter-spacing: -0.03em;
+}
+.recon-group-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 24px;
+}
+.recon-group-row ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recon-group-row li {
+  display: flex;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-group-row ul.is-muted li {
+  color: var(--muted);
+}
+.recon-group-row i {
+  flex: none;
+  font-style: normal;
+}
+.recon-secondary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 24px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-secondary article {
+  padding: 24px;
+  background: var(--background);
+}
+.recon-secondary b {
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-secondary p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ── 08 Checkout example toggle ───────────────────────────────────────── */
+.recon-example {
+  border: 1px solid var(--line);
+  background: var(--background);
+}
+.recon-example-bar {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+.recon-example-bar button {
+  padding: 16px 24px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font:
+    700 11px ui-monospace,
+    monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background-color 180ms var(--recon-ease),
+    color 180ms var(--recon-ease);
+}
+.recon-example-bar button:hover {
+  color: var(--foreground);
+}
+.recon-example-bar button.is-active {
+  background: var(--foreground);
+  color: var(--background);
+}
+.recon-example-body {
+  display: grid;
+  grid-template-columns: 1100px minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+.recon-example-body > .product-placeholder {
+  border: 0;
+}
+.recon-example-panel {
+  padding: 24px;
+  background: var(--background);
+}
+.recon-outcome-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recon-outcome-list li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 2px 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  animation: recon-rise 360ms var(--recon-ease) both;
+}
+.recon-outcome-list i {
+  color: var(--muted);
+  font-style: normal;
+}
+.recon-outcome-list b {
+  font:
+    700 10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-outcome-list small {
+  grid-column: 2;
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.recon-outcome-list li.is-true-gap b {
+  color: var(--muted);
+  font-weight: 400;
+}
+.recon-outcome-list li.is-undeclared {
+  padding-left: 6px;
+  border-left: 2px solid var(--foreground);
+}
+
+/* ── 09 Reconciliation explorer (1280 × 800) ──────────────────────────── */
+/* 96 header + 560 body + 142 detail inside a 1 px frame. */
+.recon-explorer {
+  display: grid;
+  width: min(100%, 1280px);
+  height: 800px;
+  margin-inline: auto;
+  grid-template-areas:
+    "header header"
+    "filters canvas"
+    "detail detail";
+  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-rows: 96px minmax(0, 560px) 142px;
+  border: 1px solid var(--line);
+  background: var(--background);
+}
+.recon-explorer button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--foreground);
+  font: 700 10px inherit;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--recon-ease),
+    color 160ms var(--recon-ease),
+    border-color 160ms var(--recon-ease);
+}
+.recon-explorer button:hover {
+  background: var(--surface-soft);
+}
+.recon-explorer button.is-active {
+  background: var(--foreground);
+  color: var(--background);
+}
+.recon-explorer-header {
+  display: flex;
+  grid-area: header;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.recon-explorer-title b {
+  font:
+    700 18px ui-monospace,
+    monospace;
+  letter-spacing: 0.04em;
+}
+.recon-explorer-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.recon-explorer-summary span {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+}
+.recon-explorer-summary i {
+  color: var(--muted);
+  font-style: normal;
+}
+.recon-explorer-summary b {
+  font-size: 17px;
+  font-weight: 540;
+}
+.recon-explorer-summary small {
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.recon-view-toggle {
+  display: flex;
+  gap: 4px;
+}
+.recon-view-toggle button {
+  padding: 10px 12px;
+}
+.recon-explorer-filters {
+  display: grid;
+  grid-area: filters;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  padding: 18px 16px;
+  border-right: 1px solid var(--line);
+}
+.recon-filter-rows {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+.recon-filter-rows button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 13px;
+}
+.recon-filter-rows span {
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.recon-filter-rows button.is-active span {
+  color: var(--background);
+}
+.recon-finding-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+.recon-finding-count {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 0 0 10px;
+  background: var(--background);
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-finding-list button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 3px 8px;
+  padding: 11px 8px;
+  border-width: 0 0 1px;
+  text-align: left;
+}
+.recon-finding-list i {
+  color: var(--muted);
+  font-style: normal;
+}
+.recon-finding-list b {
+  font:
+    700 10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-finding-list small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 400;
+}
+.recon-finding-list button.is-true_gap b {
+  color: var(--muted);
+  font-weight: 400;
+}
+.recon-finding-list button.is-current {
+  padding-left: 6px;
+  border-left: 2px solid var(--foreground);
+  background: var(--surface);
+}
+.recon-finding-list button.is-current b {
+  color: var(--foreground);
+}
+.recon-explorer-canvas {
+  display: flex;
+  grid-area: canvas;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+/* The stage fills its column so the placeholder's `min(100%, Wpx)` resolves
+   against real space instead of collapsing to its own label width. */
+.recon-canvas-stage {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+.recon-canvas-stage > .product-placeholder {
+  flex: none;
+}
+.recon-canvas-list {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+  padding: 22px;
+  overflow-y: auto;
+}
+.recon-canvas-list ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recon-canvas-list li {
+  display: flex;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-canvas-list i {
+  flex: none;
+  color: var(--muted);
+  font-style: normal;
+}
+.recon-explorer-detail {
+  display: grid;
+  grid-area: detail;
+  grid-template-columns: 260px minmax(0, 1fr) auto;
+  gap: 28px;
+  padding: 22px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.recon-detail-identity b {
+  display: block;
+  margin-top: 12px;
+  font:
+    700 18px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-detail-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.recon-detail-origin {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-top: 12px !important;
+}
+.recon-detail-origin small {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-detail-origin i {
+  color: var(--foreground);
+  font:
+    700 11px ui-monospace,
+    monospace;
+  font-style: normal;
+}
+.recon-detail-technical {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 14px 0 0;
+  animation: recon-rise 280ms var(--recon-ease) both;
+}
+.recon-detail-technical dt {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-detail-technical dd {
+  margin: 5px 0 0;
+  font:
+    700 10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.recon-detail-actions {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+.recon-detail-actions button {
+  padding: 11px 15px;
+  white-space: nowrap;
+}
+.recon-detail-actions button.is-quiet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-color: transparent;
+  color: var(--muted);
+}
+.recon-detail-actions button.is-quiet i {
+  font-style: normal;
+}
+
+/* ── 10 True gap comparison ───────────────────────────────────────────── */
+.recon-gap-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-gap-compare article {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 30px;
+  background: var(--background);
+}
+.recon-gap-compare span {
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-gap-compare b {
+  font-size: 26px;
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-gap-compare p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.recon-gap-compare small {
+  margin-top: 6px;
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.recon-gap-compare .is-primary {
+  border-left: 2px solid var(--foreground);
+}
+.recon-gap-compare .is-primary small {
+  color: var(--foreground);
+}
+
+/* ── 11 Undeclared review ─────────────────────────────────────────────── */
+.recon-split {
+  display: grid;
+  grid-template-columns: 800px minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+}
+.recon-review-card {
+  display: grid;
+  align-content: start;
+  padding: 28px;
+  border: 1px solid var(--line);
+  background: var(--background);
+}
+.recon-review-card > .recon-pill {
+  justify-self: start;
+}
+.recon-review-card > b {
+  margin: 16px 0 0;
+  font-size: 24px;
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-review-card dl {
+  margin: 20px 0 0;
+}
+.recon-review-card dl div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.recon-review-card dt {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-review-card dd {
+  margin: 0;
+  font:
+    700 11px ui-monospace,
+    monospace;
+}
+.recon-review-card p {
+  margin: 22px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.recon-review-result {
+  animation: recon-rise 320ms var(--recon-ease) both;
+}
+.recon-review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.recon-review-actions button {
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--foreground);
+  font: 700 11px inherit;
+  cursor: pointer;
+  transition:
+    background-color 180ms var(--recon-ease),
+    color 180ms var(--recon-ease),
+    border-color 180ms var(--recon-ease);
+}
+.recon-review-actions button:hover {
+  border-color: var(--foreground);
+}
+.recon-review-actions button.is-primary {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* ── 12-13 Evidence and demonstration traces ──────────────────────────── */
+.recon-trace {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.recon-trace span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.recon-trace b {
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.06em;
+}
+.recon-trace i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+/* ── 14 Multiple runs ─────────────────────────────────────────────────── */
+.recon-runs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+}
+.recon-runs article {
+  padding: 28px;
+  border: 1px solid var(--line);
+}
+.recon-runs .is-primary {
+  border-color: var(--foreground);
+}
+.recon-runs span {
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.recon-runs dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0 0;
+}
+.recon-runs dt {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-runs dd {
+  margin: 8px 0 0;
+  font-size: 26px;
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-runs > b {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* ── 15 Report ────────────────────────────────────────────────────────── */
+.recon-report {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 600px;
+  gap: 60px;
+  align-items: start;
+}
+.recon-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-stat-grid span {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  background: var(--background);
+}
+.recon-stat-grid small {
+  color: var(--muted);
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-stat-grid b {
+  font-size: 24px;
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-report-audiences {
+  margin: 28px 0 0;
+}
+.recon-report-audiences div {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.recon-report-audiences dt {
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.recon-report-audiences dd {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ── 16 Human control ─────────────────────────────────────────────────── */
+.recon-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-control span {
+  display: grid;
+  gap: 10px;
+  padding: 28px;
+  background: var(--background);
+}
+.recon-control small {
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.14em;
+}
+.recon-control b {
+  font-size: 21px;
+  font-weight: 540;
+  letter-spacing: -0.03em;
+}
+.recon-control i {
+  color: var(--muted);
+  font-style: normal;
+  line-height: 1.6;
+}
+
+/* ── 17 Optional declaration ──────────────────────────────────────────── */
+.recon-paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-paths article {
+  padding: 30px;
+  background: var(--background);
+}
+.recon-paths span {
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-paths b {
+  display: block;
+  margin: 14px 0 20px;
+  font-size: 21px;
+  font-weight: 540;
+  letter-spacing: -0.03em;
+}
+.recon-paths ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.recon-paths li {
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font:
+    10px ui-monospace,
+    monospace;
+}
+
+/* ── 18 Comparison table ──────────────────────────────────────────────── */
+.recon-compare-table {
+  display: grid;
+  border: 1px solid var(--line);
+}
+.recon-compare-table > div {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  border-bottom: 1px solid var(--line);
+}
+.recon-compare-table > div:last-child {
+  border-bottom: 0;
+}
+.recon-compare-table span {
+  padding: 20px 24px;
+  border-right: 1px solid var(--line);
+  font-size: 15px;
+}
+.recon-compare-table span:last-child {
+  border-right: 0;
+  color: var(--muted);
+}
+.recon-compare-table a {
+  color: var(--foreground);
+  text-decoration: none;
+  text-underline-offset: 4px;
+}
+.recon-compare-table a:hover {
+  text-decoration: underline;
+}
+.recon-compare-table .is-head span {
+  color: var(--muted);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.recon-compare-table .is-primary {
+  background: var(--background);
+}
+.recon-compare-table .is-primary span {
+  font-weight: 700;
+}
+.recon-compare-table .is-primary span:last-child {
+  color: var(--foreground);
+}
+
+/* ── 19 Use cases (560 × 300) ─────────────────────────────────────────── */
+.recon-use-cases {
+  display: grid;
+  grid-template-columns: repeat(2, 560px);
+  gap: 24px;
+  justify-content: center;
+}
+.recon-use-cases article {
+  display: grid;
+  width: 560px;
+  height: 300px;
+  padding: 30px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  transition:
+    border-color 200ms var(--recon-ease),
+    transform 200ms var(--recon-ease);
+}
+.recon-use-cases article:hover {
+  border-color: var(--foreground);
+  transform: translateY(-3px);
+}
+.recon-use-cases b {
+  font-size: 24px;
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-use-cases p {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.recon-use-cases div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-self: end;
+  margin-top: 20px;
+}
+.recon-use-cases span {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  font:
+    700 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+}
+
+/* ── 20 Phases ────────────────────────────────────────────────────────── */
+.recon-phases {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.recon-phases article {
+  display: grid;
+  gap: 14px;
+  padding: 30px;
+  background: var(--background);
+}
+.recon-phases span {
+  color: var(--muted);
+  font:
+    700 10px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.recon-phases b {
+  font-size: clamp(20px, 2vw, 27px);
+  font-weight: 540;
+  letter-spacing: -0.04em;
+}
+.recon-phases .is-planned b {
+  color: var(--muted);
+}
+
+/* ── FAQ ──────────────────────────────────────────────────────────────── */
+.recon-faq-grid {
+  display: grid;
+  grid-template-columns: 0.5fr 1fr;
+  gap: 60px;
+}
+.recon-faq-grid h2 {
+  margin: 22px 0 0;
+  font-size: clamp(32px, 3.2vw, 48px);
+  font-weight: 540;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+.recon-faq details {
+  border-bottom: 1px solid var(--line);
+}
+.recon-faq summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 21px 0;
+  font-size: 16px;
+  font-weight: 540;
+  cursor: pointer;
+  list-style: none;
+  transition: padding-left 200ms var(--recon-ease);
+}
+.recon-faq summary::-webkit-details-marker {
+  display: none;
+}
+.recon-faq summary:hover {
+  padding-left: 5px;
+}
+.recon-faq summary span {
+  flex: none;
+  color: var(--muted);
+  font-size: 18px;
+  transition: transform 240ms var(--recon-ease);
+}
+.recon-faq details[open] summary span {
+  transform: rotate(45deg);
+}
+.recon-faq details p {
+  margin: 0 0 22px;
+  color: var(--muted);
+  line-height: 1.75;
+  animation: recon-rise 320ms var(--recon-ease) both;
+}
+
+/* ── Final CTA ────────────────────────────────────────────────────────── */
+.recon-final {
+  padding: clamp(104px, 12vw, 175px) 0;
+  text-align: center;
+}
+.recon-final > div {
+  display: grid;
+  justify-items: center;
+}
+.recon-final h2 {
+  max-width: 17ch;
+  margin: 24px 0 22px;
+  font-size: clamp(38px, 5.2vw, 78px);
+  font-weight: 540;
+  letter-spacing: -0.07em;
+  line-height: 0.9;
+}
+.recon-final p:last-of-type {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Responsive. Fixed-size marketing surfaces (380 × 320 outcome cards,
+   560 × 300 use cases, the 1280-wide explorer, the 900/800/600 media
+   columns) hold their exact dimensions while there is room, then release
+   in that order rather than overflowing.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Large laptop — the persona media column is the first thing to give. */
+@media (max-width: 1399px) {
+  .recon-persona-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+    min-height: 0;
+  }
+  .recon-example-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-example-body > .product-placeholder {
+    margin-inline: auto;
+  }
+}
+
+/* Laptop */
+@media (max-width: 1279px) {
+  .recon-explorer {
+    height: auto;
+    grid-template-areas:
+      "header header"
+      "filters canvas"
+      "detail detail";
+    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+  .recon-explorer-filters {
+    grid-template-rows: none;
+  }
+  .recon-finding-list {
+    max-height: 320px;
+  }
+  .recon-explorer-canvas {
+    padding: 18px 0;
+  }
+  .recon-explorer-header {
+    padding: 18px;
+  }
+  .recon-outcome-cards {
+    grid-template-columns: repeat(2, minmax(0, 380px));
+  }
+  .recon-outcome-cards article {
+    width: 100%;
+    max-width: 380px;
+  }
+  .recon-use-cases {
+    grid-template-columns: repeat(2, minmax(0, 560px));
+  }
+  .recon-use-cases article {
+    width: 100%;
+    max-width: 560px;
+    height: auto;
+    min-height: 300px;
+  }
+  .recon-report {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+  .recon-report > .product-placeholder {
+    margin-inline: auto;
+  }
+  .recon-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .recon-split > .product-placeholder {
+    margin-inline: auto;
+  }
+  .recon-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Tablet */
+@media (max-width: 1023px) {
+  .recon-heading {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .recon-explorer {
+    grid-template-areas:
+      "header"
+      "canvas"
+      "filters"
+      "detail";
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-explorer-filters {
+    border-right: 0;
+    border-top: 1px solid var(--line);
+  }
+  .recon-explorer-detail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .recon-detail-actions {
+    grid-auto-flow: column;
+    justify-content: start;
+  }
+  .recon-problem,
+  .recon-runs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-problem > b,
+  .recon-runs > b {
+    justify-self: center;
+  }
+  .recon-gap-compare,
+  .recon-paths,
+  .recon-phases,
+  .recon-control,
+  .recon-secondary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-gap-compare .is-primary {
+    border-left: 0;
+    border-top: 2px solid var(--foreground);
+  }
+  .recon-canvas-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .recon-detail-technical {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Small tablet / large phone */
+@media (max-width: 879px) {
+  .recon-outcome-cards,
+  .recon-use-cases {
+    grid-template-columns: minmax(0, 380px);
+  }
+  .recon-use-cases {
+    grid-template-columns: minmax(0, 560px);
+  }
+  .recon-outcome-cards article {
+    height: auto;
+    min-height: 300px;
+  }
+  .recon-persona-tabs button {
+    flex: 1 1 50%;
+    border-bottom: 1px solid var(--line);
+  }
+  .recon-explorer-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .recon-link-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-report-audiences div,
+  .recon-review-card dl div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .recon-compare-table > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-compare-table span {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 16px 18px;
+  }
+  .recon-compare-table > div > span:last-child {
+    border-bottom: 0;
+  }
+  .recon-compare-table .is-head span:first-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .recon-faq-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+}
+
+/* Phone — the persona switcher becomes a single select. */
+@media (max-width: 767px) {
+  .recon-persona-tabs {
+    display: none;
+  }
+  .recon-persona-select {
+    display: grid;
+    gap: 10px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .recon-persona-select label {
+    color: var(--muted);
+    font:
+      700 9px ui-monospace,
+      monospace;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .recon-persona-select select {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font:
+      700 13px ui-monospace,
+      monospace;
+  }
+  .recon-persona-body {
+    padding-top: 32px;
+  }
+  .recon-stat-grid,
+  .recon-runs dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .recon-detail-actions {
+    grid-auto-flow: row;
+  }
+  /* Three tabs do not fit on one row here, and the page clips overflow — so
+     they wrap rather than pushing "Reconciled" out of reach. */
+  .recon-example-bar {
+    flex-wrap: wrap;
+  }
+  .recon-example-bar button {
+    flex: 1 1 auto;
+    padding: 14px 16px;
+  }
+  .recon-trace {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .recon-trace span {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+
+/* Small phone */
+@media (max-width: 640px) {
+  .recon-shell,
+  .recon-shell-wide,
+  .recon-media {
+    width: calc(100% - 40px);
+  }
+  .recon-hero {
+    padding-top: 72px;
+  }
+  .recon-hero h1 {
+    max-width: none;
+    font-size: clamp(34px, 10.5vw, 52px);
+    overflow-wrap: anywhere;
+  }
+  .recon-actions {
+    display: grid;
+    width: 100%;
+  }
+  .recon-actions a {
+    min-width: 0;
+  }
+  .recon-desktop-media {
+    display: none;
+  }
+  .recon-mobile-media {
+    display: block;
+    width: calc(100vw - 32px);
+    margin: 48px auto 0;
+  }
+  /* Chips scroll horizontally inside the shell rather than wrapping into a
+     tall block. Kept within the gutter so it stays aligned with the copy. */
+  .recon-jump {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    padding-bottom: 36px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .recon-jump::-webkit-scrollbar {
+    display: none;
+  }
+  .recon-jump a {
+    flex: none;
+  }
+  .recon-heading h2 {
+    font-size: clamp(28px, 8vw, 38px);
+  }
+  .recon-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-problem article,
+  .recon-outcome-cards article,
+  .recon-use-cases article,
+  .recon-gap-compare article,
+  .recon-paths article,
+  .recon-phases article,
+  .recon-runs article,
+  .recon-review-card,
+  .recon-control span,
+  .recon-secondary article {
+    padding: 20px;
+  }
+  .recon-explorer-detail,
+  .recon-explorer-filters,
+  .recon-explorer-header,
+  .recon-canvas-list {
+    padding: 16px 14px;
+  }
+  .recon-detail-technical {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-group-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .recon-final h2 {
+    max-width: none;
+    font-size: clamp(30px, 9vw, 44px);
+  }
+}
+
+/* Folded devices and very narrow viewports (down to 280 px). */
+@media (max-width: 400px) {
+  .recon-shell,
+  .recon-shell-wide,
+  .recon-media {
+    width: calc(100% - 28px);
+  }
+  .recon-explorer-summary span {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+  .recon-example-bar button {
+    flex: 1 1 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .recon-example-bar button:last-child {
+    border-bottom: 0;
+  }
+  .recon-stat-grid,
+  .recon-runs dl,
+  .recon-stat-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recon-stat-row span {
+    flex: 1 1 100%;
+  }
+  .recon-outcome-cards dl div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .recon-use-cases b,
+  .recon-gap-compare b,
+  .recon-review-card > b {
+    font-size: 20px;
+  }
+  .recon-actions a {
+    padding: 16px;
+    gap: 14px;
+  }
+}
+
+/* Motion here is decorative — reveals, hover shifts, panel transitions.
+   None of it carries meaning, so it resolves to its final state on request. */
+@media (prefers-reduced-motion: reduce) {
+  .recon-page *,
+  .recon-page *::before,
+  .recon-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

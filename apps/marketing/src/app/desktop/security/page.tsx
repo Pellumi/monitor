@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import { DesktopPermissionModel } from "@/components/desktop-security-controls";
 import { DesktopVisual } from "@/components/desktop-visual";
 import "./desktop-security.css";
@@ -93,7 +94,7 @@ export default function DesktopSecurityPage() {
       </section>
 
       <section className="desksec-section">
-        <div className="desksec-shell desksec-split"><div><p className="desksec-kicker" data-aos="fade-up">QA run privacy</p><h2 data-aos="fade-up" data-aos-delay="60">Observe behavior without collecting everything.</h2><p data-aos="fade-up" data-aos-delay="120">Managed browser runs should make capture scope, masked data, excluded fields, and synchronized evidence visible to the operator.</p><Link className="desksec-text-link" href="/security/privacy">Read platform privacy <span>→</span></Link></div><DesktopVisual id="SEC-D12" label="QA run privacy controls" source="1440 × 900" display="980 × 613" /></div>
+        <div className="desksec-shell desksec-split"><div><p className="desksec-kicker" data-aos="fade-up">QA run privacy</p><h2 data-aos="fade-up" data-aos-delay="60">Observe behavior without collecting everything.</h2><p data-aos="fade-up" data-aos-delay="120">Managed browser runs should make capture scope, masked data, excluded fields, and synchronized evidence visible to the operator.</p><Link className="desksec-text-link" href={docsLinks.privacy.href}>Read platform privacy <span>→</span></Link></div><DesktopVisual id="SEC-D12" label="QA run privacy controls" source="1440 × 900" display="980 × 613" /></div>
       </section>
 
       <section className="desksec-section is-surface">
@@ -106,14 +107,14 @@ export default function DesktopSecurityPage() {
       </section>
 
       <section className="desksec-section is-surface">
-        <div className="desksec-shell desksec-split"><div><p className="desksec-kicker" data-aos="fade-up">Installer and update integrity</p><h2 data-aos="fade-up" data-aos-delay="60">Verify the software before giving it access.</h2><p data-aos="fade-up" data-aos-delay="120">Published releases should expose verifiable artifact identity, signing status, checksum, version, and provenance. The page does not claim those are available until the release manifest proves them.</p><Link className="desksec-text-link" href="/desktop/releases">View Desktop releases <span>→</span></Link></div><DesktopVisual id="SEC-D15" label="Installer verification and artifact integrity" source="1200 × 760" display="720 × 456" /></div>
+        <div className="desksec-shell desksec-split"><div><p className="desksec-kicker" data-aos="fade-up">Installer and update integrity</p><h2 data-aos="fade-up" data-aos-delay="60">Verify the software before giving it access.</h2><p data-aos="fade-up" data-aos-delay="120">Published releases should expose verifiable artifact identity, signing status, checksum, version, and provenance. The page does not claim those are available until the release manifest proves them.</p><Link className="desksec-text-link" href={docsLinks.desktopReleases.href}>View Desktop releases <span>→</span></Link></div><DesktopVisual id="SEC-D15" label="Installer verification and artifact integrity" source="1200 × 760" display="720 × 456" /></div>
       </section>
 
       <section className="desksec-section"><div className="desksec-shell desksec-head"><p className="desksec-kicker" data-aos="fade-up">Control summary</p><h2 data-aos="fade-up" data-aos-delay="60">The boundary, at a glance.</h2><p data-aos="fade-up" data-aos-delay="120">Security does not depend on color or vague trust language.</p></div><div className="desksec-shell desksec-control-grid" data-aos="tellann-panel">{["✓ Read and write are distinct", "✓ Initial attachment can remain browser-only", "✓ Scanning does not authorize commands", "✓ Scope changes require new approval", "✓ Privacy filtering precedes transmission", "✓ Production remains observation-only", "○ Instrumentation must be explicitly enabled", "○ Installer facts come from release evidence"].map(x=><span key={x}>{x}</span>)}</div></section>
 
       <section className="desksec-section is-surface"><div className="desksec-shell desksec-faq"><div><p className="desksec-kicker" data-aos="fade-up">Desktop security FAQ</p><h2 data-aos="fade-up" data-aos-delay="60">Specific questions. Specific boundaries.</h2></div><div>{faqs.map(([q,a])=><details key={q}><summary>{q}<span>+</span></summary><p>{a}</p></details>)}</div></div></section>
 
-      <section className="desksec-resources"><div className="desksec-shell"><div><p className="desksec-kicker" data-aos="fade-up">Security resources</p><h2 data-aos="fade-up" data-aos-delay="60">Go deeper into the model.</h2></div><nav aria-label="Desktop security resources"><Link href="/desktop">Desktop overview <span>→</span></Link><Link href="/desktop/requirements">System requirements <span>→</span></Link><Link href="/security">Platform security <span>→</span></Link><a href={docsUrl}>Security documentation <span>↗</span></a></nav></div></section>
+      <section className="desksec-resources"><div className="desksec-shell"><div><p className="desksec-kicker" data-aos="fade-up">Security resources</p><h2 data-aos="fade-up" data-aos-delay="60">Go deeper into the model.</h2></div><nav aria-label="Desktop security resources"><Link href="/desktop">Desktop overview <span>→</span></Link><Link href={docsLinks.desktopRequirements.href}>System requirements <span>→</span></Link><Link href="/security">Platform security <span>→</span></Link><a href={docsUrl}>Security documentation <span>↗</span></a></nav></div></section>
 
       <section className="desksec-final"><div className="desksec-shell"><p className="desksec-kicker" data-aos="fade-up">Tellann Desktop</p><h2 data-aos="fade-up" data-aos-delay="60">Start with the smallest permission you need.</h2><div className="desksec-actions"><Link className="desksec-button is-primary" href="/desktop/download">Download Tellann Desktop <span>→</span></Link><Link className="desksec-button" href="/desktop">Explore Desktop <span>→</span></Link></div></div><div className="desksec-final-crop"><DesktopVisual id="SEC-D16" label="Desktop permission prompt crop" source="1400 × 900" display="900 × 579" /></div></section>
     </main>

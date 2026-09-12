@@ -2,10 +2,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { logoIconText, logoIconTextBlack } from "@/lib/image";
 import {
+  docsLinks,
+  isDocsRoute,
   isRouteVisible,
   navCompanyRoutes,
   navDesktopRoutes,
-  navDeveloperGroups,
   navLegalRoutes,
   navProductGroups,
   navResourceGroups,
@@ -14,9 +15,6 @@ import {
   type SiteRoute,
 } from "@/config/site-routes";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
-const docsUrl =
-  process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 const statusUrl =
   process.env.NEXT_PUBLIC_STATUS_URL || "https://status.tellann.co";
 
@@ -30,120 +28,106 @@ type FooterGroup = {
   links: FooterLink[];
 };
 
+// Documentation pages open on docs.tellann.co, so they render as external links.
+const toFooterLink = (item: SiteRoute): FooterLink => ({
+  href: item.href,
+  label: item.label,
+  external: isDocsRoute(item),
+});
+
 // Curated picks. A planned route silently drops out of the footer until its
 // page is built, so this list can name routes ahead of time.
 const selectRoutes = (routes: SiteRoute[], hrefs: string[]) =>
   hrefs.flatMap((href) => {
     const item = routes.find((route) => route.href === href);
-    return item && isRouteVisible(item) ? [{ href: item.href, label: item.label }] : [];
+    return item && isRouteVisible(item) ? [toFooterLink(item)] : [];
   });
 
 const allSolutionRoutes = navSolutionGroups.flatMap((group) => group.routes);
-const allDeveloperRoutes = navDeveloperGroups.flatMap((group) => group.routes);
 const allResourceRoutes = navResourceGroups.flatMap((group) => group.routes);
 
-const footerNavigation: FooterGroup[] = [
-  {
-    title: "Product",
-    links: [
-      ...navProductGroups.flatMap((group) =>
-        group.routes.map((route, index) => ({
-        href: route.href,
-        label: route.label,
-        sublabel: index === 0 ? group.label : undefined,
-        })),
-      ),
-    ].filter((link, index, links) => links.findIndex(({ href }) => href === link.href) === index),
-  },
+// Product is by far the longest section, so it gets its own row with one column
+// per menu group instead of one tall column that leaves the rest of the footer
+// empty beside it.
+const productColumns: FooterGroup[] = navProductGroups.map((group) => ({
+  title: group.label,
+  links: group.routes.map(toFooterLink),
+}));
+
+// The second row shares the product row's column grid, so every edge lines up.
+const siteColumns: FooterGroup[] = [
   {
     title: "Solutions",
-    links: [
-      ...selectRoutes(allSolutionRoutes, [
-        "/solutions/developers",
-        "/solutions/qa-engineers",
-        "/solutions/engineering-leaders",
-        "/solutions/product-teams",
-        "/solutions/startups",
-        "/solutions/saas",
-      ]),
-      ...selectRoutes(allSolutionRoutes, [
-        "/use-cases/workflow-coverage",
-        "/use-cases/find-missing-flows",
-        "/use-cases/qa-planning",
-      ]).map((route, index) => ({
-        ...route,
-        sublabel: index === 0 ? "Use cases" : undefined,
-      })),
-    ],
+    links: selectRoutes(allSolutionRoutes, [
+      "/solutions/developers",
+      "/solutions/qa-engineers",
+      "/solutions/engineering-leaders",
+      "/solutions/product-teams",
+    ]),
   },
   {
     title: "Developers",
     links: [
-      ...selectRoutes(allDeveloperRoutes, [
-        "/developers",
-        "/developers/quickstart",
-        "/desktop/download",
-        "/developers/sdk",
-        "/developers/api",
-        "/developers/react",
-        "/developers/nextjs",
-        "/developers/nodejs",
-      ]),
-      ...selectRoutes(navDesktopRoutes, ["/desktop/requirements"]),
-      { label: "Documentation", href: docsUrl, external: true },
+      toFooterLink(docsLinks.home),
+      toFooterLink(docsLinks.quickstart),
+      ...selectRoutes(navDesktopRoutes, ["/desktop/download"]).map((link) => ({
+        ...link,
+        label: "Download Desktop",
+      })),
       { label: "System status", href: statusUrl, external: true },
     ],
   },
   {
     title: "Resources",
-    links: [
-      ...selectRoutes(allResourceRoutes, [
-        "/blog",
-        "/guides",
-        "/case-studies",
-        "/glossary",
-        "/changelog",
-      ]),
-      ...selectRoutes(navDesktopRoutes, ["/desktop/releases"]),
-      ...selectRoutes(allResourceRoutes, ["/roadmap"]),
-    ],
+    links: selectRoutes(allResourceRoutes, ["/blog", "/case-studies", "/changelog", "/roadmap"]),
   },
   {
     title: "Company",
     links: [
-      ...selectRoutes(navCompanyRoutes, ["/company", "/careers", "/contact", "/brand", "/roadmap"]),
+      ...selectRoutes(navCompanyRoutes, ["/company", "/careers", "/contact", "/brand"]),
       { label: "Pricing", href: "/pricing" },
     ],
   },
   {
-    title: "Trust & legal",
+    title: "Trust",
     links: [
-      ...selectRoutes(navSecurityRoutes, [
-        "/security",
-        "/security/privacy",
-        "/security/data-collection",
-        "/security/session-replay",
-        "/security/enterprise",
-      ]),
+      ...selectRoutes(navSecurityRoutes, ["/security", "/security/enterprise"]),
       ...selectRoutes(navDesktopRoutes, ["/desktop/security"]),
-      ...selectRoutes(navLegalRoutes, [
-        "/terms",
-        "/privacy",
-        "/cookies",
-        "/dpa",
-        "/subprocessors",
-        "/acceptable-use",
-      ]).map((route, index) => ({
-        ...route,
-        sublabel: index === 0 ? "Policies" : undefined,
-      })),
+      ...[docsLinks.privacy, docsLinks.dataCollection, docsLinks.replayPrivacy].map(toFooterLink),
     ],
   },
 ];
 
+// Policies live in the bottom bar, where visitors look for them.
+const legalLinks = selectRoutes(navLegalRoutes, [
+  "/terms",
+  "/privacy",
+  "/cookies",
+  "/dpa",
+  "/subprocessors",
+  "/acceptable-use",
+]);
+
 // A column whose routes are all still planned is dropped rather than rendered
 // as an empty heading.
-const visibleFooterNavigation = footerNavigation.filter((group) => group.links.length > 0);
+const nonEmpty = (groups: FooterGroup[]) => groups.filter((group) => group.links.length > 0);
+
+const visibleProductColumns = nonEmpty(productColumns);
+const visibleSiteColumns = nonEmpty(siteColumns);
+
+// Mobile collapses Product back into one section, labelled by group.
+const mobileGroups: FooterGroup[] = [
+  {
+    title: "Product",
+    links: visibleProductColumns.flatMap((column) =>
+      column.links.map((link, index) => ({
+        ...link,
+        sublabel: index === 0 ? column.title : undefined,
+      })),
+    ),
+  },
+  ...visibleSiteColumns,
+];
 
 function FooterNavLink({ link }: { link: FooterLink }) {
   return (
@@ -176,30 +160,6 @@ function FooterColumn({ group }: { group: FooterGroup }) {
 export function SiteFooter() {
   return (
     <footer className="site-footer">
-      <section className="footer-cta" aria-labelledby="footer-cta-heading">
-        <div>
-          <p>Ready to understand what your testing missed?</p>
-          <h2 id="footer-cta-heading">
-            Show Tellann how your application works.
-          </h2>
-        </div>
-        <div className="footer-cta-detail">
-          <p>
-            Start with a demonstration and turn observed behavior into
-            workflows, coverage, missing paths, session replay, endpoint
-            intelligence, and QA reports.
-          </p>
-          <div className="footer-cta-actions">
-            <a href={`${appUrl}/auth/login?plan=free`}>
-              Start free <span aria-hidden="true">→</span>
-            </a>
-            <a href={docsUrl} target="_blank" rel="noreferrer">
-              View documentation <span aria-hidden="true">↗</span>
-            </a>
-          </div>
-        </div>
-      </section>
-
       <div className="footer-navigation">
         <div className="footer-brand">
           <Link href="/" className="brand footer-wordmark">
@@ -226,14 +186,27 @@ export function SiteFooter() {
           <p id="mino" className="w-full!">Behavioral quality intelligence</p>
         </div>
 
-        <nav className="footer-grid footer-nav-desktop" aria-label="Footer">
-          {visibleFooterNavigation.map((group) => (
+        <nav
+          className="footer-tier footer-tier-product footer-nav-desktop"
+          aria-label="Footer product"
+        >
+          <p className="footer-tier-label">Product</p>
+          {visibleProductColumns.map((group) => (
+            <FooterColumn key={group.title} group={group} />
+          ))}
+        </nav>
+
+        <nav
+          className="footer-tier footer-tier-site footer-nav-desktop"
+          aria-label="Footer"
+        >
+          {visibleSiteColumns.map((group) => (
             <FooterColumn key={group.title} group={group} />
           ))}
         </nav>
 
         <nav className="footer-nav-mobile" aria-label="Footer">
-          {visibleFooterNavigation.map((group) => (
+          {mobileGroups.map((group) => (
             <details key={group.title}>
               <summary>
                 {group.title} <span aria-hidden="true">+</span>
@@ -277,10 +250,12 @@ export function SiteFooter() {
             © {new Date().getFullYear()} Tellann. All rights reserved.
           </span>
         </div>
-        <div>
-          <Link href="/privacy">Privacy</Link>
-          <Link href="/terms">Terms</Link>
-          <Link href="/cookies">Cookies</Link>
+        <div aria-label="Legal">
+          {legalLinks.map((link) => (
+            <Link key={link.href} href={link.href}>
+              {link.label}
+            </Link>
+          ))}
         </div>
       </div>
     </footer>

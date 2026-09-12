@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import type { CSSProperties } from "react";
 import { EndpointExplorer } from "@/components/endpoint-explorer";
 import { EndpointRankings } from "@/components/endpoint-rankings";
@@ -1113,7 +1114,7 @@ export default function EndpointIntelligencePage() {
             </li>
           ))}
         </ul>
-        <Link href="/security/data-collection" className="endpoint-inline-link">
+        <Link href={docsLinks.dataCollection.href} className="endpoint-inline-link">
           What Tellann collects <span>→</span>
         </Link>
       </AsideSection>
@@ -1254,7 +1255,7 @@ export default function EndpointIntelligencePage() {
             <a className="is-primary" href={dashboardUrl}>
               Start free <span>↗</span>
             </a>
-            <Link href="/developers/sdk">
+            <Link href={docsLinks.sdk.href}>
               View SDK documentation <span>→</span>
             </Link>
           </div>

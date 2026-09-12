@@ -1,0 +1,54 @@
+---
+id: "desktop-requirements"
+slug: "desktop/requirements"
+title: "Desktop System Requirements"
+description: "Operating system, architecture, network, and development-tool requirements for Tellann Desktop."
+version: v1
+status: preview
+audiences: ["developer","qa"]
+tags: ["desktop","requirements","compatibility"]
+related: ["desktop-installation","desktop-troubleshooting"]
+updatedAt: "2026-09-12"
+---
+
+
+# Desktop System Requirements
+
+Check these requirements before installing Tellann Desktop. Requirements that only apply to a specific workflow, such as Git for repository features, name the workflow that needs them.
+
+## Operating system
+
+| Requirement | Supported |
+| --- | --- |
+| Operating system | Windows 10 or later |
+| Architecture | 64-bit (x64) |
+| macOS | Not available |
+| Linux | Not available |
+
+Tellann Desktop is built on Electron, which does not support Windows 7, Windows 8, or Windows 8.1. Install only an architecture that is listed for the release you download.
+
+## Hardware
+
+Tellann has not published measured memory or disk minimums. Resource use grows with the size of the repository being analyzed and the number of browser sessions running at the same time, so large repositories and monorepos benefit from additional memory and free disk space.
+
+## Network
+
+Desktop needs outbound HTTPS access to Tellann cloud services to sign in, synchronize approved results, and check for updates. Your system browser must also be able to reach the Tellann sign-in page, because authentication happens in the browser.
+
+Proxies, VPNs, or firewalls that block or intercept HTTPS traffic can prevent sign-in and synchronization. If your organization inspects TLS traffic, allow the Tellann domains used by your workspace.
+
+## Development tools
+
+| Tool | Needed for |
+| --- | --- |
+| Git on `PATH` | Attaching, cloning, and checkpointing local repositories |
+| npm, pnpm, yarn, or bun | Detecting the project's package manager during workspace analysis |
+| A framework supported by the Tellann SDK | Instrumentation proposals |
+
+Desktop runs Git non-interactively, so it never displays credential prompts. For private remotes, configure a credential helper such as Git Credential Manager before cloning from Desktop.
+
+Instrumentation proposals target the frameworks that the Tellann SDK supports. See [Integration overview](/integrations/integration-overview) for the current list.
+
+## Permissions
+
+Installing the application does not give Tellann access to your repositories. Browser, read, write, and command permissions are separate, and each one is requested only when a workflow needs it. See [Install Tellann Desktop](/desktop/installation) for the ways to connect a project.

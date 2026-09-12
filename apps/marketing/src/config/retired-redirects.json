@@ -1,0 +1,20 @@
+[
+  { "source": "/solutions/startups", "destination": "/pricing" },
+  { "source": "/solutions/saas", "destination": "/product" },
+  { "source": "/solutions/enterprise", "destination": "/pricing" },
+  { "source": "/solutions/agencies", "destination": "/solutions" },
+
+  { "source": "/use-cases", "destination": "/product" },
+  { "source": "/use-cases/workflow-coverage", "destination": "/product/coverage" },
+  { "source": "/use-cases/find-missing-flows", "destination": "/product/missing-flows" },
+  { "source": "/use-cases/find-missing-states", "destination": "/product/missing-states" },
+  { "source": "/use-cases/qa-planning", "destination": "/product/coverage" },
+  { "source": "/use-cases/debug-user-workflows", "destination": "/product/session-replay" },
+  { "source": "/use-cases/api-performance-analysis", "destination": "/product/endpoint-intelligence" },
+  { "source": "/use-cases/application-walkthrough", "destination": "/product/demonstration-mode" },
+  { "source": "/use-cases/regression-detection", "destination": "/product/graph-drift" },
+  { "source": "/use-cases/release-readiness", "destination": "/product/coverage" },
+  { "source": "/use-cases/legacy-application-mapping", "destination": "/product/behavior-graphs" },
+  { "source": "/use-cases/documenting-user-journeys", "destination": "/product/workflow-discovery" },
+  { "source": "/use-cases/onboarding-engineers", "destination": "/product/behavior-graphs" }
+]

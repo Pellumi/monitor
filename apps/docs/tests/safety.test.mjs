@@ -27,7 +27,7 @@ test('navigation state uses the versioned v1 key and active-page accessibility',
 });
 
 test('generated manifest carries canonical metadata for all pages', () => {
-  assert.equal((manifestSource.match(/"sourcePath":/g) || []).length, 271);
+  assert.equal((manifestSource.match(/"sourcePath":/g) || []).length, 277);
   assert.match(manifestSource, /"status": "planned"/);
   assert.match(manifestSource, /"plans": \[\s*"enterprise"/);
 });

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 import { ArchitectureAccordion } from "@/components/architecture-accordion";
 import { HowItWorksSandbox } from "@/components/how-it-works-sandbox";
@@ -142,7 +143,7 @@ const faqs = [
 export default function HowItWorksPage() {
   const dashboardUrl =
     process.env.NEXT_PUBLIC_DASHBOARD_URL ?? "http://localhost:3000";
-  const docsUrl = process.env.NEXT_PUBLIC_DOCS_URL ?? "/developers/sdk";
+  const docsUrl = docsLinks.sdk.href;
   const schema = {
     "@context": "https://schema.org",
     "@type": "HowTo",
@@ -230,7 +231,7 @@ export default function HowItWorksPage() {
             label="SDK connection / HTML code animation placeholder"
             dimensions="1600 × 900"
             displayDimensions="1600 × 900"
-            href="/developers/sdk"
+            href={docsLinks.sdk.href}
             linkLabel="Read SDK documentation"
           >
             <div className="hiw-code">
@@ -270,7 +271,7 @@ export default function HowItWorksPage() {
             label="Behavioral event capture / animated SVG placeholder"
             dimensions="1440 × 720"
             displayDimensions="1440 × 720"
-            href="/developers/event-model"
+            href={docsLinks.events.href}
             linkLabel="View event model"
           >
             <div className="hiw-chips">

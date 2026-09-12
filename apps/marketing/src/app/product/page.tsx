@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { docsLinks } from "@/config/site-routes";
 import { DesktopRouteCallout } from "@/components/desktop-route-callout";
 import { ProductPlaceholder, ProductTour } from "@/components/product-tour";
 import "./product.css";
@@ -512,7 +513,7 @@ export default function ProductPage() {
               </article>
             </div>
           </div>
-          <Link className="product-text-link" data-aos="fade-up" href="/security/privacy">
+          <Link className="product-text-link" data-aos="fade-up" href={docsLinks.privacy.href}>
             Read privacy principles →
           </Link>
         </div>

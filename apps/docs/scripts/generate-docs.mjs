@@ -60,7 +60,7 @@ function validateMeta(meta, expected, sourcePath) {
 }
 
 const sourceFiles = await walk(contentRoot);
-if (sourceFiles.length !== 271) errors.push('Expected exactly 271 MDX pages; found ' + sourceFiles.length);
+if (sourceFiles.length !== 277) errors.push('Expected exactly 277 MDX pages; found ' + sourceFiles.length);
 const docs = [];
 const ids = new Set();
 const slugs = new Set();
@@ -122,7 +122,7 @@ for (const absolute of sourceFiles) {
 }
 
 for (const expected of allExpected) if (!ids.has(expected.id)) errors.push('Navigation page has no MDX file: ' + expected.id);
-if (ids.size !== 271 || slugs.size !== 271) errors.push('Manifest must contain 271 unique IDs and slugs');
+if (ids.size !== 277 || slugs.size !== 277) errors.push('Manifest must contain 277 unique IDs and slugs');
 const legacySources = new Set();
 for (const entry of legacyUrls) {
   if (legacySources.has(entry.source)) errors.push('Duplicate legacy URL ' + entry.source);

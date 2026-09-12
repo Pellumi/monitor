@@ -6,14 +6,14 @@ const root = new URL('../', import.meta.url);
 const navigation = JSON.parse(await readFile(new URL('src/config/docs-navigation.json', root), 'utf8'));
 const legacy = JSON.parse(await readFile(new URL('src/config/legacy-url-map.json', root), 'utf8'));
 
-test('canonical information architecture contains 5 regions, 20 sections, and 271 pages', () => {
+test('canonical information architecture contains 5 regions, 21 sections, and 277 pages', () => {
   const sections = navigation.groups.flatMap((group) => group.sections);
   const pages = [...sections.flatMap((section) => section.pages), ...navigation.standalone];
   assert.equal(navigation.groups.length, 5);
-  assert.equal(sections.length, 20);
-  assert.equal(pages.length, 271);
-  assert.equal(new Set(pages.map((page) => page.id)).size, 271);
-  assert.equal(new Set(pages.map((page) => page.slug)).size, 271);
+  assert.equal(sections.length, 21);
+  assert.equal(pages.length, 277);
+  assert.equal(new Set(pages.map((page) => page.id)).size, 277);
+  assert.equal(new Set(pages.map((page) => page.slug)).size, 277);
 });
 
 test('product footer exposes four external destinations', () => {

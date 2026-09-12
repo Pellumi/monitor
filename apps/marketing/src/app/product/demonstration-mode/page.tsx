@@ -123,7 +123,7 @@ const faqs = [
 export default function DemonstrationModePage() {
   const dashboard =
     process.env.NEXT_PUBLIC_DASHBOARD_URL ?? "http://localhost:3000";
-  const docs = process.env.NEXT_PUBLIC_DOCS_URL ?? "/developers/sdk";
+  const docs = process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
   const schema = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",

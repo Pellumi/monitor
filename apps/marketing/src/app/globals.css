@@ -3465,15 +3465,6 @@ body {
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
-.footer-cta {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.6fr);
-  gap: clamp(48px, 8vw, 140px);
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: clamp(88px, 10vw, 136px) 32px clamp(72px, 8vw, 104px);
-}
-.footer-cta > div:first-child > p,
 .footer-brand > span,
 .footer-link-row > span {
   margin: 0 0 22px;
@@ -3486,64 +3477,16 @@ body {
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
-.footer-cta h2 {
-  max-width: 760px;
-  margin: 0;
-  font-size: clamp(46px, 6.3vw, 92px);
-  font-weight: 500;
-  letter-spacing: -0.065em;
-  line-height: 0.94;
-}
-.footer-cta-detail {
-  align-self: end;
-}
-.footer-cta-detail > p {
-  margin: 0 0 30px;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1.65;
-}
-.footer-cta-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.footer-cta-actions a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 30px;
-  min-height: 52px;
-  padding: 0 18px;
-  border: 1px solid var(--foreground);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  transition:
-    background-color 180ms ease,
-    color 180ms ease;
-}
-.footer-cta-actions a:first-child {
-  background: var(--foreground);
-  color: var(--background);
-}
-.footer-cta-actions a:hover {
-  background: var(--foreground);
-  color: var(--background);
-}
-.footer-cta-actions a:first-child:hover {
-  background: transparent;
-  color: var(--foreground);
-}
+/* Five equal columns. The brand takes the first; the product row spans the
+   other four and the site row spans all five, both with the same gap, so every
+   column edge lines up across the two rows. */
 .footer-navigation {
   display: grid;
-  grid-template-columns: minmax(230px, 1.35fr) minmax(0, 4.65fr);
-  gap: clamp(48px, 6vw, 96px);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  column-gap: 36px;
   max-width: 1280px;
   margin: 0 auto;
   padding: 72px 32px 80px;
-  border-top: 1px solid var(--line);
 }
 .footer-wordmark {
   width: fit-content;
@@ -3574,10 +3517,33 @@ body {
   margin: 0;
   line-height: 1.55;
 }
-.footer-grid {
+.footer-tier {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 54px 36px;
+  gap: 40px 36px;
+  align-content: start;
+}
+.footer-tier-product {
+  grid-column: 2 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.footer-tier-site {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 56px;
+  padding-top: 48px;
+  border-top: 1px solid var(--line);
+}
+.footer-tier-label {
+  grid-column: 1 / -1;
+  margin: 0 0 -16px;
+  color: var(--muted);
+  font:
+    700 10px/1.2 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
 }
 .footer-column {
   min-width: 0;
@@ -3688,21 +3654,21 @@ html.light .footer-mega-wordmark-image-light {
 }
 
 @media (max-width: 1100px) {
-  .footer-cta {
-    grid-template-columns: 1fr;
-    gap: 42px;
-  }
-  .footer-cta-detail {
-    max-width: 620px;
-  }
   .footer-navigation {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .footer-brand {
+    grid-column: 1 / -1;
+    margin-bottom: 48px;
   }
   .footer-brand p {
     max-width: 520px;
   }
-  .footer-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .footer-tier-product {
+    grid-column: 1 / -1;
+  }
+  .footer-tier-site {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -4082,18 +4048,6 @@ html.light .footer-mega-wordmark-image-light {
 }
 
 @media (max-width: 760px) {
-  .footer-cta {
-    padding: 72px 24px 64px;
-  }
-  .footer-cta h2 {
-    font-size: clamp(43px, 13vw, 64px);
-  }
-  .footer-cta-actions {
-    flex-direction: column;
-  }
-  .footer-cta-actions a {
-    width: 100%;
-  }
   .footer-navigation {
     display: block;
     padding: 52px 24px 58px;
