@@ -13,8 +13,11 @@ const dashboardUrl =
   process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
 
 export const metadata: Metadata = {
-  title:
-    "Flow Declaration — Define Intended Application Workflows | Tellann",
+  // Absolute, so the layout's "%s | Tellann" template doesn't append a second suffix.
+  title: {
+    absolute:
+      "Flow Declaration — Define Intended Application Workflows | Tellann",
+  },
   description:
     "Define the workflows your application is intended to support, review suggested failure and edge-case branches, and let Tellann reconcile declared intent against demonstrated behavior.",
   alternates: { canonical: "/product/flow-declaration" },

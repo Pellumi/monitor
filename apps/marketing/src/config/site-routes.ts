@@ -129,7 +129,7 @@ export const productGroups: RouteGroup[] = [
       live('/product/graph-drift', 'Graph drift', 'Compare behavior across demonstrations.'),
       live('/product/automated-instrumentation', 'Automated instrumentation', 'Tellann wires the SDK, you review it.'),
       live('/product/document-flow-inference', 'Document flow inference', 'Turn product documents into reviewable flow drafts.'),
-      route('/product/guided-qa-runs', 'Guided QA runs', 'Walk through a managed browser session.'),
+      live('/product/guided-qa-runs', 'Guided QA runs', 'Walk through a managed browser session.'),
     ],
   },
   {

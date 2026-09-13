@@ -13,8 +13,11 @@ const dashboardUrl =
   process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
 
 export const metadata: Metadata = {
-  title:
-    "Software Workflow Reconciliation — Compare Expected vs Actual Behavior | Tellann",
+  // Absolute, so the layout's "%s | Tellann" template doesn't append a second suffix.
+  title: {
+    absolute:
+      "Software Workflow Reconciliation — Compare Expected vs Actual Behavior | Tellann",
+  },
   description:
     "Compare intended software workflows with observed application behavior. Tellann shows what was confirmed, what expected behavior was never reached, and what happened that nobody declared.",
   alternates: { canonical: "/product/reconciliation" },

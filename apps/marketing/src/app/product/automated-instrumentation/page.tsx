@@ -11,7 +11,8 @@ import "./automated-instrumentation.css";
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://domain-name.com";
 
 export const metadata: Metadata = {
-  title: "Automated Instrumentation for Behavioral QA | Tellann",
+  // Absolute, so the layout's "%s | Tellann" template doesn't append a second suffix.
+  title: { absolute: "Automated Instrumentation for Behavioral QA | Tellann" },
   description:
     "Automatically instrument application workflows with Tellann. Review every proposed code change, approve scoped instrumentation, validate the result, and roll back safely when needed.",
   alternates: { canonical: "/product/automated-instrumentation" },
