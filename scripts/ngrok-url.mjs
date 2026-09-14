@@ -16,7 +16,8 @@ try {
   console.log(tunnel.public_url);
 } catch (error) {
   console.error(`Unable to read the ngrok URL from ${inspectorUrl}.`);
-  console.error('Start the API with `pnpm dev`, then start the tunnel with `pnpm tunnel:ngrok`.');
+  console.error('Check the tunnel with `docker compose --profile tunnel ps ngrok`.');
+  console.error('View authentication or startup errors with `pnpm tunnel:ngrok:logs`.');
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 }
