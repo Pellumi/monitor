@@ -75,22 +75,7 @@ async function fetchDashboardOverview(
   appId: string,
   range: string,
 ): Promise<DashboardOverviewResponse> {
-  // 1. Try unified GET /api-gateway/dashboard/overview?appId=${appId} if available
-  try {
-    const res = await authenticatedFetch(
-      `/api-gateway/dashboard/overview?appId=${encodeURIComponent(appId)}&range=${encodeURIComponent(range)}`,
-    );
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.application) {
-        return data;
-      }
-    }
-  } catch {
-    // Ignore and proceed to aggregate from individual DB services
-  }
-
-  // 2. Fetch real data from all database endpoints concurrently
+  // Fetch real data from the supported service endpoints concurrently.
   const [
     reportRes,
     workflowsRes,
