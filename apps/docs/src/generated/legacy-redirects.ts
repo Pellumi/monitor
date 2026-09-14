@@ -322,22 +322,22 @@ export const legacyRedirects = [
   },
   {
     "source": "/why-tellann/vs-datadog",
-    "destination": "https://tellann.co/compare/datadog",
+    "destination": "http://localhost:3020/compare/datadog",
     "permanent": true
   },
   {
     "source": "/why-tellann/vs-sentry",
-    "destination": "https://tellann.co/compare/sentry",
+    "destination": "http://localhost:3020/compare/sentry",
     "permanent": true
   },
   {
     "source": "/why-tellann/vs-posthog",
-    "destination": "https://tellann.co/compare/posthog",
+    "destination": "http://localhost:3020/compare/posthog",
     "permanent": true
   },
   {
     "source": "/why-tellann/vs-replay-io",
-    "destination": "https://tellann.co/compare/replay-io",
+    "destination": "http://localhost:3020/compare/replay-io",
     "permanent": true
   },
   {

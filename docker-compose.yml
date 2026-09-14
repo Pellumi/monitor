@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  ngrok:
+    image: ngrok/ngrok:latest
+    profiles:
+      - tunnel
+    network_mode: host
+    command:
+      - http
+      - http://127.0.0.1:3000
+      - --log=stdout
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    restart: unless-stopped
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     environment:
@@ -65,7 +78,7 @@ services:
       - clickhouse_data:/var/lib/clickhouse
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     ports:
       - "9002:9000"
       - "9001:9001"
@@ -80,7 +93,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -136,7 +149,7 @@ services:
   grafana:
     image: grafana/grafana:10.3.0
     ports:
-      - "3001:3000"
+      - "3030:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin

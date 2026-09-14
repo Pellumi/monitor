@@ -126,14 +126,40 @@ npx pnpm dev
 
 The services will listen on their mapped ports (e.g., API Gateway on port `3000`, Dashboard on `3010`).
 
-### Step 2: Access the Dashboard Wizard
+### Step 2: Expose the API Gateway with ngrok (Optional)
+
+Add your ngrok authtoken to the ignored root `.env` file:
+
+```dotenv
+NGROK_AUTHTOKEN="your-token"
+```
+
+Keep `pnpm dev` running, then start the tunnel in another terminal:
+
+```bash
+pnpm tunnel:ngrok
+pnpm tunnel:ngrok:url
+```
+
+Use the printed HTTPS URL as the public API Gateway base URL. Requests are forwarded to
+`http://127.0.0.1:3000`; the other services remain private and are reached through the gateway.
+The local ngrok request inspector is available at `http://127.0.0.1:4040`.
+
+To follow tunnel logs or stop it:
+
+```bash
+pnpm tunnel:ngrok:logs
+pnpm tunnel:ngrok:stop
+```
+
+### Step 3: Access the Dashboard Wizard
 
 1. Open your browser and navigate to `http://localhost:3010/onboarding`.
 2. Create an **Organization**.
 3. Create an **Application** and select its profile structure (`ECOMMERCE` or `LMS`).
 4. Generate a new **API Key**. Copy the initialization snippet.
 
-### Step 3: Run E2E Verification Tests
+### Step 4: Run E2E Verification Tests
 
 Verify system behavior against the integrated Golden-Master E2E scenarios:
 
