@@ -16,7 +16,7 @@
   "scripts": {
     "build": "prisma generate && tsc",
     "generate": "prisma generate",
-    "push": "prisma db push",
+    "push": "node -r ../../scripts/register-root-env.cjs ../../node_modules/prisma/build/index.js db push",
     "seed:plans": "tsx src/seed-plans.ts",
     "seed:rulesets": "ts-node prisma/seeds/rulesets.ts",
     "seed:admin": "ts-node prisma/seeds/system-admin.ts",
