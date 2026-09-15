@@ -27,7 +27,8 @@ import { initializeUpdater } from './update-manager';
 import { closeLocalStore, deleteLocalState, listLocalStateKeys, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@tellann/document-intelligence';
 import { InstrumentationController, type SelectedWorkspace } from './instrumentation-controller';
-import { workspaceLocalId } from './device-identity';
+import { documentSourceKey, workspaceLocalId } from './device-identity';
+import { DocumentImportManager, isActiveDocumentImportStage } from './document-import-manager';
 import {
   evaluateCompliance,
   restoreWorkspaceBranch,
@@ -163,6 +164,29 @@ function publishApplyProgress(progress: InstrumentationApplyProgress): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(INSTRUMENTATION_PROGRESS_CHANNEL, progress);
 }
+
+// Document imports run here rather than in the page that started them, so an
+// upload keeps going (and stays visible) after the member navigates away.
+// Channel names are local for the same reason as the instrumentation ones.
+const DOCUMENT_IMPORT_PROGRESS_CHANNEL = 'tellann:documents:import:progress';
+const DOCUMENT_IMPORT_GET_CHANNEL = 'tellann:documents:import:get';
+const DOCUMENT_IMPORT_RESUME_CHANNEL = 'tellann:documents:import:resume';
+const DOCUMENT_IMPORT_CANCEL_CHANNEL = 'tellann:documents:import:cancel';
+const DOCUMENT_IMPORT_DISMISS_CHANNEL = 'tellann:documents:import:dismiss';
+const DOCUMENT_IMPORT_GENERATE_CHANNEL = 'tellann:documents:import:generate';
+const INTENT_DRAFT_APPLY_ANSWERS_CHANNEL = 'tellann:intent:draft:apply-answers';
+
+const documentImports = new DocumentImportManager({
+  cloud,
+  publish: (view) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(DOCUMENT_IMPORT_PROGRESS_CHANNEL, view);
+  },
+  notify: (input) => notifyWhenAway(input),
+  repositorySnapshotId: (applicationId) => selectedWorkspaces.get(applicationId)?.snapshotId,
+  safeError: (error) => safeDesktopError(error),
+  sourceKey: (filePath) => documentSourceKey(filePath),
+});
 
 /** A native notification, only when the member is not looking at Tellann; clicking opens `deepLink`. */
 function notifyWhenAway(input: { title: string; body: string; deepLink: string }): void {
@@ -1241,6 +1265,8 @@ function registerIpc(): void {
     activeOrganizationId = null;
     cloud.setAppEventsOrganization(null);
     selectedWorkspaces.clear();
+    // Document imports belong to the signed-in member; drop them and their filenames.
+    documentImports.clearAll();
   });
   ipcMain.handle(IPC.getApplications, async (event) => {
     assertTrustedSender(event);
@@ -1543,31 +1569,67 @@ function registerIpc(): void {
       throw err;
     }
   });
-  ipcMain.handle(IPC.importDocuments, async (event, applicationId: unknown) => {
+  // Choosing files is the only step tied to this request. Extraction, upload,
+  // processing and draft generation continue in the import manager, so they
+  // survive the member leaving the page.
+  ipcMain.handle(IPC.importDocuments, async (event, input: unknown) => {
     assertTrustedSender(event);
-    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const value = (typeof input === 'string' ? { applicationId: input } : input ?? {}) as { applicationId?: unknown; generateDraft?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const existing = documentImports.get(value.applicationId);
+    if (existing && (existing.running || isActiveDocumentImportStage(existing.stage))) throw new Error('INTENT_IMPORT_IN_PROGRESS');
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: 'Select product documents for local analysis', properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Product documents', extensions: ['pdf', 'docx', 'md', 'markdown', 'txt', 'html', 'htm', 'json', 'yaml', 'yml'] }],
     });
-    if (result.canceled) return [];
-    const uploaded = [];
-    for (const filePath of result.filePaths.slice(0, 20)) {
-      const filename = path.basename(filePath);
-      try {
-        const buffer = await fs.readFile(filePath);
-        const manifest = await extractDocument({ buffer, filename });
-        const response = await cloud.uploadDerivedDocument(applicationId, manifest) as any;
-        uploaded.push({
-          filename, documentId: response.documentId ?? null, jobId: response.jobId ?? null,
-          status: response.status ?? 'QUEUED', deduplicated: response.deduplicated === true,
-          versionId: response.versionId ?? null, errorMessageSafe: null,
-        });
-      } catch (error) {
-        uploaded.push({ filename, documentId: null, jobId: null, status: 'FAILED', deduplicated: false, versionId: null, errorMessageSafe: safeDesktopError(error) });
-      }
+    if (result.canceled || !result.filePaths.length) return null;
+    return documentImports.startFromFiles(value.applicationId, result.filePaths, value.generateDraft === true);
+  });
+  ipcMain.handle(DOCUMENT_IMPORT_GET_CHANNEL, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return documentImports.get(applicationId);
+  });
+  ipcMain.handle(DOCUMENT_IMPORT_RESUME_CHANNEL, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return documentImports.resume(applicationId);
+  });
+  ipcMain.handle(DOCUMENT_IMPORT_CANCEL_CHANNEL, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return documentImports.cancel(applicationId);
+  });
+  ipcMain.handle(DOCUMENT_IMPORT_DISMISS_CHANNEL, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    documentImports.dismiss(applicationId);
+  });
+  ipcMain.handle(DOCUMENT_IMPORT_GENERATE_CHANNEL, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = (input ?? {}) as { applicationId?: unknown; documents?: unknown };
+    if (typeof value.applicationId !== 'string' || !Array.isArray(value.documents) || value.documents.length > 50) {
+      throw new Error('INVALID_INTENT_DRAFT_REQUEST');
     }
-    return uploaded;
+    const documents = value.documents.flatMap((item) => {
+      const entry = (item ?? {}) as { versionId?: unknown; documentId?: unknown; filename?: unknown };
+      return typeof entry.versionId === 'string' && typeof entry.filename === 'string'
+        ? [{ versionId: entry.versionId, documentId: typeof entry.documentId === 'string' ? entry.documentId : null, filename: entry.filename }]
+        : [];
+    });
+    return documentImports.startFromVersions(value.applicationId, documents);
+  });
+  ipcMain.handle(INTENT_DRAFT_APPLY_ANSWERS_CHANNEL, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = (input ?? {}) as { applicationId?: unknown; draftId?: unknown; conflictResolutions?: unknown };
+    const answers = value.conflictResolutions;
+    if (typeof value.applicationId !== 'string' || typeof value.draftId !== 'string' || !answers || typeof answers !== 'object' || Array.isArray(answers)) {
+      throw new Error('INVALID_INTENT_CONFLICT_ANSWERS');
+    }
+    const conflictResolutions = Object.fromEntries(
+      Object.entries(answers as Record<string, unknown>).flatMap(([key, answer]) => (typeof answer === 'string' ? [[key, answer.slice(0, 2_000)]] : [])),
+    );
+    return cloud.applyIntentConflictAnswers(value.applicationId, value.draftId, conflictResolutions);
   });
   ipcMain.handle(IPC.getDocumentJob, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -2407,6 +2469,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   void syncNotificationOrganization();
   mainWindow?.on('focus', () => void syncNotificationOrganization());
   void resumeInterruptedRunSynchronization();
+  // Continue document imports the previous session left mid-way.
+  documentImports.resumeAll();
   await initializeUpdater().catch((error) => {
     console.error('Desktop update check failed', error instanceof Error ? error.message : error);
   });

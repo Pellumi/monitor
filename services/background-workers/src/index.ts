@@ -20,6 +20,7 @@ import { applyScheduledSubscriptionChanges } from './subscription-change-worker'
 import { processBillingDunning } from './billing-dunning-worker';
 import { runBillingCycle } from './billing-cycle-worker';
 import { processDocumentJobs } from './document-processing-worker';
+import { inferEvidenceBackedIntent } from '@tellann/document-intelligence';
 import { createMetricsRegistry, createHttpMetricsMiddleware } from '@tellann/shared';
 import http from 'http';
 import { createHash } from 'crypto';
@@ -35,6 +36,65 @@ const metrics = createMetricsRegistry('background-workers');
 // Schedule: Every 5 seconds
 // Polls AIFlowDraftJob, processes queued jobs asynchronously
 // ─────────────────────────────────────────────────────────────
+
+const DOCUMENT_DERIVED_DRAFT_SOURCES = new Set(['DOCUMENT', 'HYBRID_ANALYSIS', 'REPOSITORY_SCAN', 'USER_CORRECTION']);
+
+/** How a draft was produced, shown to the reviewer whenever it was not a real AI provider. */
+type DraftGeneration = {
+  method: 'AI_PROVIDER' | 'DOCUMENT_BASELINE' | 'RULE_TEMPLATE';
+  reason: 'PROVIDER_NOT_CONFIGURED' | 'PROVIDER_FAILED' | null;
+  message: string | null;
+};
+
+/**
+ * A draft built straight from the stored evidence of the selected documents,
+ * used when no AI provider can run. Unlike a domain template it only contains
+ * what the documents say. Evidence set aside by conflict answers is left out.
+ */
+async function documentBaselineDraft(job: any, evidenceIds: string[], manifest: Record<string, any>) {
+  if (!evidenceIds.length) return null;
+  const rejected = new Set<string>(
+    (Array.isArray(manifest.conflicts) ? manifest.conflicts : [])
+      .flatMap((conflict: any) => Array.isArray(conflict?.resolution?.rejectedEvidenceIds) ? conflict.resolution.rejectedEvidenceIds : []),
+  );
+  const rows = await prisma.intentEvidence.findMany({
+    where: { id: { in: evidenceIds }, applicationId: job.applicationId },
+    include: { documentVersion: { include: { document: { select: { filename: true } } } } },
+  });
+  const byVersion = new Map<string, { title: string; rows: typeof rows }>();
+  for (const row of rows) {
+    if (rejected.has(row.id) || !row.excerpt) continue;
+    const key = row.documentVersionId ?? 'unversioned';
+    const title = String((row.documentVersion?.extractedSummary as any)?.title ?? row.documentVersion?.document.filename ?? 'Product document');
+    const entry = byVersion.get(key) ?? { title, rows: [] };
+    entry.rows.push(row);
+    byVersion.set(key, entry);
+  }
+  const lineStart = (locator: string | null) => Number(/lines:(\d+)/.exec(locator ?? '')?.[1] ?? Number.MAX_SAFE_INTEGER);
+  const proposal = inferEvidenceBackedIntent([...byVersion.values()].map((entry) => ({
+    title: entry.title,
+    segments: [...entry.rows]
+      .sort((left, right) => lineStart(left.locator) - lineStart(right.locator))
+      .map((row) => ({ id: row.id, heading: row.sourceLabel, excerpt: row.excerpt ?? '', excludedFromAi: false })),
+  })));
+  if (!proposal.workflows.length) return null;
+  return {
+    domainKey: job.domainKey,
+    // Sentence order is not a reliable workflow; keep confidence modest.
+    confidence: Math.min(0.5, proposal.confidence),
+    assumptions: proposal.assumptions,
+    workflows: proposal.workflows.map((workflow) => ({
+      key: workflow.key, name: workflow.name, description: workflow.description, workflowType: 'DOCUMENT_DERIVED',
+      evidenceIds: workflow.evidenceIds,
+      states: workflow.states.map((state) => ({ key: state.key, name: state.name, category: state.category, evidenceIds: state.evidenceIds })),
+      transitions: workflow.transitions.map((transition) => ({ from: transition.from, to: transition.to, action: transition.action, evidenceIds: transition.evidenceIds })),
+    })),
+    missingFlowCandidates: [],
+    missingStateCandidates: [],
+    suggestions: [],
+    source: 'RULE_ENGINE' as const,
+  };
+}
 
 export async function runAiDraftJobProcessor(): Promise<void> {
   const MAX_BATCH = 3; // process up to 3 jobs per tick
@@ -85,76 +145,121 @@ export async function runAiDraftJobProcessor(): Promise<void> {
           prisma,
         });
 
-        // Run AI generation (productDescription is already sanitized/redacted)
-        let result;
-        try {
-          result = await generateAiFlowDraft({
-            productDescription: job.productDescription,
-            domainKey: job.domainKey,
-            rulesets,
-            provider: resolveAiProvider(),
-          });
-        } catch (providerError) {
-          const fallbackDraft = await generateRuleBasedFlow({
-            domainKey: job.domainKey,
-            productDescription: job.productDescription,
-            rulesets,
-          });
-          result = {
-            draft: { ...fallbackDraft, source: 'HYBRID' as const },
-            provider: 'rule-engine-fallback',
-            model: 'ruleset-fallback-v1',
-            promptHash: createHash('sha256')
-              .update(JSON.stringify({ description: job.productDescription, domainKey: job.domainKey }))
-              .digest('hex'),
-            validation: validateGeneratedGraph({ workflows: fallbackDraft.workflows }),
-          };
-          console.warn(`[ai-draft-job-processor] Provider unavailable for ${job.id}; used rules fallback`,
-            providerError instanceof Error ? providerError.message : 'Unknown provider error');
-        }
-
-        // Create the AIFlowDraft record
-        const sanitized = sanitizeAiInputFull(job.productDescription);
-        const draftRecord = await prisma.aIFlowDraft.create({
-          data: {
-            organizationId: job.organizationId,
-            applicationId: job.applicationId,
-            environmentId: job.environmentId ?? null,
-            source: job.source as any,
-            status: 'PENDING_REVIEW',
-            productDescription: job.productDescription, // already redacted
-            productDescriptionHash: sanitized.originalHash,
-            inferredDomainKey: job.domainKey,
-            rulesetVersionIds: job.rulesetVersionIds,
-            promptHash: result.promptHash,
-            provider: result.provider,
-            model: result.model,
-            draftJson: {
-              ...result.draft,
-              sourceManifest: job.sourceManifest ?? null,
-              conflicts: (job.sourceManifest as any)?.conflicts ?? [],
-              unresolvedQuestions: (job.sourceManifest as any)?.unresolvedQuestions ?? [],
-            } as any,
-            validationJson: result.validation as any,
-            confidence: result.draft.confidence,
-            sourceManifest: job.sourceManifest ?? undefined,
-          },
-        });
-
-        const evidenceIds = Array.isArray((job.sourceManifest as any)?.evidenceIds)
-          ? (job.sourceManifest as any).evidenceIds.filter((id: unknown) => typeof id === 'string')
+        const manifest = (job.sourceManifest ?? {}) as Record<string, any>;
+        const evidenceIds: string[] = Array.isArray(manifest.evidenceIds)
+          ? manifest.evidenceIds.filter((id: unknown): id is string => typeof id === 'string')
           : [];
-        if (evidenceIds.length) {
-          await prisma.intentEvidence.updateMany({
-            where: { id: { in: evidenceIds }, applicationId: job.applicationId, aiFlowDraftId: null },
-            data: { aiFlowDraftId: draftRecord.id },
-          });
+        const documentDerived = DOCUMENT_DERIVED_DRAFT_SOURCES.has(job.source);
+        const provider = resolveAiProvider();
+        // resolveAiProvider hands back the mock provider when no real provider is
+        // configured. For document intent that output would ignore the document.
+        const providerConfigured = provider.name !== 'mock';
+        const promptHash = createHash('sha256')
+          .update(JSON.stringify({ description: job.productDescription, domainKey: job.domainKey }))
+          .digest('hex');
+
+        // Run AI generation (productDescription is already sanitized/redacted)
+        let result: { draft: any; provider: string; model: string; promptHash: string; validation: unknown } | null = null;
+        let generation: DraftGeneration = { method: 'AI_PROVIDER', reason: null, message: null };
+        if (providerConfigured || !documentDerived) {
+          try {
+            result = await generateAiFlowDraft({
+              productDescription: job.productDescription,
+              domainKey: job.domainKey,
+              rulesets,
+              provider,
+            });
+            if (!providerConfigured) {
+              generation = {
+                method: 'RULE_TEMPLATE', reason: 'PROVIDER_NOT_CONFIGURED',
+                message: `No AI provider is configured, so this draft is Tellann's generic ${job.domainKey} template.`,
+              };
+            }
+          } catch (providerError) {
+            console.warn(`[ai-draft-job-processor] Provider unavailable for ${job.id}; using fallback`,
+              providerError instanceof Error ? providerError.message : 'Unknown provider error');
+          }
         }
 
-        // Mark job COMPLETED
-        await (prisma as any).aIFlowDraftJob.update({
-          where: { id: job.id },
-          data: { status: 'COMPLETED', draftId: draftRecord.id, completedAt: new Date() },
+        if (!result) {
+          const reason = providerConfigured ? 'PROVIDER_FAILED' as const : 'PROVIDER_NOT_CONFIGURED' as const;
+          const cause = reason === 'PROVIDER_FAILED' ? 'The AI provider was unavailable' : 'No AI provider is configured';
+          const baseline = documentDerived ? await documentBaselineDraft(job, evidenceIds, manifest) : null;
+          if (baseline) {
+            result = { draft: baseline, provider: 'document-evidence-baseline', model: 'evidence-baseline-v1', promptHash, validation: validateGeneratedGraph({ workflows: baseline.workflows }) };
+            generation = {
+              method: 'DOCUMENT_BASELINE', reason,
+              message: `${cause}, so these journeys were assembled directly from your documents' headings and sentences in document order. Check every step before approving.${job.source === 'USER_CORRECTION' ? ' Your requested change could not be applied without an AI provider.' : ''}`,
+            };
+          } else {
+            const fallbackDraft = await generateRuleBasedFlow({
+              domainKey: job.domainKey,
+              productDescription: job.productDescription,
+              rulesets,
+            });
+            result = {
+              draft: { ...fallbackDraft, source: 'HYBRID' as const },
+              provider: 'rule-engine-fallback',
+              model: 'ruleset-fallback-v1',
+              promptHash,
+              validation: validateGeneratedGraph({ workflows: fallbackDraft.workflows }),
+            };
+            generation = {
+              method: 'RULE_TEMPLATE', reason,
+              message: `${cause}, and no usable document evidence was found, so this draft is Tellann's generic ${job.domainKey} template rather than content from your documents.`,
+            };
+          }
+        }
+
+        const generated = result;
+        const sanitized = sanitizeAiInputFull(job.productDescription);
+        const parentDraftId = typeof manifest.parentDraftId === 'string' ? manifest.parentDraftId : null;
+        const draftRecord = await prisma.$transaction(async (tx) => {
+          const created = await tx.aIFlowDraft.create({
+            data: {
+              organizationId: job.organizationId,
+              applicationId: job.applicationId,
+              environmentId: job.environmentId ?? null,
+              source: job.source as any,
+              status: 'PENDING_REVIEW',
+              productDescription: job.productDescription, // already redacted
+              productDescriptionHash: sanitized.originalHash,
+              inferredDomainKey: job.domainKey,
+              rulesetVersionIds: job.rulesetVersionIds,
+              promptHash: generated.promptHash,
+              provider: generated.provider,
+              model: generated.model,
+              draftJson: {
+                ...generated.draft,
+                generation,
+                sourceManifest: job.sourceManifest ?? null,
+                conflicts: manifest.conflicts ?? [],
+                unresolvedQuestions: manifest.unresolvedQuestions ?? [],
+              } as any,
+              validationJson: generated.validation as any,
+              confidence: generated.draft.confidence,
+              sourceManifest: job.sourceManifest ?? undefined,
+            },
+          });
+          if (evidenceIds.length) {
+            await tx.intentEvidence.updateMany({
+              where: { id: { in: evidenceIds }, applicationId: job.applicationId, aiFlowDraftId: null },
+              data: { aiFlowDraftId: created.id },
+            });
+          }
+          // A revision replaces the draft it was requested from, so only the
+          // newest draft of a lineage waits in the review queue.
+          if (parentDraftId) {
+            await tx.aIFlowDraft.updateMany({
+              where: { id: parentDraftId, applicationId: job.applicationId, status: 'PENDING_REVIEW' },
+              data: { status: 'SUPERSEDED', rejectionReason: `Superseded by revised draft ${created.id}` },
+            });
+          }
+          await (tx as any).aIFlowDraftJob.update({
+            where: { id: job.id },
+            data: { status: 'COMPLETED', draftId: created.id, completedAt: new Date() },
+          });
+          return created;
         });
 
         console.log(`[ai-draft-job-processor] Job ${job.id} completed → draft ${draftRecord.id}`);

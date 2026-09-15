@@ -41,7 +41,14 @@ export async function processDocumentJobs(prisma: PrismaClient, limit = 5): Prom
             locator: segment.locator, confidence: Math.max(0, Math.min(1, segment.confidence || 0.5)), metadata: { localEvidenceId: segment.id } as any,
           })),
         });
-        await tx.sourceDocument.update({ where: { id: queued.documentId }, data: { status: 'PROCESSED', errorMessageSafe: null } });
+        // A newer upload of this document may already be queued; it stays
+        // PROCESSING until that one finishes.
+        const newerPending = await tx.documentProcessingJob.count({
+          where: { documentId: queued.documentId, id: { not: queued.id }, status: { in: ['QUEUED', 'PROCESSING'] } },
+        });
+        if (!newerPending) {
+          await tx.sourceDocument.update({ where: { id: queued.documentId }, data: { status: 'PROCESSED', errorMessageSafe: null } });
+        }
         await tx.documentProcessingJob.update({ where: { id: queued.id }, data: { status: 'COMPLETED', resultVersionId: created.id, completedAt: new Date() } });
         return created;
       });

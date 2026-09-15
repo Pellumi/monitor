@@ -123,6 +123,8 @@ enum AIFlowDraftStatus {
   PARTIALLY_ACCEPTED
   REJECTED
   EXPIRED
+  /// Replaced by a revised draft generated from a correction or conflict answers.
+  SUPERSEDED
 }
 
 enum SuggestionType {

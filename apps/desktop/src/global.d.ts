@@ -53,6 +53,34 @@ declare global {
     }>;
   };
 
+  /** A document import run by the main process (mirrors DocumentImportView in document-import-manager.ts). */
+  type DocumentImportView = {
+    id: string;
+    applicationId: string;
+    generateDraft: boolean;
+    stage: 'EXTRACTING_AND_UPLOADING' | 'PROCESSING_DOCUMENTS' | 'GENERATING_DRAFT' | 'DOCUMENTS_READY' | 'DRAFT_READY' | 'FAILED' | 'CANCELLED';
+    message: string | null;
+    failedFileCount: number;
+    files: Array<{
+      id: string;
+      filename: string;
+      status: 'WAITING' | 'EXTRACTING' | 'UPLOADING' | 'QUEUED' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED';
+      documentId: string | null;
+      jobId: string | null;
+      versionId: string | null;
+      deduplicated: boolean;
+      errorMessageSafe: string | null;
+    }>;
+    draftJobId: string | null;
+    draftJobStatus: string | null;
+    draftId: string | null;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+    /** Whether the desktop is still working on it (false after a restart until it resumes). */
+    running: boolean;
+  };
+
   type CodebaseAnalysisView = {
     mode: 'cloud' | 'local';
     source: 'cloud' | 'local';
@@ -180,11 +208,22 @@ declare global {
         reviewDraft(applicationId: string, draftId: string, review: Record<string, unknown>): Promise<Record<string, unknown>>;
         deleteDraft(applicationId: string, draftId: string): Promise<void>;
         correctDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
+        applyConflictAnswers(applicationId: string, draftId: string, conflictResolutions: Record<string, string>): Promise<IntentDraftJobCreated>;
       };
       documents: {
         list(applicationId: string): Promise<DocumentAccess>;
-        import(applicationId: string): Promise<DocumentImportResult[]>;
+        /** Opens the file picker; resolves to the started import, or null when no file was chosen. */
+        import(applicationId: string, options?: { generateDraft?: boolean }): Promise<DocumentImportView | null>;
         getJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
+        getImport(applicationId: string): Promise<DocumentImportView | null>;
+        resumeImport(applicationId: string): Promise<DocumentImportView | null>;
+        cancelImport(applicationId: string): Promise<DocumentImportView | null>;
+        dismissImport(applicationId: string): Promise<void>;
+        generateFromVersions(
+          applicationId: string,
+          documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
+        ): Promise<DocumentImportView>;
+        onImportProgress(callback: (view: DocumentImportView) => void): () => void;
       };
       runs: {
         list(applicationId: string): Promise<QARunSummary[]>;

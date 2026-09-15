@@ -150,7 +150,18 @@ type DesktopContextValue = {
   applyFlowInitialization(initializationId: string, patchSetId: string): Promise<Record<string, unknown>>;
   validateFlowInitialization(initializationId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getDocuments(applicationId: string): Promise<DocumentAccess>;
-  importDocuments(applicationId: string): Promise<DocumentImportResult[]>;
+  /** Opens the file picker and starts an import that continues in the background; null when nothing was chosen. */
+  importDocuments(applicationId: string, options?: { generateDraft?: boolean }): Promise<DocumentImportView | null>;
+  getDocumentImport(applicationId: string): Promise<DocumentImportView | null>;
+  resumeDocumentImport(applicationId: string): Promise<DocumentImportView | null>;
+  cancelDocumentImport(applicationId: string): Promise<DocumentImportView | null>;
+  dismissDocumentImport(applicationId: string): Promise<void>;
+  generateFromDocumentVersions(
+    applicationId: string,
+    documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
+  ): Promise<DocumentImportView>;
+  onDocumentImportProgress(callback: (view: DocumentImportView) => void): () => void;
+  applyIntentConflictAnswers(applicationId: string, draftId: string, conflictResolutions: Record<string, string>): Promise<IntentDraftJobCreated>;
   getDocumentJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
   getIntentDrafts(applicationId: string): Promise<IntentDraft[]>;
   getIntentDraft(applicationId: string, draftId: string): Promise<IntentDraft>;
@@ -638,7 +649,16 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     applyFlowInitialization: (initializationId, patchSetId) => perform(() => bridge().intent.applyFlowInitialization(initializationId, patchSetId)),
     validateFlowInitialization: (initializationId, input) => perform(() => bridge().intent.validateFlowInitialization(initializationId, input)),
     getDocuments: (applicationId) => bridge().documents.list(applicationId),
-    importDocuments: (applicationId) => perform(() => bridge().documents.import(applicationId)),
+    // Resolves as soon as files are chosen; the import continues in the main process.
+    importDocuments: (applicationId, options) => perform(() => bridge().documents.import(applicationId, options)),
+    getDocumentImport: (applicationId) => bridge().documents.getImport(applicationId),
+    resumeDocumentImport: (applicationId) => bridge().documents.resumeImport(applicationId),
+    cancelDocumentImport: (applicationId) => perform(() => bridge().documents.cancelImport(applicationId)),
+    dismissDocumentImport: (applicationId) => bridge().documents.dismissImport(applicationId),
+    generateFromDocumentVersions: (applicationId, documents) => perform(() => bridge().documents.generateFromVersions(applicationId, documents)),
+    onDocumentImportProgress: (callback) => window.tellann?.documents.onImportProgress?.(callback) ?? (() => undefined),
+    applyIntentConflictAnswers: (applicationId, draftId, conflictResolutions) =>
+      perform(() => bridge().intent.applyConflictAnswers(applicationId, draftId, conflictResolutions)),
     getDocumentJob: (applicationId, jobId) => bridge().documents.getJob(applicationId, jobId),
     getIntentDrafts: (applicationId) => bridge().intent.listDrafts(applicationId),
     getIntentDraft: (applicationId, draftId) => bridge().intent.getDraft(applicationId, draftId),

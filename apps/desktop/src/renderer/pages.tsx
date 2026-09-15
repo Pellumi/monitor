@@ -1781,12 +1781,23 @@ export function WorkspacePage() {
 export function SourcesPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { getDocuments, importDocuments, refreshApplications, busy } =
-    useDesktop();
+  const {
+    getDocuments,
+    importDocuments,
+    getDocumentImport,
+    resumeDocumentImport,
+    cancelDocumentImport,
+    dismissDocumentImport,
+    onDocumentImportProgress,
+    refreshApplications,
+    busy,
+  } = useDesktop();
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [unentitled, setUnentitled] = useState(false);
   const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
+  const [importView, setImportView] = useState<DocumentImportView | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const refresh = async () => {
     if (!projectId) return;
@@ -1813,6 +1824,37 @@ export function SourcesPage() {
   useEffect(() => {
     void refresh();
   }, [projectId]);
+
+  // Uploads run in the desktop's background import, which outlives this page.
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void getDocumentImport(projectId)
+      .then(async (view) => {
+        if (cancelled) return;
+        setImportView(view);
+        if (view && !view.running && ACTIVE_IMPORT_STAGES.includes(view.stage)) {
+          const resumed = await resumeDocumentImport(projectId);
+          if (!cancelled) setImportView(resumed);
+        }
+      })
+      .catch(() => undefined);
+    const unsubscribe = onDocumentImportProgress((view) => {
+      if (view.applicationId === projectId) setImportView(view);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [projectId]);
+
+  // Show each file in the library as soon as its status changes.
+  const importProgressKey = importView
+    ? `${importView.id}:${importView.stage}:${importView.files.map((file) => file.status).join(",")}`
+    : "";
+  useEffect(() => {
+    if (importProgressKey) void refresh();
+  }, [importProgressKey]);
 
   useEffect(() => {
     if (
@@ -1881,15 +1923,30 @@ export function SourcesPage() {
   }
 
   const upload = async () => {
+    setImportMessage(null);
     try {
-      await importDocuments(projectId);
-      await refresh();
+      const view = await importDocuments(projectId, { generateDraft: false });
+      if (view) setImportView(view);
     } catch (err: any) {
       if (String(err?.message ?? err).includes("FEATURE_NOT_ENTITLED")) {
         setUnentitled(true);
         setEntitlementModalOpen(true);
       }
+      setImportMessage(intentErrorMessage(err));
     }
+  };
+
+  const updateImport = (request: Promise<DocumentImportView | null>) => {
+    void request
+      .then((view) => {
+        if (view) setImportView(view);
+      })
+      .catch((error) => setImportMessage(intentErrorMessage(error)));
+  };
+
+  const dismissImport = async () => {
+    await dismissDocumentImport(projectId).catch(() => undefined);
+    setImportView(null);
   };
 
   return (
@@ -1899,7 +1956,12 @@ export function SourcesPage() {
       actions={
         <button
           className="button primary"
-          disabled={busy}
+          disabled={busy || isDocumentImportActive(importView)}
+          title={
+            isDocumentImportActive(importView)
+              ? "Wait for the current import to finish or stop it first."
+              : undefined
+          }
           onClick={() => void upload()}
         >
           <FileSearch size={15} />
@@ -1911,6 +1973,27 @@ export function SourcesPage() {
         PDF, DOCX, Markdown, text, HTML, and OpenAPI files are extracted
         locally. Raw files stay on this device unless separately approved.
       </div>
+      {importMessage ? (
+        <div className="context-banner" role="status">
+          {importMessage}
+        </div>
+      ) : null}
+      {importView ? (
+        <DocumentImportProgress
+          view={importView}
+          busy={busy}
+          cancellingGeneration={false}
+          onStop={() => updateImport(cancelDocumentImport(projectId))}
+          onCancelGeneration={() => updateImport(cancelDocumentImport(projectId))}
+          onCheckAgain={() => updateImport(resumeDocumentImport(projectId))}
+          onRetry={() => void dismissImport().then(upload)}
+          onDismiss={() => void dismissImport()}
+          onReviewDraft={() => {
+            if (importView.draftId)
+              navigate(`/applications/${projectId}/intent/drafts/${importView.draftId}`);
+          }}
+        />
+      ) : null}
       {loading ? (
         <LoadingState />
       ) : documents.length ? (
@@ -3995,20 +4078,83 @@ export function DeclaredFlowPage() {
   );
 }
 
-type IntentAutomationStage =
-  | "IDLE"
-  | "SELECTING_FILES"
-  | "EXTRACTING_AND_UPLOADING"
-  | "PROCESSING_DOCUMENTS"
-  | "GENERATING_DRAFT"
-  | "DRAFT_READY"
-  | "PARTIAL_FAILURE"
-  | "FAILED";
-
 const JOB_POLL_INTERVAL_MS = 2_000;
 const JOB_POLL_TIMEOUT_MS = 5 * 60_000;
 const delay = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+const ACTIVE_IMPORT_STAGES: DocumentImportView["stage"][] = [
+  "EXTRACTING_AND_UPLOADING",
+  "PROCESSING_DOCUMENTS",
+  "GENERATING_DRAFT",
+];
+
+const IMPORT_STAGE_LABELS: Record<DocumentImportView["stage"], string> = {
+  EXTRACTING_AND_UPLOADING: "Extracting and uploading",
+  PROCESSING_DOCUMENTS: "Processing document evidence",
+  GENERATING_DRAFT: "Generating flow draft",
+  DOCUMENTS_READY: "Documents ready",
+  DRAFT_READY: "Draft ready for review",
+  FAILED: "Needs attention",
+  CANCELLED: "Stopped",
+};
+
+const IMPORT_FILE_LABELS: Record<
+  DocumentImportView["files"][number]["status"],
+  string
+> = {
+  WAITING: "Waiting to be extracted",
+  EXTRACTING: "Extracting locally",
+  UPLOADING: "Uploading derived evidence; raw bytes remain local",
+  QUEUED: "Queued for processing",
+  PROCESSING: "Processing evidence",
+  READY: "Evidence ready",
+  FAILED: "Failed",
+  CANCELLED: "Not uploaded",
+};
+
+function isDocumentImportActive(view: DocumentImportView | null): boolean {
+  return Boolean(
+    view && (view.running || ACTIVE_IMPORT_STAGES.includes(view.stage)),
+  );
+}
+
+/**
+ * Whether a document's latest version reflects its latest upload. A version
+ * stays usable either way, but the picker must not call an older version
+ * "ready" while a newer upload is processing or after it failed.
+ */
+function documentReadiness(document: SourceDocumentSummary): {
+  ready: boolean;
+  label: string;
+} {
+  const version = document.versions[0];
+  if (!version) return { ready: false, label: "Not processed yet" };
+  const latestJob = document.processingJobs[0]?.status;
+  if (
+    document.status === "PROCESSED" ||
+    (document.status === "READY" && (!latestJob || latestJob === "COMPLETED"))
+  )
+    return {
+      ready: true,
+      label: `Version ${version.version} · Ready for generation`,
+    };
+  if (
+    document.status === "PROCESSING" ||
+    latestJob === "QUEUED" ||
+    latestJob === "PROCESSING"
+  )
+    return {
+      ready: false,
+      label: `Version ${version.version} · A newer upload is still processing; this is the previous version`,
+    };
+  if (document.status === "FAILED" || latestJob === "FAILED")
+    return {
+      ready: false,
+      label: `Version ${version.version} · The latest upload failed; this is the previous version`,
+    };
+  return { ready: false, label: `Version ${version.version}` };
+}
 
 // Manual starting points for a new flow, mirroring the web dashboard's
 // "Create a flow" picker. Each creates a bounded draft flow of the given
@@ -4061,11 +4207,25 @@ function intentErrorMessage(error: unknown): string {
   if (message.includes("FEATURE_NOT_ENTITLED"))
     return "Document-based flow generation is not included on this plan.";
   if (message.includes("PROMPT_INJECTION"))
-    return "The approved document summary contains unsafe instructions and cannot be used for generation.";
+    return "Every usable section of the selected documents reads as instructions to the AI, so none of it can be used for generation.";
+  if (message.includes("NO_USABLE_DOCUMENT_EVIDENCE"))
+    return "The selected documents contain no usable text for generation.";
   if (message.includes("INVALID_OR_UNPROCESSED"))
     return "One or more documents are not ready yet. Check their processing status and retry.";
+  if (message.includes("INTENT_IMPORT_IN_PROGRESS"))
+    return "An import for this application is already running. Wait for it to finish or stop it first.";
   if (message.includes("DRAFT_JOB_CANNOT_BE_CANCELLED"))
     return "Generation has already started and can no longer be cancelled. Wait for it to finish, then review or discard the draft.";
+  if (message.includes("DRAFT_REVISION_IN_PROGRESS"))
+    return "A revision of this draft is already running.";
+  if (message.includes("CONFLICT_ANSWERS_NOT_APPLIED"))
+    return "Apply your answers first. Tellann regenerates the draft with them, then you approve the revised draft.";
+  if (message.includes("UNRESOLVED_SOURCE_CONFLICTS"))
+    return "Answer every question before applying your answers.";
+  if (message.includes("CORRECTION_BLOCKED_BY_PRIVACY_POLICY"))
+    return "That text looks like it contains secrets or instructions to the AI. Rephrase it in plain language.";
+  if (message.includes("REVIEWED_DRAFT_IS_IMMUTABLE") || message.includes("DRAFT_ALREADY_REVIEWED"))
+    return "This draft has already been reviewed or replaced by a revision.";
   if (message.includes("401") || message.includes("UNAUTHORIZED"))
     return "Your desktop session expired. Sign in again, then check this job.";
   return (
@@ -4147,18 +4307,171 @@ function summarizeDraftRevision(
   return changes;
 }
 
+/** Progress of a document import run by the desktop, shared by Intent and Sources. */
+function DocumentImportProgress({
+  view,
+  busy,
+  cancellingGeneration,
+  onStop,
+  onCancelGeneration,
+  onCheckAgain,
+  onRetry,
+  onDismiss,
+  onReviewDraft,
+}: {
+  view: DocumentImportView;
+  busy: boolean;
+  cancellingGeneration: boolean;
+  onStop(): void;
+  onCancelGeneration(): void;
+  onCheckAgain(): void;
+  onRetry(): void;
+  onDismiss(): void;
+  onReviewDraft(): void;
+}) {
+  const active = isDocumentImportActive(view);
+  const readyCount = view.files.filter((file) => file.versionId).length;
+  const canStop = active && view.stage !== "GENERATING_DRAFT";
+  return (
+    <section
+      className="content-card intent-progress flex flex-col gap-4 w-full overflow-hidden"
+      aria-live="polite"
+    >
+      <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
+        <div className="min-w-0 flex-1">
+          <small>{view.generateDraft ? "Generation cycle" : "Document upload"}</small>
+          <h2 className="break-words">{IMPORT_STAGE_LABELS[view.stage]}</h2>
+        </div>
+        <div className="shrink-0 self-start sm:self-auto">
+          <Status>{active ? "IN PROGRESS" : view.stage.replaceAll("_", " ")}</Status>
+        </div>
+      </div>
+      {active ? (
+        <p className="break-words leading-relaxed">
+          You can leave this page. Tellann keeps working in the background and
+          shows progress here when you come back.
+        </p>
+      ) : null}
+      {view.message ? (
+        <p className="break-words leading-relaxed">
+          {view.stage === "FAILED"
+            ? intentErrorMessage(view.message)
+            : view.message}
+        </p>
+      ) : null}
+      {view.failedFileCount > 0 ? (
+        <div className="context-banner" role="status">
+          {view.failedFileCount} of {view.files.length} file(s) could not be
+          used.
+          {view.generateDraft &&
+          readyCount > 0 &&
+          ["GENERATING_DRAFT", "DRAFT_READY"].includes(view.stage)
+            ? ` The draft is generated from the ${readyCount} that could.`
+            : ""}
+        </div>
+      ) : null}
+      {view.generateDraft &&
+      view.draftJobId &&
+      view.stage === "GENERATING_DRAFT" ? (
+        <div className="row-card flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full">
+          <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+            <strong className="truncate">Flow draft generation</strong>
+            <small className="break-words">
+              Server job {view.draftJobId.slice(0, 8)}
+            </small>
+          </div>
+          <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
+            <Status>{view.draftJobStatus ?? "QUEUED"}</Status>
+            {view.draftJobStatus === "QUEUED" ? (
+              <button
+                className="button danger"
+                disabled={busy || cancellingGeneration}
+                onClick={onCancelGeneration}
+              >
+                <CircleStop size={14} />
+                {cancellingGeneration ? "Cancelling…" : "Cancel generation"}
+              </button>
+            ) : (
+              <small>
+                Generation has started and can no longer be cancelled.
+              </small>
+            )}
+          </div>
+        </div>
+      ) : null}
+      {view.files.length ? (
+        <div className="stack compact flex flex-col gap-2.5 w-full">
+          {view.files.map((file) => (
+            <div
+              className="row-card flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
+              key={file.id}
+            >
+              <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                <strong className="truncate" title={file.filename}>
+                  {file.filename}
+                </strong>
+                <small className="break-words">
+                  {file.errorMessageSafe ??
+                    (file.status === "READY" && file.deduplicated
+                      ? "Unchanged since the last upload · Evidence ready"
+                      : IMPORT_FILE_LABELS[file.status])}
+                </small>
+              </div>
+              <div className="shrink-0 self-start sm:self-auto">
+                <Status>{file.status}</Status>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {canStop || !active ? (
+        <div className="review-actions flex flex-wrap items-center gap-2.5 sm:gap-3 pt-2">
+          {canStop ? (
+            <button className="button" disabled={busy} onClick={onStop}>
+              <CircleStop size={15} /> Stop import
+            </button>
+          ) : null}
+          {view.stage === "DRAFT_READY" && view.draftId ? (
+            <button className="button primary" onClick={onReviewDraft}>
+              Review draft <ArrowRight size={14} />
+            </button>
+          ) : null}
+          {view.stage === "FAILED" ? (
+            <>
+              <button className="button" onClick={onCheckAgain}>
+                <RefreshCw size={15} /> Check again
+              </button>
+              <button className="button" disabled={busy} onClick={onRetry}>
+                Upload again
+              </button>
+            </>
+          ) : null}
+          {!active ? (
+            <button className="button" onClick={onDismiss}>
+              <X size={15} /> Dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function IntentPage() {
   const { projectId, application, getDeclaredFlows } = useProject();
   const activeProjectId = projectId ?? "";
   const {
     getIntentDrafts,
     getIntentDraftJobs,
-    getIntentDraftJob,
     cancelIntentDraftJob,
     getDocuments,
-    getDocumentJob,
     importDocuments,
-    createIntentDraft,
+    getDocumentImport,
+    resumeDocumentImport,
+    cancelDocumentImport,
+    dismissDocumentImport,
+    generateFromDocumentVersions,
+    onDocumentImportProgress,
     deleteIntentDraft,
     createDeclaredFlow,
     busy,
@@ -4167,12 +4480,8 @@ export function IntentPage() {
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
   const [drafts, setDrafts] = useState<IntentDraft[]>([]);
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
-  const [batch, setBatch] = useState<DocumentImportResult[]>([]);
-  const [stage, setStage] = useState<IntentAutomationStage>("IDLE");
-  const [automationMessage, setAutomationMessage] = useState<string | null>(
-    null,
-  );
-  const [activeDraftJobId, setActiveDraftJobId] = useState<string | null>(null);
+  const [importView, setImportView] = useState<DocumentImportView | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [activeDraftJobs, setActiveDraftJobs] = useState<IntentDraftJob[]>([]);
   const [cancellingDraftJobId, setCancellingDraftJobId] = useState<
     string | null
@@ -4192,7 +4501,12 @@ export function IntentPage() {
   const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creatingFlowKey, setCreatingFlowKey] = useState<string | null>(null);
-  const operationRef = useRef(0);
+  // The last import stage this page saw, to tell a transition it witnessed
+  // (open the finished draft) from a finished import found on arrival (offer it).
+  const observedImportRef = useRef<{
+    id: string;
+    stage: DocumentImportView["stage"];
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -4234,9 +4548,64 @@ export function IntentPage() {
       });
     return () => {
       cancelled = true;
-      operationRef.current += 1;
     };
   }, [projectId, refresh]);
+
+  // An import started earlier keeps running in the desktop, including one
+  // started before navigating away or before the desktop was last closed.
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void getDocumentImport(projectId)
+      .then(async (view) => {
+        if (cancelled) return;
+        observedImportRef.current = view
+          ? { id: view.id, stage: view.stage }
+          : null;
+        setImportView(view);
+        if (view && !view.running && ACTIVE_IMPORT_STAGES.includes(view.stage)) {
+          const resumed = await resumeDocumentImport(projectId);
+          if (!cancelled) setImportView(resumed);
+        }
+      })
+      .catch(() => undefined);
+    const unsubscribe = onDocumentImportProgress((view) => {
+      if (view.applicationId === projectId) setImportView(view);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!importView) return;
+    const previous = observedImportRef.current;
+    observedImportRef.current = { id: importView.id, stage: importView.stage };
+    if (!previous || previous.id !== importView.id || previous.stage === importView.stage)
+      return;
+    void refresh().catch(() => undefined);
+    if (importView.stage === "DRAFT_READY" && importView.draftId) {
+      void dismissDocumentImport(importView.applicationId).catch(() => undefined);
+      navigate(
+        `/applications/${importView.applicationId}/intent/drafts/${importView.draftId}`,
+      );
+    }
+  }, [importView]);
+
+  // Generation jobs not owned by the import (revisions requested from a review
+  // page) are listed here until they finish.
+  const otherDraftJobs = activeDraftJobs.filter(
+    (job) => job.id !== importView?.draftJobId,
+  );
+  useEffect(() => {
+    if (!projectId || !otherDraftJobs.length) return;
+    const timer = window.setInterval(
+      () => void refresh().catch(() => undefined),
+      JOB_POLL_INTERVAL_MS * 2,
+    );
+    return () => window.clearInterval(timer);
+  }, [projectId, otherDraftJobs.length, refresh]);
 
   useEffect(() => {
     const onFocus = () => void refresh().catch(() => undefined);
@@ -4257,12 +4626,19 @@ export function IntentPage() {
     return next;
   };
 
+  const showActionError = (error: unknown) => {
+    const message = intentErrorMessage(error);
+    if (String(error).includes("FEATURE_NOT_ENTITLED"))
+      setEntitlementModalOpen(true);
+    setActionMessage(message);
+  };
+
   const startFlowFromTemplate = async (
     option: (typeof FLOW_STARTING_POINTS)[number],
   ) => {
     if (!activeProjectId || creatingFlowKey) return;
     setCreatingFlowKey(option.key);
-    setAutomationMessage(null);
+    setActionMessage(null);
     try {
       const flow = await createDeclaredFlow(
         activeProjectId,
@@ -4274,7 +4650,7 @@ export function IntentPage() {
       await refreshFlows();
       navigate(`/applications/${activeProjectId}/intent/flows/${flow.id}`);
     } catch (error) {
-      setAutomationMessage(intentErrorMessage(error));
+      setActionMessage(intentErrorMessage(error));
     } finally {
       setCreatingFlowKey(null);
     }
@@ -4284,7 +4660,7 @@ export function IntentPage() {
     if (confirmingDraftId !== draft.id) {
       setConfirmingDraftId(draft.id);
       setDraftManagementMessage(
-        `Confirm deletion of “${(draft.draftJson as any)?.workflows?.[0]?.name ?? "this draft"}”. This removes the draft and its generated evidence.`,
+        `Confirm deletion of “${(draft.draftJson as any)?.workflows?.[0]?.name ?? "this draft"}”. This removes the draft; your documents and their evidence are kept.`,
       );
       return;
     }
@@ -4298,340 +4674,123 @@ export function IntentPage() {
     }
   };
 
-  const pollDraftJob = useCallback(
-    async (jobId: string, operation: number) => {
-      const startedAt = Date.now();
-      setActiveDraftJobId(jobId);
-      while (
-        operationRef.current === operation &&
-        Date.now() - startedAt < JOB_POLL_TIMEOUT_MS
-      ) {
-        const job: IntentDraftJob = await getIntentDraftJob(
-          activeProjectId,
-          jobId,
-        );
-        setActiveDraftJobs((current) =>
-          current.map((candidate) =>
-            candidate.id === job.id ? job : candidate,
-          ),
-        );
-        if (job.status === "COMPLETED" && job.draftId) {
-          setStage("DRAFT_READY");
-          setActiveDraftJobId(null);
-          await refresh();
-          navigate(`/applications/${activeProjectId}/intent/drafts/${job.draftId}`);
-          return;
-        }
-        if (job.status === "FAILED" || job.status === "CANCELLED") {
-          setActiveDraftJobId(null);
-          throw new Error(
-            job.errorMessageSafe ?? "Flow draft generation failed.",
-          );
-        }
-        await delay(JOB_POLL_INTERVAL_MS);
-      }
-      if (operationRef.current === operation) {
-        setStage("FAILED");
-        setAutomationMessage(
-          "Generation is still running. Use Check again to resume without creating another job.",
-        );
-      }
-    },
-    [activeProjectId, getIntentDraftJob, navigate, refresh],
-  );
+  const trackImport = (view: DocumentImportView | null) => {
+    if (!view) return;
+    observedImportRef.current = { id: view.id, stage: view.stage };
+    setImportView(view);
+  };
 
-  useEffect(() => {
-    const resumable = activeDraftJobs[0];
-    if (
-      !resumable ||
-      activeDraftJobId ||
-      [
-        "SELECTING_FILES",
-        "EXTRACTING_AND_UPLOADING",
-        "PROCESSING_DOCUMENTS",
-        "GENERATING_DRAFT",
-      ].includes(stage)
-    )
-      return;
-    const operation = operationRef.current + 1;
-    operationRef.current = operation;
-    setStage("GENERATING_DRAFT");
-    setAutomationMessage(
-      "Resumed an existing generation. You can leave this page; progress is stored securely and will reappear when you return.",
-    );
-    void pollDraftJob(resumable.id, operation).catch((error) => {
-      if (operationRef.current !== operation) return;
-      setStage("FAILED");
-      setAutomationMessage(intentErrorMessage(error));
-      void refresh().catch(() => undefined);
-    });
-  }, [activeDraftJobId, activeDraftJobs, pollDraftJob, refresh, stage]);
-
-  const generateVersions = useCallback(
-    async (versionIds: string[], operation: number) => {
-      if (!versionIds.length || operationRef.current !== operation) return;
-      setStage("GENERATING_DRAFT");
-      setAutomationMessage(
-        "Generating a reviewable flow draft from approved evidence…",
-      );
-      const created = await createIntentDraft(activeProjectId, [
-        ...new Set(versionIds),
-      ]);
-      await pollDraftJob(created.jobId, operation);
-    },
-    [activeProjectId, createIntentDraft, pollDraftJob],
-  );
-
-  const cancelGeneration = async (jobId: string) => {
-    operationRef.current += 1;
-    setActiveDraftJobId(null);
-    setCancellingDraftJobId(jobId);
+  const uploadAndGenerate = async () => {
+    setActionMessage(null);
     try {
-      await cancelIntentDraftJob(activeProjectId, jobId);
-      const remaining = await getIntentDraftJobs(activeProjectId);
-      setActiveDraftJobs(remaining);
-      setStage("IDLE");
-      setAutomationMessage(
-        remaining.length
-          ? "Queued generation cancelled. Another existing generation is still active."
-          : "Generation cancelled. You can upload files or generate again from ready documents.",
+      trackImport(
+        await importDocuments(activeProjectId, { generateDraft: true }),
       );
     } catch (error) {
-      setStage("FAILED");
-      setAutomationMessage(intentErrorMessage(error));
-      await refresh().catch(() => undefined);
-    } finally {
-      setCancellingDraftJobId(null);
+      showActionError(error);
     }
   };
 
-  const uploadAndGenerate = useCallback(async () => {
-    const operation = operationRef.current + 1;
-    operationRef.current = operation;
-    setBatch([]);
-    setAutomationMessage(null);
-    setStage("SELECTING_FILES");
-    try {
-      setStage("EXTRACTING_AND_UPLOADING");
-      const imported = await importDocuments(activeProjectId);
-      if (operationRef.current !== operation) return;
-      if (!imported.length) {
-        setStage("IDLE");
-        return;
-      }
-      setBatch(imported);
-      const pending = imported.filter(
-        (item) => item.jobId && !item.versionId && item.status !== "FAILED",
-      );
-      const readyVersionIds = imported.flatMap((item) =>
-        item.versionId ? [item.versionId] : [],
-      );
-      const failures = imported.filter((item) => item.status === "FAILED");
-      if (pending.length) {
-        setStage("PROCESSING_DOCUMENTS");
-        setAutomationMessage(
-          "Processing document evidence locally and in the secure worker queue…",
-        );
-        const startedAt = Date.now();
-        const remaining = new Map(pending.map((item) => [item.jobId!, item]));
-        while (
-          remaining.size &&
-          operationRef.current === operation &&
-          Date.now() - startedAt < JOB_POLL_TIMEOUT_MS
-        ) {
-          const jobs = await Promise.all(
-            [...remaining.keys()].map((jobId) =>
-              getDocumentJob(activeProjectId, jobId),
-            ),
-          );
-          for (const job of jobs) {
-            const source = remaining.get(job.id)!;
-            if (job.status === "COMPLETED" && job.resultVersionId) {
-              readyVersionIds.push(job.resultVersionId);
-              remaining.delete(job.id);
-            } else if (job.status === "FAILED" || job.status === "CANCELLED") {
-              failures.push({
-                ...source,
-                status: "FAILED",
-                errorMessageSafe:
-                  job.errorMessageSafe ?? "Document processing failed.",
-              });
-              remaining.delete(job.id);
-            }
-          }
-          setBatch((current) =>
-            current.map((item) => {
-              const job = jobs.find((candidate) => candidate.id === item.jobId);
-              return job
-                ? {
-                    ...item,
-                    status: job.status,
-                    versionId: job.resultVersionId,
-                    errorMessageSafe: job.errorMessageSafe,
-                  }
-                : item;
-            }),
-          );
-          if (remaining.size) await delay(JOB_POLL_INTERVAL_MS);
-        }
-        if (remaining.size && operationRef.current === operation) {
-          setStage("FAILED");
-          setAutomationMessage(
-            "Document processing is still running. Check again from Intent or Sources; no duplicate job was created.",
-          );
-          await refresh();
-          return;
-        }
-      }
-      if (!readyVersionIds.length)
-        throw new Error(
-          "No selected document produced usable evidence. Review the file errors and retry.",
-        );
-      if (failures.length) {
-        setStage("PARTIAL_FAILURE");
-        setAutomationMessage(
-          `${failures.length} file(s) failed. Generating from ${readyVersionIds.length} successful file(s).`,
-        );
-      }
-      await generateVersions(readyVersionIds, operation);
-    } catch (error) {
-      if (operationRef.current !== operation) return;
-      setStage("FAILED");
-      setAutomationMessage(intentErrorMessage(error));
-      await refresh().catch(() => undefined);
+  const retryUpload = async () => {
+    if (importView && !isDocumentImportActive(importView)) {
+      await dismissDocumentImport(activeProjectId).catch(() => undefined);
+      setImportView(null);
     }
-  }, [
-    activeProjectId,
-    generateVersions,
-    getDocumentJob,
-    importDocuments,
-    refresh,
-  ]);
+    await uploadAndGenerate();
+  };
 
   const openReadyDocumentPicker = () => {
     setSelectedReadyVersionIds(new Set());
     setDocumentPickerOpen(true);
   };
 
-  const generateReadyDocuments = () => {
-    const versionIds = [...selectedReadyVersionIds];
-    if (!versionIds.length) return;
-    setDocumentPickerOpen(false);
-    const operation = operationRef.current + 1;
-    operationRef.current = operation;
-    void generateVersions(versionIds, operation).catch((error) => {
-      setStage("FAILED");
-      setAutomationMessage(intentErrorMessage(error));
+  const generateReadyDocuments = async () => {
+    const selected = documents.flatMap((document) => {
+      const version = document.versions[0];
+      return version && selectedReadyVersionIds.has(version.id)
+        ? [{ versionId: version.id, documentId: document.id, filename: document.filename }]
+        : [];
     });
-  };
-
-  const resumeDocumentBatch = async () => {
-    const operation = operationRef.current + 1;
-    operationRef.current = operation;
-    setStage("PROCESSING_DOCUMENTS");
-    setAutomationMessage("Checking the existing document jobs…");
+    if (!selected.length) return;
+    setDocumentPickerOpen(false);
+    setActionMessage(null);
     try {
-      const readyVersionIds = batch.flatMap((item) =>
-        item.versionId ? [item.versionId] : [],
-      );
-      const pending = batch.filter(
-        (item) => item.jobId && !item.versionId && item.status !== "FAILED",
-      );
-      const jobs = await Promise.all(
-        pending.map((item) => getDocumentJob(activeProjectId, item.jobId!)),
-      );
-      const failedIds = new Set(
-        jobs
-          .filter(
-            (job) => job.status === "FAILED" || job.status === "CANCELLED",
-          )
-          .map((job) => job.id),
-      );
-      for (const job of jobs)
-        if (job.status === "COMPLETED" && job.resultVersionId)
-          readyVersionIds.push(job.resultVersionId);
-      setBatch((current) =>
-        current.map((item) => {
-          const job = jobs.find((candidate) => candidate.id === item.jobId);
-          return job
-            ? {
-                ...item,
-                status: job.status,
-                versionId: job.resultVersionId,
-                errorMessageSafe: job.errorMessageSafe,
-              }
-            : item;
-        }),
-      );
-      if (
-        jobs.some(
-          (job) => job.status === "QUEUED" || job.status === "PROCESSING",
-        )
-      ) {
-        setStage("FAILED");
-        setAutomationMessage(
-          "Some document jobs are still running. Wait briefly, then check again.",
-        );
-        return;
-      }
-      if (!readyVersionIds.length)
-        throw new Error("No document in this batch produced usable evidence.");
-      if (failedIds.size)
-        setAutomationMessage(
-          `${failedIds.size} file(s) failed. Continuing with the successful evidence.`,
-        );
-      await generateVersions(readyVersionIds, operation);
+      trackImport(await generateFromDocumentVersions(activeProjectId, selected));
     } catch (error) {
-      setStage("FAILED");
-      const msg = intentErrorMessage(error);
-      if (
-        String(error).includes("FEATURE_NOT_ENTITLED") ||
-        msg.includes("FEATURE_NOT_ENTITLED")
-      ) {
-        setEntitlementModalOpen(true);
-      }
-      setAutomationMessage(msg);
+      showActionError(error);
     }
   };
 
-  const checkAgain = () => {
-    if (activeDraftJobId) {
-      const operation = operationRef.current + 1;
-      operationRef.current = operation;
-      setStage("GENERATING_DRAFT");
-      void pollDraftJob(activeDraftJobId, operation).catch((error) => {
-        setStage("FAILED");
-        const msg = intentErrorMessage(error);
-        if (
-          String(error).includes("FEATURE_NOT_ENTITLED") ||
-          msg.includes("FEATURE_NOT_ENTITLED")
-        ) {
-          setEntitlementModalOpen(true);
-        }
-        setAutomationMessage(msg);
-      });
-    } else if (
-      batch.some(
-        (item) => item.jobId && !item.versionId && item.status !== "FAILED",
-      )
-    ) {
-      void resumeDocumentBatch();
-    } else void refresh();
+  const stopImport = async () => {
+    try {
+      const view = await cancelDocumentImport(activeProjectId);
+      if (view) setImportView(view);
+    } catch (error) {
+      setActionMessage(intentErrorMessage(error));
+    }
   };
-  const readyDocuments = documents.filter(
+
+  const cancelImportGeneration = async () => {
+    if (!importView?.draftJobId) return;
+    setCancellingDraftJobId(importView.draftJobId);
+    try {
+      const view = await cancelDocumentImport(activeProjectId);
+      if (view) setImportView(view);
+      await refresh();
+    } catch (error) {
+      setActionMessage(intentErrorMessage(error));
+    } finally {
+      setCancellingDraftJobId(null);
+    }
+  };
+
+  const cancelOtherGeneration = async (jobId: string) => {
+    setCancellingDraftJobId(jobId);
+    try {
+      await cancelIntentDraftJob(activeProjectId, jobId);
+      await refresh();
+    } catch (error) {
+      setActionMessage(intentErrorMessage(error));
+    } finally {
+      setCancellingDraftJobId(null);
+    }
+  };
+
+  const checkAgain = async () => {
+    try {
+      const view = await resumeDocumentImport(activeProjectId);
+      if (view) setImportView(view);
+      await refresh();
+    } catch (error) {
+      setActionMessage(intentErrorMessage(error));
+    }
+  };
+
+  const dismissImport = async () => {
+    await dismissDocumentImport(activeProjectId).catch(() => undefined);
+    observedImportRef.current = null;
+    setImportView(null);
+  };
+
+  const reviewImportedDraft = () => {
+    if (!importView?.draftId) return;
+    const target = `/applications/${activeProjectId}/intent/drafts/${importView.draftId}`;
+    void dismissImport();
+    navigate(target);
+  };
+
+  const versionedDocuments = documents.filter(
     (document) => document.versions.length > 0,
   );
+  const readyDocumentCount = versionedDocuments.filter(
+    (document) => documentReadiness(document).ready,
+  ).length;
   const processingDocuments = documents.filter((document) =>
     ["QUEUED", "PROCESSING"].includes(
       document.processingJobs[0]?.status ?? document.status,
     ),
   );
-  const automationActive = [
-    "SELECTING_FILES",
-    "EXTRACTING_AND_UPLOADING",
-    "PROCESSING_DOCUMENTS",
-    "GENERATING_DRAFT",
-  ].includes(stage);
+  const importActive = isDocumentImportActive(importView);
   if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
@@ -4699,7 +4858,6 @@ export function IntentPage() {
             </p>
             <div className="grid gap-3 sm:grid-cols-3 mt-4">
               {FLOW_STARTING_POINTS.map((option) => {
-                const Icon = option.icon;
                 const isCreating = creatingFlowKey === option.key;
                 return (
                   <div
@@ -4708,9 +4866,6 @@ export function IntentPage() {
                   >
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        {/* <div className="flex h-8 w-8 items-center justify-center rounded-md border border-[#262626] bg-[#141414] text-neutral-300">
-                          <Icon size={16} />
-                        </div> */}
                         {option.key === "CUSTOM" && (
                           <span className="rounded border border-[#262626] bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400">
                             Blank
@@ -4749,7 +4904,6 @@ export function IntentPage() {
           </section>
           <section className="content-card ai-intent-actions">
             <div>
-              {/* <Status>AI-assisted intent</Status> */}
               <h2>Generate flows from your documents</h2>
               <p>
                 Tellann creates a review draft first. Nothing changes graph
@@ -4759,23 +4913,23 @@ export function IntentPage() {
             <div className="review-actions">
               <button
                 className="button primary"
-                disabled={busy || automationActive}
+                disabled={busy || importActive}
                 title={
-                  automationActive
-                    ? "Cancel or finish the active generation before starting another."
+                  importActive
+                    ? "Stop or finish the active import before starting another."
                     : undefined
                 }
                 onClick={() => void uploadAndGenerate()}
               >
                 <FileSearch size={15} /> Upload and generate
               </button>
-              {readyDocuments.length ? (
+              {versionedDocuments.length ? (
                 <button
                   className="button"
-                  disabled={busy || automationActive}
+                  disabled={busy || importActive}
                   title={
-                    automationActive
-                      ? "Cancel or finish the active generation before starting another."
+                    importActive
+                      ? "Stop or finish the active import before starting another."
                       : undefined
                   }
                   onClick={openReadyDocumentPicker}
@@ -4785,12 +4939,20 @@ export function IntentPage() {
               ) : null}
             </div>
           </section>
+          {actionMessage ? (
+            <div className="context-banner" role="status">
+              <span>{actionMessage}</span>
+              <button className="button" onClick={() => setActionMessage(null)}>
+                Dismiss
+              </button>
+            </div>
+          ) : null}
           {documentPickerOpen ? (
             <div
               className="desktop-modal-backdrop"
               role="presentation"
               onMouseDown={(event) => {
-                if (event.target === event.currentTarget && !automationActive)
+                if (event.target === event.currentTarget)
                   setDocumentPickerOpen(false);
               }}
             >
@@ -4812,14 +4974,6 @@ export function IntentPage() {
                     <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
                       EVIDENCE // SELECTION
                     </span>
-                    {/* <button
-                      type="button"
-                      className="text-[#8e9192] hover:text-white transition-colors p-1"
-                      aria-label="Close document selection"
-                      onClick={() => setDocumentPickerOpen(false)}
-                    >
-                      <X size={16} />
-                    </button> */}
                   </div>
                 </div>
 
@@ -4832,8 +4986,9 @@ export function IntentPage() {
                 </p>
 
                 <div className="bg-[#000000] border border-[#262626] rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-[#262626]">
-                  {readyDocuments.map((document) => {
+                  {versionedDocuments.map((document) => {
                     const version = document.versions[0];
+                    const readiness = documentReadiness(document);
                     const selected = selectedReadyVersionIds.has(version.id);
                     const toggleSelect = () => {
                       setSelectedReadyVersionIds((current) => {
@@ -4858,8 +5013,12 @@ export function IntentPage() {
                           <strong className="text-white text-[13px] font-semibold truncate">
                             {document.filename}
                           </strong>
-                          <span className="text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase">
-                            Version {version.version} · Ready for generation
+                          <span
+                            className={`font-mono text-[11px] tracking-[0.08em] uppercase ${
+                              readiness.ready ? "text-[#8e9192]" : "text-[#d6a24a]"
+                            }`}
+                          >
+                            {readiness.label}
                           </span>
                         </div>
                         <Switch
@@ -4892,8 +5051,8 @@ export function IntentPage() {
                   <button
                     type="button"
                     className="flex-1 px-5 py-3 bg-white text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-[#e6e6e6] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    disabled={!selectedReadyVersionIds.size || automationActive}
-                    onClick={generateReadyDocuments}
+                    disabled={!selectedReadyVersionIds.size || importActive}
+                    onClick={() => void generateReadyDocuments()}
                   >
                     Generate selected flows
                   </button>
@@ -4901,125 +5060,83 @@ export function IntentPage() {
               </section>
             </div>
           ) : null}
-          {stage !== "IDLE" || batch.length || automationMessage ? (
-            <section
-              className="content-card intent-progress flex flex-col gap-4 w-full overflow-hidden"
-              aria-live="polite"
-            >
-              <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
-                <div className="min-w-0 flex-1">
-                  <small>Generation cycle</small>
-                  <h2 className="break-words">{stage.replaceAll("_", " ")}</h2>
-                </div>
-                <div className="shrink-0 self-start sm:self-auto">
-                  <Status>{automationActive ? "IN PROGRESS" : stage}</Status>
+          {importView ? (
+            <DocumentImportProgress
+              view={importView}
+              busy={busy}
+              cancellingGeneration={
+                Boolean(importView.draftJobId) &&
+                cancellingDraftJobId === importView.draftJobId
+              }
+              onStop={() => void stopImport()}
+              onCancelGeneration={() => void cancelImportGeneration()}
+              onCheckAgain={() => void checkAgain()}
+              onRetry={() => void retryUpload()}
+              onDismiss={() => void dismissImport()}
+              onReviewDraft={reviewImportedDraft}
+            />
+          ) : null}
+          {otherDraftJobs.length ? (
+            <section className="content-card flex flex-col gap-4 w-full overflow-hidden" aria-live="polite">
+              <div className="card-heading">
+                <div>
+                  <small>Generation</small>
+                  <h2>Draft revisions in progress</h2>
                 </div>
               </div>
-              {automationMessage ? (
-                <p className="break-words leading-relaxed">
-                  {automationMessage}
-                </p>
-              ) : null}
-              {activeDraftJobs.length ? (
-                <div className="stack compact flex flex-col gap-2.5 w-full">
-                  {activeDraftJobs.map((job) => {
-                    const queuedForMs = job.createdAt
-                      ? Date.now() - new Date(job.createdAt).getTime()
-                      : 0;
-                    const delayed =
-                      job.status === "QUEUED" && queuedForMs > 15_000;
-                    return (
-                      <div
-                        className="row-card flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
-                        key={job.id}
-                      >
-                        <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                          <strong className="truncate">
-                            Flow draft generation
-                          </strong>
-                          <small className="break-words">
-                            Server job {job.id.slice(0, 8)} · attempt{" "}
-                            {job.attempts + 1} of {job.maxAttempts}
-                          </small>
-                          {delayed ? (
-                            <small className="break-words">
-                              This is taking longer than expected. The
-                              generation worker may be unavailable; cancel it
-                              and try again after the worker is healthy.
-                            </small>
-                          ) : null}
-                        </div>
-                        <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
-                          <Status>{job.status}</Status>
-                          {job.status === "QUEUED" ? (
-                            <button
-                              className="button danger"
-                              disabled={busy || cancellingDraftJobId === job.id}
-                              onClick={() => void cancelGeneration(job.id)}
-                            >
-                              <CircleStop size={14} />
-                              {cancellingDraftJobId === job.id
-                                ? "Cancelling…"
-                                : "Cancel generation"}
-                            </button>
-                          ) : (
-                            <small>
-                              Generation has started and can no longer be
-                              cancelled.
-                            </small>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {batch.length ? (
-                <div className="stack compact flex flex-col gap-2.5 w-full">
-                  {batch.map((item) => (
+              <div className="stack compact flex flex-col gap-2.5 w-full">
+                {otherDraftJobs.map((job) => {
+                  const queuedForMs = job.createdAt
+                    ? Date.now() - new Date(job.createdAt).getTime()
+                    : 0;
+                  const delayed =
+                    job.status === "QUEUED" && queuedForMs > 15_000;
+                  return (
                     <div
                       className="row-card flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
-                      key={`${item.filename}:${item.jobId ?? "local"}`}
+                      key={job.id}
                     >
                       <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                        <strong className="truncate" title={item.filename}>
-                          {item.filename}
-                        </strong>
+                        <strong className="truncate">Flow draft generation</strong>
                         <small className="break-words">
-                          {item.errorMessageSafe ??
-                            (item.versionId
-                              ? "Evidence ready"
-                              : "Derived evidence only; raw bytes remain local")}
+                          Server job {job.id.slice(0, 8)} · attempt{" "}
+                          {job.attempts + 1} of {job.maxAttempts}
                         </small>
+                        {delayed ? (
+                          <small className="break-words">
+                            This is taking longer than expected. The
+                            generation worker may be unavailable; cancel it
+                            and try again after the worker is healthy.
+                          </small>
+                        ) : null}
                       </div>
-                      <div className="shrink-0 self-start sm:self-auto">
-                        <Status>
-                          {item.versionId ? "READY" : item.status}
-                        </Status>
+                      <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
+                        <Status>{job.status}</Status>
+                        {job.status === "QUEUED" ? (
+                          <button
+                            className="button danger"
+                            disabled={busy || cancellingDraftJobId === job.id}
+                            onClick={() => void cancelOtherGeneration(job.id)}
+                          >
+                            <CircleStop size={14} />
+                            {cancellingDraftJobId === job.id
+                              ? "Cancelling…"
+                              : "Cancel generation"}
+                          </button>
+                        ) : (
+                          <small>
+                            Generation has started and can no longer be
+                            cancelled.
+                          </small>
+                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : null}
-              {stage === "FAILED" ? (
-                <div className="review-actions flex flex-wrap items-center gap-2.5 sm:gap-3 pt-2">
-                  <button
-                    className="button flex-1 sm:flex-none justify-center"
-                    onClick={checkAgain}
-                  >
-                    <RefreshCw size={15} /> Check again
-                  </button>
-                  <button
-                    className="button flex-1 sm:flex-none justify-center"
-                    onClick={() => void uploadAndGenerate()}
-                  >
-                    Retry upload
-                  </button>
-                </div>
-              ) : null}
+                  );
+                })}
+              </div>
             </section>
           ) : null}
-          {processingDocuments.length && stage === "IDLE" ? (
+          {processingDocuments.length && !importActive ? (
             <div className="context-banner">
               {processingDocuments.length} document(s) are still processing.
               This page refreshes when focused; Sources shows the full library.
@@ -5068,6 +5185,7 @@ export function IntentPage() {
                     "PENDING_REVIEW",
                     "REJECTED",
                     "EXPIRED",
+                    "SUPERSEDED",
                   ].includes(draft.status);
                   return (
                     <div
@@ -5082,8 +5200,9 @@ export function IntentPage() {
                           {draftName}
                         </strong>
                         <small className="break-words">
-                          {draft.source} · {Math.round(draft.confidence * 100)}%
-                          confidence
+                          {draft.status === "SUPERSEDED"
+                            ? "Replaced by a revised draft"
+                            : `${draft.source} · ${Math.round(draft.confidence * 100)}% confidence`}
                         </small>
                       </Link>
                       <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
@@ -5152,10 +5271,7 @@ export function IntentPage() {
               </div>
             </section>
           ) : null}
-          {!documents.length &&
-          !drafts.length &&
-          !flows.length &&
-          stage === "IDLE" ? (
+          {!documents.length && !drafts.length && !flows.length && !importView ? (
             <EmptyState
               icon={<Workflow size={36} />}
               title="No expected intent yet"
@@ -5163,6 +5279,7 @@ export function IntentPage() {
               action={
                 <button
                   className="button primary"
+                  disabled={busy}
                   onClick={() => void uploadAndGenerate()}
                 >
                   Upload documents
@@ -5170,13 +5287,10 @@ export function IntentPage() {
               }
             />
           ) : null}
-          {documents.length &&
-          !drafts.length &&
-          !flows.length &&
-          stage === "IDLE" ? (
+          {documents.length && !drafts.length && !flows.length && !importView ? (
             <div className="context-banner">
-              {readyDocuments.length
-                ? `${readyDocuments.length} document(s) are ready for flow generation.`
+              {readyDocumentCount
+                ? `${readyDocumentCount} document(s) are ready for flow generation.`
                 : "Your documents are queued or processing. Open Sources for detailed status."}
             </div>
           ) : null}
@@ -5184,6 +5298,20 @@ export function IntentPage() {
       )}
     </Page>
   );
+}
+
+const GENERATION_METHOD_LABELS: Record<string, string> = {
+  AI_PROVIDER: "AI provider",
+  DOCUMENT_BASELINE: "Assembled from document text (no AI)",
+  RULE_TEMPLATE: "Generic domain template (no AI)",
+};
+
+function describeConflictResolution(conflict: any): string {
+  const resolution = conflict?.resolution ?? {};
+  if (resolution.choice === "SOURCE")
+    return `use “${resolution.statement ?? "the chosen statement"}”`;
+  if (resolution.choice === "BOTH") return "both statements apply";
+  return `“${resolution.statement ?? ""}”`;
 }
 
 export function IntentDetailPage() {
@@ -5194,24 +5322,41 @@ export function IntentDetailPage() {
     getIntentDraftJob,
     reviewIntentDraft,
     correctIntentDraft,
+    applyIntentConflictAnswers,
     busy,
   } = useDesktop();
   const [draft, setDraft] = useState<IntentDraft | null>(null);
   const [loading, setLoading] = useState(Boolean(draftId));
   const [correction, setCorrection] = useState("");
-  const [correctionStatus, setCorrectionStatus] = useState<string | null>(null);
-  const [isCorrecting, setIsCorrecting] = useState(false);
+  const [revisionJobId, setRevisionJobId] = useState<string | null>(null);
+  const [revisionKind, setRevisionKind] = useState<
+    "CORRECTION" | "ANSWERS" | null
+  >(null);
+  const [revisionStatus, setRevisionStatus] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [parentDraft, setParentDraft] = useState<IntentDraft | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
   const [editedWorkflows, setEditedWorkflows] = useState<any[]>([]);
   const [editingWorkflow, setEditingWorkflow] = useState<string | null>(null);
+
+  const loadDraft = useCallback(async () => {
+    if (!projectId || !draftId) return;
+    setDraft(await getIntentDraft(projectId, draftId).catch(() => null));
+  }, [draftId, projectId]);
+
   useEffect(() => {
     if (!projectId || !draftId) return;
+    // Opening another draft (such as the revision just generated) starts clean.
+    setResolutions({});
+    setCorrection("");
+    setRevisionJobId(null);
+    setRevisionKind(null);
+    setRevisionStatus(null);
+    setReviewError(null);
+    setEditingWorkflow(null);
     setLoading(true);
-    void getIntentDraft(projectId, draftId)
-      .then(setDraft)
-      .finally(() => setLoading(false));
-  }, [draftId, getIntentDraft, projectId]);
+    void loadDraft().finally(() => setLoading(false));
+  }, [draftId, projectId, loadDraft]);
   useEffect(() => {
     const parentDraftId = (draft?.sourceManifest as any)?.parentDraftId;
     if (!projectId || !parentDraftId) {
@@ -5229,11 +5374,62 @@ export function IntentDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [draft, getIntentDraft, projectId]);
+  }, [draft, projectId]);
   useEffect(() => {
     const next = (draft?.draftJson as any)?.workflows;
     setEditedWorkflows(Array.isArray(next) ? structuredClone(next) : []);
   }, [draft]);
+  // A revision requested before leaving this page is picked back up.
+  useEffect(() => {
+    const jobId = (draft as any)?.activeRevisionJobId;
+    if (typeof jobId === "string" && jobId) {
+      setRevisionJobId(jobId);
+      setRevisionStatus("A revision of this draft is already running…");
+    }
+  }, [draft]);
+  useEffect(() => {
+    if (!projectId || !revisionJobId) return;
+    let cancelled = false;
+    void (async () => {
+      const startedAt = Date.now();
+      try {
+        while (!cancelled && Date.now() - startedAt < JOB_POLL_TIMEOUT_MS) {
+          const job = await getIntentDraftJob(projectId, revisionJobId);
+          if (cancelled) return;
+          if (job.status === "COMPLETED" && job.draftId) {
+            setRevisionStatus("Revision complete. Opening the updated draft…");
+            setRevisionJobId(null);
+            navigate(`/applications/${projectId}/intent/drafts/${job.draftId}`);
+            return;
+          }
+          if (job.status === "FAILED" || job.status === "CANCELLED")
+            throw new Error(
+              job.errorMessageSafe ?? "The revised draft could not be generated.",
+            );
+          setRevisionStatus(
+            job.status === "QUEUED"
+              ? "Your revision is queued and will start shortly…"
+              : `Updating the flows · attempt ${job.attempts + 1} of ${job.maxAttempts}…`,
+          );
+          await delay(JOB_POLL_INTERVAL_MS);
+        }
+        if (!cancelled) {
+          setRevisionJobId(null);
+          setRevisionStatus(
+            "The revision is still running. You can leave this page; reopen this draft to pick it back up.",
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRevisionJobId(null);
+          setRevisionStatus(intentErrorMessage(error));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, revisionJobId]);
   if (!projectId) return <ApplicationRequired />;
   if (!draftId)
     return (
@@ -5253,9 +5449,10 @@ export function IntentDetailPage() {
       />
     );
   const draftJson = draft.draftJson as any;
+  const manifest = (draft.sourceManifest as any) ?? {};
   const workflows = editedWorkflows;
-  const allConflicts = Array.isArray((draft.sourceManifest as any)?.conflicts)
-    ? (draft.sourceManifest as any).conflicts
+  const allConflicts = Array.isArray(manifest.conflicts)
+    ? manifest.conflicts
     : [];
   const conflicts = allConflicts.filter(
     (conflict: any) =>
@@ -5264,10 +5461,25 @@ export function IntentDetailPage() {
       Array.isArray(conflict?.sources) &&
       conflict.sources.length > 1,
   );
-  const manifestDocumentNames = Array.isArray(
-    (draft.sourceManifest as any)?.documentNames,
-  )
-    ? (draft.sourceManifest as any).documentNames
+  const resolvedConflicts = allConflicts.filter(
+    (conflict: any) => conflict?.resolved && conflict?.resolution,
+  );
+  const pendingReview = draft.status === "PENDING_REVIEW";
+  const generation = draftJson?.generation as
+    | { method?: string; reason?: string | null; message?: string | null }
+    | undefined;
+  const coverage: Array<{
+    filename: string;
+    includedSections: number;
+    totalSections: number;
+    unsafeSections: number;
+  }> = Array.isArray(manifest.coverage) ? manifest.coverage : [];
+  const supersededByDraftId = (draft as any).supersededByDraftId as
+    | string
+    | null
+    | undefined;
+  const manifestDocumentNames = Array.isArray(manifest.documentNames)
+    ? manifest.documentNames
     : [];
   const documentNames = [
     ...new Set([
@@ -5277,87 +5489,144 @@ export function IntentDetailPage() {
       ),
     ]),
   ];
+  const unansweredConflict = conflicts.some(
+    (conflict: any) => !resolutions[conflict.key]?.trim(),
+  );
   const accept = async () => {
-    await reviewIntentDraft(projectId, draft.id, {
-      action: "ACCEPT",
-      conflictResolutions: resolutions,
-      editedWorkflows: workflows,
-    });
-    navigate(`/applications/${projectId}/intent`);
-  };
-  const reject = async () => {
-    await reviewIntentDraft(projectId, draft.id, { action: "REJECT" });
-    navigate(`/applications/${projectId}/intent`);
-  };
-  const correct = async () => {
-    const requestedChange = correction.trim();
-    if (!requestedChange || isCorrecting) return;
+    setReviewError(null);
     try {
-      setIsCorrecting(true);
-      setCorrectionStatus("Submitting your requested change…");
-      const created = await correctIntentDraft(
-        projectId,
-        draft.id,
-        requestedChange,
-      );
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < JOB_POLL_TIMEOUT_MS) {
-        const job = await getIntentDraftJob(projectId, created.jobId);
-        setCorrectionStatus(
-          job.status === "QUEUED"
-            ? "Your revision is queued and will start shortly…"
-            : `Updating the flows from your suggestion · attempt ${job.attempts + 1} of ${job.maxAttempts}…`,
-        );
-        if (job.status === "COMPLETED" && job.draftId) {
-          setCorrectionStatus("Revision complete. Opening the updated draft…");
-          setCorrection("");
-          navigate(`/applications/${projectId}/intent/drafts/${job.draftId}`);
-          return;
-        }
-        if (job.status === "FAILED" || job.status === "CANCELLED")
-          throw new Error(
-            job.errorMessageSafe ?? "Corrected draft generation failed.",
-          );
-        await delay(JOB_POLL_INTERVAL_MS);
-      }
-      setCorrectionStatus(
-        "Correction is still processing. Return to Intent and check again.",
-      );
+      await reviewIntentDraft(projectId, draft.id, {
+        action: "ACCEPT",
+        editedWorkflows: workflows,
+      });
+      navigate(`/applications/${projectId}/intent`);
     } catch (error) {
-      setCorrectionStatus(intentErrorMessage(error));
-    } finally {
-      setIsCorrecting(false);
+      setReviewError(intentErrorMessage(error));
     }
   };
-  const correctionRequest = (draft.sourceManifest as any)?.correctionRequest as
-    | string
-    | undefined;
+  const reject = async () => {
+    setReviewError(null);
+    try {
+      await reviewIntentDraft(projectId, draft.id, { action: "REJECT" });
+      navigate(`/applications/${projectId}/intent`);
+    } catch (error) {
+      setReviewError(intentErrorMessage(error));
+    }
+  };
+  const startRevision = async (
+    kind: "CORRECTION" | "ANSWERS",
+    request: () => Promise<{ jobId: string }>,
+  ) => {
+    if (revisionJobId) return;
+    setRevisionKind(kind);
+    setRevisionStatus(
+      kind === "ANSWERS"
+        ? "Applying your answers…"
+        : "Submitting your requested change…",
+    );
+    try {
+      const created = await request();
+      setRevisionJobId(created.jobId);
+    } catch (error) {
+      setRevisionStatus(intentErrorMessage(error));
+      // Another revision already running: reload to pick up its job.
+      if (String(error).includes("DRAFT_REVISION_IN_PROGRESS"))
+        void loadDraft();
+    }
+  };
+  const correct = () => {
+    const requestedChange = correction.trim();
+    if (!requestedChange) return;
+    void startRevision("CORRECTION", () =>
+      correctIntentDraft(projectId, draft.id, requestedChange),
+    );
+  };
+  const applyAnswers = () => {
+    if (unansweredConflict) return;
+    void startRevision("ANSWERS", () =>
+      applyIntentConflictAnswers(
+        projectId,
+        draft.id,
+        Object.fromEntries(
+          conflicts.map((conflict: any) => [
+            conflict.key,
+            resolutions[conflict.key].trim(),
+          ]),
+        ),
+      ),
+    );
+  };
+  const correctionRequest = manifest.correctionRequest as string | undefined;
+  const appliedAnswers: string[] = Array.isArray(manifest.appliedConflictAnswers)
+    ? manifest.appliedConflictAnswers
+    : [];
   const revisionChanges = summarizeDraftRevision(parentDraft, draft);
   return (
     <Page
       title="Review generated system flows"
       description={`Tellann found ${workflows.length} user ${workflows.length === 1 ? "journey" : "journeys"}${documentNames.length ? ` from ${documentNames.map((name) => `“${name}”`).join(", ")}` : " from your approved application evidence"}. Review ${workflows.length === 1 ? "it" : "them"} before using ${workflows.length === 1 ? "it" : "them"} in QA tests.`}
       actions={
-        <Status>
-          {draft.status === "PENDING_REVIEW"
-            ? "READY FOR REVIEW"
-            : draft.status}
-        </Status>
+        <Status>{pendingReview ? "READY FOR REVIEW" : draft.status}</Status>
       }
     >
       <div className="flow-review-shell">
-        {correctionRequest ? (
+        {draft.status === "SUPERSEDED" ? (
+          <div className="context-banner" role="status">
+            <span>
+              This draft was replaced by a revised draft and can no longer be
+              approved.
+            </span>
+            {supersededByDraftId ? (
+              <Link
+                className="button"
+                to={`/applications/${projectId}/intent/drafts/${supersededByDraftId}`}
+              >
+                Open the revised draft
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+        {generation?.message && generation.method !== "AI_PROVIDER" ? (
+          <div className="review-attention" role="status">
+            <AlertTriangle size={18} />
+            <strong>
+              {generation.method === "DOCUMENT_BASELINE"
+                ? "Generated without AI"
+                : "Generic template, not your documents"}
+            </strong>
+            <span>{generation.message}</span>
+          </div>
+        ) : null}
+        {correctionRequest || appliedAnswers.length ? (
           <section className="revision-summary" aria-live="polite">
             <div className="revision-summary-heading">
               <Check size={18} />
               <div>
                 <small>Revision complete</small>
-                <h2>Your suggestion was applied to this review draft</h2>
+                <h2>
+                  {correctionRequest && appliedAnswers.length
+                    ? "Your answers and suggestion were applied to this review draft"
+                    : correctionRequest
+                      ? "Your suggestion was applied to this review draft"
+                      : "Your answers were applied to this review draft"}
+                </h2>
               </div>
             </div>
-            <p>
-              <strong>Your suggestion:</strong> “{correctionRequest}”
-            </p>
+            {correctionRequest ? (
+              <p>
+                <strong>Your suggestion:</strong> “{correctionRequest}”
+              </p>
+            ) : null}
+            {appliedAnswers.length && resolvedConflicts.length ? (
+              <ul>
+                {resolvedConflicts.map((conflict: any) => (
+                  <li key={conflict.key}>
+                    {conflict.question ?? conflict.description}{" "}
+                    {describeConflictResolution(conflict)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {revisionChanges.length ? (
               <ul>
                 {revisionChanges.map((change) => (
@@ -5366,7 +5635,7 @@ export function IntentDetailPage() {
               </ul>
             ) : (
               <p>
-                Tellann regenerated the workflow behavior using your suggestion.
+                Tellann regenerated the workflow behavior with your input.
                 Review the journeys below to confirm the result matches your
                 intent.
               </p>
@@ -5381,15 +5650,15 @@ export function IntentDetailPage() {
               {conflicts.length === 1 ? "question needs" : "questions need"}{" "}
               your attention
             </strong>
-            <span>Answer before approval.</span>
+            <span>Answer, then apply your answers before approval.</span>
           </div>
-        ) : (
+        ) : pendingReview ? (
           <div className="review-ready">
             <Check size={18} />
             <strong>No questions need your attention</strong>
             <span>Review each journey, then approve when it looks right.</span>
           </div>
-        )}
+        ) : null}
 
         <section className="review-section">
           <div className="review-section-heading">
@@ -5440,6 +5709,7 @@ export function IntentDetailPage() {
                       </Status>
                       <button
                         className="button"
+                        disabled={!pendingReview}
                         onClick={() =>
                           setEditingWorkflow(editing ? null : workflow.key)
                         }
@@ -5586,6 +5856,42 @@ export function IntentDetailPage() {
                 </label>
               </article>
             ))}
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-[#8e9192]">
+                Tellann regenerates the journeys with your answers, and you
+                review the revised draft before anything is saved. Edits made
+                to journeys on this page are not carried into the revision.
+              </p>
+              <div className="review-actions flex flex-wrap items-center gap-3">
+                <button
+                  className="button primary"
+                  disabled={
+                    busy ||
+                    Boolean(revisionJobId) ||
+                    !pendingReview ||
+                    unansweredConflict
+                  }
+                  onClick={applyAnswers}
+                >
+                  {revisionJobId && revisionKind === "ANSWERS" ? (
+                    <>
+                      <RefreshCw className="spin" size={15} /> Applying
+                      answers…
+                    </>
+                  ) : (
+                    "Apply answers to draft"
+                  )}
+                </button>
+                {revisionKind === "ANSWERS" && revisionStatus ? (
+                  <small
+                    className="text-[#8e9192] font-mono text-[11px]"
+                    role="status"
+                  >
+                    {revisionStatus}
+                  </small>
+                ) : null}
+              </div>
+            </div>
           </section>
         ) : null}
 
@@ -5608,9 +5914,26 @@ export function IntentDetailPage() {
                   {documentNames.join(", ") || "Approved application evidence"}
                 </dd>
               </div>
+              {coverage.length ? (
+                <div>
+                  <dt>Document coverage</dt>
+                  <dd>
+                    {coverage
+                      .map(
+                        (item) =>
+                          `${item.filename}: ${item.includedSections} of ${item.totalSections} sections used${item.unsafeSections ? ` (${item.unsafeSections} set aside as unsafe)` : ""}`,
+                      )
+                      .join("; ")}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Generation method</dt>
-                <dd>{draft.source.replaceAll("_", " ").toLowerCase()}</dd>
+                <dd>
+                  {(generation?.method &&
+                    GENERATION_METHOD_LABELS[generation.method]) ??
+                    draft.source.replaceAll("_", " ").toLowerCase()}
+                </dd>
               </div>
               <div>
                 <dt>Overall confidence</dt>
@@ -5620,7 +5943,7 @@ export function IntentDetailPage() {
                 <dt>Evidence excerpts</dt>
                 <dd>
                   {draft.evidence?.length ??
-                    (draft.sourceManifest as any)?.evidenceIds?.length ??
+                    manifest.evidenceIds?.length ??
                     0}
                 </dd>
               </div>
@@ -5640,17 +5963,17 @@ export function IntentDetailPage() {
             <textarea
               className="w-full min-h-[96px] p-3 bg-black border border-[#262626] rounded text-white text-xs placeholder:text-[#555555] focus:outline-none focus:border-white transition-colors"
               value={correction}
-              disabled={isCorrecting}
+              disabled={Boolean(revisionJobId) || !pendingReview}
               onChange={(event) => setCorrection(event.target.value)}
               placeholder="For example: Require sign-in before checkout, and add an order cancellation journey."
             />
             <div className="flex items-center justify-between gap-3">
-              {correctionStatus ? (
+              {revisionKind !== "ANSWERS" && revisionStatus ? (
                 <small
                   className="text-[#8e9192] font-mono text-[11px]"
                   role="status"
                 >
-                  {correctionStatus}
+                  {revisionStatus}
                 </small>
               ) : (
                 <span />
@@ -5659,13 +5982,13 @@ export function IntentDetailPage() {
                 className="button primary"
                 disabled={
                   busy ||
-                  isCorrecting ||
+                  Boolean(revisionJobId) ||
                   !correction.trim() ||
-                  draft.status !== "PENDING_REVIEW"
+                  !pendingReview
                 }
-                onClick={() => void correct()}
+                onClick={correct}
               >
-                {isCorrecting ? (
+                {revisionJobId && revisionKind !== "ANSWERS" ? (
                   <>
                     <RefreshCw className="spin" size={15} /> Updating draft…
                   </>
@@ -5690,10 +6013,9 @@ export function IntentDetailPage() {
               className="button primary"
               disabled={
                 busy ||
-                draft.status !== "PENDING_REVIEW" ||
-                conflicts.some(
-                  (conflict: any) => !resolutions[conflict.key]?.trim(),
-                )
+                !pendingReview ||
+                conflicts.length > 0 ||
+                Boolean(revisionJobId)
               }
               onClick={() => void accept()}
             >
@@ -5702,17 +6024,24 @@ export function IntentDetailPage() {
             </button>
             <button
               className="button danger"
-              disabled={busy || draft.status !== "PENDING_REVIEW"}
+              disabled={busy || !pendingReview || Boolean(revisionJobId)}
               onClick={() => void reject()}
             >
               Discard draft
             </button>
           </div>
-          {conflicts.some(
-            (conflict: any) => !resolutions[conflict.key]?.trim(),
-          ) ? (
+          {conflicts.length ? (
             <small className="approval-blocker">
-              Answer every required question before approval.
+              Answer every question and apply your answers before approval.
+            </small>
+          ) : revisionJobId ? (
+            <small className="approval-blocker">
+              Wait for the revision to finish, then review the revised draft.
+            </small>
+          ) : null}
+          {reviewError ? (
+            <small className="approval-blocker" role="alert">
+              {reviewError}
             </small>
           ) : null}
         </section>

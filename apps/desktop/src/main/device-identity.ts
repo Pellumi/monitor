@@ -38,6 +38,22 @@ function uuidFrom(digest: Buffer): string {
  * without the device secret the digest is not reversible or even comparable
  * across machines.
  */
+/**
+ * An opaque identity for where a product document lives on this machine, so
+ * two different files that share a name are kept apart in the cloud while
+ * uploading the same file again adds a version to its existing document.
+ */
+export function documentSourceKey(filePath: string): string {
+  let canonical = path.resolve(filePath);
+  try {
+    canonical = fs.realpathSync.native(canonical);
+  } catch {
+    // The resolved path still identifies the file consistently.
+  }
+  const normalized = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+  return crypto.createHmac('sha256', deviceSecret()).update(`source-document:${normalized}`).digest('hex');
+}
+
 export function workspaceLocalId(workspaceRoot: string): string {
   const canonical = fs.realpathSync.native(path.resolve(workspaceRoot));
   // Windows paths are case-insensitive, so the same folder reached through a

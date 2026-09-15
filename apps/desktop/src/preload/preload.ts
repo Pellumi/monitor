@@ -62,6 +62,14 @@ const IPC = {
   reviewIntentDraft: 'tellann:intent:draft:review',
   deleteIntentDraft: 'tellann:intent:draft:delete',
   correctIntentDraft: 'tellann:intent:draft:correct',
+  // Mirror the document import channel names defined in main.ts.
+  applyIntentConflictAnswers: 'tellann:intent:draft:apply-answers',
+  getDocumentImport: 'tellann:documents:import:get',
+  resumeDocumentImport: 'tellann:documents:import:resume',
+  cancelDocumentImport: 'tellann:documents:import:cancel',
+  dismissDocumentImport: 'tellann:documents:import:dismiss',
+  generateFromDocumentVersions: 'tellann:documents:import:generate',
+  documentImportProgress: 'tellann:documents:import:progress',
   openExternal: 'tellann:system:open-external',
   openPath: 'tellann:system:open-path',
   openProfile: 'tellann:system:open-profile',
@@ -223,11 +231,25 @@ contextBridge.exposeInMainWorld('tellann', {
     reviewDraft: (applicationId: string, draftId: string, review: unknown) => ipcRenderer.invoke(IPC.reviewIntentDraft, { applicationId, draftId, review }),
     deleteDraft: (applicationId: string, draftId: string) => ipcRenderer.invoke(IPC.deleteIntentDraft, { applicationId, draftId }),
     correctDraft: (applicationId: string, draftId: string, correction: string) => ipcRenderer.invoke(IPC.correctIntentDraft, { applicationId, draftId, correction }),
+    applyConflictAnswers: (applicationId: string, draftId: string, conflictResolutions: Record<string, string>) =>
+      ipcRenderer.invoke(IPC.applyIntentConflictAnswers, { applicationId, draftId, conflictResolutions }),
   },
   documents: {
     list: (applicationId: string) => ipcRenderer.invoke(IPC.listDocuments, applicationId),
-    import: (applicationId: string) => ipcRenderer.invoke(IPC.importDocuments, applicationId),
+    import: (applicationId: string, options?: { generateDraft?: boolean }) =>
+      ipcRenderer.invoke(IPC.importDocuments, { applicationId, generateDraft: options?.generateDraft === true }),
     getJob: (applicationId: string, jobId: string) => ipcRenderer.invoke(IPC.getDocumentJob, { applicationId, jobId }),
+    getImport: (applicationId: string) => ipcRenderer.invoke(IPC.getDocumentImport, applicationId),
+    resumeImport: (applicationId: string) => ipcRenderer.invoke(IPC.resumeDocumentImport, applicationId),
+    cancelImport: (applicationId: string) => ipcRenderer.invoke(IPC.cancelDocumentImport, applicationId),
+    dismissImport: (applicationId: string) => ipcRenderer.invoke(IPC.dismissDocumentImport, applicationId),
+    generateFromVersions: (applicationId: string, documents: Array<{ versionId: string; documentId: string | null; filename: string }>) =>
+      ipcRenderer.invoke(IPC.generateFromDocumentVersions, { applicationId, documents }),
+    onImportProgress: (callback: (view: unknown) => void) => {
+      const subscription = (_: unknown, data: unknown) => callback(data);
+      ipcRenderer.on(IPC.documentImportProgress, subscription);
+      return () => ipcRenderer.removeListener(IPC.documentImportProgress, subscription);
+    },
   },
   runs: {
     list: (applicationId: string) => ipcRenderer.invoke(IPC.listRuns, applicationId),

@@ -29,6 +29,16 @@ function logicalKey(filename: string): string {
   return crypto.createHash('sha256').update(filename.trim().toLowerCase()).digest('hex');
 }
 
+// The desktop sends an opaque, device-scoped digest of where the file lives so
+// two different files that share a name (docs/a/requirements.md and
+// docs/b/requirements.md) stay separate documents. The path itself never leaves
+// the machine.
+const SOURCE_KEY_PATTERN = /^[a-f0-9]{64}$/;
+
+function sourceLogicalKey(filename: string, sourceKey: string): string {
+  return crypto.createHash('sha256').update(`${filename.trim().toLowerCase()}:${sourceKey}`).digest('hex');
+}
+
 export function createDocumentRouter(input: {
   prisma: PrismaClient;
   entitlementChecker: EntitlementChecker;
@@ -81,29 +91,74 @@ export function createDocumentRouter(input: {
     if (!Array.isArray(manifest.segments) || manifest.segments.length > 250 || String(manifest.summary ?? '').length > 12_000) {
       return res.status(413).json({ error: 'DERIVED_DOCUMENT_SUMMARY_TOO_LARGE' });
     }
-    const document = await prisma.sourceDocument.upsert({
-      where: { applicationId_logicalKey: { applicationId: app.id, logicalKey: logicalKey(String(manifest.filename)) } },
-      update: {
-        filename: String(manifest.filename), mimeType: String(manifest.mimeType ?? 'application/octet-stream'), checksum: String(manifest.checksum),
-        uploadMode: req.body.fullFileApproved === true ? 'FULL_FILE_APPROVED' : 'DERIVED_SUMMARY', status: 'READY', parserVersion: String(manifest.processorVersion ?? 'unknown'), errorMessageSafe: null,
-      },
-      create: {
-        organizationId: app.organizationId, applicationId: app.id, uploadedByUserId: req.user!.id,
-        logicalKey: logicalKey(String(manifest.filename)), filename: String(manifest.filename), mimeType: String(manifest.mimeType ?? 'application/octet-stream'),
-        checksum: String(manifest.checksum), uploadMode: req.body.fullFileApproved === true ? 'FULL_FILE_APPROVED' : 'DERIVED_SUMMARY', status: 'READY', parserVersion: String(manifest.processorVersion ?? 'unknown'),
-      },
-    });
+    if (manifest.sourceKey !== undefined && !SOURCE_KEY_PATTERN.test(String(manifest.sourceKey))) {
+      return res.status(400).json({ error: 'INVALID_DOCUMENT_SOURCE_KEY' });
+    }
+    const filename = String(manifest.filename);
+    const checksum = String(manifest.checksum);
+    const uploadMode = req.body.fullFileApproved === true ? 'FULL_FILE_APPROVED' : 'DERIVED_SUMMARY';
+    const legacyKey = logicalKey(filename);
+    const key = manifest.sourceKey ? sourceLogicalKey(filename, String(manifest.sourceKey)) : legacyKey;
+
+    let document = await prisma.sourceDocument.findUnique({ where: { applicationId_logicalKey: { applicationId: app.id, logicalKey: key } } });
+    if (!document && key !== legacyKey) {
+      // Documents uploaded before source keys existed are keyed by filename
+      // alone. The first upload of that filename from a known location adopts
+      // the existing document, so its version history continues instead of a
+      // duplicate appearing beside it.
+      const legacy = await prisma.sourceDocument.findUnique({ where: { applicationId_logicalKey: { applicationId: app.id, logicalKey: legacyKey } } });
+      if (legacy) document = await prisma.sourceDocument.update({ where: { id: legacy.id }, data: { logicalKey: key } });
+    }
+    if (!document) {
+      document = await prisma.sourceDocument.create({
+        data: {
+          organizationId: app.organizationId, applicationId: app.id, uploadedByUserId: req.user!.id,
+          logicalKey: key, filename, mimeType: String(manifest.mimeType ?? 'application/octet-stream'),
+          checksum, uploadMode, status: 'PROCESSING', parserVersion: String(manifest.processorVersion ?? 'unknown'),
+        },
+      });
+    }
+    const documentFields = {
+      filename, mimeType: String(manifest.mimeType ?? 'application/octet-stream'), checksum, uploadMode,
+      parserVersion: String(manifest.processorVersion ?? 'unknown'), errorMessageSafe: null,
+    };
+
     const latest = await prisma.sourceDocumentVersion.findFirst({ where: { documentId: document.id }, orderBy: { version: 'desc' } });
-    if (latest && document.checksum === String(manifest.checksum) && (latest.extractedSummary as any)?.checksum === String(manifest.checksum)) {
+    if (latest && (latest.extractedSummary as any)?.checksum === checksum) {
+      // Unchanged content: the latest version already holds this evidence. The
+      // document must read as PROCESSED again, otherwise intent generation
+      // rejects the version it was just handed.
+      await prisma.documentProcessingJob.updateMany({
+        where: { documentId: document.id, status: 'QUEUED' },
+        data: { status: 'CANCELLED', completedAt: new Date(), errorMessageSafe: 'Superseded by a newer upload.' },
+      });
+      await prisma.sourceDocument.update({ where: { id: document.id }, data: { ...documentFields, status: 'PROCESSED' } });
       return res.status(200).json({ documentId: document.id, versionId: latest.id, status: 'PROCESSED', deduplicated: true });
     }
+
+    // The same content may already be queued, for example when the desktop
+    // resumes an interrupted import. Reuse that job instead of queueing another.
+    const inFlight = await prisma.documentProcessingJob.findFirst({
+      where: { documentId: document.id, status: { in: ['QUEUED', 'PROCESSING'] }, inputManifest: { path: ['checksum'], equals: checksum } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (inFlight) {
+      await prisma.sourceDocument.update({ where: { id: document.id }, data: { ...documentFields, status: 'PROCESSING' } });
+      return res.status(202).json({ documentId: document.id, jobId: inFlight.id, status: inFlight.status, deduplicated: true, fullFileUploaded: false });
+    }
+
+    // Latest upload wins: older queued content for this document is dropped.
+    await prisma.documentProcessingJob.updateMany({
+      where: { documentId: document.id, status: 'QUEUED' },
+      data: { status: 'CANCELLED', completedAt: new Date(), errorMessageSafe: 'Superseded by a newer upload.' },
+    });
     const job = await prisma.documentProcessingJob.create({
       data: {
         organizationId: app.organizationId, applicationId: app.id, documentId: document.id, requestedByUserId: req.user!.id,
         inputManifest: { ...manifest, aiSafeText: String(manifest.aiSafeText ?? '').slice(0, 100_000) },
       },
     });
-    await prisma.sourceDocument.update({ where: { id: document.id }, data: { status: 'PROCESSING' } });
+    await prisma.sourceDocument.update({ where: { id: document.id }, data: { ...documentFields, status: 'PROCESSING' } });
     res.status(202).json({ documentId: document.id, jobId: job.id, status: job.status, fullFileUploaded: false });
   });
 

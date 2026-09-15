@@ -186,8 +186,13 @@ function key(value: string): string {
   return value.trim().replace(/([a-z])([A-Z])/g, '$1_$2').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase().slice(0, 80) || 'WORKFLOW';
 }
 
+/** The parts of a document the baseline reads, so stored evidence can feed it as well as a fresh extraction. */
+export type EvidenceBackedDocument = Pick<ExtractedDocument, 'title'> & {
+  segments: Array<Pick<EvidenceSegment, 'id' | 'heading' | 'excerpt' | 'excludedFromAi'>>;
+};
+
 /** Deterministic, review-only baseline. It never writes graph truth. */
-export function inferEvidenceBackedIntent(documents: ExtractedDocument[]): IntentDraftProposal {
+export function inferEvidenceBackedIntent(documents: EvidenceBackedDocument[]): IntentDraftProposal {
   const usable = documents.flatMap((document) => document.segments.filter((segment) => !segment.excludedFromAi).map((segment) => ({ document, segment })));
   const grouped = new Map<string, typeof usable>();
   for (const item of usable) {

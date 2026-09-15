@@ -1058,7 +1058,7 @@ export class DesktopCloudClient {
 
   async uploadDerivedDocument(
     applicationId: string,
-    manifest: SourceDocumentManifest,
+    manifest: SourceDocumentManifest & { sourceKey?: string },
   ) {
     return this.request<Json>(
       `/applications/${applicationId}/source-documents/upload-intent`,
@@ -1175,6 +1175,22 @@ export class DesktopCloudClient {
     }>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/correct`, {
       method: "POST",
       body: JSON.stringify({ correction }),
+    });
+    return response.data;
+  }
+
+  /** Regenerates a draft with the member's answers to its documentation conflicts. */
+  async applyIntentConflictAnswers(
+    applicationId: string,
+    draftId: string,
+    conflictResolutions: Record<string, string>,
+  ): Promise<IntentDraftJobCreated> {
+    const response = await this.request<{
+      success: boolean;
+      data: IntentDraftJobCreated;
+    }>(`/v1/applications/${applicationId}/intent-drafts/${draftId}/correct`, {
+      method: "POST",
+      body: JSON.stringify({ conflictResolutions }),
     });
     return response.data;
   }
