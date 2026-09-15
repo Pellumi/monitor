@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -6,9 +5,18 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * The Git state a workspace was in when Tellann applied instrumentation.
+ *
+ * `GIT_BRANCH` means the branch and revision the changes were applied on were
+ * recorded; `LOCAL` means Git state could not be read. Either way, undoing the
+ * change restores files from the adapter's own file checkpoint, not from Git.
+ */
 export type InstrumentationCheckpoint = {
   kind: 'GIT_BRANCH' | 'LOCAL';
+  /** The branch the changes were applied on (null on a detached HEAD). */
   branch: string | null;
+  /** Kept for the patch record; equal to `branch`, since nothing is switched. */
   previousBranch: string | null;
   baseRevision: string | null;
   dirty: boolean;
@@ -34,18 +42,6 @@ async function git(root: string, args: string[]): Promise<string> {
   return String(result.stdout ?? '').trim();
 }
 
-// Instrumentation branches live under the QA review branch when the application
-// has one, so a run cannot quietly escape the branch policy into an unrelated
-// namespace. Falls back to the flat name when no policy applies.
-function branchName(now: Date, qaBranchName?: string | null): string {
-  const timestamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const suffix = `instrument-${timestamp}-${crypto.randomBytes(3).toString('hex')}`;
-  const prefix = qaBranchName && /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,200}$/.test(qaBranchName)
-    ? qaBranchName
-    : 'tellann';
-  return `${prefix}/${suffix}`;
-}
-
 function local(reason: string, details?: Partial<InstrumentationCheckpoint>): InstrumentationCheckpoint {
   return {
     kind: 'LOCAL',
@@ -59,9 +55,14 @@ function local(reason: string, details?: Partial<InstrumentationCheckpoint>): In
   };
 }
 
+/**
+ * Records where instrumentation is about to be applied. It deliberately never
+ * creates or switches a branch: QA work for an application happens on its QA
+ * review branch, and moving the workspace to a per-run branch would take the
+ * member off it (and fail the branch policy) the moment setup finished.
+ */
 export async function createInstrumentationCheckpoint(
   workspaceRoot: string,
-  qaBranchName?: string | null,
 ): Promise<InstrumentationCheckpoint> {
   const root = fs.realpathSync.native(path.resolve(workspaceRoot));
   try {
@@ -70,14 +71,12 @@ export async function createInstrumentationCheckpoint(
       return local('WORKSPACE_IS_NOT_REPOSITORY_ROOT');
     }
     const baseRevision = await git(root, ['rev-parse', 'HEAD']);
-    const previousBranch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '')) || null;
+    const branch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '')) || null;
     const dirty = Boolean(await git(root, ['status', '--porcelain=v1', '--untracked-files=normal']));
-    const branch = branchName(new Date(), qaBranchName);
-    await git(root, ['switch', '-c', branch]);
     return {
       kind: 'GIT_BRANCH',
       branch,
-      previousBranch,
+      previousBranch: branch,
       baseRevision,
       dirty,
       reason: null,

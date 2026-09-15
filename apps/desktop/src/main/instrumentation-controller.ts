@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createRequire } from "node:module";
 import { app, shell } from "electron";
 import {
   resolveWithinWorkspace,
@@ -31,6 +30,7 @@ import {
   type InstrumentationCheckpoint,
 } from "./git-checkpoint";
 import type { LocalApplicationLauncher } from "./application-launcher";
+import { findInstalledPackage } from "./sdk-installation";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,6 +70,19 @@ export type CommandResult = {
   exitCode: number | null;
   durationMs: number;
   output: string;
+};
+
+/**
+ * One step of applying an approved task, reported as it happens so the member
+ * can see what Tellann is doing to their project. `detail` names the file or
+ * command a step is about, when there is one.
+ */
+export type InstrumentationProgressUpdate = {
+  step: string;
+  status: "RUNNING" | "DONE" | "FAILED";
+  message: string;
+  detail: string | null;
+  at: string;
 };
 
 function assertUuid(value: unknown, name: string): asserts value is string {
@@ -252,20 +265,18 @@ function installedSdkCheck(
   const packageManifest = packageOperation
     ? resolveWithinWorkspace(root, packageOperation.relativePath)
     : path.join(root, "package.json");
-  try {
-    createRequire(packageManifest).resolve(`${packageName}/package.json`);
-    return {
-      name: "sdk-installed",
-      passed: true,
-      output: `${packageName} resolves from the project`,
-    };
-  } catch {
-    return {
-      name: "sdk-installed",
-      passed: false,
-      output: `${packageName} is declared but cannot be resolved from the project`,
-    };
-  }
+  const installed = findInstalledPackage(path.dirname(packageManifest), packageName);
+  return installed
+    ? {
+        name: "sdk-installed",
+        passed: true,
+        output: `${packageName}${installed.version ? `@${installed.version}` : ""} is installed`,
+      }
+    : {
+        name: "sdk-installed",
+        passed: false,
+        output: `${packageName} is declared but not installed in node_modules. Run your package manager's install, then re-run local checks.`,
+      };
 }
 
 function currentHash(root: string, relativePath: string): string | null {
@@ -296,6 +307,8 @@ export class InstrumentationController {
       applicationId: string,
     ) => SelectedWorkspace | null,
     private readonly launcher?: LocalApplicationLauncher,
+    /** Rescans the attached folder and registers the result as the workspace's current snapshot. */
+    private readonly refreshWorkspace?: (applicationId: string) => Promise<void>,
   ) {}
 
   private selected(applicationId: string): SelectedWorkspace {
@@ -344,6 +357,11 @@ export class InstrumentationController {
   async propose(input: EnvironmentContext & { adapterId: FrameworkId }) {
     if (input.environmentType === "PRODUCTION")
       throw new Error("PRODUCTION_OBSERVATION_ONLY");
+    // Applying refuses a plan whose revision is not the project's current commit.
+    // Build the plan from the project as it is now: the snapshot taken when the
+    // folder was attached goes stale after any commit, branch switch or install,
+    // and every plan built from it would then fail to apply.
+    await this.refreshWorkspace?.(input.applicationId);
     const workspace = this.selected(input.applicationId);
     const initialization =
       input.instrumentationPurpose === "FLOW" && input.flowInitializationId
@@ -478,7 +496,21 @@ export class InstrumentationController {
     return this.cloud.rejectInstrumentation(applicationId, planId, reason);
   }
 
-  async apply(applicationId: string, planId: string) {
+  async apply(
+    applicationId: string,
+    planId: string,
+    onProgress?: (update: InstrumentationProgressUpdate) => void,
+  ) {
+    let currentStep = "PREPARE";
+    const report = (
+      step: string,
+      status: InstrumentationProgressUpdate["status"],
+      message: string,
+      detail: string | null = null,
+    ) => {
+      if (status === "RUNNING") currentStep = step;
+      onProgress?.({ step, status, message, detail, at: new Date().toISOString() });
+    };
     const workspace = this.selected(applicationId);
     const plan = this.localPlan(planId);
     const approval = this.localApproval(planId);
@@ -493,12 +525,14 @@ export class InstrumentationController {
     ) {
       throw new Error("SDK_INSTALL_COMMAND_APPROVAL_REQUIRED");
     }
+    report("PREPARE", "RUNNING", "Confirming your approval with Tellann Cloud");
     const intent = await this.cloud.instrumentationApplyIntent(
       applicationId,
       planId,
     );
     if (intent.approvalHash !== approval.approvalHash)
       throw new Error("CLOUD_APPROVAL_HASH_MISMATCH");
+    report("PREPARE", "DONE", "Approval confirmed");
     const context = this.context(workspace, approval.environmentType);
     let appliedPatch: PatchResult | null = null;
     try {
@@ -513,10 +547,38 @@ export class InstrumentationController {
           workspace.localId,
         ),
       };
+      report("CHECKPOINT", "RUNNING", "Recording where your project is before changing anything");
       const checkpoint = await createInstrumentationCheckpoint(workspace.root);
       writeLocalState(`instrumentation-checkpoint:${planId}`, checkpoint);
+      report(
+        "CHECKPOINT",
+        "DONE",
+        checkpoint.kind === "GIT_BRANCH"
+          ? `On ${checkpoint.branch ?? "a detached HEAD"}${checkpoint.baseRevision ? ` at ${checkpoint.baseRevision.slice(0, 7)}` : ""}${checkpoint.dirty ? ", with your uncommitted changes left as they are" : ""}`
+          : "Saved a local checkpoint of the files Tellann will touch",
+      );
+      // The environment file and its ignore rule are written further down.
+      const fileOperations = plan.operations.filter(
+        (operation) =>
+          operation.id !== "tellann-local-environment" &&
+          operation.id !== "tellann-environment-ignore",
+      );
+      report(
+        "WRITE_FILES",
+        "RUNNING",
+        `Writing ${fileOperations.length} approved change${fileOperations.length === 1 ? "" : "s"}`,
+      );
       let patch = await getAdapter(plan.adapterId).apply(context, task);
       appliedPatch = patch;
+      for (const operation of fileOperations) {
+        report("WRITE_FILES", "RUNNING", operation.description, operation.relativePath);
+      }
+      report(
+        "WRITE_FILES",
+        "DONE",
+        `Wrote ${fileOperations.length} change${fileOperations.length === 1 ? "" : "s"}`,
+      );
+      report("CREDENTIALS", "RUNNING", "Creating a setup key for this environment");
       const setup = await this.cloud.sdkSetup(
         applicationId,
         approval.environmentId,
@@ -579,6 +641,14 @@ export class InstrumentationController {
           ignoreTarget,
           `${ignoreSource.trimEnd()}${ignoreSource.trim() ? "\n" : ""}.env.local\n`,
         );
+      report(
+        "CREDENTIALS",
+        "RUNNING",
+        "Saved the setup key and connection settings",
+        envOperation.relativePath,
+      );
+      report("CREDENTIALS", "RUNNING", "Kept the key out of Git", ignoreOperation.relativePath);
+      report("CREDENTIALS", "DONE", "Setup key added");
       patch = refreshPatchResult(context, patch);
       appliedPatch = patch;
       const commands = plan.validationCommands.filter((command) =>
@@ -586,12 +656,23 @@ export class InstrumentationController {
       );
       const commandResults: CommandResult[] = [];
       for (const command of commands) {
+        const step = `COMMAND:${command.id}`;
+        report(step, "RUNNING", command.purpose, `${command.executable} ${command.args.join(" ")}`);
         const result = await runCommand(command, workspace.root);
         commandResults.push(result);
+        const seconds = Math.max(1, Math.round(result.durationMs / 1000));
+        report(
+          step,
+          result.passed ? "DONE" : "FAILED",
+          result.passed
+            ? `Finished in ${seconds}s`
+            : `Failed after ${seconds}s${result.exitCode === null ? "" : ` (exit code ${result.exitCode})`}`,
+        );
         if (!result.passed) break;
       }
       patch = refreshPatchResult(context, patch);
       appliedPatch = patch;
+      report("VALIDATE", "RUNNING", "Checking the changes Tellann made");
       const validation = await getAdapter(plan.adapterId).validate(
         context,
         patch,
@@ -600,9 +681,15 @@ export class InstrumentationController {
       for (const command of commandResults)
         validation.checks.push(validationCheckForCommand(command));
       validation.valid = validation.checks.every((check) => check.passed);
+      report(
+        "VALIDATE",
+        validation.valid ? "DONE" : "FAILED",
+        `${validation.checks.filter((check) => check.passed).length} of ${validation.checks.length} checks passed`,
+      );
       let telemetryVerified = false;
       const launchCommand = workspace.snapshot.launchCommands?.[0];
       if (validation.valid && launchCommand && this.launcher) {
+        report("VERIFY", "RUNNING", "Starting your app to confirm the connection");
         await this.launcher.startPermanent(launchCommand, workspace.root, {
           endpoint: String(setup.gatewayEndpoint),
           ingestionKey: credential.rawKey,
@@ -626,6 +713,7 @@ export class InstrumentationController {
             }
             await shell.openExternal(target.toString());
           }
+          report("VERIFY", "RUNNING", "Waiting for your app's first event (up to 45 seconds)");
           const deadline = Date.now() + 45_000;
           while (Date.now() < deadline) {
             const latest = await this.cloud.sdkSetup(
@@ -651,6 +739,13 @@ export class InstrumentationController {
             ? "TELLANN_ONBOARDING_TEST received"
             : "Application started but no onboarding test event was observed before timeout",
         });
+        report(
+          "VERIFY",
+          telemetryVerified ? "DONE" : "FAILED",
+          telemetryVerified
+            ? "Your app sent its first event"
+            : "No event arrived in time. You can confirm the connection later",
+        );
         validation.valid = validation.checks.every((check) => check.passed);
       }
       const localResult = {
@@ -664,6 +759,7 @@ export class InstrumentationController {
         },
       };
       writeLocalState(`instrumentation-result:${planId}`, localResult);
+      report("SYNC", "RUNNING", "Saving the result to Tellann Cloud");
       const cloudResult = await this.cloud.submitInstrumentationResult(
         applicationId,
         planId,
@@ -673,6 +769,7 @@ export class InstrumentationController {
         commandResults,
         checkpoint,
       );
+      report("SYNC", "DONE", "Saved");
       return {
         patch,
         commandResults,
@@ -686,10 +783,14 @@ export class InstrumentationController {
         error instanceof Error
           ? error.message
           : "Local instrumentation application failed";
-      if (appliedPatch)
+      report(currentStep, "FAILED", reason);
+      if (appliedPatch) {
+        report("ROLLBACK", "RUNNING", "Undoing Tellann's changes");
         await getAdapter(plan.adapterId)
           .rollback(context, refreshPatchResult(context, appliedPatch))
           .catch(() => undefined);
+        report("ROLLBACK", "DONE", "Your files are back as they were");
+      }
       await this.cloud
         .failInstrumentation(applicationId, planId, intent.capability, reason)
         .catch(() => undefined);

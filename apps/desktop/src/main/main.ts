@@ -8,6 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
 import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
+import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
   answerFromAnalysis,
   blastRadiusInAnalysis,
@@ -92,6 +93,13 @@ const instrumentation = new InstrumentationController(
   cloud,
   (applicationId) => selectedWorkspaces.get(applicationId) ?? null,
   applicationLauncher,
+  // The same scan-and-register as attaching the folder, so a new plan and the
+  // cloud's snapshot both describe the project's current commit and files.
+  async (applicationId) => {
+    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    if (!stored || !existsSync(stored.path)) return;
+    await registerSelectedWorkspace(applicationId, stored.path);
+  },
 );
 
 function captureSetupDeepLink(values: string[]): void {
@@ -124,6 +132,90 @@ let evidenceFlushTimer: NodeJS.Timeout | null = null;
 let boundaryPollTimer: NodeJS.Timeout | null = null;
 
 function evidenceQueueKey(runId: string): string { return `qa-evidence-queue:${runId}`; }
+
+/**
+ * Applying a setup task can take minutes (package install, build, waiting for
+ * the app's first event). Progress is kept per plan so the task page shows where
+ * it has got to even after navigating away and back, and the member is told
+ * when it finishes if they are not looking at Tellann.
+ *
+ * Channel names live here and in preload rather than in the shared contracts:
+ * the desktop loads that package's prebuilt output at runtime.
+ */
+const INSTRUMENTATION_PROGRESS_CHANNEL = 'tellann:instrumentation:progress';
+const INSTRUMENTATION_PROGRESS_GET_CHANNEL = 'tellann:instrumentation:progress:get';
+
+type InstrumentationApplyProgress = {
+  applicationId: string;
+  planId: string;
+  outcome: 'RUNNING' | 'SUCCEEDED' | 'NEEDS_ATTENTION' | 'FAILED';
+  summary: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  events: InstrumentationProgressUpdate[];
+};
+
+const instrumentationApplyProgress = new Map<string, InstrumentationApplyProgress>();
+// Held until closed: a notification garbage-collected early loses its click handler.
+const shownNotifications = new Set<ElectronNotification>();
+
+function publishApplyProgress(progress: InstrumentationApplyProgress): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(INSTRUMENTATION_PROGRESS_CHANNEL, progress);
+}
+
+/** A native notification, only when the member is not looking at Tellann; clicking opens `deepLink`. */
+function notifyWhenAway(input: { title: string; body: string; deepLink: string }): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) return;
+  if (!ElectronNotification.isSupported()) return;
+  const notification = new ElectronNotification({ title: input.title, body: input.body });
+  shownNotifications.add(notification);
+  const release = () => shownNotifications.delete(notification);
+  notification.on('click', () => {
+    release();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send(IPC.notificationOpen, { deepLink: input.deepLink });
+  });
+  notification.on('close', release);
+  notification.show();
+}
+
+async function applyInstrumentationWithProgress(applicationId: string, planId: string) {
+  if (instrumentationApplyProgress.get(planId)?.outcome === 'RUNNING') {
+    throw new Error('INSTRUMENTATION_APPLY_IN_PROGRESS');
+  }
+  const progress: InstrumentationApplyProgress = {
+    applicationId, planId, outcome: 'RUNNING', summary: null,
+    startedAt: new Date().toISOString(), finishedAt: null, events: [],
+  };
+  instrumentationApplyProgress.set(planId, progress);
+  publishApplyProgress(progress);
+  const finish = (outcome: Exclude<InstrumentationApplyProgress['outcome'], 'RUNNING'>, title: string, summary: string) => {
+    progress.outcome = outcome;
+    progress.summary = summary;
+    progress.finishedAt = new Date().toISOString();
+    publishApplyProgress(progress);
+    notifyWhenAway({ title, body: summary, deepLink: `/applications/${applicationId}/instrumentation/plans/${planId}` });
+  };
+  try {
+    const result = await instrumentation.apply(applicationId, planId, (update) => {
+      progress.events = [...progress.events, update].slice(-200);
+      publishApplyProgress(progress);
+    });
+    if (result.validation.valid) {
+      finish('SUCCEEDED', 'Tellann setup finished', 'Tellann is installed in your project and every check passed.');
+    } else {
+      finish('NEEDS_ATTENTION', 'Tellann setup needs a look', 'Tellann applied the changes, but some checks need your attention.');
+    }
+    return result;
+  } catch (error) {
+    finish('FAILED', 'Tellann setup stopped', 'Setup stopped before finishing, and any changes Tellann made were undone. Open the task to see why.');
+    throw error;
+  }
+}
 
 function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEvent> = {}): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -461,6 +553,20 @@ async function hasQaBranchGrant(applicationId: string, cloudWorkspaceId: string 
   } catch {
     return false;
   }
+}
+
+/** This member's workspace measured against the application's QA review branch policy. */
+async function workspaceBranchCompliance(applicationId: string) {
+  const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+  if (!stored) return null;
+  const policy = await resolveBranchPolicy(applicationId, stored.branchPolicy);
+  return evaluateCompliance({
+    workspaceRoot: stored.path,
+    policy,
+    agentCheckoutGranted: await hasQaBranchGrant(applicationId, stored.cloudId),
+    aheadCount: stored.snapshot.aheadCount ?? null,
+    behindCount: stored.snapshot.behindCount ?? null,
+  });
 }
 
 function localWorkspaceKey(applicationId: string): string {
@@ -1946,16 +2052,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.getBranchCompliance, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
-    if (!stored) return null;
-    const policy = await resolveBranchPolicy(applicationId, stored.branchPolicy);
-    return evaluateCompliance({
-      workspaceRoot: stored.path,
-      policy,
-      agentCheckoutGranted: await hasQaBranchGrant(applicationId, stored.cloudId),
-      aheadCount: stored.snapshot.aheadCount ?? null,
-      behindCount: stored.snapshot.behindCount ?? null,
-    });
+    return workspaceBranchCompliance(applicationId);
   });
 
   /**
@@ -2124,11 +2221,24 @@ function registerIpc(): void {
   ] as const) {
     ipcMain.handle(channel, async (event, input: unknown) => {
       assertTrustedSender(event);
-      const value = input as { applicationId?: unknown; planId?: unknown };
+      const value = input as { applicationId?: unknown; planId?: unknown; confirmOffQaBranch?: unknown };
       if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_ACTION');
+      // Applying writes to whatever branch the workspace is on. Off the QA review
+      // branch that is allowed, but only after the member confirms it: the
+      // renderer asks, and an unconfirmed request is refused here.
+      if (action === 'apply' && value.confirmOffQaBranch !== true) {
+        const compliance = await workspaceBranchCompliance(value.applicationId);
+        if (compliance?.status === 'BRANCH_MISMATCH') throw new Error('QA_BRANCH_CONFIRMATION_REQUIRED');
+      }
+      if (action === 'apply') return applyInstrumentationWithProgress(value.applicationId, value.planId);
       return instrumentation[action](value.applicationId, value.planId);
     });
   }
+  ipcMain.handle(INSTRUMENTATION_PROGRESS_GET_CHANNEL, (event, planId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof planId !== 'string') throw new Error('INVALID_PLAN_ID');
+    return instrumentationApplyProgress.get(planId) ?? null;
+  });
   ipcMain.handle(IPC.startGuidedRun, async (event, input: unknown) => {
     assertTrustedSender(event);
     const parsed = StartGuidedRunInputSchema.parse(input);

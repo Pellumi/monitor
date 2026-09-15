@@ -6172,6 +6172,205 @@ button:disabled {
   margin-top: 0;
 }
 
+/* Instrumentation: one next step, detection as a short checklist, setup code
+   and history on demand. */
+.instrumentation-environment {
+  width: min(100%, 320px);
+  margin: 2px 0 10px;
+}
+.setup-note,
+.next-step-card .setup-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inline-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--strong);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.detection-options {
+  display: grid;
+  gap: 8px;
+}
+.check-row.detection-option {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: #090909;
+  cursor: pointer;
+}
+.setup-live-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+.setup-live-status.is-connected {
+  color: #7fc08a;
+}
+.setup-troubleshooting > summary,
+.setup-history > summary {
+  width: fit-content;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.setup-history > summary {
+  font-size: 13px;
+}
+.setup-troubleshooting ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.setup-history .table-head,
+.setup-history .table-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* Applying a setup task: live steps and the changes being made. */
+.apply-progress {
+  display: grid;
+  gap: 14px;
+  border-left: 3px solid var(--strong);
+}
+.apply-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.apply-progress-head small {
+  color: var(--muted);
+  font:
+    10px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.apply-progress-head h2 {
+  margin: 4px 0;
+  font-size: 18px;
+}
+.apply-progress-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.apply-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #1f1f23;
+}
+.apply-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--strong);
+  transition: width 0.4s ease;
+}
+.apply-progress-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.apply-progress-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.apply-progress-step.is-running {
+  color: var(--strong);
+}
+.apply-progress-step.is-done {
+  color: var(--text);
+}
+.apply-progress-step.is-failed {
+  color: #f4a3a3;
+}
+.apply-progress-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+.apply-progress-step.is-done .apply-progress-icon {
+  border-color: #2f6b3f;
+  color: #7fc08a;
+}
+.apply-progress-step.is-running .apply-progress-icon {
+  border-color: var(--strong);
+}
+.apply-progress-step.is-failed .apply-progress-icon {
+  border-color: #7a2e2e;
+}
+.apply-progress-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.apply-progress-text strong {
+  color: inherit;
+  font-weight: 500;
+}
+.apply-progress-text small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.apply-progress-text code,
+.apply-progress-changes code {
+  color: var(--text);
+  font-size: 11px;
+}
+.apply-progress-changes {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.apply-progress-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.apply-progress-changes li > svg {
+  flex-shrink: 0;
+  color: #7fc08a;
+}
+.apply-progress-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .flow-review-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

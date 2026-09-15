@@ -179,7 +179,7 @@ Create these modules under the desktop main/utility boundary:
 
 - `instrumentation-controller`: orchestrates detect/propose/approve/apply/validate/rollback.
 - `workspace-reader`: bounded reads and hashes, no execution.
-- `git-checkpoint`: detects Git/worktree state, creates `tellann/instrument-<timestamp>` when selected, or records a local checkpoint.
+- `git-checkpoint`: records Git/worktree state (branch, revision, dirty files) before applying, or records a local checkpoint. It never creates or switches branches; applying off the QA review branch requires the member's explicit confirmation.
 - `patch-engine`: applies typed adapter operations atomically and journals each operation.
 - `command-runner`: executes approved executable + argument arrays without a shell, with timeouts, environment allowlists, output bounds, and cancellation.
 - `package-manager`: npm, pnpm, yarn, and Bun detection/install argument generation.

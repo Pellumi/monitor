@@ -5,6 +5,7 @@ import { Prisma, type PrismaClient } from '@tellann/db';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import { InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
+import { flowInitializationResetOnRejection } from './instrumentation-flow-reset';
 
 type InstrumentationRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: InstrumentationRequest, res: Response, next: NextFunction) => unknown;
@@ -260,9 +261,16 @@ export function createInstrumentationRouter(input: {
     const plan = await planFor(req, res);
     if (!plan) return;
     if (!['PROPOSED', 'APPROVED'].includes(plan.status)) return res.status(409).json({ error: 'PLAN_CANNOT_BE_REJECTED' });
-    const rejected = await prisma.instrumentationPlan.update({ where: { id: plan.id }, data: { status: 'REJECTED', rejectionReasonSafe: safeReason(req.body.reason), completedAt: new Date() } });
-    await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_PLAN_REJECTED', { planId: plan.id });
-    res.json(rejected);
+    // The plan and the Flow initialization waiting on it change together, so a
+    // Flow is never left on the automatic path behind a plan that is closed.
+    const reset = flowInitializationResetOnRejection(plan);
+    const { rejected, flowInitializationsReset } = await prisma.$transaction(async (tx) => {
+      const rejected = await tx.instrumentationPlan.update({ where: { id: plan.id }, data: { status: 'REJECTED', rejectionReasonSafe: safeReason(req.body.reason), completedAt: new Date() } });
+      const flowInitializationsReset = reset ? (await tx.flowInitialization.updateMany(reset)).count : 0;
+      return { rejected, flowInitializationsReset };
+    });
+    await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_PLAN_REJECTED', { planId: plan.id, flowInitializationsReset });
+    res.json({ ...rejected, flowInitializationsReset });
   });
 
   router.post('/v1/applications/:appId/instrumentation/plans/:planId/apply-intent', async (req: InstrumentationRequest, res: Response) => {

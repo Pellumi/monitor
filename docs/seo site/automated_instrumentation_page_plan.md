@@ -789,35 +789,37 @@ This is particularly important for enterprise adoption.
 
 Explain:
 
-> Organizations can control which branch Tellann is allowed to use for instrumentation.
+> Organizations set a QA review branch. Tellann applies instrumentation there without creating branches of its own, and asks before applying anywhere else.
 
 Visual:
 
 ```text
 main
  │
- ├── feature/checkout
+ ├── tellann/qa-review
+ │        ↑
+ │   changes applied here
  │
- └── qa/tellann-instrumentation
-                ↑
-           changes applied here
+ └── feature/checkout
 ```
 
 Then:
 
 ```text
-Original branch
-feature/checkout
+QA review branch
+tellann/qa-review
 
-Instrumentation branch
-qa/tellann-instrumentation
+Changes applied
+On the QA review branch
 
-Run completed
+On another branch?
+Tellann asks before applying
 
-Original branch restored
+Undo
+Only Tellann-authored changes
 ```
 
-The architecture supports branch policy, time-boxed checkout grants, recording the current branch state and restoring it after intervention. 
+The architecture supports a QA review branch policy, time-boxed checkout grants for switching a workspace onto that branch, and a confirmation step before instrumentation is applied on any other branch.
 
 ---
 

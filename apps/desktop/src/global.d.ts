@@ -35,6 +35,24 @@ import type { GuidedRunState } from '@tellann/browser-observer';
 
 declare global {
   /** What the desktop knows about an analysis, whichever side is running it. */
+  /** Where applying an approved instrumentation task has got to (sent by the main process). */
+  type InstrumentationApplyProgress = {
+    applicationId: string;
+    planId: string;
+    outcome: 'RUNNING' | 'SUCCEEDED' | 'NEEDS_ATTENTION' | 'FAILED';
+    summary: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+    events: Array<{
+      step: string;
+      status: 'RUNNING' | 'DONE' | 'FAILED';
+      message: string;
+      /** The file or command the step is about, when there is one. */
+      detail: string | null;
+      at: string;
+    }>;
+  };
+
   type CodebaseAnalysisView = {
     mode: 'cloud' | 'local';
     source: 'cloud' | 'local';
@@ -197,7 +215,15 @@ declare global {
         generateReport(applicationId: string, planId: string, applicationName: string, environmentName: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string; sourceAdded?: boolean; sourceStatus?: string; sourceError?: string }>;
         approve(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
         reject(applicationId: string, planId: string, reason?: string): Promise<Record<string, unknown>>;
-        apply(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+        /** `confirmOffQaBranch` is required when the workspace is not on the QA review branch. */
+        apply(
+          applicationId: string,
+          planId: string,
+          options?: { confirmOffQaBranch?: boolean },
+        ): Promise<Record<string, unknown>>;
+        /** The latest apply progress for a plan, or null if it has not been applied this session. */
+        getProgress(planId: string): Promise<InstrumentationApplyProgress | null>;
+        onProgress(callback: (progress: InstrumentationApplyProgress) => void): () => void;
         validate(applicationId: string, planId: string): Promise<InstrumentationValidationResult>;
         rollback(applicationId: string, planId: string): Promise<Record<string, unknown>>;
       };

@@ -10,7 +10,7 @@ function git(root: string, ...args: string[]) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true }).trim();
 }
 
-test('creates a bounded Tellann branch while preserving dirty workspace changes', async () => {
+test('records the current branch without switching or creating one, and keeps dirty changes', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-git-checkpoint-'));
   git(root, 'init');
   git(root, 'config', 'user.email', 'test@tellann.local');
@@ -18,19 +18,39 @@ test('creates a bounded Tellann branch while preserving dirty workspace changes'
   fs.writeFileSync(path.join(root, 'tracked.txt'), 'original');
   git(root, 'add', 'tracked.txt');
   git(root, 'commit', '-m', 'fixture');
-  const previousBranch = git(root, 'branch', '--show-current');
+  const currentBranch = git(root, 'branch', '--show-current');
+  const revision = git(root, 'rev-parse', 'HEAD');
   fs.writeFileSync(path.join(root, 'tracked.txt'), 'dirty user change');
   fs.writeFileSync(path.join(root, 'untracked.txt'), 'keep me');
 
   const checkpoint = await createInstrumentationCheckpoint(root);
 
   assert.equal(checkpoint.kind, 'GIT_BRANCH');
-  assert.equal(checkpoint.previousBranch, previousBranch);
+  assert.equal(checkpoint.branch, currentBranch);
+  assert.equal(checkpoint.previousBranch, currentBranch);
+  assert.equal(checkpoint.baseRevision, revision);
   assert.equal(checkpoint.dirty, true);
-  assert.match(checkpoint.branch ?? '', /^tellann\/instrument-/);
-  assert.equal(git(root, 'branch', '--show-current'), checkpoint.branch);
+  assert.equal(git(root, 'branch', '--show-current'), currentBranch);
+  assert.equal(git(root, 'branch', '--list', 'tellann/instrument-*'), '');
   assert.equal(fs.readFileSync(path.join(root, 'tracked.txt'), 'utf8'), 'dirty user change');
   assert.equal(fs.readFileSync(path.join(root, 'untracked.txt'), 'utf8'), 'keep me');
+});
+
+test('leaves a workspace on its QA review branch', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-git-checkpoint-'));
+  git(root, 'init');
+  git(root, 'config', 'user.email', 'test@tellann.local');
+  git(root, 'config', 'user.name', 'Tellann Test');
+  fs.writeFileSync(path.join(root, 'tracked.txt'), 'original');
+  git(root, 'add', 'tracked.txt');
+  git(root, 'commit', '-m', 'fixture');
+  git(root, 'switch', '-c', 'tellann/qa-review');
+
+  const checkpoint = await createInstrumentationCheckpoint(root);
+
+  assert.equal(checkpoint.branch, 'tellann/qa-review');
+  assert.equal(git(root, 'branch', '--show-current'), 'tellann/qa-review');
+  assert.doesNotMatch(git(root, 'branch', '--list'), /instrument-/);
 });
 
 test('uses a local checkpoint when the approved workspace is only a repository subdirectory', async () => {

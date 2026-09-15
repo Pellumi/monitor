@@ -162,8 +162,8 @@ test('instrumentation lifecycle enforces tenancy, production policy, approval sc
         validation: { valid: true, checks: [] },
         checkpointKind: 'GIT_BRANCH',
         checkpointMetadata: {
-          branch: 'tellann/instrument-20260811T120000Z-a1b2c3',
-          previousBranch: 'main',
+          branch: 'tellann/qa-review',
+          previousBranch: 'tellann/qa-review',
           baseRevision: null,
           dirty: true,
           reason: null,
@@ -174,7 +174,7 @@ test('instrumentation lifecycle enforces tenancy, production policy, approval sc
     const submittedBody = await submitted.json() as { checkpointKind: string; checkpointMetadata: { branch: string; dirty: boolean }; error?: string };
     assert.equal(submitted.status, 201, submittedBody.error);
     assert.equal(submittedBody.checkpointKind, 'GIT_BRANCH');
-    assert.equal(submittedBody.checkpointMetadata.branch, 'tellann/instrument-20260811T120000Z-a1b2c3');
+    assert.equal(submittedBody.checkpointMetadata.branch, 'tellann/qa-review');
     assert.equal(submittedBody.checkpointMetadata.dirty, true);
     const replay = await request(baseUrl, data.user.id, `/v1/applications/${data.application.id}/instrumentation/plans/${proposedPlan.id}/results`, {
       method: 'POST', headers: { 'x-tellann-instrumentation-capability': capability }, body: JSON.stringify({ result, validation: { valid: true, checks: [] } }),

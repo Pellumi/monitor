@@ -168,7 +168,12 @@ type DesktopContextValue = {
   getLocalInstrumentationResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
   approveInstrumentation(input: InstrumentationEnvironmentInput & { planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
   rejectInstrumentation(applicationId: string, planId: string, reason?: string): Promise<Record<string, unknown>>;
-  applyInstrumentation(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+  /** Pass `confirmOffQaBranch` once the member has agreed to apply off the QA review branch. */
+  applyInstrumentation(
+    applicationId: string,
+    planId: string,
+    options?: { confirmOffQaBranch?: boolean },
+  ): Promise<Record<string, unknown>>;
   validateInstrumentation(applicationId: string, planId: string): Promise<InstrumentationValidationResult>;
   rollbackInstrumentation(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   startRun(input: StartGuidedRunInput): Promise<GuidedRunState>;
@@ -651,7 +656,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getLocalInstrumentationResult: (applicationId, planId) => bridge().instrumentation.getLocalResult(applicationId, planId),
     approveInstrumentation: (input) => perform(() => bridge().instrumentation.approve(input)),
     rejectInstrumentation: (applicationId, planId, reason) => perform(() => bridge().instrumentation.reject(applicationId, planId, reason)),
-    applyInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.apply(applicationId, planId)),
+    applyInstrumentation: (applicationId, planId, options) => perform(() => bridge().instrumentation.apply(applicationId, planId, options)),
     validateInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.validate(applicationId, planId)),
     rollbackInstrumentation: (applicationId, planId) => perform(() => bridge().instrumentation.rollback(applicationId, planId)),
     startRun,
@@ -698,11 +703,17 @@ export function normalizeDesktopError(cause: unknown): string {
   if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
     return 'That sign-in request is no longer active. Cancel it and try again.';
   }
+  if (/QA_BRANCH_CONFIRMATION_REQUIRED/.test(raw)) {
+    return 'This workspace is not on the QA review branch, and applying there was not confirmed. Try again and Tellann will ask before writing to the current branch.';
+  }
   if (/STALE_TARGET_FILE:/.test(raw)) {
     const file = raw.split('STALE_TARGET_FILE:')[1]?.trim().split(/[\s'"]/)[0] || 'A project file';
     return `${file} changed on disk after this setup task was created, so Tellann stopped before writing anything to avoid overwriting your own edits. Open the project’s Instrumentation page, run “Detect framework” again to build a fresh task from the current files, then approve and apply that new task.`;
   }
-  if (/STALE_INSTRUMENTATION_BASE_REVISION|STALE_INSTRUMENTATION_PLAN|STALE_INSTRUMENTATION/.test(raw)) {
+  if (/STALE_INSTRUMENTATION_BASE_REVISION/.test(raw)) {
+    return 'Your project is on a different commit than when this setup task was created (for example after committing or switching branches), so Tellann stopped before writing anything. Run “Detect framework” again to create a task from the project as it is now, then approve and apply it.';
+  }
+  if (/STALE_INSTRUMENTATION_PLAN|STALE_INSTRUMENTATION/.test(raw)) {
     return 'The project changed (a new commit, or edited or installed dependencies) after this setup task was created, so it can no longer be applied safely. Run “Detect framework” again on the Instrumentation page to create a fresh task, then approve and apply it.';
   }
   if (/INVALID_TASK_APPROVAL|TASK_SCOPE_EXPANSION_DENIED|APPROVED_SCOPE_OUTSIDE_PLAN/.test(raw)) {

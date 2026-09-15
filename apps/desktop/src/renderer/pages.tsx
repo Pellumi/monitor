@@ -6725,6 +6725,63 @@ void TELLANN.verifyInstallation();`;
   };
 }
 
+type BranchDecision = "on-branch" | "confirmed" | "cancelled";
+
+/**
+ * Instrumentation writes to whatever branch the workspace is on. QA work belongs
+ * on the application's QA review branch, so applying anywhere else is allowed
+ * only after the member confirms it. The branch is checked fresh at the moment
+ * of applying, not from a cached status. The main process refuses an
+ * unconfirmed off-branch apply, so pass `confirmOffQaBranch` only on "confirmed".
+ */
+function useOffQaBranchConfirmation(projectId: string | undefined) {
+  const { refreshBranchCompliance } = useDesktop();
+  const [prompt, setPrompt] = useState<{
+    currentBranch: string;
+    requiredBranch: string;
+    blocksRun: boolean;
+    resolve(decision: BranchDecision): void;
+  } | null>(null);
+
+  const confirmBranch = useCallback(async (): Promise<BranchDecision> => {
+    if (!projectId) return "on-branch";
+    const compliance = await refreshBranchCompliance(projectId);
+    if (compliance?.status !== "BRANCH_MISMATCH") return "on-branch";
+    return new Promise<BranchDecision>((resolve) =>
+      setPrompt({
+        currentBranch: compliance.currentBranch ?? "another branch",
+        requiredBranch: compliance.requiredBranch ?? "the QA review branch",
+        blocksRun: compliance.blocksRun,
+        resolve,
+      }),
+    );
+  }, [projectId, refreshBranchCompliance]);
+
+  const settle = (decision: BranchDecision) => {
+    prompt?.resolve(decision);
+    setPrompt(null);
+  };
+
+  const modal = (
+    <ConfirmModal
+      isOpen={Boolean(prompt)}
+      title="Apply on a different branch?"
+      description={
+        prompt
+          ? `This workspace is on "${prompt.currentBranch}", but QA work for this application happens on "${prompt.requiredBranch}". The changes will be written to "${prompt.currentBranch}" and won't be on the QA review branch until you merge them.${prompt.blocksRun ? ` QA runs stay blocked until the workspace is back on "${prompt.requiredBranch}".` : ""}`
+          : ""
+      }
+      confirmLabel={`Apply on ${prompt?.currentBranch ?? "this branch"}`}
+      cancelLabel="Cancel"
+      variant="primary"
+      onConfirm={() => settle("confirmed")}
+      onCancel={() => settle("cancelled")}
+    />
+  );
+
+  return { confirmBranch, modal };
+}
+
 export function InstrumentationPage() {
   const {
     projectId,
@@ -6746,6 +6803,7 @@ export function InstrumentationPage() {
     getFlowVerification,
   } = useProject();
   const navigate = useNavigate();
+  const branchConfirmation = useOffQaBranchConfirmation(projectId);
   const [searchParams] = useSearchParams();
   const setupMode = searchParams.get("setup") === "connect";
   const flowId = searchParams.get("flowId") ?? undefined;
@@ -6788,6 +6846,8 @@ export function InstrumentationPage() {
   const [scanOutcome, setScanOutcome] = useState<FlowCodeScanOutcome | null>(
     null,
   );
+  // Until the first readiness check returns, "not connected" is unknown, not false.
+  const [setupChecked, setSetupChecked] = useState(false);
 
   const refreshPlans = async () => {
     if (!projectId) return;
@@ -6830,7 +6890,8 @@ export function InstrumentationPage() {
       void window.tellann?.setup
         .getSdkSetup(projectId, environmentId)
         .then(setManualSetup)
-        .catch(() => setManualSetup(null));
+        .catch(() => setManualSetup(null))
+        .finally(() => setSetupChecked(true));
     refreshSetup();
     // Keep checking until connected, so the setup banner and manual guide flip
     // to "connected" on their own once the app sends its first event.
@@ -6982,6 +7043,9 @@ export function InstrumentationPage() {
   );
   const applyReviewedSetup = async () => {
     if (!environment) return;
+    // One confirmation covers every task in this batch.
+    const branchDecision = await branchConfirmation.confirmBranch();
+    if (branchDecision === "cancelled") return;
     for (const record of proposedPlans) {
       const plan = record.planJson as InstrumentationPlan;
       await approveInstrumentation({
@@ -6994,7 +7058,9 @@ export function InstrumentationPage() {
           (command) => command.id,
         ),
       });
-      await applyInstrumentation(projectId, String(record.id));
+      await applyInstrumentation(projectId, String(record.id), {
+        confirmOffQaBranch: branchDecision === "confirmed",
+      });
     }
     await refreshPlans();
   };
@@ -7100,80 +7166,159 @@ export function InstrumentationPage() {
     return () => window.clearInterval(timer);
   }, [flowInitialization?.stage, getFlowVerification, initializationId]);
 
+  // A setup task that has started but not finished is the next step: the user
+  // goes back to it rather than starting another one.
+  const inProgressStatuses = new Set([
+    "PROPOSED",
+    "APPROVED",
+    "APPLYING",
+    "APPLIED",
+    "VALIDATING",
+    "VALIDATION_FAILED",
+  ]);
+  const activeTask = visiblePlans.find((record) =>
+    inProgressStatuses.has(String(record.status)),
+  );
+  const adapterLabels: Record<string, string> = {
+    "react-vite": "React (Vite)",
+    nextjs: "Next.js",
+    express: "Express",
+    fastify: "Fastify",
+    nestjs: "NestJS",
+  };
+  const adapterLabel = (adapterId: unknown) =>
+    adapterLabels[String(adapterId)] ?? String(adapterId);
+  const taskStatusLabel = (status: unknown) =>
+    String(status).toLowerCase().replaceAll("_", " ");
+  const taskHref = (record: Record<string, any>) =>
+    `/applications/${projectId}/instrumentation/plans/${record.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`;
+  const supportedDetections = detections.filter((item) => item.supported);
+  // Adapters that were found but cannot be set up automatically; adapters that
+  // simply are not in the project are not worth listing.
+  const unsupportedDetections = detections.filter(
+    (item) => !item.supported && item.confidence > 0,
+  );
+  // Without an environment the readiness check never runs, so there is nothing
+  // to wait for.
+  const setupResolved = setupChecked || !environmentId;
+  const checkingSetup = !setupResolved && !initializationId;
+  const flowAutomated = Boolean(
+    flowId && flowInitialization?.mode === "AUTOMATED",
+  );
+  const multipleEnvironments = application.environments.length > 1;
+  const toggleManualSetup = () => setManualSetupOpen((current) => !current);
+  const manualSetupLabel = manualSetupOpen
+    ? "Hide manual setup"
+    : "Set up manually";
+  const environmentPicker = multipleEnvironments ? (
+    <SelectField
+      ariaLabel="Environment"
+      value={environmentId}
+      onValueChange={setEnvironmentId}
+      options={application.environments.map((item) => ({
+        value: item.id,
+        label: `${item.name} · ${item.type}`,
+      }))}
+      placeholder="Select environment"
+      className="instrumentation-environment"
+    />
+  ) : null;
+  const automationNote = !instrumentationEntitled ? (
+    <p className="setup-note">
+      <Lock size={13} />
+      Automatic setup is included on Solo and above.
+      <button
+        type="button"
+        className="inline-link-button"
+        onClick={() => setEntitlementModalOpen(true)}
+      >
+        See plans
+      </button>
+    </p>
+  ) : environment?.type === "PRODUCTION" ? (
+    <p className="setup-note">
+      <Lock size={13} />
+      Production is observation-only, so Tellann won&apos;t change code for it.
+      {multipleEnvironments ? " Choose a development environment above." : ""}
+    </p>
+  ) : null;
+
   return (
     <Page
       title="Instrumentation"
-      description="Detect the project stack, review a bounded task, and approve every file and command before Tellann writes."
+      description={
+        flowId
+          ? "Mark where this Flow starts and finishes in your code."
+          : "Connect the Tellann SDK to this project."
+      }
     >
-      {flowId && !(manualSetup?.readiness as any)?.connected ? (
-        <section className="content-card flow-prerequisite mb-4 ">
-          <div className="card-heading">
-            <div>
-              <small>Required before Flow initialization</small>
-              <h2>Connect Tellann to this project</h2>
-            </div>
-            <Status>Waiting for telemetry</Status>
+      {branchConfirmation.modal}
+      {checkingSetup ? (
+        <section className="content-card next-step-card" aria-busy="true">
+          <span className="step-label">Tellann SDK</span>
+          <h2>Checking the connection…</h2>
+        </section>
+      ) : null}
+
+      {/* ── Flow initialization ─────────────────────────────────────────── */}
+      {flowId && setupResolved && !tellannConnected ? (
+        <section className="content-card next-step-card">
+          <span className="step-label">Before this Flow · Tellann SDK</span>
+          <h2>Connect the Tellann SDK</h2>
+          <p>
+            Tellann needs the SDK running in your app before it can map this
+            Flow. This page moves on as soon as your app sends its first event.
+          </p>
+          <div className="card-actions">
+            {activeTask ? (
+              <Link className="button primary" to={taskHref(activeTask)}>
+                <ArrowRight size={15} />
+                Continue setup task
+              </Link>
+            ) : automaticSetupAvailable && workspace ? (
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() => void detectAndReveal()}
+              >
+                <SearchCode size={15} />
+                Detect framework
+              </button>
+            ) : null}
+            <button
+              className={`button${activeTask || (automaticSetupAvailable && workspace) ? "" : " primary"}`}
+              disabled={!environmentId}
+              onClick={toggleManualSetup}
+            >
+              <Code2 size={15} />
+              {manualSetupLabel}
+            </button>
           </div>
-          <p className="mb-4">
-            Install and initialize a Tellann SDK, start this environment, and
-            send <code>TELLANN_INITIALIZED</code> or{" "}
-            <code>TELLANN_ONBOARDING_TEST</code>. Finding package files alone
-            does not unlock the Flow.
+          {automationNote}
+        </section>
+      ) : null}
+      {flowId && tellannConnected && !initializationId ? (
+        <section className="content-card next-step-card">
+          <span className="step-label">SDK connected · Next step</span>
+          <h2>Map this Flow in your code</h2>
+          <p>
+            Tellann reviews your code to find where this Flow starts and
+            finishes. Your files don&apos;t change.
           </p>
           <div className="card-actions">
             <button
               className="button primary"
-              disabled={busy || !workspace}
-              onClick={() => void detect()}
-            >
-              <ShieldCheck size={15} />
-              Set up automatically
-            </button>
-            <button className="button" onClick={() => setManualSetupOpen(true)}>
-              <Code2 size={15} />
-              Set up manually
-            </button>
-            <button
-              className="button"
+              disabled={busy}
               onClick={() =>
-                window.tellann?.setup
-                  .getSdkSetup(projectId, environmentId)
-                  .then(setManualSetup)
+                void continueFlowInitialization().catch((cause) =>
+                  setFlowLoadError(String(cause?.message ?? cause)),
+                )
               }
             >
-              <RefreshCw size={15} />
-              Check connection
+              <ArrowRight size={15} />
+              Analyze this Flow
             </button>
           </div>
-        </section>
-      ) : null}
-      {flowId &&
-      (manualSetup?.readiness as any)?.connected &&
-      !initializationId ? (
-        <section className="content-card flow-prerequisite is-ready">
-          <div className="card-heading">
-            <div>
-              <small>SDK verified</small>
-              <h2>Tellann can now analyze this Flow</h2>
-            </div>
-            <Status>Connected</Status>
-          </div>
-          <p>
-            Continue to create an immutable Flow-scoped repository review. No
-            source files change during analysis.
-          </p>
-          <button
-            className="button primary"
-            disabled={busy}
-            onClick={() =>
-              void continueFlowInitialization().catch((cause) =>
-                setFlowLoadError(String(cause?.message ?? cause)),
-              )
-            }
-          >
-            <ArrowRight size={15} />
-            Analyze declared Flow
-          </button>
         </section>
       ) : null}
       {flowLoadError ? (
@@ -7219,46 +7364,49 @@ export function InstrumentationPage() {
             <section className="content-card flow-mode-choice mt-4">
               <div className="card-heading">
                 <div>
-                  <small>Choose how to initialize</small>
-                  <h2>Use the same checkpoint contract in either path</h2>
+                  <small>Next step</small>
+                  <h2>How should this Flow&apos;s start and finish be marked?</h2>
                 </div>
-                <Status>Review ready</Status>
               </div>
               <div className="two-column">
-                <article className="mode-card">
+                <article
+                  className={`mode-card${instrumentationEntitled ? "" : " featured"}`}
+                >
                   <Status>All plans</Status>
-                  <h2>Guide me manually</h2>
+                  <h2>I&apos;ll add them</h2>
                   <p className="mb-4">
-                    Add two lines yourself — where the flow starts and where it
-                    finishes — and Tellann finds them in your code.
+                    Add two lines, one where the Flow starts and one where it
+                    finishes. Tellann then finds them in your code.
                   </p>
                   <button
-                    className="button primary"
+                    className={`button${instrumentationEntitled ? "" : " primary"}`}
                     disabled={busy}
                     onClick={() => void chooseInitializationMode("MANUAL")}
                   >
                     <Workflow size={15} />
-                    Open manual roadmap
+                    Show me where
                   </button>
                 </article>
-                <article className="mode-card featured">
+                <article
+                  className={`mode-card${instrumentationEntitled ? " featured" : ""}`}
+                >
                   <Status>
                     {instrumentationEntitled
-                      ? "Available"
+                      ? "Recommended"
                       : "Solo plan and above"}
                   </Status>
-                  <h2>Instrument automatically</h2>
+                  <h2>Add them for me</h2>
                   <p className="mb-4">
-                    Generate a bounded AST proposal from confident mappings,
-                    approve every file, and keep rollback available.
+                    Tellann prepares the change. You approve each file, and it
+                    can be undone.
                   </p>
                   <button
-                    className="button primary"
+                    className={`button${instrumentationEntitled ? " primary" : ""}`}
                     disabled={busy || !instrumentationEntitled}
                     onClick={() => void chooseInitializationMode("AUTOMATED")}
                   >
                     <Sparkles size={15} />
-                    Create automated proposal
+                    Prepare the change
                   </button>
                 </article>
               </div>
@@ -7267,9 +7415,50 @@ export function InstrumentationPage() {
           {flowInitialization.stage === "SCANNING" ? (
             <div className="context-banner">
               <Activity size={15} />
-              Tellann is enriching the deterministic review. The evidence-backed
-              fallback remains available if the AI provider cannot respond.
+              Tellann is reviewing your code for this Flow…
             </div>
+          ) : null}
+          {flowAutomated &&
+          instrumentationPurpose === "FLOW" &&
+          flowInitialization.stage !== "COMPLETED" ? (
+            activeTask ? (
+              <section className="content-card next-step-card mt-4">
+                <span className="step-label">Next step</span>
+                <h2>Review the checkpoint changes</h2>
+                <p>
+                  The {adapterLabel(activeTask.adapterId)} changes are{" "}
+                  {taskStatusLabel(activeTask.status)}.
+                  {String(activeTask.status) === "PROPOSED"
+                    ? " Nothing is written until you approve them."
+                    : ""}
+                </p>
+                <div className="card-actions">
+                  <Link className="button primary" to={taskHref(activeTask)}>
+                    <ArrowRight size={15} />
+                    Open the changes
+                  </Link>
+                </div>
+              </section>
+            ) : detections.length ? null : (
+              <section className="content-card next-step-card mt-4">
+                <span className="step-label">Next step</span>
+                <h2>Prepare the checkpoint changes</h2>
+                <p>
+                  Tellann detects your framework, then prepares the lines that
+                  mark where this Flow starts and finishes.
+                </p>
+                <div className="card-actions">
+                  <button
+                    className="button primary"
+                    disabled={busy || !workspace}
+                    onClick={() => void detectAndReveal()}
+                  >
+                    <SearchCode size={15} />
+                    Detect framework
+                  </button>
+                </div>
+              </section>
+            )
           ) : null}
           {flowInitialization.mode === "MANUAL" &&
           flowInitialization.manualRoadmap ? (
@@ -7299,8 +7488,8 @@ export function InstrumentationPage() {
               <Check size={15} />
               {(flowInitialization.verification as any)?.method ===
               "STATIC_CODE_SCAN"
-                ? "Flow initialized. Tellann found the start marker and a finish marker in your code."
-                : "Flow initialized. Tellann observed an ordered path from the declared initial state to a terminal state."}
+                ? "Flow initialized. Tellann found the start and finish markers in your code."
+                : "Flow initialized. Tellann saw your app go from the start of this Flow to its finish."}
               <Link
                 className="button"
                 to={`/applications/${projectId}/qa-runs/new${flowId ? `?flowId=${encodeURIComponent(flowId)}` : ""}`}
@@ -7311,83 +7500,257 @@ export function InstrumentationPage() {
           ) : null}
         </>
       ) : null}
-      {/* In a Flow context the prerequisite card above owns the connected state. */}
-      {(
-        setupMode
-          ? !(flowId && tellannConnected)
-          : !flowId && manualSetup && !tellannConnected
-      ) ? (
-        <section className="content-card setup-connection-banner mb-4">
-          <Status>{tellannConnected ? "Connected" : "SDK connection"}</Status>
-          {tellannConnected ? (
-            <>
-              <h2>Tellann is connected to this project</h2>
-              <p className="mb-4">
-                {environment?.name ?? "This environment"} is sending telemetry.
-                Initialize a Flow next to run your first guided walkthrough.
-              </p>
-              <div className="card-actions">
-                <Link
-                  className="button primary"
-                  to={`/applications/${projectId}/intent`}
-                >
-                  <Workflow size={15} />
-                  Initialize a Flow
-                </Link>
-                <Link
-                  className="button"
-                  to={`/applications/${projectId}/qa-runs/new`}
-                >
-                  <Play size={15} />
-                  New QA run
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <h2>Connect the Tellann SDK</h2>
-              <p className="mb-4">
-                {automaticSetupAvailable
-                  ? workspace
-                    ? "Let Tellann detect your stack and prepare a setup task. You approve every file and command before anything is written. Or copy the setup and add it yourself."
-                    : "Attach the project folder so Tellann can detect your stack and prepare a reviewed setup task, or copy the setup and add it yourself."
-                  : "Copy the install command, initialization snippet, and a one-time key into your project. This page confirms the connection once your app sends its first event."}
-              </p>
-              <div className="card-actions">
-                {!workspace ? (
-                  <button
-                    className={`button ${automaticSetupAvailable ? "primary" : ""}`}
-                    disabled={busy || !projectId}
-                    onClick={() => projectId && void attachWorkspace(projectId)}
-                  >
-                    <Folder size={15} />
-                    Attach project folder
-                  </button>
-                ) : automaticSetupAvailable ? (
+
+      {/* ── SDK connection ──────────────────────────────────────────────── */}
+      {!flowId && setupResolved ? (
+        tellannConnected ? (
+          <section className="content-card next-step-card is-complete">
+            <span className="step-label">Tellann SDK · Connected</span>
+            <h2>Tellann is connected to this project</h2>
+            <p>
+              {environment?.name ?? "This environment"} is sending events. Next,
+              initialize a Flow so Tellann knows which journey to check.
+            </p>
+            <div className="card-actions">
+              <Link
+                className="button primary"
+                to={`/applications/${projectId}/intent`}
+              >
+                <Workflow size={15} />
+                Initialize a Flow
+              </Link>
+              <button className="button" onClick={toggleManualSetup}>
+                <Code2 size={15} />
+                {manualSetupOpen ? "Hide setup code" : "View setup code"}
+              </button>
+            </div>
+          </section>
+        ) : proposedPlans.length > 1 ? (
+          <section className="content-card next-step-card">
+            <span className="step-label">Next step · Tellann SDK</span>
+            <h2>Approve {proposedPlans.length} setup tasks</h2>
+            <p>
+              Tellann applies them one at a time. If one fails, its changes are
+              undone and the rest stop.
+            </p>
+            <AccordionItem value="review-files-commands" className="w-full my-2">
+              <AccordionTrigger>Review files and commands</AccordionTrigger>
+              <AccordionContent>
+                <div className="stack">
+                  {proposedPlans.map((record) => {
+                    const plan = record.planJson as InstrumentationPlan;
+                    return (
+                      <div key={String(record.id)}>
+                        <strong>{adapterLabel(plan.adapterId)}</strong>
+                        <ul>
+                          {plan.operations.map((operation) => (
+                            <li key={operation.id}>
+                              {operation.relativePath} · {operation.description}
+                            </li>
+                          ))}
+                          {plan.validationCommands.map((command) => (
+                            <li key={command.id}>
+                              {command.executable} {command.args.join(" ")} ·{" "}
+                              {command.cwd}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+            <div className="card-actions">
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() => void applyReviewedSetup()}
+              >
+                <ShieldCheck size={15} />
+                Approve and apply
+              </button>
+            </div>
+          </section>
+        ) : activeTask ? (
+          <section className="content-card next-step-card">
+            <span className="step-label">Next step · Tellann SDK</span>
+            <h2>
+              {String(activeTask.status) === "PROPOSED"
+                ? "Review your setup task"
+                : "Finish your setup task"}
+            </h2>
+            <p>
+              {String(activeTask.status) === "PROPOSED"
+                ? `The ${adapterLabel(activeTask.adapterId)} setup is ready. Nothing is written until you approve its files and commands.`
+                : `The ${adapterLabel(activeTask.adapterId)} setup is ${taskStatusLabel(activeTask.status)}.`}
+            </p>
+            <div className="card-actions">
+              <Link className="button primary" to={taskHref(activeTask)}>
+                <ArrowRight size={15} />
+                {String(activeTask.status) === "PROPOSED"
+                  ? "Review setup task"
+                  : "Open setup task"}
+              </Link>
+              <button
+                className="button"
+                disabled={!environmentId}
+                onClick={toggleManualSetup}
+              >
+                <Code2 size={15} />
+                {manualSetupLabel}
+              </button>
+            </div>
+          </section>
+        ) : (
+          <section className="content-card next-step-card">
+            <span className="step-label">Next step · Tellann SDK</span>
+            <h2>Connect the Tellann SDK</h2>
+            <p>
+              {automaticSetupAvailable
+                ? workspace
+                  ? "Tellann detects your framework and prepares the change. Nothing is written until you approve it."
+                  : "Attach your project folder so Tellann can detect your framework and prepare the change for your approval."
+                : "Add the SDK to your project with a one-time key. This page confirms the connection when your app sends its first event."}
+            </p>
+            {environmentPicker}
+            <div className="card-actions">
+              {automaticSetupAvailable ? (
+                workspace ? (
                   <button
                     className="button primary"
                     disabled={busy}
                     onClick={() => void detectAndReveal()}
                   >
                     <SearchCode size={15} />
-                    Detect framework automatically
+                    Detect framework
                   </button>
-                ) : null}
-                <button
-                  className={`button ${automaticSetupAvailable ? "" : "primary"}`}
-                  disabled={!environmentId}
-                  onClick={() => setManualSetupOpen((current) => !current)}
+                ) : (
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => void attachWorkspace(projectId)}
+                  >
+                    <Folder size={15} />
+                    Attach project folder
+                  </button>
+                )
+              ) : null}
+              <button
+                className={`button${automaticSetupAvailable ? "" : " primary"}`}
+                disabled={!environmentId}
+                onClick={toggleManualSetup}
+              >
+                <Code2 size={15} />
+                {manualSetupLabel}
+              </button>
+            </div>
+            {automationNote}
+          </section>
+        )
+      ) : null}
+
+      {/* ── Detection results, for SDK setup or Flow checkpoints ────────── */}
+      {detections.length ? (
+        <section className="content-card stack mt-4" id="instrumentation-detect">
+          <div className="card-heading">
+            <div>
+              <small>
+                {instrumentationPurpose === "FLOW"
+                  ? "Flow checkpoints"
+                  : "Detected in your project"}
+              </small>
+              <h2>
+                {supportedDetections.length
+                  ? "Choose what to set up"
+                  : "No supported framework found"}
+              </h2>
+            </div>
+          </div>
+          {supportedDetections.length ? (
+            <div className="detection-options">
+              {supportedDetections.map((item) => (
+                <label
+                  className="check-row detection-option"
+                  key={item.adapterId}
                 >
-                  <Code2 size={15} />
-                  {manualSetupOpen ? "Hide manual setup" : "Set up manually"}
-                </button>
-              </div>
-            </>
+                  <input
+                    type="checkbox"
+                    checked={selectedAdapters.includes(item.adapterId)}
+                    onChange={(event) =>
+                      setSelectedAdapters((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, item.adapterId])]
+                          : current.filter(
+                              (candidate) => candidate !== item.adapterId,
+                            ),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{adapterLabel(item.adapterId)}</strong>
+                    <small>
+                      {item.frameworkVersion
+                        ? `Version ${item.frameworkVersion}`
+                        : "Version not detected"}
+                    </small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p>
+              Tellann couldn&apos;t find a framework it can set up
+              automatically. Use manual setup instead.
+            </p>
           )}
+          {unsupportedDetections.length ? (
+            <p className="muted">
+              Needs manual setup:{" "}
+              {unsupportedDetections
+                .map((item) => adapterLabel(item.adapterId))
+                .join(", ")}
+              .
+            </p>
+          ) : null}
+          <div className="card-actions">
+            {supportedDetections.length ? (
+              <button
+                className="button primary"
+                disabled={busy || creatingProposal || !selectedAdapters.length}
+                onClick={() => void proposeSelected()}
+              >
+                <ShieldCheck size={15} />
+                {creatingProposal ? "Preparing…" : "Prepare setup for review"}
+              </button>
+            ) : null}
+            {instrumentationPurpose === "FLOW" ? null : (
+              <button
+                className={`button${supportedDetections.length ? "" : " primary"}`}
+                disabled={!environmentId}
+                onClick={toggleManualSetup}
+              >
+                <Code2 size={15} />
+                {manualSetupLabel}
+              </button>
+            )}
+          </div>
+          {proposalMessage ? (
+            <div className="context-banner" role="status">
+              <Check size={15} /> {proposalMessage}
+            </div>
+          ) : null}
+          {proposalError ? (
+            <div className="context-banner" role="alert">
+              <AlertTriangle size={15} /> {proposalError}
+            </div>
+          ) : null}
         </section>
       ) : null}
+
+      {/* ── Manual setup, on demand ─────────────────────────────────────── */}
       {manualSetupOpen && !manualSetup ? (
-        <div className="context-banner mb-4" id="manual-sdk-setup" role="status">
+        <div className="context-banner mt-4" id="manual-sdk-setup" role="status">
           <RefreshCw size={15} />
           {environmentId
             ? "Loading the SDK setup for this environment…"
@@ -7395,18 +7758,14 @@ export function InstrumentationPage() {
         </div>
       ) : null}
       {manualSetupOpen && manualSetup ? (
-        <section className="content-card stack" id="manual-sdk-setup">
+        <section className="content-card stack mt-4" id="manual-sdk-setup">
           <div className="card-heading">
             <div>
-              <small>Manual SDK setup</small>
-              <h2>Copy the setup for your project</h2>
+              <small>Manual setup</small>
+              <h2>Add the SDK to your project</h2>
             </div>
             <Status>
-              {String(
-                (manualSetup.readiness as any)?.connected
-                  ? "Verified"
-                  : "Waiting for telemetry",
-              )}
+              {tellannConnected ? "Connected" : "Waiting for first event"}
             </Status>
           </div>
           <div className="card-actions">
@@ -7437,726 +7796,120 @@ export function InstrumentationPage() {
             );
             return (
               <div className="stack">
-                <div
-                  className="context-banner"
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <span>
-                    <strong>Detected Stack:</strong> {formatted.stackLabel}
-                  </span>
-                  {formatted.workspaceName ? (
-                    <small className="muted">
-                      Project: <code>{formatted.workspaceName}</code>
-                      {" · "}Package manager:{" "}
-                      <code>{formatted.packageManager}</code>
-                    </small>
-                  ) : (
-                    <small className="muted">
-                      Package manager: <code>{formatted.packageManager}</code>
-                    </small>
-                  )}
-                </div>
+                <p className="muted">
+                  {formatted.stackLabel}
+                  {formatted.workspaceName
+                    ? ` · ${formatted.workspaceName}`
+                    : ""}
+                  {` · ${formatted.packageManager}`}
+                </p>
                 <CopyableCodeBlock
-                  label={`Install package ${
-                    formatted.workspaceName
-                      ? `(in ${formatted.workspaceName})`
-                      : "in project"
-                  }`}
+                  label="1. Install the package"
                   code={formatted.installCommand}
-                />
-                <CopyableCodeBlock
-                  label={`Environment and initialization (${formatted.stackLabel})`}
-                  code={formatted.snippet}
                 />
                 {manualRawKey ? (
                   <CopyableCodeBlock
-                    label="One-time Development key · copy now"
+                    label="2. Your setup key · shown once, keep it in an ignored env file"
                     code={manualRawKey}
                   />
                 ) : (
-                  <button
-                    className="button primary"
-                    disabled={busy}
-                    onClick={() =>
-                      projectId &&
-                      window.tellann?.setup
-                        .issueKey(projectId, environmentId)
-                        .then((result) => setManualRawKey(result.rawKey))
-                    }
-                  >
-                    <KeyRound size={15} />
-                    Generate one-time setup key
-                  </button>
+                  <div className="card-actions">
+                    <button
+                      className="button primary"
+                      disabled={busy}
+                      onClick={() =>
+                        void window.tellann?.setup
+                          .issueKey(projectId, environmentId)
+                          .then((result) => setManualRawKey(result.rawKey))
+                      }
+                    >
+                      <KeyRound size={15} />
+                      2. Generate setup key
+                    </button>
+                  </div>
                 )}
-                <p className="muted">
-                  Keep the key in an ignored local environment file. Start the
-                  application after initialization; this screen and the web
-                  dashboard use the same live readiness endpoint.
-                </p>
-
-                <div
-                  className="stack mt-4"
-                  style={{
-                    background: "#0c0c0c",
-                    border: "1px solid #222",
-                    borderRadius: "6px",
-                    padding: "16px",
-                    marginTop: "16px",
-                  }}
+                <CopyableCodeBlock
+                  label="3. Add the environment variables and initialization"
+                  code={formatted.snippet}
+                />
+                <p
+                  className={`setup-live-status${tellannConnected ? " is-connected" : ""}`}
+                  role="status"
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      borderBottom: "1px solid #222",
-                      paddingBottom: "12px",
-                      marginBottom: "12px",
-                    }}
-                  >
-                    <div>
-                      <small
-                        style={{
-                          textTransform: "uppercase",
-                          letterSpacing: "0.08em",
-                          color: "#8e9192",
-                          fontSize: "10px",
-                          fontFamily: "ui-monospace, monospace",
-                        }}
-                      >
-                        Guide & Next Steps
-                      </small>
-                      <h3
-                        style={{
-                          margin: "2px 0 0",
-                          fontSize: "15px",
-                          fontWeight: 600,
-                        }}
-                      >
-                        What to do after adding the code
-                      </h3>
-                    </div>
-                    <Status>
-                      {(manualSetup.readiness as any)?.connected
-                        ? "Verified"
-                        : "Waiting for telemetry"}
-                    </Status>
-                  </div>
-
-                  <div className="stack" style={{ gap: "14px" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "12px",
-                        alignItems: "flex-start",
-                      }}
-                    >
-                      <div
-                        style={{
-                          background: "#181818",
-                          border: "1px solid #333",
-                          borderRadius: "50%",
-                          width: "22px",
-                          height: "22px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          fontSize: "11px",
-                          color: "#fff",
-                          flexShrink: 0,
-                        }}
-                      >
-                        1
-                      </div>
-                      <div>
-                        <strong style={{ fontSize: "13px", color: "#fff" }}>
-                          Start your local dev server
-                        </strong>
-                        <p
-                          className="muted"
-                          style={{
-                            margin: "2px 0 0",
-                            fontSize: "12px",
-                            lineHeight: "1.5",
-                          }}
-                        >
-                          Run your application (e.g. <code>npm run dev</code> or{" "}
-                          <code>pnpm dev</code>) and load it in your browser.
-                          The Tellann SDK will send its initial telemetry
-                          handshake automatically.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "12px",
-                        alignItems: "flex-start",
-                      }}
-                    >
-                      <div
-                        style={{
-                          background: (manualSetup.readiness as any)?.connected
-                            ? "#14532d"
-                            : "#181818",
-                          border: `1px solid ${
-                            (manualSetup.readiness as any)?.connected
-                              ? "#22c55e"
-                              : "#333"
-                          }`,
-                          borderRadius: "50%",
-                          width: "22px",
-                          height: "22px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          fontSize: "11px",
-                          color: "#fff",
-                          flexShrink: 0,
-                        }}
-                      >
-                        2
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <strong style={{ fontSize: "13px", color: "#fff" }}>
-                          Verify connection status
-                        </strong>
-                        <p
-                          className="muted"
-                          style={{
-                            margin: "2px 0 8px",
-                            fontSize: "12px",
-                            lineHeight: "1.5",
-                          }}
-                        >
-                          {(manualSetup.readiness as any)?.connected ? (
-                            <span
-                              style={{
-                                color: "#4ade80",
-                                fontWeight: 600,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "4px",
-                              }}
-                            >
-                              <Check size={13} /> Connection verified! Tellann
-                              is receiving live telemetry from your app.
-                            </span>
-                          ) : (
-                            <span>
-                              Waiting for live telemetry... This screen updates
-                              automatically when your app sends its first event.
-                            </span>
-                          )}
-                        </p>
-                        <button
-                          type="button"
-                          className="button"
-                          disabled={busy}
-                          onClick={() => {
-                            if (projectId && environmentId) {
-                              void window.tellann?.setup
-                                .getSdkSetup(projectId, environmentId)
-                                .then(setManualSetup);
-                            }
-                          }}
-                          style={{
-                            fontSize: "11px",
-                            padding: "4px 10px",
-                            height: "auto",
-                          }}
-                        >
-                          <RefreshCw size={12} /> Check connection now
-                        </button>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "12px",
-                        alignItems: "flex-start",
-                      }}
-                    >
-                      <div
-                        style={{
-                          background: "#181818",
-                          border: "1px solid #333",
-                          borderRadius: "50%",
-                          width: "22px",
-                          height: "22px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          fontSize: "11px",
-                          color: "#fff",
-                          flexShrink: 0,
-                        }}
-                      >
-                        3
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <strong style={{ fontSize: "13px", color: "#fff" }}>
-                          Continue to next action
-                        </strong>
-                        <p
-                          className="muted"
-                          style={{
-                            margin: "2px 0 10px",
-                            fontSize: "12px",
-                            lineHeight: "1.5",
-                          }}
-                        >
-                          Once your application is running, choose what you want
-                          to do next:
-                        </p>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: "8px",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          {flowId ? (
-                            <button
-                              type="button"
-                              className="button primary"
-                              disabled={busy}
-                              onClick={() =>
-                                void continueFlowInitialization().catch(
-                                  (cause) =>
-                                    setFlowLoadError(
-                                      String(cause?.message ?? cause),
-                                    ),
-                                )
-                              }
-                            >
-                              <ArrowRight size={14} /> Analyze declared Flow
-                            </button>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="button primary"
-                                disabled={
-                                  busy ||
-                                  !workspace ||
-                                  environment?.type === "PRODUCTION" ||
-                                  !instrumentationEntitled
-                                }
-                                onClick={() => void detect()}
-                              >
-                                <SearchCode size={14} /> Detect framework &
-                                create proposal
-                              </button>
-                              <Link
-                                className="button"
-                                to={`/applications/${projectId}/intent`}
-                              >
-                                <Workflow size={14} /> View Behavior Graph
-                              </Link>
-                              <Link
-                                className="button"
-                                to={`/applications/${projectId}/qa-runs/new`}
-                              >
-                                <Play size={14} /> New QA Run
-                              </Link>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: "16px",
-                      paddingTop: "14px",
-                      borderTop: "1px solid #222",
-                    }}
-                  >
-                    <strong
-                      style={{
-                        fontSize: "12px",
-                        color: "#f59e0b",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <AlertTriangle size={14} /> Troubleshooting — Why isn't my
-                      app connecting?
-                    </strong>
-                    <ul
-                      style={{
-                        margin: 0,
-                        paddingLeft: "18px",
-                        fontSize: "12px",
-                        color: "#9ca3af",
-                        lineHeight: "1.6",
-                      }}
-                    >
+                  {tellannConnected ? (
+                    <Check size={14} />
+                  ) : (
+                    <RefreshCw size={13} className="spin" />
+                  )}
+                  {tellannConnected
+                    ? "Connected. Tellann is receiving events from your app."
+                    : "4. Start your app and open it once. This updates on its own when the first event arrives."}
+                </p>
+                {tellannConnected ? null : (
+                  <details className="setup-troubleshooting">
+                    <summary>App not connecting?</summary>
+                    <ul>
                       <li>
-                        <strong>
-                          Place initialization at top-level module scope:
-                        </strong>{" "}
-                        Call <code>TELLANN.initialize(...)</code> in{" "}
-                        <code>main.tsx</code> or top of <code>App.tsx</code>{" "}
-                        <em>outside</em> component functions (e.g. outside{" "}
-                        <code>{"const App = () => ..."}</code>). Calling it
-                        inside a component function resets the SDK session on
-                        every React render.
+                        Call <code>TELLANN.initialize(...)</code> once at the
+                        top level of your entry file, not inside a component.
                       </li>
                       <li>
-                        <strong>
-                          Set environment key & restart dev server:
-                        </strong>{" "}
-                        Put{" "}
-                        <code>
-                          VITE_TELLANN_INGESTION_KEY=
-                          {manualRawKey || "tellann_..."}
-                        </code>{" "}
-                        in your <code>.env.local</code> file and restart your
-                        Vite server (<code>npm run dev</code>).
+                        Env files are read at startup: restart your dev server
+                        after adding the key.
                       </li>
                       <li>
-                        <strong>Check browser console & network tab:</strong>{" "}
-                        Press F12 in your browser to check if{" "}
-                        <code>/v1/events/batch</code> requests are failing or
-                        blocked by CORS.
+                        In your browser&apos;s network tab, check that{" "}
+                        <code>/v1/events/batch</code> requests aren&apos;t
+                        failing or blocked by CORS.
                       </li>
                     </ul>
-                  </div>
-                </div>
+                  </details>
+                )}
               </div>
             );
           })()}
         </section>
       ) : null}
-      <div className="mode-grid my-4">
-        <section className="mode-card featured">
-          <Status>Available</Status>
-          {/* <Globe2 /> */}
-          <h2>Browser-only</h2>
-          <p>
-            No source mutation or SDK installation. Captures navigation,
-            console, network, screenshots, and accessibility evidence.
-          </p>
-        </section>
-        <section className="mode-card">
-          <Status>Manual</Status>
-          {/* <Code2 /> */}
-          <h2>Manual SDK</h2>
-          <p>
-            Install and initialize the Tellann SDK yourself with a one-time
-            setup key. Available on every plan.
-          </p>
-          <div className="card-actions mt-4">
-            <button
-              className={`button ${instrumentationEntitled ? "" : "primary"}`}
-              disabled={!environmentId}
-              onClick={() => setManualSetupOpen((current) => !current)}
-            >
-              <Code2 size={15} />
-              {manualSetupOpen ? "Hide manual setup" : "Set up manually"}
-            </button>
-          </div>
-        </section>
-        <section className="mode-card">
-          <Status>
-            {!instrumentationEntitled
-              ? "Solo plan and above"
-              : workspace
-                ? "Available"
-                : "Workspace required"}
-          </Status>
-          {/* <FileSearch /> */}
-          <h2>Automated instrumentation</h2>
-          <p>
-            Syntax-aware SDK installation with task-scoped approval, validation,
-            a local checkpoint, and conflict-safe rollback.
-          </p>
-        </section>
-      </div>
-      <section className="content-card stack" id="instrumentation-detect">
-        <div className="card-heading">
-          <div>
-            <small>Step 1</small>
-            <h2>Detect a supported adapter</h2>
-          </div>
-          <Status>{environment?.type ?? "Select environment"}</Status>
-        </div>
-        <label>Environment</label>
-        <div className="flex w-full gap-4 items-start">
-          <SelectField
-            value={environmentId}
-            onValueChange={setEnvironmentId}
-            options={application.environments.map((item) => ({
-              value: item.id,
-              label: `${item.name} · ${item.type}`,
-            }))}
-            placeholder="Select environment"
-            className="flex-1"
-          />
-          <div className="card-actions">
-            <button
-              className="button primary"
-              disabled={
-                busy ||
-                !workspace ||
-                !environment ||
-                environment.type === "PRODUCTION" ||
-                !instrumentationEntitled
-              }
-              onClick={() => void detect()}
-            >
-              <SearchCode size={15} />
-              Detect framework
-            </button>
-          </div>
-        </div>
-        {environment?.type === "PRODUCTION" ? (
-          <div className="context-banner">
-            <Lock size={15} /> Production is observation-only. Instrumentation
-            proposal and application are blocked locally and by the cloud.
-          </div>
-        ) : null}
-        {!instrumentationEntitled ? (
-          <div
-            className="context-banner"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <span>
-              <Lock
-                size={15}
-                style={{ display: "inline-block", marginRight: "8px" }}
-              />{" "}
-              Automated instrumentation is not included on the{" "}
-              {application?.entitlements?.planType ?? "current"} plan. Connect
-              the SDK with <strong>Set up manually</strong> above, or keep
-              using browser-only QA.
-            </span>
-            <button
-              className="button primary"
-              style={{
-                background: "#ffffff",
-                color: "#000000",
-                border: "none",
-                fontSize: "11px",
-                fontWeight: 700,
-                padding: "6px 14px",
-                cursor: "pointer",
-                textTransform: "uppercase",
-              }}
-              onClick={() => setEntitlementModalOpen(true)}
-            >
-              Upgrade plan
-            </button>
-          </div>
-        ) : null}
-        {detections.length ? (
-          <>
-            <div className="data-table">
-              <div className="table-head">
-                <span>Adapter</span>
-                <span>Version</span>
-                <span>Confidence</span>
-                <span>Action</span>
-              </div>
-              {detections.map((item) => (
-                <div className="table-row" key={item.adapterId}>
-                  <span>
-                    <strong>{item.adapterId}</strong>
-                    <small>
-                      {item.supported ? "Supported" : item.reasons.join("; ")}
-                    </small>
-                  </span>
-                  <span>
-                    {item.frameworkVersion ?? "Unknown"}
-                    <small>{item.supportedVersionRange}</small>
-                  </span>
-                  <span>{Math.round(item.confidence * 100)}%</span>
-                  <span>
-                    <label className="check-row">
-                      <input
-                        type="checkbox"
-                        disabled={!item.supported}
-                        checked={selectedAdapters.includes(item.adapterId)}
-                        onChange={(event) =>
-                          setSelectedAdapters((current) =>
-                            event.target.checked
-                              ? [...new Set([...current, item.adapterId])]
-                              : current.filter(
-                                  (candidate) => candidate !== item.adapterId,
-                                ),
-                          )
-                        }
-                      />
-                      <span>
-                        <strong>
-                          {item.supported ? "Include target" : "Manual setup"}
-                        </strong>
-                      </span>
-                    </label>
-                  </span>
-                </div>
-              ))}
+
+      {/* ── History, out of the way ─────────────────────────────────────── */}
+      {visiblePlans.length ? (
+        <details className="content-card setup-history mt-4">
+          <summary>
+            Setup history · {visiblePlans.length} task
+            {visiblePlans.length === 1 ? "" : "s"}
+          </summary>
+          <div className="data-table mt-3">
+            <div className="table-head">
+              <span>Framework</span>
+              <span>Status</span>
+              <span>Created</span>
             </div>
-            <div className="card-actions w-full items-end! justify-end!">
-              <button
-                className="button primary"
-                disabled={busy || creatingProposal || !selectedAdapters.length}
-                onClick={() => void proposeSelected()}
+            {visiblePlans.map((plan) => (
+              <Link
+                className="table-row"
+                key={String(plan.id)}
+                to={taskHref(plan)}
               >
-                <ShieldCheck size={15} />
-                {creatingProposal
-                  ? "Creating setup task…"
-                  : `Create reviewed setup task${selectedAdapters.length > 1 ? "s" : ""}`}
-              </button>
-            </div>
-            {proposalMessage ? (
-              <div className="context-banner" role="status">
-                <Check size={15} /> {proposalMessage}
-              </div>
-            ) : null}
-            {proposalError ? (
-              <div className="context-banner" role="alert">
-                <AlertTriangle size={15} /> {proposalError}
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </section>
-      <section className="content-card mt-4">
-        <div className="card-heading">
-          <div>
-            <small>Step 2</small>
-            <h2>Instrumentation tasks</h2>
+                <span>
+                  <strong>{adapterLabel(plan.adapterId)}</strong>
+                  <small>
+                    {String(plan.frameworkVersion ?? "unknown version")}
+                  </small>
+                </span>
+                <span>
+                  <Status>{taskStatusLabel(plan.status)}</Status>
+                </span>
+                <span>
+                  {plan.createdAt
+                    ? new Date(String(plan.createdAt)).toLocaleString()
+                    : "—"}
+                </span>
+              </Link>
+            ))}
           </div>
-          <button
-            className="button"
-            disabled={busy}
-            onClick={() => void refreshPlans()}
-          >
-            <RefreshCw size={15} />
-            Refresh
-          </button>
-        </div>
-        {loading ? (
-          <LoadingState />
-        ) : visiblePlans.length ? (
-          <div className="stack">
-            {setupMode && proposedPlans.length ? (
-              <section className="content-card stack">
-                <div className="card-heading">
-                  <div>
-                    <small>One reviewed setup</small>
-                    <h2>
-                      {proposedPlans.length} selected SDK target
-                      {proposedPlans.length === 1 ? "" : "s"}
-                    </h2>
-                  </div>
-                  <Status>Approval required</Status>
-                </div>
-                <p>
-                  Tellann will checkpoint and apply each bounded adapter task in
-                  sequence. If a target fails, its Tellann-authored changes are
-                  restored and remaining targets stop.
-                </p>
-                <AccordionItem value="review-files-commands" className="my-3">
-                  <AccordionTrigger>
-                    Review all files and commands
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div className="stack">
-                      {proposedPlans.map((record) => {
-                        const plan = record.planJson as InstrumentationPlan;
-                        return (
-                          <div key={String(record.id)}>
-                            <strong>{plan.adapterId}</strong>
-                            <ul>
-                              {plan.operations.map((operation) => (
-                                <li key={operation.id}>
-                                  {operation.relativePath} ·{" "}
-                                  {operation.description}
-                                </li>
-                              ))}
-                              {plan.validationCommands.map((command) => (
-                                <li key={command.id}>
-                                  {command.executable} {command.args.join(" ")}{" "}
-                                  · {command.cwd}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() => void applyReviewedSetup()}
-                >
-                  <ShieldCheck size={15} />
-                  Approve, apply and verify selected targets
-                </button>
-              </section>
-            ) : null}
-            <div className="data-table">
-              <div className="table-head">
-                <span>Framework</span>
-                <span>Risk</span>
-                <span>Status</span>
-                <span>Created</span>
-              </div>
-              {visiblePlans.map((plan) => (
-                <Link
-                  className="table-row"
-                  key={String(plan.id)}
-                  to={`/applications/${projectId}/instrumentation/plans/${plan.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
-                >
-                  <span>
-                    <strong>{String(plan.adapterId)}</strong>
-                    <small>
-                      {String(plan.frameworkVersion ?? "unknown version")}
-                    </small>
-                  </span>
-                  <span>{String(plan.risk)}</span>
-                  <span>
-                    <Status>{String(plan.status)}</Status>
-                  </span>
-                  <span>
-                    {plan.createdAt
-                      ? new Date(String(plan.createdAt)).toLocaleString()
-                      : "—"}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <EmptyState
-            icon={<FileSearch size={36} />}
-            title="No instrumentation tasks"
-            description="Detect the attached project and create a proposal. No files change until explicit approval."
-          />
-        )}
-      </section>
+        </details>
+      ) : null}
+
       <EntitlementModal
         isOpen={entitlementModalOpen}
         feature="AUTOMATED_INSTRUMENTATION"
@@ -8164,6 +7917,183 @@ export function InstrumentationPage() {
         onClose={() => setEntitlementModalOpen(false)}
       />
     </Page>
+  );
+}
+
+const APPLY_STEP_HINTS: Record<string, string> = {
+  PREPARE: "Tellann checks that what you approved is exactly what it's about to do.",
+  CHECKPOINT: "This is what lets Tellann undo its changes if anything goes wrong.",
+  WRITE_FILES: "Only the files you approved are changed.",
+  CREDENTIALS: "The key goes in a local file that stays out of Git.",
+  VALIDATE: "Tellann confirms the SDK is wired in and resolves correctly.",
+  VERIFY: "Your app is started so the SDK can send its first event.",
+  SYNC: "Your team sees the result in Tellann Cloud.",
+  ROLLBACK: "Tellann restores the files it changed.",
+};
+
+function formatElapsed(milliseconds: number) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function applyStepHint(stepId: string) {
+  if (APPLY_STEP_HINTS[stepId]) return APPLY_STEP_HINTS[stepId];
+  if (stepId === "COMMAND:install-sdk") return "Installing packages can take a minute or two.";
+  if (stepId.startsWith("COMMAND:")) return "Running an approved command in your project.";
+  return "";
+}
+
+/**
+ * Live progress while an approved task is applied: every step Tellann takes,
+ * what it is doing right now, and the files it has changed so far.
+ */
+function ApplyProgressPanel({
+  progress,
+  plan,
+  approvedCommandIds,
+}: {
+  progress: InstrumentationApplyProgress;
+  plan: InstrumentationPlan;
+  approvedCommandIds: string[];
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const fileCount = plan.operations.filter(
+    (operation) =>
+      operation.id !== "tellann-local-environment" &&
+      operation.id !== "tellann-environment-ignore",
+  ).length;
+  const planned: Array<{ id: string; label: string }> = [
+    { id: "PREPARE", label: "Confirm your approval" },
+    { id: "CHECKPOINT", label: "Record where your project is" },
+    {
+      id: "WRITE_FILES",
+      label: `Write ${fileCount} approved change${fileCount === 1 ? "" : "s"}`,
+    },
+    { id: "CREDENTIALS", label: "Add your setup key" },
+    ...plan.validationCommands
+      .filter((command) => approvedCommandIds.includes(command.id))
+      .map((command) => ({ id: `COMMAND:${command.id}`, label: command.purpose })),
+    { id: "VALIDATE", label: "Check the changes" },
+    { id: "SYNC", label: "Save the result" },
+  ];
+  // Steps that are only known once they happen: starting the app, and undoing
+  // changes after a failure.
+  for (const event of progress.events) {
+    if (planned.some((step) => step.id === event.step)) continue;
+    if (event.step === "VERIFY") {
+      planned.splice(planned.length - 1, 0, {
+        id: "VERIFY",
+        label: "Start your app and wait for its first event",
+      });
+    } else {
+      planned.push({
+        id: event.step,
+        label: event.step === "ROLLBACK" ? "Undo Tellann's changes" : event.message,
+      });
+    }
+  }
+  const steps = planned.map((step) => {
+    const events = progress.events.filter((event) => event.step === step.id);
+    const last = events[events.length - 1];
+    return {
+      ...step,
+      events,
+      last,
+      status: last?.status ?? ("PENDING" as const),
+      startedAt: events[0] ? Date.parse(events[0].at) : null,
+    };
+  });
+  const current = [...steps].reverse().find((step) => step.status === "RUNNING");
+  const done = steps.filter((step) => step.status === "DONE").length;
+  const percent = Math.round((done / steps.length) * 100);
+
+  return (
+    <section
+      ref={panelRef}
+      className="content-card apply-progress mb-6"
+      aria-live="polite"
+    >
+      <div className="apply-progress-head">
+        <div>
+          <small>Applying · {formatElapsed(now - Date.parse(progress.startedAt))}</small>
+          <h2>{current?.last?.message ?? "Setting up Tellann in your project"}</h2>
+          <p>{current ? applyStepHint(current.id) : "Getting started…"}</p>
+        </div>
+        <Status>
+          {done}/{steps.length} steps
+        </Status>
+      </div>
+      <div
+        className="apply-progress-bar"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <span style={{ width: `${Math.max(percent, 4)}%` }} />
+      </div>
+      <ol className="apply-progress-steps">
+        {steps.map((step) => {
+          const changes = step.events.filter((event) => event.detail && event.status === "RUNNING");
+          const listsChanges = step.id === "WRITE_FILES" || step.id === "CREDENTIALS";
+          return (
+            <li
+              key={step.id}
+              className={`apply-progress-step is-${step.status.toLowerCase()}`}
+            >
+              <span className="apply-progress-icon" aria-hidden="true">
+                {step.status === "DONE" ? (
+                  <Check size={12} />
+                ) : step.status === "RUNNING" ? (
+                  <RefreshCw size={12} className="spin" />
+                ) : step.status === "FAILED" ? (
+                  <AlertTriangle size={12} />
+                ) : null}
+              </span>
+              <div className="apply-progress-text">
+                <strong>{step.label}</strong>
+                {step.status === "RUNNING" && step.startedAt !== null ? (
+                  <small>
+                    {!listsChanges && step.last?.detail ? (
+                      <code>{step.last.detail}</code>
+                    ) : null}{" "}
+                    {formatElapsed(now - step.startedAt)}
+                  </small>
+                ) : step.status === "DONE" ? (
+                  <small>{step.last?.message}</small>
+                ) : step.status === "FAILED" ? (
+                  <small>{normalizeDesktopError(step.last?.message ?? "")}</small>
+                ) : null}
+                {listsChanges && changes.length ? (
+                  <ul className="apply-progress-changes">
+                    {changes.map((event, index) => (
+                      <li key={`${event.detail}-${index}`}>
+                        <Check size={11} />
+                        <code>{event.detail}</code>
+                        <span>{event.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="apply-progress-note">
+        You can keep working elsewhere. Tellann keeps going and sends a desktop
+        notification when it&apos;s done.
+      </p>
+    </section>
   );
 }
 
@@ -8188,6 +8118,8 @@ export function InstrumentationDetailPage() {
     getDeclaredFlows,
   } = useProject();
   const navigate = useNavigate();
+  const branchConfirmation = useOffQaBranchConfirmation(projectId);
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [record, setRecord] = useState<Record<string, any> | null>(null);
   const [localResult, setLocalResult] = useState<Record<string, any> | null>(
     null,
@@ -8323,6 +8255,33 @@ export function InstrumentationDetailPage() {
     void refresh().finally(() => setLoading(false));
   }, [projectId, planId]);
 
+  // Applying runs in the main process and reports each step. The latest state
+  // is fetched on arrival, so returning to this page mid-apply picks it up.
+  const [applyProgress, setApplyProgress] =
+    useState<InstrumentationApplyProgress | null>(null);
+  useEffect(() => {
+    const bridge = window.tellann?.instrumentation;
+    if (!planId || typeof bridge?.onProgress !== "function") return;
+    let cancelled = false;
+    void bridge
+      .getProgress(planId)
+      .then((state) => {
+        if (!cancelled && state) setApplyProgress(state);
+      })
+      .catch(() => undefined);
+    const unsubscribe = bridge.onProgress((state) => {
+      if (state.planId !== planId) return;
+      setApplyProgress(state);
+      // Also covers an apply that finishes after navigating away and back,
+      // when no local action is waiting to refresh the task.
+      if (state.outcome !== "RUNNING") void refresh();
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [planId]);
+
   // Once the install itself has passed but the onboarding test event has not been
   // seen yet, this screen is the verification step: poll live readiness so it flips
   // to "verified" on its own when the operator starts their app.
@@ -8438,6 +8397,9 @@ export function InstrumentationDetailPage() {
   const approveAndApply = async () => {
     if (!environment)
       throw new Error("INSTRUMENTATION_ENVIRONMENT_UNAVAILABLE");
+    // Asked before approving, so cancelling leaves the task untouched.
+    const branchDecision = await branchConfirmation.confirmBranch();
+    if (branchDecision === "cancelled") return;
     if (initializationId)
       await approveFlowInitialization(initializationId, planId);
     await approveInstrumentation({
@@ -8451,7 +8413,9 @@ export function InstrumentationDetailPage() {
       approvedFileScopes: files,
       approvedCommandIds: commands,
     });
-    const result = await applyInstrumentation(projectId, planId);
+    const result = await applyInstrumentation(projectId, planId, {
+      confirmOffQaBranch: branchDecision === "confirmed",
+    });
     const patchSetId = String(
       (result.cloud as Record<string, unknown> | undefined)?.id ?? "",
     );
@@ -8465,7 +8429,11 @@ export function InstrumentationDetailPage() {
     await refresh();
   };
   const apply = async () => {
-    const result = await applyInstrumentation(projectId, planId);
+    const branchDecision = await branchConfirmation.confirmBranch();
+    if (branchDecision === "cancelled") return;
+    const result = await applyInstrumentation(projectId, planId, {
+      confirmOffQaBranch: branchDecision === "confirmed",
+    });
     const patchSetId = String(
       (result.cloud as Record<string, unknown> | undefined)?.id ?? "",
     );
@@ -8551,6 +8519,19 @@ export function InstrumentationDetailPage() {
       );
     }
   };
+  // A Flow task belongs to a Flow initialization; rejecting it sends that Flow
+  // back to choosing how its start and finish are marked (done by the backend).
+  const flowTask = plan.instrumentationPurpose === "FLOW";
+  const flowChoiceHref = `/applications/${projectId}/instrumentation?flowId=${encodeURIComponent(String(plan.flowId ?? ""))}&flowVersionId=${encodeURIComponent(String(plan.flowVersionId ?? ""))}${initializationId ? `&initializationId=${encodeURIComponent(initializationId)}` : ""}&environmentId=${encodeURIComponent(String(record.environmentId ?? ""))}`;
+  const rejectTask = async () => {
+    setRejectConfirmOpen(false);
+    await rejectInstrumentation(projectId, planId, "Rejected in desktop review");
+    if (flowTask && initializationId) {
+      navigate(flowChoiceHref);
+      return;
+    }
+    await refresh();
+  };
   const rollback = async () => {
     await rollbackInstrumentation(projectId, planId);
     await refresh();
@@ -8566,6 +8547,29 @@ export function InstrumentationDetailPage() {
         </Status>
       }
     >
+      {branchConfirmation.modal}
+      <ConfirmModal
+        isOpen={rejectConfirmOpen}
+        title="Reject this setup task?"
+        description={
+          flowTask
+            ? "Tellann closes this task without changing any files, and this Flow goes back to choosing how its start and finish are marked. A rejected task can't be reopened."
+            : "Tellann closes this task without changing any files. A rejected task can't be reopened; to set up again, run Detect framework to create a new task."
+        }
+        confirmLabel="Reject task"
+        cancelLabel="Keep reviewing"
+        variant="danger"
+        busy={busy}
+        onConfirm={() => void runAction(rejectTask)}
+        onCancel={() => setRejectConfirmOpen(false)}
+      />
+      {applyProgress?.outcome === "RUNNING" ? (
+        <ApplyProgressPanel
+          progress={applyProgress}
+          plan={plan}
+          approvedCommandIds={commands}
+        />
+      ) : null}
       {terminalStatus ? (
         <section className="content-card stack mb-6">
           <div className="card-heading">
@@ -8591,19 +8595,35 @@ export function InstrumentationDetailPage() {
               </span>
             </div>
           ) : null}
-          <p>
-            A closed task can no longer be approved, applied, re-validated, or
-            rolled back. Start a new setup from the Instrumentation page and
-            Tellann will create a fresh reviewed task from the current project
-            state.
-          </p>
-          <Link
-            className="button primary"
-            to={`/applications/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
-          >
-            <ArrowRight size={15} />
-            Re-run detection and create a fresh task
-          </Link>
+          {record.status === "REJECTED" && flowTask ? (
+            <>
+              <p>
+                No files were changed. This Flow is back to choosing how its
+                start and finish are marked, so you can add them yourself or
+                have Tellann prepare a new change.
+              </p>
+              <Link className="button primary" to={flowChoiceHref}>
+                <ArrowRight size={15} />
+                Choose how to mark the Flow
+              </Link>
+            </>
+          ) : (
+            <>
+              <p>
+                A closed task can no longer be approved, applied, re-validated,
+                or rolled back. Start a new setup from the Instrumentation page
+                and Tellann will create a fresh reviewed task from the current
+                project state.
+              </p>
+              <Link
+                className="button primary"
+                to={`/applications/${projectId}/instrumentation${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`}
+              >
+                <ArrowRight size={15} />
+                Re-run detection and create a fresh task
+              </Link>
+            </>
+          )}
         </section>
       ) : null}
       {actionError && !terminalStatus ? (
@@ -8963,16 +8983,7 @@ export function InstrumentationDetailPage() {
               <button
                 className="button danger min-w-37.5"
                 disabled={busy}
-                onClick={() =>
-                  void runAction(async () => {
-                    await rejectInstrumentation(
-                      projectId,
-                      planId,
-                      "Rejected in desktop review",
-                    );
-                    await refresh();
-                  })
-                }
+                onClick={() => setRejectConfirmOpen(true)}
               >
                 Reject
               </button>

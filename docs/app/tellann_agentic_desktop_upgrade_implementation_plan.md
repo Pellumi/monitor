@@ -336,7 +336,7 @@ Checkpoint insertion targets business boundaries rather than every interaction:
 ### Safe application
 
 - Require task-level approval and declared file scope.
-- Create a `tellann/instrument-<timestamp>` branch when Git is available unless the user selects the current branch.
+- Apply on the workspace's current branch; never create or switch branches. QA work belongs on the application's QA review branch (for example `tellann/qa-review`): when the workspace is on a different branch, warn and require explicit confirmation before applying there.
 - Preserve unrelated dirty changes.
 - Reject stale plans when the base revision or target file hash changes.
 - Prefer framework configuration, AST transforms, and codemods.

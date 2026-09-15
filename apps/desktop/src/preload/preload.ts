@@ -100,6 +100,9 @@ const IPC = {
   approveInstrumentation: 'tellann:instrumentation:approve',
   rejectInstrumentation: 'tellann:instrumentation:reject',
   applyInstrumentation: 'tellann:instrumentation:apply',
+  // Mirrors the channel names defined in main.ts.
+  instrumentationProgress: 'tellann:instrumentation:progress',
+  getInstrumentationProgress: 'tellann:instrumentation:progress:get',
   validateInstrumentation: 'tellann:instrumentation:validate',
   rollbackInstrumentation: 'tellann:instrumentation:rollback',
   getLocalInstrumentationResult: 'tellann:instrumentation:local-result',
@@ -256,7 +259,14 @@ contextBridge.exposeInMainWorld('tellann', {
     generateReport: (applicationId: string, planId: string, applicationName: string, environmentName: string) => ipcRenderer.invoke(IPC.generateInstrumentationReport, { applicationId, planId, applicationName, environmentName }),
     approve: (input: unknown) => ipcRenderer.invoke(IPC.approveInstrumentation, input),
     reject: (applicationId: string, planId: string, reason?: string) => ipcRenderer.invoke(IPC.rejectInstrumentation, { applicationId, planId, reason }),
-    apply: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.applyInstrumentation, { applicationId, planId }),
+    apply: (applicationId: string, planId: string, options?: { confirmOffQaBranch?: boolean }) =>
+      ipcRenderer.invoke(IPC.applyInstrumentation, { applicationId, planId, confirmOffQaBranch: options?.confirmOffQaBranch === true }),
+    getProgress: (planId: string) => ipcRenderer.invoke(IPC.getInstrumentationProgress, planId),
+    onProgress: (callback: (progress: any) => void) => {
+      const subscription = (_: unknown, data: any) => callback(data);
+      ipcRenderer.on(IPC.instrumentationProgress, subscription);
+      return () => ipcRenderer.removeListener(IPC.instrumentationProgress, subscription);
+    },
     validate: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.validateInstrumentation, { applicationId, planId }),
     rollback: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.rollbackInstrumentation, { applicationId, planId }),
   },

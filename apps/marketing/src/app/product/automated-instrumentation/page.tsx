@@ -564,23 +564,23 @@ export default function AutomatedInstrumentationPage() {
         surface
         eyebrow="Branch safety"
         title="Keep instrumentation where it belongs."
-        copy="Organizations can control which branch Tellann is allowed to use, and the branch you were on is restored when the run finishes."
+        copy="Organizations set a QA review branch. Tellann applies instrumentation there without creating branches of its own, and asks before applying anywhere else."
       >
         <div className="instr-shell instr-branch" data-aos="tellann-panel">
           <div className="instr-branch-tree">
             <span>main</span>
-            <span className="is-child">feature/checkout</span>
             <span className="is-child is-target">
-              qa/tellann-instrumentation
+              tellann/qa-review
               <small>changes applied here</small>
             </span>
+            <span className="is-child">feature/checkout</span>
           </div>
           <ol className="instr-branch-steps">
             {[
-              ["Original branch", "feature/checkout"],
-              ["Instrumentation branch", "qa/tellann-instrumentation"],
-              ["Run completed", "Evidence captured"],
-              ["Original branch restored", "feature/checkout"],
+              ["QA review branch", "tellann/qa-review"],
+              ["Changes applied", "On the QA review branch"],
+              ["On another branch?", "Tellann asks before applying"],
+              ["Undo", "Only Tellann-authored changes"],
             ].map(([term, value]) => (
               <li key={term}>
                 <small>{term}</small>
@@ -591,11 +591,11 @@ export default function AutomatedInstrumentationPage() {
         </div>
         <Media
           visual={{
-            label: "Branch policy and restore-on-completion / SVG design",
+            label: "QA review branch and off-branch confirmation / SVG design",
             master: "1200 × 600",
             display: "900 × 450",
           }}
-          note="Master 1200 × 600 px · Display 900 × 450 px · 500–700 ms branch-restore animation on scroll"
+          note="Master 1200 × 600 px · Display 900 × 450 px · 500–700 ms branch highlight animation on scroll"
         />
       </Section>
 
