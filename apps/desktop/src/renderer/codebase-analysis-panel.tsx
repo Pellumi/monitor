@@ -716,7 +716,7 @@ export function CodebaseAnalysisPanel({
       <section className="content-card analysis-shell p-0!">
         <div className="analysis-progress-head">
           <div>
-            <div
+            {/* <div
               style={{
                 display: "flex",
                 gap: "8px",
@@ -728,7 +728,7 @@ export function CodebaseAnalysisPanel({
                 Codebase //{" "}
                 {state.mode === "cloud" ? "Cloud Analysis" : "Local Analysis"}
               </span>
-            </div>
+            </div> */}
             <h2>{STAGE_LABEL[status] ?? status}</h2>
             <p>{stageMessage}</p>
           </div>

@@ -31,6 +31,7 @@ import type {
   QAMentionableMember,
 } from "@tellann/desktop-contracts";
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
+import { resolveTelemetryGateway } from "./gateway-endpoint";
 import type { GuidedRunState } from "@tellann/browser-observer";
 import {
   clearDesktopSession,
@@ -524,9 +525,22 @@ export class DesktopCloudClient {
   }
 
   async sdkSetup(applicationId: string, environmentId: string): Promise<Json> {
-    return this.request(
+    const setup = await this.request<Json>(
       `/applications/${applicationId}/sdk-setup?environmentId=${encodeURIComponent(environmentId)}`,
     );
+    // The same endpoint is written into the member's project on apply and shown
+    // in the manual setup code, so the SDK always targets a gateway this device
+    // can actually reach.
+    return typeof setup.gatewayEndpoint === "string"
+      ? {
+          ...setup,
+          gatewayEndpoint: resolveTelemetryGateway({
+            gatewayEndpoint: setup.gatewayEndpoint,
+            customized: setup.gatewayEndpointCustomized === true,
+            desktopApiUrl: API_URL,
+          }),
+        }
+      : setup;
   }
 
   async issueSetupKey(

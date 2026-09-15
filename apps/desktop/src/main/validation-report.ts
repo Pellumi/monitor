@@ -56,7 +56,7 @@ export function escapeHtml(value: unknown): string {
     /[&<>"']/g,
     (character) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        character
+      character
       ] ?? character,
   );
 }
@@ -112,59 +112,59 @@ export function validationReportHtml(input: ValidationReportInput): string {
     .join("");
   const categoryRows = summary.length
     ? summary
-        .map(
-          (item) =>
-            `<tr><td>${escapeHtml(item.label)}</td><td>${item.count}</td></tr>`,
-        )
-        .join("")
+      .map(
+        (item) =>
+          `<tr><td>${escapeHtml(item.label)}</td><td>${item.count}</td></tr>`,
+      )
+      .join("")
     : "<tr><td>No TypeScript categories detected</td><td>0</td></tr>";
   const currentFileRows = input.files.length
     ? input.files
-        .map(
-          (file) =>
-            `<tr><td>${escapeHtml(file.relativePath)}</td><td>${file.changed ? "CHANGED" : "UNCHANGED"}</td><td class="hash">${escapeHtml(file.afterHash)}</td></tr>`,
-        )
-        .join("")
+      .map(
+        (file) =>
+          `<tr><td>${escapeHtml(file.relativePath)}</td><td>${file.changed ? "CHANGED" : "UNCHANGED"}</td><td class="hash">${escapeHtml(file.afterHash)}</td></tr>`,
+      )
+      .join("")
     : '<tr><td colspan="3">No current file manifest was available.</td></tr>';
   const previousFileRows = input.files.length
     ? input.files
-        .map(
-          (file) =>
-            `<tr><td>${escapeHtml(file.relativePath)}</td><td>${file.beforeHash ? "EXISTED" : "NEW FILE"}</td><td class="hash">${escapeHtml(file.beforeHash ?? "NOT PRESENT")}</td></tr>`,
-        )
-        .join("")
+      .map(
+        (file) =>
+          `<tr><td>${escapeHtml(file.relativePath)}</td><td>${file.beforeHash ? "EXISTED" : "NEW FILE"}</td><td class="hash">${escapeHtml(file.beforeHash ?? "NOT PRESENT")}</td></tr>`,
+      )
+      .join("")
     : '<tr><td colspan="3">No before-state file manifest was available.</td></tr>';
   const operationRows = input.operations.length
     ? input.operations
-        .map(
-          (operation) =>
-            `<tr><td>${escapeHtml(operation.kind)}</td><td><strong>${escapeHtml(operation.relativePath)}</strong><small>${escapeHtml(operation.description)}</small></td></tr>`,
-        )
-        .join("")
+      .map(
+        (operation) =>
+          `<tr><td>${escapeHtml(operation.kind)}</td><td><strong>${escapeHtml(operation.relativePath)}</strong><small>${escapeHtml(operation.description)}</small></td></tr>`,
+      )
+      .join("")
     : '<tr><td colspan="2">No operation manifest was available.</td></tr>';
   const packageRows = input.packageChanges.length
     ? input.packageChanges
-        .map(
-          (change) =>
-            `<tr><td>${escapeHtml(change.kind)}</td><td>${escapeHtml(change.packageName)} ${escapeHtml(change.version)}</td></tr>`,
-        )
-        .join("")
+      .map(
+        (change) =>
+          `<tr><td>${escapeHtml(change.kind)}</td><td>${escapeHtml(change.packageName)} ${escapeHtml(change.version)}</td></tr>`,
+      )
+      .join("")
     : '<tr><td colspan="2">No dependency change was requested.</td></tr>';
   const commandRows = input.commands.length
     ? input.commands
-        .map(
-          (command) =>
-            `<tr><td><span class="mark ${command.passed ? "pass" : "fail"}">${command.passed ? "PASS" : "FAIL"}</span></td><td><strong>${escapeHtml(command.purpose ?? command.id)}</strong><small>ID: ${escapeHtml(command.id)} | Exit: ${escapeHtml(command.exitCode ?? "unknown")} | Duration: ${escapeHtml(command.durationMs ?? 0)} ms</small></td></tr>`,
-        )
-        .join("")
+      .map(
+        (command) =>
+          `<tr><td><span class="mark ${command.passed ? "pass" : "fail"}">${command.passed ? "PASS" : "FAIL"}</span></td><td><strong>${escapeHtml(command.purpose ?? command.id)}</strong><small>ID: ${escapeHtml(command.id)} | Exit: ${escapeHtml(command.exitCode ?? "unknown")} | Duration: ${escapeHtml(command.durationMs ?? 0)} ms</small></td></tr>`,
+      )
+      .join("")
     : '<tr><td colspan="2">No approved command result was recorded.</td></tr>';
   const commandSections = failedCommands.length
     ? failedCommands
-        .map(
-          (command) =>
-            `<section class="command"><div class="command-head"><strong>${escapeHtml(command.purpose ?? command.id)}</strong><span>EXIT ${escapeHtml(command.exitCode ?? "UNKNOWN")}</span></div><pre>${escapeHtml(command.output)}</pre></section>`,
-        )
-        .join("")
+      .map(
+        (command) =>
+          `<section class="command"><div class="command-head"><strong>${escapeHtml(command.purpose ?? command.id)}</strong><span>EXIT ${escapeHtml(command.exitCode ?? "UNKNOWN")}</span></div><pre>${escapeHtml(command.output)}</pre></section>`,
+      )
+      .join("")
     : '<p class="muted">No failed command output was recorded.</p>';
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
     @page { size:A4; margin:18mm 0; }
@@ -202,7 +202,7 @@ export function validationReportHtml(input: ValidationReportInput): string {
     .major{break-before:page}
     .notice{border-left:3px solid #000;background:transparent;padding:12px 14px;margin:12px 0}
     .section-label{font:8pt 'Courier New',monospace;color:#666;letter-spacing:.1em;text-transform:uppercase}
-  </style></head><body><div class="watermark">${TELLANN_LOGO_SVG}</div><main><section class="sheet"><div class="brand"><div class="logo">TELLANN</div><span class="badge">QA // Validation blocker</span></div>
+  </style></head><body><main><section class="sheet"><div class="brand"><div class="logo">TELLANN</div><span class="badge">QA // Validation blocker</span></div>
     <h1>${escapeHtml(title)}</h1><p class="muted">A developer-ready record of the automated instrumentation result, project build blocker, evidence, and recommended next actions.</p>
     <div class="summary"><div class="metric">${passedChecks}/${input.checks.length} checks passed</div><p>${failedCommands.length ? `${failedCommands.length} approved command failed; ${changedFiles.length} workspace files were changed by the approved task.` : `${changedFiles.length} workspace files were changed and no failed command was recorded.`}</p></div>
     <table>${rows}</table><h2>Executive assessment</h2><p>${failedCommands.length ? "Tellann applied the reviewed instrumentation scope and completed its structural SDK checks. The attached application then failed an approved project command. The evidence below separates the project before-state, Tellann changes, current state, and observed blocker." : "The recorded instrumentation and approved validation commands completed successfully."}</p>

@@ -124,6 +124,14 @@ function isTellannRelatedBuildFailure(output: string): boolean {
   ].some((pattern) => pattern.test(output));
 }
 
+/** Whether a command printed anything besides "> script" banners and the failure line. */
+function buildProducedOutput(output: string): boolean {
+  return output.split(/\r?\n/).some((line) => {
+    const text = line.trim();
+    return Boolean(text) && !text.startsWith(">") && !/^Command failed:/i.test(text);
+  });
+}
+
 function validationCheckForCommand(
   result: CommandResult,
 ): ValidationResult["checks"][number] {
@@ -137,6 +145,21 @@ function validationCheckForCommand(
       output: warningCount
         ? `Project build completed successfully with ${warningCount} non-blocking bundler warning${warningCount === 1 ? "" : "s"}. See Project build health for guidance.`
         : "Project build completed successfully.",
+    };
+  }
+  // A build that printed nothing beyond the package manager's banner never ran
+  // (npm could not start the script, for example). Calling that "application
+  // errors unrelated to Tellann" would send the member looking for errors that
+  // do not exist.
+  if (
+    result.id === "validate-build" &&
+    !result.passed &&
+    !buildProducedOutput(result.output)
+  ) {
+    return {
+      name: "command:validate-build",
+      passed: false,
+      output: `The build script exited before producing any output${result.exitCode === null ? "" : ` (exit code ${result.exitCode})`}, so the build did not run. Run the build yourself to see why, then re-run local checks.`,
     };
   }
   if (
@@ -204,12 +227,19 @@ async function runCommand(
   validateStructuredCommand(command, workspaceRoot);
   const cwd = resolveWithinWorkspace(workspaceRoot, command.cwd);
   const resolved = resolveCommand(command);
-  const env = Object.fromEntries(
+  const env: Record<string, string> = Object.fromEntries(
     command.allowedEnvironmentKeys.flatMap((key) => {
       const value = process.env[key];
       return value === undefined ? [] : [[key, value]];
     }),
   );
+  // Package managers run a script such as "vite build" through the Windows
+  // command shell, which they find through ComSpec. Without it npm exits with
+  // code 1 before the script starts and prints nothing. ComSpec names a system
+  // binary rather than project or user data, so it is always passed through.
+  if (process.platform === "win32" && process.env.ComSpec && !env.ComSpec) {
+    env.ComSpec = process.env.ComSpec;
+  }
   const started = Date.now();
   try {
     const result = await execFileAsync(resolved.executable, resolved.args, {

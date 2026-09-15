@@ -8090,8 +8090,7 @@ function ApplyProgressPanel({
         })}
       </ol>
       <p className="apply-progress-note">
-        You can keep working elsewhere. Tellann keeps going and sends a desktop
-        notification when it&apos;s done.
+        You can keep working elsewhere. Tellann keeps going and will notify you when it&apos;s done.
       </p>
     </section>
   );
@@ -8306,7 +8305,7 @@ export function InstrumentationDetailPage() {
     pollSdkReadiness();
     const timer = window.setInterval(
       pollSdkReadiness,
-      document.hidden ? 15_000 : 4_000,
+      document.hidden ? 15_000 : 3_000,
     );
     return () => window.clearInterval(timer);
   }, [validationSucceeded, telemetryVerified, environmentId, pollSdkReadiness]);
@@ -8740,21 +8739,17 @@ export function InstrumentationDetailPage() {
             </div>
           ) : (
             <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
-              <RefreshCw size={15} className="text-[#8e9192] shrink-0 mt-0.5" />
+              <RefreshCw
+                size={15}
+                className="text-[#8e9192] shrink-0 mt-0.5 animate-spin"
+              />
               <span className="text-sm text-[#c4c7c8] leading-relaxed flex-1">
-                Waiting for the onboarding test event
+                Searching automatically for the onboarding test event
                 {environment?.name ? ` from ${environment.name}` : ""}. Start
-                your application and use it once — this screen updates on its
-                own when Tellann receives the event. No QA run is needed for
-                this step.
+                your application and use it once — Tellann checks every few
+                seconds and updates this screen when the event arrives. No QA
+                run is needed for this step.
               </span>
-              <button
-                className="button shrink-0"
-                disabled={busy}
-                onClick={() => pollSdkReadiness()}
-              >
-                <RefreshCw size={13} /> Check now
-              </button>
             </div>
           )}
 
