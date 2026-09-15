@@ -402,6 +402,18 @@ export default function ConnectApplicationPage() {
           </p>
         </div>
 
+        {descriptor.readiness.connected ? (
+          <div className="flex items-start gap-3 rounded border border-white bg-black px-4 py-3">
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-white" />
+            <div>
+              <p className="text-sm font-semibold text-white">This application is already connected</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#c4c7c8]">
+                Tellann is already receiving telemetry from {descriptor.environmentName}. The setup options and credentials below are still available if you need to connect another target or reinstall the SDK.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         {/* Readiness Table */}
         <table className="w-full border-collapse border border-[#262626] bg-black">
           <tbody>
@@ -473,7 +485,7 @@ export default function ConnectApplicationPage() {
               <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-white" : ""}`} />
               {setup.isFetching ? "Checking connection…" : "Check connection now"}
             </button>
-            {setup.isFetching ? (
+            {/* {setup.isFetching ? (
               <span className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[#8e9192] animate-pulse">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
@@ -481,7 +493,7 @@ export default function ConnectApplicationPage() {
                 </span>
                 Polling status…
               </span>
-            ) : null}
+            ) : null} */}
           </div>
           {descriptor.readiness.connected ? (
             <Link
@@ -495,7 +507,7 @@ export default function ConnectApplicationPage() {
       </section>
 
       {/* Choice Cards */}
-      {!descriptor.readiness.connected && mode === "choice" ? (
+      {mode === "choice" ? (
         <div className="grid gap-5 md:grid-cols-2">
           <button
             onClick={() => {
@@ -544,7 +556,7 @@ export default function ConnectApplicationPage() {
       ) : null}
 
       {/* Desktop Mode */}
-      {!descriptor.readiness.connected && mode === "desktop" ? (
+      {mode === "desktop" ? (
         <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
           <div className="border-b border-[#262626] pb-4">
             <h2 className="text-xl font-semibold text-white">Continue in Tellann Desktop</h2>
@@ -587,7 +599,7 @@ export default function ConnectApplicationPage() {
       ) : null}
 
       {/* Manual Mode */}
-      {!descriptor.readiness.connected && mode === "manual" ? (
+      {mode === "manual" ? (
         <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#262626] pb-4">
             <div>

@@ -181,6 +181,39 @@ function useEvidenceOpener(applicationId: string) {
   );
 }
 
+const SOURCE_KIND_BY_EXTENSION: Record<string, string> = {
+  js: "javascript",
+  jsx: "jsx",
+  ts: "typescript",
+  tsx: "tsx",
+  py: "python",
+  css: "css",
+  scss: "css",
+  sass: "css",
+  html: "html",
+  htm: "html",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  md: "markdown",
+  mdx: "markdown",
+  sql: "sql",
+  prisma: "prisma",
+};
+
+function sourcePresentation(item: Pick<CodeEvidence, "path" | "startLine">) {
+  const filename = item.path.split(/[\\/]/).pop() || item.path;
+  const extension = filename.includes(".")
+    ? filename.split(".").pop()?.toLowerCase() || "file"
+    : "file";
+  const route = `${item.path}${item.startLine ? `:${item.startLine}` : ""}`;
+  return {
+    filename: `${filename}${item.startLine ? `:${item.startLine}` : ""}`,
+    kind: SOURCE_KIND_BY_EXTENSION[extension] ?? "file",
+    route,
+  };
+}
+
 function EvidenceLink({
   item,
   onOpen,
@@ -188,15 +221,17 @@ function EvidenceLink({
   item: CodeEvidence;
   onOpen: (item: CodeEvidence) => void;
 }) {
+  const source = sourcePresentation(item);
   return (
     <button
-      className="analysis-evidence"
+      type="button"
+      className={`analysis-evidence kind-${source.kind}`}
       onClick={() => void onOpen(item)}
-      title={`${item.analyzer} · ${Math.round(item.confidence * 100)}% confidence`}
+      data-tooltip={source.route}
+      aria-label={`Open ${source.route} with the default application`}
     >
       <ExternalLink size={12} />
-      {item.path}
-      {item.startLine ? `:${item.startLine}` : ""}
+      <span>{source.filename}</span>
     </button>
   );
 }
@@ -901,7 +936,7 @@ function ArchitectureView({
     <div className="analysis-architecture">
       <section>
         <h3>Domains</h3>
-        <p className="analysis-note">
+        <p className="analysis-note pb-2!">
           Discovered by clustering the dependency graph, then named from the
           directories, data models, and routes the cluster shares. Confidence
           reflects how many of those signals agreed.
@@ -2021,7 +2056,7 @@ export function CodebaseAnalysisPanel({
         <div className="analysis-progress">
           <span style={{ width: `${Math.max(progress, 2)}%` }} />
         </div>
-        <p className="analysis-note">
+        <p className="analysis-note analysis-progress-note">
           {progress}%
           {state.uploadProgress
             ? ` · uploading part ${state.uploadProgress.sent} of ${state.uploadProgress.total}`

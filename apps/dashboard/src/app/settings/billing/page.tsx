@@ -741,14 +741,25 @@ export default function BillingPage() {
         </div>
       )}
       {checkoutState && (
-        <div className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-200" role="status">
-          {checkoutState === 'PREPARING' && 'Preparing secure checkout…'}
-          {checkoutState === 'AWAITING' && 'Awaiting payment on the provider page…'}
-          {checkoutState === 'VERIFYING' && 'Verifying payment with the provider…'}
-          {checkoutState === 'ACTIVE' && 'Payment verified. Your paid plan is active.'}
-          {checkoutState === 'CANCELLED' && 'Checkout was cancelled. Your current plan is unchanged.'}
-          {checkoutState === 'PENDING_CONFIRMATION' && 'Your payment is still being confirmed by the bank. This can take a few minutes — refresh this page shortly. If you were charged, your plan activates automatically and nothing further is needed.'}
-          {checkoutState === 'FAILED' && 'We could not confirm this payment. If your bank shows a charge, it will activate automatically once the processor confirms it — refresh in a few minutes or contact support with your invoice number. Your current plan is unchanged.'}
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-200" role="status">
+          <span>
+            {checkoutState === 'PREPARING' && 'Preparing secure checkout…'}
+            {checkoutState === 'AWAITING' && 'Awaiting payment on the provider page…'}
+            {checkoutState === 'VERIFYING' && 'Verifying payment with the provider…'}
+            {checkoutState === 'ACTIVE' && 'Payment verified. Your paid plan is active.'}
+            {checkoutState === 'CANCELLED' && 'Checkout was cancelled. Your current plan is unchanged.'}
+            {checkoutState === 'PENDING_CONFIRMATION' && 'Your payment is still being confirmed by the bank. This can take a few minutes — refresh this page shortly. If you were charged, your plan activates automatically and nothing further is needed.'}
+            {checkoutState === 'FAILED' && 'We could not confirm this payment. If your bank shows a charge, it will activate automatically once the processor confirms it — refresh in a few minutes or contact support with your invoice number. Your current plan is unchanged.'}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setCheckoutState(null)}
+            className="h-6 w-6 shrink-0 rounded p-0.5 text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-200"
+            aria-label="Dismiss checkout notification"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
       )}
       {subscription && ['GRACE_PERIOD', 'PAST_DUE', 'SUSPENDED'].includes(subscription.status) && (
