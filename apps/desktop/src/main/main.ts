@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import {
   answerFromAnalysis,
@@ -36,6 +36,7 @@ import {
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
+import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
 
@@ -579,6 +580,39 @@ function pendingAnalysis(snapshot: RepositorySnapshotSummary, message: string): 
 }
 
 /**
+ * An analysis runs over a copy of the source (the worker's input, or an archive
+ * extracted in the cloud) that carries no Git metadata, so the branch and
+ * revision recorded when the snapshot was taken are the source of truth.
+ */
+function withSnapshotGitDetails<T extends CodebaseAnalysis | null>(
+  analysis: T,
+  snapshot: { revision?: string | null; branch?: string | null } | null | undefined,
+): T {
+  if (!analysis || !snapshot) return analysis;
+  return {
+    ...analysis,
+    revision: analysis.revision ?? snapshot.revision ?? null,
+    branch: analysis.branch ?? snapshot.branch ?? null,
+  };
+}
+
+/**
+ * Whether the folder sits inside a Git working tree, found by looking for `.git`
+ * up the tree. Lets the UI tell "not a repository" from "Git could not be read"
+ * (git missing from PATH, or a repository Git refuses as unsafe).
+ */
+function hasGitDirectory(root: string | null | undefined): boolean {
+  if (!root) return false;
+  let current = path.resolve(root);
+  for (;;) {
+    if (existsSync(path.join(current, '.git'))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+/**
  * Run the analyzer in a worker thread so a large repository cannot block the
  * Electron main process. Cached fragments from the previous run are handed in
  * so a rescan only re-analyses what actually changed.
@@ -646,7 +680,12 @@ function beginLocalCodebaseAnalysis(
           console.warn('[codebase-analysis] Could not retain the previous analysis', error);
         }
       }
-      if (state) writeAnalysisState(applicationId, { ...state, analysis: message.analysis });
+      if (state) {
+        writeAnalysisState(applicationId, {
+          ...state,
+          analysis: withSnapshotGitDetails(message.analysis, snapshot),
+        });
+      }
       if (message.cache) {
         try {
           writeLocalState(codebaseCacheKey(applicationId), message.cache);
@@ -1581,6 +1620,10 @@ function registerIpc(): void {
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const state = readAnalysisState(applicationId);
     if (!state) return null;
+    // Fills the branch and revision of analyses stored before they were carried
+    // through, and reports whether the folder is a Git working tree at all.
+    const workspaceSnapshot = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId))?.snapshot;
+    const gitDetected = hasGitDirectory(state.workspaceRoot);
 
     if (state.mode === 'local' || !state.cloudJobId) {
       // A local run that is marked active with no worker behind it died with a
@@ -1594,8 +1637,9 @@ function registerIpc(): void {
         source: 'local' as const,
         interrupted: Boolean(stale),
         uploadProgress: state.uploadProgress,
-        analysis: state.analysis,
+        analysis: withSnapshotGitDetails(state.analysis, workspaceSnapshot),
         job: null,
+        gitDetected,
       };
     }
 
@@ -1606,7 +1650,13 @@ function registerIpc(): void {
         source: 'cloud' as const,
         interrupted: false,
         uploadProgress: state.uploadProgress,
-        analysis: (remote.analysis as CodebaseAnalysis | null) ?? null,
+        gitDetected,
+        // The snapshot the job analysed is the better source; the local one
+        // covers a job record that predates it.
+        analysis: withSnapshotGitDetails(
+          withSnapshotGitDetails((remote.analysis as CodebaseAnalysis | null) ?? null, remote.snapshot),
+          workspaceSnapshot,
+        ),
         job: {
           jobId: remote.jobId,
           status: remote.status,
@@ -1626,8 +1676,9 @@ function registerIpc(): void {
         source: 'cloud' as const,
         interrupted: false,
         uploadProgress: state.uploadProgress,
-        analysis: state.analysis,
+        analysis: withSnapshotGitDetails(state.analysis, workspaceSnapshot),
         job: null,
+        gitDetected,
         unreachable: error instanceof Error ? error.message.slice(0, 200) : 'Cloud analysis is unreachable',
       };
     }
@@ -1656,14 +1707,25 @@ function registerIpc(): void {
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
     if (!workspace) throw new Error('WORKSPACE_NOT_ATTACHED');
-    const state = readAnalysisState(applicationId);
-    if (state?.mode === 'cloud') {
-      // Rescanning a cloud workspace means sending the current revision again;
-      // re-attaching is the one path that asks for consent against real numbers.
-      return { rescanned: false, requiresReattach: true };
-    }
     if (!existsSync(workspace.path)) {
       throw new Error('The attached folder is no longer on this machine. Re-attach it to analyse again.');
+    }
+    const state = readAnalysisState(applicationId);
+    if (state?.mode === 'cloud') {
+      // Rescanning a cloud workspace sends the current revision again, so it
+      // takes the same steps as attaching, without the folder picker: a fresh
+      // snapshot is registered, then consent is asked against the archive that
+      // would actually be uploaded (declining analyses locally instead).
+      const registered = await registerSelectedWorkspace(applicationId, workspace.path);
+      if (!registered.cloudId || !registered.snapshotId) throw new Error('WORKSPACE_NOT_ATTACHED');
+      // Not awaited: the renderer shows the consent prompt and polls progress.
+      void beginCodebaseAnalysisWithConsent(applicationId, registered.path, registered.snapshot, {
+        workspaceId: registered.cloudId,
+        repositorySnapshotId: registered.snapshotId,
+      }).catch((error) => {
+        console.warn('[codebase-analysis] Rescan could not start', error);
+      });
+      return { rescanned: true, requiresReattach: false };
     }
     // The QA branch is carried through so a rescan measures drift the same way
     // the original attach did, rather than silently losing it.
@@ -1792,6 +1854,60 @@ function registerIpc(): void {
     if (!existsSync(absolute)) return { opened: false, reason: 'FILE_NOT_FOUND' };
     const error = await shell.openPath(absolute);
     return error ? { opened: false, reason: error } : { opened: true };
+  });
+  /**
+   * The desktop only lists risk titles; the explanation, affected code, reach,
+   * evidence, and remediation for each one are written to a PDF the user saves.
+   */
+  ipcMain.handle(IPC.saveCodebaseRiskReport, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const state = readAnalysisState(applicationId);
+    if (!state) throw new Error('No codebase analysis is stored for this application.');
+    let analysis = state.analysis;
+    if (state.mode === 'cloud' && state.cloudJobId) {
+      const remote = await cloud.getCodebaseAnalysis(applicationId).catch(() => null) as Record<string, any> | null;
+      analysis = (remote?.analysis as CodebaseAnalysis | null) ?? analysis;
+    }
+    if (!analysis?.findings?.length) throw new Error('This analysis has no risks to report.');
+
+    let workspace: StoredWorkspace | null = null;
+    try {
+      workspace = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
+    } catch {
+      workspace = null;
+    }
+
+    // Reach only means something for findings about a module's dependents.
+    const blastRadius: Record<string, BlastRadiusResult> = {};
+    for (const finding of analysis.findings) {
+      const entityId = finding.entityIds[0];
+      if (!entityId || (finding.kind !== 'COUPLING' && finding.kind !== 'CYCLE')) continue;
+      try {
+        blastRadius[finding.id] = blastRadiusInAnalysis(analysis, entityId);
+      } catch {
+        // A finding whose entity is absent from this payload is reported without reach.
+      }
+    }
+
+    const workspaceName = (workspace?.name ?? 'Workspace').slice(0, 120);
+    const pdf = await renderCodebaseRiskReportPdf({
+      workspaceName,
+      mode: state.mode,
+      generatedAt: new Date().toISOString(),
+      analysis,
+      blastRadius,
+    });
+    const safeName = workspaceName.replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'workspace';
+    const filename = `Tellann-${safeName}-codebase-risk-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const save = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Save codebase risk report',
+      defaultPath: path.join(app.getPath('documents'), filename),
+      filters: [{ name: 'PDF report', extensions: ['pdf'] }],
+    });
+    if (save.canceled || !save.filePath) return { cancelled: true };
+    await fs.writeFile(save.filePath, pdf);
+    return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath) };
   });
   ipcMain.handle(IPC.cloneWorkspace, async (event, input: unknown) => {
     assertTrustedSender(event);

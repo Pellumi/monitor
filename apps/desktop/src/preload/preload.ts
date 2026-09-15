@@ -74,6 +74,7 @@ const IPC = {
   rescanCodebase: 'tellann:workspace:analysis:rescan',
   codebaseQuery: 'tellann:workspace:analysis:query',
   openCodebaseEvidence: 'tellann:workspace:analysis:evidence:open',
+  saveCodebaseRiskReport: 'tellann:workspace:analysis:risk-report:save',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
   setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',
@@ -149,6 +150,8 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.invoke(IPC.codebaseQuery, input),
     openCodebaseEvidence: (input: { applicationId: string; path: string; line?: number }) =>
       ipcRenderer.invoke(IPC.openCodebaseEvidence, input),
+    saveCodebaseRiskReport: (applicationId: string) =>
+      ipcRenderer.invoke(IPC.saveCodebaseRiskReport, applicationId),
     cloneWorkspace: (input: { applicationId: string; cloneUrl: string }) =>
       ipcRenderer.invoke(IPC.cloneWorkspace, input),
     getBranchCompliance: (applicationId: string) =>

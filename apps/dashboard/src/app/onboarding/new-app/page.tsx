@@ -1,13 +1,18 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { Suspense, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AppWindow, ArrowRight, ShieldAlert } from "lucide-react";
+import { ArrowRight, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useSession } from "@/components/providers";
 
 const ONBOARDING_API = "/api-gateway";
+
+/** Every list that shows an organization's applications, refreshed after a create. */
+const APPLICATION_LIST_KEYS = ["organization-applications", "sidebar-apps", "apps"] as const;
 
 interface Application {
   id: string;
@@ -16,10 +21,10 @@ interface Application {
   createdAt: string;
 }
 
-import { Suspense } from "react";
-
 function NewAppContent() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { setSelectedOrgId } = useSession();
   const searchParams = useSearchParams();
   const orgId = searchParams.get("orgId") ?? "";
   const orgName = searchParams.get("orgName") ?? "";
@@ -28,7 +33,10 @@ function NewAppContent() {
 
   const [appName, setAppName] = useState("");
 
-  const { data: entitlement, isLoading: isEntitlementLoading } = useQuery({
+  // Plan limits load beside the form rather than in front of it. The cloud
+  // enforces the limit on create regardless, so a slow check never holds up a
+  // user who is within it.
+  const { data: entitlement } = useQuery({
     queryKey: ["entitlement", orgId],
     queryFn: async () => {
       const res = await authenticatedFetch(
@@ -40,7 +48,7 @@ function NewAppContent() {
     enabled: !!orgId,
   });
 
-  const { data: apps, isLoading: isAppsLoading } = useQuery<Application[]>({
+  const { data: apps } = useQuery<Application[]>({
     queryKey: ["apps", orgId],
     queryFn: async () => {
       const res = await authenticatedFetch(
@@ -75,8 +83,16 @@ function NewAppContent() {
       const app = (await res.json()) as Application;
       return app;
     },
-    onSuccess: (data) => {
-      router.push(`/onboarding/declare?appId=${data.id}`);
+    onSuccess: (app) => {
+      // The sidebar and every app-scoped page read the session's organization,
+      // so the new application must be visible there when the next page loads.
+      setSelectedOrgId(orgId);
+      for (const key of APPLICATION_LIST_KEYS) {
+        void queryClient.invalidateQueries({ queryKey: [key, orgId] });
+      }
+      // Connecting the SDK is the next step; declaring flows comes after it.
+      const id = encodeURIComponent(app.id);
+      router.push(`/applications/${id}/connect?appId=${id}`);
     },
   });
 
@@ -100,19 +116,9 @@ function NewAppContent() {
     );
   }
 
-  if (isEntitlementLoading || isAppsLoading) {
-    return (
-      <div className="flex h-[80vh] items-center justify-center">
-        <div className="text-neutral-400 animate-pulse text-lg">
-          Checking plan limits…
-        </div>
-      </div>
-    );
-  }
-
   const appLimit = entitlement?.limits?.applications ?? 1;
-  const currentAppCount = apps?.length ?? 0;
-  const hasReachedLimit = currentAppCount >= appLimit;
+  const hasReachedLimit =
+    entitlement !== undefined && apps !== undefined && apps.length >= appLimit;
 
   if (hasReachedLimit) {
     return (
@@ -129,9 +135,7 @@ function NewAppContent() {
               Your organization{" "}
               <span className="font-semibold text-white">{orgName}</span> has
               onboarded{" "}
-              <span className="font-semibold text-white">
-                {currentAppCount}
-              </span>{" "}
+              <span className="font-semibold text-white">{apps.length}</span>{" "}
               of <span className="font-semibold text-white">{appLimit}</span>{" "}
               allowed applications on the{" "}
               <span className="font-mono text-white font-semibold uppercase">
@@ -165,17 +169,15 @@ function NewAppContent() {
       <div className="w-full max-w-lg space-y-8 rounded-md border border-[#262626] bg-[#131313] p-8 shadow-2xl">
         <div className="w-full flex justify-between items-center">
           <h2 className="text-2xl font-bold tracking-tight text-white">
-            Register Application
+            Name your application
           </h2>
           <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-            APP // DEFINE
+            APP // CREATE
           </span>
         </div>
         <div className="text-left">
           <p className="mt-2 text-sm text-[#c4c7c8] leading-relaxed">
-            Create an application configuration for{" "}
-            <span className="font-semibold text-white">{orgName}</span>. You
-            will define its expected behavior next.
+            You&apos;ll connect it to your project on the next screen.
           </p>
         </div>
 
@@ -197,6 +199,7 @@ function NewAppContent() {
               id="app-name"
               type="text"
               required
+              autoFocus
               value={appName}
               onChange={(e) => setAppName(e.target.value)}
               placeholder="e.g. Production E-commerce Store"
@@ -204,28 +207,31 @@ function NewAppContent() {
             />
           </div>
 
-          <div className="flex space-x-3 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => router.back()}
-              className="w-[150px]"
-            >
-              Back
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={createAppMutation.isPending || !appName.trim()}
-              className="flex-1"
-            >
-              <span>
-                {createAppMutation.isPending ? "Creating…" : "Register App"}
-              </span>
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            disabled={createAppMutation.isPending || !appName.trim()}
+            className="w-full"
+          >
+            <span>
+              {createAppMutation.isPending ? "Creating…" : "Create and connect"}
+            </span>
+            <ArrowRight className="h-4 w-4" />
+          </Button>
         </form>
+
+        <p className="text-center font-mono text-[11px] leading-relaxed text-[#8e9192]">
+          Creating in{" "}
+          <span className="text-white">{orgName || "your organization"}</span>
+          {" · "}
+          <Link
+            href="/onboarding?pick=1"
+            className="underline underline-offset-2 hover:text-white"
+          >
+            Use a different organization
+          </Link>
+        </p>
       </div>
     </div>
   );

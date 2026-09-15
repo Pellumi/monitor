@@ -151,6 +151,10 @@ async function processOne(): Promise<boolean> {
     if (await cancelled(queued.id)) return true;
 
     const analysis: CodebaseAnalysis = result.analysis;
+    // The extracted archive carries no Git metadata, so the branch and revision
+    // come from the snapshot the desktop recorded when it uploaded the source.
+    analysis.revision = analysis.revision ?? queued.codebaseSnapshot.revision ?? null;
+    analysis.branch = analysis.branch ?? queued.codebaseSnapshot.branch ?? null;
 
     // Readable feature descriptions, from bounded evidence only. A provider
     // outage leaves the deterministic descriptions in place.

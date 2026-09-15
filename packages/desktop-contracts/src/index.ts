@@ -1129,6 +1129,7 @@ export const IPC = {
   rescanCodebase: 'tellann:workspace:analysis:rescan',
   codebaseQuery: 'tellann:workspace:analysis:query',
   openCodebaseEvidence: 'tellann:workspace:analysis:evidence:open',
+  saveCodebaseRiskReport: 'tellann:workspace:analysis:risk-report:save',
   cloneWorkspace: 'tellann:workspace:clone',
   getBranchCompliance: 'tellann:workspace:branch:compliance',
   setBranchAgentCheckout: 'tellann:workspace:branch:agent-checkout',

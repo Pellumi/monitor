@@ -512,7 +512,9 @@ export function analyzeArchitecture(
       id: stableId('finding', `orphans:${unreachable.length}`),
       kind: 'UNRESOLVED_REFERENCE',
       severity: 'INFO',
-      title: `${unreachable.length} module(s) are never imported`,
+      title: unreachable.length === 1
+        ? '1 module is never imported'
+        : `${unreachable.length} modules are never imported`,
       description: `These modules import others but nothing imports them, and they are not entrypoints. They may be dead code, or reached only through a dynamic mechanism static analysis cannot see: ${unreachable.slice(0, 5).map((item) => item.path).join(', ')}${unreachable.length > 5 ? '…' : ''}.`,
       entityIds: unreachable.slice(0, 30).map((item) => item.entityId),
       evidence: [],

@@ -55,6 +55,8 @@ declare global {
       snapshot: { id: string; revision: string | null; branch: string | null; dirty: boolean } | null;
     } | null;
     unreachable?: string;
+    /** A `.git` directory exists in or above the attached folder. */
+    gitDetected?: boolean;
   };
 
   interface Window {
@@ -99,6 +101,8 @@ declare global {
           payload?: Record<string, unknown>;
         }): Promise<any>;
         openCodebaseEvidence(input: { applicationId: string; path: string; line?: number }): Promise<{ opened: boolean; reason?: string }>;
+        /** Writes a PDF explaining every risk in the stored analysis to a user-chosen path. */
+        saveCodebaseRiskReport(applicationId: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string }>;
         cloneWorkspace(input: { applicationId: string; cloneUrl: string }): Promise<{
           id: string;
           path: string;

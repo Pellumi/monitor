@@ -204,6 +204,55 @@ function ApplicationRequired() {
   );
 }
 
+/** The environment SDK setup targets: the first one that is not observation-only. */
+function sdkSetupEnvironmentId(
+  application: { environments: Array<{ id: string; type: string }> } | undefined | null,
+) {
+  return (
+    application?.environments.find((item) => item.type !== "PRODUCTION")?.id ?? ""
+  );
+}
+
+function sdkSetupHref(applicationId: string, environmentId?: string) {
+  return `/applications/${applicationId}/instrumentation?setup=connect${
+    environmentId ? `&environmentId=${encodeURIComponent(environmentId)}` : ""
+  }`;
+}
+
+type SdkConnectionStatus = "checking" | "connected" | "disconnected" | "unavailable";
+
+function useSdkConnectionStatus(
+  applicationId: string | undefined,
+  environmentId: string,
+): SdkConnectionStatus {
+  const [status, setStatus] = useState<SdkConnectionStatus>("checking");
+  useEffect(() => {
+    if (!applicationId || !environmentId || !window.tellann?.setup) {
+      setStatus("unavailable");
+      return;
+    }
+    let cancelled = false;
+    setStatus("checking");
+    void window.tellann.setup
+      .getSdkSetup(applicationId, environmentId)
+      .then((setup) => {
+        if (cancelled) return;
+        setStatus(
+          (setup?.readiness as { connected?: boolean } | undefined)?.connected
+            ? "connected"
+            : "disconnected",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId, environmentId]);
+  return status;
+}
+
 export function RouteResolver({ section }: { section: string }) {
   const lastProject = localStorage.getItem("tellann:last-project");
   return (
@@ -437,8 +486,14 @@ export function NewApplicationPage() {
     // The folder picker is always offered and always optional: cancelling it
     // leaves the application browser-only, and a folder can be attached later
     // from the Applications list or the Workspace page.
-    await attachWorkspace(created.id).catch(() => undefined);
-    navigate(`/applications/${created.id}`);
+    // With a folder attached, connecting the SDK is the next step, so go straight
+    // to it rather than the overview.
+    const attached = await attachWorkspace(created.id).catch(() => null);
+    navigate(
+      attached
+        ? sdkSetupHref(created.id, sdkSetupEnvironmentId(created))
+        : `/applications/${created.id}`,
+    );
   };
 
   return (
@@ -515,8 +570,9 @@ export function NewApplicationPage() {
         <p className="wizard-footnote">
           The application is created in Tellann Cloud, so it appears in the web
           dashboard immediately and everyone signed in is notified. A folder
-          picker opens next for read-only analysis — skip it to stay
-          browser-only, and attach a folder later from the Applications list.
+          picker opens next for read-only analysis, then Tellann takes you
+          straight to connecting the SDK. Skip the folder to stay browser-only
+          and attach one later from the Applications list.
         </p>
       </section>
     </Page>
@@ -534,11 +590,77 @@ function useProject() {
   };
 }
 
+/**
+ * A run needs a Flow that is both published (a version was published from the
+ * declare view) and initialized in *this* project — an active binding whose
+ * initialization has completed. A Flow short of that cannot start a run.
+ */
+function isFlowReadyToRun(item: DeclaredFlowSummary) {
+  const binding = (item as any)?.projectBindings?.[0] as
+    | { status?: string; initializations?: Array<{ status?: string }> }
+    | undefined;
+  return (
+    Boolean(item.publishedVersionId) &&
+    binding?.status === "ACTIVE" &&
+    binding.initializations?.[0]?.status === "COMPLETED"
+  );
+}
+
+function formatRunStatus(status: string) {
+  return status.toLowerCase().replaceAll("_", " ");
+}
+
+type JourneyStep = {
+  title: string;
+  why: string;
+  done: boolean;
+  /** False while the step's status is still being fetched. */
+  known: boolean;
+  doneDetail: string;
+  action: ReactNode;
+  /** Where the step is done or changed; its progress row links there. */
+  href: string;
+};
+
+/**
+ * The overview answers one question: what should I do next? Each setup step
+ * unlocks the one after it (a Flow needs the SDK, a run needs a Flow), so the
+ * first incomplete step is always the next action. Folder details live on the
+ * Workspace page, reachable from the sidebar.
+ */
 export function ApplicationOverviewPage() {
-  const { projectId, application, workspace, runs, refreshRuns } = useProject();
+  const {
+    projectId,
+    application,
+    workspace,
+    runs,
+    refreshRuns,
+    attachWorkspace,
+    getDeclaredFlows,
+    busy,
+  } = useProject();
   useEffect(() => {
     if (projectId) void refreshRuns(projectId).catch(() => undefined);
   }, [projectId, refreshRuns]);
+  const sdkEnvironmentId = sdkSetupEnvironmentId(application);
+  const sdkStatus = useSdkConnectionStatus(projectId, sdkEnvironmentId);
+  const [flowReady, setFlowReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setFlowReady(null);
+    void getDeclaredFlows(projectId)
+      .then((items) => {
+        if (!cancelled) setFlowReady(items.some(isFlowReadyToRun));
+      })
+      .catch(() => {
+        if (!cancelled) setFlowReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [getDeclaredFlows, projectId]);
+
   if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
@@ -547,62 +669,172 @@ export function ApplicationOverviewPage() {
         description="This application does not exist or is outside your current organization access."
       />
     );
-  const latest = runs[projectId]?.[0];
+
+  const latestRun = runs[projectId]?.[0];
+  const steps: JourneyStep[] = [
+    {
+      title: "Attach your project folder",
+      why: "Tellann reads your code, read-only, to set up the SDK and map your Flow.",
+      done: Boolean(workspace),
+      known: true,
+      doneDetail: workspace?.name ?? "",
+      href: `/applications/${projectId}/workspace`,
+      action: (
+        <button
+          className="button primary"
+          disabled={busy}
+          onClick={() => void attachWorkspace(projectId).catch(() => undefined)}
+        >
+          <Folder size={15} />
+          Choose project folder
+        </button>
+      ),
+    },
+    {
+      title: "Connect the Tellann SDK",
+      why: "Your app sends telemetry, so every run captures what happens inside it.",
+      done: sdkStatus === "connected",
+      known: sdkStatus !== "checking",
+      doneDetail: "Connected",
+      href: sdkSetupHref(projectId, sdkEnvironmentId),
+      action: (
+        <Link
+          className="button primary"
+          to={sdkSetupHref(projectId, sdkEnvironmentId)}
+        >
+          <Code2 size={15} />
+          Connect SDK
+        </Link>
+      ),
+    },
+    {
+      title: "Initialize a Flow",
+      why: "Tell Tellann which user journey to check, such as sign-up or checkout.",
+      done: flowReady === true,
+      known: flowReady !== null,
+      doneDetail: "Ready to run",
+      href: `/applications/${projectId}/intent`,
+      action: (
+        <Link
+          className="button primary"
+          to={`/applications/${projectId}/intent`}
+        >
+          <Workflow size={15} />
+          Open Intent
+        </Link>
+      ),
+    },
+    {
+      title: "Run your first walkthrough",
+      why: "Walk through the Flow once in the guided browser. Tellann records the evidence and writes your report.",
+      done: Boolean(latestRun),
+      known: true,
+      doneDetail: latestRun ? formatRunStatus(String(latestRun.status)) : "",
+      href: latestRun
+        ? `/applications/${projectId}/qa-runs/${latestRun.id}`
+        : `/applications/${projectId}/qa-runs/new`,
+      action: (
+        <Link
+          className="button primary"
+          to={`/applications/${projectId}/qa-runs/new`}
+        >
+          <Play size={15} />
+          Start a QA run
+        </Link>
+      ),
+    },
+  ];
+  const nextIndex = steps.findIndex((step) => !step.done);
+  const nextStep = nextIndex === -1 ? null : steps[nextIndex];
+  const reportHref =
+    latestRun && (latestRun.reportId || latestRun.status === "COMPLETED")
+      ? `/applications/${projectId}/reports/${encodeURIComponent(latestRun.reportId ?? `qa-report:${latestRun.id}`)}?runId=${latestRun.id}`
+      : null;
+
   return (
-    <Page
-      title={application.name}
-      description={`${application.organizationName} / Desktop application overview`}
-    >
-      <div className="metric-grid">
-        <Metric
-          label="Workspace"
-          value={workspace ? "Analyzed" : "Not attached"}
-        />
-        <Metric label="Intent" value="Review expected behavior" />
-        <Metric label="Instrumentation" value="Browser-only available" />
-        <Metric label="Latest run" value={latest?.status ?? "No runs"} />
-      </div>
-      <div className="two-column">
-        <section className="content-card">
-          <h2>Readiness</h2>
-          <Checklist
-            checked={Boolean(application.environments.length)}
-            text="Environment configured"
-          />
-          <Checklist
-            checked={Boolean(workspace)}
-            text="Local workspace analyzed"
-          />
-          <Checklist checked text="Browser-first QA available without SDK" />
+    <Page title={application.name} description={application.organizationName}>
+      {/* A wrong branch can block runs, so it outranks the next step. */}
+      <QaBranchNotice projectId={projectId} hideWhenCompliant />
+      {nextStep && !nextStep.known ? (
+        <section className="content-card next-step-card" aria-busy="true">
+          <span className="step-label">Next step</span>
+          <h2>Checking your setup…</h2>
         </section>
-        <section className="content-card">
-          <h2>Recommended next action</h2>
-          <p className="mb-4">
-            {workspace
-              ? "Start a guided browser run or review the expected intent."
-              : "Attach a folder for repository context, or start a URL-only guided run."}
+      ) : nextStep ? (
+        <section className="content-card next-step-card">
+          <span className="step-label">
+            Next step · {nextIndex + 1} of {steps.length}
+          </span>
+          <h2>{nextStep.title}</h2>
+          <p>{nextStep.why}</p>
+          <div className="card-actions">{nextStep.action}</div>
+        </section>
+      ) : latestRun ? (
+        <section className="content-card next-step-card is-complete">
+          <span className="step-label">
+            Latest run · {formatRunStatus(String(latestRun.status))}
+          </span>
+          <h2>
+            {reportHref
+              ? `${latestRun.findingCount} finding${latestRun.findingCount === 1 ? "" : "s"} in your latest run`
+              : "Your latest run is being processed"}
+          </h2>
+          <p>
+            {reportHref
+              ? "Review the report, fix what matters, then run the Flow again to confirm."
+              : "The report appears here once processing finishes."}
           </p>
           <div className="card-actions">
+            {reportHref ? (
+              <Link className="button primary" to={reportHref}>
+                <BarChart3 size={15} />
+                View report
+              </Link>
+            ) : null}
             <Link
-              className="button primary"
+              className={`button ${reportHref ? "" : "primary"}`}
               to={`/applications/${projectId}/qa-runs/new`}
             >
+              <Play size={15} />
               New QA run
             </Link>
           </div>
         </section>
-      </div>
-      <div className="section-heading">
-        <div>
-          <h2>Workspace</h2>
-          <p>
-            Local repository access, read-only analysis, detected stack, and
-            redaction status.
-          </p>
+      ) : null}
+
+      <ol className="overview-progress" aria-label="Setup progress">
+        {steps.map((step, index) => {
+          const current = index === nextIndex && step.known;
+          return (
+            <li
+              key={step.title}
+              className={`overview-progress-step${step.done ? " is-done" : current ? " is-current" : ""}`}
+            >
+              <Link
+                className="overview-progress-link"
+                to={step.href}
+                aria-current={current ? "step" : undefined}
+              >
+                <span className="overview-progress-marker" aria-hidden="true">
+                  {step.done ? <Check size={12} /> : index + 1}
+                </span>
+                <span className="overview-progress-text">
+                  <strong>{step.title}</strong>
+                  {step.done && step.doneDetail ? (
+                    <small>{step.doneDetail}</small>
+                  ) : null}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
+
+      {workspace ? (
+        <div className="overview-analysis">
+          <CodebaseAnalysisPanel applicationId={projectId} collapsible />
         </div>
-        <WorkspaceAttachButton />
-      </div>
-      <WorkspaceDetails />
+      ) : null}
     </Page>
   );
 }
@@ -849,7 +1081,14 @@ function InstrumentationDiffViewer({ diff }: { diff: unknown }) {
  * ways out: switch it yourself, or let Tellann switch it for you under an
  * explicit, revocable grant.
  */
-function QaBranchNotice({ projectId }: { projectId: string }) {
+function QaBranchNotice({
+  projectId,
+  hideWhenCompliant = false,
+}: {
+  projectId: string;
+  /** Show only when something needs action, e.g. on the overview. */
+  hideWhenCompliant?: boolean;
+}) {
   const {
     branchCompliance,
     refreshBranchCompliance,
@@ -867,6 +1106,9 @@ function QaBranchNotice({ projectId }: { projectId: string }) {
   }, [projectId, refreshBranchCompliance]);
 
   if (!compliance || compliance.status === "NO_POLICY") return null;
+  // Keep a just-switched notice visible so its outcome message is not lost.
+  if (hideWhenCompliant && compliance.status === "COMPLIANT" && !notice)
+    return null;
 
   const compliant = compliance.status === "COMPLIANT";
   const mismatch = compliance.status === "BRANCH_MISMATCH";
@@ -1055,9 +1297,8 @@ function WorkspaceAttachButton() {
   );
 }
 
-// Rendered both on the standalone workspace route and inline under the
-// application overview, so the workspace details are visible without an extra
-// navigation click.
+// The full workspace view, on the Workspace route. The overview shows only the
+// branch warning (when action is needed) and the analysis summary.
 export function WorkspaceDetails() {
   const {
     projectId,
@@ -1511,7 +1752,7 @@ export function WorkspaceDetails() {
           </section>
         </div>
       )}
-      {workspace && projectId ? <CodebaseAnalysisPanel applicationId={projectId} workspaceRoot={workspace.path} /> : null}
+      {workspace && projectId ? <CodebaseAnalysisPanel applicationId={projectId} /> : null}
     </>
   );
 }
@@ -6582,6 +6823,7 @@ export function InstrumentationPage() {
     return () => window.clearInterval(timer);
   }, [flowInitialization?.stage, refreshFlowInitialization]);
 
+  const setupConnected = Boolean((manualSetup?.readiness as any)?.connected);
   useEffect(() => {
     if (!projectId || !environmentId || !window.tellann) return;
     const refreshSetup = () =>
@@ -6590,23 +6832,26 @@ export function InstrumentationPage() {
         .then(setManualSetup)
         .catch(() => setManualSetup(null));
     refreshSetup();
-    if (
-      (!manualSetupOpen && !flowId) ||
-      (manualSetup?.readiness as any)?.connected
-    )
-      return;
+    // Keep checking until connected, so the setup banner and manual guide flip
+    // to "connected" on their own once the app sends its first event.
+    if (setupConnected) return;
     const timer = window.setInterval(
       refreshSetup,
       document.hidden ? 15_000 : 3_000,
     );
     return () => window.clearInterval(timer);
-  }, [
-    environmentId,
-    flowId,
-    manualSetup?.readiness,
-    manualSetupOpen,
-    projectId,
-  ]);
+    // Depend on the connected flag, not the readiness object: every fetch
+    // returns a new object, which would re-run this effect back-to-back.
+  }, [environmentId, projectId, setupConnected]);
+
+  // The manual setup panel renders near the top of the page, above the mode
+  // cards that can open it, so bring it into view when it opens.
+  useEffect(() => {
+    if (!manualSetupOpen) return;
+    document
+      .getElementById("manual-sdk-setup")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [manualSetupOpen]);
 
   if (!projectId) return <ApplicationRequired />;
   if (!application)
@@ -6623,7 +6868,9 @@ export function InstrumentationPage() {
   // the Flow initialization has produced its checkpoint manifest can a FLOW
   // proposal be created — the adapter rejects a FLOW proposal that has no manifest
   // with FLOW_INITIALIZATION_MANIFEST_REQUIRED.
-  const tellannConnected = Boolean((manualSetup?.readiness as any)?.connected);
+  const tellannConnected = setupConnected;
+  const automaticSetupAvailable =
+    instrumentationEntitled && environment?.type !== "PRODUCTION";
   const flowManifestReady =
     Boolean(initializationId) && Boolean(flowInitialization?.manifest);
   const instrumentationPurpose: "BOOTSTRAP" | "FLOW" =
@@ -6652,6 +6899,14 @@ export function InstrumentationPage() {
         ? [frontend.adapterId]
         : supported.slice(0, 1).map((item) => item.adapterId),
     );
+  };
+
+  // The detection results render in the Step 1 card further down the page.
+  const detectAndReveal = async () => {
+    await detect();
+    document
+      .getElementById("instrumentation-detect")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const proposeSelected = async () => {
@@ -7056,38 +7311,91 @@ export function InstrumentationPage() {
           ) : null}
         </>
       ) : null}
-      {setupMode ? (
+      {/* In a Flow context the prerequisite card above owns the connected state. */}
+      {(
+        setupMode
+          ? !(flowId && tellannConnected)
+          : !flowId && manualSetup && !tellannConnected
+      ) ? (
         <section className="content-card setup-connection-banner mb-4">
-          <Status>SDK connection</Status>
-          <h2>Connect this project automatically</h2>
-          <p className="mb-4">
-            Attach the project folder, select every frontend and backend target
-            you want Tellann to configure, then review the bounded files and
-            commands before one approved task writes locally.
-          </p>
-          <div className="card-actions">
-            {!workspace ? (
-              <button
-                className="button primary"
-                disabled={busy || !projectId}
-                onClick={() => projectId && void attachWorkspace(projectId)}
-              >
-                <Folder size={15} />
-                Attach project folder
-              </button>
-            ) : null}
-            <button
-              className="button"
-              onClick={() => setManualSetupOpen((current) => !current)}
-            >
-              <Code2 size={15} />
-              Set up manually
-            </button>
-          </div>
+          <Status>{tellannConnected ? "Connected" : "SDK connection"}</Status>
+          {tellannConnected ? (
+            <>
+              <h2>Tellann is connected to this project</h2>
+              <p className="mb-4">
+                {environment?.name ?? "This environment"} is sending telemetry.
+                Initialize a Flow next to run your first guided walkthrough.
+              </p>
+              <div className="card-actions">
+                <Link
+                  className="button primary"
+                  to={`/applications/${projectId}/intent`}
+                >
+                  <Workflow size={15} />
+                  Initialize a Flow
+                </Link>
+                <Link
+                  className="button"
+                  to={`/applications/${projectId}/qa-runs/new`}
+                >
+                  <Play size={15} />
+                  New QA run
+                </Link>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2>Connect the Tellann SDK</h2>
+              <p className="mb-4">
+                {automaticSetupAvailable
+                  ? workspace
+                    ? "Let Tellann detect your stack and prepare a setup task. You approve every file and command before anything is written. Or copy the setup and add it yourself."
+                    : "Attach the project folder so Tellann can detect your stack and prepare a reviewed setup task, or copy the setup and add it yourself."
+                  : "Copy the install command, initialization snippet, and a one-time key into your project. This page confirms the connection once your app sends its first event."}
+              </p>
+              <div className="card-actions">
+                {!workspace ? (
+                  <button
+                    className={`button ${automaticSetupAvailable ? "primary" : ""}`}
+                    disabled={busy || !projectId}
+                    onClick={() => projectId && void attachWorkspace(projectId)}
+                  >
+                    <Folder size={15} />
+                    Attach project folder
+                  </button>
+                ) : automaticSetupAvailable ? (
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => void detectAndReveal()}
+                  >
+                    <SearchCode size={15} />
+                    Detect framework automatically
+                  </button>
+                ) : null}
+                <button
+                  className={`button ${automaticSetupAvailable ? "" : "primary"}`}
+                  disabled={!environmentId}
+                  onClick={() => setManualSetupOpen((current) => !current)}
+                >
+                  <Code2 size={15} />
+                  {manualSetupOpen ? "Hide manual setup" : "Set up manually"}
+                </button>
+              </div>
+            </>
+          )}
         </section>
       ) : null}
-      {(setupMode || flowId) && manualSetupOpen && manualSetup ? (
-        <section className="content-card stack">
+      {manualSetupOpen && !manualSetup ? (
+        <div className="context-banner mb-4" id="manual-sdk-setup" role="status">
+          <RefreshCw size={15} />
+          {environmentId
+            ? "Loading the SDK setup for this environment…"
+            : "Select an environment to see its SDK setup."}
+        </div>
+      ) : null}
+      {manualSetupOpen && manualSetup ? (
+        <section className="content-card stack" id="manual-sdk-setup">
           <div className="card-heading">
             <div>
               <small>Manual SDK setup</small>
@@ -7441,7 +7749,8 @@ export function InstrumentationPage() {
                                 disabled={
                                   busy ||
                                   !workspace ||
-                                  environment?.type === "PRODUCTION"
+                                  environment?.type === "PRODUCTION" ||
+                                  !instrumentationEntitled
                                 }
                                 onClick={() => void detect()}
                               >
@@ -7548,9 +7857,19 @@ export function InstrumentationPage() {
           {/* <Code2 /> */}
           <h2>Manual SDK</h2>
           <p>
-            Continue using existing frontend and backend SDK integrations where
-            deeper semantic telemetry is already installed.
+            Install and initialize the Tellann SDK yourself with a one-time
+            setup key. Available on every plan.
           </p>
+          <div className="card-actions mt-4">
+            <button
+              className={`button ${instrumentationEntitled ? "" : "primary"}`}
+              disabled={!environmentId}
+              onClick={() => setManualSetupOpen((current) => !current)}
+            >
+              <Code2 size={15} />
+              {manualSetupOpen ? "Hide manual setup" : "Set up manually"}
+            </button>
+          </div>
         </section>
         <section className="mode-card">
           <Status>
@@ -7568,7 +7887,7 @@ export function InstrumentationPage() {
           </p>
         </section>
       </div>
-      <section className="content-card stack">
+      <section className="content-card stack" id="instrumentation-detect">
         <div className="card-heading">
           <div>
             <small>Step 1</small>
@@ -7626,8 +7945,9 @@ export function InstrumentationPage() {
                 style={{ display: "inline-block", marginRight: "8px" }}
               />{" "}
               Automated instrumentation is not included on the{" "}
-              {application?.entitlements?.planType ?? "current"} plan.
-              Browser-only QA remains available.
+              {application?.entitlements?.planType ?? "current"} plan. Connect
+              the SDK with <strong>Set up manually</strong> above, or keep
+              using browser-only QA.
             </span>
             <button
               className="button primary"
@@ -8042,17 +8362,7 @@ export function InstrumentationDetailPage() {
     void getDeclaredFlows(projectId)
       .then((items) => {
         if (cancelled) return;
-        const ready = items.some((item) => {
-          const binding = (item as any)?.projectBindings?.[0] as
-            | { status?: string; initializations?: Array<{ status?: string }> }
-            | undefined;
-          return (
-            Boolean(item.publishedVersionId) &&
-            binding?.status === "ACTIVE" &&
-            binding.initializations?.[0]?.status === "COMPLETED"
-          );
-        });
-        setHasInitializedFlow(ready);
+        setHasInitializedFlow(items.some(isFlowReadyToRun));
       })
       .catch(() => {
         if (!cancelled) setHasInitializedFlow(false);
@@ -9131,21 +9441,9 @@ export function NewRunPage() {
   useEffect(() => {
     if (!projectId) return;
     void getDeclaredFlows(projectId).then((items) => {
-      // A run needs a Flow that is both published (a version was published from
-      // the declare view) and initialized in *this* project — an active binding
-      // whose initialization has completed. A completed/published Flow with no
-      // active, completed initialization here cannot start a run, so it is
-      // filtered out rather than surfaced as a selectable option that later fails.
-      const ready = items.filter((item) => {
-        const binding = (item as any)?.projectBindings?.[0] as
-          | { status?: string; initializations?: Array<{ status?: string }> }
-          | undefined;
-        return (
-          Boolean(item.publishedVersionId) &&
-          binding?.status === "ACTIVE" &&
-          binding.initializations?.[0]?.status === "COMPLETED"
-        );
-      });
+      // A Flow that cannot start a run is filtered out rather than surfaced as
+      // a selectable option that later fails.
+      const ready = items.filter(isFlowReadyToRun);
       setFlows(ready);
       // Arriving straight from initializing a Flow, that Flow is the one the user
       // means to run — preselect it rather than whichever sorts first.

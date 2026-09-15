@@ -1,10 +1,10 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
-import { Building2, ArrowRight, Plus, Check } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, Plus, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const ONBOARDING_API = "/api-gateway";
@@ -15,9 +15,17 @@ interface Organization {
   createdAt: string;
 }
 
-export default function OnboardingPage() {
+function newAppHref(org: Pick<Organization, "id" | "name">) {
+  return `/onboarding/new-app?orgId=${encodeURIComponent(org.id)}&orgName=${encodeURIComponent(org.name)}`;
+}
+
+function OnboardingContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  // Set by "Use a different organization" on the next step — the only way a
+  // single-organization user reaches this picker.
+  const forcePicker = searchParams.get("pick") === "1";
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [newOrgName, setNewOrgName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -35,6 +43,22 @@ export default function OnboardingPage() {
     },
   });
 
+  // Sign-up provisions exactly one organization, so there is nothing to choose:
+  // continue straight to naming the application.
+  const onlyOrganization =
+    !forcePicker && organizations?.length === 1 ? organizations[0] : null;
+  const onlyOrganizationId = onlyOrganization?.id;
+  const onlyOrganizationName = onlyOrganization?.name ?? "";
+  useEffect(() => {
+    if (!onlyOrganizationId) return;
+    router.replace(
+      newAppHref({ id: onlyOrganizationId, name: onlyOrganizationName }),
+    );
+  }, [onlyOrganizationId, onlyOrganizationName, router]);
+
+  const hasNoOrganizations = organizations?.length === 0;
+  const showCreateForm = isCreating || hasNoOrganizations;
+
   const createOrgMutation = useMutation({
     mutationFn: async (name: string) => {
       const res = await authenticatedFetch(`${ONBOARDING_API}/organizations`, {
@@ -47,25 +71,28 @@ export default function OnboardingPage() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["organizations"] });
-      setSelectedOrgId(data.id);
       setIsCreating(false);
       setNewOrgName("");
+      // With nothing else to pick from, selecting it would be a wasted click.
+      if (hasNoOrganizations) {
+        router.push(newAppHref(data));
+        return;
+      }
+      setSelectedOrgId(data.id);
     },
   });
 
   function handleNext() {
-    if (!selectedOrgId) return;
     const org = organizations?.find((o) => o.id === selectedOrgId);
-    router.push(
-      `/onboarding/new-app?orgId=${selectedOrgId}&orgName=${encodeURIComponent(org?.name ?? "")}`,
-    );
+    if (!org) return;
+    router.push(newAppHref(org));
   }
 
-  if (isLoading) {
+  if (isLoading || onlyOrganizationId) {
     return (
       <div className="flex h-[80vh] items-center justify-center font-mono">
         <div className="text-neutral-400 animate-pulse text-sm">
-          Loading organizations…
+          {onlyOrganizationId ? "Opening your workspace…" : "Loading organizations…"}
         </div>
       </div>
     );
@@ -76,15 +103,17 @@ export default function OnboardingPage() {
       <div className="w-full max-w-lg space-y-4 rounded-md border border-[#262626] bg-[#131313] p-8 shadow-2xl">
         <div className="w-full flex justify-between items-start">
           <h2 className="text-2xl font-bold tracking-tight text-white">
-            Select Organization
+            {hasNoOrganizations ? "Create Organization" : "Select Organization"}
           </h2>
           <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-            ORGANIZATION // SELECT
+            ORGANIZATION // {hasNoOrganizations ? "CREATE" : "SELECT"}
           </span>
         </div>
         <div className="text-left">
           <p className="text-sm text-[#c4c7c8] leading-relaxed">
-            Choose an existing organization or create a new one to get started.
+            {hasNoOrganizations
+              ? "Name your organization to get started."
+              : "Choose an existing organization or create a new one to get started."}
           </p>
         </div>
 
@@ -94,8 +123,14 @@ export default function OnboardingPage() {
           </div>
         )}
 
+        {createOrgMutation.error && (
+          <div className="rounded-md bg-red-950/20 p-4 text-xs font-mono text-red-400 border border-red-900/30">
+            {(createOrgMutation.error as Error).message}
+          </div>
+        )}
+
         <div className="space-y-6">
-          {isCreating ? (
+          {showCreateForm ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -123,14 +158,16 @@ export default function OnboardingPage() {
               </div>
 
               <div className="flex space-x-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setIsCreating(false)}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
+                {hasNoOrganizations ? null : (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setIsCreating(false)}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                )}
                 <Button
                   type="submit"
                   variant="primary"
@@ -180,7 +217,7 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {!isCreating && (
+          {!showCreateForm && (
             <Button
               onClick={handleNext}
               variant="primary"
@@ -195,5 +232,21 @@ export default function OnboardingPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[80vh] items-center justify-center font-mono">
+          <div className="text-neutral-400 animate-pulse text-sm">
+            Loading organizations…
+          </div>
+        </div>
+      }
+    >
+      <OnboardingContent />
+    </Suspense>
   );
 }

@@ -118,7 +118,7 @@ function SessionsContent() {
         title="Record your first behavior session"
         description="Once the SDK is connected, interactions and state transitions will appear here as replayable sessions."
         primaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
-        secondaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
+        secondaryAction={{ label: 'Start a demonstration', href: `/qa-runs/new?appId=${encodeURIComponent(appId)}` }}
       />
     );
   }

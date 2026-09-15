@@ -191,7 +191,7 @@ function ReportsContent() {
         eyebrow="Report not ready"
         title="Run a demonstration to generate evidence"
         description="Reports combine captured sessions, discovered workflows, and coverage results. Send telemetry first, then Tellann can produce the report."
-        primaryAction={{ label: 'Start a demonstration', href: `/onboarding/declare?appId=${encodeURIComponent(appId)}` }}
+        primaryAction={{ label: 'Start a demonstration', href: `/qa-runs/new?appId=${encodeURIComponent(appId)}` }}
         secondaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
       />
     );

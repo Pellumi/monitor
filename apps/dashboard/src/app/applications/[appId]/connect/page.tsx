@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Download, Laptop, Loader2, RefreshCw, Settings2, Terminal, TriangleAlert } from "lucide-react";
+import { Check, Circle, Copy, Download, Laptop, Loader2, Play, RefreshCw, Settings2, TriangleAlert, Workflow } from "lucide-react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Target = {
   id: "frontend" | "backend";
@@ -39,6 +38,11 @@ type Descriptor = {
     installationTestPassed: boolean;
     targets: Array<{ targetId: string; verified: boolean; lastEventAt: string | null }>;
   };
+};
+type DesktopDevice = {
+  id: string;
+  expiresAt: string;
+  revokedAt: string | null;
 };
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -253,7 +257,17 @@ const FRAMEWORKS: FrameworkOption[] = [
   },
 ];
 
-const DEFAULT_FRAMEWORK: Record<"FRONTEND" | "BACKEND", FrameworkId> = { FRONTEND: "nextjs", BACKEND: "node" };
+const FRAMEWORK_GROUPS: Array<{ kind: FrameworkOption["kind"]; label: string }> = [
+  { kind: "FRONTEND", label: "Frontend / browser" },
+  { kind: "BACKEND", label: "Backend / server" },
+];
+
+const PACKAGE_MANAGERS = ["pnpm", "npm", "yarn", "bun"];
+
+/** Plain Node and Deno read `.env`; the framework dev servers also load `.env.local`. */
+function envFileFor(framework: FrameworkId): string {
+  return framework === "node" || framework === "deno" ? ".env" : ".env.local";
+}
 
 function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor: Descriptor; fallbackEndpoint: string; onSaved: () => void }) {
   const [customized, setCustomized] = useState(descriptor.gatewayEndpointCustomized);
@@ -320,9 +334,7 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
 export default function ConnectApplicationPage() {
   const { appId } = useParams<{ appId: string }>();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"choice" | "manual" | "desktop">("choice");
-  const [targetId, setTargetId] = useState<"frontend" | "backend">("frontend");
-  const [framework, setFramework] = useState<FrameworkId>("nextjs");
+  const [framework, setFramework] = useState<FrameworkId | null>(null);
   const [manager, setManager] = useState("pnpm");
   const [rawKey, setRawKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -337,6 +349,16 @@ export default function ConnectApplicationPage() {
     refetchIntervalInBackground: false,
   });
 
+  // A live Desktop sign-in means the app is installed, which is the only case
+  // where Desktop is the faster path and earns the "Recommended" label.
+  const desktopInstalled = useQuery<DesktopDevice[], Error, boolean>({
+    queryKey: ["desktop-devices"],
+    queryFn: () => json("/api-gateway/auth/desktop/devices"),
+    select: (devices) =>
+      devices.some((device) => !device.revokedAt && Date.parse(device.expiresAt) > Date.now()),
+    staleTime: 60_000,
+  }).data === true;
+
   const selectMethod = useMutation({
     mutationFn: (method: "MANUAL" | "DESKTOP") => json(`/api-gateway/applications/${appId}/sdk-setup/method`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method }) }),
   });
@@ -349,10 +371,36 @@ export default function ConnectApplicationPage() {
     onSuccess: (result) => { setHandoff(result); window.location.href = result.deepLink; },
   });
 
-  const target = useMemo(() => setup.data?.targets.find((item) => item.id === targetId), [setup.data, targetId]);
-  const targetKind = target?.kind ?? "FRONTEND";
-  const frameworkOptions = useMemo(() => FRAMEWORKS.filter((item) => item.kind === targetKind), [targetKind]);
-  const activeFramework = frameworkOptions.find((item) => item.id === framework) ?? frameworkOptions[0];
+  // Generate the setup key on first view so it is already in the env block.
+  // Only when the environment has no active key: issuing a key never revokes
+  // older ones, so doing this on every visit would pile up live keys.
+  const { mutate: generateKey } = createKey;
+  const autoKeyRequested = useRef(false);
+  const descriptorData = setup.data;
+  useEffect(() => {
+    if (!descriptorData || autoKeyRequested.current) return;
+    if (
+      descriptorData.hasActiveKey ||
+      descriptorData.readiness.connected ||
+      descriptorData.environmentType === "PRODUCTION"
+    ) {
+      return;
+    }
+    autoKeyRequested.current = true;
+    generateKey();
+  }, [descriptorData, generateKey]);
+
+  const { mutate: recordMethod } = selectMethod;
+  const methodRecorded = useRef(false);
+  const chooseFramework = (id: FrameworkId) => {
+    setFramework(id);
+    if (methodRecorded.current) return;
+    methodRecorded.current = true;
+    recordMethod("MANUAL");
+  };
+
+  const activeFramework = FRAMEWORKS.find((item) => item.id === framework) ?? null;
+  const target = setup.data?.targets.find((item) => item.kind === activeFramework?.kind);
   const resolvedEndpoint = setup.data ? resolveGatewayEndpoint(setup.data) : "";
   const snippet =
     target && setup.data && activeFramework
@@ -365,6 +413,22 @@ export default function ConnectApplicationPage() {
           })
           .replace(/YOUR_API_KEY/g, rawKey ?? "YOUR_API_KEY")
       : "";
+  const installCommand =
+    !target || !activeFramework
+      ? ""
+      : activeFramework.id === "deno"
+        ? `deno add npm:${target.packageName}`
+        : target.installCommands[manager] ?? "";
+  const keyValue =
+    rawKey ??
+    (createKey.isPending
+      ? "<generating…>"
+      : setup.data?.hasActiveKey
+        ? `<your existing ${setup.data.keyPrefix ?? "Tellann"}… key>`
+        : "<generate a setup key below>");
+  const envBlock = activeFramework?.envVars
+    ? `${activeFramework.envVars.url}=${resolvedEndpoint}\n${activeFramework.envVars.key}=${keyValue}`
+    : "";
   const copy = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(key);
@@ -389,80 +453,314 @@ export default function ConnectApplicationPage() {
   }
 
   const descriptor = setup.data;
+  const { readiness } = descriptor;
+  const encodedAppId = encodeURIComponent(appId);
+  const checklist = [
+    {
+      label: "Installed",
+      done: readiness.installationTestPassed,
+      doneText: "The SDK initialized and verified its installation.",
+      waitingText: "Waiting for TELLANN.verifyInstallation() to reach Tellann.",
+    },
+    {
+      label: "Key set",
+      done: descriptor.hasActiveKey || Boolean(rawKey),
+      doneText: rawKey
+        ? "Your setup key is in the env block below."
+        : `An active key${descriptor.keyPrefix ? ` (${descriptor.keyPrefix}…)` : ""} exists for this environment.`,
+      waitingText: createKey.isPending ? "Generating your setup key…" : "Generate a setup key below.",
+    },
+    {
+      label: "First event",
+      done: readiness.connected,
+      doneText: `Receiving telemetry from ${descriptor.environmentName}.`,
+      waitingText: "Start your app and open it once.",
+    },
+  ];
+  const currentStep = checklist.findIndex((step) => !step.done);
+
   return (
     <main className="mx-auto w-full space-y-6 pb-16">
-      {/* Top Header Card */}
-      <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-white">
-            Connect {descriptor.applicationName}
-          </h1>
-          <p className="mt-2 text-base leading-relaxed text-[#c4c7c8]">
-            Connect a browser application, backend service, or both. One verified SDK is enough to continue; connecting both gives end-to-end workflow and endpoint intelligence.
-          </p>
-        </div>
-
-        {descriptor.readiness.connected ? (
-          <div className="flex items-start gap-3 rounded border border-white bg-black px-4 py-3">
-            <Check className="mt-0.5 h-4 w-4 shrink-0 text-white" />
+      {readiness.connected ? (
+        <section className="rounded-md border border-white bg-[#131313] p-6">
+          <div className="flex items-start gap-3">
+            <Check className="mt-1 h-5 w-5 shrink-0 text-white" />
             <div>
-              <p className="text-sm font-semibold text-white">This application is already connected</p>
-              <p className="mt-1 text-xs leading-relaxed text-[#c4c7c8]">
-                Tellann is already receiving telemetry from {descriptor.environmentName}. The setup options and credentials below are still available if you need to connect another target or reinstall the SDK.
+              <h2 className="text-xl font-semibold text-white">Tellann is connected</h2>
+              <p className="mt-1 text-sm leading-relaxed text-[#c4c7c8]">
+                Next, declare the Flow you want Tellann to check, or run a walkthrough right away.
               </p>
             </div>
           </div>
-        ) : null}
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              className="inline-flex items-center gap-2 rounded bg-white px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+              href={`/declare?appId=${encodedAppId}`}
+            >
+              <Workflow className="h-4 w-4" />
+              Declare your first Flow
+            </Link>
+            <Link
+              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+              href={`/qa-runs/new?appId=${encodedAppId}`}
+            >
+              <Play className="h-4 w-4" />
+              Run Walkthrough
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
-        {/* Readiness Table */}
-        <table className="w-full border-collapse border border-[#262626] bg-black">
-          <tbody>
-            <tr>
-              <td className="border-b border-[#262626] px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-[#8e9192]">
-                ENVIRONMENT
-              </td>
-              <td className="border-b border-[#262626] px-3 py-2.5 text-right font-mono text-[13px] text-white">
-                {descriptor.environmentName} ({descriptor.environmentType})
-              </td>
-            </tr>
-            <tr>
-              <td className="border-b border-[#262626] px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-[#8e9192]">
-                SESSION OBSERVED
-              </td>
-              <td className="border-b border-[#262626] px-3 py-2.5 text-right font-mono text-[13px] text-white">
-                {descriptor.readiness.sessionObserved ? (
-                  <span className="text-white">✓ YES</span>
-                ) : (
-                  <span className="text-[#8e9192]">NO</span>
+      {/* Header with live checklist */}
+      <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">
+            {descriptor.environmentName} · {descriptor.environmentType}
+          </p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
+            Connect {descriptor.applicationName}
+          </h1>
+          <p className="mt-2 text-base leading-relaxed text-[#c4c7c8]">
+            Install the SDK, add your key, and start your app. This page confirms the connection on its own.
+          </p>
+        </div>
+
+        <ol className="grid gap-3 sm:grid-cols-3">
+          {checklist.map((step, index) => {
+            const isCurrent = index === currentStep;
+            return (
+              <li
+                key={step.label}
+                className={`rounded border bg-black p-4 ${
+                  step.done ? "border-white" : isCurrent ? "border-[#444748]" : "border-[#262626]"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {step.done ? (
+                    <Check className="h-4 w-4 shrink-0 text-white" />
+                  ) : isCurrent ? (
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#8e9192]" />
+                  ) : (
+                    <Circle className="h-4 w-4 shrink-0 text-[#444748]" />
+                  )}
+                  <span className={`font-mono text-[11px] uppercase tracking-[0.08em] ${step.done ? "text-white" : "text-[#8e9192]"}`}>
+                    {index + 1}. {step.label}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-[#8e9192]">
+                  {step.done ? step.doneText : step.waitingText}
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">
+            {readiness.connected ? "Connection verified" : "Checking every few seconds"}
+          </span>
+          <button
+            onClick={() => void setup.refetch()}
+            disabled={setup.isFetching}
+            className={`inline-flex items-center gap-2 rounded border font-mono text-xs uppercase tracking-wider px-4 py-2 transition-all ${
+              setup.isFetching
+                ? "border-neutral-400 bg-[#1c1c1c] text-white opacity-90 cursor-not-allowed"
+                : "border-[#444748] bg-black text-[#8e9192] hover:border-neutral-400 hover:text-white"
+            }`}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-white" : ""}`} />
+            {setup.isFetching ? "Checking connection…" : "Check connection now"}
+          </button>
+        </div>
+      </section>
+
+      {/* Desktop, as the alternative path */}
+      <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-white" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-white">Prefer automatic setup? Use Tellann Desktop</h2>
+                {desktopInstalled ? (
+                  <span className="border border-[#444748] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#8e9192]">
+                    Recommended
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">
+                {desktopInstalled
+                  ? "Tellann Desktop is signed in on one of your devices. Attach your project folder and it detects your stack, shows every file and command for approval, then installs and verifies the SDK."
+                  : "The desktop app attaches your project folder, shows every file and command for approval, then installs and verifies the SDK for you."}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              onClick={() => createHandoff.mutate()}
+              disabled={createHandoff.isPending}
+              className={`inline-flex items-center gap-2 rounded px-4 py-2 text-xs uppercase tracking-[0.08em] transition-colors disabled:opacity-50 ${
+                desktopInstalled
+                  ? "bg-white font-semibold text-black hover:bg-[#e2e2e2]"
+                  : "border border-[#444748] bg-black font-mono text-[#c4c7c8] hover:border-neutral-500 hover:text-white"
+              }`}
+            >
+              {createHandoff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Laptop className="h-4 w-4" />}
+              Open Tellann Desktop
+            </button>
+            {desktopInstalled ? null : (
+              <a
+                className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+                href={`${marketingUrl}/desktop${handoff ? `?handoff=${encodeURIComponent(handoff.handoffToken)}` : ""}`}
+              >
+                <Download className="h-4 w-4" />
+                Download Desktop
+              </a>
+            )}
+          </div>
+        </div>
+        {createHandoff.error ? (
+          <p className="mt-3 font-mono text-xs text-red-400">{createHandoff.error.message}</p>
+        ) : null}
+      </section>
+
+      {/* Manual setup, open by default */}
+      <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-8">
+        <div className="space-y-4">
+          <StepHeading step={1} title="What's your app built with?" />
+          <div className="space-y-4 pl-9">
+            {FRAMEWORK_GROUPS.map((group) => (
+              <div key={group.kind}>
+                <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">{group.label}</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {FRAMEWORKS.filter((item) => item.kind === group.kind).map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => chooseFramework(item.id)}
+                      aria-pressed={framework === item.id}
+                      className={`rounded border px-3 py-2.5 text-left font-mono text-xs transition-colors ${
+                        framework === item.id
+                          ? "border-white bg-black font-semibold text-white"
+                          : "border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {activeFramework && target ? (
+          <>
+            <div className="space-y-4">
+              <StepHeading step={2} title="Install the package" />
+              <div className="space-y-3 pl-9">
+                {activeFramework.id === "deno" ? null : (
+                  <div className="flex flex-wrap gap-2">
+                    {PACKAGE_MANAGERS.map((item) => (
+                      <button
+                        key={item}
+                        onClick={() => setManager(item)}
+                        aria-pressed={manager === item}
+                        className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
+                          manager === item
+                            ? "bg-white font-semibold text-black"
+                            : "border border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
                 )}
-              </td>
-            </tr>
-            <tr>
-              <td className="border-b border-[#262626] px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-[#8e9192]">
-                EVENT OBSERVED
-              </td>
-              <td className="border-b border-[#262626] px-3 py-2.5 text-right font-mono text-[13px] text-white">
-                {descriptor.readiness.eventObserved ? (
-                  <span className="text-white">✓ YES</span>
-                ) : (
-                  <span className="text-[#8e9192]">NO</span>
-                )}
-              </td>
-            </tr>
-            <tr>
-              <td className="px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-[#8e9192]">
-                INSTALLATION VERIFIED
-              </td>
-              <td className="px-3 py-2.5 text-right font-mono text-[13px] text-white">
-                {descriptor.readiness.installationTestPassed ? (
-                  <span className="text-white">✓ VERIFIED</span>
-                ) : (
-                  <span className="text-[#8e9192]">WAITING</span>
-                )}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <CodeBox
+                  title="Terminal"
+                  value={installCommand}
+                  copied={copied === "install"}
+                  onCopy={() => void copy("install", installCommand)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <StepHeading
+                step={3}
+                title={activeFramework.envVars ? `Add these to ${envFileFor(activeFramework.id)}` : "Your setup key"}
+                description={
+                  activeFramework.envVars
+                    ? "Keep this file out of version control."
+                    : "This setup reads no environment variables, so the key is placed directly in the snippet below."
+                }
+              />
+              <div className="space-y-3 pl-9">
+                {activeFramework.envVars ? (
+                  <CodeBox
+                    title={envFileFor(activeFramework.id)}
+                    value={envBlock}
+                    copied={copied === "env"}
+                    onCopy={() => void copy("env", envBlock)}
+                  />
+                ) : null}
+                {rawKey ? (
+                  <p className="font-mono text-[11px] leading-relaxed text-[#8e9192]">
+                    This key is shown only once. Copy it now.
+                  </p>
+                ) : null}
+                {createKey.error ? (
+                  <p className="font-mono text-xs text-red-400">{createKey.error.message}</p>
+                ) : null}
+                {!rawKey && !createKey.isPending ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#262626] bg-black px-4 py-3">
+                    <p className="max-w-xl text-xs leading-relaxed text-[#8e9192]">
+                      {descriptor.hasActiveKey
+                        ? "This environment already has a key. Keys are shown only once, so use the one you saved or generate a new one — existing keys keep working."
+                        : "No setup key has been generated for this environment yet."}
+                    </p>
+                    <button
+                      onClick={() => generateKey()}
+                      className="rounded bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+                    >
+                      {descriptor.hasActiveKey ? "Generate new key" : "Generate setup key"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <StepHeading step={4} title="Initialize and verify" />
+              <div className="space-y-3 pl-9">
+                <CodeBox
+                  title="Initialization"
+                  value={snippet}
+                  copied={copied === "snippet"}
+                  onCopy={() => void copy("snippet", snippet)}
+                  multiline
+                />
+                <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
+                  {activeFramework.envVars
+                    ? `The gateway URL falls back to ${resolvedEndpoint} when unset.`
+                    : `This snippet posts telemetry directly to ${resolvedEndpoint}.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <StepHeading
+                step={5}
+                title="Start your app"
+                description="Run your app and open it once. The checklist at the top turns green when the first event arrives."
+              />
+            </div>
+          </>
+        ) : (
+          <p className="pl-9 text-sm text-[#8e9192]">
+            Pick your framework to see the install command, environment variables, and initialization code.
+          </p>
+        )}
 
         <GatewaySettings
           key={`${descriptor.environmentId}:${resolvedEndpoint}:${descriptor.gatewayEndpointCustomized}`}
@@ -470,269 +768,22 @@ export default function ConnectApplicationPage() {
           fallbackEndpoint={resolvedEndpoint}
           onSaved={() => void queryClient.invalidateQueries({ queryKey: ["sdk-setup", appId] })}
         />
-
-        <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => void setup.refetch()}
-              disabled={setup.isFetching}
-              className={`inline-flex items-center gap-2 rounded border font-mono text-xs uppercase tracking-wider px-4 py-2 transition-all ${
-                setup.isFetching
-                  ? "border-neutral-400 bg-[#1c1c1c] text-white opacity-90 cursor-not-allowed"
-                  : "border-[#444748] bg-black text-[#8e9192] hover:border-neutral-400 hover:text-white"
-              }`}
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-white" : ""}`} />
-              {setup.isFetching ? "Checking connection…" : "Check connection now"}
-            </button>
-            {/* {setup.isFetching ? (
-              <span className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[#8e9192] animate-pulse">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
-                </span>
-                Polling status…
-              </span>
-            ) : null} */}
-          </div>
-          {descriptor.readiness.connected ? (
-            <Link
-              className="inline-block rounded bg-white px-5 py-2.5 font-semibold text-xs uppercase tracking-[0.08em] text-black hover:bg-[#e2e2e2] transition-colors"
-              href={`/qa-runs/new?appId=${appId}`}
-            >
-              Run Walkthrough →
-            </Link>
-          ) : null}
-        </div>
       </section>
-
-      {/* Choice Cards */}
-      {mode === "choice" ? (
-        <div className="grid gap-5 md:grid-cols-2">
-          <button
-            onClick={() => {
-              setMode("desktop");
-              selectMethod.mutate("DESKTOP");
-            }}
-            className="group rounded-md border border-[#262626] bg-[#131313] p-6 text-left transition-colors hover:border-[#444748]"
-          >
-            <div className="flex items-center justify-between">
-              <Laptop className="h-6 w-6 text-white" />
-              <span className="border border-[#444748] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#8e9192]">
-                RECOMMENDED
-              </span>
-            </div>
-            <h2 className="mt-4 text-lg font-semibold text-white">Set up automatically with Desktop</h2>
-            <p className="mt-2 text-sm leading-relaxed text-[#c4c7c8]">
-              Attach your project folder. Tellann detects supported frontend and backend targets, shows every file and command for one approval, then installs, validates, starts, and verifies them.
-            </p>
-            <span className="mt-6 inline-block font-mono text-xs uppercase tracking-wider text-white group-hover:underline">
-              Automatic desktop task →
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              setMode("manual");
-              selectMethod.mutate("MANUAL");
-            }}
-            className="group rounded-md border border-[#262626] bg-[#131313] p-6 text-left transition-colors hover:border-[#444748]"
-          >
-            <div className="flex items-center justify-between">
-              <Terminal className="h-6 w-6 text-white" />
-              <span className="border border-[#444748] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#8e9192]">
-                MANUAL
-              </span>
-            </div>
-            <h2 className="mt-4 text-lg font-semibold text-white">Set up manually</h2>
-            <p className="mt-2 text-sm leading-relaxed text-[#c4c7c8]">
-              Choose frontend or backend, install the package, add environment variables and paste the initialization code. Tellann verifies the connection here.
-            </p>
-            <span className="mt-6 inline-block font-mono text-xs uppercase tracking-wider text-[#8e9192] group-hover:text-white group-hover:underline">
-              View manual instructions →
-            </span>
-          </button>
-        </div>
-      ) : null}
-
-      {/* Desktop Mode */}
-      {mode === "desktop" ? (
-        <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
-          <div className="border-b border-[#262626] pb-4">
-            <h2 className="text-xl font-semibold text-white">Continue in Tellann Desktop</h2>
-            <p className="mt-2 text-sm text-[#c4c7c8]">
-              The handoff contains only a short-lived, one-time identifier. Your ingestion key and source code are never placed in the link.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => createHandoff.mutate()}
-              disabled={createHandoff.isPending}
-              className="inline-flex items-center gap-2 rounded bg-white px-5 py-3 font-semibold text-xs uppercase tracking-[0.08em] text-black hover:bg-[#e2e2e2] disabled:opacity-50 transition-colors"
-            >
-              {createHandoff.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Laptop className="h-4 w-4" />
-              )}
-              Open Tellann Desktop
-            </button>
-            <a
-              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] hover:text-white hover:border-neutral-500 transition-colors"
-              href={`${marketingUrl}/desktop${handoff ? `?handoff=${encodeURIComponent(handoff.handoffToken)}` : ""}`}
-            >
-              <Download className="h-4 w-4" />
-              Download Desktop
-            </a>
-            <button
-              onClick={() => setMode("manual")}
-              className="inline-flex items-center rounded border border-transparent px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-white transition-colors"
-            >
-              Use Manual Setup
-            </button>
-          </div>
-          {createHandoff.error ? (
-            <p className="font-mono text-xs text-red-400">{createHandoff.error.message}</p>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* Manual Mode */}
-      {mode === "manual" ? (
-        <section className="rounded-md border border-[#262626] bg-[#131313] p-6 space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#262626] pb-4">
-            <div>
-              <h2 className="text-xl font-semibold text-white">Manual SDK Setup</h2>
-              <p className="mt-1 font-mono text-xs text-[#8e9192]">Use either SDK or configure both.</p>
-            </div>
-            <button
-              onClick={() => setMode("desktop")}
-              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-white hover:border-neutral-500 transition-colors"
-            >
-              <Laptop className="h-3.5 w-3.5" />
-              Automate with Desktop
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            {descriptor.targets.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setTargetId(item.id);
-                  setFramework(DEFAULT_FRAMEWORK[item.kind]);
-                }}
-                className={`rounded px-4 py-2 font-mono text-xs uppercase tracking-wider transition-colors ${
-                  targetId === item.id
-                    ? "bg-white text-black font-semibold"
-                    : "border border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
-                }`}
-              >
-                {item.kind === "FRONTEND" ? "Frontend / Browser" : "Backend / Node.js"}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-4">
-              <div>
-                <label className="mb-2 block font-mono text-xs uppercase tracking-wider text-[#8e9192]">
-                  Framework
-                </label>
-                <Select value={activeFramework?.id ?? ""} onValueChange={(value) => setFramework(value as FrameworkId)}>
-                  <SelectTrigger className="font-mono text-xs">
-                    <SelectValue placeholder="Select framework">{activeFramework?.label}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {frameworkOptions.map((item) => (
-                      <SelectItem key={item.id} value={item.id} className="font-mono text-xs">
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className="mb-2 block font-mono text-xs uppercase tracking-wider text-[#8e9192]">
-                  Package Manager
-                </label>
-                <Select value={manager} onValueChange={setManager}>
-                  <SelectTrigger className="font-mono text-xs">
-                    <SelectValue placeholder="Select package manager">{manager}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["pnpm", "npm", "yarn", "bun"].map((item) => (
-                      <SelectItem key={item} value={item} className="font-mono text-xs">
-                        {item}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <CodeBox
-                title="1. Install Package"
-                value={target?.installCommands[manager] ?? ""}
-                copied={copied === "install"}
-                onCopy={() => void copy("install", target?.installCommands[manager] ?? "")}
-              />
-
-              <div className="rounded border border-[#262626] bg-black p-4 font-mono text-xs leading-relaxed text-[#8e9192]">
-                Store the Development ingestion key in an ignored local environment file. Never commit it.
-              </div>
-
-              {rawKey ? (
-                <CodeBox
-                  title="2. One-time Ingestion Key"
-                  value={rawKey}
-                  copied={copied === "key"}
-                  onCopy={() => void copy("key", rawKey)}
-                />
-              ) : (
-                <button
-                  onClick={() => createKey.mutate()}
-                  disabled={createKey.isPending}
-                  className="w-full rounded bg-white px-5 py-3 font-semibold text-xs uppercase tracking-[0.08em] text-black hover:bg-[#e2e2e2] disabled:opacity-50 transition-colors"
-                >
-                  {createKey.isPending
-                    ? "Generating…"
-                    : descriptor.hasActiveKey
-                    ? "Generate Replacement Setup Key"
-                    : "Generate Setup Key"}
-                </button>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              <CodeBox
-                title="3. Initialize and Verify"
-                value={snippet}
-                copied={copied === "snippet"}
-                onCopy={() => void copy("snippet", snippet)}
-                multiline
-              />
-              {activeFramework?.envVars ? (
-                <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
-                  Set <span className="text-white">{activeFramework.envVars.url}</span> and{" "}
-                  <span className="text-white">{activeFramework.envVars.key}</span> in your environment. The URL falls
-                  back to <span className="text-white">{resolvedEndpoint}</span> when unset.
-                </p>
-              ) : (
-                <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
-                  This snippet reads no build-time environment variables; it posts telemetry directly to{" "}
-                  <span className="text-white">{resolvedEndpoint}</span>.
-                </p>
-              )}
-              <p className="font-mono text-xs leading-relaxed text-[#8e9192]">
-                Start your application after initialization. This page will detect its session, first event, and test automatically.
-              </p>
-            </div>
-          </div>
-        </section>
-      ) : null}
     </main>
+  );
+}
+
+function StepHeading({ step, title, description }: { step: number; title: string; description?: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#444748] font-mono text-[11px] text-white">
+        {step}
+      </span>
+      <div>
+        <h2 className="text-base font-semibold text-white">{title}</h2>
+        {description ? <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">{description}</p> : null}
+      </div>
+    </div>
   );
 }
 
@@ -753,7 +804,7 @@ function CodeBox({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs uppercase tracking-wider text-[#8e9192]">{title}</span>
-        <button onClick={onCopy} className="text-[#8e9192] hover:text-white transition-colors">
+        <button onClick={onCopy} aria-label={`Copy ${title}`} className="text-[#8e9192] hover:text-white transition-colors">
           {copied ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>

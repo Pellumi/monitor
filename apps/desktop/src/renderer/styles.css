@@ -203,18 +203,17 @@
 
 .analysis-metric strong {
   display: block;
-  font: 500 24px "JetBrains Mono", "Courier New", monospace;
+  font: 600 22px / 1.2 "Inter", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
   color: #ffffff;
-  letter-spacing: 0.12em;
+  letter-spacing: -0.01em;
 }
 
 .analysis-metric span {
   display: block;
-  margin-top: 6px;
+  margin-top: 4px;
   color: #8e9192;
-  font: 11px "JetBrains Mono", "Courier New", monospace;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 12px / 1.3 "Inter", system-ui, -apple-system, sans-serif;
 }
 
 .analysis-overview-grid {
@@ -1338,6 +1337,315 @@
 .analysis-clear svg {
   flex-shrink: 0;
   color: #ffffff;
+}
+
+/* Risk notice: titles only. The downloadable report carries the explanation. */
+.analysis-clear.analysis-risk-clear {
+  margin-bottom: 20px;
+}
+
+.analysis-risk-notice {
+  margin: 0 0 20px;
+  padding: 16px 18px;
+  /* border: 1px solid #262626; */
+  /* border-left: 3px solid #a1a1aa; */
+  /* border-radius: 8px; */
+  background: #09090b;
+}
+
+.analysis-risk-notice.severity-high {
+  border-left-color: #ffffff;
+}
+
+.analysis-risk-notice.severity-info {
+  border-left-color: #52525b;
+}
+
+.analysis-risk-notice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.analysis-risk-notice-head > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #ffffff;
+}
+
+.analysis-risk-notice-head > div {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.analysis-risk-notice-head h3 {
+  margin: 0 0 4px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.analysis-risk-notice-head p {
+  margin: 0;
+  color: #8e9192;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.analysis-risk-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  margin: 14px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.analysis-risk-titles li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #1f1f23;
+  border-radius: 6px;
+  background: #0d0d0f;
+  color: #e4e4e7;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.analysis-risk-severity {
+  flex-shrink: 0;
+  min-width: 64px;
+  padding: 2px 6px;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  color: #a1a1aa;
+  font: 500 10px / 1.4 "JetBrains Mono", "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* Same red and amber accents as the QA branch notice; the text label stays. */
+.analysis-risk-severity.severity-high {
+  border-color: #7a2e2e;
+  background: rgba(122, 46, 46, 0.35);
+  color: #f4a3a3;
+}
+
+.analysis-risk-severity.severity-warning {
+  border-color: #7a5a2e;
+  background: rgba(122, 90, 46, 0.3);
+  color: #f0c989;
+}
+
+.analysis-risk-notice.severity-high .analysis-risk-notice-head > svg {
+  color: #f4a3a3;
+}
+
+.analysis-risk-notice.severity-warning .analysis-risk-notice-head > svg {
+  color: #f0c989;
+}
+
+.analysis-risk-more {
+  margin: 8px 0 0;
+  color: #8e9192;
+  font-size: 12px;
+}
+
+.analysis-limit-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -8px 0 16px;
+  color: #8e9192;
+  font-size: 12px;
+}
+
+.analysis-fact-caption {
+  margin: 6px 0 0;
+  color: #8e9192;
+  font-size: 12px;
+}
+
+/* Header rescan is an icon so the page keeps a single primary action. */
+.analysis-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #2a2a2e;
+  border-radius: 6px;
+  background: transparent;
+  color: #c4c7c8;
+  cursor: pointer;
+}
+
+.analysis-icon-btn:hover:not(:disabled) {
+  border-color: #52525b;
+  color: #ffffff;
+}
+
+.analysis-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.analysis-btn-outline {
+  height: 32px;
+  padding: 0 12px;
+  border-color: #444748;
+  background: transparent;
+  font-size: 12px;
+}
+
+.analysis-btn-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.analysis-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: #e4e4e7;
+  font: 500 12px / 1 "Inter", system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+}
+
+.analysis-link-btn:hover {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Collapsed overview: a single summary line with details one click away. */
+.analysis-strip {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid #262626;
+  border-left: 3px solid #52525b;
+  border-radius: 4px;
+  background: #09090b;
+}
+
+.analysis-strip.tone-high {
+  border-left-color: #7a2e2e;
+}
+
+.analysis-strip.tone-warning {
+  border-left-color: #7a5a2e;
+}
+
+.analysis-strip.tone-clear {
+  border-left-color: #2f6b3f;
+}
+
+.analysis-strip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.analysis-strip-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #e4e4e7;
+  font-size: 13px;
+}
+
+.analysis-strip-summary > svg {
+  flex-shrink: 0;
+}
+
+.analysis-strip.tone-high .analysis-strip-summary > svg {
+  color: #f4a3a3;
+}
+
+.analysis-strip.tone-warning .analysis-strip-summary > svg {
+  color: #f0c989;
+}
+
+.analysis-strip.tone-clear .analysis-strip-summary > svg {
+  color: #7fc08a;
+}
+
+.analysis-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.analysis-risk-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.analysis-risk-report-status {
+  margin: 12px 0 0;
+  color: #8e9192;
+  font-size: 12px;
+}
+
+.analysis-risk-report-status.is-error {
+  color: #f4a3a3;
+}
+
+.analysis-summary-facts {
+  margin: 0;
+}
+
+.analysis-summary-facts > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #1f1f23;
+}
+
+.analysis-summary-facts dt {
+  color: #8e9192;
+  font: 11px "JetBrains Mono", "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.analysis-summary-facts dd {
+  margin: 0;
+  color: #e4e4e7;
+  font-size: 13px;
+}
+
+.analysis-summary-facts .analysis-language-bar {
+  margin-top: 4px;
+}
+
+.analysis-coverage-bar {
+  height: 10px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.analysis-coverage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: #ffffff;
 }
 
 /* Compact architecture metrics; a non-zero cycle or orphan count goes amber. */
@@ -5747,6 +6055,121 @@ button:disabled {
 
 .flow-prerequisite.is-ready {
   border-left-color: #5fa06a;
+}
+
+/* Application overview: the single next step, then compact setup progress. */
+.next-step-card {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-left: 3px solid var(--strong);
+}
+.next-step-card h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+.next-step-card p {
+  max-width: 62ch;
+  margin: 0 0 10px;
+}
+.next-step-card.is-complete {
+  border-left-color: #5fa06a;
+}
+/* `overview-progress`, not `journey-steps`: that name is the intent review's
+   vertical timeline, whose `li > span` rules turn every span into a circle. */
+.overview-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+.overview-progress-step {
+  min-width: 0;
+  background: #090909;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.overview-progress-link {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  height: 100%;
+  padding: 12px 14px;
+  color: inherit;
+  text-decoration: none;
+}
+.overview-progress-link:hover {
+  background: #111111;
+}
+.overview-progress-link:focus-visible {
+  outline: 1px solid var(--strong);
+  outline-offset: -1px;
+}
+.overview-progress-marker {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font:
+    10px ui-monospace,
+    monospace;
+}
+.overview-progress-text {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+.overview-progress-text strong {
+  color: inherit;
+  font-weight: 500;
+}
+.overview-progress-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-progress-step.is-current {
+  color: var(--strong);
+}
+.overview-progress-step.is-current .overview-progress-marker {
+  border-color: var(--strong);
+}
+.overview-progress-step.is-done {
+  color: var(--text);
+}
+.overview-progress-step.is-done .overview-progress-marker {
+  border-color: #5fa06a;
+  color: #5fa06a;
+}
+@media (max-width: 900px) {
+  .overview-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .overview-progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.overview-analysis {
+  margin-top: 14px;
+}
+.overview-analysis .analysis-shell {
+  margin-top: 0;
 }
 
 .flow-review-metrics {
