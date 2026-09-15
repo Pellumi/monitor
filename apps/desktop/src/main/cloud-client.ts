@@ -157,6 +157,8 @@ export class DesktopCloudClient {
     string,
     { value: unknown; cachedAt: number }
   >();
+  /** Bumped by every write so reads that started before it are never cached or shared. */
+  private readGeneration = 0;
   private rateLimitedUntil = 0;
   private activeSignIn: {
     controller: AbortController;
@@ -654,6 +656,14 @@ export class DesktopCloudClient {
       `/v1/applications/${applicationId}/flows`,
     );
     return Array.isArray(flows) ? flows : [];
+  }
+
+  /** Permanently deletes a declared flow with its versions, QA runs, reports, bindings and scans. */
+  async deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}`,
+      { method: "DELETE" },
+    );
   }
 
   async declaredFlow(
@@ -1826,9 +1836,16 @@ export class DesktopCloudClient {
   ): Promise<T> {
     const method = String(init.method ?? "GET").toUpperCase();
     if (method !== "GET") {
-      this.readCache.clear();
-      return this.requestOnce<T>(pathName, init, retry);
+      // Invalidate before and after: a read that runs while the write is in
+      // flight would otherwise cache (and hand out) the pre-write response.
+      this.invalidateReads();
+      try {
+        return await this.requestOnce<T>(pathName, init, retry);
+      } finally {
+        this.invalidateReads();
+      }
     }
+    const generation = this.readGeneration;
     const cached = this.readCache.get(pathName);
     if (Date.now() < this.rateLimitedUntil) {
       if (cached) return cached.value as T;
@@ -1852,7 +1869,8 @@ export class DesktopCloudClient {
     if (existing) return existing as Promise<T>;
     const pending = this.requestOnce<T>(pathName, init, retry)
       .then((value) => {
-        this.readCache.set(pathName, { value, cachedAt: Date.now() });
+        if (generation === this.readGeneration)
+          this.readCache.set(pathName, { value, cachedAt: Date.now() });
         return value;
       })
       .catch((error) => {
@@ -1864,9 +1882,18 @@ export class DesktopCloudClient {
         }
         throw error;
       })
-      .finally(() => this.inflightReads.delete(pathName));
+      .finally(() => {
+        if (this.inflightReads.get(pathName) === pending)
+          this.inflightReads.delete(pathName);
+      });
     this.inflightReads.set(pathName, pending);
     return pending;
+  }
+
+  private invalidateReads() {
+    this.readGeneration += 1;
+    this.readCache.clear();
+    this.inflightReads.clear();
   }
 
   private async requestOnce<T = unknown>(

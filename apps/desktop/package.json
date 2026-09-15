@@ -65,6 +65,18 @@
         "to": "icon.png"
       },
       {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/icon-light.ico",
+        "to": "icon-light.ico"
+      },
+      {
+        "from": "build/icon-light.png",
+        "to": "icon-light.png"
+      },
+      {
         "from": ".env.production",
         "to": ".env.production"
       }

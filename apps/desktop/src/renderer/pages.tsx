@@ -31,6 +31,7 @@ import {
   HelpCircle,
   KeyRound,
   Lock,
+  MoreHorizontal,
   Network,
   Play,
   Plus,
@@ -90,6 +91,13 @@ import {
   AccordionContent,
 } from "./components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import {
+  formatEnum,
+  showMenu,
+  statusTone,
+  useSelectableList,
+} from "./components/desktop-ui";
+import { AppWindow, Info } from "lucide-react";
 
 function ActionTooltip({
   content,
@@ -120,9 +128,9 @@ function ActionTooltip({
             bottom: "100%",
             left: "50%",
             transform: "translateX(-50%) translateY(-6px)",
-            backgroundColor: "#000000",
-            color: "#ffffff",
-            border: "1px solid #333333",
+            backgroundColor: "var(--surface-0)",
+            color: "var(--text-strong)",
+            border: "1px solid var(--border-strong)",
             padding: "4px 8px",
             borderRadius: "4px",
             fontSize: "11px",
@@ -141,27 +149,46 @@ function ActionTooltip({
   );
 }
 
+/**
+ * A routed view: a fixed toolbar (title, optional filter or view controls,
+ * commands) over the scrolling content. `fill` gives the content the full
+ * height so list and detail panes scroll on their own.
+ */
 export function Page({
   title,
   description,
   actions,
+  toolbar,
+  layout = "scroll",
   children,
 }: {
   title: string;
   description: string;
   actions?: ReactNode;
+  toolbar?: ReactNode;
+  layout?: "scroll" | "fill";
   children: ReactNode;
 }) {
+  // Short descriptions (an organization name) read as a subtitle; longer
+  // explanations stay out of the way in a tooltip.
+  const shortDescription = description && description.length <= 48;
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
+    <div className={`page${layout === "fill" ? " page-fill" : ""}`}>
+      <header className="page-toolbar">
+        <div className="page-toolbar-title">
           <h1>{title}</h1>
-          <p>{description}</p>
+          {shortDescription ? (
+            <span className="page-toolbar-subtitle">{description}</span>
+          ) : description ? (
+            <span className="page-toolbar-hint" title={description} aria-label={description} role="img">
+              <Info size={14} />
+            </span>
+          ) : null}
         </div>
+        {toolbar ? <div className="page-toolbar-center">{toolbar}</div> : <div className="page-toolbar-spacer" />}
         {actions ? <div className="page-actions">{actions}</div> : null}
       </header>
-      {children}
+      <div className="page-body">{children}</div>
     </div>
   );
 }
@@ -188,10 +215,11 @@ function EmptyState({
 }
 
 function Status({ children }: { children: ReactNode }) {
+  const text = typeof children === "string" ? children : null;
   return (
-    <span className="status-pill">
-      {/* <span aria-hidden="true" /> */}
-      {children}
+    <span className="status-pill" data-tone={text ? statusTone(text) : "neutral"}>
+      <span aria-hidden="true" />
+      {text ? formatEnum(text) : children}
     </span>
   );
 }
@@ -285,16 +313,25 @@ export function RootResolver() {
   );
 }
 
+const applicationKey = (application: { id: string }) => application.id;
+const runKey = (run: QARunSummary) => run.id;
+const flowKey = (flow: DeclaredFlowSummary) => flow.id;
+
 export function ApplicationsPage() {
   const { applications, workspaces, runs, refreshRuns, attachWorkspace, busy } =
     useDesktop();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const next = searchParams.get("next");
   const [query, setQuery] = useState("");
-  const visible = applications.filter((item) =>
-    `${item.name} ${item.organizationName}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+  const visible = useMemo(
+    () =>
+      applications.filter((item) =>
+        `${item.name} ${item.organizationName}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+      ),
+    [applications, query],
   );
 
   useEffect(() => {
@@ -304,99 +341,185 @@ export function ApplicationsPage() {
     }
   }, [applications, refreshRuns, runs]);
 
+  const openApplication = useCallback(
+    (application: { id: string }) => {
+      localStorage.setItem("tellann:last-project", application.id);
+      navigate(
+        next
+          ? `/applications/${application.id}/${next}`
+          : `/applications/${application.id}`,
+      );
+    },
+    [navigate, next],
+  );
+
+  const list = useSelectableList({
+    items: visible,
+    getKey: applicationKey,
+    onOpen: openApplication,
+    onContextMenu: (application, event) => {
+      const workspace = workspaces[application.id];
+      void showMenu(event, [
+        { id: "open", label: "Open", accelerator: "Enter" },
+        { id: "run", label: "New QA run" },
+        { type: "separator" },
+        {
+          id: "attach",
+          label: workspace ? "Change project folder…" : "Attach project folder…",
+          enabled: !busy,
+        },
+        { id: "reveal", label: "Show folder in Explorer", enabled: Boolean(workspace) },
+        { type: "separator" },
+        { id: "copy", label: "Copy application ID" },
+      ]).then((choice) => {
+        if (choice === "open") openApplication(application);
+        if (choice === "run")
+          navigate(`/applications/${application.id}/qa-runs/new`);
+        if (choice === "attach") void attachWorkspace(application.id);
+        if (choice === "reveal" && workspace)
+          void window.tellann?.system.openPath(workspace.path);
+        if (choice === "copy")
+          void window.tellann?.system.copyText(application.id);
+      });
+    },
+  });
+
+  const selected = list.selected;
+  const selectedWorkspace = selected ? workspaces[selected.id] : undefined;
+  const selectedRun = selected ? runs[selected.id]?.[0] : undefined;
+
   return (
     <Page
       title="Applications"
       description="Connect a Tellann application to a local workspace, a development URL, or a staging URL."
+      layout={applications.length ? "fill" : "scroll"}
+      toolbar={
+        applications.length ? (
+          <input
+            className="toolbar-search"
+            data-search-input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter applications (Ctrl+F)"
+            aria-label="Filter applications"
+          />
+        ) : null
+      }
       actions={
         <Link className="button primary" to="/applications/new">
+          <Plus size={15} />
           Create application
         </Link>
       }
     >
       {next ? (
-        <div className="context-banner">
-          Select an application to continue to <strong>{next}</strong>.
+        <div className="context-banner infobar">
+          <Info size={16} />
+          <span>
+            Select an application to continue to <strong>{formatEnum(next.replace(/-/g, "_"))}</strong>.
+          </span>
         </div>
       ) : null}
-      <div className="filter-row">
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter applications"
-          aria-label="Filter applications"
-        />
-      </div>
-      {visible.length ? (
-        <div className="project-grid">
-          {visible.map((application) => {
-            const workspace = workspaces[application.id];
-            const latestRun = runs[application.id]?.[0];
-            const destination = next
-              ? `/applications/${application.id}/${next}`
-              : `/applications/${application.id}`;
-            return (
-              <article className="project-card" key={application.id}>
-                <div className="card-heading">
-                  <div>
-                    <small>{application.organizationName}</small>
-                    <h2>{application.name}</h2>
+      {applications.length ? (
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="Applications"
+              style={{ "--list-columns": "minmax(200px, 1.6fr) minmax(120px, 1fr) minmax(100px, 0.8fr) 130px" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Name</span>
+                <span>Workspace</span>
+                <span>Latest run</span>
+                <span>Status</span>
+              </div>
+              {visible.map((application) => {
+                const workspace = workspaces[application.id];
+                const latestRun = runs[application.id]?.[0];
+                return (
+                  <div className="list-row" key={application.id} {...list.rowProps(application)}>
+                    <span className="list-cell-primary">
+                      <strong>{application.name}</strong>
+                      <small>{application.organizationName}</small>
+                    </span>
+                    <span>{workspace?.name ?? "Not attached"}</span>
+                    <span>{latestRun ? formatEnum(latestRun.status) : "None"}</span>
+                    <span>
+                      <Status>{workspace ? "Analyzed" : "Browser only"}</Status>
+                    </span>
                   </div>
-                  <Status>
-                    {workspace ? "Analyzed" : "Browser-only ready"}
-                  </Status>
+                );
+              })}
+              {!visible.length ? (
+                <div className="list-empty">No applications match “{query}”.</div>
+              ) : null}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Application details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>{selected.organizationName}</small>
+                  <h2>{selected.name}</h2>
                 </div>
-                <div className="tag-list">
-                  {application.environments.map((environment) => (
-                    <span key={environment.id}>{environment.type}</span>
-                  ))}
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openApplication(selected)}>
+                    <AppWindow size={15} />
+                    Open
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void attachWorkspace(selected.id)}
+                  >
+                    <FolderOpen size={15} />
+                    {selectedWorkspace ? "Change folder" : "Attach folder"}
+                  </button>
                 </div>
-                <dl className="summary-grid">
+                <dl className="property-list">
                   <div>
                     <dt>Workspace</dt>
-                    <dd>{workspace?.name ?? "Not attached"}</dd>
+                    <dd>{selectedWorkspace?.name ?? "Not attached"}</dd>
+                  </div>
+                  <div>
+                    <dt>Location</dt>
+                    <dd className="mono selectable">{selectedWorkspace?.path ?? "—"}</dd>
                   </div>
                   <div>
                     <dt>Stack</dt>
+                    <dd>{selectedWorkspace?.snapshot.frameworks[0]?.framework ?? "URL mode"}</dd>
+                  </div>
+                  <div>
+                    <dt>Branch</dt>
+                    <dd>{selectedWorkspace?.snapshot.branch ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Environments</dt>
                     <dd>
-                      {workspace?.snapshot.frameworks[0]?.framework ??
-                        "URL mode"}
+                      {selected.environments.map((environment) => formatEnum(environment.type)).join(", ") || "None"}
                     </dd>
                   </div>
                   <div>
                     <dt>Latest run</dt>
-                    <dd>{latestRun?.status ?? "None"}</dd>
+                    <dd>{selectedRun ? formatEnum(selectedRun.status) : "None"}</dd>
                   </div>
                   <div>
                     <dt>Findings</dt>
-                    <dd>
-                      {latestRun ? latestRun.findingCount : "No run data"}
-                    </dd>
+                    <dd>{selectedRun ? selectedRun.findingCount : "No run data"}</dd>
+                  </div>
+                  <div>
+                    <dt>Application ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
                   </div>
                 </dl>
-                <div className="card-actions">
-                  <Link
-                    className="button primary"
-                    to={destination}
-                    onClick={() =>
-                      localStorage.setItem(
-                        "tellann:last-project",
-                        application.id,
-                      )
-                    }
-                  >
-                    Open application
-                  </Link>
-                  <button
-                    disabled={busy}
-                    onClick={() => void attachWorkspace(application.id)}
-                  >
-                    Attach folder
-                  </button>
-                </div>
-              </article>
-            );
-          })}
+              </div>
+            ) : (
+              <div className="detail-empty">Select an application to see its details.</div>
+            )}
+          </aside>
         </div>
       ) : (
         <EmptyState
@@ -567,13 +690,13 @@ export function NewApplicationPage() {
           {busy ? "Creating…" : "Create application"}
           <ArrowRight size={16} />
         </button>
-        <p className="wizard-footnote">
+        {/* <p className="wizard-footnote">
           The application is created in Tellann Cloud, so it appears in the web
           dashboard immediately and everyone signed in is notified. A folder
           picker opens next for read-only analysis, then Tellann takes you
           straight to connecting the SDK. Skip the folder to stay browser-only
           and attach one later from the Applications list.
-        </p>
+        </p> */}
       </section>
     </Page>
   );
@@ -1548,7 +1671,7 @@ export function WorkspaceDetails() {
                   fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
-                  color: "var(--muted, #8e9192)",
+                  color: "var(--muted, var(--text-muted))",
                   display: "block",
                   marginBottom: "6px",
                 }}
@@ -1561,8 +1684,8 @@ export function WorkspaceDetails() {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: "8px",
-                  background: "#090909",
-                  border: "1px solid #262626",
+                  background: "var(--surface-0)",
+                  border: "1px solid var(--border)",
                   borderRadius: "6px",
                   padding: "8px 12px",
                 }}
@@ -1578,13 +1701,13 @@ export function WorkspaceDetails() {
                 >
                   <Folder
                     size={15}
-                    style={{ color: "#ffffff", flexShrink: 0 }}
+                    style={{ color: "var(--text-strong)", flexShrink: 0 }}
                   />
                   <span
                     style={{
                       fontFamily: "ui-monospace, monospace",
                       fontSize: "12px",
-                      color: "#ffffff",
+                      color: "var(--text-strong)",
                       wordBreak: "break-all",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -1606,16 +1729,16 @@ export function WorkspaceDetails() {
                     <button
                       type="button"
                       style={{
-                        background: "#131313",
-                        border: "1px solid #262626",
-                        color: "#ffffff",
+                        background: "var(--surface-1)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-strong)",
                         padding: "6px 10px",
                         borderRadius: "4px",
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "6px",
                         fontSize: "12px",
-                        cursor: "pointer",
+                        cursor: "default",
                         transition: "all 0.15s ease",
                       }}
                       onClick={async () => {
@@ -1659,15 +1782,15 @@ export function WorkspaceDetails() {
                     <button
                       type="button"
                       style={{
-                        background: "#131313",
-                        border: "1px solid #262626",
-                        color: "#ffffff",
+                        background: "var(--surface-1)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-strong)",
                         padding: "6px 8px",
                         borderRadius: "4px",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        cursor: "pointer",
+                        cursor: "default",
                         transition: "all 0.15s ease",
                       }}
                       onClick={async () => {
@@ -1689,7 +1812,7 @@ export function WorkspaceDetails() {
                       aria-label="Copy folder path"
                     >
                       {pathCopied ? (
-                        <Check size={14} style={{ color: "#ffffff" }} />
+                        <Check size={14} style={{ color: "var(--text-strong)" }} />
                       ) : (
                         <Copy size={14} />
                       )}
@@ -2141,11 +2264,6 @@ function ConfirmModal({
         >
           <X size={16} />
         </button>
-
-        <div className="confirm-modal-topbar">
-          <span className="confirm-modal-brand">TELLANN</span>
-          <span className="confirm-modal-tag">ACTION // CONFIRMATION</span>
-        </div>
 
         <h2 id="confirm-modal-title" className="confirm-modal-heading">
           {title}
@@ -2606,18 +2724,119 @@ function CappedTextarea({
   );
 }
 
+/**
+ * Confirms permanent deletion of a declared flow. Mirrors the web editor's
+ * "type DELETE <flow name>" gate because the delete also removes the QA runs,
+ * reports, versions, bindings and scans recorded against the flow.
+ */
+function DeleteFlowDialog({
+  flow,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  flow: { id: string; name: string };
+  busy: boolean;
+  onCancel(): void;
+  onConfirm(): Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const expected = `DELETE ${flow.name}`;
+  const canDelete = !busy && !deleting && typed.trim() === expected;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deleting) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleting, onCancel]);
+  const confirm = async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      await onConfirm();
+    } catch (cause) {
+      setError(
+        String(cause instanceof Error ? cause.message : cause)
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .slice(0, 240) || "The flow could not be deleted.",
+      );
+      setDeleting(false);
+    }
+  };
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !deleting) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-flow-title"
+        aria-describedby="delete-flow-description"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canDelete) void confirm();
+        }}
+      >
+        <h2 id="delete-flow-title">Delete “{flow.name}”?</h2>
+        <p id="delete-flow-description">
+          This permanently deletes the flow, its published versions, and the QA
+          runs, reconciliation reports, bindings and scans recorded against it.
+          It cannot be undone. Your documents are kept.
+        </p>
+        <label className="dialog-field">
+          <span>
+            Type <code className="confirm-phrase">{expected}</code> to confirm
+          </span>
+          <input
+            autoFocus
+            value={typed}
+            disabled={deleting}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setTyped(event.target.value)}
+          />
+        </label>
+        {error ? (
+          <p role="alert" className="dialog-error">
+            {error}
+          </p>
+        ) : null}
+        <div className="desktop-modal-actions">
+          <button type="submit" className="destructive" disabled={!canDelete}>
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+          <button type="button" disabled={deleting} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ManualIntentBuilder({
   projectId,
   flows,
   refreshFlows,
   initialFlowId,
   showPlanBanner = true,
+  onFlowDeleted,
 }: {
   projectId: string;
   flows: DeclaredFlowSummary[];
   refreshFlows(): Promise<DeclaredFlowSummary[]>;
   initialFlowId?: string;
   showPlanBanner?: boolean;
+  /** Called after the open flow is deleted; without it the builder switches to another flow. */
+  onFlowDeleted?(flowId: string): void;
 }) {
   const navigate = useNavigate();
   const {
@@ -2629,6 +2848,7 @@ function ManualIntentBuilder({
     addDeclaredTransition,
     completeDeclaredFlow,
     reopenDeclaredFlow,
+    deleteDeclaredFlow,
     getFlowDiagrams,
     initializeFlow,
     rescanFlow,
@@ -3180,6 +3400,23 @@ function ManualIntentBuilder({
     }
   };
 
+  const [flowDeleteOpen, setFlowDeleteOpen] = useState(false);
+  const deleteActiveFlow = async () => {
+    if (!activeFlow) return;
+    const deleted = { id: activeFlow.id, name: activeFlow.name };
+    await deleteDeclaredFlow(projectId, deleted.id);
+    setFlowDeleteOpen(false);
+    if (onFlowDeleted) {
+      onFlowDeleted(deleted.id);
+      return;
+    }
+    // Refresh first so the builder falls back to a flow that still exists.
+    await refreshFlows();
+    setActiveFlow(null);
+    setSelectedFlowId("");
+    setMessage(`“${deleted.name}” was deleted.`);
+  };
+
   const editable = activeFlow?.status !== "COMPLETE";
   const application = applications.find((item) => item.id === projectId);
   const workspaceAttached = Boolean(workspaces[projectId]);
@@ -3486,15 +3723,15 @@ function ManualIntentBuilder({
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "8px 12px",
-                  background: "#1c1c1c",
-                  border: "1px solid #333",
+                  background: "var(--surface-1)",
+                  border: "1px solid var(--border-strong)",
                   borderRadius: "4px",
                   marginTop: "12px",
                   marginBottom: "-4px",
                 }}
               >
                 <span
-                  style={{ color: "#fff", fontSize: "12px", fontWeight: 600 }}
+                  style={{ color: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}
                 >
                   Editing state: {stateName || "Untitled"}
                 </span>
@@ -3880,6 +4117,31 @@ function ManualIntentBuilder({
                 : "Publish flow"}
             </button>
           </section>
+          <section className="content-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <small>Danger zone</small>
+              <h2>Delete this flow</h2>
+              <p>
+                Permanently removes the flow, its published versions, and the
+                QA runs and reports recorded against it.
+              </p>
+            </div>
+            <button
+              className="button danger"
+              disabled={busy}
+              onClick={() => setFlowDeleteOpen(true)}
+            >
+              <Trash2 size={15} /> Delete flow
+            </button>
+          </section>
+          {flowDeleteOpen ? (
+            <DeleteFlowDialog
+              flow={{ id: activeFlow.id, name: activeFlow.name }}
+              busy={busy}
+              onCancel={() => setFlowDeleteOpen(false)}
+              onConfirm={deleteActiveFlow}
+            />
+          ) : null}
           {diagrams.length ? (
             <section className="content-card published-flow-diagram-card">
               <div className="card-heading">
@@ -4017,6 +4279,7 @@ function ManualIntentBuilder({
 
 export function DeclaredFlowPage() {
   const { flowId } = useParams();
+  const navigate = useNavigate();
   const { projectId, application, getDeclaredFlows } = useProject();
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4073,6 +4336,7 @@ export function DeclaredFlowPage() {
         refreshFlows={refreshFlows}
         initialFlowId={flowId}
         showPlanBanner={false}
+        onFlowDeleted={() => navigate(`/applications/${projectId}/intent`)}
       />
     </Page>
   );
@@ -4474,6 +4738,7 @@ export function IntentPage() {
     onDocumentImportProgress,
     deleteIntentDraft,
     createDeclaredFlow,
+    deleteDeclaredFlow,
     busy,
   } = useDesktop();
   const navigate = useNavigate();
@@ -4501,12 +4766,47 @@ export function IntentPage() {
   const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creatingFlowKey, setCreatingFlowKey] = useState<string | null>(null);
+  const [flowToDelete, setFlowToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   // The last import stage this page saw, to tell a transition it witnessed
   // (open the finished draft) from a finished import found on arrival (offer it).
   const observedImportRef = useRef<{
     id: string;
     stage: DocumentImportView["stage"];
   } | null>(null);
+
+  const openFlow = useCallback(
+    (flow: DeclaredFlowSummary) =>
+      navigate(`/applications/${projectId}/intent/flows/${flow.id}`),
+    [navigate, projectId],
+  );
+  const openFlowMenu = (
+    flow: DeclaredFlowSummary,
+    event: Parameters<typeof showMenu>[0],
+  ) => {
+    void showMenu(event, [
+      {
+        id: "open",
+        label: flow.status === "DRAFT" ? "Open and edit" : "View flow",
+        accelerator: "Enter",
+      },
+      { id: "copy", label: "Copy flow ID" },
+      { type: "separator" },
+      { id: "delete", label: "Delete…", accelerator: "Delete", enabled: !busy },
+    ]).then((choice) => {
+      if (choice === "open") openFlow(flow);
+      if (choice === "copy") void navigator.clipboard?.writeText(flow.id);
+      if (choice === "delete") setFlowToDelete({ id: flow.id, name: flow.name });
+    });
+  };
+  const flowList = useSelectableList({
+    items: flows,
+    getKey: flowKey,
+    onOpen: openFlow,
+    onContextMenu: openFlowMenu,
+  });
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -4674,6 +4974,16 @@ export function IntentPage() {
     }
   };
 
+  const deleteFlow = async () => {
+    if (!flowToDelete) return;
+    const deleted = flowToDelete;
+    await deleteDeclaredFlow(activeProjectId, deleted.id);
+    setFlows((current) => current.filter((flow) => flow.id !== deleted.id));
+    setFlowToDelete(null);
+    setActionMessage(`“${deleted.name}” was deleted.`);
+    await refresh().catch(() => undefined);
+  };
+
   const trackImport = (view: DocumentImportView | null) => {
     if (!view) return;
     observedImportRef.current = { id: view.id, stage: view.stage };
@@ -4779,6 +5089,67 @@ export function IntentPage() {
     navigate(target);
   };
 
+  // Only drafts still awaiting a decision belong in the review queue; reviewed
+  // ones are history and link to the flow they produced.
+  const pendingDrafts = drafts.filter((draft) => draft.status === "PENDING_REVIEW");
+  const reviewedDrafts = drafts.filter((draft) => draft.status !== "PENDING_REVIEW");
+  const renderDraftRow = (draft: IntentDraft) => {
+    const draftName =
+      (draft.draftJson as any)?.workflows?.[0]?.name ?? "Document-derived intent";
+    const accepted = ["ACCEPTED", "PARTIALLY_ACCEPTED"].includes(draft.status);
+    const acceptedFlow = draft.acceptedGraphId
+      ? flows.find((flow) => flow.id === draft.acceptedGraphId)
+      : undefined;
+    const deletable =
+      ["PENDING_REVIEW", "REJECTED", "EXPIRED", "SUPERSEDED"].includes(draft.status) ||
+      (accepted && !acceptedFlow);
+    const detail =
+      draft.status === "SUPERSEDED"
+        ? "Replaced by a revised draft"
+        : accepted && acceptedFlow
+          ? `Accepted into “${acceptedFlow.name}”`
+          : accepted
+            ? "Accepted; the flow it created has since been deleted"
+            : `${draft.source} · ${Math.round(draft.confidence * 100)}% confidence`;
+    return (
+      <div
+        className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
+        key={draft.id}
+      >
+        <Link
+          className="min-w-0 flex-1 flex flex-col gap-0.5 text-inherit hover:no-underline"
+          to={`/applications/${projectId}/intent/drafts/${draft.id}`}
+        >
+          <strong className="truncate" title={draftName}>
+            {draftName}
+          </strong>
+          <small className="break-words">{detail}</small>
+        </Link>
+        <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
+          <Status>{draft.status}</Status>
+          {deletable ? (
+            <button
+              className={`button ${confirmingDraftId === draft.id ? "danger" : ""}`}
+              disabled={busy}
+              onClick={() => void removeDraft(draft)}
+              aria-label={`${confirmingDraftId === draft.id ? "Confirm deletion of" : "Delete"} ${draftName}`}
+            >
+              <Trash2 size={14} />
+              {confirmingDraftId === draft.id ? "Confirm delete" : "Delete"}
+            </button>
+          ) : acceptedFlow ? (
+            <Link
+              className="button"
+              to={`/applications/${projectId}/intent/flows/${acceptedFlow.id}`}
+              title="Accepted drafts are kept as evidence while their flow exists. Delete the flow to remove the draft."
+            >
+              Open flow
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
   const versionedDocuments = documents.filter(
     (document) => document.versions.length > 0,
   );
@@ -4862,20 +5233,20 @@ export function IntentPage() {
                 return (
                   <div
                     key={option.key}
-                    className="flex flex-col justify-between rounded-lg border border-[#262626] bg-[#0c0c0c] p-4 transition-all hover:border-[#383838] hover:bg-[#121212]"
+                    className="flex flex-col justify-between rounded-lg border border-(--border) bg-(--surface-0) p-4 transition-all hover:border-(--border-strong) hover:bg-(--surface-1)"
                   >
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         {option.key === "CUSTOM" && (
-                          <span className="rounded border border-[#262626] bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400">
+                          <span className="rounded border border-(--border) bg-(--surface-1) px-1.5 py-0.5 font-mono text-[9px] text-(--text-muted)">
                             Blank
                           </span>
                         )}
                       </div>
-                      <h3 className="text-sm font-semibold text-white">
+                      <h3 className="text-sm font-semibold text-(--text-strong)">
                         {option.label}
                       </h3>
-                      <p className="text-xs leading-relaxed text-neutral-400">
+                      <p className="text-xs leading-relaxed text-(--text-muted)">
                         {option.description}
                       </p>
                     </div>
@@ -4957,7 +5328,7 @@ export function IntentPage() {
               }}
             >
               <section
-                className="desktop-modal w-full bg-[#131313] border border-[#262626] rounded-xs p-6 shadow-2xl"
+                className="desktop-modal w-full bg-(--surface-1) border border-(--border) rounded-xs p-6 shadow-2xl"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="ready-document-picker-title"
@@ -4966,26 +5337,21 @@ export function IntentPage() {
                 <div className="flex items-center justify-between mb-5">
                   <h2
                     id="ready-document-picker-title"
-                    className="text-white text-[24px] font-semibold tracking-[-0.01em] mb-2"
+                    className="text-(--text-strong) text-[24px] font-semibold tracking-[-0.01em] mb-2"
                   >
                     Choose documents
-                  </h2>{" "}
-                  <div className="flex items-center gap-3">
-                    <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-                      EVIDENCE // SELECTION
-                    </span>
-                  </div>
+                  </h2>
                 </div>
 
                 <p
                   id="ready-document-picker-description"
-                  className="text-[#c4c7c8] text-[14px] leading-relaxed mb-6"
+                  className="text-(--text) text-[14px] leading-relaxed mb-6"
                 >
                   Select the uploaded documents Tellann should use as evidence.
                   Only the latest processed version of each document is shown.
                 </p>
 
-                <div className="bg-[#000000] border border-[#262626] rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-[#262626]">
+                <div className="bg-(--surface-0) border border-(--border) rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-(--border)">
                   {versionedDocuments.map((document) => {
                     const version = document.versions[0];
                     const readiness = documentReadiness(document);
@@ -5002,20 +5368,20 @@ export function IntentPage() {
                     return (
                       <div
                         key={document.id}
-                        className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${
+                        className={`flex items-center justify-between p-4 cursor-default transition-colors ${
                           selected
-                            ? "bg-[#181818]"
-                            : "bg-[#000000] hover:bg-[#131313]"
+                            ? "bg-(--surface-1)"
+                            : "bg-(--surface-0) hover:bg-(--surface-1)"
                         }`}
                         onClick={toggleSelect}
                       >
                         <div className="flex flex-col gap-1 min-w-0 pr-4">
-                          <strong className="text-white text-[13px] font-semibold truncate">
+                          <strong className="text-(--text-strong) text-[13px] font-semibold truncate">
                             {document.filename}
                           </strong>
                           <span
                             className={`font-mono text-[11px] tracking-[0.08em] uppercase ${
-                              readiness.ready ? "text-[#8e9192]" : "text-[#d6a24a]"
+                              readiness.ready ? "text-(--text-muted)" : "text-[#d6a24a]"
                             }`}
                           >
                             {readiness.label}
@@ -5032,7 +5398,7 @@ export function IntentPage() {
                 </div>
 
                 <div
-                  className="text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase mb-6"
+                  className="text-(--text-muted) font-mono text-[11px] tracking-[0.08em] uppercase mb-6"
                   aria-live="polite"
                 >
                   {selectedReadyVersionIds.size
@@ -5043,14 +5409,14 @@ export function IntentPage() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    className="px-5 py-3 border border-[#444748] bg-[#000000] text-[#c4c7c8] hover:text-white hover:border-white font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs transition-colors"
+                    className="px-5 py-3 border border-(--border-strong) bg-(--surface-0) text-(--text) hover:text-(--text-strong) hover:border-(--accent) font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs transition-colors"
                     onClick={() => setDocumentPickerOpen(false)}
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    className="flex-1 px-5 py-3 bg-white text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-[#e6e6e6] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex-1 px-5 py-3 bg-(--accent) text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-(--accent) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     disabled={!selectedReadyVersionIds.size || importActive}
                     onClick={() => void generateReadyDocuments()}
                   >
@@ -5142,134 +5508,158 @@ export function IntentPage() {
               This page refreshes when focused; Sources shows the full library.
             </div>
           ) : null}
-          {drafts.length ? (
+          {draftManagementMessage ? (
+            <div className="context-banner" role="status">
+              <span>{draftManagementMessage}</span>
+              {confirmingDraftId ? (
+                <button
+                  className="button"
+                  onClick={() => {
+                    setConfirmingDraftId(null);
+                    setDraftManagementMessage(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {pendingDrafts.length ? (
             <section className="content-card flex flex-col gap-4 w-full overflow-hidden">
               <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
                 <div className="min-w-0 flex-1">
                   <small>Review queue</small>
-                  <h2 className="break-words">Inferred intent drafts</h2>
+                  <h2 className="break-words">Drafts waiting for review</h2>
                 </div>
                 <div className="shrink-0 self-start sm:self-auto">
-                  <Status>
-                    {
-                      drafts.filter(
-                        (draft) => draft.status === "PENDING_REVIEW",
-                      ).length
-                    }{" "}
-                    pending
-                  </Status>
+                  <Status>{pendingDrafts.length} pending</Status>
                 </div>
               </div>
-              {draftManagementMessage ? (
-                <div className="context-banner" role="status">
-                  <span>{draftManagementMessage}</span>
-                  {confirmingDraftId ? (
-                    <button
-                      className="button"
-                      onClick={() => {
-                        setConfirmingDraftId(null);
-                        setDraftManagementMessage(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
               <div className="stack compact flex flex-col gap-2.5 w-full">
-                {drafts.map((draft) => {
-                  const draftName =
-                    (draft.draftJson as any)?.workflows?.[0]?.name ??
-                    "Document-derived intent";
-                  const deletable = [
-                    "PENDING_REVIEW",
-                    "REJECTED",
-                    "EXPIRED",
-                    "SUPERSEDED",
-                  ].includes(draft.status);
-                  return (
-                    <div
-                      className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
-                      key={draft.id}
-                    >
-                      <Link
-                        className="min-w-0 flex-1 flex flex-col gap-0.5 text-inherit hover:no-underline"
-                        to={`/applications/${projectId}/intent/drafts/${draft.id}`}
-                      >
-                        <strong className="truncate" title={draftName}>
-                          {draftName}
-                        </strong>
-                        <small className="break-words">
-                          {draft.status === "SUPERSEDED"
-                            ? "Replaced by a revised draft"
-                            : `${draft.source} · ${Math.round(draft.confidence * 100)}% confidence`}
-                        </small>
-                      </Link>
-                      <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
-                        <Status>{draft.status}</Status>
-                        {deletable ? (
-                          <button
-                            className={`button ${confirmingDraftId === draft.id ? "danger" : ""}`}
-                            disabled={busy}
-                            onClick={() => void removeDraft(draft)}
-                            aria-label={`${confirmingDraftId === draft.id ? "Confirm deletion of" : "Delete"} ${draftName}`}
-                          >
-                            <Trash2 size={14} />
-                            {confirmingDraftId === draft.id
-                              ? "Confirm delete"
-                              : "Delete"}
-                          </button>
-                        ) : (
-                          <small title="Accepted drafts are retained as evidence for immutable graph versions.">
-                            Retained as graph evidence
-                          </small>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {pendingDrafts.map(renderDraftRow)}
               </div>
             </section>
           ) : null}
           {flows.length ? (
-            <section className="content-card flex flex-col gap-4 w-full overflow-hidden">
-              <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
+            <section className="content-card flex flex-col gap-3 w-full overflow-hidden">
+              <div className="card-heading flex items-center justify-between gap-3 min-w-0">
                 <div className="min-w-0 flex-1">
                   <small>Graph truth</small>
-                  <h2 className="break-words">Declared system flows</h2>
+                  <h2 className="break-words">
+                    Declared system flows{" "}
+                    <span className="card-count">{flows.length}</span>
+                  </h2>
+                </div>
+                {flowList.selected ? (
+                  <div className="detail-actions shrink-0">
+                    <button
+                      className="button"
+                      onClick={() => openFlow(flowList.selected!)}
+                    >
+                      <Pencil size={14} />
+                      {flowList.selected.status === "DRAFT" ? "Open and edit" : "View flow"}
+                    </button>
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setFlowToDelete({
+                          id: flowList.selected!.id,
+                          name: flowList.selected!.name,
+                        })
+                      }
+                      aria-label={`Delete ${flowList.selected.name}`}
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="card-list">
+                <div
+                  className="list-view"
+                  aria-label="Declared system flows"
+                  style={{ "--list-columns": "minmax(220px, 1fr) 110px 70px 150px 26px" } as CSSProperties}
+                  {...flowList.listProps}
+                  onKeyDown={(event) => {
+                    if (event.key === "Delete" && flowList.selected && !busy) {
+                      event.preventDefault();
+                      setFlowToDelete({
+                        id: flowList.selected.id,
+                        name: flowList.selected.name,
+                      });
+                      return;
+                    }
+                    flowList.listProps.onKeyDown(event);
+                  }}
+                >
+                  <div className="list-head" role="presentation">
+                    <span>Name</span>
+                    <span>Status</span>
+                    <span>Version</span>
+                    <span>Modified</span>
+                    <span />
+                  </div>
+                  {flows.map((flow) => (
+                    <div
+                      className="list-row"
+                      key={flow.id}
+                      title={flow.name}
+                      {...flowList.rowProps(flow)}
+                    >
+                      <span className="list-cell-primary">
+                        <strong>{flow.name}</strong>
+                        <small>
+                          {flow.purpose ||
+                            (flow.status === "DRAFT"
+                              ? "Draft · add states and transitions"
+                              : "Declared behavior")}
+                        </small>
+                      </span>
+                      <span>
+                        <Status>{flow.status}</Status>
+                      </span>
+                      <span>{flow.version ? `v${flow.version}` : "—"}</span>
+                      <span>{flow.updatedAt ? formatDate(flow.updatedAt) : "—"}</span>
+                      <button
+                        className="row-action"
+                        aria-label={`More actions for ${flow.name}`}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          flowList.setSelectedKey(flow.id);
+                          openFlowMenu(flow, event);
+                        }}
+                      >
+                        <MoreHorizontal size={15} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="stack compact flex flex-col gap-2.5 w-full">
-                {flows.map((flow) => (
-                  <Link
-                    className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full hover:no-underline"
-                    key={flow.id}
-                    to={`/applications/${projectId}/intent/flows/${flow.id}`}
-                    aria-label={`${flow.status === "DRAFT" ? "Open and edit" : "View"} ${flow.name}`}
-                  >
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <strong className="truncate" title={flow.name}>
-                        {flow.name}
-                      </strong>
-                      <small className="break-words">
-                        {flow.status === "DRAFT"
-                          ? "Draft flow · Open to add states and transitions"
-                          : "Declared behavior · Open to view or reopen"}
-                      </small>
-                    </div>
-                    <div className="source-status shrink-0 flex items-center gap-2.5 self-start sm:self-auto flex-wrap sm:flex-nowrap">
-                      <Status>{flow.status}</Status>
-                      <span className="inline-flex items-center gap-1 text-xs text-neutral-400 whitespace-nowrap">
-                        <Pencil size={13} />{" "}
-                        {flow.status === "DRAFT"
-                          ? "Open and edit"
-                          : "View flow"}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
             </section>
+          ) : null}
+          {reviewedDrafts.length ? (
+            <details className="content-card flex flex-col gap-4 w-full overflow-hidden">
+              <summary className="card-heading flex items-center justify-between gap-3 min-w-0 cursor-default">
+                <div className="min-w-0 flex-1">
+                  <small>History</small>
+                  <h2 className="break-words">Reviewed drafts</h2>
+                </div>
+                <Status>{reviewedDrafts.length}</Status>
+              </summary>
+              <div className="stack compact flex flex-col gap-2.5 w-full mt-4">
+                {reviewedDrafts.map(renderDraftRow)}
+              </div>
+            </details>
+          ) : null}
+          {flowToDelete ? (
+            <DeleteFlowDialog
+              flow={flowToDelete}
+              busy={busy}
+              onCancel={() => setFlowToDelete(null)}
+              onConfirm={deleteFlow}
+            />
           ) : null}
           {!documents.length && !drafts.length && !flows.length && !importView ? (
             <EmptyState
@@ -5857,7 +6247,7 @@ export function IntentDetailPage() {
               </article>
             ))}
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-[#8e9192]">
+              <p className="text-xs text-(--text-muted)">
                 Tellann regenerates the journeys with your answers, and you
                 review the revised draft before anything is saved. Edits made
                 to journeys on this page are not carried into the revision.
@@ -5884,7 +6274,7 @@ export function IntentDetailPage() {
                 </button>
                 {revisionKind === "ANSWERS" && revisionStatus ? (
                   <small
-                    className="text-[#8e9192] font-mono text-[11px]"
+                    className="text-(--text-muted) font-mono text-[11px]"
                     role="status"
                   >
                     {revisionStatus}
@@ -5898,10 +6288,10 @@ export function IntentDetailPage() {
         <AccordionItem value="generation-details" className="my-4">
           <AccordionTrigger>
             <div className="flex flex-col text-left">
-              <strong className="text-white font-semibold">
+              <strong className="text-(--text-strong) font-semibold">
                 Documents and generation details
               </strong>
-              <small className="text-xs text-[#8e9192]">
+              <small className="text-xs text-(--text-muted)">
                 See the evidence and technical information used for this draft.
               </small>
             </div>
@@ -5961,7 +6351,7 @@ export function IntentDetailPage() {
           </div>
           <div>
             <textarea
-              className="w-full min-h-[96px] p-3 bg-black border border-[#262626] rounded text-white text-xs placeholder:text-[#555555] focus:outline-none focus:border-white transition-colors"
+              className="w-full min-h-[96px] p-3 bg-(--surface-0) border border-(--border) rounded text-(--text-strong) text-xs placeholder:text-(--text-subtle) focus:outline-none focus:border-(--accent) transition-colors"
               value={correction}
               disabled={Boolean(revisionJobId) || !pendingReview}
               onChange={(event) => setCorrection(event.target.value)}
@@ -5970,7 +6360,7 @@ export function IntentDetailPage() {
             <div className="flex items-center justify-between gap-3">
               {revisionKind !== "ANSWERS" && revisionStatus ? (
                 <small
-                  className="text-[#8e9192] font-mono text-[11px]"
+                  className="text-(--text-muted) font-mono text-[11px]"
                   role="status"
                 >
                   {revisionStatus}
@@ -6917,7 +7307,7 @@ function CopyableCodeBlock({
             color: copied ? "#4ade80" : undefined,
             borderColor: copied ? "#22c55e" : undefined,
             transition: "all 0.15s ease",
-            cursor: "pointer",
+            cursor: "default",
           }}
           title="Copy code to clipboard"
         >
@@ -8990,16 +9380,16 @@ export function InstrumentationDetailPage() {
         </section>
       ) : null}
       {validationSucceeded ? (
-        <section className="bg-[#131313] border border-[#262626] rounded-xs p-6 mb-6">
-          <h2 className="text-2xl font-semibold text-white tracking-tight mb-2">
+        <section className="bg-(--surface-1) border border-(--border) rounded-xs p-6 mb-6">
+          <h2 className="text-2xl font-semibold text-(--text-strong) tracking-tight mb-2">
             {buildFailure
               ? "Tellann is installed — every Tellann check passed"
               : "Tellann is installed and the project build passed"}
           </h2>
 
-          <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
-            <Check size={18} className="text-white shrink-0 mt-0.5" />
-            <span className="text-sm text-[#c4c7c8] leading-relaxed">
+          <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
+            <Check size={18} className="text-(--text-strong) shrink-0 mt-0.5" />
+            <span className="text-sm text-(--text) leading-relaxed">
               {buildFailure
                 ? "The reviewed files are in place and the SDK resolves correctly. Your application's own build reported pre-existing errors that do not reference Tellann, so they don't block this setup, the categorized diagnostics stay available under the technical validation evidence below."
                 : "The reviewed files are in place, the SDK resolves correctly, and the approved TypeScript/Vite build completed successfully."}
@@ -9007,7 +9397,7 @@ export function InstrumentationDetailPage() {
           </div>
 
           {buildWarning ? (
-            <p className="text-xs text-[#8e9192] bg-[#000000] border border-[#262626] p-3 mb-4 leading-relaxed">
+            <p className="text-xs text-(--text-muted) bg-(--surface-0) border border-(--border) p-3 mb-4 leading-relaxed">
               Vite reported a non-blocking import/chunking warning. It does not
               affect the SDK connection and can be optimized later by making
               that module use one consistent import strategy.
@@ -9015,7 +9405,7 @@ export function InstrumentationDetailPage() {
           ) : null}
 
           {!localResult ? (
-            <p className="text-xs text-[#8e9192] bg-[#000000] border border-[#262626] p-3 mb-4 leading-relaxed">
+            <p className="text-xs text-(--text-muted) bg-(--surface-0) border border-(--border) p-3 mb-4 leading-relaxed">
               This completed task was restored from synchronized cloud history.
               Local diff and rollback evidence are available only on the device
               and workspace that originally applied the task.
@@ -9023,11 +9413,11 @@ export function InstrumentationDetailPage() {
           ) : null}
 
           <div className="my-5">
-            <div className="text-[11px] font-mono text-[#8e9192] tracking-wider uppercase mb-3">
+            <div className="text-[11px] font-mono text-(--text-muted) tracking-wider uppercase mb-3">
               WHAT TO DO NEXT
             </div>
-            <div className="bg-[#000000] border border-[#262626] p-4">
-              <ol className="list-decimal list-inside space-y-2 text-sm text-[#e2e2e2] leading-relaxed">
+            <div className="bg-(--surface-0) border border-(--border) p-4">
+              <ol className="list-decimal list-inside space-y-2 text-sm text-(--text) leading-relaxed">
                 {telemetryVerified ? (
                   <li>
                     Telemetry and the onboarding test event have been received.
@@ -9056,9 +9446,9 @@ export function InstrumentationDetailPage() {
           </div>
 
           {telemetryVerified ? (
-            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
-              <Check size={16} className="text-white shrink-0 mt-0.5" />
-              <span className="text-sm text-[#c4c7c8] leading-relaxed">
+            <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
+              <Check size={16} className="text-(--text-strong) shrink-0 mt-0.5" />
+              <span className="text-sm text-(--text) leading-relaxed">
                 Tellann received the onboarding test event. The connection is
                 verified.{" "}
                 {hasInitializedFlow
@@ -9067,12 +9457,12 @@ export function InstrumentationDetailPage() {
               </span>
             </div>
           ) : (
-            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
+            <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
               <RefreshCw
                 size={15}
-                className="text-[#8e9192] shrink-0 mt-0.5 animate-spin"
+                className="text-(--text-muted) shrink-0 mt-0.5 animate-spin"
               />
-              <span className="text-sm text-[#c4c7c8] leading-relaxed flex-1">
+              <span className="text-sm text-(--text) leading-relaxed flex-1">
                 Searching automatically for the onboarding test event
                 {environment?.name ? ` from ${environment.name}` : ""}. Start
                 your application and use it once — Tellann checks every few
@@ -9085,7 +9475,7 @@ export function InstrumentationDetailPage() {
           <div className="flex flex-wrap gap-3 my-4 w-full! justify-end">
             {telemetryVerified && hasInitializedFlow ? (
               <Link
-                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
+                className="inline-flex items-center gap-2 bg-(--accent) text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-(--accent) transition-colors"
                 to={`/applications/${projectId}/qa-runs/new`}
               >
                 <Play size={15} /> Run first walkthrough
@@ -9093,25 +9483,25 @@ export function InstrumentationDetailPage() {
             ) : null}
             {telemetryVerified && !hasInitializedFlow ? (
               <Link
-                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
+                className="inline-flex items-center gap-2 bg-(--accent) text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-(--accent) transition-colors"
                 to={`/applications/${projectId}/intent`}
               >
                 <ArrowRight size={15} /> Initialize a Flow
               </Link>
             ) : null}
             <Link
-              className="inline-flex items-center gap-2 bg-[#000000] border border-[#444748] text-white font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-white transition-colors"
+              className="inline-flex items-center gap-2 bg-(--surface-0) border border-(--border-strong) text-(--text-strong) font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-(--accent) transition-colors"
               to={`/applications/${projectId}/instrumentation`}
             >
               View instrumentation history
             </Link>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-[#262626]">
+          <div className="mt-6 pt-4 border-t border-(--border)">
             <AccordionItem value="advanced-maintenance" defaultOpen={false}>
               <AccordionTrigger>Advanced maintenance</AccordionTrigger>
               <AccordionContent>
-                <p className="text-xs text-[#8e9192] mb-3">
+                <p className="text-xs text-(--text-muted) mb-3">
                   Use these only after source changes, when troubleshooting, or
                   when intentionally removing Tellann.
                 </p>
@@ -9287,13 +9677,13 @@ export function InstrumentationDetailPage() {
               <button
                 className="button primary"
                 style={{
-                  background: "#ffffff",
-                  color: "#000000",
+                  background: "var(--accent)",
+                  color: "var(--on-accent)",
                   border: "none",
                   fontSize: "11px",
                   fontWeight: 700,
                   padding: "6px 14px",
-                  cursor: "pointer",
+                  cursor: "default",
                   textTransform: "uppercase",
                 }}
                 onClick={() => setEntitlementModalOpen(true)}
@@ -9615,9 +10005,52 @@ function useRuns(projectId?: string) {
   return { items: projectId ? (runs[projectId] ?? []) : [], loading };
 }
 
+function reportHrefFor(projectId: string, run: QARunSummary) {
+  return run.reportId || run.status === "COMPLETED"
+    ? `/applications/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`
+    : null;
+}
+
+function formatRunTime(value: string | null | undefined, fallback: string) {
+  return value ? new Date(value).toLocaleString() : fallback;
+}
+
 export function RunsPage() {
   const { projectId, application } = useProject();
   const { items, loading } = useRuns(projectId);
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const visible = useMemo(() => {
+    const terms = query.trim().toLowerCase();
+    if (!terms) return items;
+    return items.filter((run) =>
+      `${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
+        .toLowerCase()
+        .includes(terms),
+    );
+  }, [items, query]);
+  const openRun = useCallback(
+    (run: QARunSummary) => navigate(`/applications/${projectId}/qa-runs/${run.id}`),
+    [navigate, projectId],
+  );
+  const list = useSelectableList({
+    items: visible,
+    getKey: runKey,
+    onOpen: openRun,
+    onContextMenu: (run, event) => {
+      const report = projectId ? reportHrefFor(projectId, run) : null;
+      void showMenu(event, [
+        { id: "open", label: "Open run", accelerator: "Enter" },
+        { id: "report", label: "View report", enabled: Boolean(report) },
+        { type: "separator" },
+        { id: "copy", label: "Copy run ID" },
+      ]).then((choice) => {
+        if (choice === "open") openRun(run);
+        if (choice === "report" && report) navigate(report);
+        if (choice === "copy") void window.tellann?.system.copyText(run.id);
+      });
+    },
+  });
   if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
@@ -9626,14 +10059,30 @@ export function RunsPage() {
         description="Select another application."
       />
     );
+  const selected = list.selected;
+  const selectedReport = selected ? reportHrefFor(projectId, selected) : null;
   return (
     <Page
       title="QA Runs"
       description="Guided browser execution, captured evidence, reconciliation, and report processing."
+      layout={!loading && items.length ? "fill" : "scroll"}
+      toolbar={
+        items.length ? (
+          <input
+            className="toolbar-search"
+            data-search-input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter runs (Ctrl+F)"
+            aria-label="Filter runs"
+          />
+        ) : null
+      }
       actions={
         <Link
           className="button primary"
           to={`/applications/${projectId}/qa-runs/new`}
+          title="New QA run (Ctrl+N)"
         >
           <Play size={15} />
           New QA run
@@ -9643,7 +10092,100 @@ export function RunsPage() {
       {loading ? (
         <LoadingState />
       ) : items.length ? (
-        <RunTable projectId={projectId} runs={items} />
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="QA runs"
+              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Run</span>
+                <span>Environment</span>
+                <span>Status</span>
+                <span>Evidence</span>
+                <span>Started</span>
+              </div>
+              {visible.map((run) => (
+                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                  <span className="list-cell-primary">
+                    <strong className="mono">{run.id.slice(0, 8)}</strong>
+                    <small>{formatEnum(run.mode)}</small>
+                  </span>
+                  <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
+                  <span>
+                    <Status>{run.status}</Status>
+                  </span>
+                  <span>
+                    {run.artifactCount} artifacts · {run.findingCount} findings
+                  </span>
+                  <span>{formatRunTime(run.startedAt, "Not started")}</span>
+                </div>
+              ))}
+              {!visible.length ? (
+                <div className="list-empty">No runs match “{query}”.</div>
+              ) : null}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Run details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>QA run</small>
+                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
+                </div>
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openRun(selected)}>
+                    Open run
+                  </button>
+                  {selectedReport ? (
+                    <Link className="button" to={selectedReport}>
+                      <BarChart3 size={15} />
+                      View report
+                    </Link>
+                  ) : null}
+                </div>
+                <dl className="property-list">
+                  <div>
+                    <dt>Status</dt>
+                    <dd><Status>{selected.status}</Status></dd>
+                  </div>
+                  <div>
+                    <dt>Mode</dt>
+                    <dd>{formatEnum(selected.mode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Environment</dt>
+                    <dd>{selected.environment?.name ?? selected.environmentId}</dd>
+                  </div>
+                  <div>
+                    <dt>Started</dt>
+                    <dd>{formatRunTime(selected.startedAt, "Not started")}</dd>
+                  </div>
+                  <div>
+                    <dt>Ended</dt>
+                    <dd>{formatRunTime(selected.endedAt, "—")}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifacts</dt>
+                    <dd>{selected.artifactCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Findings</dt>
+                    <dd>{selected.findingCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : (
+              <div className="detail-empty">Select a run to see its details.</div>
+            )}
+          </aside>
+        </div>
       ) : (
         <EmptyState
           icon={<Play size={36} />}
@@ -10603,14 +11145,14 @@ function FindingsLayout({ items }: { items: unknown[] }) {
               <AccordionTrigger className="w-full py-3.5 px-4">
                 <div className="flex items-center justify-between flex-1 min-w-0 pr-2">
                   <div className="flex items-center gap-3 min-w-0 pr-3">
-                    <span className="font-mono text-xs text-[#555] shrink-0">
+                    <span className="font-mono text-xs text-(--text-subtle) shrink-0">
                       {String(index + 1).padStart(2, "0")}
                     </span>
                     <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
-                      <strong className="text-white text-sm font-semibold truncate">
+                      <strong className="text-(--text-strong) text-sm font-semibold truncate">
                         {displayValue(item.title, `Finding ${index + 1}`)}
                       </strong>
-                      <span className="text-[#8e9192] font-mono text-[11px] uppercase tracking-wider shrink-0">
+                      <span className="text-(--text-muted) font-mono text-[11px] uppercase tracking-wider shrink-0">
                         {displayValue(item.category, "Finding")}
                       </span>
                     </div>
@@ -10620,8 +11162,8 @@ function FindingsLayout({ items }: { items: unknown[] }) {
                   </div>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="p-4 pt-3 border-t border-[#262626] bg-[#000000] text-xs text-[#c4c7c8] space-y-3">
-                <p className="leading-relaxed text-sm text-[#e2e2e2]">
+              <AccordionContent className="p-4 pt-3 border-t border-(--border) bg-(--surface-0) text-xs text-(--text) space-y-3">
+                <p className="leading-relaxed text-sm text-(--text)">
                   {displayValue(
                     item.description,
                     "No description was recorded.",
@@ -10635,7 +11177,7 @@ function FindingsLayout({ items }: { items: unknown[] }) {
                 ) : null}
                 {steps.length ? (
                   <div className="space-y-1.5 pt-1">
-                    <small className="block text-[#8e9192] font-mono text-[10px] uppercase tracking-wider mb-1">
+                    <small className="block text-(--text-muted) font-mono text-[10px] uppercase tracking-wider mb-1">
                       Reproduction steps
                     </small>
                     <ol className="list-decimal pl-5 space-y-1 leading-relaxed text-xs">
@@ -11185,58 +11727,125 @@ export function RunSubPage({ kind }: { kind: string }) {
 export function ReportsPage() {
   const { projectId } = useParams();
   const { items, loading } = useRuns(projectId);
-  if (!projectId) return <ApplicationRequired />;
-  const reportRuns = items.filter(
-    (run) => run.reportId || run.status === "COMPLETED",
+  const navigate = useNavigate();
+  const reportRuns = useMemo(
+    () => items.filter((run) => run.reportId || run.status === "COMPLETED"),
+    [items],
   );
+  const openReport = useCallback(
+    (run: QARunSummary) => {
+      if (projectId) navigate(reportHrefFor(projectId, run) ?? `/applications/${projectId}/qa-runs/${run.id}`);
+    },
+    [navigate, projectId],
+  );
+  const list = useSelectableList({
+    items: reportRuns,
+    getKey: runKey,
+    onOpen: openReport,
+    onContextMenu: (run, event) => {
+      void showMenu(event, [
+        { id: "open", label: "Open report", accelerator: "Enter" },
+        { id: "run", label: "Open QA run" },
+        { type: "separator" },
+        { id: "copy", label: "Copy run ID" },
+      ]).then((choice) => {
+        if (choice === "open") openReport(run);
+        if (choice === "run") navigate(`/applications/${projectId}/qa-runs/${run.id}`);
+        if (choice === "copy") void window.tellann?.system.copyText(run.id);
+      });
+    },
+  });
+  if (!projectId) return <ApplicationRequired />;
+  const selected = list.selected;
   return (
     <Page
       title="Reports"
       description="Canonical quality reports generated from guided QA evidence and reconciliation."
+      layout={!loading && reportRuns.length ? "fill" : "scroll"}
     >
       {loading ? (
         <LoadingState />
       ) : reportRuns.length ? (
-        <div className="project-grid">
-          {reportRuns.map((run) => (
-            <article className="project-card" key={run.id}>
-              <div className="card-heading">
-                <div>
-                  <small>QA report</small>
-                  <h2>{run.id.slice(0, 8)}</h2>
-                </div>
-                <Status>{run.reportId ? "Ready" : "Processing"}</Status>
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="Reports"
+              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 90px 90px minmax(110px, 1fr) 110px" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Report</span>
+                <span>Environment</span>
+                <span>Findings</span>
+                <span>Artifacts</span>
+                <span>Completed</span>
+                <span>Status</span>
               </div>
-              <dl className="summary-grid">
-                <div>
-                  <dt>Environment</dt>
-                  <dd>{run.environment?.name ?? "Environment"}</dd>
+              {reportRuns.map((run) => (
+                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                  <span className="list-cell-primary">
+                    <strong className="mono">{run.id.slice(0, 8)}</strong>
+                    <small>QA report</small>
+                  </span>
+                  <span>{run.environment?.name ?? "Environment"}</span>
+                  <span>{run.findingCount}</span>
+                  <span>{run.artifactCount}</span>
+                  <span>{run.endedAt ? new Date(run.endedAt).toLocaleDateString() : "Pending"}</span>
+                  <span>
+                    <Status>{run.reportId ? "Ready" : "Processing"}</Status>
+                  </span>
                 </div>
-                <div>
-                  <dt>Findings</dt>
-                  <dd>{run.findingCount}</dd>
+              ))}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Report details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>QA report</small>
+                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
                 </div>
-                <div>
-                  <dt>Artifacts</dt>
-                  <dd>{run.artifactCount}</dd>
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openReport(selected)}>
+                    <BarChart3 size={15} />
+                    Open report
+                  </button>
+                  <Link className="button" to={`/applications/${projectId}/qa-runs/${selected.id}`}>
+                    Open QA run
+                  </Link>
                 </div>
-                <div>
-                  <dt>Completed</dt>
-                  <dd>
-                    {run.endedAt
-                      ? new Date(run.endedAt).toLocaleDateString()
-                      : "Pending"}
-                  </dd>
-                </div>
-              </dl>
-              <Link
-                className="button primary"
-                to={`/applications/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`}
-              >
-                Open report
-              </Link>
-            </article>
-          ))}
+                <dl className="property-list">
+                  <div>
+                    <dt>Status</dt>
+                    <dd><Status>{selected.reportId ? "Ready" : "Processing"}</Status></dd>
+                  </div>
+                  <div>
+                    <dt>Environment</dt>
+                    <dd>{selected.environment?.name ?? "Environment"}</dd>
+                  </div>
+                  <div>
+                    <dt>Findings</dt>
+                    <dd>{selected.findingCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifacts</dt>
+                    <dd>{selected.artifactCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Completed</dt>
+                    <dd>{formatRunTime(selected.endedAt, "Pending")}</dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : (
+              <div className="detail-empty">Select a report to see its details.</div>
+            )}
+          </aside>
         </div>
       ) : (
         <EmptyState
@@ -11538,35 +12147,12 @@ function GuardedFeatureContent({
 
 export function LoadingState() {
   return (
-    <div
-      className="p-6 space-y-6 w-full animate-pulse"
-      role="status"
-      aria-label="Loading page data"
-    >
-      <div className="space-y-2">
-        <div className="h-7 w-48 bg-neutral-800 rounded-md" />
-        <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-24 bg-neutral-800 rounded" />
-          <div className="h-6 w-16 bg-neutral-800/60 rounded" />
-        </div>
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-28 bg-neutral-800 rounded" />
-          <div className="h-6 w-20 bg-neutral-800/60 rounded" />
-        </div>
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-20 bg-neutral-800 rounded" />
-          <div className="h-6 w-16 bg-neutral-800/60 rounded" />
-        </div>
-      </div>
-      <div className="h-56 bg-neutral-900 border border-neutral-800 rounded-lg p-6 space-y-4">
-        <div className="h-5 w-40 bg-neutral-800 rounded" />
-        <div className="h-4 w-full bg-neutral-800/40 rounded" />
-        <div className="h-4 w-4/5 bg-neutral-800/40 rounded" />
-        <div className="h-4 w-2/3 bg-neutral-800/40 rounded" />
-      </div>
+    <div className="loading-skeleton" role="status" aria-label="Loading page data">
+      <div className="skeleton-line is-title" style={{ width: "28%" }} />
+      {["92%", "86%", "74%", "88%", "64%", "80%"].map((width, index) => (
+        <div key={index} className="skeleton-line" style={{ width }} />
+      ))}
+      <div className="skeleton-block" />
     </div>
   );
 }

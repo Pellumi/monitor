@@ -41,6 +41,18 @@ import { renderValidationReportPdf, type ValidationReportInput } from './validat
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
+import {
+  attachWindowChrome,
+  handleSecondInstanceArgv,
+  noteBackgroundNotification,
+  onEndRunRequested,
+  registerWindowIpc,
+  rendererQuery,
+  requestAttention,
+  setRunIndicator,
+  themedWindowIconPath,
+  windowOptions,
+} from './window-chrome';
 
 loadDesktopEnvironment();
 
@@ -52,6 +64,7 @@ const notificationClient = new DesktopNotificationClient({
   apiUrl: process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000',
   appVersion: app.getVersion(),
   getWindow: () => mainWindow,
+  onBackgroundNotification: noteBackgroundNotification,
 });
 
 /**
@@ -243,6 +256,9 @@ async function applyInstrumentationWithProgress(applicationId: string, planId: s
 
 function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEvent> = {}): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  const ended = input.phase === 'COMPLETE' || input.localStatus === 'CHROMIUM_CLOSED' || input.localStatus === 'FAILED';
+  setRunIndicator(ended ? 'idle' : input.cloudStatus === 'PAUSED' ? 'paused' : 'running');
+  if (input.localStatus === 'CHROMIUM_CLOSED' || input.localStatus === 'FAILED') requestAttention();
   mainWindow.webContents.send(IPC.runLifecycleEvent, {
     runId: state.runId,
     applicationId: state.applicationId,
@@ -1120,6 +1136,7 @@ if (!hasSingleInstanceLock) {
 } else {
   app.on('second-instance', (_event, argv) => {
     captureSetupDeepLink(argv);
+    handleSecondInstanceArgv(argv);
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -1150,26 +1167,17 @@ function parseInstrumentationContext(input: unknown) {
 
 async function createWindow(): Promise<void> {
   const showImmediately = !app.isPackaged;
-  const windowIconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.resolve(__dirname, '../../../build/icon.png');
+  // The window chrome swaps this for the taskbar theme's variant once attached.
+  const windowIconPath = themedWindowIconPath();
   mainWindow = new BrowserWindow({
-    width: 1584,
-    height: 990,
-    minWidth: 1180,
-    minHeight: 720,
+    // Size, placement, title bar overlay and Mica come from the window chrome,
+    // which restores the last bounds and opens compact while signed out.
+    ...windowOptions(),
     icon: windowIconPath,
     // In development, show the shell immediately so a renderer/preload failure
     // cannot leave Electron running invisibly behind the Vite process.
     show: showImmediately,
-    backgroundColor: '#080808',
     title: 'Tellann',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#000000',
-      symbolColor: '#ffffff',
-      height: 32,
-    },
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
@@ -1196,9 +1204,11 @@ async function createWindow(): Promise<void> {
     console.error(`Desktop renderer failed to load (${errorCode}): ${errorDescription}`, validatedUrl);
     mainWindow?.show();
   });
+  attachWindowChrome(mainWindow);
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) await mainWindow.loadURL(devUrl);
-  else await mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
+  const query = rendererQuery();
+  if (devUrl) await mainWindow.loadURL(`${devUrl}?${new URLSearchParams(query).toString()}`);
+  else await mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
 }
 
 function registerIpc(): void {
@@ -1411,6 +1421,14 @@ function registerIpc(): void {
     const value = input as { applicationId?: unknown; flowId?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
     return cloud.setDeclaredFlowComplete(value.applicationId, value.flowId, false);
+  });
+  // Channel mirrored in preload; kept out of the prebuilt shared contracts.
+  const DELETE_DECLARED_FLOW_CHANNEL = 'tellann:cloud:intent:delete';
+  ipcMain.handle(DELETE_DECLARED_FLOW_CHANNEL, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.deleteDeclaredFlow(value.applicationId, value.flowId);
   });
   ipcMain.handle(IPC.generateFlowSuggestions, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -2463,6 +2481,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   registerIpc();
+  registerWindowIpc(assertTrustedSender);
+  onEndRunRequested(() => void completeActiveRun('MANUAL_STOP_BEFORE_TERMINAL'));
   await createWindow();
   // Re-arm notifications if a session is already stored, and again whenever the
   // window regains focus (the access token may have been refreshed since).

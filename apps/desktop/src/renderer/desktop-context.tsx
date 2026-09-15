@@ -100,7 +100,8 @@ type DesktopContextValue = {
   refreshOrganizations(): Promise<DesktopOrganization[]>;
   /** Creates the application in the cloud, then refreshes the local list. */
   createApplication(input: CreateApplicationInput): Promise<DesktopApplication | null>;
-  attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
+  /** Attaches a folder: the one given (dropped onto the window) or one picked in the folder dialog. */
+  attachWorkspace(applicationId: string, folder?: { path: string; name: string }): Promise<LocalWorkspace | null>;
   /** Set when the last attach was refused because the folder is a different repository. */
   repositoryMismatch: RepositoryMismatchPrompt | null;
   dismissRepositoryMismatch(): void;
@@ -129,6 +130,7 @@ type DesktopContextValue = {
   addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
   completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+  deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
   getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
   acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
@@ -467,8 +469,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const attachWorkspace = useCallback(async (applicationId: string) => perform(async () => {
-    const selected = await bridge().projects.chooseWorkspace();
+  const attachWorkspace = useCallback(async (applicationId: string, folder?: { path: string; name: string }) => perform(async () => {
+    const selected = folder ?? await bridge().projects.chooseWorkspace();
     if (!selected) return null;
     setRepositoryMismatch(null);
     // The workspace id is derived in the main process from the folder path, so
@@ -628,6 +630,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     addDeclaredTransition: (applicationId, flowId, fromStateId, toStateId, action) => perform(() => bridge().intent.addDeclaredTransition(applicationId, flowId, fromStateId, toStateId, action)),
     completeDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.completeDeclaredFlow(applicationId, flowId)),
     reopenDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.reopenDeclaredFlow(applicationId, flowId)),
+    deleteDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.deleteDeclaredFlow(applicationId, flowId)),
     generateFlowSuggestions: (applicationId, flowId, input) => bridge().intent.generateFlowSuggestions(applicationId, flowId, input),
     getFlowSuggestions: (applicationId, flowId) => bridge().intent.getFlowSuggestions(applicationId, flowId),
     acceptFlowSuggestion: (applicationId, flowId, suggestionId) => bridge().intent.acceptFlowSuggestion(applicationId, flowId, suggestionId),

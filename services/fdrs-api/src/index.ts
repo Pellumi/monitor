@@ -962,6 +962,12 @@ app.delete('/v1/applications/:appId/flows/:flowId', async (req: AuthenticatedReq
       await tx.graphRelationship.deleteMany({ where: { OR: [{ sourceGraphId: flowId }, { targetGraphId: flowId }] } });
       await tx.promotionDecision.deleteMany({ where: { flowId } });
       await tx.instrumentationPlan.updateMany({ where: { flowId }, data: { flowId: null, flowVersionId: null } });
+      // A document intent draft accepted into this flow no longer backs graph
+      // truth; unlinking it lets the member delete the draft too.
+      await tx.aIFlowDraft.updateMany({
+        where: { applicationId: appId, acceptedGraphId: flowId },
+        data: { acceptedGraphId: null, acceptedGraphVersionId: null },
+      });
 
       // ── The graph itself ──────────────────────────────────
       await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flowId } });
@@ -1841,10 +1847,15 @@ app.delete('/v1/applications/:appId/intent-drafts/:draftId', async (req: Authent
   if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
   const draft = await prisma.aIFlowDraft.findFirst({
     where: { id: draftId, applicationId: appId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, acceptedGraphId: true },
   });
   if (!draft) return res.status(404).json({ error: 'Intent draft not found' });
-  if (!['PENDING_REVIEW', 'REJECTED', 'EXPIRED', 'SUPERSEDED'].includes(draft.status)) {
+  // An accepted draft is kept as evidence only while the flow it created exists.
+  const acceptedFlowExists = draft.acceptedGraphId
+    ? (await prisma.behaviorGraph.count({ where: { id: draft.acceptedGraphId } })) > 0
+    : false;
+  const reviewedWithoutFlow = ['ACCEPTED', 'PARTIALLY_ACCEPTED'].includes(draft.status) && !acceptedFlowExists;
+  if (!reviewedWithoutFlow && !['PENDING_REVIEW', 'REJECTED', 'EXPIRED', 'SUPERSEDED'].includes(draft.status)) {
     return res.status(409).json({
       error: 'ACCEPTED_DRAFT_IS_IMMUTABLE',
       message: 'Accepted drafts are retained as evidence for immutable graph versions.',

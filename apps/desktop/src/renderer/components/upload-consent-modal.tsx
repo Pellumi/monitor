@@ -73,13 +73,6 @@ export function UploadConsentModal() {
         aria-modal="true"
         aria-labelledby="upload-consent-title"
       >
-        <div className="flex items-center justify-between mb-5">
-          <span className="text-white text-[20px] font-extrabold tracking-tight">TELLANN</span>
-          <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-            SOURCE // CONSENT
-          </span>
-        </div>
-
         <h2 id="upload-consent-title">
           Upload {request.fileCount} files ({formatBytes(request.compressedBytes)} compressed) for
           full codebase analysis?

@@ -1,9 +1,10 @@
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { LoaderCircle, TriangleAlert } from 'lucide-react';
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
 import type { RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { DesktopProvider, useDesktop } from './desktop-context';
+import { ThemedLogo } from './components/themed-logo';
 import {
   ActivityPage,
   DeclaredFlowPage,
@@ -30,6 +31,27 @@ import {
   WorkspacePage,
 } from './pages';
 
+/** Standalone window content (sign-in, recovery, splash) with its own drag strip. */
+function StandaloneWindow({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`auth-shell ${className}`}>
+      <div className="auth-titlebar">
+        <ThemedLogo className="titlebar-icon" />
+        <span>Tellann</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function AppVersion() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    void window.tellann?.system.getVersion().then(setVersion).catch(() => undefined);
+  }, []);
+  return <footer className="auth-footer">Tellann Desktop{version ? ` ${version}` : ''}</footer>;
+}
+
 class RendererErrorBoundary extends Component<
   { children: ReactNode },
   { error: Error | null }
@@ -47,20 +69,18 @@ class RendererErrorBoundary extends Component<
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="auth-shell">
+      <StandaloneWindow>
         <div className="auth-card" role="alert">
-          <div className="auth-card-header">
-            <span className="brand-logo">TELLANN</span>
-            <span className="badge">Page recovery</span>
-          </div>
-          <h1>This page could not be displayed</h1>
+          <TriangleAlert className="auth-logo" size={40} color="var(--warning)" />
+          <h1>This view could not be displayed</h1>
           <p>{this.state.error.message || 'An unexpected renderer error occurred.'}</p>
-          <div className="actions-row">
-            <button className="primary-btn" onClick={() => window.location.reload()}>
+          <div className="auth-actions">
+            <button className="button primary" type="button" onClick={() => window.location.reload()}>
               Reload Tellann
             </button>
             <button
-              className="secondary-btn"
+              className="button"
+              type="button"
               onClick={() => {
                 window.location.hash = '/applications';
                 window.location.reload();
@@ -70,86 +90,81 @@ class RendererErrorBoundary extends Component<
             </button>
           </div>
         </div>
-      </div>
+      </StandaloneWindow>
     );
   }
 }
 
 function AuthenticatedApp() {
   const { bridgeAvailable, loading, busy, authPending, error, session, signIn, reopenSignIn } = useDesktop();
-  if (loading) return <div className="auth-shell"><div className="loading-state">Loading Tellann Desktop…</div></div>;
+
+  // Signed out, the window shrinks to a compact sign-in window; signed in, it
+  // returns to the size and position the user last left it at.
+  useEffect(() => {
+    if (loading || !window.tellann?.window) return;
+    void window.tellann.window.setMode(session?.authenticated ? 'main' : 'auth').catch(() => undefined);
+  }, [loading, session?.authenticated]);
+
+  if (loading) {
+    return (
+      <StandaloneWindow className="app-splash">
+        <div className="splash-body" role="status" aria-label="Loading Tellann">
+          <ThemedLogo className="splash-logo" />
+          <div className="splash-progress" />
+        </div>
+      </StandaloneWindow>
+    );
+  }
+
   if (!session?.authenticated) {
     return (
-      <div className="auth-shell">
+      <StandaloneWindow>
         <div className="auth-card">
-          <div className="auth-card-header">
-            <span className="brand-logo">TELLANN</span>
-            <span className="badge">Auth // Desktop</span>
-          </div>
-
-          <h1>{bridgeAvailable ? 'Connect Tellann Desktop' : 'Open Tellann in the desktop app'}</h1>
+          <ThemedLogo className="auth-logo" />
+          <h1>{bridgeAvailable ? 'Sign in to Tellann' : 'Open Tellann in the desktop app'}</h1>
           <p>
             {bridgeAvailable
-              ? 'Sign in securely in your system browser. Raw source remains local and your device credential is protected by Windows.'
+              ? 'Sign-in opens in your browser. Source code stays on this device, and your device credential is protected by Windows.'
               : 'This URL is only the renderer preview. Authentication, application access, and managed-browser controls are provided by Electron.'}
           </p>
 
-          <table className="auth-meta-table">
-            <tbody>
-              <tr>
-                <td className="meta-label">ENVIRONMENT</td>
-                <td className="meta-value">Desktop Application</td>
-              </tr>
-              <tr>
-                <td className="meta-label">AUTHENTICATION</td>
-                <td className="meta-value">System Browser OAuth</td>
-              </tr>
-              {/* <tr>
-                <td className="meta-label">SECURITY MODEL</td>
-                <td className="meta-value">Windows Protected Credentials</td>
-              </tr> */}
-            </tbody>
-          </table>
-
           {authPending ? (
-            <div className="auth-pending mb-2" role="status" aria-live="polite">
-              <strong>Waiting for authentication</strong>
-              <span>Complete sign-in in your browser. If you closed the page, open it again or start over.</span>
+            <div className="auth-pending" role="status" aria-live="polite">
+              <LoaderCircle className="spin" size={16} />
+              <div>
+                <strong>Waiting for your browser</strong>
+                <span>Finish signing in there. If you closed the page, open it again or start over.</span>
+              </div>
             </div>
           ) : null}
 
-          <div className="actions-row">
+          <div className="auth-actions">
             {authPending ? (
               <>
-                <button className="primary-btn" onClick={() => void reopenSignIn()}>
+                <button className="button primary" type="button" onClick={() => void reopenSignIn()}>
                   Open browser again
                 </button>
-                <button className="secondary-btn" onClick={() => void signIn()}>
+                <button className="button" type="button" onClick={() => void signIn()}>
                   Start over
                 </button>
               </>
             ) : (
-              <button className="primary-btn w-full!" onClick={() => void signIn()} disabled={busy || !bridgeAvailable}>
-                {/* <KeyRound size={16} /> */}
-                Sign in to Tellann
+              <button className="button primary" type="button" onClick={() => void signIn()} disabled={busy || !bridgeAvailable}>
+                Sign in with browser
               </button>
             )}
           </div>
 
-          {/* {!bridgeAvailable ? (
-            <div className="context-banner">
-              Run <code>npx pnpm --filter @tellann/desktop dev</code> and use the Electron window.
+          {error ? (
+            <div className="infobar" data-tone="danger" role="alert">
+              <TriangleAlert size={16} />
+              <span>{error}</span>
             </div>
-          ) : null} */}
-          {error ? <div className="global-error">{error}</div> : null}
+          ) : null}
 
-          <div className="auth-card-footer text-center">
-            Tellann Systems &middot; Desktop Service
-            {/* <br />   */}
-            {/* You received this prompt because of activity in Tellann Desktop. */}
-          </div>
+          <AppVersion />
         </div>
-      </div>
+      </StandaloneWindow>
     );
   }
 

@@ -146,7 +146,7 @@ const AccordionItem = React.forwardRef<HTMLDivElement, AccordionItemProps>(
       <AccordionItemContext.Provider value={itemContextValue}>
         <div
           ref={ref}
-          className={cn("border border-[#262626] bg-[#131313] rounded-xs overflow-hidden", className)}
+          className={cn("border border-(--border) bg-(--surface-1) rounded-xs overflow-hidden", className)}
           data-state={isOpen ? "open" : "closed"}
           {...props}
         >
@@ -180,13 +180,13 @@ const AccordionTrigger = React.forwardRef<HTMLButtonElement, AccordionTriggerPro
         data-state={item.isOpen ? "open" : "closed"}
         onClick={handleClick}
         className={cn(
-          "flex w-full items-center justify-between px-4 py-3 font-medium text-white text-sm transition-all hover:bg-[#1a1a1a] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white [&[data-state=open]>svg]:rotate-180",
+          "flex w-full items-center justify-between px-4 py-3 font-medium text-(--text-strong) text-sm transition-all hover:bg-(--surface-1) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent) [&[data-state=open]>svg]:rotate-180",
           className
         )}
         {...props}
       >
         <span className="flex items-center gap-2 text-left">{children}</span>
-        {icon ?? <ChevronDown className="h-4 w-4 shrink-0 text-[#8e9192] transition-transform duration-200" />}
+        {icon ?? <ChevronDown className="h-4 w-4 shrink-0 text-(--text-muted) transition-transform duration-200" />}
       </button>
     );
   }
@@ -207,7 +207,7 @@ const AccordionContent = React.forwardRef<HTMLDivElement, AccordionContentProps>
       <div
         ref={ref}
         data-state={item.isOpen ? "open" : "closed"}
-        className={cn("px-4 pb-4 pt-3 text-sm text-[#c4c7c8] border-t border-[#262626] bg-[#000000]", className)}
+        className={cn("px-4 pb-4 pt-3 text-sm text-(--text) border-t border-(--border) bg-(--surface-0)", className)}
         {...props}
       >
         {children}

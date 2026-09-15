@@ -1,4 +1,24 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+
+// Mirrors WINDOW_CHANNELS in main/window-chrome.ts.
+const WINDOW_IPC = {
+  state: 'tellann:window:state',
+  getState: 'tellann:window:state:get',
+  navigate: 'tellann:window:navigate',
+  command: 'tellann:window:command',
+  consumeCommand: 'tellann:window:command:consume',
+  contextMenu: 'tellann:window:context-menu',
+  confirm: 'tellann:window:confirm',
+  setMode: 'tellann:window:mode',
+} as const;
+
+function subscribe<T>(channel: string, callback: (value: T) => void) {
+  const subscription = (_: unknown, data: T) => callback(data);
+  ipcRenderer.on(channel, subscription);
+  return () => {
+    ipcRenderer.removeListener(channel, subscription);
+  };
+}
 
 const IPC = {
   getVersion: 'tellann:version',
@@ -30,6 +50,8 @@ const IPC = {
   addDeclaredTransition: 'tellann:cloud:intent:transition:add',
   completeDeclaredFlow: 'tellann:cloud:intent:complete',
   reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
+  // Mirrors DELETE_DECLARED_FLOW_CHANNEL in main.ts.
+  deleteDeclaredFlow: 'tellann:cloud:intent:delete',
   generateFlowSuggestions: 'tellann:cloud:intent:suggestions:generate',
   getFlowSuggestions: 'tellann:cloud:intent:suggestions:list',
   acceptFlowSuggestion: 'tellann:cloud:intent:suggestions:accept',
@@ -202,6 +224,7 @@ contextBridge.exposeInMainWorld('tellann', {
     addDeclaredTransition: (applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string) => ipcRenderer.invoke(IPC.addDeclaredTransition, { applicationId, flowId, fromStateId, toStateId, action }),
     completeDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.completeDeclaredFlow, { applicationId, flowId }),
     reopenDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.reopenDeclaredFlow, { applicationId, flowId }),
+    deleteDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.deleteDeclaredFlow, { applicationId, flowId }),
     generateFlowSuggestions: (applicationId: string, flowId: string, input: unknown) => ipcRenderer.invoke(IPC.generateFlowSuggestions, { applicationId, flowId, input }),
     getFlowSuggestions: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getFlowSuggestions, { applicationId, flowId }),
     acceptFlowSuggestion: (applicationId: string, flowId: string, suggestionId: string) => ipcRenderer.invoke(IPC.acceptFlowSuggestion, { applicationId, flowId, suggestionId }),
@@ -318,5 +341,16 @@ contextBridge.exposeInMainWorld('tellann', {
     openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
     openPath: (path: string) => ipcRenderer.invoke(IPC.openPath, path),
     openProfile: () => ipcRenderer.invoke(IPC.openProfile),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  },
+  window: {
+    getState: () => ipcRenderer.invoke(WINDOW_IPC.getState),
+    onStateChange: (callback: (state: unknown) => void) => subscribe(WINDOW_IPC.state, callback),
+    onNavigate: (callback: (direction: 'back' | 'forward') => void) => subscribe(WINDOW_IPC.navigate, callback),
+    onCommand: (callback: (command: string) => void) => subscribe(WINDOW_IPC.command, callback),
+    consumePendingCommand: () => ipcRenderer.invoke(WINDOW_IPC.consumeCommand),
+    setMode: (mode: 'auth' | 'main') => ipcRenderer.invoke(WINDOW_IPC.setMode, mode),
+    showContextMenu: (items: unknown[]) => ipcRenderer.invoke(WINDOW_IPC.contextMenu, items),
+    confirm: (input: unknown) => ipcRenderer.invoke(WINDOW_IPC.confirm, input),
   },
 });

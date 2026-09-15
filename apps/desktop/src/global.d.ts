@@ -179,6 +179,8 @@ declare global {
         addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
         completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        /** Permanently deletes the flow and everything recorded against it. */
+        deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
         getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
         acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
@@ -287,9 +289,43 @@ declare global {
         openExternal(url: string): Promise<void>;
         openPath(path: string): Promise<string>;
         openProfile(): Promise<void>;
+        /** Absolute path of a file or folder dropped onto the window. */
+        getPathForFile(file: File): string;
+      };
+      window: {
+        getState(): Promise<DesktopWindowState>;
+        onStateChange(callback: (state: DesktopWindowState) => void): () => void;
+        onNavigate(callback: (direction: 'back' | 'forward') => void): () => void;
+        onCommand(callback: (command: DesktopWindowCommand) => void): () => void;
+        consumePendingCommand(): Promise<DesktopWindowCommand | null>;
+        setMode(mode: 'auth' | 'main'): Promise<DesktopWindowState>;
+        /** Shows a native menu at the cursor and resolves with the chosen item id. */
+        showContextMenu(items: DesktopContextMenuItem[]): Promise<string | null>;
+        /** Native message box; resolves true when the confirm button is chosen. */
+        confirm(input: {
+          title: string;
+          message: string;
+          detail?: string;
+          confirmLabel?: string;
+          cancelLabel?: string;
+          danger?: boolean;
+        }): Promise<boolean>;
       };
     };
   }
+
+  type DesktopWindowState = {
+    focused: boolean;
+    maximized: boolean;
+    fullScreen: boolean;
+    mode: 'auth' | 'main';
+  };
+
+  type DesktopWindowCommand = 'new-run' | 'applications';
+
+  type DesktopContextMenuItem =
+    | { type: 'separator' }
+    | { id: string; label: string; enabled?: boolean; accelerator?: string; type?: 'normal' };
 }
 
 export {};

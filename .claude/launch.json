@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@tellann/marketing", "dev"],
       "port": 3020
+    },
+    {
+      "name": "desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@tellann/desktop", "dev"],
+      "port": 5174
     }
   ]
 }

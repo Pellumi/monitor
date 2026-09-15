@@ -79,11 +79,16 @@ export class DesktopNotificationClient {
     apiUrl: string;
     appVersion: string;
     getWindow: () => BrowserWindow | null;
+    /** Called when an actionable notification arrives while the window is not focused. */
+    onBackgroundNotification?: () => void;
   }) {
     this.apiUrl = deps.apiUrl.replace(/\/$/, '');
     this.appVersion = deps.appVersion;
     this.getWindow = deps.getWindow;
+    this.onBackgroundNotification = deps.onBackgroundNotification ?? null;
   }
+
+  private readonly onBackgroundNotification: (() => void) | null;
 
   /**
    * Lazily resolved so no protected-storage I/O happens before the app is ready.
@@ -275,6 +280,7 @@ export class DesktopNotificationClient {
 
     const focused = !!window && !window.isDestroyed() && window.isFocused();
     if (focused) return; // the renderer shows an in-app alert instead
+    this.onBackgroundNotification?.();
 
     if (!Notification.isSupported()) return;
     const native = new Notification({

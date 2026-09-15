@@ -164,11 +164,6 @@ export function QaRunStartErrorModal({
           <X size={16} />
         </button>
 
-        <div className="confirm-modal-topbar">
-          <span className="confirm-modal-brand">TELLANN</span>
-          <span className="confirm-modal-tag">QA RUN // ACTION REQUIRED</span>
-        </div>
-
         <div className="qa-run-error-heading">
           <span className="qa-run-error-icon" aria-hidden="true">
             <AlertTriangle size={20} />
