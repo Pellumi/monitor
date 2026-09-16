@@ -9,7 +9,6 @@ import {
   type CSSProperties,
 } from "react";
 import {
-  Accessibility,
   Activity,
   AlertTriangle,
   ArrowRight,
@@ -31,7 +30,15 @@ import {
   HelpCircle,
   KeyRound,
   Lock,
+  ArrowDownToLine,
+  Clock,
+  CloudUpload,
+  ExternalLink,
+  Filter,
+  Gauge,
+  MessageSquare,
   MoreHorizontal,
+  MousePointerClick,
   Network,
   Play,
   Plus,
@@ -80,7 +87,7 @@ import type {
   DocumentImportResult,
   IntentDraftJob,
 } from "@tellann/desktop-contracts";
-import type { LiveEvidence } from "@tellann/browser-observer";
+import type { GuidedRunState, LiveEvidence } from "@tellann/browser-observer";
 import { useDesktop, normalizeDesktopError } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
 import { FlowDiagram } from "./components/flow-diagram";
@@ -11587,66 +11594,276 @@ export function NewRunPage() {
   );
 }
 
+/**
+ * What each boundary refusal means for the person driving the browser. The
+ * server's reason codes are precise but unreadable; leaving them on screen left
+ * a run looking stuck with no way to tell what to do about it.
+ */
+const BOUNDARY_REJECTION_GUIDANCE: Record<string, string> = {
+  UNKNOWN_STATE:
+    "Your application reported a state that this Flow version does not declare. Check the state key the SDK is sending.",
+  BEFORE_INITIAL_BOUNDARY:
+    "The Flow has not started yet. Reach its first state in the browser window before the rest of the walkthrough can be recorded.",
+  INITIAL_BOUNDARY_ALREADY_ACCEPTED:
+    "The Flow already started, so this second start event was ignored. Carry on from where you are.",
+  FLOW_VERSION_MISMATCH:
+    "The application is reporting against a different Flow version than this run expects. Restart it so it picks up the published version.",
+  UNKNOWN_TRANSITION:
+    "That move is not a declared transition in this Flow. Follow one of the expected paths, or add the transition to the Flow.",
+  OUT_OF_ORDER_TRANSITION:
+    "That transition started from a different state than the one the run is on. Go back and take the declared path.",
+  UNDECLARED_TERMINAL_STATE:
+    "That state is not declared as an ending for this Flow, so it cannot finish the run.",
+  RUN_PAUSED: "The run is paused, so Flow events are not being accepted. Resume to continue.",
+  AFTER_TERMINAL_BOUNDARY: "This Flow already reached an ending, so later events are not recorded.",
+  FLOW_EVENT_CONTEXT_REQUIRED:
+    "The event arrived without its Flow version or state key. Check the SDK call that reports this state.",
+  UNSUPPORTED_FLOW_EVENT: "The application sent an event type this Flow does not use.",
+  EVENT_ID_COLLISION: "An event with this id was already recorded for a different run.",
+  RUN_IS_TERMINAL: "This run has already finished.",
+  RUN_NOT_FOUND: "The cloud no longer recognises this run.",
+};
+
+type EvidenceTabValue = "CONSOLE" | "NETWORK" | "INTERACTION" | "FLOW" | "PERFORMANCE" | "FINDINGS";
+
+const EVIDENCE_TABS: Array<{
+  value: EvidenceTabValue;
+  label: string;
+  icon: typeof Activity;
+  kinds: Array<LiveEvidence["kind"]>;
+}> = [
+  { value: "CONSOLE", label: "Console", icon: TerminalSquare, kinds: ["CONSOLE"] },
+  { value: "NETWORK", label: "Network", icon: Network, kinds: ["NETWORK"] },
+  { value: "INTERACTION", label: "Interactions", icon: MousePointerClick, kinds: ["INTERACTION", "STORAGE"] },
+  { value: "FLOW", label: "Flow", icon: Workflow, kinds: ["FLOW", "PAGE"] },
+  { value: "PERFORMANCE", label: "Performance", icon: Gauge, kinds: ["PERFORMANCE", "ACCESSIBILITY"] },
+  { value: "FINDINGS", label: "Findings", icon: AlertTriangle, kinds: [] },
+];
+
+/** Rows rendered at once. A log pane only ever shows its tail. */
+const EVIDENCE_WINDOW = 200;
+/** No capture for this long means something is wrong, not that nothing happened. */
+const STALL_AFTER_MS = 30_000;
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  return `${seconds}s`;
+}
+
+/** Status of one expected state, given what the run has actually accepted. */
+type PlanStateStatus = "done" | "current" | "next" | "pending";
+
+function planStateStatuses(run: GuidedRunState): Map<string, PlanStateStatus> {
+  const statuses = new Map<string, PlanStateStatus>();
+  const plan = run.flowPlan;
+  if (!plan) return statuses;
+  const visited = new Set(run.coverage?.visitedStateKeys ?? []);
+  const nextKeys = new Set(
+    run.phase === "PRE_BOUNDARY"
+      ? plan.initialStateKey
+        ? [plan.initialStateKey]
+        : []
+      : plan.transitions
+          .filter((transition) => transition.from === run.currentFlowStateKey)
+          .map((transition) => transition.to),
+  );
+  for (const state of plan.states) {
+    if (state.key === run.currentFlowStateKey && run.phase === "IN_FLOW") statuses.set(state.key, "current");
+    else if (visited.has(state.key)) statuses.set(state.key, "done");
+    else if (nextKeys.has(state.key)) statuses.set(state.key, "next");
+    else statuses.set(state.key, "pending");
+  }
+  return statuses;
+}
+
+/** The one sentence telling the user what to do right now. */
+function runInstruction(run: GuidedRunState): { title: string; detail: string } {
+  const plan = run.flowPlan;
+  if (run.status === "PAUSED") {
+    return {
+      title: "Run paused",
+      detail: "Nothing is being recorded. Resume when you are ready to carry on.",
+    };
+  }
+  if (!plan) {
+    return {
+      title: run.expectedGraphVersionId ? "Loading the expected Flow" : "Observational run",
+      detail: run.expectedGraphVersionId
+        ? "Everything is being captured. The expected states will appear once the accepted graph loads."
+        : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
+    };
+  }
+  const label = (key: string | null) =>
+    plan.states.find((state) => state.key === key)?.name ?? key ?? "the next state";
+  if (run.phase === "PRE_BOUNDARY") {
+    return {
+      title: `Open ${label(plan.initialStateKey)} in the browser`,
+      detail:
+        "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
+    };
+  }
+  if (run.coverage?.terminalReached) {
+    return {
+      title: "This Flow reached an ending",
+      detail: "You can end the run, or keep going to cover the states that are still outstanding.",
+    };
+  }
+  const next = plan.transitions
+    .filter((transition) => transition.from === run.currentFlowStateKey)
+    .map((transition) => label(transition.to));
+  return {
+    title: next.length ? `Continue to ${next.slice(0, 2).join(" or ")}` : "Carry on through the Flow",
+    detail: next.length
+      ? "Drive the application the way a user would. Every step is being recorded against the Flow."
+      : "This state has no declared next step. Move on to whichever state you expect to reach.",
+  };
+}
+
 export function LiveRunPage() {
   const { projectId } = useParams();
-  const { activeRun: run, pauseRun, resumeRun, setRunInteractionMode, endRun, busy } = useDesktop();
-  const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACTIVITY">(
-    "CONSOLE",
-  );
+  const {
+    activeRun: run,
+    pauseRun,
+    resumeRun,
+    setRunInteractionMode,
+    focusRunBrowser,
+    endRun,
+    busy,
+  } = useDesktop();
+  const [tab, setTab] = useState<EvidenceTabValue>("FLOW");
+  const [query, setQuery] = useState("");
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  const [follow, setFollow] = useState(true);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState<number>(() => {
     const saved = localStorage.getItem("tellann:live-flow-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(parsed) && parsed >= 180 && parsed <= 600 ? parsed : 240;
+    return !isNaN(parsed) && parsed >= 180 && parsed <= 600 ? parsed : 260;
   });
   const [evidenceWidth, setEvidenceWidth] = useState<number>(() => {
     const saved = localStorage.getItem("tellann:live-evidence-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 340;
+    return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 360;
   });
 
-  const beginFlowResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = flowWidth;
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = moveEvent.clientX - startX;
-      setFlowWidth(Math.min(600, Math.max(180, startWidth + delta)));
-    };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("flow-resizing");
-      setFlowWidth((current) => {
-        localStorage.setItem("tellann:live-flow-width", String(current));
-        return current;
-      });
-    };
-    document.body.classList.add("flow-resizing");
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  };
+  // Elapsed time and stall detection both need a clock of their own: the run
+  // state only changes when the browser has something to say, which is exactly
+  // when a stall does not.
+  useEffect(() => {
+    if (!run || run.status === "COMPLETED" || run.status === "FAILED") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [run?.status]);
 
-  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = evidenceWidth;
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = startX - moveEvent.clientX;
-      setEvidenceWidth(Math.min(600, Math.max(240, startWidth + delta)));
+  /**
+   * Keeps both panels inside the window. A width saved on a wide monitor used
+   * to survive into a small window and squeeze the middle column to nothing.
+   */
+  useEffect(() => {
+    const clamp = () => {
+      const available = window.innerWidth;
+      const maxSide = Math.max(180, Math.floor((available - 360) / 2));
+      setFlowWidth((current) => Math.min(current, Math.max(180, maxSide)));
+      setEvidenceWidth((current) => Math.min(current, Math.max(240, maxSide)));
     };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("evidence-resizing");
-      setEvidenceWidth((current) => {
-        localStorage.setItem("tellann:live-evidence-width", String(current));
-        return current;
-      });
-    };
-    document.body.classList.add("evidence-resizing");
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, []);
+
+  const beginResize = useCallback(
+    (
+      event: ReactPointerEvent<HTMLDivElement>,
+      edge: "flow" | "evidence",
+    ) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const isFlow = edge === "flow";
+      const setWidth = isFlow ? setFlowWidth : setEvidenceWidth;
+      const storageKey = isFlow ? "tellann:live-flow-width" : "tellann:live-evidence-width";
+      const minWidth = isFlow ? 180 : 240;
+      const startWidth = isFlow ? flowWidth : evidenceWidth;
+      const maxWidth = Math.min(600, Math.max(minWidth, Math.floor((window.innerWidth - 360) / 2)));
+      const className = isFlow ? "flow-resizing" : "evidence-resizing";
+      const onMove = (moveEvent: PointerEvent) => {
+        const delta = isFlow ? moveEvent.clientX - startX : startX - moveEvent.clientX;
+        setWidth(Math.min(maxWidth, Math.max(minWidth, startWidth + delta)));
+      };
+      const onUp = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.body.classList.remove(className);
+        setWidth((current) => {
+          localStorage.setItem(storageKey, String(current));
+          return current;
+        });
+      };
+      document.body.classList.add(className);
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    },
+    [flowWidth, evidenceWidth],
+  );
+
+  /** Double-click resets a panel to its default, the way a splitter should. */
+  const resetWidth = useCallback((edge: "flow" | "evidence") => {
+    if (edge === "flow") {
+      setFlowWidth(260);
+      localStorage.setItem("tellann:live-flow-width", "260");
+    } else {
+      setEvidenceWidth(360);
+      localStorage.setItem("tellann:live-evidence-width", "360");
+    }
+  }, []);
+
+  const activeTab = EVIDENCE_TABS.find((entry) => entry.value === tab) ?? EVIDENCE_TABS[0];
+  const visible = useMemo(() => {
+    if (!run || activeTab.value === "FINDINGS") return [];
+    const needle = query.trim().toLowerCase();
+    return run.evidence.filter((item) => {
+      if (!activeTab.kinds.includes(item.kind)) return false;
+      if (errorsOnly && item.level === "INFO") return false;
+      if (!needle) return true;
+      if (item.message.toLowerCase().includes(needle)) return true;
+      return (item.details ?? []).some(
+        (entry) =>
+          entry.label.toLowerCase().includes(needle) || entry.value.toLowerCase().includes(needle),
+      );
+    });
+  }, [run?.evidence, activeTab, query, errorsOnly]);
+
+  const windowed = visible.length > EVIDENCE_WINDOW ? visible.slice(-EVIDENCE_WINDOW) : visible;
+
+  useEffect(() => {
+    if (!follow) return;
+    const node = listRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [windowed.length, follow, tab]);
+
+  const onListScroll = useCallback(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+    setFollow(atBottom);
+  }, []);
+
+  const runControl = useCallback(async (action: () => Promise<unknown>) => {
+    setControlError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    }
+  }, []);
 
   if (!projectId) return <ApplicationRequired />;
   if (!run)
@@ -11656,25 +11873,35 @@ export function LiveRunPage() {
         title="No active local run"
         description="The requested run is not active on this device. Open its cloud detail or create a new run."
         action={
-          <Link
-            className="button primary"
-            to={`/applications/${projectId}/qa-runs`}
-          >
+          <Link className="button primary" to={`/applications/${projectId}/qa-runs`}>
             Run history
           </Link>
         }
       />
     );
-  const visible = run.evidence.filter((item) =>
-    tab === "ACTIVITY"
-      ? item.kind !== "CONSOLE" && item.kind !== "NETWORK"
-      : item.kind === tab,
-  );
-  const consoleCount = run.evidence.filter((item) => item.kind === "CONSOLE").length;
-  const networkCount = run.evidence.filter((item) => item.kind === "NETWORK").length;
-  const activityCount = run.evidence.length - consoleCount - networkCount;
+
+  const plan = run.flowPlan;
+  const coverage = run.coverage;
+  const statuses = planStateStatuses(run);
+  const instruction = runInstruction(run);
+  const rejection = run.boundaryRejection;
   const currentObservation = run.observations.at(-1);
   const resolution = run.windowResolution;
+  const elapsedMs = now - new Date(run.startedAt).valueOf();
+  const lastEvidenceMs = run.lastEvidenceAt ? now - new Date(run.lastEvidenceAt).valueOf() : null;
+  const stalled =
+    run.status === "RUNNING" && lastEvidenceMs !== null && lastEvidenceMs > STALL_AFTER_MS;
+  // Tolerant of a state written by an older build, which would not carry the
+  // newer collections at all.
+  const findings = [...(run.findings ?? [])].reverse();
+  const stateArtifacts = run.stateArtifacts ?? [];
+  const flowStateHistory = run.flowStateHistory ?? [];
+  const counts = run.liveCounts ?? ({} as Record<LiveEvidence["kind"], number>);
+  const tabCount = (entry: (typeof EVIDENCE_TABS)[number]) =>
+    entry.value === "FINDINGS"
+      ? findings.length
+      : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+
   return (
     <div
       className="live-run-page"
@@ -11685,157 +11912,443 @@ export function LiveRunPage() {
         } as CSSProperties
       }
     >
+      <header className="run-toolbar">
+        <div className="run-toolbar-title">
+          <h1>{plan?.flowName ?? "QA run"}</h1>
+          <span className="run-toolbar-subtitle">
+            {plan?.version != null ? `Version ${plan.version}` : "No accepted Flow"}
+            {" · "}
+            {new URL(run.targetUrl).host}
+          </span>
+        </div>
+        <div className="run-toolbar-meters">
+          <span title="Time since this run started">
+            <Clock size={13} />
+            {formatDuration(elapsedMs)}
+          </span>
+          <span
+            className={stalled ? "is-stalled" : undefined}
+            title="Time since the last captured event"
+          >
+            <Activity size={13} />
+            {lastEvidenceMs === null
+              ? "No events yet"
+              : stalled
+                ? `Quiet for ${formatDuration(lastEvidenceMs)}`
+                : `Last event ${formatDuration(lastEvidenceMs)} ago`}
+          </span>
+          {run.syncBacklog > 0 ? (
+            <span className="is-pending" title="Evidence events still waiting to reach the cloud">
+              <CloudUpload size={13} />
+              {run.syncBacklog} queued
+            </span>
+          ) : null}
+          {run.annotationCount > 0 ? (
+            <span title="Inspect comments saved during this run">
+              <MessageSquare size={13} />
+              {run.annotationCount}
+            </span>
+          ) : null}
+        </div>
+        <div className="run-toolbar-actions">
+          <Status>{run.status}</Status>
+          <button
+            className="button"
+            type="button"
+            disabled={busy || run.status === "COMPLETED" || run.status === "FAILED"}
+            onClick={() => void runControl(focusRunBrowser)}
+          >
+            <ExternalLink size={15} />
+            Show browser
+          </button>
+        </div>
+      </header>
+
       <section className="live-flow">
         <div
           className="flow-resize-handle"
           role="separator"
-          aria-label="Resize flow panel"
+          aria-label="Resize expected Flow panel"
           aria-orientation="vertical"
-          onPointerDown={beginFlowResize}
+          onPointerDown={(event) => beginResize(event, "flow")}
+          onDoubleClick={() => resetWidth("flow")}
         />
-        <h2>Expected flow</h2>
-        <p>
-          {run.expectedGraphVersionId
-            ? `Reconciling against accepted graph version ${run.expectedGraphVersionId.slice(0, 8)}.`
-            : "No accepted intent selected. This is an observational run."}
-        </p>
-        <div className={`flow-step ${run.phase === "IN_FLOW" ? "complete" : "active"}`}>
-          <span>
-            {run.phase === "IN_FLOW" ? <Check /> : 1}
-          </span>
-          <div>
-            <strong>Initial Flow boundary</strong>
-            <small>{run.phase === "IN_FLOW" ? "Accepted by Tellann" : "Waiting for FLOW_INITIAL_STATE"}</small>
-          </div>
+        <div className="run-instruction" data-tone={rejection ? "warning" : "normal"}>
+          <small>What to do now</small>
+          <strong>{instruction.title}</strong>
+          <p>{instruction.detail}</p>
         </div>
-        <div className="flow-step active">
-          <span>2</span>
-          <div>
-            <strong>Verify states and transitions</strong>
-            <small>{run.phase === "IN_FLOW" ? "Meticulous capture is active" : "Detailed values remain off until the boundary"}</small>
+
+        {rejection ? (
+          <div className="run-rejection" role="status">
+            <TriangleAlert size={15} />
+            <div>
+              <strong>Your application reported a state the Flow refused</strong>
+              <p>{BOUNDARY_REJECTION_GUIDANCE[rejection.reason] ?? `The server refused it: ${rejection.reason}.`}</p>
+              <dl>
+                <div>
+                  <dt>Reported</dt>
+                  <dd>{rejection.stateKey ?? "no state key"}</dd>
+                </div>
+                <div>
+                  <dt>Reason</dt>
+                  <dd>
+                    <code>{rejection.reason}</code>
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </div>
+        ) : null}
+
+        <div className="flow-plan-heading">
+          <h2>Expected states</h2>
+          {coverage ? (
+            <span>
+              {coverage.visitedStateKeys.length} / {coverage.expectedStates}
+            </span>
+          ) : null}
         </div>
+
+        {plan && plan.states.length ? (
+          <ol className="flow-plan">
+            {plan.states.map((state, index) => {
+              const status = statuses.get(state.key) ?? "pending";
+              return (
+                <li key={state.key} className="flow-plan-state" data-status={status}>
+                  <span className="flow-plan-marker">
+                    {status === "done" ? <Check size={13} /> : index + 1}
+                  </span>
+                  <div>
+                    <strong>{state.name}</strong>
+                    <small>
+                      {status === "current"
+                        ? "You are here"
+                        : status === "done"
+                          ? "Visited"
+                          : status === "next"
+                            ? "Expected next"
+                            : state.role === "TERMINAL"
+                              ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
+                              : state.role === "INITIAL"
+                                ? "Starting point"
+                                : "Not reached yet"}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="flow-plan-empty">
+            {run.expectedGraphVersionId
+              ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
+              : "This run is observational. Nothing is being compared against a declared Flow."}
+          </p>
+        )}
       </section>
+
       <section className="live-browser">
         <div className="browser-toolbar">
           <Globe2 size={16} />
           <strong>Managed Chromium</strong>
-          <Status>{run.status}</Status>
+          <span className="browser-toolbar-route">
+            {currentObservation?.url || run.targetUrl}
+          </span>
+          <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
-        <div className="browser-canvas">
-          <div className="run-live-overview">
-            <div className="run-live-overview-heading">
-              <div>
-                <small>Live run snapshot</small>
-                <h2>{currentObservation?.title || "Managed browser is running"}</h2>
+        <div className="run-workspace">
+          {coverage ? (
+            <section className="run-coverage">
+              <header>
+                <div>
+                  <small>Flow coverage</small>
+                  <strong>
+                    {coverage.visitedStateKeys.length} of {coverage.expectedStates} states
+                  </strong>
+                </div>
+                <div>
+                  <small>Transitions</small>
+                  <strong>
+                    {coverage.takenTransitionKeys.length} of {coverage.expectedTransitions}
+                  </strong>
+                </div>
+                <div>
+                  <small>Ending</small>
+                  <strong>{coverage.terminalReached ? "Reached" : "Not yet"}</strong>
+                </div>
+              </header>
+              <div
+                className="run-coverage-bar"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={coverage.expectedStates}
+                aria-valuenow={coverage.visitedStateKeys.length}
+              >
+                <span
+                  style={{
+                    width: `${coverage.expectedStates ? (coverage.visitedStateKeys.length / coverage.expectedStates) * 100 : 0}%`,
+                  }}
+                />
               </div>
-              <Status>{run.phase.replaceAll("_", " ")}</Status>
-            </div>
-            <div className="run-live-metrics">
-              <article>
-                <Globe2 size={18} />
-                <small>Current route</small>
-                <strong>{currentObservation?.stateName || "Waiting for route"}</strong>
-                <span>{currentObservation?.url || run.targetUrl}</span>
-              </article>
-              <article>
-                <Accessibility size={18} />
-                <small>Window resolution</small>
-                <strong>
-                  {resolution
-                    ? `${resolution.innerWidth} × ${resolution.innerHeight}`
-                    : "Detecting…"}
-                </strong>
-                <span>
-                  {resolution
-                    ? `${resolution.outerWidth} × ${resolution.outerHeight} outer · ${resolution.screenWidth} × ${resolution.screenHeight} screen · ${resolution.devicePixelRatio}× DPR`
-                    : "The initial viewport event has not arrived yet."}
-                </span>
-              </article>
-              <article>
-                <Network size={18} />
-                <small>Captured requests</small>
-                <strong>{run.evidenceCounts.QA_REQUEST ?? 0}</strong>
-                <span>{networkCount} currently retained in the live panel</span>
-              </article>
-              <article>
-                <Activity size={18} />
-                <small>Interaction mode</small>
-                <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
-                <span>
-                  {run.interactionMode === "INSPECT"
-                    ? "Select an element in Chromium to add a comment."
-                    : "Application controls perform their normal actions."}
-                </span>
-              </article>
-            </div>
-            <div className={`run-capture-disclosure ${run.phase === "IN_FLOW" ? "active" : ""}`}>
-              <ShieldCheck size={17} />
-              <div>
-                <strong>
-                  {run.phase === "IN_FLOW"
-                    ? "Detailed protected capture is active"
-                    : "Pre-boundary metadata capture is active"}
-                </strong>
-                <span>
-                  {run.phase === "IN_FLOW"
-                    ? "Buttons, forms, protected fields, approved state adapters, storage, requests, routes, and performance are being recorded."
-                    : "Routes, requests, console errors, viewport, performance, and Inspect comments are recorded now. Field and state values remain off until FLOW_INITIAL_STATE is accepted."}
-                </span>
-              </div>
+              {coverage.remainingStateKeys.length ? (
+                <p>
+                  Still to cover:{" "}
+                  {coverage.remainingStateKeys
+                    .map((key) => plan?.states.find((state) => state.key === key)?.name ?? key)
+                    .join(", ")}
+                </p>
+              ) : (
+                <p>Every declared state in this Flow has been visited.</p>
+              )}
+            </section>
+          ) : null}
+
+          <div className="run-facts">
+            <article>
+              <small>Current route</small>
+              <strong>{currentObservation?.stateName || "Waiting for a route"}</strong>
+              <span>{currentObservation?.url || run.targetUrl}</span>
+            </article>
+            <article>
+              <small>Viewport</small>
+              <strong>
+                {resolution
+                  ? `${resolution.innerWidth} × ${resolution.innerHeight}`
+                  : "Detecting…"}
+              </strong>
+              <span>
+                {resolution
+                  ? `${resolution.screenWidth} × ${resolution.screenHeight} screen · ${resolution.devicePixelRatio}× DPR`
+                  : "The first viewport event has not arrived yet."}
+              </span>
+            </article>
+            <article>
+              <small>Captured events</small>
+              <strong>
+                {Object.values(run.evidenceCounts).reduce((total, value) => total + value, 0)}
+              </strong>
+              <span>
+                {`${run.evidenceCounts.QA_REQUEST ?? 0} requests · $${stateArtifacts.length} state snapshots`}
+              </span>
+            </article>
+            <article>
+              <small>Interaction mode</small>
+              <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+              <span>
+                {run.interactionMode === "INSPECT"
+                  ? "Click any element in the browser window to leave a comment."
+                  : "Controls in the application behave normally."}
+              </span>
+            </article>
+          </div>
+
+          <section className="run-findings">
+            <header>
+              <h2>Findings</h2>
+              <span>{findings.length}</span>
+            </header>
+            {findings.length ? (
+              <ul>
+                {findings.slice(0, 40).map((finding) => (
+                  <li key={finding.id} data-severity={finding.severity.toLowerCase()}>
+                    <span className="run-finding-severity">{finding.severity}</span>
+                    <div>
+                      <strong>{finding.title}</strong>
+                      <p>{finding.description}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="run-findings-empty">
+                Nothing has gone wrong yet. Console errors, failed requests and accessibility
+                failures appear here as they happen.
+              </p>
+            )}
+          </section>
+
+          {flowStateHistory.length ? (
+            <section className="run-timeline">
+              <header>
+                <h2>Timeline</h2>
+                <span>{flowStateHistory.length} accepted steps</span>
+              </header>
+              <ol>
+                {flowStateHistory.map((visit, index) => (
+                  <li key={`${visit.stateKey}-${visit.timestamp}-${index}`}>
+                    <time>{new Date(visit.timestamp).toLocaleTimeString()}</time>
+                    <strong>
+                      {plan?.states.find((state) => state.key === visit.stateKey)?.name ??
+                        visit.stateKey}
+                    </strong>
+                    <small>{visit.eventType.replaceAll("_", " ").toLowerCase()}</small>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+
+          <div className={`run-capture-disclosure ${run.phase === "IN_FLOW" ? "active" : ""}`}>
+            <ShieldCheck size={17} />
+            <div>
+              <strong>
+                {run.phase === "IN_FLOW"
+                  ? "Recording this Flow in full"
+                  : "Recording metadata only, for now"}
+              </strong>
+              <span>
+                {run.phase === "IN_FLOW"
+                  ? "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
+                  : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
+              </span>
             </div>
           </div>
         </div>
       </section>
+
       <aside className="live-evidence">
         <div
           className="evidence-resize-handle"
           role="separator"
           aria-label="Resize evidence panel"
           aria-orientation="vertical"
-          onPointerDown={beginResize}
+          onPointerDown={(event) => beginResize(event, "evidence")}
+          onDoubleClick={() => resetWidth("evidence")}
         />
         <div className="evidence-heading">
           <h2>Live evidence</h2>
-          <span>{run.evidence.length}</span>
+          <div className="evidence-heading-tools">
+            <label className="evidence-search">
+              <Filter size={13} />
+              <input
+                value={query}
+                placeholder="Filter"
+                onChange={(event) => setQuery(event.target.value)}
+                aria-label="Filter evidence"
+              />
+              {query ? (
+                <button type="button" aria-label="Clear filter" onClick={() => setQuery("")}>
+                  <X size={12} />
+                </button>
+              ) : null}
+            </label>
+            <button
+              type="button"
+              className={errorsOnly ? "evidence-toggle selected" : "evidence-toggle"}
+              aria-pressed={errorsOnly}
+              title="Show only warnings and errors"
+              onClick={() => setErrorsOnly((current) => !current)}
+            >
+              <AlertTriangle size={13} />
+            </button>
+            <button
+              type="button"
+              className={follow ? "evidence-toggle selected" : "evidence-toggle"}
+              aria-pressed={follow}
+              title="Follow new events"
+              onClick={() => {
+                setFollow(true);
+                const node = listRef.current;
+                if (node) node.scrollTop = node.scrollHeight;
+              }}
+            >
+              <ArrowDownToLine size={13} />
+            </button>
+          </div>
         </div>
-        <div className="evidence-tabs">
-          <button
-            className={tab === "CONSOLE" ? "selected" : ""}
-            onClick={() => setTab("CONSOLE")}
-          >
-            <TerminalSquare size={14} />
-            Console <span>{consoleCount}</span>
-          </button>
-          <button
-            className={tab === "NETWORK" ? "selected" : ""}
-            onClick={() => setTab("NETWORK")}
-          >
-            <Network size={14} />
-            Network <span>{networkCount}</span>
-          </button>
-          <button
-            className={tab === "ACTIVITY" ? "selected" : ""}
-            onClick={() => setTab("ACTIVITY")}
-          >
-            <Activity size={14} />
-            Activity <span>{activityCount}</span>
-          </button>
+        <div className="evidence-tabs" role="tablist">
+          {EVIDENCE_TABS.map((entry) => {
+            const Icon = entry.icon;
+            return (
+              <button
+                key={entry.value}
+                role="tab"
+                aria-selected={tab === entry.value}
+                className={tab === entry.value ? "selected" : ""}
+                onClick={() => setTab(entry.value)}
+              >
+                <Icon size={13} />
+                {entry.label} <span>{tabCount(entry)}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="evidence-list">
-          {visible.length ? (
-            visible.map((item) => <EvidenceRow key={item.id} item={item} />)
+        <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
+          {activeTab.value === "FINDINGS" ? (
+            findings.length ? (
+              findings.map((finding) => (
+                <div
+                  key={finding.id}
+                  className={`evidence-row evidence-${finding.severity === "LOW" || finding.severity === "INFO" ? "info" : finding.severity === "MEDIUM" ? "warn" : "error"}`}
+                >
+                  <time>{finding.category.replaceAll("_", " ").toLowerCase()}</time>
+                  <span>{finding.severity}</span>
+                  <div className="evidence-row-body">
+                    <p>{finding.title}</p>
+                    <dl>
+                      <div>
+                        <dt>Detail</dt>
+                        <dd>{finding.description}</dd>
+                      </div>
+                      {finding.recommendation ? (
+                        <div>
+                          <dt>Fix</dt>
+                          <dd>{finding.recommendation}</dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="evidence-empty">No findings have been raised in this run.</div>
+            )
           ) : (
-            <div className="evidence-empty">
-              Evidence will appear during the workflow.
-            </div>
+            <>
+              {run.evidenceTrimmed > 0 && !query && !errorsOnly ? (
+                <div className="evidence-trimmed">
+                  {run.evidenceTrimmed} earlier rows were dropped from this panel. Every one of them
+                  is still in the run's evidence.
+                </div>
+              ) : null}
+              {visible.length > windowed.length ? (
+                <div className="evidence-trimmed">
+                  Showing the most recent {windowed.length} of {visible.length} matching rows.
+                </div>
+              ) : null}
+              {windowed.length ? (
+                windowed.map((item, index) => (
+                  <EvidenceRow
+                    key={item.id}
+                    item={item}
+                    continuesGroup={
+                      Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
+                    }
+                  />
+                ))
+              ) : (
+                <div className="evidence-empty">
+                  {query || errorsOnly
+                    ? "No rows match this filter."
+                    : "Evidence will appear here as you use the application."}
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>
+
       <footer className="run-controls">
         <div>
-          <Status>{run.status}</Status>
           <code>{run.runId.slice(0, 8)}</code>
+          <span className="run-mode-status" role="status" aria-live="polite">
+            {controlError
+              ? controlError
+              : run.phase === "IN_FLOW"
+                ? "Recording the Flow in full"
+                : "Metadata only until the Flow starts"}
+          </span>
         </div>
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
@@ -11845,7 +12358,7 @@ export function LiveRunPage() {
                   className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "NAVIGATE"}
                   disabled={busy || run.status === "PAUSED"}
-                  onClick={() => void setRunInteractionMode("NAVIGATE")}
+                  onClick={() => void runControl(() => setRunInteractionMode("NAVIGATE"))}
                 >
                   Navigate
                 </button>
@@ -11853,46 +12366,99 @@ export function LiveRunPage() {
                   className={run.interactionMode === "INSPECT" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "INSPECT"}
                   disabled={busy || run.status === "PAUSED"}
-                  onClick={() => void setRunInteractionMode("INSPECT")}
+                  onClick={() => void runControl(() => setRunInteractionMode("INSPECT"))}
                 >
                   Inspect
                 </button>
               </div>
-              <span className="run-mode-status" role="status" aria-live="polite">
-                {run.interactionMode === "INSPECT" ? "Inspect active in Chromium" : "Navigate active"}
-              </span>
               <button
                 className="button"
                 disabled={busy}
-                onClick={() => void (run.status === "PAUSED" ? resumeRun() : pauseRun())}
+                onClick={() => void runControl(run.status === "PAUSED" ? resumeRun : pauseRun)}
               >
                 {run.status === "PAUSED" ? <Play /> : <CirclePause />}
                 {run.status === "PAUSED" ? "Resume" : "Pause"}
               </button>
-              <button
-                className="button"
-                disabled={busy}
-                onClick={() => void endRun()}
-              >
-                <CircleStop />
-                End run
-              </button>
+              {confirmEnd ? (
+                <>
+                  <button
+                    className="button danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirmEnd(false);
+                      void runControl(endRun);
+                    }}
+                  >
+                    <CircleStop />
+                    {run.phase === "PRE_BOUNDARY" ? "End without the Flow" : "End run"}
+                  </button>
+                  <button className="button" disabled={busy} onClick={() => setConfirmEnd(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button className="button" disabled={busy} onClick={() => setConfirmEnd(true)}>
+                  <CircleStop />
+                  End run
+                </button>
+              )}
             </>
           ) : null}
         </div>
-        <div>{run.phase === "IN_FLOW" ? "In-Flow capture protected" : "Pre-boundary metadata only"}</div>
+        <div>
+          {confirmEnd && run.phase === "PRE_BOUNDARY"
+            ? "This Flow never started, so the run will hold metadata only and will not reconcile."
+            : run.status === "PAUSED"
+              ? "Paused — nothing is being recorded"
+              : `${run.evidence.length} rows shown · ${run.evidenceTrimmed} trimmed`}
+        </div>
       </footer>
     </div>
   );
 }
 
-function EvidenceRow({ item }: { item: LiveEvidence }) {
+function EvidenceRow({
+  item,
+  continuesGroup,
+}: {
+  item: LiveEvidence;
+  continuesGroup?: boolean;
+}) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = () => setMenu(null);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [menu]);
+
+  const copy = (text: string) => {
+    void window.tellann?.system?.copyText?.(text);
+    setMenu(null);
+  };
+
   return (
-    <div className={`evidence-row evidence-${item.level.toLowerCase()}`}>
+    <div
+      className={`evidence-row evidence-${item.level.toLowerCase()}`}
+      data-group-continues={continuesGroup ? "true" : undefined}
+      data-unrecorded={item.recorded === false ? "true" : undefined}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <time>{new Date(item.timestamp).toLocaleTimeString()}</time>
       <span>{item.level}</span>
       <div className="evidence-row-body">
         <p>{item.message}</p>
+        {item.recorded === false ? (
+          <em className="evidence-unrecorded">Seen while paused — not written to evidence</em>
+        ) : null}
         {item.details?.length ? (
           <dl>
             {item.details.map((entry) => (
@@ -11904,6 +12470,34 @@ function EvidenceRow({ item }: { item: LiveEvidence }) {
           </dl>
         ) : null}
       </div>
+      {menu ? (
+        <div className="evidence-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+          <button type="button" role="menuitem" onClick={() => copy(item.message)}>
+            <Copy size={13} />
+            Copy message
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() =>
+              copy(
+                [
+                  `${item.timestamp} ${item.level} ${item.kind}`,
+                  item.message,
+                  ...(item.details ?? []).map((entry) => `${entry.label}: ${entry.value}`),
+                ].join("\n"),
+              )
+            }
+          >
+            <Copy size={13} />
+            Copy row with detail
+          </button>
+          <button type="button" role="menuitem" onClick={() => copy(JSON.stringify(item, null, 2))}>
+            <Code2 size={13} />
+            Copy as JSON
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

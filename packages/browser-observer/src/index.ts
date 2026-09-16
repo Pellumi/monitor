@@ -306,9 +306,37 @@ export function normalizeFlowKey(value: unknown): string {
     .replace(/^_|_$/g, '');
 }
 
-/** Strips captured field content out of an aria snapshot before it is written. */
+/**
+ * Strips captured field content out of an aria snapshot before it is written.
+ *
+ * Playwright renders a field's value inline after the role and accessible name
+ * (`- textbox "Email": someone@example.test`), and sometimes as an indented
+ * block beneath it. The role and the name are the structure a reviewer needs;
+ * the value is exactly what must not reach an artifact, so it is replaced in
+ * both positions rather than only in the nested one.
+ */
 export function redactAriaSnapshot(snapshot: string): string {
-  return snapshot.replace(/((?:textbox|combobox|password)[^\n]*)(?:\n\s*-.*)?/gi, '$1 [PROTECTED]');
+  const valueBearing = /^(\s*-?\s*(?:textbox|combobox|searchbox|spinbutton|password)(?:\s+"[^"]*")?)\s*:?.*$/i;
+  const lines = snapshot.split('\n');
+  const kept: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = valueBearing.exec(line);
+    if (!match) {
+      kept.push(line);
+      continue;
+    }
+    kept.push(`${match[1]}: [PROTECTED]`);
+    // Anything indented under the field is part of the same value.
+    const indent = line.length - line.trimStart().length;
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1];
+      if (!next.trim()) break;
+      if (next.length - next.trimStart().length <= indent) break;
+      index += 1;
+    }
+  }
+  return kept.join('\n');
 }
 
 function normalizedRoute(urlValue: string): string | null {
@@ -332,7 +360,7 @@ function compactDetails(
  */
 export function liveEvidenceForBridgePayload(
   payload: BridgePayload,
-): Omit<LiveEvidence, 'id' | 'timestamp'> | null {
+): Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> | null {
   const metadata = payload.metadata ?? {};
   const type = String(payload.type ?? '');
   const target = safeMessage(String(
@@ -411,9 +439,16 @@ export function liveEvidenceForBridgePayload(
         detail('Visually stable', metadata.visuallyStableMs != null ? `${metadata.visuallyStableMs} ms` : null),
         detail('DOM content loaded', metadata.domContentLoadedMs != null ? `${metadata.domContentLoadedMs} ms` : null),
         detail('Page load', metadata.loadMs != null ? `${metadata.loadMs} ms` : null),
+        detail('TTFB', metadata.ttfbMs != null ? `${metadata.ttfbMs} ms` : null),
         detail('FCP', metadata.fcp != null ? `${Math.round(Number(metadata.fcp))} ms` : null),
         detail('LCP', metadata.lcp != null ? `${Math.round(Number(metadata.lcp))} ms` : null),
-        detail('CLS', metadata.cls), detail('Resources', metadata.resourceCount),
+        detail('CLS', metadata.cls),
+        detail('INP', metadata.inpMs != null ? `${metadata.inpMs} ms over ${metadata.interactionCount ?? 0} interactions` : null),
+        detail('Blocking time', metadata.longTaskMs ? `${Math.round(Number(metadata.longTaskMs))} ms across ${metadata.longTasks} long tasks` : null),
+        detail('Longest task', metadata.longestTaskMs ? `${metadata.longestTaskMs} ms${metadata.longestTaskAttribution ? ` in ${metadata.longestTaskAttribution}` : ''}` : null),
+        detail('Resources', metadata.resourceCount),
+        detail('Failed resources', metadata.failedResourceCount || null),
+        detail('Hidden for', metadata.hiddenMs ? `${metadata.hiddenMs} ms` : null),
       ]),
     };
   }
@@ -433,7 +468,7 @@ export function liveEvidenceForNetworkRequest(input: {
   resourceType: string;
   transferredBytes: number | null;
   failure?: string | null;
-}): Omit<LiveEvidence, 'id' | 'timestamp'> {
+}): Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> {
   const outcome = input.blockedByPolicy
     ? 'blocked by observation policy'
     : input.failed
@@ -1245,6 +1280,221 @@ export class BrowserObserver {
     }
   }
 
+  /**
+   * Records the accepted graph this run is being reconciled against. The main
+   * process resolves it once, at start, so the desktop can show the states the
+   * user is actually expected to visit instead of a generic checklist.
+   */
+  setFlowPlan(plan: RunFlowPlan | null): GuidedRunState {
+    if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    const { state } = this.active;
+    state.flowPlan = plan;
+    this.recomputeCoverage(state);
+    if (plan) {
+      const initial = plan.states.find((item) => item.key === plan.initialStateKey);
+      this.addLive(state, {
+        kind: 'FLOW',
+        level: 'INFO',
+        message: `Reconciling against ${plan.flowName ?? 'the accepted Flow'}${plan.version == null ? '' : ` v${plan.version}`}`,
+        details: compactDetails([
+          detail('Expected states', plan.states.length),
+          detail('Starts at', initial?.name ?? plan.initialStateKey),
+          detail('Ends at', plan.terminalStateKeys.join(', ')),
+        ]),
+      });
+    }
+    this.notifyStateChanged();
+    return this.snapshot();
+  }
+
+  /** Raises the managed browser window above the desktop app. */
+  async focusBrowser(): Promise<GuidedRunState> {
+    if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    const { page } = this.active;
+    if (!page || page.isClosed()) throw new Error('QA_BROWSER_CLOSED');
+    await page.bringToFront();
+    return this.snapshot();
+  }
+
+  /** Human-readable name for a normalised state key, falling back to the key. */
+  private stateLabel(state: GuidedRunState, key: string | null): string | null {
+    if (!key) return null;
+    return state.flowPlan?.states.find((item) => item.key === key)?.name ?? key;
+  }
+
+  /** What the run is waiting for, phrased for the person driving the browser. */
+  private expectedNextLabel(state: GuidedRunState): string | null {
+    const plan = state.flowPlan;
+    if (!plan) return null;
+    if (state.phase === 'PRE_BOUNDARY') return this.stateLabel(state, plan.initialStateKey);
+    const next = plan.transitions
+      .filter((transition) => transition.from === state.currentFlowStateKey)
+      .map((transition) => this.stateLabel(state, transition.to))
+      .filter((label): label is string => Boolean(label));
+    return next.length ? next.join(' or ') : null;
+  }
+
+  private recomputeCoverage(state: GuidedRunState): void {
+    const plan = state.flowPlan;
+    if (!plan) {
+      state.coverage = null;
+      return;
+    }
+    const expectedKeys = plan.states.map((item) => item.key);
+    const visited: string[] = [];
+    const takenTransitionKeys: string[] = [];
+    for (const visit of state.flowStateHistory) {
+      if (!visited.includes(visit.stateKey)) visited.push(visit.stateKey);
+      if (!visit.fromStateKey) continue;
+      const key = `${visit.fromStateKey}->${visit.stateKey}`;
+      if (!takenTransitionKeys.includes(key)) takenTransitionKeys.push(key);
+    }
+    state.coverage = {
+      expectedStates: expectedKeys.length,
+      visitedStateKeys: visited.filter((key) => expectedKeys.includes(key)),
+      remainingStateKeys: expectedKeys.filter((key) => !visited.includes(key)),
+      offPlanStateKeys: visited.filter((key) => !expectedKeys.includes(key)),
+      expectedTransitions: plan.transitions.length,
+      takenTransitionKeys,
+      terminalReached: visited.some((key) => plan.terminalStateKeys.includes(key)),
+    };
+  }
+
+  /**
+   * Captures the evidence a report needs for one settled state: a masked
+   * screenshot, a redacted aria snapshot, and an accessibility scan. Gated on
+   * IN_FLOW so the pre-boundary floor (metadata only) still holds, and
+   * deduplicated per flow state and route so a re-render does not refire it.
+   */
+  private async captureStateArtifacts(controller: RunController): Promise<void> {
+    const { state, page } = controller;
+    if (controller.stopping || controller.paused || controller.snapshotInFlight) return;
+    if (state.phase !== 'IN_FLOW') return;
+    if (!page || page.isClosed()) return;
+    if (state.stateArtifacts.length >= MAX_STATE_ARTIFACTS) return;
+    const pageUrl = sanitizeCapturedUrl(page.url());
+    const route = normalizedRoute(pageUrl) ?? pageUrl;
+    const dedupeKey = `${state.currentFlowStateKey ?? ''}|${route}`;
+    if (controller.capturedStateKeys.has(dedupeKey)) return;
+    controller.capturedStateKeys.add(dedupeKey);
+    controller.snapshotInFlight = true;
+    try {
+      const base = `state-${String(state.stateArtifacts.length + 1).padStart(3, '0')}-${Date.now()}`;
+      const screenshotPath = path.join(state.artifactDirectory, `${base}.png`);
+      const ariaPath = path.join(state.artifactDirectory, `${base}.aria.txt`);
+      const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
+      await page.screenshot({ path: screenshotPath, fullPage: true, mask: [mask], maskColor: '#111827' })
+        .catch(() => undefined);
+      const aria = await page.locator('body').ariaSnapshot().catch(() => null);
+      if (aria !== null) fs.writeFileSync(ariaPath, redactAriaSnapshot(aria), 'utf8');
+      const violations = await this.runAccessibilityScan(controller, route);
+      const title = await page.title().catch(() => '');
+      const artifact: RunStateArtifact = {
+        stateKey: state.currentFlowStateKey,
+        route,
+        title: safeMessage(title),
+        timestamp: new Date().toISOString(),
+        screenshotFile: fs.existsSync(screenshotPath) ? path.basename(screenshotPath) : null,
+        accessibilityFile: fs.existsSync(ariaPath) ? path.basename(ariaPath) : null,
+        accessibilityViolations: violations === null ? null : violations.length,
+      };
+      state.stateArtifacts.push(artifact);
+      this.emit(controller, 'QA_STATE_SNAPSHOT', {
+        stateKey: artifact.stateKey,
+        route: artifact.route,
+        title: artifact.title,
+        screenshotFile: artifact.screenshotFile,
+        accessibilityFile: artifact.accessibilityFile,
+      }, { pageUrl });
+      this.addLive(state, {
+        kind: 'PAGE',
+        level: 'INFO',
+        message: `State snapshot captured for ${this.stateLabel(state, state.currentFlowStateKey) ?? route}`,
+        details: compactDetails([
+          detail('Screenshot', artifact.screenshotFile),
+          detail('Accessibility tree', artifact.accessibilityFile),
+          detail('Accessibility violations', artifact.accessibilityViolations),
+        ]),
+      });
+    } finally {
+      controller.snapshotInFlight = false;
+    }
+  }
+
+  /**
+   * Runs axe-core against the settled page. The source is evaluated as an
+   * expression so the driver compiles it rather than the page, which keeps the
+   * scan working under a strict Content-Security-Policy without weakening the
+   * policy the application is actually being tested under. Only rule metadata
+   * and target selectors are kept: the failing markup itself is page content
+   * and never leaves the browser.
+   */
+  private async runAccessibilityScan(
+    controller: RunController,
+    route: string,
+  ): Promise<Array<{ id: string; impact: string | null; help: string; nodes: number }> | null> {
+    const { page, state } = controller;
+    try {
+      const axeSourcePath = require.resolve('axe-core/axe.min.js');
+      const axeSource = fs.readFileSync(axeSourcePath, 'utf8');
+      await page.evaluate(`${axeSource};undefined`);
+      const violations = await page.evaluate(async () => {
+        const axe = (globalThis as unknown as { axe?: { run: (...args: unknown[]) => Promise<unknown> } }).axe;
+        if (!axe) return null;
+        const results = await axe.run(document, {
+          resultTypes: ['violations'],
+          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+        }) as { violations: unknown[] };
+        // Capped hard: the server rejects any single evidence event over 32 KB,
+        // and a rejected event costs the whole scan rather than its tail.
+        return results.violations.slice(0, 20).map((raw) => {
+          const violation = raw as Record<string, any>;
+          const nodes = Array.isArray(violation.nodes) ? violation.nodes : [];
+          return {
+            id: String(violation.id),
+            impact: violation.impact ? String(violation.impact) : null,
+            help: String(violation.help ?? '').slice(0, 160),
+            nodes: nodes.length,
+            targets: nodes.slice(0, 3).map((node: any) => String(node?.target?.[0] ?? '').slice(0, 160)),
+          };
+        });
+      });
+      if (!violations) return null;
+      this.emit(controller, 'QA_ACCESSIBILITY_SCAN', {
+        route,
+        stateKey: state.currentFlowStateKey,
+        engine: 'axe-core',
+        violationCount: violations.length,
+        violations,
+      });
+      for (const violation of violations) {
+        if (violation.impact !== 'critical' && violation.impact !== 'serious') continue;
+        state.findings.push({
+          id: uuid(),
+          runId: state.runId,
+          category: 'ACCESSIBILITY_VIOLATION',
+          severity: violation.impact === 'critical' ? 'HIGH' : 'MEDIUM',
+          confidence: 0.9,
+          title: violation.help || `Accessibility rule ${violation.id}`,
+          description: `${violation.nodes} element(s) on ${route} fail ${violation.id}.`,
+          url: sanitizeCapturedUrl(page.url()),
+          viewport: page.viewportSize(),
+          evidenceArtifactIds: [],
+          reproductionSteps: ['Open the captured route', 'Inspect the reported elements'],
+          recommendation: 'Resolve the accessibility rule failure and rerun the affected Flow state.',
+          scope: 'IN_FLOW',
+          dedupeKey: `a11y:${violation.id}:${route}`,
+          generatorSource: 'BROWSER',
+        });
+      }
+      return violations;
+    } catch {
+      // A scan that cannot run is not a run failure: the rest of the state
+      // snapshot still stands, and the artifact records that it is missing.
+      return null;
+    }
+  }
+
   async acceptBoundaryOutcome(input: {
     accepted: boolean;
     phase?: 'PRE_BOUNDARY' | 'IN_FLOW';
@@ -1253,28 +1503,60 @@ export class BrowserObserver {
     reason?: string | null;
   }): Promise<GuidedRunState> {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    const { state } = this.active;
+    const stateKey = input.stateKey ? normalizeFlowKey(input.stateKey) : null;
     // A rejected Flow event is otherwise indistinguishable from one that never
     // arrived: both leave the run waiting at the boundary. Say which it was, and
-    // why, next to the event itself.
+    // why, next to the event itself, and keep the latest refusal on the state so
+    // the run page can turn it into something the user can act on.
     if (!input.accepted) {
-      this.addLive(this.active.state, {
+      state.boundaryRejection = {
+        eventType: input.eventType || 'FLOW_EVENT',
+        stateKey,
+        reason: input.reason || 'UNKNOWN',
+        timestamp: new Date().toISOString(),
+      };
+      this.addLive(state, {
         kind: 'FLOW', level: 'WARN', recorded: true,
         message: `${input.eventType || 'Flow event'} was not accepted · ${input.reason || 'unknown reason'}`,
-        details: [
-          { label: 'State key', value: input.stateKey || '(none)' },
-          { label: 'Reason', value: input.reason || 'unknown' },
-        ],
+        details: compactDetails([
+          detail('State key', input.stateKey || '(none)'),
+          detail('Reason', input.reason || 'unknown'),
+          detail('Expected next', this.expectedNextLabel(state)),
+        ]),
       });
     }
-    if (input.accepted && input.phase === 'IN_FLOW') {
-      this.active.state.phase = 'IN_FLOW';
-      if (input.stateKey) this.active.state.currentFlowStateKey = input.stateKey;
-      await this.broadcastToFrames(
-        ({ phase, stateKey }: { phase: string; stateKey: string | null }) =>
-          (globalThis as any).__tellannQaSetPhase?.(phase, stateKey),
-        { phase: 'IN_FLOW', stateKey: input.stateKey ?? null },
-      );
+    if (input.accepted) {
+      const wasPreBoundary = state.phase === 'PRE_BOUNDARY';
+      state.boundaryRejection = null;
+      if (input.phase === 'IN_FLOW') {
+        state.phase = 'IN_FLOW';
+        if (input.stateKey) state.currentFlowStateKey = stateKey;
+        await this.broadcastToFrames(
+          ({ phase, stateKey: nextKey }: { phase: string; stateKey: string | null }) =>
+            (globalThis as any).__tellannQaSetPhase?.(phase, nextKey),
+          { phase: 'IN_FLOW', stateKey },
+        );
+      }
+      if (stateKey) {
+        const previous = state.flowStateHistory[state.flowStateHistory.length - 1];
+        state.flowStateHistory.push({
+          stateKey,
+          eventType: input.eventType || (wasPreBoundary ? 'FLOW_INITIAL_STATE' : 'FLOW_TRANSITION'),
+          fromStateKey: previous?.stateKey ?? null,
+          timestamp: new Date().toISOString(),
+        });
+        this.recomputeCoverage(state);
+      }
+      if (wasPreBoundary && state.phase === 'IN_FLOW') {
+        this.addLive(state, {
+          kind: 'FLOW', level: 'INFO', recorded: true,
+          message: 'Flow boundary accepted. Detailed capture is on for the rest of this run.',
+          details: compactDetails([detail('Initial state', this.stateLabel(state, stateKey))]),
+        });
+      }
     }
+    this.notifyStateChanged();
     return this.snapshot();
   }
 
@@ -1354,12 +1636,20 @@ export class BrowserObserver {
       const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
       await page.screenshot({ path: screenshot, fullPage: true, mask: [mask], maskColor: '#111827' }).catch(() => undefined);
       const aria = await page.locator('body').ariaSnapshot().catch(() => 'Accessibility snapshot unavailable');
-      fs.writeFileSync(accessibility, aria.replace(/((?:textbox|combobox|password)[^\n]*)(?:\n\s*-.*)?/gi, '$1 [PROTECTED]'), 'utf8');
+      // Shares the redaction rule with every per-state snapshot rather than
+      // restating it, so the two can never drift apart.
+      fs.writeFileSync(accessibility, redactAriaSnapshot(aria), 'utf8');
     }
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
     state.phase = 'COMPLETE';
-    const artifactFiles = [screenshot, accessibility].filter((file) => fs.existsSync(file));
+    // Per-state captures ride along with the final pair so the report can show
+    // each step of the Flow rather than only where the run happened to stop.
+    const stateArtifactFiles = state.stateArtifacts.flatMap((artifact) => [
+      artifact.screenshotFile ? path.join(state.artifactDirectory, artifact.screenshotFile) : null,
+      artifact.accessibilityFile ? path.join(state.artifactDirectory, artifact.accessibilityFile) : null,
+    ]).filter((file): file is string => Boolean(file));
+    const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles].filter((file) => fs.existsSync(file));
     fs.writeFileSync(manifest, JSON.stringify({
       runId: state.runId, sessionId: state.sessionId, traceId: state.traceId,
       applicationId: state.applicationId, environmentId: state.environmentId,
@@ -1368,6 +1658,9 @@ export class BrowserObserver {
       windowResolution: state.windowResolution ?? null,
       evidenceCounts: state.evidenceCounts, observations: state.observations,
       observedTransitions: state.observedTransitions, findings: state.findings,
+      flowPlan: state.flowPlan, coverage: state.coverage, flowStateHistory: state.flowStateHistory,
+      stateArtifacts: state.stateArtifacts, annotationCount: state.annotationCount,
+      evidenceTrimmed: state.evidenceTrimmed, liveCounts: state.liveCounts,
       startedAt: state.startedAt, endedAt: state.endedAt,
       artifacts: artifactFiles.map((file) => ({
         name: path.basename(file), bytes: fs.statSync(file).size, checksum: checksum(file),

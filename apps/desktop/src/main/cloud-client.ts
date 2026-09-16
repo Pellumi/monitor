@@ -960,6 +960,29 @@ export class DesktopCloudClient {
     );
   }
 
+  /**
+   * The published graph snapshot a run reconciles against. Read by version
+   * rather than through the canonical flow endpoint, because the draft graph
+   * can move on while a run is still in progress.
+   */
+  async flowVersionGraph(
+    applicationId: string,
+    flowId: string,
+    versionId: string,
+  ): Promise<{
+    flowId: string;
+    versionId: string;
+    version: number | null;
+    name: string | null;
+    purpose: string | null;
+    states: Array<Record<string, unknown>>;
+    transitions: Array<Record<string, unknown>>;
+  }> {
+    return this.request(
+      `/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}`,
+    );
+  }
+
   async initializeFlow(flowId: string, input: Json): Promise<Json> {
     return this.request(`/flows/${flowId}/initializations`, {
       method: "POST",

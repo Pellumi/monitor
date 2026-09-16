@@ -22,7 +22,14 @@ import {
   scanWorkspace,
   workingTreeIdentity,
 } from '@tellann/project-intelligence';
-import { BrowserObserver, type GuidedRunState } from '@tellann/browser-observer';
+import {
+  BrowserObserver,
+  normalizeFlowKey,
+  type GuidedRunState,
+  type RunFlowPlan,
+  type RunFlowPlanState,
+  type RunFlowPlanTransition,
+} from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
@@ -537,7 +544,87 @@ const observer = new BrowserObserver({
   onEvidenceEvent: async (event) => enqueueEvidence(event),
   searchMentionableMembers: (runId, query) => cloud.mentionableMembers(runId, query),
   onAnnotation: (runId, annotation) => cloud.saveAnnotation(runId, annotation),
+  // Pushing the state is what lets the run page stop asking for a full copy of
+  // it several times a second, which on a busy page meant serialising hundreds
+  // of evidence rows across the IPC boundary for no new information.
+  onStateChanged: (state) => sendRunState(state),
 });
+
+/**
+ * Evidence still waiting to reach the cloud. A run that looks healthy while its
+ * spool quietly grows is the failure mode this makes visible.
+ */
+function runSyncBacklog(runId: string): number {
+  const queue = evidenceQueues.get(runId) ?? readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? [];
+  return queue.length;
+}
+
+/** Decorates a snapshot with the parts of run health only the main process knows. */
+function decorateRunState(state: GuidedRunState): GuidedRunState {
+  return { ...state, syncBacklog: runSyncBacklog(state.runId) };
+}
+
+function sendRunState(state: GuidedRunState): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC.runStateChanged, decorateRunState(state));
+}
+/**
+ * Resolves the published graph a run reconciles against into the shape the run
+ * page renders. Failure is not fatal: the run still captures everything, it
+ * just cannot show which states remain, so the page falls back to saying so.
+ */
+async function resolveRunFlowPlan(input: {
+  applicationId: string;
+  flowId: string;
+  expectedGraphVersionId: string;
+}): Promise<RunFlowPlan | null> {
+  try {
+    const graph = await cloud.flowVersionGraph(input.applicationId, input.flowId, input.expectedGraphVersionId);
+    const states: RunFlowPlanState[] = (graph.states ?? []).map((raw) => {
+      const record = raw as Record<string, any>;
+      const name = String(record.stateName ?? record.name ?? record.behaviorKey ?? '');
+      const role = record.role === 'INITIAL' || record.role === 'TERMINAL' ? record.role : 'NORMAL';
+      return {
+        key: normalizeFlowKey(record.behaviorKey ?? record.stateName ?? record.name),
+        name: name || String(record.behaviorKey ?? 'Unnamed state'),
+        role,
+        terminalKind: record.terminalKind ? String(record.terminalKind) : null,
+        category: record.category ? String(record.category) : null,
+      };
+    }).filter((state) => state.key.length > 0);
+    const byId = new Map<string, string>();
+    for (const raw of graph.states ?? []) {
+      const record = raw as Record<string, any>;
+      if (record.id) byId.set(String(record.id), normalizeFlowKey(record.behaviorKey ?? record.stateName ?? record.name));
+    }
+    const transitions: RunFlowPlanTransition[] = (graph.transitions ?? []).map((raw) => {
+      const record = raw as Record<string, any>;
+      const from = normalizeFlowKey(
+        record.fromStateKey ?? record.from ?? record.sourceBehaviorKey ?? record.source
+          ?? byId.get(String(record.fromStateId ?? record.fromNodeId ?? '')) ?? '',
+      );
+      const to = normalizeFlowKey(
+        record.toStateKey ?? record.to ?? record.targetBehaviorKey ?? record.target
+          ?? byId.get(String(record.toStateId ?? record.toNodeId ?? '')) ?? '',
+      );
+      return { from, to, action: record.action ? String(record.action) : null };
+    }).filter((transition) => transition.from && transition.to);
+    return {
+      flowId: input.flowId,
+      flowName: graph.name ?? null,
+      versionId: input.expectedGraphVersionId,
+      version: graph.version ?? null,
+      purpose: graph.purpose ?? null,
+      initialStateKey: states.find((state) => state.role === 'INITIAL')?.key ?? null,
+      terminalStateKeys: states.filter((state) => state.role === 'TERMINAL').map((state) => state.key),
+      states,
+      transitions,
+    };
+  } catch {
+    return null;
+  }
+}
+
 let runCompletionInProgress = false;
 
 async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'MANUAL_STOP_BEFORE_TERMINAL') {
@@ -3279,7 +3366,17 @@ function registerIpc(): void {
       }, path.join(app.getPath('userData'), 'qa-runs'));
       startRunMaintenance(runId);
       emitRunLifecycle(state, { cloudStatus: 'WAITING_FOR_INITIAL' });
-      return state;
+      // Resolved after the browser is up so a slow graph read never delays the
+      // run itself; the page shows a generic plan until this lands.
+      void resolveRunFlowPlan({
+        applicationId: parsed.applicationId,
+        flowId: parsed.flowId,
+        expectedGraphVersionId: parsed.expectedGraphVersionId,
+      }).then((plan) => {
+        if (observer.getState()?.runId !== runId) return;
+        sendRunState(observer.setFlowPlan(plan));
+      }).catch(() => undefined);
+      return decorateRunState(state);
     } catch (error) {
       stopRunMaintenance();
       await applicationLauncher.stop().catch(() => undefined);
@@ -3354,7 +3451,12 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.getRunState, (event) => {
     assertTrustedSender(event);
-    return observer.getState();
+    const state = observer.getState();
+    return state ? decorateRunState(state) : null;
+  });
+  ipcMain.handle(IPC.focusRunBrowser, async (event) => {
+    assertTrustedSender(event);
+    return decorateRunState(await observer.focusBrowser());
   });
 }
 

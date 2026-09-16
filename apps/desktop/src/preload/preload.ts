@@ -136,6 +136,8 @@ const IPC = {
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
+  focusRunBrowser: 'tellann:run:browser:focus',
+  runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
@@ -326,6 +328,12 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.on(IPC.runLifecycleEvent, subscription);
       return () => ipcRenderer.removeListener(IPC.runLifecycleEvent, subscription);
     },
+    onStateChanged: (callback: (state: unknown) => void) => {
+      const subscription = (_: unknown, data: unknown) => callback(data);
+      ipcRenderer.on(IPC.runStateChanged, subscription);
+      return () => ipcRenderer.removeListener(IPC.runStateChanged, subscription);
+    },
+    focusBrowser: () => ipcRenderer.invoke(IPC.focusRunBrowser),
     end: () => ipcRenderer.invoke(IPC.endGuidedRun),
     getActive: () => ipcRenderer.invoke(IPC.getRunState),
   },

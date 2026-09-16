@@ -200,6 +200,8 @@ type DesktopContextValue = {
   pauseRun(): Promise<GuidedRunState>;
   resumeRun(): Promise<GuidedRunState>;
   setRunInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
+  /** Raises the managed browser window above the desktop app. */
+  focusRunBrowser(): Promise<GuidedRunState>;
   retryRunSynchronization(runId: string): Promise<Record<string, unknown>>;
   revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
   endRun(): Promise<GuidedRunState>;
@@ -313,11 +315,21 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, []);
 
+  // The main process pushes the run state as it changes. Polling for a full
+  // copy of it several times a second meant serialising the whole evidence ring
+  // buffer across IPC on every tick, whether or not anything had happened.
+  useEffect(() => {
+    if (!window.tellann?.runs?.onStateChanged) return;
+    return window.tellann.runs.onStateChanged((state) => setActiveRun(state));
+  }, []);
+
+  // A slow reconcile behind the push, so a dropped message cannot strand the
+  // page on a stale state for the rest of the run.
   useEffect(() => {
     if (!activeRun || ['COMPLETED', 'FAILED'].includes(activeRun.status)) return;
     const timer = window.setInterval(() => {
       void bridge().runs.getActive().then((state) => setActiveRun(state)).catch(() => undefined);
-    }, 1_500);
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [activeRun?.status]);
 
@@ -583,6 +595,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return next;
   }), [perform]);
 
+  // Deliberately outside `perform`: the run page reports this one inline, next
+  // to the control that asked for it, rather than in the app-level error slot.
+  const focusRunBrowser = useCallback(async () => {
+    const next = await bridge().runs.focusBrowser();
+    setActiveRun(next);
+    return next;
+  }, []);
+
   const retryRunSynchronization = useCallback((runId: string) =>
     perform(() => bridge().runs.retrySynchronization(runId)), [perform]);
 
@@ -702,13 +722,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     pauseRun,
     resumeRun,
     setRunInteractionMode,
+    focusRunBrowser,
     retryRunSynchronization,
     revealProtectedValue,
     endRun,
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, resumeRun, setRunInteractionMode, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);

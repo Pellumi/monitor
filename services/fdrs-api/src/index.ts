@@ -1276,6 +1276,35 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/draft-history/:snapshot
   }
 });
 
+/**
+ * The exact graph a QA run is reconciled against. The canonical flow endpoint
+ * serves the current draft, which may have moved on since the run started, so a
+ * run has to read its own published version snapshot rather than the live graph.
+ */
+app.get('/v1/applications/:appId/flows/:flowId/versions/:versionId', async (req: Request, res: Response) => {
+  const version = await prisma.behaviorGraphVersion.findFirst({
+    where: {
+      id: req.params.versionId,
+      graphId: req.params.flowId,
+      graph: { applicationId: req.params.appId },
+    },
+    include: { graph: { select: { name: true, purpose: true, workflowType: true } } },
+  });
+  if (!version) return res.status(404).json({ error: 'FLOW_VERSION_NOT_FOUND' });
+  const snapshot = (version.snapshot ?? {}) as any;
+  return res.json({
+    flowId: req.params.flowId,
+    versionId: version.id,
+    version: version.version,
+    lifecycleStatus: version.lifecycleStatus,
+    name: snapshot.name ?? version.graph?.name ?? null,
+    purpose: snapshot.purpose ?? version.graph?.purpose ?? null,
+    workflowType: snapshot.workflowType ?? version.graph?.workflowType ?? null,
+    states: Array.isArray(snapshot.states) ? snapshot.states : [],
+    transitions: Array.isArray(snapshot.transitions) ? snapshot.transitions : [],
+  });
+});
+
 app.get('/v1/applications/:appId/flows/:flowId/versions/:versionId/diagrams', async (req: Request, res: Response) => {
   const version = await prisma.behaviorGraphVersion.findFirst({ where: {
     id: req.params.versionId,

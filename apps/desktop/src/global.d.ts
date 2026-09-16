@@ -256,6 +256,10 @@ declare global {
         revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
         searchMentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]>;
         onLifecycleEvent(callback: (event: RunLifecycleEvent) => void): () => void;
+        /** Pushed whenever the active run's state changes, replacing polling. */
+        onStateChanged(callback: (state: GuidedRunState) => void): () => void;
+        /** Raises the managed browser window above the desktop app. */
+        focusBrowser(): Promise<GuidedRunState>;
         end(): Promise<GuidedRunState>;
         getActive(): Promise<GuidedRunState | null>;
       };
