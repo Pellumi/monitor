@@ -55,6 +55,18 @@ async function seed() {
   const version = await prisma.behaviorGraphVersion.create({ data: {
     graphId: flow.id, version: 1, snapshot: snapshotJson as never, lifecycleStatus: 'PUBLISHED',
   } });
+  // Initialization is refused until the SDK has actually reported in, which is
+  // the same gate the desktop shows as "SDK connected". One initialized session
+  // is the whole of it.
+  const session = await prisma.session.create({ data: {
+    id: crypto.randomUUID(), applicationId: application.id, environmentId: environment.id,
+    tenantId: organization.id, startTime: new Date(Date.now() - 60_000), endTime: new Date(),
+  } });
+  await prisma.sessionEvent.create({ data: {
+    sessionId: session.id, eventType: 'TELLANN_INITIALIZED', eventVersion: '1.0',
+    source: 'frontend-sdk', timestamp: new Date(), metadata: {},
+  } });
+
   // Initialization is only offered for a published Flow pointing at a published
   // version, which is the same precondition the desktop enforces before it
   // shows the button at all.
@@ -62,10 +74,12 @@ async function seed() {
     where: { id: flow.id },
     data: { lifecycleStatus: 'PUBLISHED', publishedVersionId: version.id },
   });
-  return { suffix, user, organization, application, environment, workspace, snapshot, flow: published, version };
+  return { suffix, user, organization, application, environment, workspace, snapshot, flow: published, version, session };
 }
 
 async function cleanup(value: Seed) {
+  await prisma.sessionEvent.deleteMany({ where: { sessionId: value.session.id } });
+  await prisma.session.deleteMany({ where: { id: value.session.id } });
   await prisma.flowInitialization.deleteMany({ where: { applicationId: value.application.id } });
   await prisma.flowScan.deleteMany({ where: { applicationId: value.application.id } });
   await prisma.flowProjectBinding.deleteMany({ where: { applicationId: value.application.id } });
