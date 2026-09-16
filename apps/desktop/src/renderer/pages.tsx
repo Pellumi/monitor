@@ -6541,6 +6541,132 @@ function locationLabel(
 }
 
 /**
+ * What mapping is doing, while it does it.
+ *
+ * Each of these takes real time on a real repository — analysis can run for
+ * minutes, and the upload consent prompt sits inside the first one. A single
+ * unchanging line is indistinguishable from a hang, so the work is named, in
+ * order, with the current step called out and the ones already behind it
+ * marked done.
+ */
+const FLOW_MAPPING_STAGES = [
+  {
+    id: "WAITING_FOR_ANALYSIS",
+    title: "Reading your code",
+    detail:
+      "Checking the analysis still matches what is on disk, and analysing it again if not.",
+    slow: "On a large project this is the slow part.",
+  },
+  {
+    id: "RETRIEVING",
+    title: "Finding candidates",
+    detail:
+      "Searching the analysed codebase for the places each state and transition could live.",
+    slow: null,
+  },
+  {
+    id: "CONTEXTUALIZING",
+    title: "Reading the shortlist",
+    detail:
+      "Opening the files that matched, so the choice is made against your real code.",
+    slow: null,
+  },
+  {
+    id: "RESOLVING",
+    title: "Pinpointing placements",
+    detail: "Working out the exact place each checkpoint belongs.",
+    slow: null,
+  },
+] as const;
+
+function FlowMappingProgressPanel({
+  progress,
+  checkpointCount,
+  busy,
+  onRetry,
+}: {
+  progress: { status?: string; message?: string | null } | undefined;
+  checkpointCount: number;
+  busy?: boolean;
+  onRetry?: () => void;
+}) {
+  const status = String(progress?.status ?? "WAITING_FOR_ANALYSIS");
+  const failed = status === "FAILED";
+  const activeIndex = FLOW_MAPPING_STAGES.findIndex(
+    (stage) => stage.id === status,
+  );
+  // An unknown status is still forward motion, not a reason to show nothing.
+  const current = activeIndex < 0 ? 0 : activeIndex;
+
+  return (
+    <section
+      className="content-card flow-mapping-progress"
+      aria-busy={!failed}
+      aria-live="polite"
+    >
+      <div className="card-heading">
+        <div>
+          <small>Working</small>
+          <h2>Mapping this Flow to your code</h2>
+        </div>
+        {checkpointCount ? (
+          <Status>{checkpointCount} checkpoints</Status>
+        ) : null}
+      </div>
+
+      {failed ? (
+        <div className="context-banner mt-4!" role="alert">
+          <AlertTriangle size={15} />
+          {progress?.message || "Mapping could not be completed."}
+          {onRetry ? (
+            <button className="button" disabled={busy} onClick={onRetry}>
+              <RefreshCw size={15} />
+              Try again
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <ol className="flow-stage-list">
+            {FLOW_MAPPING_STAGES.map((stage, index) => {
+              const state =
+                index < current ? "done" : index === current ? "current" : "pending";
+              return (
+                <li key={stage.id} className="flow-stage" data-state={state}>
+                  <span className="flow-stage-marker" aria-hidden="true">
+                    {state === "done" ? <Check size={12} /> : null}
+                  </span>
+                  <div>
+                    <strong>{stage.title}</strong>
+                    <p className="muted">
+                      {state === "current" && progress?.message
+                        ? progress.message
+                        : stage.detail}
+                      {state === "current" && stage.slow ? ` ${stage.slow}` : ""}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+
+          {/* A hint of the shape the results will take, so the page reads as
+              filling in rather than as empty. */}
+          <div className="flow-skeleton" aria-hidden="true">
+            {[0, 1, 2].map((row) => (
+              <div className="flow-skeleton-row" key={row}>
+                <span className="flow-skeleton-bar" data-width="title" />
+                <span className="flow-skeleton-bar" data-width="location" />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * One declared checkpoint and the place in the repository it maps to.
  *
  * A row is the whole decision: what was declared, where Tellann believes it
@@ -6550,12 +6676,13 @@ function locationLabel(
  */
 function FlowMappingRow({
   checkpoint,
-  busy,
+  pendingCandidateId,
   onConfirm,
   onReveal,
 }: {
   checkpoint: FlowCheckpointView;
-  busy: boolean;
+  /** The candidate being confirmed for *this* checkpoint, if any. */
+  pendingCandidateId: string | null;
   onConfirm(checkpointId: string, candidate: FlowMappingCandidateView): void;
   onReveal(file: string, line?: number | null): void;
 }) {
@@ -6680,13 +6807,29 @@ function FlowMappingRow({
                               Open
                             </button>
                           ) : null}
+                          {/* Confirming one location locks only the siblings
+                              it competes with. Gating this on the shared
+                              desktop busy flag greyed out every candidate of
+                              every checkpoint at once, so one click read as
+                              the whole list going dead. */}
                           <button
                             className="button primary"
-                            disabled={busy || !kinds.length}
+                            disabled={
+                              pendingCandidateId !== null || !kinds.length
+                            }
                             onClick={() => onConfirm(checkpoint.id, candidate)}
                           >
-                            <Check size={14} />
-                            Use this location
+                            {pendingCandidateId === candidate.id ? (
+                              <>
+                                <RefreshCw size={14} className="spin" />
+                                Using this location…
+                              </>
+                            ) : (
+                              <>
+                                <Check size={14} />
+                                Use this location
+                              </>
+                            )}
                           </button>
                         </div>
                       </li>
@@ -6715,6 +6858,7 @@ function FlowReviewPanel({
   onReanalyze,
   onConfirmMapping,
   onRevealEvidence,
+  pendingMappings,
   busy,
 }: {
   initialization: FlowInitialization;
@@ -6724,6 +6868,8 @@ function FlowReviewPanel({
     candidate: FlowMappingCandidateView,
   ): void;
   onRevealEvidence?(file: string, line?: number | null): void;
+  /** Checkpoint id -> the candidate id currently being confirmed for it. */
+  pendingMappings?: Record<string, string>;
   busy?: boolean;
 }) {
   const report = initialization.codeReviewReport as any;
@@ -6745,7 +6891,18 @@ function FlowReviewPanel({
         "CONTEXTUALIZING",
         "RESOLVING",
       ].includes(mappingStatus);
-    if (mappingPending) return null;
+    if (mappingPending) {
+      return (
+        <FlowMappingProgressPanel
+          progress={(initialization as any).scan?.mappingProgress}
+          checkpointCount={
+            ((initialization.manifest as any)?.checkpoints ?? []).length
+          }
+          busy={busy}
+          onRetry={onReanalyze}
+        />
+      );
+    }
     return (
       <LegacyFlowReviewPanel
         initialization={initialization}
@@ -6859,7 +7016,7 @@ function FlowReviewPanel({
               <FlowMappingRow
                 key={checkpoint.id}
                 checkpoint={checkpoint}
-                busy={Boolean(busy)}
+                pendingCandidateId={pendingMappings?.[checkpoint.id] ?? null}
                 onConfirm={(checkpointId, candidate) =>
                   onConfirmMapping?.(checkpointId, candidate)
                 }
@@ -8031,25 +8188,55 @@ export function InstrumentationPage() {
     return () => window.clearInterval(timer);
   }, [flowInitialization?.stage, refreshFlowInitialization]);
 
+  // Which candidate is being confirmed, per checkpoint. Confirming is one IPC
+  // call behind the shared desktop `busy` flag, so driving the buttons off that
+  // flag disabled every checkpoint's candidates at once — the whole list looked
+  // broken because one of its buttons was working. Only the checkpoint being
+  // confirmed belongs in a pending state.
+  const [pendingMappings, setPendingMappings] = useState<
+    Record<string, string>
+  >({});
+
+  // Each confirm replies with a rebuilt snapshot of the entire initialization,
+  // so two in flight together would race and the slower reply would drop the
+  // faster one's checkpoint. Rather than blocking the other buttons to prevent
+  // that, the requests queue: every button stays live, and they go out in the
+  // order they were clicked.
+  const confirmQueue = useRef<Promise<unknown>>(Promise.resolve());
+
   // Choosing a location for an ambiguous checkpoint. The server recomputes the
   // anchor hash from the candidate the user picked, so the reply already
   // carries the rebuilt manifest, report and roadmap.
   const confirmMapping = useCallback(
-    async (checkpointId: string, candidate: FlowMappingCandidateView) => {
+    (checkpointId: string, candidate: FlowMappingCandidateView) => {
       if (!initializationId) return;
-      setFlowLoadError(null);
-      try {
-        const updated = await confirmFlowMapping(
-          initializationId,
-          checkpointId,
-          candidate.id,
-          candidate.placementKind ?? candidate.placementKinds?.[0],
-          candidate.anchor ?? candidate.symbol ?? undefined,
-        );
-        setFlowInitialization(updated as FlowInitialization);
-      } catch (cause) {
-        setFlowLoadError(normalizeDesktopError(cause));
-      }
+      setPendingMappings((current) => ({
+        ...current,
+        [checkpointId]: candidate.id,
+      }));
+      const settled = confirmQueue.current.then(async () => {
+        setFlowLoadError(null);
+        try {
+          const updated = await confirmFlowMapping(
+            initializationId,
+            checkpointId,
+            candidate.id,
+            candidate.placementKind ?? candidate.placementKinds?.[0],
+            candidate.anchor ?? candidate.symbol ?? undefined,
+          );
+          setFlowInitialization(updated as FlowInitialization);
+        } catch (cause) {
+          setFlowLoadError(normalizeDesktopError(cause));
+        } finally {
+          // Leave a newer choice for the same checkpoint pending.
+          setPendingMappings((current) => {
+            if (current[checkpointId] !== candidate.id) return current;
+            const { [checkpointId]: _done, ...rest } = current;
+            return rest;
+          });
+        }
+      });
+      confirmQueue.current = settled.catch(() => undefined);
     },
     [confirmFlowMapping, initializationId],
   );
@@ -8587,7 +8774,7 @@ export function InstrumentationPage() {
             // proposal once a mode is picked.
             onReanalyze={
               initializationId &&
-              flowInitialization.stage === "REVIEW_READY" &&
+              ["REVIEW_READY", "SCANNING"].includes(flowInitialization.stage) &&
               !flowInitialization.mode
                 ? () =>
                     void analyzeFlowInitialization(initializationId).then(
@@ -8597,6 +8784,7 @@ export function InstrumentationPage() {
             }
             onConfirmMapping={confirmMapping}
             onRevealEvidence={revealEvidence}
+            pendingMappings={pendingMappings}
           />
           {!flowInitialization.mode &&
           flowInitialization.stage === "REVIEW_READY" ? (
@@ -8659,49 +8847,6 @@ export function InstrumentationPage() {
               </div>
             </section>
           ) : null}
-          {flowInitialization.stage === "SCANNING"
-            ? (() => {
-                // Naming the stage is the difference between waiting and
-                // wondering whether it has hung — analysing a large project runs
-                // for minutes, and the upload consent prompt sits in the middle
-                // of it. A run that died has to say so and offer a way back,
-                // rather than leaving this banner up forever.
-                const mappingProgress = (flowInitialization as any).scan
-                  ?.mappingProgress as
-                  | { status?: string; message?: string | null }
-                  | undefined;
-                const failed = mappingProgress?.status === "FAILED";
-                return (
-                  <div
-                    className="context-banner mt-4!"
-                    role={failed ? "alert" : undefined}
-                  >
-                    {failed ? (
-                      <AlertTriangle size={15} />
-                    ) : (
-                      <Activity size={15} />
-                    )}
-                    {mappingProgress?.message ||
-                      FLOW_PROGRESS_LABEL[String(mappingProgress?.status ?? "")] ||
-                      "Tellann is reviewing your code for this Flow…"}
-                    {failed && initializationId ? (
-                      <button
-                        className="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void analyzeFlowInitialization(initializationId).then(
-                            refreshFlowInitialization,
-                          )
-                        }
-                      >
-                        <RefreshCw size={15} />
-                        Try again
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })()
-            : null}
           {flowAutomated &&
           instrumentationPurpose === "FLOW" &&
           flowInitialization.stage !== "COMPLETED" ? (

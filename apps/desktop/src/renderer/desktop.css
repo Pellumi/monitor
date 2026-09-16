@@ -740,6 +740,147 @@ button:disabled {
   margin: 10px 0 0;
 }
 
+/* ── Flow mapping progress ─────────────────────────────────────────────── */
+
+/* Each step takes real time, so the list is the explanation: what is happening
+   now, what is already behind it, and what is still to come. */
+.flow-stage-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.flow-stage {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  padding: 0 0 14px;
+  position: relative;
+}
+/* The connector reaches the next marker, and stops at the last one. */
+.flow-stage:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  bottom: 2px;
+  left: 8px;
+  width: 1px;
+  background: var(--border);
+}
+.flow-stage[data-state="done"]:not(:last-child)::before {
+  background: var(--success);
+}
+.flow-stage strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+.flow-stage p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.flow-stage[data-state="pending"] strong,
+.flow-stage[data-state="pending"] p {
+  color: var(--text-subtle);
+}
+/* Work already behind us recedes, so the step actually running is the one the
+   eye lands on. A finished step is still legible, just no longer the subject. */
+.flow-stage[data-state="done"] strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.flow-stage[data-state="done"] p {
+  color: var(--text-subtle);
+}
+.flow-stage[data-state="current"] strong {
+  color: var(--text-strong);
+}
+.flow-stage[data-state="current"] p {
+  color: var(--text);
+}
+
+.flow-stage-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-1);
+  color: var(--on-accent);
+}
+.flow-stage[data-state="done"] .flow-stage-marker {
+  border-color: transparent;
+  background: var(--success);
+  color: #000;
+}
+.flow-stage[data-state="current"] .flow-stage-marker {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: flow-stage-pulse 1.6s var(--ease) infinite;
+}
+.flow-stage[data-state="current"] .flow-stage-marker::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@keyframes flow-stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 4px var(--accent-soft); }
+}
+
+/* A hint of the rows that are coming, so the card reads as filling in rather
+   than as a page that failed to render anything. */
+.flow-skeleton {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.flow-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--surface-3);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+.flow-skeleton-bar {
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 300% 100%;
+  animation: flow-skeleton-shimmer 1.8s linear infinite;
+}
+.flow-skeleton-bar[data-width="title"] { width: 42%; }
+.flow-skeleton-bar[data-width="location"] { width: 68%; height: 8px; }
+.flow-skeleton-row:nth-child(2) .flow-skeleton-bar[data-width="title"] { width: 33%; }
+.flow-skeleton-row:nth-child(3) .flow-skeleton-bar[data-width="title"] { width: 50%; }
+.flow-skeleton-row:nth-child(3) .flow-skeleton-bar[data-width="location"] { width: 55%; }
+@keyframes flow-skeleton-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -150% 0; }
+}
+
+/* Motion here is decoration; the stage list already says everything. */
+@media (prefers-reduced-motion: reduce) {
+  .flow-stage[data-state="current"] .flow-stage-marker,
+  .flow-skeleton-bar {
+    animation: none;
+  }
+}
+
 /* ── Evidence-grounded Flow mapping review ─────────────────────────────── */
 
 /* A quieter button for the two navigational actions inside a mapping row, so
