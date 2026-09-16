@@ -10,11 +10,11 @@ import { compileFlowRuleset } from './compiler';
 import { runReconciliation } from './reconciliation';
 import { generateAiFlowDraft, generateFlowSuggestions } from '@tellann/ai';
 import { validateGeneratedGraph } from '@tellann/graph-validation';
-import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet, getDomainTemplate, type DomainTemplate } from '@tellann/rules';
+import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet, getDomainTemplate } from '@tellann/rules';
 import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { createConnectivityRepairTransitions, createFlowDiagrams, validateFlow } from './flow-domain';
+import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow } from './flow-domain';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
@@ -854,35 +854,6 @@ async function publishCanonicalFlow(applicationId: string, flowId: string, publi
 
   await compileFlowRuleset(applicationId, flow.id, flow.version);
   return { status: 200 as const, body: { flowId: flow.id, version, validation, diagrams } };
-}
-
-/**
- * Resolve the states of a domain template to the role/terminalKind shape the
- * Flow model stores. Templates that do not annotate roles fall back to graph
- * shape: the first state nothing points at is the entry, every leaf is an exit.
- * Without this a seeded Flow would fail validateFlow at publish time.
- */
-function templateSeedStates(template: DomainTemplate) {
-  const hasIncoming = new Set(template.transitions.map((transition) => transition.to));
-  const hasOutgoing = new Set(template.transitions.map((transition) => transition.from));
-  const annotated = template.states.some((state) => state.role);
-  let initialTaken = template.states.some((state) => state.role === 'INITIAL');
-  return template.states.map((state) => {
-    let role = state.role ?? 'NORMAL';
-    let terminalKind = state.terminalKind ?? null;
-    if (!annotated) {
-      if (!initialTaken && !hasIncoming.has(state.name)) {
-        role = 'INITIAL';
-        initialTaken = true;
-      } else if (!hasOutgoing.has(state.name)) {
-        role = 'TERMINAL';
-        terminalKind = 'SUCCESS';
-      }
-    }
-    if (role === 'TERMINAL' && !terminalKind) terminalKind = 'SUCCESS';
-    if (role !== 'TERMINAL') terminalKind = null;
-    return { name: state.name.toUpperCase().trim(), category: state.category, role, terminalKind };
-  });
 }
 
 // Canonical Flow API. The older /declared-flow family remains available as a compatibility alias.
