@@ -546,6 +546,14 @@ export function createFlowLifecycleRouter(input: {
       manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
       failureReasonSafe: (enriched.report.summary as any).unresolvedCount ? `${(enriched.report.summary as any).unresolvedCount} checkpoint mappings need review` : null,
     } });
+    // The scan is the record of where this mapping run stands, and confirming a
+    // location moves it. Leaving it behind would make anything that reads scan
+    // state — the progress endpoint most of all — report a review as still
+    // needing attention after the user had already finished with it.
+    const progress = (enriched.report as any).progress;
+    await prisma.flowScan.update({ where: { id: initialization.scanId }, data: {
+      mappingStatus: progress.status, mappingProgress: progress,
+    } as any });
     return res.json(updated);
   });
 
