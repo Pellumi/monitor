@@ -55,7 +55,14 @@ async function seed() {
   const version = await prisma.behaviorGraphVersion.create({ data: {
     graphId: flow.id, version: 1, snapshot: snapshotJson as never, lifecycleStatus: 'PUBLISHED',
   } });
-  return { suffix, user, organization, application, environment, workspace, snapshot, flow, version };
+  // Initialization is only offered for a published Flow pointing at a published
+  // version, which is the same precondition the desktop enforces before it
+  // shows the button at all.
+  const published = await prisma.behaviorGraph.update({
+    where: { id: flow.id },
+    data: { lifecycleStatus: 'PUBLISHED', publishedVersionId: version.id },
+  });
+  return { suffix, user, organization, application, environment, workspace, snapshot, flow: published, version };
 }
 
 async function cleanup(value: Seed) {
