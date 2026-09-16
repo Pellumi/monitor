@@ -8638,20 +8638,49 @@ export function InstrumentationPage() {
               </div>
             </section>
           ) : null}
-          {flowInitialization.stage === "SCANNING" ? (
-            <div className="context-banner mt-4!">
-              <Activity size={15} />
-              {/* Naming the stage is the difference between waiting and
-                  wondering whether it has hung — analysis of a large project
-                  runs for minutes. */}
-              {FLOW_PROGRESS_LABEL[
-                String(
-                  (flowInitialization as any).scan?.mappingProgress?.status ??
-                    "",
-                )
-              ] ?? "Tellann is reviewing your code for this Flow…"}
-            </div>
-          ) : null}
+          {flowInitialization.stage === "SCANNING"
+            ? (() => {
+                // Naming the stage is the difference between waiting and
+                // wondering whether it has hung — analysing a large project runs
+                // for minutes, and the upload consent prompt sits in the middle
+                // of it. A run that died has to say so and offer a way back,
+                // rather than leaving this banner up forever.
+                const mappingProgress = (flowInitialization as any).scan
+                  ?.mappingProgress as
+                  | { status?: string; message?: string | null }
+                  | undefined;
+                const failed = mappingProgress?.status === "FAILED";
+                return (
+                  <div
+                    className="context-banner mt-4!"
+                    role={failed ? "alert" : undefined}
+                  >
+                    {failed ? (
+                      <AlertTriangle size={15} />
+                    ) : (
+                      <Activity size={15} />
+                    )}
+                    {mappingProgress?.message ||
+                      FLOW_PROGRESS_LABEL[String(mappingProgress?.status ?? "")] ||
+                      "Tellann is reviewing your code for this Flow…"}
+                    {failed && initializationId ? (
+                      <button
+                        className="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void analyzeFlowInitialization(initializationId).then(
+                            refreshFlowInitialization,
+                          )
+                        }
+                      >
+                        <RefreshCw size={15} />
+                        Try again
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })()
+            : null}
           {flowAutomated &&
           instrumentationPurpose === "FLOW" &&
           flowInitialization.stage !== "COMPLETED" ? (

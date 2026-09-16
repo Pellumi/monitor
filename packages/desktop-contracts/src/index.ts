@@ -184,6 +184,12 @@ export const RepositorySnapshotSummarySchema = z.object({
   dirty: z.boolean(),
   repositoryFingerprint: z.string().min(32),
   portableManifestIdentity: z.string().min(32).nullable().optional(),
+  /**
+   * Identity of the working tree as it stands, uncommitted edits included.
+   * Optional so a snapshot taken by an older scanner still parses; callers treat
+   * its absence as "unknown", not as "unchanged".
+   */
+  workingTreeHash: z.string().optional(),
   repositoryOriginHash: z.string().min(32).nullable().optional(),
   repositoryCloneUrl: z.string().url().nullable().optional(),
   upstreamBranch: z.string().nullable().optional(),

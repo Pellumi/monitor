@@ -635,6 +635,15 @@ type CodebaseAnalysisState = {
   workspaceRoot: string;
   workspaceId: string;
   repositoryFingerprint: string;
+  /**
+   * The working tree this analysis describes, uncommitted edits included.
+   *
+   * `repositoryFingerprint` folds in the revision, so at a single commit it is
+   * the same value for every possible set of local edits. Without this, the only
+   * safe rule was "a dirty checkout is never current" — which meant anyone with
+   * uncommitted work re-analysed, and re-consented, on every single Flow.
+   */
+  workingTreeHash: string | null;
   updatedAt: string;
   /** Present for local analyses; a cloud analysis is fetched from the API. */
   analysis: CodebaseAnalysis | null;
@@ -778,6 +787,7 @@ function beginLocalCodebaseAnalysis(
     workspaceRoot: root,
     workspaceId: snapshot.workspaceId,
     repositoryFingerprint: snapshot.repositoryFingerprint,
+    workingTreeHash: snapshot.workingTreeHash ?? null,
     updatedAt: new Date().toISOString(),
     analysis: pendingAnalysis(snapshot, 'Queued for local analysis'),
     uploadProgress: null,
@@ -1075,20 +1085,55 @@ async function waitForCodebaseAnalysis(applicationId: string, timeoutMs = 10 * 6
   throw new Error('FLOW_CODEBASE_ANALYSIS_TIMEOUT');
 }
 
+/**
+ * The analysis already on disk, if it describes the tree that is there now.
+ *
+ * Deliberately side-effect free: the caller decides whether a miss is worth
+ * starting an upload and a consent prompt for. Separating the question from the
+ * action is what lets Flow initialization create its record first and do the
+ * expensive part in the background.
+ */
+function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysisState | null {
+  const workspace = selectedWorkspaces.get(applicationId);
+  if (!workspace?.cloudId || !workspace.snapshotId) return null;
+  const state = readAnalysisState(applicationId);
+  const analysis = state?.analysis;
+  const sameWorkingTree = workspace.snapshot.workingTreeHash
+    ? state?.workingTreeHash === workspace.snapshot.workingTreeHash
+    : !workspace.snapshot.dirty && analysis?.dirty === false;
+  const current = Boolean(
+    analysis && ['COMPLETED', 'PARTIAL'].includes(analysis.status)
+    && analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
+    && analysis.revision === workspace.snapshot.revision
+    && analysis.branch === workspace.snapshot.branch
+    && sameWorkingTree,
+  );
+  return current && state ? state : null;
+}
+
 async function currentFlowCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisState> {
   const workspace = selectedWorkspaces.get(applicationId);
   if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
   let state = readAnalysisState(applicationId);
   const analysis = state?.analysis;
-  const cleanAndCurrent = Boolean(
+  // An analysis is current when it describes the tree that is on disk now. A
+  // dirty checkout is allowed to be current, as long as it is the *same* dirty
+  // checkout: requiring a clean tree meant anyone mid-change re-analysed and
+  // re-consented on every Flow, which is the opposite of "stale results are
+  // never used with only a warning" — it just made the guard fire constantly.
+  // Snapshots from a scanner that predates the working-tree hash keep the old
+  // conservative rule, because for those the tree genuinely is unknown.
+  const sameWorkingTree = workspace.snapshot.workingTreeHash
+    ? state?.workingTreeHash === workspace.snapshot.workingTreeHash
+    : !workspace.snapshot.dirty && analysis?.dirty === false;
+  const current = Boolean(
     analysis && ['COMPLETED', 'PARTIAL'].includes(analysis.status)
     && analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
     && analysis.revision === workspace.snapshot.revision
     && analysis.branch === workspace.snapshot.branch
-    && analysis.dirty === workspace.snapshot.dirty
-    && !workspace.snapshot.dirty,
+    && sameWorkingTree,
   );
-  if (cleanAndCurrent && state) return state;
+  if (current && state) return state;
 
   if (state?.mode === 'cloud') {
     await beginCodebaseAnalysisWithConsent(applicationId, workspace.root, workspace.snapshot, {
@@ -1171,6 +1216,36 @@ function reportFlowMappingProgress(
   }).catch(() => undefined);
 }
 
+/**
+ * Run mapping for an initialization that already exists, without blocking the
+ * caller on it.
+ *
+ * Every failure has to land somewhere the user can see, because nobody is
+ * awaiting this promise. Progress — including the failure — is reported against
+ * the initialization the window is polling, so a run that dies still changes
+ * what the page says instead of leaving a banner spinning forever.
+ */
+function beginFlowMappingInBackground(applicationId: string, initialization: Record<string, any>): void {
+  const initializationId = String(initialization.id ?? '');
+  if (!initializationId) return;
+  void submitCurrentFlowMappings(applicationId, initialization).catch((error) => {
+    const code = error instanceof Error ? error.message : 'FLOW_MAPPING_FAILED';
+    console.warn('[flow-mapping] mapping run failed', code);
+    const checkpointCount = Array.isArray(initialization.manifest?.checkpoints) ? initialization.manifest.checkpoints.length : 0;
+    reportFlowMappingProgress(initializationId, 'FAILED', checkpointCount, flowMappingFailureMessage(code));
+  });
+}
+
+/** Say what went wrong in the user's terms; the raw code goes to the log only. */
+function flowMappingFailureMessage(code: string): string {
+  if (code.includes('FLOW_WORKSPACE_SCAN_REQUIRED')) return 'Attach a project folder before mapping this Flow.';
+  if (code.includes('FLOW_CODEBASE_ANALYSIS_TIMEOUT')) return 'Analysing your code took too long. Try again.';
+  if (code.includes('FLOW_CODEBASE_ANALYSIS_FAILED')) return 'Your code could not be analysed. Try re-scanning the folder.';
+  if (code.includes('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED')) return 'Your code changed while it was being analysed. Try again.';
+  if (code.includes('FLOW_CODE_MAPPING_V2_DISABLED')) return 'Evidence-grounded mapping is turned off on this server.';
+  return 'Mapping could not be completed. Try again.';
+}
+
 async function submitCurrentFlowMappings(applicationId: string, initialization: Record<string, any>) {
   const workspace = selectedWorkspaces.get(applicationId);
   if (!workspace?.root) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
@@ -1248,6 +1323,7 @@ async function beginCloudCodebaseAnalysis(
       workspaceRoot: selectedPath,
       workspaceId: registered.workspaceId,
       repositoryFingerprint: snapshot.repositoryFingerprint,
+      workingTreeHash: snapshot.workingTreeHash ?? null,
       updatedAt: new Date().toISOString(),
       analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
       uploadProgress: { sent: 0, total: 1 },
@@ -1282,6 +1358,7 @@ async function beginCloudCodebaseAnalysis(
       workspaceRoot: selectedPath,
       workspaceId: registered.workspaceId,
       repositoryFingerprint: snapshot.repositoryFingerprint,
+      workingTreeHash: snapshot.workingTreeHash ?? null,
       updatedAt: new Date().toISOString(),
       analysis: state?.analysis ?? pendingAnalysis(snapshot, 'Queued for analysis'),
       uploadProgress: null,
@@ -1805,27 +1882,37 @@ function registerIpc(): void {
     if (typeof value.flowId !== 'string' || typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string' || typeof value.flowVersionId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_REQUEST');
     const workspace = selectedWorkspaces.get(value.applicationId);
     if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
-    // Establish freshness before creating a scan tied to this repository snapshot,
-    // and tell the server which analysed tree this initialization describes. The
-    // server records it, keys idempotency on it, and — because it knows an
-    // evidence-grounded bundle is coming — does not publish the filename-matched
-    // fallback as if it were the finished review.
-    const analysisState = await currentFlowCodebaseAnalysis(value.applicationId);
-    const analysis = analysisState.analysis!;
+    // Create the record before doing any of the expensive work.
+    //
+    // Analysing a repository can take minutes, and asking for upload consent
+    // sits in the middle of it. Doing that before the initialization exists left
+    // the user on a page with nothing to look at and no id to poll — the click
+    // appeared to do nothing at all. The record is created first so the window
+    // can navigate to it immediately; mapping then runs behind it and reports
+    // each stage against the id the UI is already watching.
+    const analysisState = readCurrentFlowCodebaseAnalysis(value.applicationId);
+    const analysis = analysisState?.analysis ?? null;
     const created = await cloud.initializeFlow(value.flowId, {
       flowVersionId: value.flowVersionId,
       workspaceId: workspace.cloudId,
       repositorySnapshotId: workspace.snapshotId,
       environmentId: value.environmentId,
       instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
-      codebaseAnalysis: {
-        id: analysis.id, graphVersion: analysis.graphVersion, contentHash: analysis.contentHash,
-        revision: analysis.revision, branch: analysis.branch, dirty: analysis.dirty,
-      },
+      ...(analysis ? {
+        codebaseAnalysis: {
+          id: analysis.id, graphVersion: analysis.graphVersion, contentHash: analysis.contentHash,
+          revision: analysis.revision, branch: analysis.branch, dirty: analysis.dirty,
+        },
+      } : {
+        // No current analysis yet, but one is being produced right now. The
+        // server must not publish the filename-matched fallback as a finished
+        // review in the meantime.
+        awaitingAnalysis: true,
+      }),
     });
     const initialization = (created.initialization ?? created) as Record<string, any>;
-    const mapped = await submitCurrentFlowMappings(value.applicationId, initialization);
-    return { ...created, initialization: mapped, codeReviewReport: mapped.codeReviewReport };
+    beginFlowMappingInBackground(value.applicationId, initialization);
+    return created;
   });
   ipcMain.handle(IPC.getFlowInitialization, async (event, initializationId: unknown) => {
     assertTrustedSender(event);
@@ -1838,7 +1925,10 @@ function registerIpc(): void {
     const base = await cloud.analyzeFlowInitialization(initializationId);
     const applicationId = String(base.applicationId ?? '');
     if (!applicationId) throw new Error('FLOW_INITIALIZATION_APPLICATION_REQUIRED');
-    return submitCurrentFlowMappings(applicationId, base as Record<string, any>);
+    // Same reasoning as the first run: hand the reset record back now and let
+    // the window watch the stages, rather than holding the click open.
+    beginFlowMappingInBackground(applicationId, base as Record<string, any>);
+    return base;
   });
   ipcMain.handle(IPC.confirmFlowMapping, async (event, input: unknown) => {
     assertTrustedSender(event);

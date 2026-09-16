@@ -52,3 +52,42 @@ test('uses a portable fingerprint and exposes only a credential-free GitHub clon
   assert.equal(firstSnapshot.repositoryCloneUrl, 'https://github.com/tellann/monitor.git');
   assert.equal(firstSnapshot.repositoryCloneUrl?.includes('secret-token'), false);
 });
+
+test('a dirty checkout still has a stable identity that changes when the tree does', () => {
+  // Without this, a checkout with uncommitted work could never be recognised as
+  // the one that was already analysed: repositoryFingerprint folds in the
+  // revision, so it is identical for every possible set of local edits at a
+  // commit. Anything relying on it had to re-analyse — and re-ask for upload
+  // consent — on every single run.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-dirty-scan-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'] });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'dirty', dependencies: { react: '^19.0.0' } }));
+  fs.writeFileSync(path.join(root, 'app.js'), 'export const a = 1;\n');
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const options = { workspaceId: '00000000-0000-4000-8000-000000000009' };
+  const clean = scanWorkspace(root, options);
+  assert.equal(clean.dirty, false);
+  assert.equal(typeof clean.workingTreeHash, 'string');
+  assert.equal(scanWorkspace(root, options).workingTreeHash, clean.workingTreeHash, 'an unchanged tree is stable');
+
+  // An uncommitted edit is a different tree...
+  fs.writeFileSync(path.join(root, 'app.js'), 'export const a = 2;\n');
+  const dirty = scanWorkspace(root, options);
+  assert.equal(dirty.dirty, true);
+  assert.notEqual(dirty.workingTreeHash, clean.workingTreeHash);
+  assert.equal(dirty.repositoryFingerprint, clean.repositoryFingerprint, 'the commit-level fingerprint cannot see this');
+
+  // ...but the *same* uncommitted edit is the same tree, which is what makes a
+  // dirty checkout usable without re-analysing it every time.
+  assert.equal(scanWorkspace(root, options).workingTreeHash, dirty.workingTreeHash);
+
+  // A new untracked file changes it too.
+  fs.writeFileSync(path.join(root, 'extra.js'), 'export const b = 3;\n');
+  assert.notEqual(scanWorkspace(root, options).workingTreeHash, dirty.workingTreeHash);
+});

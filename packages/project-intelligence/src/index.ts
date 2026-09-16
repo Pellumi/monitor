@@ -237,6 +237,31 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
 
   const divergence = divergenceFrom(resolvedRoot, options.upstreamBranch);
 
+  // What the working tree looks like right now, including edits that are not
+  // committed. `repositoryFingerprint` folds in the revision, so it cannot tell
+  // two different sets of uncommitted changes at the same commit apart — which
+  // meant anything downstream had to treat every dirty checkout as unknown, and
+  // a developer with uncommitted work could never have a current analysis. The
+  // porcelain status names every changed path; size and mtime catch a further
+  // edit to a path that was already dirty. It costs one stat per changed file.
+  const dirtyPaths = (status ?? '')
+    .split('\n')
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean)
+    .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry)
+    .map((entry) => entry.replace(/^"|"$/g, ''))
+    .sort();
+  const dirtyStamps = dirtyPaths.map((relative) => {
+    try {
+      const stats = fs.statSync(path.join(resolvedRoot, relative));
+      return `${relative}:${stats.size}:${Math.trunc(stats.mtimeMs)}`;
+    } catch {
+      // Deleted since `git status` ran, which is itself part of the state.
+      return `${relative}:missing`;
+    }
+  });
+  const workingTreeHash = hash(`${revision ?? ''}\0${portableManifestIdentity}\0${dirtyStamps.join('\n')}`);
+
   return {
     workspaceId: options.workspaceId,
     revision,
@@ -257,6 +282,7 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     endpoints: [...endpoints].sort().slice(0, 2_000),
     documentation: documentation.sort().slice(0, 2_000),
     manifestHashes,
+    workingTreeHash,
     scannerVersion: options.scannerVersion ?? '0.1.0',
     redactionSummary: { excludedFiles, suspectedSecrets },
     upstreamBranch: divergence.upstreamBranch,

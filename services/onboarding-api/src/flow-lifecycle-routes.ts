@@ -157,6 +157,10 @@ export function createFlowLifecycleRouter(input: {
         }
       : null;
     if (analysisIdentity && !analysisIdentity.id) return res.status(422).json({ error: 'CURRENT_CODEBASE_ANALYSIS_REQUIRED' });
+    // The desktop creates this record before it finishes analysing, so the user
+    // has something to watch. It says so here, and that promise is what stops
+    // the filename-matched fallback being published as the finished review.
+    const awaitingAnalysis = req.body?.awaitingAnalysis === true;
     // Idempotency spans the whole input to mapping, not just the snapshot row:
     // the same repository snapshot analysed again at a different content hash is
     // a different job and has to produce a new scan.
@@ -196,8 +200,8 @@ export function createFlowLifecycleRouter(input: {
       ...(analysisIdentity ? {
         analysisContentHash: analysisIdentity.contentHash, analysisGraphVersion: analysisIdentity.graphVersion,
         analysisRevision: analysisIdentity.revision, analysisBranch: analysisIdentity.branch, analysisDirty: analysisIdentity.dirty,
-        mappingStatus: 'WAITING_FOR_ANALYSIS',
       } : {}),
+      ...(analysisIdentity || awaitingAnalysis ? { mappingStatus: 'WAITING_FOR_ANALYSIS' } : {}),
     } as any });
     const roadmapRevision = (existing?.roadmapRevision ?? 0) + 1;
     const initialization = await prisma.flowInitialization.upsert({
@@ -209,7 +213,7 @@ export function createFlowLifecycleRouter(input: {
     // evidence-grounded bundle next. Enriching the filename-matched report here
     // would present that fallback as a finished review and race the real one, so
     // the legacy path only runs for callers that have no analysis to offer.
-    if (!analysisIdentity) {
+    if (!analysisIdentity && !awaitingAnalysis) {
       scheduleReportEnrichment(initialization.id, report, { repositorySnapshotId: repository.id, graphHash: manifest.graphHash });
     }
     await prisma.flowProjectBinding.update({ where: { id: binding.id }, data: { currentScanId: scan.id } });
