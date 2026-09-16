@@ -19,7 +19,6 @@ import {
   previewSanitizedSourceArchive,
   projectAnalysis,
   redactSecrets,
-  retrieveFlowCheckpointCandidates,
   scanWorkspace,
 } from '@tellann/project-intelligence';
 import { BrowserObserver, type GuidedRunState } from '@tellann/browser-observer';
@@ -987,46 +986,39 @@ type FlowMappingExcerpt = {
   redactions: number;
 };
 
-/** Never send a whole file because a candidate's range happened to be wide. */
-const FLOW_EXCERPT_MAX_LINES = 120;
-const FLOW_EXCERPT_MAX_CHARS = 12_000;
-
 /**
- * Read each candidate's own lines out of the attached folder, and redact them.
+ * Rank the Flow and read its candidates' lines in a worker.
  *
- * The analyser's stored evidence is a by-product of indexing — often a single
- * line, often absent — so resolving against it asked the model to pick an exact
- * insertion point from almost nothing. The candidate already carries the range
- * that matters, so read that range from the file the user actually has. Nothing
- * here leaves the device; consent is asked separately, with these in hand.
+ * Both halves are proportional to the size of the repository, and neither needs
+ * the main process. Running them there froze the window for long enough that
+ * Windows offered to close the app.
  */
-function extractFlowMappingExcerpts(
-  workspaceRoot: string,
-  mappings: Array<{ candidates?: Array<{ id?: string; path?: string; startLine?: number | null; endLine?: number | null; evidence?: Array<{ excerpt?: string | null }> }> }>,
-): Map<string, FlowMappingExcerpt> {
-  const byCandidate = new Map<string, FlowMappingExcerpt>();
-  for (const candidate of mappings.flatMap((mapping) => mapping.candidates ?? [])) {
-    if (!candidate.path || !candidate.id) continue;
-    let raw: string | null = null;
-    try {
-      const absolute = resolveWithinWorkspace(workspaceRoot, candidate.path);
-      const lines = readFileSync(absolute, 'utf8').replaceAll('\r\n', '\n').split('\n');
-      const start = Math.max(1, candidate.startLine ?? 1);
-      const end = Math.min(lines.length, Math.max(start, candidate.endLine ?? start), start + FLOW_EXCERPT_MAX_LINES - 1);
-      raw = lines.slice(start - 1, end).join('\n');
-    } catch {
-      // A file that moved since analysis still has whatever the graph captured.
-      raw = candidate.evidence?.find((item) => item.excerpt)?.excerpt ?? null;
-    }
-    if (!raw?.trim()) continue;
-    const redacted = redactSecrets(raw.slice(0, FLOW_EXCERPT_MAX_CHARS));
-    byCandidate.set(String(candidate.id), {
-      candidateId: String(candidate.id), path: String(candidate.path),
-      startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
-      content: redacted.content, redactions: redacted.redactions,
+function runFlowMappingRetrieval(input: {
+  analysis: CodebaseAnalysis;
+  flow: unknown;
+  workspaceRoot: string;
+}): Promise<{ retrieval: any; excerpts: FlowMappingExcerpt[] }> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'flow-mapping-worker.js'), { workerData: input });
+    let settled = false;
+    const settle = (run: () => void) => {
+      if (settled) return;
+      settled = true;
+      void worker.terminate().catch(() => undefined);
+      run();
+    };
+    worker.on('message', (message: { type: string; retrieval?: any; excerpts?: FlowMappingExcerpt[]; message?: string }) => {
+      if (message.type === 'complete') {
+        settle(() => resolve({ retrieval: message.retrieval, excerpts: message.excerpts ?? [] }));
+        return;
+      }
+      settle(() => reject(new Error(message.message ?? 'FLOW_MAPPING_RETRIEVAL_FAILED')));
     });
-  }
-  return byCandidate;
+    worker.on('error', (error) => settle(() => reject(error)));
+    worker.on('exit', (code) => {
+      if (code !== 0) settle(() => reject(new Error(`FLOW_MAPPING_RETRIEVAL_FAILED:${code}`)));
+    });
+  });
 }
 
 async function requestFlowMappingAiConsent(
@@ -1275,9 +1267,13 @@ async function runFlowMappingSubmission(
   // Enrichment only: a Flow that cannot be fetched still maps, just with less
   // context, so this must never be the thing that fails initialization.
   const detail = await cloud.declaredFlow(applicationId, String(initialization.flowId)).catch(() => null);
-  const retrieval = retrieveFlowCheckpointCandidates(state.analysis!, flowInputFromInitialization(initialization, detail));
+  const { retrieval, excerpts: extracted } = await runFlowMappingRetrieval({
+    analysis: state.analysis!,
+    flow: flowInputFromInitialization(initialization, detail),
+    workspaceRoot,
+  });
   progress('CONTEXTUALIZING', 'Reading the shortlisted files');
-  const excerpts = extractFlowMappingExcerpts(workspaceRoot, retrieval.mappings as any);
+  const excerpts = new Map(extracted.map((item) => [item.candidateId, item]));
   let consentMode = state.mode === 'cloud' ? 'CLOUD_APPROVED' : 'LOCAL_GRAPH_ONLY';
   if (state.mode === 'local') {
     // Asking is only meaningful when there is something to send. With nothing
@@ -1288,9 +1284,9 @@ async function runFlowMappingSubmission(
     consentMode = consented ? 'LOCAL_EXCERPTS_APPROVED' : 'LOCAL_GRAPH_ONLY';
   }
   const shareExcerpts = consentMode.endsWith('APPROVED');
-  const mappings = retrieval.mappings.map((mapping) => ({
+  const mappings = retrieval.mappings.map((mapping: any) => ({
     ...mapping,
-    candidates: mapping.candidates.map((candidate) => ({
+    candidates: mapping.candidates.map((candidate: any) => ({
       ...candidate,
       file: candidate.path,
       excerpt: shareExcerpts ? (excerpts.get(candidate.id)?.content ?? null) : null,

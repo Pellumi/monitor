@@ -243,11 +243,22 @@ function documentForEntity(entity: CodeEntity): string {
   ].filter((item): item is string => Boolean(item)).join(' ');
 }
 
-function overlapScore(queryTerms: string[], document: string): number {
+/**
+ * How much of a checkpoint's language a document contains.
+ *
+ * Takes an already-tokenized document because tokenizing is the expensive part
+ * and every document is compared against every checkpoint: doing it here would
+ * re-split the same text once per checkpoint per comparison.
+ */
+function overlapScore(queryTerms: string[], documentTerms: Set<string>): number {
   if (!queryTerms.length) return 0;
-  const documentTerms = new Set(semanticTerms([document]));
-  const matched = queryTerms.filter((term) => documentTerms.has(term)).length;
+  let matched = 0;
+  for (const term of queryTerms) if (documentTerms.has(term)) matched += 1;
   return matched / Math.min(Math.max(queryTerms.length, 1), 6);
+}
+
+function termSet(value: string): Set<string> {
+  return new Set(semanticTerms([value]));
 }
 
 function entityTypeScore(query: FlowMappingQuery, type: CodeEntity['type']): number {
@@ -325,20 +336,104 @@ function round(value: number): number {
   return Math.round(Math.max(0, Math.min(value, 1)) * 10_000) / 10_000;
 }
 
+/**
+ * Everything about the analysis that does not depend on which checkpoint is
+ * being matched, computed once.
+ *
+ * Ranking compares every checkpoint against every entity, and the original
+ * shape of this code re-derived per comparison what is actually a property of
+ * the codebase: each entity's tokens, the relationships touching it, the
+ * features claiming it. That made the work checkpoints x entities x
+ * relationships, with a full re-tokenization at the innermost step — fine for a
+ * three-state fixture, and minutes of a blocked process for a real repository
+ * with fifty checkpoints. Hoisting it here leaves the scoring identical and the
+ * cost proportional to the graph rather than to its square.
+ */
+type RetrievalIndex = {
+  byId: Map<string, CodeEntity>;
+  entityTerms: Map<string, Set<string>>;
+  entityDirectTerms: Map<string, Set<string>>;
+  relationships: Map<string, CodeRelationship[]>;
+  features: Map<string, CodebaseAnalysis['features']>;
+  featureTerms: Map<string, Set<string>>;
+  evidenceTerms: Map<string, Array<{ terms: Set<string>; confidence: number }>>;
+  location: Map<string, { path: string; startLine: number | null; endLine: number | null; symbol: string | null }>;
+};
+
+function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
+  const byId = new Map(analysis.entities.map((entity) => [entity.id, entity]));
+  const byPath = new Map<string, CodeEntity[]>();
+  for (const entity of analysis.entities) {
+    if (!entity.path) continue;
+    const existing = byPath.get(entity.path);
+    if (existing) existing.push(entity);
+    else byPath.set(entity.path, [entity]);
+  }
+
+  const entityTerms = new Map<string, Set<string>>();
+  const entityDirectTerms = new Map<string, Set<string>>();
+  const evidenceTerms = new Map<string, Array<{ terms: Set<string>; confidence: number }>>();
+  const location = new Map<string, { path: string; startLine: number | null; endLine: number | null; symbol: string | null }>();
+  for (const entity of analysis.entities) {
+    const document = documentForEntity(entity);
+    entityTerms.set(entity.id, termSet(document));
+    entityDirectTerms.set(entity.id, new Set(splitTerms(document)));
+    evidenceTerms.set(entity.id, entity.evidence.map((item) => ({
+      terms: termSet([item.symbol, item.path, item.excerpt].filter(Boolean).join(' ')),
+      confidence: item.confidence,
+    })));
+    const resolved = sourceLocation(entity, byPath);
+    if (resolved) location.set(entity.id, resolved);
+  }
+
+  const relationships = new Map<string, CodeRelationship[]>();
+  const attach = (id: string, relationship: CodeRelationship) => {
+    const existing = relationships.get(id);
+    if (existing) existing.push(relationship);
+    else relationships.set(id, [relationship]);
+  };
+  for (const relationship of analysis.relationships) {
+    attach(relationship.source, relationship);
+    if (relationship.target !== relationship.source) attach(relationship.target, relationship);
+  }
+
+  const features = new Map<string, CodebaseAnalysis['features']>();
+  const featureTerms = new Map<string, Set<string>>();
+  for (const feature of analysis.features) {
+    featureTerms.set(feature.id, termSet([
+      feature.name, feature.description, feature.domain, ...feature.triggers, ...feature.reads,
+      ...feature.writes, ...feature.externalServices, ...feature.emittedEvents,
+      ...feature.downstreamEffects, ...feature.workflow.map((step) => step.label),
+    ].join(' ')));
+    const claimed = new Set<string>([
+      ...feature.workflow.map((step) => step.entityId),
+      ...feature.entrypoints,
+    ]);
+    for (const sourceFile of feature.sourceFiles) {
+      for (const entity of byPath.get(sourceFile) ?? []) claimed.add(entity.id);
+    }
+    for (const entityId of claimed) {
+      const existing = features.get(entityId);
+      if (existing) existing.push(feature);
+      else features.set(entityId, [feature]);
+    }
+  }
+
+  return { byId, entityTerms, entityDirectTerms, relationships, features, featureTerms, evidenceTerms, location };
+}
+
 function relationshipContext(
-  analysis: CodebaseAnalysis,
+  index: RetrievalIndex,
   entity: CodeEntity,
   query: FlowMappingQuery,
-  byId: Map<string, CodeEntity>,
 ): { score: number; paths: FlowMappingRelationshipPath[] } {
   const paths: FlowMappingRelationshipPath[] = [];
   let score = 0;
-  for (const relationship of analysis.relationships) {
-    if (relationship.source !== entity.id && relationship.target !== entity.id) continue;
+  for (const relationship of index.relationships.get(entity.id) ?? []) {
     const neighborId = relationship.source === entity.id ? relationship.target : relationship.source;
-    const neighbor = byId.get(neighborId);
+    const neighbor = index.byId.get(neighborId);
     if (!neighbor) continue;
-    const neighborScore = overlapScore(query.contextTerms, documentForEntity(neighbor));
+    const neighborScore = overlapScore(query.contextTerms, index.entityTerms.get(neighborId)!);
     if (neighborScore <= 0) continue;
     const relationshipWeight = ['ROUTES_TO', 'CALLS', 'HANDLED_BY', 'IMPLEMENTS_FEATURE'].includes(relationship.type) ? 1 : 0.7;
     // For a transition, the source of CALLS/ROUTES_TO is normally the action
@@ -359,19 +454,11 @@ function relationshipContext(
   return { score: round(score), paths: paths.slice(0, 6) };
 }
 
-function featureContext(analysis: CodebaseAnalysis, entity: CodeEntity, query: FlowMappingQuery) {
-  const matched = analysis.features.filter((feature) =>
-    feature.workflow.some((step) => step.entityId === entity.id)
-    || feature.entrypoints.includes(entity.id)
-    || (entity.path ? feature.sourceFiles.includes(entity.path) : false));
+function featureContext(index: RetrievalIndex, entity: CodeEntity, allQueryTerms: string[]) {
+  const matched = index.features.get(entity.id) ?? [];
   let score = 0;
   for (const feature of matched) {
-    const document = [
-      feature.name, feature.description, feature.domain, ...feature.triggers, ...feature.reads,
-      ...feature.writes, ...feature.externalServices, ...feature.emittedEvents,
-      ...feature.downstreamEffects, ...feature.workflow.map((step) => step.label),
-    ].join(' ');
-    score = Math.max(score, overlapScore([...query.terms, ...query.contextTerms], document) * feature.confidence);
+    score = Math.max(score, overlapScore(allQueryTerms, index.featureTerms.get(feature.id)!) * feature.confidence);
   }
   return {
     score: round(score),
@@ -381,24 +468,22 @@ function featureContext(analysis: CodebaseAnalysis, entity: CodeEntity, query: F
 }
 
 function candidateFor(
-  analysis: CodebaseAnalysis,
+  index: RetrievalIndex,
   entity: CodeEntity,
   query: FlowMappingQuery,
-  byId: Map<string, CodeEntity>,
-  byPath: Map<string, CodeEntity[]>,
+  actionVerb: string | null,
+  allQueryTerms: string[],
 ): FlowMappingCandidate | null {
-  const location = sourceLocation(entity, byPath);
+  const location = index.location.get(entity.id);
   if (!location) return null;
-  const document = documentForEntity(entity);
-  const actionVerb = query.kind === 'TRANSITION' ? splitTerms(query.name)[0] : null;
-  const directEntityTerms = new Set(splitTerms(document));
-  const lexical = Math.min(1, overlapScore(query.terms, document)
-    + (actionVerb && directEntityTerms.has(actionVerb) ? 0.25 : 0));
-  const context = overlapScore(query.contextTerms, document);
-  const graph = relationshipContext(analysis, entity, query, byId);
-  const feature = featureContext(analysis, entity, query);
-  const evidence = Math.max(0, ...entity.evidence.map((item) =>
-    overlapScore([...query.terms, ...query.contextTerms], [item.symbol, item.path, item.excerpt].filter(Boolean).join(' ')) * item.confidence));
+  const documentTerms = index.entityTerms.get(entity.id)!;
+  const lexical = Math.min(1, overlapScore(query.terms, documentTerms)
+    + (actionVerb && index.entityDirectTerms.get(entity.id)!.has(actionVerb) ? 0.25 : 0));
+  const context = overlapScore(query.contextTerms, documentTerms);
+  const graph = relationshipContext(index, entity, query);
+  const feature = featureContext(index, entity, allQueryTerms);
+  const evidence = Math.max(0, ...(index.evidenceTerms.get(entity.id) ?? []).map((item) =>
+    overlapScore(allQueryTerms, item.terms) * item.confidence));
 
   // A candidate must contain direct intent language or be supported by graph/feature context.
   // Merely having the right entity type is deliberately insufficient.
@@ -475,18 +560,16 @@ function mappingStatus(candidates: FlowMappingCandidate[]): { status: FlowMappin
 export function retrieveFlowMappings(input: RetrieveFlowMappingsInput): FlowMappingRetrievalResult {
   const maxCandidates = Math.min(Math.max(input.maxCandidates ?? 8, 1), 8);
   const maxFiles = Math.min(Math.max(input.maxFiles ?? 5, 1), 5);
-  const byId = new Map(input.analysis.entities.map((entity) => [entity.id, entity]));
-  const byPath = new Map<string, CodeEntity[]>();
-  for (const entity of input.analysis.entities) {
-    if (!entity.path) continue;
-    const existing = byPath.get(entity.path);
-    if (existing) existing.push(entity);
-    else byPath.set(entity.path, [entity]);
-  }
+  const index = buildRetrievalIndex(input.analysis);
+  // Only entities with a source location can ever become a candidate, so the
+  // rest are dropped once rather than rejected once per checkpoint.
+  const locatable = input.analysis.entities.filter((entity) => index.location.has(entity.id));
   const mappings = buildFlowMappingQueries(input.flow).map((query): FlowCheckpointMapping => {
+    const actionVerb = query.kind === 'TRANSITION' ? splitTerms(query.name)[0] ?? null : null;
+    const allQueryTerms = [...query.terms, ...query.contextTerms];
     const candidates = boundedCandidates(
-      input.analysis.entities
-        .map((entity) => candidateFor(input.analysis, entity, query, byId, byPath))
+      locatable
+        .map((entity) => candidateFor(index, entity, query, actionVerb, allQueryTerms))
         .filter((candidate): candidate is FlowMappingCandidate => candidate !== null),
       maxCandidates,
       maxFiles,

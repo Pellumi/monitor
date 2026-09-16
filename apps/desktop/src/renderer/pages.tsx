@@ -6729,6 +6729,23 @@ function FlowReviewPanel({
   const report = initialization.codeReviewReport as any;
   if (!report) return <LoadingState />;
   if (report.version !== "2.0") {
+    // While mapping is still running, the only report on record is the
+    // filename-matched fallback. Showing its "0/22 states mapped" next to a
+    // banner saying the real analysis is in progress states a result that has
+    // not been reached yet — and 0/N is the exact thing evidence-grounded
+    // mapping exists to stop saying. The banner speaks for this state instead.
+    const mappingStatus = String(
+      (initialization as any).scan?.mappingStatus ?? "",
+    );
+    const mappingPending =
+      initialization.stage === "SCANNING" ||
+      [
+        "WAITING_FOR_ANALYSIS",
+        "RETRIEVING",
+        "CONTEXTUALIZING",
+        "RESOLVING",
+      ].includes(mappingStatus);
+    if (mappingPending) return null;
     return (
       <LegacyFlowReviewPanel
         initialization={initialization}

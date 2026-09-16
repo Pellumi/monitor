@@ -211,3 +211,53 @@ test('reports no candidates for a checkpoint whose language was not analysed', (
     assert.equal(mapping.status, 'UNRESOLVED');
   }
 });
+
+test('ranking a large flow against a large codebase stays proportional to the graph', () => {
+  // Ranking compares every checkpoint against every located entity. The first
+  // version re-derived each entity's tokens, its relationships and its features
+  // inside that comparison, which made the work checkpoints x entities x
+  // relationships: fine for the fixtures above, and minutes of a frozen desktop
+  // for a real repository with a few dozen checkpoints. The budget here is
+  // deliberately loose — it is guarding the shape of the work, not a stopwatch.
+  const VERBS = ['login', 'submit', 'verify', 'save', 'render', 'checkout'];
+  const entities = Array.from({ length: 1_500 }, (_, index) => entity({
+    id: `bulk-${index}`,
+    type: index % 3 === 0 ? 'ui_route' : index % 3 === 1 ? 'ui_action' : 'function',
+    name: `${VERBS[index % VERBS.length]}Handler${index}`,
+    path: `apps/web/src/area-${index % 100}/file-${index}.tsx`,
+    startLine: 1, endLine: 40,
+  }));
+  const relationships = Array.from({ length: 4_000 }, (_, index) => edge({
+    source: `bulk-${index % 1_500}`,
+    target: `bulk-${(index * 7 + 3) % 1_500}`,
+    type: (['CALLS', 'ROUTES_TO', 'IMPORTS'] as const)[index % 3],
+  }));
+  const features: CodebaseAnalysis['features'] = Array.from({ length: 30 }, (_, index) => ({
+    id: `bulk-feature-${index}`, name: `${VERBS[index % VERBS.length]} feature`, description: 'Generated',
+    domain: 'Identity', triggers: [], entrypoints: [`bulk-${index}`],
+    workflow: [{ entityId: `bulk-${index}`, label: 'Step' }],
+    reads: [], writes: [], externalServices: [], emittedEvents: [], downstreamEffects: [],
+    authorization: [], sourceFiles: [`apps/web/src/area-${index}/file-${index}.tsx`], confidence: 0.9, evidence: [],
+  }));
+
+  const wide = {
+    ...flow(),
+    states: Array.from({ length: 22 }, (_, index) => ({
+      id: `wide-s${index}`, stateName: `${VERBS[index % VERBS.length].toUpperCase()} PAGE ${index}`,
+      category: 'UI', provenance: 'USER' as const,
+      role: (index === 0 ? 'INITIAL' : index === 21 ? 'TERMINAL' : 'NORMAL') as 'INITIAL' | 'TERMINAL' | 'NORMAL',
+      terminalKind: index === 21 ? ('SUCCESS' as const) : null,
+    })),
+    transitions: Array.from({ length: 34 }, (_, index) => ({
+      id: `wide-t${index}`, fromStateId: `wide-s${index % 22}`, toStateId: `wide-s${(index + 1) % 22}`,
+      action: `${VERBS[index % VERBS.length].toUpperCase()}_CREDENTIALS`, condition: null, provenance: 'USER' as const,
+    })),
+  };
+
+  const started = Date.now();
+  const result = retrieveFlowMappings({ flow: wide as never, analysis: analysis(entities, relationships, features) });
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.mappings.length, 56, 'one mapping per declared checkpoint');
+  assert.ok(elapsed < 8_000, `retrieval took ${elapsed}ms for 56 checkpoints over 1500 entities`);
+});
