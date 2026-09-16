@@ -137,6 +137,10 @@ export type RetrieveFlowMappingsInput = {
   analysis: CodebaseAnalysis;
   maxCandidates?: number;
   maxFiles?: number;
+  /** A prebuilt index for this analysis, when the caller is holding one. */
+  index?: RetrievalIndex;
+  /** Called as each checkpoint is ranked, so a caller can report real progress. */
+  onProgress?: (completed: number, total: number, status: FlowMappingStatus) => void;
 };
 
 const STOP_WORDS = new Set([
@@ -349,7 +353,7 @@ function round(value: number): number {
  * with fifty checkpoints. Hoisting it here leaves the scoring identical and the
  * cost proportional to the graph rather than to its square.
  */
-type RetrievalIndex = {
+export type RetrievalIndex = {
   byId: Map<string, CodeEntity>;
   entityTerms: Map<string, Set<string>>;
   entityDirectTerms: Map<string, Set<string>>;
@@ -358,6 +362,14 @@ type RetrievalIndex = {
   featureTerms: Map<string, Set<string>>;
   evidenceTerms: Map<string, Array<{ terms: Set<string>; confidence: number }>>;
   location: Map<string, { path: string; startLine: number | null; endLine: number | null; symbol: string | null }>;
+  /** term -> every entity whose document contains it. */
+  postings: Map<string, string[]>;
+  /** term -> every feature whose description contains it. */
+  featurePostings: Map<string, string[]>;
+  /** feature -> every entity it claims. */
+  featureMembers: Map<string, string[]>;
+  /** Entities that can be a candidate at all, in stable order. */
+  locatable: CodeEntity[];
 };
 
 function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
@@ -399,6 +411,7 @@ function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
 
   const features = new Map<string, CodebaseAnalysis['features']>();
   const featureTerms = new Map<string, Set<string>>();
+  const featureMembers = new Map<string, string[]>();
   for (const feature of analysis.features) {
     featureTerms.set(feature.id, termSet([
       feature.name, feature.description, feature.domain, ...feature.triggers, ...feature.reads,
@@ -412,6 +425,7 @@ function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
     for (const sourceFile of feature.sourceFiles) {
       for (const entity of byPath.get(sourceFile) ?? []) claimed.add(entity.id);
     }
+    featureMembers.set(feature.id, [...claimed]);
     for (const entityId of claimed) {
       const existing = features.get(entityId);
       if (existing) existing.push(feature);
@@ -419,7 +433,104 @@ function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
     }
   }
 
-  return { byId, entityTerms, entityDirectTerms, relationships, features, featureTerms, evidenceTerms, location };
+  // The inverted lists. Scoring used to visit every entity for every checkpoint
+  // and discard almost all of them at the final rejection — the zeros cost the
+  // same as the matches, and on a real repository they are the overwhelming
+  // majority of the work. These make it possible to enumerate only the entities
+  // that can survive that rejection, without changing what the rejection is.
+  const postings = new Map<string, string[]>();
+  for (const [entityId, terms] of entityTerms) {
+    for (const term of terms) {
+      const existing = postings.get(term);
+      if (existing) existing.push(entityId);
+      else postings.set(term, [entityId]);
+    }
+  }
+  const featurePostings = new Map<string, string[]>();
+  for (const [featureId, terms] of featureTerms) {
+    for (const term of terms) {
+      const existing = featurePostings.get(term);
+      if (existing) existing.push(featureId);
+      else featurePostings.set(term, [featureId]);
+    }
+  }
+
+  return {
+    byId, entityTerms, entityDirectTerms, relationships, features, featureTerms, evidenceTerms, location,
+    postings, featurePostings, featureMembers,
+    locatable: analysis.entities.filter((entity) => location.has(entity.id)),
+  };
+}
+
+/**
+ * The index for this analysis, built at most once.
+ *
+ * Tokenizing every entity's document is the expensive half of retrieval and is a
+ * property of the analysed tree, not of the Flow being mapped — so initializing
+ * a second Flow against the same analysis used to pay for it again, at full
+ * price.
+ *
+ * Keyed on the analysis object rather than on `analysis.id`. An id is a claim
+ * about content that this module cannot check, and an index handed back for a
+ * graph it was not built from is not a slow answer but a wrong one. Identity is
+ * free to verify and cannot be wrong; a caller that wants the saving keeps the
+ * analysis it is mapping against, which is what holding it in a worker does.
+ */
+const indexByAnalysis = new WeakMap<CodebaseAnalysis, RetrievalIndex>();
+
+export function flowRetrievalIndexFor(analysis: CodebaseAnalysis): RetrievalIndex {
+  const existing = indexByAnalysis.get(analysis);
+  if (existing) return existing;
+  const index = buildRetrievalIndex(analysis);
+  indexByAnalysis.set(analysis, index);
+  return index;
+}
+
+/**
+ * Every entity that could survive scoring for this checkpoint.
+ *
+ * Mirrors the rejection in `candidateFor` exactly, one clause at a time: an
+ * entity is kept when its own document shares a term with the query (lexical or
+ * context), when it neighbours something whose document shares a context term
+ * (graph), or when a feature that shares a query term claims it (feature). An
+ * entity outside all three scores zero on all four axes and is rejected, so
+ * leaving it out changes nothing about the result — only about how long it takes
+ * to reach.
+ */
+function reachableCandidates(index: RetrievalIndex, query: FlowMappingQuery, allQueryTerms: string[]): CodeEntity[] {
+  const keep = new Set<string>();
+  for (const term of allQueryTerms) {
+    for (const entityId of index.postings.get(term) ?? []) {
+      if (index.location.has(entityId)) keep.add(entityId);
+    }
+  }
+
+  // A graph score needs a *neighbour* whose document matches the context, and
+  // that neighbour need not be placeable itself.
+  const contextMatches = new Set<string>();
+  for (const term of query.contextTerms) {
+    for (const entityId of index.postings.get(term) ?? []) contextMatches.add(entityId);
+  }
+  for (const entityId of contextMatches) {
+    for (const relationship of index.relationships.get(entityId) ?? []) {
+      const neighborId = relationship.source === entityId ? relationship.target : relationship.source;
+      if (index.location.has(neighborId)) keep.add(neighborId);
+    }
+  }
+
+  const matchedFeatures = new Set<string>();
+  for (const term of allQueryTerms) {
+    for (const featureId of index.featurePostings.get(term) ?? []) matchedFeatures.add(featureId);
+  }
+  for (const featureId of matchedFeatures) {
+    for (const entityId of index.featureMembers.get(featureId) ?? []) {
+      if (index.location.has(entityId)) keep.add(entityId);
+    }
+  }
+
+  // Returned in the analysis's own order so ranking ties break the same way they
+  // did when every entity was walked.
+  return index.locatable.filter((entity) => keep.has(entity.id));
 }
 
 function relationshipContext(
@@ -524,13 +635,49 @@ function candidateFor(
   };
 }
 
-function boundedCandidates(candidates: FlowMappingCandidate[], maxCandidates: number, maxFiles: number): FlowMappingCandidate[] {
-  const sorted = candidates.sort((left, right) =>
-    right.score - left.score
+function rankCandidates(left: FlowMappingCandidate, right: FlowMappingCandidate): number {
+  return right.score - left.score
     || right.confidence - left.confidence
     || left.path.localeCompare(right.path)
     || (left.startLine ?? Number.MAX_SAFE_INTEGER) - (right.startLine ?? Number.MAX_SAFE_INTEGER)
-    || left.entityId.localeCompare(right.entityId));
+    || left.entityId.localeCompare(right.entityId);
+}
+
+/**
+ * How deep a shortlist is kept before bounding.
+ *
+ * The final list is at most eight candidates across five files, but the file
+ * budget means the eighth can be some way down the ranking, so a plain top-eight
+ * would not always agree with sorting everything. This is far past the depth any
+ * file budget can reach and keeps the collector's cost constant in the number of
+ * scored entities rather than growing with it.
+ */
+const RANKED_BUFFER = 256;
+
+/** The best `limit` candidates, without sorting the whole list to find them. */
+function topRanked(limit: number): { offer(candidate: FlowMappingCandidate): void; take(): FlowMappingCandidate[] } {
+  const ranked: FlowMappingCandidate[] = [];
+  return {
+    offer(candidate) {
+      if (ranked.length >= limit && rankCandidates(candidate, ranked[ranked.length - 1]) >= 0) return;
+      // Insertion point by binary search: the buffer is bounded, so this is a
+      // fixed cost per candidate.
+      let low = 0;
+      let high = ranked.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (rankCandidates(candidate, ranked[middle]) < 0) high = middle;
+        else low = middle + 1;
+      }
+      ranked.splice(low, 0, candidate);
+      if (ranked.length > limit) ranked.pop();
+    },
+    take: () => ranked,
+  };
+}
+
+function boundedCandidates(candidates: FlowMappingCandidate[], maxCandidates: number, maxFiles: number): FlowMappingCandidate[] {
+  const sorted = candidates.sort(rankCandidates);
   const locations = new Set<string>();
   const files = new Set<string>();
   const bounded: FlowMappingCandidate[] = [];
@@ -560,21 +707,22 @@ function mappingStatus(candidates: FlowMappingCandidate[]): { status: FlowMappin
 export function retrieveFlowMappings(input: RetrieveFlowMappingsInput): FlowMappingRetrievalResult {
   const maxCandidates = Math.min(Math.max(input.maxCandidates ?? 8, 1), 8);
   const maxFiles = Math.min(Math.max(input.maxFiles ?? 5, 1), 5);
-  const index = buildRetrievalIndex(input.analysis);
-  // Only entities with a source location can ever become a candidate, so the
-  // rest are dropped once rather than rejected once per checkpoint.
-  const locatable = input.analysis.entities.filter((entity) => index.location.has(entity.id));
-  const mappings = buildFlowMappingQueries(input.flow).map((query): FlowCheckpointMapping => {
+  const index = input.index ?? flowRetrievalIndexFor(input.analysis);
+  const queries = buildFlowMappingQueries(input.flow);
+  const mappings = queries.map((query, position): FlowCheckpointMapping => {
     const actionVerb = query.kind === 'TRANSITION' ? splitTerms(query.name)[0] ?? null : null;
     const allQueryTerms = [...query.terms, ...query.contextTerms];
-    const candidates = boundedCandidates(
-      locatable
-        .map((entity) => candidateFor(index, entity, query, actionVerb, allQueryTerms))
-        .filter((candidate): candidate is FlowMappingCandidate => candidate !== null),
-      maxCandidates,
-      maxFiles,
-    );
+    const ranked = topRanked(RANKED_BUFFER);
+    for (const entity of reachableCandidates(index, query, allQueryTerms)) {
+      const candidate = candidateFor(index, entity, query, actionVerb, allQueryTerms);
+      if (candidate) ranked.offer(candidate);
+    }
+    const candidates = boundedCandidates(ranked.take(), maxCandidates, maxFiles);
     const outcome = mappingStatus(candidates);
+    // Reported per checkpoint rather than per run: mapping a large Flow takes
+    // long enough that a banner which never moves is indistinguishable from a
+    // hang, and only this loop knows how far along it is.
+    input.onProgress?.(position + 1, queries.length, outcome.status);
     return {
       checkpointId: query.checkpointId,
       kind: query.kind,
@@ -615,6 +763,7 @@ export function retrieveFlowMappings(input: RetrieveFlowMappingsInput): FlowMapp
 export function retrieveFlowCheckpointCandidates(
   analysis: CodebaseAnalysis,
   flow: FlowMappingFlowInput,
+  options: { index?: RetrievalIndex; onProgress?: RetrieveFlowMappingsInput['onProgress'] } = {},
 ): FlowMappingRetrievalResult {
-  return retrieveFlowMappings({ analysis, flow });
+  return retrieveFlowMappings({ analysis, flow, ...options });
 }

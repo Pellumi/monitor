@@ -261,3 +261,33 @@ test('ranking a large flow against a large codebase stays proportional to the gr
   assert.equal(result.mappings.length, 56, 'one mapping per declared checkpoint');
   assert.ok(elapsed < 8_000, `retrieval took ${elapsed}ms for 56 checkpoints over 1500 entities`);
 });
+
+test('reports progress per checkpoint and reuses a prebuilt index', () => {
+  const entities = [
+    entity({ id: 'login-route', type: 'ui_route', name: '/login', path: 'src/login.tsx', startLine: 1, endLine: 20 }),
+    entity({ id: 'submit-action', type: 'ui_action', name: 'submitCredentials', path: 'src/login.tsx', startLine: 22, endLine: 40 }),
+  ];
+  const graph = analysis(entities);
+
+  const seen: Array<[number, number]> = [];
+  const first = retrieveFlowMappings({
+    flow: flow() as never,
+    analysis: graph,
+    onProgress: (completed, total) => seen.push([completed, total]),
+  });
+
+  // The banner used to be driven by a hardcoded zero, so a run that was making
+  // steady progress was indistinguishable from one that had stopped.
+  assert.equal(seen.length, first.mappings.length);
+  assert.deepEqual(seen.at(0), [1, first.mappings.length]);
+  assert.deepEqual(seen.at(-1), [first.mappings.length, first.mappings.length]);
+
+  // The index is a property of the analysed tree, not of the Flow, so mapping a
+  // second Flow against the same analysis must not rebuild it — and must reach
+  // exactly the same conclusions.
+  const second = retrieveFlowMappings({ flow: flow() as never, analysis: graph });
+  assert.deepEqual(
+    second.mappings.map((mapping) => [mapping.checkpointId, mapping.status, mapping.selectedCandidateId]),
+    first.mappings.map((mapping) => [mapping.checkpointId, mapping.status, mapping.selectedCandidateId]),
+  );
+});

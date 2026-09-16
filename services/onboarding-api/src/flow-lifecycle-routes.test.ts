@@ -231,15 +231,37 @@ test('a Flow initializes, resolves and verifies against a real database', async 
 
     // 5. The user chooses a location for each one. This is the step that had no
     //    caller in the UI at all, so nothing could ever leave NEEDS_REVIEW.
-    for (const checkpointId of checkpointIds) {
-      const confirmed = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mappings/${encodeURIComponent(checkpointId)}/confirm`, {
+    //    The first goes on its own, the rest together: both routes have to end in
+    //    the same place, and the reply is a delta rather than a rebuilt record.
+    const [firstCheckpointId, ...remainingCheckpointIds] = checkpointIds;
+    const confirmed = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mappings/${encodeURIComponent(firstCheckpointId)}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({
+        candidateId: `${firstCheckpointId}:entity-0`,
+        placementKind: 'FUNCTION_ENTRY', anchorText: 'function checkout()',
+      }),
+    });
+    expectStatus(confirmed, 200);
+    const delta = confirmed.json();
+    assert.equal(delta.checkpoints.length, 1, 'only the confirmed checkpoint comes back');
+    assert.equal(delta.checkpoints[0].id, firstCheckpointId);
+    assert.equal(delta.checkpoints[0].mapping.status, 'RESOLVED');
+    assert.equal(delta.progress.unresolvedCount, checkpointIds.length - 1);
+    assert.ok(delta.manifest === undefined, 'the whole manifest is not resent');
+
+    if (remainingCheckpointIds.length) {
+      const bulk = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mappings/confirm`, {
         method: 'POST',
         body: JSON.stringify({
-          candidateId: `${checkpointId}:entity-${checkpointIds.indexOf(checkpointId)}`,
-          placementKind: 'FUNCTION_ENTRY', anchorText: 'function checkout()',
+          confirmations: remainingCheckpointIds.map((checkpointId) => ({
+            checkpointId, candidateId: `${checkpointId}:entity-${checkpointIds.indexOf(checkpointId)}`,
+            placementKind: 'FUNCTION_ENTRY', anchorText: 'function checkout()',
+          })),
         }),
       });
-      expectStatus(confirmed, 200);
+      expectStatus(bulk, 200);
+      assert.equal(bulk.json().checkpoints.length, remainingCheckpointIds.length);
+      assert.equal(bulk.json().progress.unresolvedCount, 0);
     }
 
     const ready = (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/report`)).json();

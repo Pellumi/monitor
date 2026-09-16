@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { PrismaClient } from '@tellann/db';
-import { resolveFlowCheckpointMappings } from '@tellann/ai';
+import { createFlowMappingResolutionCache, resolveFlowCheckpointMappings } from '@tellann/ai';
 import { analyzeFlowInitialization, applyEvidenceGroundedMappings, assertEvidenceGroundedContract, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { sdkReadiness } from './sdk-setup-routes';
 import { FlowAnalysisProgressSchema } from '@tellann/desktop-contracts';
@@ -43,6 +43,20 @@ function flowAnchorHash(file: unknown, symbol: unknown, placementKind: unknown, 
     .update(`${String(file ?? '')}\0${symbol == null ? '' : String(symbol)}\0${String(placementKind ?? '')}\0${String(anchorText ?? '')}`)
     .digest('hex');
 }
+
+/**
+ * Placements this process has already resolved.
+ *
+ * Re-running initialization after an unrelated edit re-asks the model about
+ * every checkpoint, even the ones whose file, symbol and shortlist are byte for
+ * byte what they were. The cache key covers exactly the inputs a placement
+ * depends on, so an unchanged checkpoint costs nothing the second time.
+ *
+ * In-process by design: the entry is cheap to recompute and worthless once the
+ * shortlist moves, so it is not worth a table, a migration or a cross-instance
+ * invalidation story. A restart simply pays once more.
+ */
+const flowMappingResolutions = createFlowMappingResolutionCache();
 
 function setDiff(previous: Set<string>, current: Set<string>) {
   return {
@@ -220,10 +234,43 @@ export function createFlowLifecycleRouter(input: {
     return res.status(201).json({ binding, scan, initialization, codeReviewReport: report });
   });
 
-  async function ownedInitialization(req: FlowRequest, res: Response) {
+  /**
+   * Everything about the scan except the evidence bundle itself.
+   *
+   * `candidateEvidence` is the whole submitted shortlist — every candidate of
+   * every checkpoint, excerpts included, megabytes on a real Flow — and nothing
+   * that reads an initialization back reads it. Shipping it on the record the
+   * window re-reads every two seconds while it waits made waiting itself the
+   * expensive part.
+   */
+  const scanSummarySelect = {
+    id: true, kind: true, status: true, scannerVersion: true,
+    repositorySnapshotId: true, codebaseAnalysisJobId: true,
+    analysisMode: true, analysisGraphVersion: true, analysisContentHash: true,
+    analysisRevision: true, analysisBranch: true, analysisDirty: true,
+    retrievalVersion: true, mappingStatus: true, mappingProgress: true, mappingProvenance: true,
+    errorMessageSafe: true, startedAt: true, completedAt: true, createdAt: true,
+  } as const;
+
+  /** The declared graph, minus the snapshot that is the graph. */
+  const flowVersionSummarySelect = {
+    id: true, graphId: true, version: true, lifecycleStatus: true, publishedAt: true,
+  } as const;
+
+  /**
+   * `heavy` loads the two fields that are only ever needed to rebuild from
+   * scratch: the published version's snapshot, and the submitted candidate
+   * bundle. Every other route gets the summary.
+   */
+  async function ownedInitialization(req: FlowRequest, res: Response, options: { heavy?: boolean } = {}) {
     const initialization = await prisma.flowInitialization.findFirst({
       where: { id: req.params.initializationId, flow: { application: { organization: { memberships: { some: { userId: req.user!.id } } } } } },
-      include: { binding: true, scan: true, flowVersion: true, flow: true },
+      include: {
+        binding: true,
+        flow: true,
+        scan: options.heavy ? true : { select: scanSummarySelect },
+        flowVersion: options.heavy ? true : { select: flowVersionSummarySelect },
+      },
     });
     if (!initialization) res.status(404).json({ error: 'FLOW_INITIALIZATION_NOT_FOUND' });
     return initialization;
@@ -326,7 +373,13 @@ export function createFlowLifecycleRouter(input: {
       flowName: String(manifest.flowName ?? initialization.flow?.name ?? 'Flow'),
       analysis: { id: String(bundle.analysis.id), graphVersion: String(bundle.analysis.graphVersion ?? ''), contentHash: String(bundle.analysis.contentHash ?? '') },
       checkpoints,
-    }, bundle.consentMode.endsWith('APPROVED') ? {} : { providers: [] });
+    }, {
+      retrievalVersion: bundle.retrievalVersion,
+      cache: flowMappingResolutions,
+      // Declining excerpt consent is expressed by offering no provider at all,
+      // so nothing can be sent even in principle.
+      ...(bundle.consentMode.endsWith('APPROVED') ? {} : { providers: [] }),
+    });
     // A confirmation survives re-analysis only when both the checkpoint and the
     // anchor it was made against are unchanged, and the fresh retrieval still
     // offers that location. Anything else is a decision the user has to make
@@ -436,7 +489,8 @@ export function createFlowLifecycleRouter(input: {
   });
 
   router.post('/flow-initializations/:initializationId/analyze', async (req: FlowRequest, res: Response) => {
-    const initialization = await ownedInitialization(req, res);
+    // Rebuilds the manifest from the published version's snapshot.
+    const initialization = await ownedInitialization(req, res, { heavy: true });
     if (!initialization) return;
     const repository = await prisma.repositorySnapshot.findFirst({ where: { id: initialization.scan.repositorySnapshotId, workspaceId: initialization.binding.workspaceId } });
     if (!repository) return res.status(404).json({ error: 'REPOSITORY_SNAPSHOT_NOT_FOUND' });
@@ -500,40 +554,126 @@ export function createFlowLifecycleRouter(input: {
     }
   });
 
-  router.post('/flow-initializations/:initializationId/mappings/:checkpointId/confirm', async (req: FlowRequest, res: Response) => {
-    const initialization = await ownedInitialization(req, res);
+  /**
+   * Ask again, with the evidence that was already gathered.
+   *
+   * When resolution fails there is nothing wrong with the retrieval behind it —
+   * the shortlist, the excerpts and the analysis identity are all still on the
+   * scan. Re-running the whole pipeline to recover from a provider timeout would
+   * re-analyse the repository and re-read the files for no reason, which is why
+   * the only offer used to be "start over". Batches that already succeeded are
+   * served from the resolution cache, so a retry re-asks only what failed.
+   */
+  router.post('/flow-initializations/:initializationId/resolve-retry', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res, { heavy: true });
     if (!initialization) return;
+    const scan = initialization.scan as any;
+    const report = initialization.codeReviewReport as any;
+    const evidence = scan?.candidateEvidence;
+    if (!Array.isArray(evidence) || !evidence.length) {
+      return res.status(409).json({ error: 'FLOW_MAPPING_EVIDENCE_UNAVAILABLE' });
+    }
+    const consentMode = report?.ai?.consentMode === 'CLOUD_APPROVED' ? 'CLOUD_APPROVED'
+      : report?.ai?.consentMode === 'LOCAL_EXCERPTS_APPROVED' ? 'LOCAL_EXCERPTS_APPROVED' : 'LOCAL_GRAPH_ONLY';
+    try {
+      return res.json(await resolveSubmittedMappings(initialization, {
+        analysis: {
+          id: String(report?.analysis?.jobId ?? scan.codebaseAnalysisJobId ?? 'local-analysis'),
+          graphVersion: scan.analysisGraphVersion ?? '',
+          contentHash: scan.analysisContentHash ?? '',
+          revision: scan.analysisRevision ?? null,
+          branch: scan.analysisBranch ?? null,
+          dirty: Boolean(scan.analysisDirty),
+        },
+        retrievalVersion: scan.retrievalVersion ?? 'flow-mapping/2',
+        consentMode,
+        mappings: evidence,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'FLOW_MAPPING_FAILED';
+      return res.status(message.includes('TOO_LARGE') ? 413 : 422).json({ error: message });
+    }
+  });
+
+  type ConfirmationRequest = {
+    checkpointId: string;
+    candidateId: string;
+    placementKind?: unknown;
+    anchorText?: unknown;
+    rationale?: unknown;
+  };
+
+  /**
+   * Confirm one or many checkpoint placements in a single rebuild.
+   *
+   * Rebuilding the manifest, the report and the roadmap is the same cost for one
+   * confirmation as for forty, so a review that ends with the user accepting a
+   * page of high-confidence candidates should pay it once. Confirming them one
+   * at a time also meant forty sequential round trips, each returning a fully
+   * rebuilt record — which is the reason finishing a review felt like the
+   * slowest part of initialization.
+   */
+  async function applyConfirmations(initialization: any, userId: string, requests: ConfirmationRequest[]) {
     const manifest = initialization.manifest as any;
     const report = initialization.codeReviewReport as any;
-    const checkpoint = manifest?.checkpoints?.find((item: any) => item.id === req.params.checkpointId);
-    if (!checkpoint) return res.status(404).json({ error: 'FLOW_CHECKPOINT_NOT_FOUND' });
-    const candidateId = String(req.body?.candidateId ?? '');
-    const candidate = checkpoint.mapping?.alternatives?.find((item: any) => String(item.id) === candidateId);
-    if (!candidate) return res.status(404).json({ error: 'FLOW_MAPPING_CANDIDATE_NOT_FOUND' });
-    const placementKind = String(req.body?.placementKind ?? candidate.placementKind ?? candidate.placementKinds?.[0] ?? '');
-    if (candidate.placementKind ? candidate.placementKind !== placementKind : !candidate.placementKinds?.includes(placementKind)) return res.status(422).json({ error: 'UNSUPPORTED_FLOW_MAPPING_PLACEMENT' });
-    const anchorText = String(req.body?.anchorText ?? candidate.anchor ?? candidate.symbol ?? '');
-    if (!anchorText) return res.status(422).json({ error: 'FLOW_MAPPING_ANCHOR_REQUIRED' });
-    const mapping = {
-      checkpointId: checkpoint.id, status: 'RESOLVED', entityId: candidate.entityId, candidateId: candidate.id,
-      file: candidate.file ?? candidate.path, symbol: candidate.symbol ?? null,
-      startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
-      placementKind, anchor: anchorText,
-      anchorHash: flowAnchorHash(candidate.file ?? candidate.path, candidate.symbol ?? null, placementKind, anchorText),
-      confidence: candidate.confidence ?? candidate.score ?? 0, rationale: String(req.body?.rationale ?? candidate.rationale ?? 'Confirmed by user.'),
-      evidenceIds: candidate.evidenceIds ?? [], alternatives: checkpoint.mapping.alternatives,
-      userConfirmed: true, userOverrode: true,
-    };
-    const mappings = manifest.checkpoints.map((item: any) => item.id === checkpoint.id ? mapping : item.mapping);
+    const confirmed = new Map<string, any>();
+    const rejected: Array<{ checkpointId: string; error: string }> = [];
+
+    for (const request of requests) {
+      const checkpoint = manifest?.checkpoints?.find((item: any) => item.id === request.checkpointId);
+      if (!checkpoint) {
+        rejected.push({ checkpointId: request.checkpointId, error: 'FLOW_CHECKPOINT_NOT_FOUND' });
+        continue;
+      }
+      const candidateId = String(request.candidateId ?? '');
+      const candidate = checkpoint.mapping?.alternatives?.find((item: any) => String(item.id) === candidateId);
+      if (!candidate) {
+        rejected.push({ checkpointId: request.checkpointId, error: 'FLOW_MAPPING_CANDIDATE_NOT_FOUND' });
+        continue;
+      }
+      const placementKind = String(request.placementKind ?? candidate.placementKind ?? candidate.placementKinds?.[0] ?? '');
+      if (candidate.placementKind ? candidate.placementKind !== placementKind : !candidate.placementKinds?.includes(placementKind)) {
+        rejected.push({ checkpointId: request.checkpointId, error: 'UNSUPPORTED_FLOW_MAPPING_PLACEMENT' });
+        continue;
+      }
+      const anchorText = String(request.anchorText ?? candidate.anchor ?? candidate.symbol ?? '');
+      if (!anchorText) {
+        rejected.push({ checkpointId: request.checkpointId, error: 'FLOW_MAPPING_ANCHOR_REQUIRED' });
+        continue;
+      }
+      confirmed.set(checkpoint.id, {
+        candidateId,
+        previousStatus: String(checkpoint.mapping?.status ?? 'UNKNOWN'),
+        mapping: {
+          checkpointId: checkpoint.id, status: 'RESOLVED', entityId: candidate.entityId, candidateId: candidate.id,
+          file: candidate.file ?? candidate.path, symbol: candidate.symbol ?? null,
+          startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
+          placementKind, anchor: anchorText,
+          anchorHash: flowAnchorHash(candidate.file ?? candidate.path, candidate.symbol ?? null, placementKind, anchorText),
+          confidence: candidate.confidence ?? candidate.score ?? 0,
+          rationale: String(request.rationale ?? candidate.rationale ?? 'Confirmed by user.'),
+          evidenceIds: candidate.evidenceIds ?? [], alternatives: checkpoint.mapping.alternatives,
+          userConfirmed: true, userOverrode: true,
+        },
+      });
+    }
+
+    if (!confirmed.size) return { updated: null, confirmed, rejected };
+
+    const mappings = manifest.checkpoints.map((item: any) => confirmed.get(item.id)?.mapping ?? item.mapping);
+    const confirmedAt = new Date().toISOString();
     // Store the placement itself, not just which candidate was picked: a later
     // analysis produces new candidate ids, so an id alone could never be matched
     // back and every confirmation would be lost on every re-analysis.
-    const confirmation = { candidateId, mapping, confirmedAt: new Date().toISOString(), userId: req.user!.id };
-    recordFlowMappingMetric({
-      name: 'flow_mapping.override', initializationId: String(initialization.id),
-      checkpointId: checkpoint.id, candidateId,
-      previousStatus: String(checkpoint.mapping?.status ?? 'UNKNOWN'),
-    });
+    const confirmations = { ...((initialization.mappingConfirmations as any) ?? {}) };
+    for (const [checkpointId, entry] of confirmed) {
+      confirmations[checkpointId] = { candidateId: entry.candidateId, mapping: entry.mapping, confirmedAt, userId };
+      recordFlowMappingMetric({
+        name: 'flow_mapping.override', initializationId: String(initialization.id),
+        checkpointId, candidateId: entry.candidateId, previousStatus: entry.previousStatus,
+      });
+    }
+
     const enriched = applyEvidenceGroundedMappings({ manifest, report } as any, mappings, {
       ...(report.analysis ?? {}), ...(report.ai ?? {}),
       analysisId: report.analysis?.jobId ?? report.analysis?.analysisId,
@@ -543,12 +683,13 @@ export function createFlowLifecycleRouter(input: {
     });
     assertEvidenceGroundedContract(enriched);
     const roadmapRevision = initialization.roadmapRevision + 1;
+    const unresolved = Number((enriched.report.summary as any).unresolvedCount ?? 0);
     const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
       manifest: enriched.manifest as any, mappingVersion: '2.0', finalMappings: mappings as any,
-      mappingConfirmations: { ...((initialization.mappingConfirmations as any) ?? {}), [checkpoint.id]: confirmation } as any,
+      mappingConfirmations: confirmations as any,
       codeReviewReport: enriched.report as any, roadmapRevision,
       manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
-      failureReasonSafe: (enriched.report.summary as any).unresolvedCount ? `${(enriched.report.summary as any).unresolvedCount} checkpoint mappings need review` : null,
+      failureReasonSafe: unresolved ? `${unresolved} checkpoint mappings need review` : null,
     } });
     // The scan is the record of where this mapping run stands, and confirming a
     // location moves it. Leaving it behind would make anything that reads scan
@@ -558,7 +699,57 @@ export function createFlowLifecycleRouter(input: {
     await prisma.flowScan.update({ where: { id: initialization.scanId }, data: {
       mappingStatus: progress.status, mappingProgress: progress,
     } as any });
-    return res.json(updated);
+    return { updated, enriched, confirmed, rejected };
+  }
+
+  /**
+   * What changed, rather than the whole record.
+   *
+   * The client already holds every checkpoint it is not confirming, and a
+   * rebuilt manifest, report and roadmap is several megabytes on a real Flow.
+   * Sending back only the checkpoints that moved, plus the counts that decide
+   * whether the review is finished, is all the review panel reads.
+   */
+  function confirmationDelta(initializationId: string, updated: any, enriched: any, confirmedIds: string[], rejected: Array<{ checkpointId: string; error: string }>) {
+    const checkpoints = (enriched.manifest.checkpoints as any[]).filter((item) => confirmedIds.includes(item.id));
+    return {
+      initializationId,
+      stage: updated.stage,
+      mappingVersion: updated.mappingVersion,
+      roadmapRevision: updated.roadmapRevision,
+      failureReasonSafe: updated.failureReasonSafe,
+      checkpoints,
+      progress: enriched.report.progress,
+      summary: enriched.report.summary,
+      rejected,
+    };
+  }
+
+  router.post('/flow-initializations/:initializationId/mappings/confirm', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const requests = Array.isArray(req.body?.confirmations) ? req.body.confirmations : [];
+    if (!requests.length || requests.length > 250) return res.status(422).json({ error: 'INVALID_FLOW_MAPPING_CONFIRMATIONS' });
+    const outcome = await applyConfirmations(initialization, req.user!.id, requests.map((item: any) => ({
+      checkpointId: String(item?.checkpointId ?? ''), candidateId: String(item?.candidateId ?? ''),
+      placementKind: item?.placementKind, anchorText: item?.anchorText, rationale: item?.rationale,
+    })));
+    if (!outcome.updated) return res.status(422).json({ error: 'NO_FLOW_MAPPING_CONFIRMED', rejected: outcome.rejected });
+    return res.json(confirmationDelta(initialization.id, outcome.updated, outcome.enriched, [...outcome.confirmed.keys()], outcome.rejected));
+  });
+
+  router.post('/flow-initializations/:initializationId/mappings/:checkpointId/confirm', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const outcome = await applyConfirmations(initialization, req.user!.id, [{
+      checkpointId: String(req.params.checkpointId), candidateId: String(req.body?.candidateId ?? ''),
+      placementKind: req.body?.placementKind, anchorText: req.body?.anchorText, rationale: req.body?.rationale,
+    }]);
+    if (!outcome.updated) {
+      const reason = outcome.rejected[0]?.error ?? 'FLOW_MAPPING_CANDIDATE_NOT_FOUND';
+      return res.status(reason.endsWith('NOT_FOUND') ? 404 : 422).json({ error: reason });
+    }
+    return res.json(confirmationDelta(initialization.id, outcome.updated, outcome.enriched, [...outcome.confirmed.keys()], outcome.rejected));
   });
 
   router.post('/flow-initializations/:initializationId/roadmap/:stepId/progress', async (req: FlowRequest, res: Response) => {

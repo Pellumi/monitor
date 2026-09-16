@@ -172,5 +172,53 @@ test('TELLANN Frontend SDK Tests', async (t) => {
     assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST'));
   });
 
+  await t.test('a guided run flushes Flow events through the local relay', async () => {
+    TELLANN.teardown();
+    fetchCalls = [];
+    navigatorMock.sendBeacon = () => {
+      throw new Error('sendBeacon cannot carry the run credential the relay requires');
+    };
+    Object.defineProperty(globalThis, '__TELLANN_RUN__', {
+      value: Object.freeze({
+        relayEndpoint: 'http://127.0.0.1:51234/',
+        relayToken: 'relay-token',
+        runId: 'run-1',
+        applicationId: 'app-auth',
+        environmentId: 'env-auth',
+      }),
+      configurable: true,
+    });
+
+    try {
+      TELLANN.initialize({
+        endpoint: 'http://gateway',
+        tenantId: 'tenant-auth',
+        applicationId: 'app-auth',
+        apiKey: 'tellann_test_key',
+        environmentId: 'env-auth',
+        autoTrackClicks: false,
+        autoTrackForms: false,
+        autoTrackRoutes: false,
+        errorTracking: false,
+      });
+      TELLANN.trackFlowInitialState('flow-version-1', 'onboarding');
+      await (TELLANN as any).flush();
+
+      assert.strictEqual(fetchCalls.length, 1);
+      assert.strictEqual(fetchCalls[0].url, 'http://127.0.0.1:51234/v1/events/batch');
+      assert.strictEqual(fetchCalls[0].headers.Authorization, 'Bearer relay-token');
+      // The relay's CORS allow-list has no environment header; sending one
+      // would fail the preflight and drop the batch.
+      assert.strictEqual(fetchCalls[0].headers['x-tellann-environment-id'], undefined);
+      const initial = fetchCalls[0].body.find((event: any) => event.eventType === 'FLOW_INITIAL_STATE');
+      assert.ok(initial);
+      assert.strictEqual(initial.metadata.flowVersionId, 'flow-version-1');
+      assert.strictEqual(initial.metadata.stateKey, 'onboarding');
+    } finally {
+      TELLANN.teardown();
+      delete (globalThis as any).__TELLANN_RUN__;
+    }
+  });
+
   TELLANN.teardown();
 });

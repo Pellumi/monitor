@@ -389,3 +389,43 @@ test('the manual roadmap carries the same evidence the automated path would act 
   assert.equal((step.alternatives as any[])[0].id, 'c2');
   assert.equal(step.placementKind, 'FUNCTION_ENTRY');
 });
+
+test('bounds path enumeration on a branchy Flow without losing reachability', () => {
+  // Fourteen diamonds in series: every one doubles the number of distinct paths,
+  // so the full enumeration is in the thousands. It used to be computed in full,
+  // on the request thread, and then stored in the manifest and returned on every
+  // poll of the initialization.
+  const DIAMONDS = 14;
+  const states: Record<string, unknown>[] = [{ id: 's0', stateName: 'Start', role: 'INITIAL' }];
+  const transitions: Record<string, unknown>[] = [];
+  for (let index = 0; index < DIAMONDS; index += 1) {
+    states.push({ id: `a${index}`, stateName: `Left ${index}`, role: 'NORMAL' });
+    states.push({ id: `b${index}`, stateName: `Right ${index}`, role: 'NORMAL' });
+    states.push({ id: `s${index + 1}`, stateName: `Join ${index}`, role: 'NORMAL' });
+    transitions.push(
+      { id: `l${index}`, fromStateId: `s${index}`, toStateId: `a${index}`, action: `left ${index}` },
+      { id: `r${index}`, fromStateId: `s${index}`, toStateId: `b${index}`, action: `right ${index}` },
+      { id: `la${index}`, fromStateId: `a${index}`, toStateId: `s${index + 1}`, action: `join left ${index}` },
+      { id: `rb${index}`, fromStateId: `b${index}`, toStateId: `s${index + 1}`, action: `join right ${index}` },
+    );
+  }
+  const last = `s${DIAMONDS}`;
+  states.push({ id: 'done', stateName: 'Done', role: 'TERMINAL', terminalKind: 'SUCCESS' });
+  states.push({ id: 'unreachable', stateName: 'Unreachable', role: 'NORMAL' });
+  transitions.push({ id: 'finish', fromStateId: last, toStateId: 'done', action: 'finish' });
+
+  const started = Date.now();
+  const { manifest, report } = analyzeFlowInitialization(
+    { states, transitions }, repository, '00000000-0000-4000-8000-000000000011',
+  );
+  const elapsed = Date.now() - started;
+
+  assert.ok(manifest.paths.length <= 500, `paths are bounded, got ${manifest.paths.length}`);
+  assert.equal(manifest.pathsTruncated, true, 'and the manifest says so rather than implying it saw them all');
+  assert.ok(elapsed < 5_000, `analysis stays quick, took ${elapsed}ms`);
+
+  // Reachability is computed separately, so bounding the enumeration does not
+  // make a reachable state look dead or a reachable terminal look uncovered.
+  assert.deepEqual(manifest.unreachableStateIds, ['unreachable']);
+  assert.deepEqual(report.uncoveredTerminalOutcomes, []);
+});

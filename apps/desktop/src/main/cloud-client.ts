@@ -998,6 +998,33 @@ export class DesktopCloudClient {
     );
   }
 
+  /**
+   * Where mapping has got to, without the record it is working on.
+   *
+   * The full initialization carries the manifest, the report, the roadmap and
+   * every mapping; this carries the stage and the counts. It is what a window
+   * waiting on a mapping run actually reads, and re-reading the former to learn
+   * the latter is what made waiting expensive.
+   */
+  async flowInitializationProgress(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/progress`, { method: "GET" });
+  }
+
+  /** Ask the resolver again with the evidence the scan already holds. */
+  async retryFlowMappingResolution(initializationId: string): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/resolve-retry`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async confirmFlowMappings(initializationId: string, confirmations: Json[]): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mappings/confirm`,
+      { method: "POST", body: JSON.stringify({ confirmations }) },
+    );
+  }
+
   async confirmFlowMapping(
     initializationId: string,
     checkpointId: string,

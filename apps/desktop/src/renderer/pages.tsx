@@ -43,6 +43,7 @@ import {
   Sparkles,
   TerminalSquare,
   Trash2,
+  TriangleAlert,
   Unlock,
   Workflow,
   X,
@@ -6853,12 +6854,41 @@ function FlowMappingRow({
  * initializations recorded before evidence-grounded mapping existed, so an old
  * record still opens instead of rendering blank.
  */
+/**
+ * A candidate is worth offering as a bulk acceptance when the ranking is
+ * confident and there is daylight between it and the runner-up. Below that the
+ * choice is genuinely the reviewer's, and pre-selecting it would be asking them
+ * to rubber-stamp a guess.
+ */
+const BULK_ACCEPT_MIN_CONFIDENCE = 0.6;
+const BULK_ACCEPT_MIN_MARGIN = 0.08;
+
+function bulkAcceptable(checkpoints: FlowCheckpointView[]) {
+  const accepted: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }> = [];
+  for (const checkpoint of checkpoints) {
+    const mapping = (checkpoint as any).mapping;
+    if (!mapping || mapping.status === "RESOLVED") continue;
+    const alternatives = (mapping.alternatives ?? []) as FlowMappingCandidateView[];
+    const [best, runnerUp] = alternatives;
+    if (!best) continue;
+    const confidence = Number((best as any).confidence ?? 0);
+    const margin = confidence - Number((runnerUp as any)?.confidence ?? 0);
+    if (confidence < BULK_ACCEPT_MIN_CONFIDENCE) continue;
+    if (runnerUp && margin < BULK_ACCEPT_MIN_MARGIN) continue;
+    accepted.push({ checkpointId: String(checkpoint.id), candidate: best });
+  }
+  return accepted;
+}
+
 function FlowReviewPanel({
   initialization,
   onReanalyze,
   onConfirmMapping,
+  onConfirmMappings,
+  onRetryResolution,
   onRevealEvidence,
   pendingMappings,
+  bulkConfirming,
   busy,
 }: {
   initialization: FlowInitialization;
@@ -6867,9 +6897,14 @@ function FlowReviewPanel({
     checkpointId: string,
     candidate: FlowMappingCandidateView,
   ): void;
+  onConfirmMappings?(
+    entries: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }>,
+  ): void;
+  onRetryResolution?(): void;
   onRevealEvidence?(file: string, line?: number | null): void;
   /** Checkpoint id -> the candidate id currently being confirmed for it. */
   pendingMappings?: Record<string, string>;
+  bulkConfirming?: boolean;
   busy?: boolean;
 }) {
   const report = initialization.codeReviewReport as any;
@@ -6928,6 +6963,11 @@ function FlowReviewPanel({
     ["States", states],
     ["Transitions", transitions],
   ];
+  const acceptable = onConfirmMappings ? bulkAcceptable(checkpoints) : [];
+  // A run where every call failed and a run where the model considered each
+  // checkpoint and was unsure both end as "choose one yourself". They ask
+  // completely different things of the reader, so they no longer look alike.
+  const resolutionFailed = Boolean(ai.failed);
 
   return (
     <section className="content-card flow-review-panel">
@@ -7000,12 +7040,51 @@ function FlowReviewPanel({
           : "Every declared state and transition has a location in your code."}
       </p>
 
+      {resolutionFailed ? (
+        <div className="infobar" data-tone="warning" role="status">
+          <TriangleAlert size={16} />
+          <span>
+            {Number(ai.batchesFailed ?? 0) === Number(ai.batches ?? 0)
+              ? "Automatic placement could not be completed"
+              : `Automatic placement finished for some checkpoints but not others (${Number(ai.batchesFailed ?? 0)} of ${Number(ai.batches ?? 0)} batches failed)`}
+            {ai.failureReasonSafe ? ` — ${String(ai.failureReasonSafe)}.` : "."} The
+            evidence below was still gathered, so you can retry the placement or
+            choose the locations yourself.
+          </span>
+          {onRetryResolution ? (
+            <button className="button" type="button" disabled={busy} onClick={onRetryResolution}>
+              <RefreshCw size={15} />
+              Retry placement
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {ai.consentMode === "GRAPH_ONLY" && ai.attempted === false ? (
         <p className="muted">
           These locations come from the codebase analysis alone — no source was
           sent to an AI provider. They are still evidence-backed; the ranking is
           just less specific about exactly which line to use.
         </p>
+      ) : null}
+
+      {acceptable.length > 1 ? (
+        <div className="flow-review-bulk">
+          <button
+            className="button"
+            type="button"
+            disabled={busy || bulkConfirming}
+            onClick={() => onConfirmMappings?.(acceptable)}
+          >
+            {bulkConfirming
+              ? "Accepting…"
+              : `Accept ${acceptable.length} high-confidence locations`}
+          </button>
+          <span className="muted">
+            Only where one candidate clearly leads the ranking. Everything else
+            stays for you to decide.
+          </span>
+        </div>
       ) : null}
 
       {groups.map(([title, items]) =>
@@ -8099,12 +8178,15 @@ export function InstrumentationPage() {
     getDeclaredFlows,
     initializeFlow,
     getFlowInitialization,
+    getFlowInitializationProgress,
     analyzeFlowInitialization,
+    retryFlowMappingResolution,
     setFlowInitializationMode,
     updateFlowRoadmapStep,
     verifyFlowCheckpointsInCode,
     getFlowVerification,
     confirmFlowMapping,
+    confirmFlowMappings,
     openCodebaseEvidence,
   } = useProject();
   const navigate = useNavigate();
@@ -8179,14 +8261,39 @@ export function InstrumentationPage() {
     );
   }, [initializationId, refreshFlowInitialization]);
 
+  // While mapping runs, poll the progress endpoint rather than the record.
+  //
+  // The initialization carries the manifest, the report, the roadmap, every
+  // mapping and every alternative — megabytes on a real Flow — and none of it
+  // changes until mapping finishes. Re-reading all of it every two seconds to
+  // watch a stage field made the waiting itself expensive. The full record is
+  // fetched once, when the stage it is waiting for actually arrives.
   useEffect(() => {
-    if (flowInitialization?.stage !== "SCANNING") return;
-    const timer = window.setInterval(
-      () => void refreshFlowInitialization().catch(() => undefined),
-      document.hidden ? 10_000 : 2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [flowInitialization?.stage, refreshFlowInitialization]);
+    if (flowInitialization?.stage !== "SCANNING" || !initializationId) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getFlowInitializationProgress(initializationId)
+        .then((update) => {
+          if (cancelled || !update) return;
+          const status = String((update as any).mappingStatus ?? "");
+          const stage = String((update as any).stage ?? "");
+          if (stage !== "SCANNING" || ["READY", "NEEDS_REVIEW", "FAILED", "SHADOW"].includes(status)) {
+            void refreshFlowInitialization().catch(() => undefined);
+            return;
+          }
+          // Keep the banner's counts moving without refetching the record.
+          setFlowInitialization((current) => current && ({
+            ...current,
+            scan: { ...(current as any).scan, mappingStatus: status, mappingProgress: (update as any).progress },
+          }) as FlowInitialization);
+        })
+        .catch(() => undefined);
+    }, document.hidden ? 10_000 : 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [flowInitialization?.stage, getFlowInitializationProgress, initializationId, refreshFlowInitialization]);
 
   // Which candidate is being confirmed, per checkpoint. Confirming is one IPC
   // call behind the shared desktop `busy` flag, so driving the buttons off that
@@ -8207,6 +8314,47 @@ export function InstrumentationPage() {
   // Choosing a location for an ambiguous checkpoint. The server recomputes the
   // anchor hash from the candidate the user picked, so the reply already
   // carries the rebuilt manifest, report and roadmap.
+  /**
+   * Fold a confirmation's reply into the record already on screen.
+   *
+   * Confirming used to answer with a rebuilt manifest, report and roadmap — and
+   * with fifty checkpoints to work through, that is fifty full rebuilds sent to
+   * a client that was only ever going to change one checkpoint of each. The
+   * reply now carries the checkpoints that moved and the counts that decide
+   * whether the review is finished.
+   */
+  const applyMappingDelta = useCallback((delta: Record<string, any>) => {
+    setFlowInitialization((current) => {
+      if (!current) return current;
+      const moved = new Map<string, any>((delta.checkpoints ?? []).map((item: any) => [String(item.id), item]));
+      const manifest = (current as any).manifest;
+      const report = (current.codeReviewReport ?? {}) as any;
+      return {
+        ...current,
+        stage: delta.stage ?? current.stage,
+        mappingVersion: delta.mappingVersion ?? (current as any).mappingVersion,
+        roadmapRevision: delta.roadmapRevision ?? (current as any).roadmapRevision,
+        failureReasonSafe: delta.failureReasonSafe ?? null,
+        manifest: manifest
+          ? {
+              ...manifest,
+              checkpoints: (manifest.checkpoints ?? []).map((item: any) => moved.get(String(item.id)) ?? item),
+            }
+          : manifest,
+        codeReviewReport: {
+          ...report,
+          progress: delta.progress ?? report.progress,
+          summary: delta.summary ?? report.summary,
+        },
+        scan: {
+          ...(current as any).scan,
+          mappingStatus: delta.progress?.status ?? (current as any).scan?.mappingStatus,
+          mappingProgress: delta.progress ?? (current as any).scan?.mappingProgress,
+        },
+      } as FlowInitialization;
+    });
+  }, []);
+
   const confirmMapping = useCallback(
     (checkpointId: string, candidate: FlowMappingCandidateView) => {
       if (!initializationId) return;
@@ -8217,14 +8365,13 @@ export function InstrumentationPage() {
       const settled = confirmQueue.current.then(async () => {
         setFlowLoadError(null);
         try {
-          const updated = await confirmFlowMapping(
+          applyMappingDelta(await confirmFlowMapping(
             initializationId,
             checkpointId,
             candidate.id,
             candidate.placementKind ?? candidate.placementKinds?.[0],
             candidate.anchor ?? candidate.symbol ?? undefined,
-          );
-          setFlowInitialization(updated as FlowInitialization);
+          ));
         } catch (cause) {
           setFlowLoadError(normalizeDesktopError(cause));
         } finally {
@@ -8238,8 +8385,61 @@ export function InstrumentationPage() {
       });
       confirmQueue.current = settled.catch(() => undefined);
     },
-    [confirmFlowMapping, initializationId],
+    [applyMappingDelta, confirmFlowMapping, initializationId],
   );
+
+  const [bulkConfirming, setBulkConfirming] = useState(false);
+
+  /**
+   * Accept a page of candidates in one request.
+   *
+   * Rebuilding the manifest, report and roadmap costs the same for forty
+   * confirmations as for one, and a reviewer who agrees with the ranking should
+   * not have to spend forty round trips saying so.
+   */
+  const confirmMappingsInBulk = useCallback(
+    (
+      entries: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }>,
+    ) => {
+      if (!initializationId || !entries.length) return;
+      setBulkConfirming(true);
+      const settled = confirmQueue.current.then(async () => {
+        setFlowLoadError(null);
+        try {
+          applyMappingDelta(await confirmFlowMappings(
+            initializationId,
+            entries.map(({ checkpointId, candidate }) => ({
+              checkpointId,
+              candidateId: candidate.id,
+              placementKind: candidate.placementKind ?? candidate.placementKinds?.[0],
+              anchorText: candidate.anchor ?? candidate.symbol ?? undefined,
+            })),
+          ));
+        } catch (cause) {
+          setFlowLoadError(normalizeDesktopError(cause));
+        } finally {
+          setBulkConfirming(false);
+        }
+      });
+      confirmQueue.current = settled.catch(() => undefined);
+    },
+    [applyMappingDelta, confirmFlowMappings, initializationId],
+  );
+
+  /**
+   * Ask the resolver again, without re-running anything behind it.
+   *
+   * A provider timeout says nothing about the shortlist it was given, and that
+   * shortlist is still on the scan — so re-analysing the repository to recover
+   * from one would repeat minutes of work that was not wrong.
+   */
+  const retryResolution = useCallback(() => {
+    if (!initializationId) return;
+    setFlowLoadError(null);
+    void retryFlowMappingResolution(initializationId)
+      .then(() => refreshFlowInitialization())
+      .catch((cause) => setFlowLoadError(normalizeDesktopError(cause)));
+  }, [initializationId, refreshFlowInitialization, retryFlowMappingResolution]);
 
   const revealEvidence = useCallback(
     (file: string, line?: number | null) => {
@@ -8783,8 +8983,13 @@ export function InstrumentationPage() {
                 : undefined
             }
             onConfirmMapping={confirmMapping}
+            onConfirmMappings={confirmMappingsInBulk}
+            onRetryResolution={
+              initializationId && !flowInitialization.mode ? retryResolution : undefined
+            }
             onRevealEvidence={revealEvidence}
             pendingMappings={pendingMappings}
+            bulkConfirming={bulkConfirming}
           />
           {!flowInitialization.mode &&
           flowInitialization.stage === "REVIEW_READY" ? (
@@ -9673,7 +9878,13 @@ export function InstrumentationDetailPage() {
         setCommands((current) =>
           current.length
             ? current
-            : nextPlan.validationCommands.map((item) => item.id),
+            : nextPlan.validationCommands
+                // An optional command is offered in the list and left unticked:
+                // a full production build to check a few inserted calls is the
+                // longest step in initialization, and the type check beside it
+                // asks the same question in a fraction of the time.
+                .filter((item) => !(item as { optional?: boolean }).optional)
+                .map((item) => item.id),
         );
       }
       const local = await getLocalInstrumentationResult(

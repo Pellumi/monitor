@@ -82,6 +82,19 @@ function bestMapping(label: string, evidence: ReturnType<typeof repositoryEviden
   return { file: best?.file ?? null, symbol: best?.symbol ?? null, confidence: best?.confidence ?? 0, rationale: best && best.confidence >= 0.65 ? `Matched declared behavior to ${best.kind} evidence.` : 'No confident repository location was found.' };
 }
 
+/**
+ * Bounds on path enumeration.
+ *
+ * The number of distinct simple paths through a Flow is combinatorial in its
+ * branching, so a graph a person would call ordinary — a couple of dozen states
+ * with retries and alternate outcomes — can produce more paths than anyone will
+ * ever read, on a request thread, into a manifest that is then stored and sent
+ * back on every poll. Past a few hundred the list has stopped informing anyone,
+ * so it stops being collected and says so.
+ */
+const PATH_LIMIT = 500;
+const PATH_VISIT_LIMIT = 10_000;
+
 function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions: JsonRecord[]) {
   const byFrom = new Map<string, JsonRecord[]>();
   for (const transition of transitions) {
@@ -89,10 +102,33 @@ function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions
     if (!byFrom.has(from)) byFrom.set(from, []);
     byFrom.get(from)!.push(transition);
   }
+
+  // Reachability is a linear walk and is always exact. It used to be a
+  // by-product of enumerating every path, which is what tied an answer everyone
+  // depends on — which states are dead, which terminals can be arrived at — to
+  // a computation that has to be allowed to give up.
+  const reachable = new Set<string>([initialId]);
+  const queue: string[] = [initialId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const edge of byFrom.get(current) ?? []) {
+      const { to } = transitionEndpoints(edge);
+      if (!to || reachable.has(to)) continue;
+      reachable.add(to);
+      queue.push(to);
+    }
+  }
+
   const paths: string[][] = [];
-  const reachable = new Set<string>();
+  let visits = 0;
+  let truncated = false;
   const visit = (stateId: string, path: string[], seen: Set<string>) => {
-    reachable.add(stateId);
+    if (truncated) return;
+    visits += 1;
+    if (visits > PATH_VISIT_LIMIT || paths.length >= PATH_LIMIT) {
+      truncated = true;
+      return;
+    }
     if (terminalIds.has(stateId)) { paths.push([...path, stateId]); return; }
     for (const edge of byFrom.get(stateId) ?? []) {
       const { to: next } = transitionEndpoints(edge);
@@ -101,7 +137,7 @@ function enumeratePaths(initialId: string, terminalIds: Set<string>, transitions
     }
   };
   visit(initialId, [], new Set([initialId]));
-  return { paths, reachable };
+  return { paths, reachable, truncated };
 }
 
 export function analyzeFlowInitialization(snapshot: JsonRecord, repository: JsonRecord, graphVersionId: string, graphHash?: string, flowName?: string) {
@@ -146,14 +182,17 @@ export function analyzeFlowInitialization(snapshot: JsonRecord, repository: Json
   ];
   const now = new Date().toISOString();
   const unreachableStateIds = states.map(stateId).filter((id) => !traversal.reachable.has(id));
-  const manifest = { version: '1.0' as const, graphVersionId, graphHash: graphHash ?? crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'), repositorySnapshotId: String(repository.id), flowKey, flowName: String(flowName ?? snapshot.name ?? snapshot.flowName ?? 'Flow'), initialStateId: stateId(initial), terminalStateIds: [...terminalIds], paths: traversal.paths, unreachableStateIds, checkpoints, generatedAt: now };
+  const manifest = { version: '1.0' as const, graphVersionId, graphHash: graphHash ?? crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'), repositorySnapshotId: String(repository.id), flowKey, flowName: String(flowName ?? snapshot.name ?? snapshot.flowName ?? 'Flow'), initialStateId: stateId(initial), terminalStateIds: [...terminalIds], paths: traversal.paths, pathsTruncated: traversal.truncated, unreachableStateIds, checkpoints, generatedAt: now };
   const missingStates = stateFindings.filter((item) => !item.implemented);
   const incompleteTransitions = transitionFindings.filter((item) => !item.implemented);
   const report = { version: '1.0' as const, kind: 'FLOW_CODE_REVIEW' as const, generatedAt: now, engine: 'RULES_FALLBACK' as const,
     summary: { mappedStates: stateFindings.length - missingStates.length, totalStates: stateFindings.length, mappedTransitions: transitionFindings.length - incompleteTransitions.length, totalTransitions: transitionFindings.length },
     stateFindings, transitionFindings, missingStates, incompleteTransitions,
     edgeCases: unreachableStateIds.map((id) => ({ code: 'UNREACHABLE_STATE', stateId: id, severity: 'BLOCKING' })),
-    uncoveredTerminalOutcomes: terminals.filter((terminal) => !traversal.paths.some((path) => path.at(-1) === stateId(terminal))).map((terminal) => ({ stateId: stateId(terminal), terminalKind: terminal.terminalKind ?? null })),
+    // A terminal is covered when it can be arrived at, which is reachability —
+    // asking instead whether some enumerated path happened to end there made the
+    // answer depend on how many paths were collected before enumeration stopped.
+    uncoveredTerminalOutcomes: terminals.filter((terminal) => !traversal.reachable.has(stateId(terminal))).map((terminal) => ({ stateId: stateId(terminal), terminalKind: terminal.terminalKind ?? null })),
     evidence, recommendations: [
       ...missingStates.map((item) => ({
         checkpointId: `state:${item.stateId}`, kind: 'STATE' as const, action: 'Add state checkpoint',
@@ -321,6 +360,13 @@ export function applyEvidenceGroundedMappings(
     consentMode: provenance.consentMode === 'CLOUD_APPROVED' ? 'CLOUD_APPROVED' as const
       : provenance.consentMode === 'LOCAL_EXCERPTS_APPROVED' ? 'LOCAL_EXCERPTS_APPROVED' as const : 'GRAPH_ONLY' as const,
     resolvedAt: new Date().toISOString(),
+    // Carried through so the review can say "nothing answered, retry" instead of
+    // presenting a provider outage as the model's considered opinion.
+    batches: Number(provenance.batches ?? 0),
+    batchesFailed: Number(provenance.batchesFailed ?? 0),
+    cachedCount: Number(provenance.cachedCount ?? 0),
+    failed: Boolean(provenance.failed),
+    failureReasonSafe: provenance.failureReasonSafe == null ? null : String(provenance.failureReasonSafe).slice(0, 300),
   };
   return {
     manifest: {

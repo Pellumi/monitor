@@ -426,6 +426,9 @@ importers:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
+      axe-core:
+        specifier: 4.12.1
+        version: 4.12.1
       playwright:
         specifier: ^1.58.0
         version: 1.62.0

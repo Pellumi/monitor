@@ -14,13 +14,88 @@ import type {
 } from '@tellann/desktop-contracts';
 import { installQaRecorder } from './injected-recorder';
 
+export type LiveEvidenceKind =
+  'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW';
+
 export type LiveEvidence = {
   id: string;
-  kind: 'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW';
+  kind: LiveEvidenceKind;
   level: 'INFO' | 'WARN' | 'ERROR';
   message: string;
   details?: Array<{ label: string; value: string }>;
+  /**
+   * Ties a row to the interaction that caused it, so the live log can group a
+   * click with the requests and state changes it set off.
+   */
+  groupId?: string | null;
+  /**
+   * False for a row observed while the run was paused. The browser keeps
+   * reporting, but nothing is written to the evidence spool, and the panel has
+   * to say so rather than implying the event was captured.
+   */
+  recorded: boolean;
   timestamp: string;
+};
+
+/** One state of the accepted graph this run reconciles against. */
+export type RunFlowPlanState = {
+  /** Normalised the same way the server's boundary evaluator normalises keys. */
+  key: string;
+  name: string;
+  role: 'INITIAL' | 'NORMAL' | 'TERMINAL';
+  terminalKind: string | null;
+  category: string | null;
+};
+
+export type RunFlowPlanTransition = { from: string; to: string; action: string | null };
+
+export type RunFlowPlan = {
+  flowId: string | null;
+  flowName: string | null;
+  versionId: string | null;
+  version: number | null;
+  purpose: string | null;
+  initialStateKey: string | null;
+  terminalStateKeys: string[];
+  states: RunFlowPlanState[];
+  transitions: RunFlowPlanTransition[];
+};
+
+/** An accepted flow event, in order, for the run timeline. */
+export type FlowStateVisit = {
+  stateKey: string;
+  eventType: string;
+  fromStateKey: string | null;
+  timestamp: string;
+};
+
+export type RunCoverage = {
+  expectedStates: number;
+  visitedStateKeys: string[];
+  remainingStateKeys: string[];
+  /** Accepted states that are not in the plan, which should never happen. */
+  offPlanStateKeys: string[];
+  expectedTransitions: number;
+  takenTransitionKeys: string[];
+  terminalReached: boolean;
+};
+
+/** A flow event the server refused, with the reason it gave. */
+export type BoundaryRejection = {
+  eventType: string;
+  stateKey: string | null;
+  reason: string;
+  timestamp: string;
+};
+
+export type RunStateArtifact = {
+  stateKey: string | null;
+  route: string;
+  title: string;
+  timestamp: string;
+  screenshotFile: string | null;
+  accessibilityFile: string | null;
+  accessibilityViolations: number | null;
 };
 
 export type BrowserWindowResolution = {
@@ -69,9 +144,28 @@ export type GuidedRunState = {
   /** Updated by the injected recorder on initial load and every resize. */
   windowResolution?: BrowserWindowResolution | null;
   evidence: LiveEvidence[];
+  /** Live rows dropped off the head of the ring buffer, so the panel can say so. */
+  evidenceTrimmed: number;
+  /** Cumulative live counts per kind. Unlike `evidence`, trimming never lowers these. */
+  liveCounts: Record<LiveEvidenceKind, number>;
+  /** Newest live row's timestamp, which is what stall detection reads. */
+  lastEvidenceAt: string | null;
   observations: BrowserObservation[];
   observedTransitions: BrowserObservedTransition[];
   findings: BrowserFinding[];
+  /** The accepted graph this run reconciles against, resolved when the run starts. */
+  flowPlan: RunFlowPlan | null;
+  /** Recomputed from `flowStateHistory` every time the server accepts a flow event. */
+  coverage: RunCoverage | null;
+  flowStateHistory: FlowStateVisit[];
+  /** The last flow event the server refused. Cleared once the boundary is accepted. */
+  boundaryRejection: BoundaryRejection | null;
+  /** Inspect comments saved during this run. */
+  annotationCount: number;
+  /** Per-state screenshots, aria snapshots and accessibility scans. */
+  stateArtifacts: RunStateArtifact[];
+  /** Evidence events still queued for upload. The main process fills this in. */
+  syncBacklog: number;
   artifactDirectory: string;
   startedAt: string;
   endedAt: string | null;
@@ -106,6 +200,10 @@ type RunController = {
   /** Requests this observer aborted itself under observation-only policy. */
   blockedByPolicy: WeakSet<Request>;
   recentCause: { eventId: string; interactionGroupId: string | null; at: number } | null;
+  /** `flowStateKey|route` pairs already snapshotted, so a settle does not refire. */
+  capturedStateKeys: Set<string>;
+  /** Serialises state snapshots so two settles cannot screenshot at once. */
+  snapshotInFlight: boolean;
 };
 
 type BridgePayload = {
@@ -126,6 +224,15 @@ const PRE_BOUNDARY_TYPES = new Set<QAEvidenceEvent['eventType']>([
 const SAFE_REQUEST_HEADERS = new Set([
   'accept', 'content-type', 'content-length', 'origin', 'referer', 'user-agent', 'x-requested-with',
 ]);
+/** Rows kept in the live panel. Older rows are counted in `evidenceTrimmed`. */
+const MAX_LIVE_EVIDENCE = 500;
+/** Per-state screenshot/aria/axe captures kept for one run. */
+const MAX_STATE_ARTIFACTS = 60;
+/** Coalescing window for state pushes to the renderer. */
+const STATE_PUSH_INTERVAL_MS = 250;
+const LIVE_EVIDENCE_KINDS: LiveEvidenceKind[] = [
+  'CONSOLE', 'NETWORK', 'PAGE', 'ACCESSIBILITY', 'INTERACTION', 'STORAGE', 'PERFORMANCE', 'FLOW',
+];
 /**
  * Token-based, mirroring the server classifier in `qa-privacy`. Raw substring
  * matching misfires on ordinary names (`profile` contains `file`, `company`
@@ -184,6 +291,24 @@ function safeMessage(raw: string): string {
     .replace(/([?&][^=\s]+)=([^&\s]+)/g, '$1=')
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[PSEUDONYMIZED EMAIL]')
     .slice(0, 2_000);
+}
+
+/**
+ * Mirrors `normalizeQaFlowKey` in `@tellann/db`, which is what the server's
+ * boundary evaluator compares against. Matching it here means the desktop's
+ * coverage view and the server's acceptance decision agree on what a state is.
+ */
+export function normalizeFlowKey(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+/** Strips captured field content out of an aria snapshot before it is written. */
+export function redactAriaSnapshot(snapshot: string): string {
+  return snapshot.replace(/((?:textbox|combobox|password)[^\n]*)(?:\n\s*-.*)?/gi, '$1 [PROTECTED]');
 }
 
 function normalizedRoute(urlValue: string): string | null {
@@ -418,6 +543,7 @@ export function deriveBrowserState(urlValue: string, titleValue = ''): {
 
 export class BrowserObserver {
   private active: RunController | null = null;
+  private statePushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: {
     executablePath?: string;
@@ -427,11 +553,46 @@ export class BrowserObserver {
     onEvidenceEvent?: (event: QAEvidenceEvent) => Promise<void> | void;
     onAnnotation?: (runId: string, annotation: LocalAnnotationInput) => Promise<unknown> | unknown;
     searchMentionableMembers?: (runId: string, query: string) => Promise<QAMentionableMember[]>;
+    /**
+     * Called, coalesced, whenever the run state changes. This is what lets the
+     * renderer stop polling for a full state copy several times a second.
+     */
+    onStateChanged?: (state: GuidedRunState) => void;
   } = {}) {}
 
-  private addLive(state: GuidedRunState, evidence: Omit<LiveEvidence, 'id' | 'timestamp'>) {
-    state.evidence.push({ id: uuid(), timestamp: new Date().toISOString(), ...evidence });
-    if (state.evidence.length > 500) state.evidence.shift();
+  /**
+   * Coalesces state pushes: a burst of requests on one page produces one
+   * notification rather than one per row.
+   */
+  private notifyStateChanged(): void {
+    if (!this.options.onStateChanged || this.statePushTimer) return;
+    this.statePushTimer = setTimeout(() => {
+      this.statePushTimer = null;
+      if (!this.active) return;
+      try { this.options.onStateChanged?.(this.snapshot()); } catch { /* the renderer went away */ }
+    }, STATE_PUSH_INTERVAL_MS);
+    this.statePushTimer.unref?.();
+  }
+
+  private addLive(state: GuidedRunState, evidence: Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> & { recorded?: boolean }) {
+    // A paused run still hears from the browser, but `emit` drops everything on
+    // the floor, so the row has to carry that it was never written to evidence.
+    const recorded = evidence.recorded ?? !(this.active?.paused ?? false);
+    const row: LiveEvidence = {
+      id: uuid(),
+      timestamp: new Date().toISOString(),
+      ...evidence,
+      recorded,
+    };
+    state.evidence.push(row);
+    state.liveCounts[row.kind] = (state.liveCounts[row.kind] ?? 0) + 1;
+    state.lastEvidenceAt = row.timestamp;
+    if (state.evidence.length > MAX_LIVE_EVIDENCE) {
+      const excess = state.evidence.length - MAX_LIVE_EVIDENCE;
+      state.evidence.splice(0, excess);
+      state.evidenceTrimmed += excess;
+    }
+    this.notifyStateChanged();
   }
 
   private emit(
@@ -475,6 +636,7 @@ export class BrowserObserver {
       protectedValues: input.protectedValues ?? [],
     };
     state.evidenceCounts[type] = (state.evidenceCounts[type] ?? 0) + 1;
+    this.notifyStateChanged();
     Promise.resolve(this.options.onEvidenceEvent?.(event)).catch((error) => {
       state.evidenceCounts.QA_CAPTURE_DEGRADED = (state.evidenceCounts.QA_CAPTURE_DEGRADED ?? 0) + 1;
       this.addLive(state, { kind: 'PAGE', level: 'ERROR', message: `Evidence upload deferred: ${safeMessage(String(error))}` });
@@ -524,9 +686,16 @@ export class BrowserObserver {
       causedByEventId: payload.causedByEventId ?? null,
     });
     const liveEvidence = eventId ? liveEvidenceForBridgePayload(payload) : null;
-    if (liveEvidence) this.addLive(controller.state, liveEvidence);
+    if (liveEvidence) {
+      this.addLive(controller.state, { ...liveEvidence, groupId: payload.interactionGroupId ?? null });
+    }
     if (eventId && ['click', 'submit_intent', 'submit', 'route'].includes(String(payload.type))) {
       controller.recentCause = { eventId, interactionGroupId: payload.interactionGroupId ?? null, at: Date.now() };
+    }
+    // A route that has finished settling is the point where the page is worth
+    // a screenshot: the data has landed and the layout has stopped moving.
+    if (payload.type === 'performance' && payload.metadata?.visuallyStableMs != null) {
+      void this.captureStateArtifacts(controller).catch(() => undefined);
     }
   }
 
@@ -567,12 +736,18 @@ export class BrowserObserver {
       status: 'RUNNING', phase: 'PRE_BOUNDARY', interactionMode: 'NAVIGATE', currentFlowStateKey: null,
       evidenceCounts: {}, targetUrl: input.targetUrl, evidence: [], observations: [], observedTransitions: [],
       windowResolution: null,
+      evidenceTrimmed: 0,
+      liveCounts: Object.fromEntries(LIVE_EVIDENCE_KINDS.map((kind) => [kind, 0])) as Record<LiveEvidenceKind, number>,
+      lastEvidenceAt: null,
+      flowPlan: null, coverage: null, flowStateHistory: [], boundaryRejection: null,
+      annotationCount: 0, stateArtifacts: [], syncBacklog: 0,
       findings: [], artifactDirectory, startedAt: new Date().toISOString(), endedAt: null,
     };
     const controller: RunController = {
       state, browser, context, page: null as unknown as Page,
       observationTimer: null as unknown as ReturnType<typeof setInterval>, stopping: false, paused: false,
       sequence: 0, applicationOrigin, requests: new Map(), blockedByPolicy: new WeakSet(), recentCause: null,
+      capturedStateKeys: new Set(), snapshotInFlight: false,
     };
     this.active = controller;
     const correlationHeaders = {
@@ -634,10 +809,32 @@ export class BrowserObserver {
       const mask = controller.page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
       await controller.page.screenshot({ path: screenshotPath, fullPage: true, mask: [mask], maskColor: '#111827' }).catch(() => undefined);
       await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(false)).catch(() => undefined);
-      return this.options.onAnnotation?.(runId, {
-        ...annotation,
-        screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-      });
+      try {
+        const saved = await this.options.onAnnotation?.(runId, {
+          ...annotation,
+          screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+        });
+        state.annotationCount += 1;
+        this.addLive(state, {
+          kind: 'INTERACTION',
+          level: 'INFO',
+          message: `Inspect comment on ${safeMessage(annotation.elementFingerprint?.accessibleName || annotation.elementFingerprint?.tag || 'an element')}`,
+          details: compactDetails([
+            detail('Comment', annotation.comment),
+            detail('Route', annotation.normalizedRoute),
+            detail('Flow state', annotation.flowStateKey),
+            detail('Screenshot', fs.existsSync(screenshotPath) ? path.basename(screenshotPath) : 'Not captured'),
+          ]),
+        });
+        return saved;
+      } catch (error) {
+        this.addLive(state, {
+          kind: 'INTERACTION',
+          level: 'ERROR',
+          message: `Inspect comment could not be saved: ${safeMessage(error instanceof Error ? error.message : String(error))}`,
+        });
+        throw error;
+      }
     });
     await context.addInitScript(installQaRecorder, {
       bridge: bridgeName, members: memberName, annotations: annotationName,
@@ -791,7 +988,7 @@ export class BrowserObserver {
         pageUrl: record.url, protectedValues: record.protectedValues,
         interactionGroupId: record.interactionGroupId, causedByEventId: record.causedByEventId,
       });
-      this.addLive(state, liveEvidenceForNetworkRequest({
+      this.addLive(state, { ...liveEvidenceForNetworkRequest({
         method: record.method,
         url: record.url,
         status,
@@ -801,7 +998,7 @@ export class BrowserObserver {
         resourceType: record.resourceType,
         transferredBytes,
         failure: failed ? safeMessage(request.failure()?.errorText ?? 'Request failed') : null,
-      }));
+      }), groupId: record.interactionGroupId });
       // A request this observer aborted under observation-only policy is an
       // expected outcome of the capture track, never an application defect.
       if (!blockedByPolicy && (failed || (status !== null && status >= 400))) {
@@ -1052,8 +1249,23 @@ export class BrowserObserver {
     accepted: boolean;
     phase?: 'PRE_BOUNDARY' | 'IN_FLOW';
     stateKey?: string | null;
+    eventType?: string | null;
+    reason?: string | null;
   }): Promise<GuidedRunState> {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    // A rejected Flow event is otherwise indistinguishable from one that never
+    // arrived: both leave the run waiting at the boundary. Say which it was, and
+    // why, next to the event itself.
+    if (!input.accepted) {
+      this.addLive(this.active.state, {
+        kind: 'FLOW', level: 'WARN', recorded: true,
+        message: `${input.eventType || 'Flow event'} was not accepted · ${input.reason || 'unknown reason'}`,
+        details: [
+          { label: 'State key', value: input.stateKey || '(none)' },
+          { label: 'Reason', value: input.reason || 'unknown' },
+        ],
+      });
+    }
     if (input.accepted && input.phase === 'IN_FLOW') {
       this.active.state.phase = 'IN_FLOW';
       if (input.stateKey) this.active.state.currentFlowStateKey = input.stateKey;

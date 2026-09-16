@@ -141,8 +141,12 @@ type DesktopContextValue = {
   getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
   initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  /** Stage and counts only; the record itself is fetched when the stage changes. */
+  getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;
   analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  retryFlowMappingResolution(initializationId: string): Promise<Record<string, any>>;
   confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
+  confirmFlowMappings(initializationId: string, confirmations: Array<{ checkpointId: string; candidateId: string; placementKind?: string; anchorText?: string }>): Promise<Record<string, any>>;
   /** Open an evidence location in the user's editor. The path is repository-relative. */
   openCodebaseEvidence(input: { applicationId: string; path: string; line?: number }): Promise<{ opened: boolean; reason?: string }>;
   setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
@@ -646,8 +650,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getFlowDiagrams: (applicationId, flowId, versionId) => bridge().intent.getFlowDiagrams(applicationId, flowId, versionId),
     initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
     getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
+    // Deliberately outside `perform`: this runs on a timer while the user waits,
+    // and a transient failure to read progress is not an app-level error.
+    getFlowInitializationProgress: (initializationId) => bridge().intent.getFlowInitializationProgress(initializationId),
     analyzeFlowInitialization: (initializationId) => perform(() => bridge().intent.analyzeFlowInitialization(initializationId)),
+    retryFlowMappingResolution: (initializationId) => perform(() => bridge().intent.retryFlowMappingResolution(initializationId)),
     confirmFlowMapping: (initializationId, checkpointId, candidateId, placementKind, anchorText) => perform(() => bridge().intent.confirmFlowMapping(initializationId, checkpointId, candidateId, placementKind, anchorText)),
+    confirmFlowMappings: (initializationId, confirmations) => perform(() => bridge().intent.confirmFlowMappings(initializationId, confirmations)),
     openCodebaseEvidence: (input) => bridge().projects.openCodebaseEvidence(input),
     setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),

@@ -102,6 +102,31 @@ const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
 const codebaseWorkers = new Map<string, Worker>();
+
+/**
+ * Callers waiting on a local analysis that is already running.
+ *
+ * The analysis lives in a worker thread this process owns, so its completion is
+ * an event — waiting for it by re-reading the stored record once a second was
+ * polling something we are holding the other end of, and paid for the whole
+ * record on every tick to learn one field.
+ */
+const localAnalysisWaiters = new Map<string, Array<(outcome: { ok: boolean; message?: string }) => void>>();
+
+function settleLocalAnalysis(applicationId: string, outcome: { ok: boolean; message?: string }): void {
+  const waiters = localAnalysisWaiters.get(applicationId);
+  if (!waiters) return;
+  localAnalysisWaiters.delete(applicationId);
+  for (const waiter of waiters) waiter(outcome);
+}
+
+function whenLocalAnalysisSettles(applicationId: string): Promise<{ ok: boolean; message?: string }> {
+  return new Promise((resolve) => {
+    const existing = localAnalysisWaiters.get(applicationId);
+    if (existing) existing.push(resolve);
+    else localAnalysisWaiters.set(applicationId, [resolve]);
+  });
+}
 let pendingSetupHandoffToken: string | null = null;
 let activeOrganizationId: string | null = null;
 const execFileAsync = promisify(execFile);
@@ -111,9 +136,23 @@ const instrumentation = new InstrumentationController(
   applicationLauncher,
   // The same scan-and-register as attaching the folder, so a new plan and the
   // cloud's snapshot both describe the project's current commit and files.
+  //
+  // Only when the folder has actually moved, though. The scan exists to catch a
+  // commit, branch switch or install since the folder was attached, and that
+  // question is answered by one `git status` plus a stat per changed file —
+  // where the scan itself reads every source file in the project. Paying the
+  // second to learn the first made every instrumentation proposal re-read the
+  // whole tree.
   async (applicationId) => {
     const stored = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId));
     if (!stored || !existsSync(stored.path)) return;
+    if (selectedWorkspaces.has(applicationId) && stored.snapshot.workingTreeHash) {
+      try {
+        if (workingTreeIdentity(stored.path) === stored.snapshot.workingTreeHash) return;
+      } catch {
+        // Git could not be read, so fall through and scan rather than guess.
+      }
+    }
     await registerSelectedWorkspace(applicationId, stored.path);
   },
 );
@@ -471,7 +510,10 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
       toStateKey: metadata.toStateKey,
       metadata,
     }) as { accepted?: boolean; shouldStop?: boolean; phase?: 'PRE_BOUNDARY' | 'IN_FLOW'; reason?: string };
-    await observer.acceptBoundaryOutcome({ accepted: Boolean(boundary.accepted), phase: boundary.phase, stateKey });
+    await observer.acceptBoundaryOutcome({
+      accepted: Boolean(boundary.accepted), phase: boundary.phase, stateKey,
+      eventType, reason: boundary.reason ?? null,
+    });
     const updated = observer.getState();
     if (updated) emitRunLifecycle(updated, { cloudStatus: boundary.accepted ? 'ACCEPTED' : `QUARANTINED:${boundary.reason ?? 'unknown'}` });
     if (boundary.shouldStop) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
@@ -650,6 +692,78 @@ type CodebaseAnalysisState = {
   uploadProgress: { sent: number; total: number } | null;
 };
 
+/**
+ * The small facts about an analysis, stored apart from the analysis itself.
+ *
+ * Deciding whether a stored analysis still describes the folder on disk needs
+ * five strings. Reading them used to mean decrypting and parsing the whole
+ * record — every entity, relationship, feature and evidence excerpt of a real
+ * repository — and that question is asked at the start of every Flow
+ * initialization and once a second while one is waiting. The graph itself is
+ * only ever needed when something is about to rank against it.
+ */
+type CodebaseAnalysisMeta = {
+  mode: 'cloud' | 'local';
+  cloudJobId: string | null;
+  workspaceRoot: string;
+  workspaceId: string;
+  repositoryFingerprint: string;
+  workingTreeHash: string | null;
+  analysisId: string | null;
+  graphVersion: string | null;
+  contentHash: string | null;
+  revision: string | null;
+  branch: string | null;
+  dirty: boolean;
+  status: CodebaseAnalysis['status'] | null;
+  updatedAt: string;
+};
+
+function codebaseAnalysisMetaKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  return `codebase-analysis-meta:${scope}:${applicationId}`;
+}
+
+function analysisMetaOf(state: CodebaseAnalysisState): CodebaseAnalysisMeta {
+  return {
+    mode: state.mode,
+    cloudJobId: state.cloudJobId,
+    workspaceRoot: state.workspaceRoot,
+    workspaceId: state.workspaceId,
+    repositoryFingerprint: state.repositoryFingerprint,
+    workingTreeHash: state.workingTreeHash,
+    analysisId: state.analysis?.id ?? null,
+    graphVersion: state.analysis?.graphVersion ?? null,
+    contentHash: state.analysis?.contentHash ?? null,
+    revision: state.analysis?.revision ?? null,
+    branch: state.analysis?.branch ?? null,
+    dirty: Boolean(state.analysis?.dirty),
+    status: state.analysis?.status ?? null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function readAnalysisMeta(applicationId: string): CodebaseAnalysisMeta | null {
+  try {
+    const meta = readLocalState<CodebaseAnalysisMeta>(codebaseAnalysisMetaKey(applicationId));
+    if (meta) return meta;
+  } catch {
+    // Fall through: an older install has no meta row yet.
+  }
+  // Derive it once from the full record so an existing install does not
+  // re-analyse simply because the cheap copy did not exist yet.
+  const state = readAnalysisState(applicationId);
+  if (!state) return null;
+  const derived = analysisMetaOf(state);
+  try {
+    writeLocalState(codebaseAnalysisMetaKey(applicationId), derived);
+  } catch {
+    // Best effort; the next write will try again.
+  }
+  return derived;
+}
+
 function codebaseCacheKey(applicationId: string): string {
   const scope = cloud.localWorkspaceScope();
   if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
@@ -700,7 +814,11 @@ function readAnalysisState(applicationId: string): CodebaseAnalysisState | null 
 }
 
 function writeAnalysisState(applicationId: string, state: CodebaseAnalysisState): void {
-  writeLocalState(codebaseAnalysisKey(applicationId), { ...state, updatedAt: new Date().toISOString() });
+  const next = { ...state, updatedAt: new Date().toISOString() };
+  writeLocalState(codebaseAnalysisKey(applicationId), next);
+  // Written together so the cheap copy can never describe a different analysis
+  // than the expensive one.
+  writeLocalState(codebaseAnalysisMetaKey(applicationId), analysisMetaOf(next));
 }
 
 function patchLocalAnalysis(applicationId: string, patch: Partial<CodebaseAnalysis>): void {
@@ -868,21 +986,29 @@ function beginLocalCodebaseAnalysis(
           console.warn('[codebase-analysis] Could not persist the incremental cache', error);
         }
       }
+      settleLocalAnalysis(applicationId, { ok: true });
     } else if (message.type === 'error') {
       patchLocalAnalysis(applicationId, {
         status: 'FAILED',
         stageMessage: String(message.message ?? 'Analysis failed').slice(0, 240),
         completedAt: new Date().toISOString(),
       });
+      settleLocalAnalysis(applicationId, { ok: false, message: String(message.message ?? 'Analysis failed') });
     }
   });
-  worker.once('exit', () => codebaseWorkers.delete(applicationId));
+  worker.once('exit', () => {
+    codebaseWorkers.delete(applicationId);
+    // A worker that exits without having reported either outcome died; nobody
+    // waiting on it should be left waiting for the timeout to notice.
+    settleLocalAnalysis(applicationId, { ok: false, message: 'FLOW_CODEBASE_ANALYSIS_FAILED' });
+  });
   worker.once('error', (error) => {
     patchLocalAnalysis(applicationId, {
       status: 'FAILED',
       stageMessage: error.message.slice(0, 240),
       completedAt: new Date().toISOString(),
     });
+    settleLocalAnalysis(applicationId, { ok: false, message: error.message });
   });
 }
 
@@ -1020,8 +1146,13 @@ type FlowMappingExcerpt = {
  * the user reviews, which is rebuilt from the same candidates server-side.
  */
 const MAX_CANDIDATES_PER_CHECKPOINT = 6;
-const MAX_EXCERPTS_PER_CHECKPOINT = 4;
-const MAX_EXCERPT_CHARS = 6_000;
+/**
+ * Source travels only for the candidates a resolver is actually choosing
+ * between. Below the top few the excerpt is not read and not cited; it is only
+ * prompt weight, and prompt weight is what made resolution fail outright.
+ */
+const MAX_EXCERPTS_PER_CHECKPOINT = 3;
+const MAX_EXCERPT_CHARS = 3_000;
 
 /**
  * Stable ids for the evidence a candidate rests on.
@@ -1036,32 +1167,112 @@ function evidenceIdsFor(candidate: { entityId?: string; id: string; path?: strin
   return derived.length ? derived : [`entity:${candidate.entityId ?? candidate.id}`];
 }
 
+type FlowMappingRequest = {
+  resolve: (value: { retrieval: any; excerpts: FlowMappingExcerpt[] }) => void;
+  reject: (error: Error) => void;
+  onProgress?: (completed: number, total: number) => void;
+};
+
+type FlowMappingWorkerEntry = {
+  worker: Worker;
+  /** The analysis this worker is currently holding, if any. */
+  analysisId: string | null;
+  pending: Map<string, FlowMappingRequest>;
+};
+
+/**
+ * One mapping worker per application, kept between runs.
+ *
+ * A worker per run meant structured-cloning the entire analysis graph across the
+ * thread boundary and rebuilding the term index from nothing, every time. That
+ * is the whole reason initializing a second Flow against an unchanged codebase
+ * cost as much as the first. Keeping the worker means the graph crosses once per
+ * analysis and the index is built once per analysis.
+ */
+const flowMappingWorkers = new Map<string, FlowMappingWorkerEntry>();
+
+function flowMappingWorkerFor(applicationId: string): FlowMappingWorkerEntry {
+  const existing = flowMappingWorkers.get(applicationId);
+  if (existing) return existing;
+
+  const worker = new Worker(path.join(__dirname, 'flow-mapping-worker.js'));
+  const entry: FlowMappingWorkerEntry = { worker, analysisId: null, pending: new Map() };
+
+  const failAll = (error: Error) => {
+    for (const request of entry.pending.values()) request.reject(error);
+    entry.pending.clear();
+    entry.analysisId = null;
+    if (flowMappingWorkers.get(applicationId) === entry) flowMappingWorkers.delete(applicationId);
+  };
+
+  worker.on('message', (message: {
+    type: string; requestId?: string; retrieval?: any; excerpts?: FlowMappingExcerpt[];
+    message?: string; completed?: number; total?: number;
+  }) => {
+    if (message.type === 'analysis-ready') return;
+    const request = message.requestId ? entry.pending.get(message.requestId) : undefined;
+    if (!request) return;
+    if (message.type === 'progress') {
+      request.onProgress?.(Number(message.completed ?? 0), Number(message.total ?? 0));
+      return;
+    }
+    entry.pending.delete(message.requestId!);
+    if (message.type === 'complete') request.resolve({ retrieval: message.retrieval, excerpts: message.excerpts ?? [] });
+    else request.reject(new Error(message.message ?? 'FLOW_MAPPING_RETRIEVAL_FAILED'));
+  });
+  worker.on('error', (error) => failAll(error));
+  worker.on('exit', (code) => failAll(new Error(`FLOW_MAPPING_RETRIEVAL_FAILED:${code}`)));
+  // A worker that outlives its run must not be the reason the process cannot.
+  worker.unref();
+
+  flowMappingWorkers.set(applicationId, entry);
+  return entry;
+}
+
 function runFlowMappingRetrieval(input: {
-  analysis: CodebaseAnalysis;
+  applicationId: string;
+  analysisId: string;
+  /** Called only when the worker is not already holding this analysis. */
+  loadAnalysis: () => CodebaseAnalysis;
   flow: unknown;
   workspaceRoot: string;
+  onProgress?: (completed: number, total: number) => void;
 }): Promise<{ retrieval: any; excerpts: FlowMappingExcerpt[] }> {
+  const entry = flowMappingWorkerFor(input.applicationId);
+  if (entry.analysisId !== input.analysisId) {
+    // Messages are delivered in order, so the map request below is guaranteed to
+    // be handled after the analysis it needs has been loaded.
+    entry.worker.postMessage({ type: 'analysis', analysisId: input.analysisId, analysis: input.loadAnalysis() });
+    entry.analysisId = input.analysisId;
+  }
+  const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, 'flow-mapping-worker.js'), { workerData: input });
-    let settled = false;
-    const settle = (run: () => void) => {
-      if (settled) return;
-      settled = true;
-      void worker.terminate().catch(() => undefined);
-      run();
-    };
-    worker.on('message', (message: { type: string; retrieval?: any; excerpts?: FlowMappingExcerpt[]; message?: string }) => {
-      if (message.type === 'complete') {
-        settle(() => resolve({ retrieval: message.retrieval, excerpts: message.excerpts ?? [] }));
-        return;
-      }
-      settle(() => reject(new Error(message.message ?? 'FLOW_MAPPING_RETRIEVAL_FAILED')));
-    });
-    worker.on('error', (error) => settle(() => reject(error)));
-    worker.on('exit', (code) => {
-      if (code !== 0) settle(() => reject(new Error(`FLOW_MAPPING_RETRIEVAL_FAILED:${code}`)));
-    });
+    entry.pending.set(requestId, { resolve, reject, onProgress: input.onProgress });
+    entry.worker.postMessage({ type: 'map', requestId, flow: input.flow, workspaceRoot: input.workspaceRoot });
   });
+}
+
+/**
+ * The excerpt-sharing decision, remembered for the folder it was made about.
+ *
+ * Scoped to the workspace rather than the application: the decision is about a
+ * body of source on this device, and re-attaching a different folder is a
+ * different question.
+ */
+function flowMappingConsentKey(applicationId: string): string {
+  const scope = cloud.localWorkspaceScope();
+  if (!scope) throw new Error('AUTHENTICATION_REQUIRED');
+  const workspace = selectedWorkspaces.get(applicationId);
+  return `flow-mapping-consent:${scope}:${workspace?.localId ?? applicationId}`;
+}
+
+function readFlowMappingConsent(applicationId: string): boolean | null {
+  try {
+    const stored = readLocalState<{ granted: boolean }>(flowMappingConsentKey(applicationId));
+    return typeof stored?.granted === 'boolean' ? stored.granted : null;
+  } catch {
+    return null;
+  }
 }
 
 async function requestFlowMappingAiConsent(
@@ -1071,6 +1282,12 @@ async function requestFlowMappingAiConsent(
 ): Promise<boolean> {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   if (!extracted.length) return false;
+  // Asked once per folder. The dialog names the files and line ranges that would
+  // be sent, so the first answer is an informed one — but it sat in the middle
+  // of every mapping run, which meant the user had to be watching for a pipeline
+  // that otherwise needs nobody, on every Flow and every re-run.
+  const remembered = readFlowMappingConsent(applicationId);
+  if (remembered !== null) return remembered;
   // The dialog lists the files and line ranges that would be sent, so what is
   // shown is exactly what leaves the device — not a sample of it.
   const excerpts = [...new Map(extracted.map((item) => [item.path, {
@@ -1091,6 +1308,11 @@ async function requestFlowMappingAiConsent(
       if (settled) return;
       settled = true;
       pendingUploadConsents.delete(requestId);
+      try {
+        writeLocalState(flowMappingConsentKey(applicationId), { granted: consented, decidedAt: new Date().toISOString() });
+      } catch {
+        // Failing to remember the answer only costs one more prompt.
+      }
       resolve(consented);
     };
     pendingUploadConsents.set(requestId, settle);
@@ -1098,23 +1320,56 @@ async function requestFlowMappingAiConsent(
   });
 }
 
-async function waitForCodebaseAnalysis(applicationId: string, timeoutMs = 10 * 60_000): Promise<CodebaseAnalysisState> {
+/** Backs off rather than asking a remote job the same question every second. */
+function cloudPollDelay(attempt: number): number {
+  if (attempt < 3) return 2_000;
+  if (attempt < 8) return 5_000;
+  return 10_000;
+}
+
+async function waitForCodebaseAnalysis(applicationId: string, timeoutMs = 10 * 60_000): Promise<CodebaseAnalysisMeta> {
   const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
   while (Date.now() < deadline) {
-    const state = readAnalysisState(applicationId);
-    if (state?.mode === 'cloud' && state.cloudJobId) {
+    const meta = readAnalysisMeta(applicationId);
+
+    if (meta?.mode === 'cloud' && meta.cloudJobId) {
       const remote = await cloud.getCodebaseAnalysis(applicationId).catch(() => null) as Record<string, any> | null;
       if (remote?.analysis && ['COMPLETED', 'PARTIAL'].includes(String(remote.status))) {
+        const state = readAnalysisState(applicationId);
+        if (!state) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
         const next = { ...state, analysis: remote.analysis as CodebaseAnalysis, uploadProgress: null };
         writeAnalysisState(applicationId, next);
-        return next;
+        return analysisMetaOf(next);
       }
       if (remote && ['FAILED', 'CANCELLED'].includes(String(remote.status))) throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
-    } else if (state?.analysis && ['COMPLETED', 'PARTIAL'].includes(state.analysis.status)) {
-      return state;
-    } else if (state?.analysis && ['FAILED', 'CANCELLED'].includes(state.analysis.status)) {
+      attempt += 1;
+      await new Promise((resolve) => setTimeout(resolve, cloudPollDelay(attempt)));
+      continue;
+    }
+
+    if (meta?.status && ['COMPLETED', 'PARTIAL'].includes(meta.status)) return meta;
+    if (meta?.status && ['FAILED', 'CANCELLED'].includes(meta.status)) throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
+
+    // A local analysis is a worker this process owns, so its completion arrives
+    // as an event. The timeout still applies, for a worker that hangs rather
+    // than finishing or failing.
+    if (codebaseWorkers.has(applicationId)) {
+      const settled = await Promise.race([
+        whenLocalAnalysisSettles(applicationId),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()))),
+      ]);
+      if (!settled) break;
+      if (!settled.ok) throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
+      const current = readAnalysisMeta(applicationId);
+      if (current?.status && ['COMPLETED', 'PARTIAL'].includes(current.status)) return current;
       throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
     }
+
+    // No worker and no finished analysis: something started it and died, or it
+    // has not been written yet. Give the write a moment, then give up.
+    attempt += 1;
+    if (attempt > 5) throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   throw new Error('FLOW_CODEBASE_ANALYSIS_TIMEOUT');
@@ -1128,12 +1383,11 @@ async function waitForCodebaseAnalysis(applicationId: string, timeoutMs = 10 * 6
  * action is what lets Flow initialization create its record first and do the
  * expensive part in the background.
  */
-function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysisState | null {
+function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysisMeta | null {
   const workspace = selectedWorkspaces.get(applicationId);
   if (!workspace?.cloudId || !workspace.snapshotId) return null;
-  const state = readAnalysisState(applicationId);
-  const analysis = state?.analysis;
-  if (!analysis || !['COMPLETED', 'PARTIAL'].includes(analysis.status)) return null;
+  const meta = readAnalysisMeta(applicationId);
+  if (!meta?.status || !['COMPLETED', 'PARTIAL'].includes(meta.status)) return null;
   // Measure the tree now rather than trusting the snapshot taken when the folder
   // was attached. That snapshot is restored from disk on launch and never
   // refreshed, so comparing against it would both miss real edits made between
@@ -1146,35 +1400,39 @@ function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysi
     liveTree = null;
   }
   const current = Boolean(
-    analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
-    && liveTree && state?.workingTreeHash === liveTree,
+    meta.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
+    && liveTree && meta.workingTreeHash === liveTree,
   );
-  return current && state ? state : null;
+  return current ? meta : null;
 }
 
-async function currentFlowCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisState> {
+async function currentFlowCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisMeta> {
   const workspace = selectedWorkspaces.get(applicationId);
   if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
   // An analysis is current when it describes the tree that is on disk now. A
   // dirty checkout is allowed to be current, as long as it is the *same* dirty
   // checkout: requiring a clean tree meant anyone mid-change re-analysed, and
   // re-consented, on every Flow.
-  let state = readCurrentFlowCodebaseAnalysis(applicationId);
-  if (state) return state;
-  state = readAnalysisState(applicationId);
+  const existing = readCurrentFlowCodebaseAnalysis(applicationId);
+  if (existing) return existing;
 
-  if (state?.mode === 'cloud') {
-    await beginCodebaseAnalysisWithConsent(applicationId, workspace.root, workspace.snapshot, {
-      workspaceId: workspace.cloudId, repositorySnapshotId: workspace.snapshotId,
-    });
-  } else {
-    beginLocalCodebaseAnalysis(applicationId, workspace.root, workspace.snapshot);
+  const meta = readAnalysisMeta(applicationId);
+  // An analysis already running for this workspace is the one to wait for;
+  // starting a second would throw away the first and its incremental cache.
+  if (!codebaseWorkers.has(applicationId)) {
+    if (meta?.mode === 'cloud') {
+      await beginCodebaseAnalysisWithConsent(applicationId, workspace.root, workspace.snapshot, {
+        workspaceId: workspace.cloudId, repositorySnapshotId: workspace.snapshotId,
+      });
+    } else {
+      beginLocalCodebaseAnalysis(applicationId, workspace.root, workspace.snapshot);
+    }
   }
-  state = await waitForCodebaseAnalysis(applicationId);
-  if (!state.analysis || state.analysis.repositoryFingerprint !== workspace.snapshot.repositoryFingerprint) {
+  const settled = await waitForCodebaseAnalysis(applicationId);
+  if (settled.repositoryFingerprint !== workspace.snapshot.repositoryFingerprint) {
     throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
   }
-  return state;
+  return settled;
 }
 
 /**
@@ -1236,12 +1494,38 @@ function reportFlowMappingProgress(
   status: 'WAITING_FOR_ANALYSIS' | 'RETRIEVING' | 'CONTEXTUALIZING' | 'RESOLVING' | 'FAILED',
   totalCheckpoints: number,
   message: string,
+  completedCheckpoints = 0,
 ): void {
   void cloud.reportFlowMappingProgress(initializationId, {
-    status, completedCheckpoints: 0, totalCheckpoints,
-    resolvedCount: 0, ambiguousCount: 0, unresolvedCount: totalCheckpoints, unsupportedCount: 0,
+    status, completedCheckpoints, totalCheckpoints,
+    resolvedCount: 0, ambiguousCount: 0,
+    unresolvedCount: Math.max(0, totalCheckpoints - completedCheckpoints), unsupportedCount: 0,
     message, updatedAt: new Date().toISOString(),
   }).catch(() => undefined);
+}
+
+/**
+ * Report at most one update per interval.
+ *
+ * Retrieval finishes a checkpoint every few milliseconds and each report is a
+ * network round trip, so sending one per checkpoint would put more load on the
+ * run than the ranking it is describing. A second is well below what reads as
+ * stalled and well above what reads as chatter.
+ */
+const FLOW_MAPPING_PROGRESS_INTERVAL_MS = 1_000;
+
+function throttledCheckpointProgress(
+  initializationId: string,
+  message: (completed: number, total: number) => string,
+): (completed: number, total: number) => void {
+  let lastSentAt = 0;
+  return (completed, total) => {
+    const now = Date.now();
+    // The last checkpoint always reports, so the bar never stops one short.
+    if (completed < total && now - lastSentAt < FLOW_MAPPING_PROGRESS_INTERVAL_MS) return;
+    lastSentAt = now;
+    reportFlowMappingProgress(initializationId, 'RETRIEVING', total, message(completed, total), completed);
+  };
 }
 
 /**
@@ -1294,9 +1578,9 @@ async function submitCurrentFlowMappings(applicationId: string, initialization: 
     reportFlowMappingProgress(initializationId, status, checkpointCount, message);
   progress('WAITING_FOR_ANALYSIS', 'Checking that the analysis matches your current code');
   try {
-    const state = await currentFlowCodebaseAnalysis(applicationId);
-    if (!state.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
-    return await runFlowMappingSubmission(applicationId, initialization, workspace.root, state, progress);
+    const meta = await currentFlowCodebaseAnalysis(applicationId);
+    if (!meta.analysisId) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
+    return await runFlowMappingSubmission(applicationId, initialization, workspace.root, meta, progress);
   } catch (error) {
     progress('FAILED', 'Mapping could not be completed');
     throw error;
@@ -1307,22 +1591,36 @@ async function runFlowMappingSubmission(
   applicationId: string,
   initialization: Record<string, any>,
   workspaceRoot: string,
-  state: CodebaseAnalysisState,
+  meta: CodebaseAnalysisMeta,
   progress: (status: 'WAITING_FOR_ANALYSIS' | 'RETRIEVING' | 'CONTEXTUALIZING' | 'RESOLVING' | 'FAILED', message: string) => void,
 ) {
   progress('RETRIEVING', 'Searching the analysed codebase for each checkpoint');
   // Enrichment only: a Flow that cannot be fetched still maps, just with less
   // context, so this must never be the thing that fails initialization.
   const detail = await cloud.declaredFlow(applicationId, String(initialization.flowId)).catch(() => null);
+  const initializationId = String(initialization.id);
   const { retrieval, excerpts: extracted } = await runFlowMappingRetrieval({
-    analysis: state.analysis!,
+    applicationId,
+    analysisId: meta.analysisId!,
+    // Only read when the worker does not already hold this analysis, which is
+    // the point: the multi-megabyte record stays on disk for every run after the
+    // first against the same tree.
+    loadAnalysis: () => {
+      const state = readAnalysisState(applicationId);
+      if (!state?.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
+      return state.analysis;
+    },
     flow: flowInputFromInitialization(initialization, detail),
     workspaceRoot,
+    onProgress: throttledCheckpointProgress(
+      initializationId,
+      (completed, total) => `Searching your code for each checkpoint (${completed} of ${total})`,
+    ),
   });
   progress('CONTEXTUALIZING', 'Reading the shortlisted files');
   const excerpts = new Map(extracted.map((item) => [item.candidateId, item]));
-  let consentMode = state.mode === 'cloud' ? 'CLOUD_APPROVED' : 'LOCAL_GRAPH_ONLY';
-  if (state.mode === 'local') {
+  let consentMode = meta.mode === 'cloud' ? 'CLOUD_APPROVED' : 'LOCAL_GRAPH_ONLY';
+  if (meta.mode === 'local') {
     // Asking is only meaningful when there is something to send. With nothing
     // extracted, skip the dialog and stay graph-only — the report records that,
     // so the absence is visible rather than looking like a refusal.
@@ -1354,8 +1652,6 @@ async function runFlowMappingSubmission(
       score: candidate.score,
       confidence: candidate.confidence,
       placementKinds: candidate.placementKinds,
-      featureIds: candidate.featureIds,
-      relationshipPaths: candidate.relationshipPaths,
       evidenceIds: evidenceIdsFor(candidate),
       rationale: candidate.rationale ?? `Ranked ${candidate.name ?? candidate.path} from codebase entities, graph relationships, and feature evidence.`,
       // Source only travels for the candidates a resolver would actually weigh
@@ -1478,6 +1774,30 @@ function repositoryMismatchError(cause: unknown): Error {
   })}`);
 }
 
+/** Scan a folder in a worker, so the window keeps painting while it happens. */
+function runWorkspaceScan(root: string, options: Parameters<typeof scanWorkspace>[1]): Promise<RepositorySnapshotSummary> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'workspace-scan-worker.js'), {
+      workerData: { root, options },
+    });
+    let settled = false;
+    const settle = (run: () => void) => {
+      if (settled) return;
+      settled = true;
+      void worker.terminate().catch(() => undefined);
+      run();
+    };
+    worker.on('message', (message: { type: string; snapshot?: RepositorySnapshotSummary; message?: string }) => {
+      if (message.type === 'complete' && message.snapshot) settle(() => resolve(message.snapshot!));
+      else settle(() => reject(new Error(message.message ?? 'WORKSPACE_SCAN_FAILED')));
+    });
+    worker.on('error', (error) => settle(() => reject(error)));
+    worker.on('exit', (code) => {
+      if (code !== 0) settle(() => reject(new Error(`WORKSPACE_SCAN_FAILED:${code}`)));
+    });
+  });
+}
+
 async function registerSelectedWorkspace(applicationId: string, selectedPath: string) {
   resolveWithinWorkspace(selectedPath, '.');
   // Derived from the folder path under a device-local secret rather than
@@ -1488,7 +1808,7 @@ async function registerSelectedWorkspace(applicationId: string, selectedPath: st
   // Fetched before the scan so the scanner can measure how far this checkout has
   // drifted from the shared QA branch in the same pass.
   const policy = await resolveBranchPolicy(applicationId, previous?.branchPolicy);
-  const snapshot = await scanWorkspace(selectedPath, {
+  const snapshot = await runWorkspaceScan(selectedPath, {
     workspaceId,
     upstreamBranch: policy?.bound ? policy.qaBranchName : null,
   });
@@ -1959,8 +2279,9 @@ function registerIpc(): void {
     // appeared to do nothing at all. The record is created first so the window
     // can navigate to it immediately; mapping then runs behind it and reports
     // each stage against the id the UI is already watching.
-    const analysisState = readCurrentFlowCodebaseAnalysis(value.applicationId);
-    const analysis = analysisState?.analysis ?? null;
+    // The identity alone, not the graph: this only records which analysed tree
+    // the initialization is about.
+    const analysis = readCurrentFlowCodebaseAnalysis(value.applicationId);
     const created = await cloud.initializeFlow(value.flowId, {
       flowVersionId: value.flowVersionId,
       workspaceId: workspace.cloudId,
@@ -1969,7 +2290,7 @@ function registerIpc(): void {
       instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
       ...(analysis ? {
         codebaseAnalysis: {
-          id: analysis.id, graphVersion: analysis.graphVersion, contentHash: analysis.contentHash,
+          id: analysis.analysisId, graphVersion: analysis.graphVersion, contentHash: analysis.contentHash,
           revision: analysis.revision, branch: analysis.branch, dirty: analysis.dirty,
         },
       } : {
@@ -1987,6 +2308,24 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
     return cloud.flowInitialization(initializationId);
+  });
+  ipcMain.handle(IPC.getFlowInitializationProgress, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.flowInitializationProgress(initializationId);
+  });
+  ipcMain.handle(IPC.retryFlowMappingResolution, async (event, initializationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    // Deliberately not a re-analysis: the shortlist and the excerpts behind it
+    // are still on the scan, and a provider timeout says nothing about them.
+    return cloud.retryFlowMappingResolution(initializationId);
+  });
+  ipcMain.handle(IPC.resetFlowMappingConsent, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    deleteLocalState(flowMappingConsentKey(applicationId));
+    return { cleared: true };
   });
   ipcMain.handle(IPC.analyzeFlowInitialization, async (event, initializationId: unknown) => {
     assertTrustedSender(event);
@@ -2008,6 +2347,25 @@ function registerIpc(): void {
       ...(typeof value.placementKind === 'string' ? { placementKind: value.placementKind } : {}),
       ...(typeof value.anchorText === 'string' ? { anchorText: value.anchorText } : {}),
     });
+  });
+  ipcMain.handle(IPC.confirmFlowMappings, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; confirmations?: unknown };
+    if (typeof value.initializationId !== 'string' || !Array.isArray(value.confirmations) || !value.confirmations.length) {
+      throw new Error('INVALID_FLOW_MAPPING_CONFIRMATION');
+    }
+    return cloud.confirmFlowMappings(value.initializationId, value.confirmations.map((item) => {
+      const entry = item as { checkpointId?: unknown; candidateId?: unknown; placementKind?: unknown; anchorText?: unknown };
+      if (typeof entry.checkpointId !== 'string' || typeof entry.candidateId !== 'string') {
+        throw new Error('INVALID_FLOW_MAPPING_CONFIRMATION');
+      }
+      return {
+        checkpointId: entry.checkpointId,
+        candidateId: entry.candidateId,
+        ...(typeof entry.placementKind === 'string' ? { placementKind: entry.placementKind } : {}),
+        ...(typeof entry.anchorText === 'string' ? { anchorText: entry.anchorText } : {}),
+      };
+    }) as never);
   });
   ipcMain.handle(IPC.setFlowInitializationMode, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -2256,7 +2614,7 @@ function registerIpc(): void {
     const selected = result.filePaths[0];
     return { path: selected, name: path.basename(selected) };
   });
-  ipcMain.handle(IPC.getLocalWorkspace, (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.getLocalWorkspace, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     let stored = readLocalState<{
@@ -2271,7 +2629,7 @@ function registerIpc(): void {
       try {
         stored = {
           ...stored,
-          snapshot: scanWorkspace(stored.path, {
+          snapshot: await runWorkspaceScan(stored.path, {
             workspaceId: stored.id,
             scannerVersion: stored.snapshot.scannerVersion,
           }),
@@ -2427,7 +2785,7 @@ function registerIpc(): void {
     // The QA branch is carried through so a rescan measures drift the same way
     // the original attach did, rather than silently losing it.
     const policy = workspace.branchPolicy;
-    const snapshot = await scanWorkspace(workspace.path, {
+    const snapshot = await runWorkspaceScan(workspace.path, {
       workspaceId: workspace.id,
       upstreamBranch: policy?.bound ? policy.qaBranchName : null,
     });
@@ -2793,11 +3151,25 @@ function registerIpc(): void {
     const context = parseInstrumentationContext(input);
     const value = input as { planId?: unknown; approvedFileScopes?: unknown; approvedCommandIds?: unknown };
     if (typeof value.planId !== 'string' || !Array.isArray(value.approvedFileScopes) || !Array.isArray(value.approvedCommandIds)) throw new Error('INVALID_INSTRUMENTATION_APPROVAL');
-    return instrumentation.approve({
+    const approved = await instrumentation.approve({
       ...context, planId: value.planId,
       approvedFileScopes: value.approvedFileScopes.filter((item): item is string => typeof item === 'string'),
       approvedCommandIds: value.approvedCommandIds.filter((item): item is string => typeof item === 'string'),
     });
+    // Start the dependency install now, while the user reads the diff.
+    //
+    // It is the longest step in applying a plan and it changes nothing about
+    // their code, so it does not need the checkpoint or the rollback that wrap
+    // the rest of `apply` — only their approval, which they have just given.
+    // Deliberately unawaited and its failure deliberately ignored: `apply` runs
+    // the same command when there is no recorded success, so a failure here
+    // costs the time it took and is reported properly there, in the run the user
+    // is watching.
+    const planId = value.planId;
+    void instrumentation.installDependencies(context.applicationId, planId).catch((error) => {
+      console.warn('[instrumentation] Early dependency install did not complete', error);
+    });
+    return approved;
   });
   ipcMain.handle(IPC.rejectInstrumentation, async (event, input: unknown) => {
     assertTrustedSender(event);

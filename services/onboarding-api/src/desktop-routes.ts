@@ -1067,9 +1067,14 @@ export function createDesktopRouter(input: {
     const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : '';
     const eventType = String(req.body?.eventType ?? '');
     const flowVersionId = String(req.body?.flowVersionId ?? metadata.flowVersionId ?? '');
-    const stateKey = String(req.body?.stateKey ?? metadata.stateKey ?? req.body?.toStateKey ?? metadata.toStateKey ?? '');
-    if (!eventId || !stateKey || !eventType || !flowVersionId) {
-      return res.status(400).json({ error: 'FLOW_EVENT_CONTEXT_REQUIRED', message: 'eventId, eventType, flowVersionId, and stateKey are required' });
+    const stateKey = String(req.body?.stateKey ?? metadata.stateKey ?? req.body?.toStateKey ?? metadata.toStateKey ?? metadata.state ?? metadata.stateId ?? '');
+    // A marker written from the instrumentation snippet identifies its flow and
+    // state by slug, in `metadata.flow` / `metadata.state`. Only the boundary can
+    // resolve those against the run's flow and snapshot, so anything carrying a
+    // flow slug goes through rather than being refused here.
+    const resolvable = Boolean(flowVersionId) || Boolean(metadata.flow ?? metadata.flowKey);
+    if (!eventId || !stateKey || !eventType || !resolvable) {
+      return res.status(400).json({ error: 'FLOW_EVENT_CONTEXT_REQUIRED', message: 'eventId, eventType, stateKey, and either flowVersionId or flow are required' });
     }
     const result = await processQaFlowBoundaryEvent(prisma, run.id, {
       eventId,

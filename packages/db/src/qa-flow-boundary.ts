@@ -63,7 +63,7 @@ export async function processQaFlowBoundaryEvent(
   return prisma.$transaction(async (tx) => {
     const run = await tx.qARun.findUnique({
       where: { id: runId },
-      include: { expectedGraphVersion: true },
+      include: { expectedGraphVersion: true, flow: true },
     });
     if (!run) {
       return { kind: 'NOT_FOUND', accepted: false, duplicate: false, quarantined: false, reason: 'RUN_NOT_FOUND', shouldStop: false, phase: 'PRE_BOUNDARY', run: null };
@@ -90,21 +90,63 @@ export async function processQaFlowBoundaryEvent(
 
     const metadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {};
     const eventType = String(input.eventType ?? '');
-    const flowVersionId = String(input.flowVersionId ?? '');
-    const stateKey = normalizeQaFlowKey(input.stateKey || input.toStateKey);
-    const fromStateKey = normalizeQaFlowKey(input.fromStateKey ?? metadata.fromStateKey);
     const snapshot = run.expectedGraphVersion?.snapshot as any;
     const expectedStates = Array.isArray(snapshot?.states) ? snapshot.states : [];
-    const knownKeys = new Set(expectedStates.map((state: any) => normalizeQaFlowKey(state.behaviorKey ?? state.stateName ?? state.name)));
+
+    // A marker in the user's source names its flow and state the way the
+    // instrumentation snippet wrote them — a slug of the declared name, not the
+    // version UUID and internal key this function used to demand. The run
+    // already pins exactly one flow and one expected version, so the slug is
+    // enough to resolve. Every alias a state answers to collapses onto one
+    // canonical key, and the run's own declared initial/terminal keys go through
+    // the same map, so a marker and a declaration written against different
+    // fields still compare equal.
+    const stateAliases = new Map<string, string>();
+    const canonicalKeys = new Set<string>();
+    for (const state of expectedStates as any[]) {
+      const canonical = normalizeQaFlowKey(state?.behaviorKey ?? state?.stateName ?? state?.name ?? state?.id);
+      if (!canonical) continue;
+      canonicalKeys.add(canonical);
+      for (const alias of [state?.behaviorKey, state?.stateName, state?.name, state?.id, state?.stateId]) {
+        const normalized = normalizeQaFlowKey(alias);
+        if (normalized && !stateAliases.has(normalized)) stateAliases.set(normalized, canonical);
+      }
+    }
+    const canonicalState = (value: unknown): string => {
+      const normalized = normalizeQaFlowKey(value);
+      return normalized ? stateAliases.get(normalized) ?? normalized : '';
+    };
+
+    // The flow slug identifies the flow, never the version. Matching it against
+    // the run's own flow is what lets a marker survive a re-publish: the run
+    // supplies the version, the source supplies the name.
+    const declaredFlow = metadata.flow ?? metadata.flowKey;
+    const flowAliases = new Set(
+      [run.flow?.name, snapshot?.name, snapshot?.flowName]
+        .map(normalizeQaFlowKey)
+        .filter(Boolean),
+    );
+    const declaredFlowMatchesRun = Boolean(declaredFlow)
+      && flowAliases.has(normalizeQaFlowKey(declaredFlow));
+    const flowVersionId = String(input.flowVersionId ?? '')
+      || (declaredFlowMatchesRun ? String(run.expectedGraphVersionId ?? '') : '');
+
+    const stateKey = canonicalState(
+      input.stateKey || input.toStateKey || metadata.state || metadata.stateId,
+    );
+    const fromStateKey = canonicalState(
+      input.fromStateKey ?? metadata.fromStateKey ?? metadata.fromState,
+    );
+    const knownKeys = canonicalKeys;
     const expectedTransitions = Array.isArray(snapshot?.transitions)
       ? snapshot.transitions
       : Array.isArray(snapshot?.edges) ? snapshot.edges : [];
-    const initialKey = normalizeQaFlowKey(run.initialStateKey);
-    const terminals = new Set(run.terminalStateKeys.map(normalizeQaFlowKey));
+    const initialKey = canonicalState(run.initialStateKey);
+    const terminals = new Set(run.terminalStateKeys.map(canonicalState));
     const waiting = !run.boundaryStartedAt;
     const transitionKnown = eventType !== 'FLOW_TRANSITION' || expectedTransitions.some((transition: any) => {
-      const from = normalizeQaFlowKey(transition.fromStateKey ?? transition.from ?? transition.sourceBehaviorKey ?? transition.source);
-      const to = normalizeQaFlowKey(transition.toStateKey ?? transition.to ?? transition.targetBehaviorKey ?? transition.target);
+      const from = canonicalState(transition.fromStateKey ?? transition.from ?? transition.sourceBehaviorKey ?? transition.source ?? transition.fromStateId);
+      const to = canonicalState(transition.toStateKey ?? transition.to ?? transition.targetBehaviorKey ?? transition.target ?? transition.toStateId);
       return from === fromStateKey && to === stateKey;
     });
 
@@ -118,7 +160,7 @@ export async function processQaFlowBoundaryEvent(
     else if (waiting && (eventType !== 'FLOW_INITIAL_STATE' || stateKey !== initialKey)) reason = 'BEFORE_INITIAL_BOUNDARY';
     else if (!waiting && eventType === 'FLOW_INITIAL_STATE') reason = 'INITIAL_BOUNDARY_ALREADY_ACCEPTED';
     else if (eventType === 'FLOW_TRANSITION' && (!fromStateKey || !transitionKnown)) reason = 'UNKNOWN_TRANSITION';
-    else if (eventType === 'FLOW_TRANSITION' && run.lastObservedStateKey && normalizeQaFlowKey(run.lastObservedStateKey) !== fromStateKey) reason = 'OUT_OF_ORDER_TRANSITION';
+    else if (eventType === 'FLOW_TRANSITION' && run.lastObservedStateKey && canonicalState(run.lastObservedStateKey) !== fromStateKey) reason = 'OUT_OF_ORDER_TRANSITION';
     else if (eventType === 'FLOW_TERMINAL_STATE' && !terminals.has(stateKey)) reason = 'UNDECLARED_TERMINAL_STATE';
 
     const parsedTimestamp = input.timestamp ? new Date(input.timestamp) : new Date();

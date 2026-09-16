@@ -740,6 +740,22 @@ button:disabled {
   margin: 10px 0 0;
 }
 
+/* Accepting the ranking wholesale is an offer, not the recommended path, so it
+   sits beside its own caveat rather than reading as the primary action. */
+.flow-review-bulk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 0;
+}
+.flow-review-bulk > .muted {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* ── Flow mapping progress ─────────────────────────────────────────────── */
 
 /* Each step takes real time, so the list is the explanation: what is happening

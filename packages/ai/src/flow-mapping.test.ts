@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AIProvider, GenerateStructuredInput, StructuredGenerationResult } from './providers/base';
-import { resolveFlowCheckpointMappings, type FlowMappingResolutionInput } from './flow-mapping';
+import {
+  createFlowMappingResolutionCache,
+  resolveFlowCheckpointMappings,
+  type FlowMappingResolutionInput,
+} from './flow-mapping';
 
 class StructuredProvider implements AIProvider {
   /** Set by a test that wants to assert repair is recorded, not treated as failure. */
@@ -187,5 +191,111 @@ describe('resolveFlowCheckpointMappings', () => {
       ],
     });
     expect(result.provenance).toMatchObject({ provider: 'deepseek', fallbackUsed: true });
+  });
+});
+
+/** A Flow with more checkpoints than fit in one call. */
+function wideInput(count: number): FlowMappingResolutionInput {
+  return {
+    flowName: 'Checkout',
+    analysis: { id: 'analysis-wide', graphVersion: 'graph-1', contentHash: 'content-wide' },
+    checkpoints: Array.from({ length: count }, (_, index) => ({
+      checkpointId: `state:cp-${index}`,
+      kind: 'STATE' as const,
+      label: `STEP ${index}`,
+      stateRole: 'NORMAL',
+      candidates: [{
+        id: `candidate-${index}`, entityId: `entity-${index}`, file: `src/step-${index}.tsx`,
+        symbol: `Step${index}`, startLine: 1, endLine: 40, score: 0.9, confidence: 0.9,
+        placementKinds: ['FUNCTION_ENTRY'], evidenceIds: [`evidence-${index}`],
+        rationale: 'Ranked.', excerpt: `export function Step${index}() {}`,
+      }],
+    })),
+  };
+}
+
+/** Answers every checkpoint the prompt it was given actually mentions. */
+class BatchProvider implements AIProvider {
+  readonly calls: Array<{ prompt: string; maxOutputTokens?: number; timeoutMs?: number }> = [];
+  constructor(
+    readonly name: string,
+    readonly model: string,
+    private readonly failOn?: (prompt: string) => boolean,
+  ) {}
+  generateFlowDraft(): Promise<any> { throw new Error('unused'); }
+  async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<StructuredGenerationResult<T>> {
+    this.calls.push({ prompt: input.prompt, maxOutputTokens: input.maxOutputTokens, timeoutMs: input.timeoutMs });
+    if (this.failOn?.(input.prompt)) throw new Error('TIMEOUT:provider request timed out');
+    const ids = [...input.prompt.matchAll(/"checkpointId":"(state:cp-\d+)"/g)].map((match) => match[1]);
+    const response = {
+      mappings: ids.map((checkpointId) => ({
+        checkpointId, candidateId: `candidate-${checkpointId.split('-')[1]}`, status: 'RESOLVED',
+        placementKind: 'FUNCTION_ENTRY', anchorText: 'function Step', startLine: 1, endLine: 40,
+        confidence: 0.9, rationale: 'Grounded.', evidenceIds: [`evidence-${checkpointId.split('-')[1]}`],
+      })),
+    };
+    return { data: input.schema.parse(response), rawText: JSON.stringify(response), repaired: false };
+  }
+}
+
+describe('resolveFlowCheckpointMappings batching', () => {
+  it('splits a wide Flow across several calls instead of asking about all of it at once', async () => {
+    const provider = new BatchProvider('gemini', 'gemini-test');
+    const result = await resolveFlowCheckpointMappings(wideInput(13), { providers: [provider] });
+
+    expect(provider.calls).toHaveLength(3);
+    expect(result.mappings).toHaveLength(13);
+    expect(result.mappings.every((mapping) => mapping.status === 'RESOLVED')).toBe(true);
+    expect(result.provenance).toMatchObject({ engine: 'HYBRID_AI', batches: 3, batchesFailed: 0, failed: false });
+  });
+
+  it('sizes the output allowance and the timeout to the batch it is asking about', async () => {
+    const provider = new BatchProvider('gemini', 'gemini-test');
+    await resolveFlowCheckpointMappings(wideInput(6), { providers: [provider] });
+
+    const [call] = provider.calls;
+    // Six mappings with rationales do not fit in the old flat 4096-token ceiling.
+    expect(call.maxOutputTokens).toBeGreaterThanOrEqual(6 * 400);
+    // Nor did the work fit in the old flat thirty-second timeout.
+    expect(call.timeoutMs).toBeGreaterThanOrEqual(20_000);
+  });
+
+  it('keeps the checkpoints a failed batch did not cover, and resolves the rest', async () => {
+    // One batch times out. Before batching this was the whole Flow, so a single
+    // provider failure sent every checkpoint to manual review.
+    const provider = new BatchProvider('gemini', 'gemini-test', (prompt) => prompt.includes('"state:cp-7"'));
+    const result = await resolveFlowCheckpointMappings(wideInput(13), { providers: [provider] });
+
+    const byId = new Map(result.mappings.map((mapping) => [mapping.checkpointId, mapping]));
+    expect(byId.get('state:cp-7')!.status).toBe('AMBIGUOUS');
+    expect(byId.get('state:cp-0')!.status).toBe('RESOLVED');
+    expect(result.mappings.filter((mapping) => mapping.status === 'RESOLVED').length).toBeGreaterThanOrEqual(6);
+    expect(result.provenance).toMatchObject({ batchesFailed: 1, failed: true });
+    expect(result.provenance.failureReasonSafe).toContain('TIMEOUT');
+  });
+
+  it('does not re-ask about a checkpoint whose evidence has not changed', async () => {
+    const cache = createFlowMappingResolutionCache();
+    const first = new BatchProvider('gemini', 'gemini-test');
+    await resolveFlowCheckpointMappings(wideInput(6), { providers: [first], cache });
+
+    const second = new BatchProvider('gemini', 'gemini-test');
+    const repeat = await resolveFlowCheckpointMappings(wideInput(6), { providers: [second], cache });
+
+    expect(second.calls).toHaveLength(0);
+    expect(repeat.mappings.every((mapping) => mapping.status === 'RESOLVED')).toBe(true);
+    expect(repeat.provenance).toMatchObject({ cachedCount: 6, failed: false });
+  });
+
+  it('never caches a placement the model did not produce', async () => {
+    const cache = createFlowMappingResolutionCache();
+    const failing = new BatchProvider('gemini', 'gemini-test', () => true);
+    await resolveFlowCheckpointMappings(wideInput(6), { providers: [failing], cache });
+
+    // A cached failure would mean a retry could never recover.
+    const retry = new BatchProvider('gemini', 'gemini-test');
+    const result = await resolveFlowCheckpointMappings(wideInput(6), { providers: [retry], cache });
+    expect(retry.calls).toHaveLength(1);
+    expect(result.mappings.every((mapping) => mapping.status === 'RESOLVED')).toBe(true);
   });
 });

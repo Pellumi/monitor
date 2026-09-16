@@ -202,8 +202,12 @@ declare global {
         getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
         initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
         getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;
         analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        retryFlowMappingResolution(initializationId: string): Promise<Record<string, any>>;
         confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
+        confirmFlowMappings(initializationId: string, confirmations: Array<{ checkpointId: string; candidateId: string; placementKind?: string; anchorText?: string }>): Promise<Record<string, any>>;
+        resetFlowMappingConsent(applicationId: string): Promise<Record<string, any>>;
         setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
         updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
         startFlowVerification(initializationId: string): Promise<Record<string, any>>;

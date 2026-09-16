@@ -33,6 +33,16 @@ export type StructuredCommand = {
   allowedEnvironmentKeys: string[];
   purpose: string;
   networkRequired: boolean;
+  /**
+   * Offered, but not selected by default.
+   *
+   * A full production build is the most expensive thing in the whole
+   * initialization, and what it is being asked is whether a handful of inserted
+   * marker calls broke the project. When the project can answer that with a type
+   * check, the build stops being the default way to ask and stays available for
+   * anyone who wants it.
+   */
+  optional?: boolean;
 };
 
 export type LocalProjectContext = {
@@ -212,6 +222,7 @@ const PLAN_SCHEMA = z.object({
   validationCommands: z.array(z.object({
     id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
     allowedEnvironmentKeys: z.array(z.string()), purpose: z.string(), networkRequired: z.boolean(),
+    optional: z.boolean().optional(),
   })),
   networkRequirements: z.array(z.string()),
   risk: RiskSchema,
@@ -373,10 +384,24 @@ function commandFor(root: string, packageRoot: string, relativePackageRoot: stri
       purpose: `Install ${sdkPackage} using the detected ${manager} package manager`, networkRequired: true,
     });
   }
+  // A type check answers the question the build is being asked — do the inserted
+  // calls still compile against this project — in a fraction of the time, so it
+  // becomes the default when the project has one.
+  const typecheckScript = ['typecheck', 'type-check', 'tsc', 'check-types']
+    .find((name) => typeof packageJson.scripts?.[name] === 'string');
+  if (typecheckScript) {
+    commands.push({
+      id: 'validate-types', executable, args: ['run', typecheckScript], cwd: relativePackageRoot || '.', timeoutMs: 10 * 60_000,
+      allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'],
+      purpose: 'Type-check the instrumented application', networkRequired: false,
+    });
+  }
   if (typeof packageJson.scripts?.build === 'string') {
     commands.push({
       id: 'validate-build', executable, args: ['run', 'build'], cwd: relativePackageRoot || '.', timeoutMs: 15 * 60_000,
       allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'], purpose: 'Validate the instrumented application build', networkRequired: false,
+      // Kept required when there is nothing cheaper that would catch a break.
+      ...(typecheckScript ? { optional: true } : {}),
     });
   }
   return commands;

@@ -70,6 +70,8 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_STORAGE_MUTATION',
   'QA_CLIENT_STATE_MUTATION',
   'QA_PAGE_PERFORMANCE',
+  'QA_ACCESSIBILITY_SCAN',
+  'QA_STATE_SNAPSHOT',
   'QA_FLOW_EVENT',
   'QA_CAPTURE_DEGRADED',
 ]);
@@ -866,6 +868,10 @@ export const FlowInitializationManifestV1Schema = z.object({
   version: z.literal('1.0'), graphVersionId: z.string().uuid(), graphHash: z.string(), repositorySnapshotId: z.string().uuid(),
   flowKey: z.string().optional(), flowName: z.string().optional(),
   initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
+  // A branchy Flow has combinatorially many distinct paths, so enumeration is
+  // bounded and says when it stopped. Reachability is computed separately and
+  // stays exact either way.
+  pathsTruncated: z.boolean().optional(),
   unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointSchema), generatedAt: z.string().datetime(),
 });
 export const FlowInitializationManifestV2Schema = z.object({
@@ -874,6 +880,7 @@ export const FlowInitializationManifestV2Schema = z.object({
   codebaseAnalysisJobId: z.string().min(1), codebaseSnapshotId: z.string().min(1), retrievalVersion: z.string().min(1),
   flowKey: z.string().optional(), flowName: z.string().optional(),
   initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
+  pathsTruncated: z.boolean().optional(),
   unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointV2Schema), generatedAt: z.string().datetime(),
 });
 export const FlowInitializationManifestSchema = z.discriminatedUnion('version', [FlowInitializationManifestV1Schema, FlowInitializationManifestV2Schema]);
@@ -916,6 +923,15 @@ export const FlowAiProvenanceSchema = z.object({
   attempted: z.boolean(), provider: z.enum(['GEMINI', 'DEEPSEEK']).nullable(), model: z.string().nullable(),
   promptVersion: z.string(), promptHash: z.string(), fallbackUsed: z.boolean(), repaired: z.boolean(),
   consentMode: z.enum(['CLOUD_APPROVED', 'LOCAL_EXCERPTS_APPROVED', 'GRAPH_ONLY']), resolvedAt: z.string().datetime().nullable(),
+  // Resolution runs in batches, so "it did not answer" is a count rather than a
+  // yes or no. Without these a run where every call timed out is indistinguishable
+  // from one where the model considered every checkpoint and was unsure — and the
+  // two ask completely different things of the person reading the review.
+  batches: z.number().int().nonnegative().optional(),
+  batchesFailed: z.number().int().nonnegative().optional(),
+  cachedCount: z.number().int().nonnegative().optional(),
+  failed: z.boolean().optional(),
+  failureReasonSafe: z.string().nullable().optional(),
 });
 const FlowReviewEvidenceV2Schema = z.object({
   id: z.string(), kind: z.string(), file: z.string().nullable(), symbol: z.string().nullable(),
@@ -1230,8 +1246,12 @@ export const IPC = {
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
+  getFlowInitializationProgress: 'tellann:flow:initialization:progress',
   analyzeFlowInitialization: 'tellann:flow:initialization:analyze',
+  retryFlowMappingResolution: 'tellann:flow:initialization:mapping:retry',
   confirmFlowMapping: 'tellann:flow:initialization:mapping:confirm',
+  confirmFlowMappings: 'tellann:flow:initialization:mapping:confirm-many',
+  resetFlowMappingConsent: 'tellann:flow:initialization:mapping:consent:reset',
   setFlowInitializationMode: 'tellann:flow:initialization:mode',
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
@@ -1286,6 +1306,10 @@ export const IPC = {
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
+  /** renderer -> main: raise the managed browser window above the desktop app. */
+  focusRunBrowser: 'tellann:run:browser:focus',
+  /** main -> renderer: the active run's state changed. Replaces polling. */
+  runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',

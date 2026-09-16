@@ -287,3 +287,85 @@ test('key normalization is lenient about formatting but not about identity', asy
   const result = await submit(client, { eventType: 'FLOW_INITIAL_STATE', stateKey: '/checkout/step-2' });
   assert.equal(result.reason, 'UNKNOWN_STATE');
 });
+
+test('a marker written from the instrumentation snippet starts the run', async () => {
+  // Exactly what `checkpointSnippet` tells a developer to paste: the flow and
+  // state as name slugs, with no version UUID anywhere on the page.
+  const run = buildRun({
+    initialStateKey: 'state-1',
+    terminalStateKeys: ['state-3'],
+    flow: { name: 'Onboarding Flow' },
+    expectedGraphVersion: {
+      snapshot: {
+        name: 'Onboarding Flow',
+        states: [
+          { id: 'state-1', stateName: 'Guest' },
+          { id: 'state-2', stateName: 'Signed In' },
+          { id: 'state-3', stateName: 'Onboarded' },
+        ],
+        transitions: [{ fromStateId: 'state-1', toStateId: 'state-2' }],
+      },
+    },
+  });
+  const { client } = fakePrisma(run);
+  const result = await processQaFlowBoundaryEvent(client, 'run-1', {
+    eventId: 'event-1',
+    eventType: 'FLOW_INITIAL_STATE',
+    flowVersionId: '',
+    stateKey: '',
+    metadata: { flow: 'onboarding-flow', state: 'guest' },
+  });
+
+  assert.equal(result.reason, null);
+  assert.equal(result.accepted, true);
+  assert.equal(result.phase, 'IN_FLOW');
+  assert.equal(result.run?.lastObservedStateKey, 'guest');
+});
+
+test('a marker naming a different flow is still refused', async () => {
+  const run = buildRun({
+    initialStateKey: 'state-1',
+    flow: { name: 'Onboarding Flow' },
+    expectedGraphVersion: {
+      snapshot: { name: 'Onboarding Flow', states: [{ id: 'state-1', stateName: 'Guest' }], transitions: [] },
+    },
+  });
+  const { client } = fakePrisma(run);
+  const result = await processQaFlowBoundaryEvent(client, 'run-1', {
+    eventId: 'event-2',
+    eventType: 'FLOW_INITIAL_STATE',
+    flowVersionId: '',
+    stateKey: '',
+    metadata: { flow: 'checkout-flow', state: 'guest' },
+  });
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'FLOW_EVENT_CONTEXT_REQUIRED');
+});
+
+test('a declaration and a marker written against different state fields still match', async () => {
+  // The run's initial key came from the graph's id; the marker came from the
+  // snippet, which slugs the display name. Both have to land on one state.
+  const run = buildRun({
+    initialStateKey: 'state-1',
+    flow: { name: 'Onboarding Flow' },
+    expectedGraphVersion: {
+      snapshot: {
+        name: 'Onboarding Flow',
+        states: [{ id: 'state-1', behaviorKey: 'guest_landing', stateName: 'Guest' }],
+        transitions: [],
+      },
+    },
+  });
+  const { client } = fakePrisma(run);
+  const result = await processQaFlowBoundaryEvent(client, 'run-1', {
+    eventId: 'event-3',
+    eventType: 'FLOW_INITIAL_STATE',
+    flowVersionId: '',
+    stateKey: '',
+    metadata: { flow: 'onboarding-flow', state: 'Guest' },
+  });
+
+  assert.equal(result.reason, null);
+  assert.equal(result.accepted, true);
+});

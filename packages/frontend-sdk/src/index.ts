@@ -25,6 +25,23 @@ function qaRunActive(): boolean {
   return Boolean(run && run.runId && run.relayToken);
 }
 
+/**
+ * The local relay the desktop observer injected for this run, if any.
+ *
+ * While a guided run is active every event has to travel through the relay:
+ * only the relay attaches the run-ingestion credential, and the collector
+ * advances the Flow boundary solely for credentialed events. A
+ * `FLOW_INITIAL_STATE` flushed straight to the configured gateway is ingested
+ * as ordinary telemetry, so the run would sit at "Waiting for
+ * FLOW_INITIAL_STATE" no matter how many times the page emits it.
+ */
+function activeRunRelay(): { endpoint: string; token: string } | null {
+  const run = (globalThis as Record<string, any>).__TELLANN_RUN__;
+  if (!run || typeof run.runId !== 'string' || typeof run.relayToken !== 'string') return null;
+  const endpoint = typeof run.relayEndpoint === 'string' ? run.relayEndpoint.replace(/\/$/, '') : '';
+  return endpoint ? { endpoint, token: run.relayToken } : null;
+}
+
 function serializeCandidate(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value === 'string') return value.slice(0, 16_384);
@@ -480,13 +497,21 @@ class TellannFrontendSDK {
         return;
       }
 
+      const relay = activeRunRelay();
+      const target = relay ? relay.endpoint : this.config.endpoint;
+
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (this.config.apiKey) {
+      if (relay) {
+        headers.Authorization = `Bearer ${relay.token}`;
+      } else if (this.config.apiKey) {
         headers.Authorization = `Bearer ${this.config.apiKey}`;
       }
-      if (this.config.environmentId) {
+      // The relay re-derives the environment from the run correlation, and its
+      // CORS allow-list does not carry this header — sending it would fail the
+      // preflight and lose the batch.
+      if (!relay && this.config.environmentId) {
         headers['x-tellann-environment-id'] = this.config.environmentId;
       }
       if (this.config.runId) headers['x-tellann-run-id'] = this.config.runId;
@@ -494,15 +519,15 @@ class TellannFrontendSDK {
       if (this.config.traceId) headers['x-tellann-trace-id'] = this.config.traceId;
 
       // sendBeacon cannot set auth headers, so only use it for unauthenticated direct collector targets.
-      if (!this.config.apiKey && !this.config.environmentId && navigator.sendBeacon && typeof Blob !== 'undefined') {
+      if (!relay && !this.config.apiKey && !this.config.environmentId && navigator.sendBeacon && typeof Blob !== 'undefined') {
         const blob = new Blob([payload], { type: 'application/json' });
-        const success = navigator.sendBeacon(`${this.config.endpoint}/v1/events/batch`, blob);
+        const success = navigator.sendBeacon(`${target}/v1/events/batch`, blob);
         if (!success) {
           throw new Error('sendBeacon returned false');
         }
       } else {
         // Fallback to fetch
-        await fetch(`${this.config.endpoint}/v1/events/batch`, {
+        await fetch(`${target}/v1/events/batch`, {
           method: 'POST',
           headers,
           body: payload,

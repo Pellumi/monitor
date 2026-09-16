@@ -1,30 +1,37 @@
 import fs from 'node:fs';
-import { parentPort, workerData } from 'node:worker_threads';
-import { redactSecrets, retrieveFlowCheckpointCandidates } from '@tellann/project-intelligence';
+import { parentPort } from 'node:worker_threads';
+import type { CodebaseAnalysis } from '@tellann/desktop-contracts';
+import {
+  flowRetrievalIndexFor,
+  redactSecrets,
+  retrieveFlowCheckpointCandidates,
+  type RetrievalIndex,
+} from '@tellann/project-intelligence';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 
 /**
- * Rank a declared Flow against an analysed codebase, off the main process.
+ * Rank declared Flows against an analysed codebase, off the main process.
  *
- * Retrieval compares every checkpoint against every located entity, and reading
+ * Retrieval compares every checkpoint against the located entities, and reading
  * each shortlisted candidate's lines is synchronous file I/O on top of that. On
  * a real repository with a few dozen checkpoints that is seconds of work, and
  * doing it on the main process is what made the window stop repainting and
- * Windows offer to close it. None of it needs the main process, so none of it
- * runs there.
+ * Windows offer to close the app. None of it needs the main process, so none of
+ * it runs there.
+ *
+ * The worker outlives a single mapping run and keeps the analysis it was given.
+ * A fresh worker per Flow meant structured-cloning the whole graph across the
+ * thread boundary and rebuilding the term index from scratch every time, so
+ * initializing a second Flow against an unchanged codebase cost exactly as much
+ * as the first. Now it costs the ranking alone.
  */
 
 if (!parentPort) throw new Error('FLOW_MAPPING_WORKER_PARENT_REQUIRED');
 
 const port = parentPort;
-const input = workerData as {
-  analysis: Parameters<typeof retrieveFlowCheckpointCandidates>[0];
-  flow: Parameters<typeof retrieveFlowCheckpointCandidates>[1];
-  workspaceRoot: string;
-};
 
-/** Never send a whole file because a candidate's range happened to be wide. */
-const MAX_LINES = 120;
+/** Lines of context kept around a candidate's anchor. */
+const EXCERPT_CONTEXT_LINES = 40;
 const MAX_CHARS = 12_000;
 
 type Excerpt = {
@@ -35,6 +42,10 @@ type Excerpt = {
   content: string;
   redactions: number;
 };
+
+type LoadedAnalysis = { analysis: CodebaseAnalysis; index: RetrievalIndex };
+
+let loaded: LoadedAnalysis | null = null;
 
 function extractExcerpts(
   workspaceRoot: string,
@@ -62,8 +73,14 @@ function extractExcerpts(
       const lines = linesOf(candidate.path);
       let raw: string | null;
       if (lines) {
-        const start = Math.max(1, candidate.startLine ?? 1);
-        const end = Math.min(lines.length, Math.max(start, candidate.endLine ?? start), start + MAX_LINES - 1);
+        // A window around the anchor rather than the declaration's full body.
+        // What decides a placement is the code immediately around the point, and
+        // a candidate whose body runs to a hundred and twenty lines was sending
+        // all of them — multiplied by every candidate of every checkpoint, that
+        // was most of a prompt too large to be answered.
+        const anchor = Math.max(1, candidate.startLine ?? 1);
+        const start = Math.max(1, anchor - EXCERPT_CONTEXT_LINES);
+        const end = Math.min(lines.length, Math.max(candidate.endLine ?? anchor, anchor + EXCERPT_CONTEXT_LINES));
         raw = lines.slice(start - 1, end).join('\n');
       } else {
         // The file moved since analysis; the graph still holds what it captured.
@@ -81,13 +98,38 @@ function extractExcerpts(
   return excerpts;
 }
 
-try {
-  const retrieval = retrieveFlowCheckpointCandidates(input.analysis, input.flow);
-  const excerpts = extractExcerpts(input.workspaceRoot, retrieval.mappings as never);
-  port.postMessage({ type: 'complete', retrieval, excerpts });
-} catch (error) {
-  port.postMessage({
-    type: 'error',
-    message: error instanceof Error ? error.message : 'FLOW_MAPPING_RETRIEVAL_FAILED',
-  });
-}
+type IncomingMessage =
+  | { type: 'analysis'; analysisId: string; analysis: CodebaseAnalysis }
+  | { type: 'map'; requestId: string; flow: unknown; workspaceRoot: string };
+
+port.on('message', (message: IncomingMessage) => {
+  if (message.type === 'analysis') {
+    // Building the index here, rather than on the first mapping request, keeps
+    // the cost out of the run the user is waiting on.
+    loaded = { analysis: message.analysis, index: flowRetrievalIndexFor(message.analysis) };
+    port.postMessage({ type: 'analysis-ready', analysisId: message.analysisId });
+    return;
+  }
+
+  if (message.type !== 'map') return;
+  const { requestId } = message;
+  try {
+    if (!loaded) throw new Error('FLOW_MAPPING_ANALYSIS_NOT_LOADED');
+    const retrieval = retrieveFlowCheckpointCandidates(
+      loaded.analysis,
+      message.flow as never,
+      {
+        index: loaded.index,
+        onProgress: (completed, total) => port.postMessage({ type: 'progress', requestId, completed, total }),
+      },
+    );
+    const excerpts = extractExcerpts(message.workspaceRoot, retrieval.mappings as never);
+    port.postMessage({ type: 'complete', requestId, retrieval, excerpts });
+  } catch (error) {
+    port.postMessage({
+      type: 'error',
+      requestId,
+      message: error instanceof Error ? error.message : 'FLOW_MAPPING_RETRIEVAL_FAILED',
+    });
+  }
+});
