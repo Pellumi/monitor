@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import semver from 'semver';
-import { Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
+import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
 import { z } from 'zod';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@tellann/desktop-contracts';
@@ -81,7 +81,19 @@ export type PatchOperation = {
   content?: string;
   importModule?: string;
   flowInitializationId?: string;
+  placementKind?: FlowPlacementKind;
+  anchorText?: string;
+  anchorHash?: string;
+  startLine?: number;
+  endLine?: number;
+  branch?: 'THEN' | 'ELSE';
 };
+
+export const FlowPlacementKindSchema = z.enum([
+  'FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY',
+  'BEFORE_STATEMENT', 'AFTER_STATEMENT', 'BRANCH_ENTRY',
+]);
+export type FlowPlacementKind = z.infer<typeof FlowPlacementKindSchema>;
 
 export type InstrumentationPlan = {
   contractVersion: string;
@@ -178,6 +190,8 @@ const PLAN_SCHEMA = z.object({
     transformVersion: z.string(), expectedHash: z.string().nullable(), description: z.string(),
     eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable(), checkpointId: z.string().optional(), stateId: z.string().nullable().optional(), transitionId: z.string().nullable().optional(), terminalKind: z.string().nullable().optional() })),
     content: z.string().optional(), importModule: z.string().optional(), flowInitializationId: z.string().uuid().optional(),
+    placementKind: FlowPlacementKindSchema.optional(), anchorText: z.string().optional(), anchorHash: z.string().optional(),
+    startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional(), branch: z.enum(['THEN', 'ELSE']).optional(),
   })),
   validationCommands: z.array(z.object({
     id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
@@ -201,6 +215,10 @@ export function validateInstrumentationPlan(value: unknown): InstrumentationPlan
 
 function hash(value: string | Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+export function calculateFlowAnchorHash(file: string, symbol: string | null, placementKind: string, anchorText: string): string {
+  return hash(`${file}\0${symbol ?? ''}\0${placementKind}\0${anchorText.replaceAll('\r\n', '\n')}`);
 }
 
 function normalizeVersion(value: string | undefined): string | null {
@@ -571,21 +589,67 @@ function addCheckpointImport(source: SourceFile, moduleSpecifier: string, common
   else source.insertImportDeclaration(0, { moduleSpecifier, namedImports: [{ name: 'TELLANN', alias: 'TellannTELLANN' }] });
 }
 
+function checkpointStatement(operation: PatchOperation): string {
+  const marker = `tellann:checkpoint:${operation.id}`;
+  const mapping = operation.eventMappings[0];
+  return `/* ${marker} */\nvoid TellannTELLANN.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify(operation.flowInitializationId ?? null)}, source: 'tellann-adapter' });`;
+}
+
+function symbolBody(source: SourceFile, symbol: string) {
+  const functionDeclaration = source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).find((item) => item.getName() === symbol);
+  const methodDeclaration = source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).find((item) => item.getName() === symbol);
+  const variableDeclaration = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === symbol);
+  const initializer = variableDeclaration?.getInitializer();
+  return functionDeclaration?.getBody()
+    ?? methodDeclaration?.getBody()
+    ?? (initializer && [SyntaxKind.ArrowFunction, SyntaxKind.FunctionExpression].includes(initializer.getKind())
+      ? initializer.getFirstChildByKind(SyntaxKind.Block)
+      : undefined);
+}
+
+function symbolPlacementKind(source: SourceFile, symbol: string): 'FUNCTION_ENTRY' | 'METHOD_ENTRY' | 'ARROW_FUNCTION_ENTRY' | 'CALLBACK_ENTRY' | null {
+  if (source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).some((item) => item.getName() === symbol)) return 'FUNCTION_ENTRY';
+  if (source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).some((item) => item.getName() === symbol)) return 'METHOD_ENTRY';
+  const initializer = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === symbol)?.getInitializer();
+  if (initializer?.getKind() === SyntaxKind.ArrowFunction) return 'ARROW_FUNCTION_ENTRY';
+  if (initializer?.getKind() === SyntaxKind.FunctionExpression) return 'CALLBACK_ENTRY';
+  return null;
+}
+
 function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, commonJs: boolean): void {
   if (!operation.symbol || !operation.importModule) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
   const marker = `tellann:checkpoint:${operation.id}`;
   if (source.getFullText().includes(marker)) return;
   addCheckpointImport(source, operation.importModule, commonJs);
-  const functionDeclaration = source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).find((item) => item.getName() === operation.symbol);
-  const methodDeclaration = source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).find((item) => item.getName() === operation.symbol);
-  const variableDeclaration = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === operation.symbol);
-  const body = functionDeclaration?.getBody()
-    ?? methodDeclaration?.getBody()
-    ?? variableDeclaration?.getInitializer()?.getFirstChildByKind(SyntaxKind.Block);
-  if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
-  const mapping = operation.eventMappings[0];
-  (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0,
-    `/* ${marker} */\nvoid TellannTELLANN.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify((operation as any).flowInitializationId ?? null)}, source: 'tellann-adapter' });`);
+  const placementKind = operation.placementKind ?? 'FUNCTION_ENTRY';
+  const statement = checkpointStatement(operation);
+  if (['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'].includes(placementKind)) {
+    const body = symbolBody(source, operation.symbol);
+    if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
+    (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0, statement);
+    return;
+  }
+  if (!operation.anchorText) throw new Error(`FLOW_CHECKPOINT_ANCHOR_REQUIRED:${operation.id}`);
+  const scope = symbolBody(source, operation.symbol);
+  if (!scope) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
+  if (placementKind === 'BRANCH_ENTRY') {
+    const branches = scope.getDescendantsOfKind(SyntaxKind.IfStatement).filter((item) => {
+      const header = `if (${item.getExpression().getText()})`;
+      return operation.anchorText === header || item.getText() === operation.anchorText;
+    });
+    if (branches.length !== 1) throw new Error(`SAFE_FLOW_BRANCH_NOT_FOUND:${operation.id}`);
+    const branch = branches[0];
+    const target = operation.branch === 'ELSE' ? branch?.getElseStatement() : branch?.getThenStatement();
+    if (!target || target.getKind() !== SyntaxKind.Block || !('insertStatements' in target)) throw new Error(`SAFE_FLOW_BRANCH_NOT_FOUND:${operation.id}`);
+    (target as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0, statement);
+    return;
+  }
+  const anchors = scope.getDescendants().filter((item) => item.getText() === operation.anchorText && Node.isStatement(item));
+  if (anchors.length !== 1) throw new Error(`SAFE_FLOW_STATEMENT_NOT_FOUND:${operation.id}`);
+  const anchor = anchors[0];
+  anchor.replaceWithText(placementKind === 'BEFORE_STATEMENT'
+    ? `${statement}\n${anchor.getText()}`
+    : `${anchor.getText()}\n${statement}`);
 }
 
 function frameworkVariable(source: SourceFile, matcher: RegExp): string | null {
@@ -664,6 +728,87 @@ function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, 
     return;
   }
   throw new Error(`UNSUPPORTED_ENTRY_TRANSFORM:${definition.id}`);
+}
+
+type FlowCheckpointMappingLike = {
+  status?: string;
+  file?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  anchor?: string | null;
+  anchorText?: string | null;
+  insertionAnchor?: string | { text?: string } | null;
+  anchorHash?: string | null;
+  branch?: string | null;
+  branchArm?: string | null;
+  confidence?: number;
+};
+
+function mappingAnchorText(mapping: FlowCheckpointMappingLike): string | null {
+  if (typeof mapping.anchor === 'string') return mapping.anchor;
+  if (typeof mapping.anchorText === 'string') return mapping.anchorText;
+  if (typeof mapping.insertionAnchor === 'string') return mapping.insertionAnchor;
+  return mapping.insertionAnchor?.text ?? null;
+}
+
+function mappingIsResolved(mapping: FlowCheckpointMappingLike, manifestVersion: string): boolean {
+  if (manifestVersion === '2.0') return mapping.status === 'RESOLVED';
+  return Boolean(mapping.file && mapping.symbol && (mapping.confidence ?? 0) >= 0.65);
+}
+
+function validateResolvedFlowMapping(root: string, checkpointId: string, mapping: FlowCheckpointMappingLike, manifestVersion: string): {
+  file: string;
+  symbol: string;
+  placementKind: FlowPlacementKind;
+  anchorText?: string;
+  anchorHash?: string;
+  startLine?: number;
+  endLine?: number;
+  branch?: 'THEN' | 'ELSE';
+} {
+  if (!mappingIsResolved(mapping, manifestVersion) || !mapping.file || !mapping.symbol) {
+    throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
+  }
+  const placementKind = manifestVersion === '2.0' ? mapping.placementKind : 'FUNCTION_ENTRY';
+  const parsedPlacement = FlowPlacementKindSchema.safeParse(placementKind);
+  if (!parsedPlacement.success) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+  const target = resolveWithinWorkspace(root, mapping.file);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`STALE_FLOW_CHECKPOINT_FILE:${checkpointId}`);
+  const content = fs.readFileSync(target, 'utf8');
+  const project = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true });
+  const source = project.createSourceFile(mapping.file, content);
+  const body = symbolBody(source, mapping.symbol);
+  if (!body) throw new Error(`STALE_FLOW_CHECKPOINT_SYMBOL:${checkpointId}`);
+  if (manifestVersion !== '2.0') return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data };
+  const anchorText = mappingAnchorText(mapping);
+  if (!anchorText || !mapping.anchorHash || !mapping.startLine || !mapping.endLine || mapping.endLine < mapping.startLine) {
+    throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
+  }
+  if (calculateFlowAnchorHash(mapping.file, mapping.symbol, parsedPlacement.data, anchorText) !== mapping.anchorHash) throw new Error(`STALE_FLOW_CHECKPOINT_ANCHOR:${checkpointId}`);
+  const mappedLines = content.replaceAll('\r\n', '\n').split('\n').slice(mapping.startLine - 1, mapping.endLine).join('\n');
+  if (!mappedLines.includes(anchorText)) throw new Error(`STALE_FLOW_CHECKPOINT_SOURCE_RANGE:${checkpointId}`);
+  if (['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'].includes(parsedPlacement.data)) {
+    const actualPlacement = symbolPlacementKind(source, mapping.symbol);
+    const acceptsAnyCallable = parsedPlacement.data === 'FUNCTION_ENTRY' || parsedPlacement.data === 'CALLBACK_ENTRY' || parsedPlacement.data === 'ROUTE_HANDLER_ENTRY';
+    if (!actualPlacement || (!acceptsAnyCallable && actualPlacement !== parsedPlacement.data)) {
+      throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+    }
+    return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  }
+  const scope = body.getDescendants();
+  if (parsedPlacement.data === 'BRANCH_ENTRY') {
+    const matches = body.getDescendantsOfKind(SyntaxKind.IfStatement)
+      .filter((item) => item.getText() === anchorText || `if (${item.getExpression().getText()})` === anchorText);
+    const branch = (mapping.branch ?? mapping.branchArm) === 'ELSE' ? 'ELSE' : 'THEN';
+    const targetBranch = branch === 'ELSE' ? matches[0]?.getElseStatement() : matches[0]?.getThenStatement();
+    if (matches.length !== 1 || !targetBranch || !Node.isBlock(targetBranch)) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine, branch };
+  }
+  const statements = scope.filter((item) => Node.isStatement(item) && item.getText() === anchorText);
+  if (statements.length !== 1) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+  return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
 }
 
 class TypeScriptAdapter implements InstrumentationAdapter {
@@ -774,30 +919,37 @@ class TypeScriptAdapter implements InstrumentationAdapter {
         importModule: relativeImport(entry.file, generatedFile),
       },
     ];
-    const manifestCheckpoints = input.instrumentationPurpose === 'FLOW' ? input.flowManifest?.checkpoints ?? [] : [];
-    const unresolvedRequired = manifestCheckpoints.filter((checkpoint) => checkpoint.required && (checkpoint.mapping.confidence < 0.65 || !checkpoint.mapping.file || !checkpoint.mapping.symbol));
     if (input.instrumentationPurpose === 'FLOW' && !input.flowManifest) throw new Error('FLOW_INITIALIZATION_MANIFEST_REQUIRED');
-    if (unresolvedRequired.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolvedRequired.map((item) => item.id).join(',')}`);
-    const selectedBoundaries = manifestCheckpoints.length
-      ? manifestCheckpoints.flatMap((checkpoint) => {
-          const boundary = evidence.semanticBoundaries.find((item) => item.file === checkpoint.mapping.file && item.symbol === checkpoint.mapping.symbol);
-          return boundary ? [{ boundary, checkpoint }] : [];
-        })
-      : (input.instrumentationPurpose === 'FLOW' && this.id !== 'nextjs' ? evidence.semanticBoundaries : [])
-          .filter((item) => item.confidence >= 0.75 && item.symbol && (!detectedPackage.relativeRoot || item.file.startsWith(`${detectedPackage.relativeRoot}/`)))
-          .slice(0, 12)
-          .map((boundary) => ({ boundary, checkpoint: null }));
-    for (const { boundary, checkpoint } of selectedBoundaries) {
+    const manifest = input.instrumentationPurpose === 'FLOW' ? input.flowManifest : null;
+    const manifestVersion = String((manifest as unknown as { version?: string } | null)?.version ?? '1.0');
+    const manifestCheckpoints = manifest?.checkpoints ?? [];
+    const unresolved = manifestCheckpoints.filter((checkpoint) => !mappingIsResolved(checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion));
+    if (unresolved.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolved.map((item) => item.id).join(',')}`);
+    for (const checkpoint of manifestCheckpoints) {
+      const mapping = validateResolvedFlowMapping(input.workspaceRoot, checkpoint.id, checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion);
+      if (detectedPackage.relativeRoot && !mapping.file.startsWith(`${detectedPackage.relativeRoot}/`)) {
+        throw new Error(`FLOW_CHECKPOINT_OUTSIDE_FRAMEWORK_PACKAGE:${checkpoint.id}`);
+      }
       operations.push({
-        id: checkpoint?.id ?? `semantic-${hash(`${boundary.file}:${boundary.symbol}`).slice(0, 12)}`,
-        kind: 'UPDATE_SOURCE', relativePath: boundary.file, symbol: boundary.symbol,
-        transformId: 'tellann.semantic.function-entry', transformVersion: this.version,
-        expectedHash: fileHash(input.workspaceRoot, boundary.file),
-        description: checkpoint ? `Add declared Flow checkpoint ${checkpoint.id} to ${boundary.symbol}` : `Add an explicit workflow-entry checkpoint to ${boundary.symbol}`,
-        eventMappings: checkpoint ? [{ eventType: checkpoint.eventType, expectedState: checkpoint.expectedState, checkpointId: checkpoint.id, stateId: checkpoint.stateId, transitionId: checkpoint.transitionId, terminalKind: checkpoint.terminalKind }] : [{ eventType: boundary.eventType, expectedState: boundary.symbol }],
-        importModule: relativeImport(boundary.file, generatedFile),
+        id: checkpoint.id,
+        kind: 'UPDATE_SOURCE', relativePath: mapping.file, symbol: mapping.symbol,
+        transformId: 'tellann.semantic.checkpoint', transformVersion: this.version,
+        expectedHash: fileHash(input.workspaceRoot, mapping.file),
+        description: `Add declared Flow checkpoint ${checkpoint.id} at its resolved ${mapping.placementKind.toLowerCase().replaceAll('_', ' ')} placement`,
+        eventMappings: [{ eventType: checkpoint.eventType, expectedState: checkpoint.expectedState, checkpointId: checkpoint.id, stateId: checkpoint.stateId, transitionId: checkpoint.transitionId, terminalKind: checkpoint.terminalKind }],
+        importModule: relativeImport(mapping.file, generatedFile),
         flowInitializationId: input.flowInitializationId,
+        placementKind: mapping.placementKind,
+        anchorText: mapping.anchorText,
+        anchorHash: mapping.anchorHash,
+        startLine: mapping.startLine,
+        endLine: mapping.endLine,
+        branch: mapping.branch,
       });
+    }
+    const checkpointOperationCount = operations.filter((operation) => operation.eventMappings.some((item) => item.checkpointId)).length;
+    if (input.instrumentationPurpose === 'FLOW' && checkpointOperationCount !== manifestCheckpoints.length) {
+      throw new Error(`FLOW_CHECKPOINT_PLAN_INCOMPLETE:${checkpointOperationCount}/${manifestCheckpoints.length}`);
     }
     const lockfile = packageManagerLockfile(input.workspaceRoot, detectedPackage.root, input.snapshot.packageManager);
     if (lockfile) {
@@ -828,11 +980,11 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       networkRequirements: validationCommands.some((command) => command.id === 'install-sdk')
         ? ['Package registry access when the SDK is not already installed']
         : [],
-      risk: evidence.existingInstrumentation.length || operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? 'MEDIUM' : 'LOW',
+      risk: evidence.existingInstrumentation.length || operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? 'MEDIUM' : 'LOW',
       riskReasons: [
         ...(evidence.existingInstrumentation.length ? ['Existing instrumentation requires duplicate-registration checks'] : []),
-        ...(operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? ['Semantic workflow-entry checkpoints modify explicitly listed functions'] : []),
-        ...(!evidence.existingInstrumentation.length && !operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? ['Changes are limited to one dependency, one generated module, and one framework integration'] : []),
+        ...(operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Resolved Flow checkpoints modify explicitly mapped source locations'] : []),
+        ...(!evidence.existingInstrumentation.length && !operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Changes are limited to one dependency, one generated module, and one framework integration'] : []),
       ],
       evidence, createdAt: new Date().toISOString(),
     };
@@ -893,7 +1045,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       applyEntryTransform(this.definition, source, importOperation.importModule, isCommonJsEntry(input.workspaceRoot, importOperation.relativePath));
       source.saveSync();
     }
-    for (const operation of plan.operations.filter((item) => item.transformId === 'tellann.semantic.function-entry')) {
+    for (const operation of plan.operations.filter((item) => ['tellann.semantic.function-entry', 'tellann.semantic.checkpoint'].includes(item.transformId))) {
       const target = resolveWithinWorkspace(input.workspaceRoot, operation.relativePath);
       const project = new Project({ manipulationSettings: { quoteKind: QuoteKind.Single }, useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true });
       const source = project.addSourceFileAtPath(target);
@@ -948,6 +1100,26 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       return (content.match(/tellann:generated:start/g) ?? []).length > 1 ? [relativePath] : [];
     });
     checks.push({ name: 'idempotency-markers', passed: duplicated.length === 0, output: duplicated.length ? `Duplicate markers: ${duplicated.join(', ')}` : 'No duplicate generated markers' });
+    if (input.instrumentationPurpose === 'FLOW' && input.flowManifest) {
+      const sources = findSourceFiles(input.workspaceRoot).map((relativePath) => ({
+        relativePath,
+        content: fs.readFileSync(resolveWithinWorkspace(input.workspaceRoot, relativePath), 'utf8'),
+      }));
+      for (const checkpoint of input.flowManifest.checkpoints) {
+        const marker = `tellann:checkpoint:${checkpoint.id}`;
+        const matches = sources.flatMap((source) => source.content.split(marker).length - 1 > 0
+          ? Array.from({ length: source.content.split(marker).length - 1 }, () => source.relativePath)
+          : []);
+        const initializationPresent = !input.flowInitializationId || sources.some((source) => source.content.includes(marker) && source.content.includes(input.flowInitializationId!));
+        checks.push({
+          name: `flow-checkpoint:${checkpoint.id}`,
+          passed: matches.length === 1 && initializationPresent,
+          output: matches.length === 1 && initializationPresent
+            ? `Exactly one marker present in ${matches[0]}`
+            : `Expected one marker for ${checkpoint.id}; found ${matches.length}${initializationPresent ? '' : '; initialization id mismatch'}`,
+        });
+      }
+    }
     return { valid: checks.every((check) => check.passed), checks };
   }
 

@@ -142,6 +142,7 @@ type DesktopContextValue = {
   initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
   analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
   setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
   updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
   startFlowVerification(initializationId: string): Promise<Record<string, any>>;
@@ -642,6 +643,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
     getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
     analyzeFlowInitialization: (initializationId) => perform(() => bridge().intent.analyzeFlowInitialization(initializationId)),
+    confirmFlowMapping: (initializationId, checkpointId, candidateId, placementKind, anchorText) => perform(() => bridge().intent.confirmFlowMapping(initializationId, checkpointId, candidateId, placementKind, anchorText)),
     setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
     startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),

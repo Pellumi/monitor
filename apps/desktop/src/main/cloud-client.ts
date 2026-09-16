@@ -978,6 +978,27 @@ export class DesktopCloudClient {
     });
   }
 
+  async submitFlowMappingCandidates(
+    initializationId: string,
+    input: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mapping-candidates`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  async confirmFlowMapping(
+    initializationId: string,
+    checkpointId: string,
+    input: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mappings/${encodeURIComponent(checkpointId)}/confirm`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
   async setFlowInitializationMode(
     initializationId: string,
     mode: "AUTOMATED" | "MANUAL",

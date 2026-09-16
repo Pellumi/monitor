@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
+import { analyzeFlowInitialization, applyEvidenceGroundedMappings, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
 const repository = {
@@ -108,6 +108,49 @@ test('AI enrichment preserves the deterministic report when no configured provid
   assert.equal(result.provenance.engine, 'RULES_FALLBACK');
   assert.ok('evidence' in result.report);
   assert.deepEqual(result.report.evidence, report.evidence);
+});
+
+test('evidence-grounded mappings replace fallback locations for every checkpoint', () => {
+  const snapshot = {
+    states: [
+      { id: 'guest', stateName: 'Guest', role: 'INITIAL' },
+      { id: 'login', stateName: 'Login page', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+    ],
+    transitions: [{ id: 'navigate', fromStateId: 'guest', toStateId: 'login', action: 'Auto navigate to login' }],
+  };
+  const base = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000017', undefined, 'Authentication');
+  const mappings = base.manifest.checkpoints.map((checkpoint, index) => ({
+    checkpointId: checkpoint.id,
+    status: 'RESOLVED',
+    entityId: `entity-${index}`,
+    candidateId: `candidate-${index}`,
+    file: index === 0 ? 'src/auth/GuestGate.tsx' : index === 1 ? 'src/auth/LoginPage.tsx' : 'src/auth/GuestGate.tsx',
+    symbol: index === 0 ? 'GuestGate' : index === 1 ? 'LoginPage' : 'redirectToLogin',
+    startLine: 10 + index,
+    endLine: 20 + index,
+    placementKind: 'FUNCTION_ENTRY',
+    anchorText: index === 1 ? 'LoginPage' : 'GuestGate',
+    anchorHash: `hash-${index}`,
+    confidence: 0.91,
+    rationale: 'Mapped from codebase graph evidence.',
+    evidenceIds: [`evidence-${index}`],
+    alternatives: [],
+    userConfirmed: false,
+    userOverridden: false,
+  }));
+  const enriched = applyEvidenceGroundedMappings(base, mappings, {
+    engine: 'HYBRID_AI', analysisId: 'analysis-1', contentHash: 'content-1', retrievalVersion: 'flow-mapping/2',
+  });
+
+  assert.equal(enriched.report.version, '2.0');
+  assert.equal(enriched.report.summary.resolvedCount, 3);
+  assert.equal(enriched.report.summary.unresolvedCount, 0);
+  assert.ok(enriched.manifest.checkpoints.every((checkpoint: any) => checkpoint.mapping.status === 'RESOLVED'));
+  assert.equal(enriched.report.missingStates.length, 0);
+  assert.equal(enriched.report.incompleteTransitions.length, 0);
+  const roadmap = buildManualRoadmap(enriched.manifest as any, 2, enriched.report as any);
+  assert.match(String(roadmap.steps[0].description), /src\/auth\/GuestGate\.tsx/);
+  assert.equal((roadmap.steps[0] as any).startLine, 10);
 });
 
 test('boundary checkpoints are the only required ones, and markers read in plain language', () => {

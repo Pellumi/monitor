@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 export * from './codebase';
+export * from './flow-mapping';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',

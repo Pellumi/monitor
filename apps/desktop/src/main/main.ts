@@ -18,6 +18,8 @@ import {
   hierarchyChildren,
   previewSanitizedSourceArchive,
   projectAnalysis,
+  redactSecrets,
+  retrieveFlowCheckpointCandidates,
   scanWorkspace,
 } from '@tellann/project-intelligence';
 import { BrowserObserver, type GuidedRunState } from '@tellann/browser-observer';
@@ -949,6 +951,7 @@ async function requestUploadConsent(
       .filter(([, count]) => Number(count) > 0)
       .map(([reason, count]) => ({ reason: reason.replaceAll('-', ' '), count: Number(count) })),
     truncated: Boolean(preview.truncated),
+    purpose: 'CODEBASE_ANALYSIS',
   };
 
   return new Promise<boolean>((resolve) => {
@@ -961,6 +964,132 @@ async function requestUploadConsent(
     };
     pendingUploadConsents.set(requestId, settle);
     mainWindow!.webContents.send(IPC.uploadConsentRequested, request);
+  });
+}
+
+async function requestFlowMappingAiConsent(
+  applicationId: string,
+  flowName: string,
+  mappings: Array<{ candidates?: Array<{ path?: string; startLine?: number | null; endLine?: number | null; evidence?: Array<{ excerpt?: string | null }> }> }>,
+): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const candidates = mappings.flatMap((mapping) => mapping.candidates ?? []);
+  const excerpts = [...new Map(candidates
+    .filter((candidate) => candidate.path)
+    .map((candidate) => [String(candidate.path), {
+      path: String(candidate.path), startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
+    }])).values()].slice(0, 5);
+  const rawExcerpts = candidates.slice(0, 8)
+    .map((candidate) => candidate.evidence?.find((item) => item.excerpt)?.excerpt ?? '')
+    .filter(Boolean);
+  const redacted = rawExcerpts.map((excerpt) => redactSecrets(String(excerpt)));
+  if (!redacted.length) return false;
+  const requestId = crypto.randomUUID();
+  const request: CodebaseUploadConsentRequest = {
+    requestId, applicationId, workspaceName: flowName, fileCount: excerpts.length,
+    compressedBytes: Buffer.byteLength(redacted.map((item) => item.content).join('\n')),
+    repositoryLabel: 'the attached local-only workspace', branch: null, revision: null, dirty: true,
+    languages: [], redactions: redacted.reduce((total, item) => total + item.redactions, 0),
+    redactedFiles: redacted.filter((item) => item.redactions > 0).length,
+    exclusions: [], truncated: candidates.length > 8, purpose: 'FLOW_MAPPING_AI', flowName, excerpts,
+  };
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const settle = (consented: boolean) => {
+      if (settled) return;
+      settled = true;
+      pendingUploadConsents.delete(requestId);
+      resolve(consented);
+    };
+    pendingUploadConsents.set(requestId, settle);
+    mainWindow!.webContents.send(IPC.uploadConsentRequested, request);
+  });
+}
+
+async function waitForCodebaseAnalysis(applicationId: string, timeoutMs = 10 * 60_000): Promise<CodebaseAnalysisState> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = readAnalysisState(applicationId);
+    if (state?.mode === 'cloud' && state.cloudJobId) {
+      const remote = await cloud.getCodebaseAnalysis(applicationId).catch(() => null) as Record<string, any> | null;
+      if (remote?.analysis && ['COMPLETED', 'PARTIAL'].includes(String(remote.status))) {
+        const next = { ...state, analysis: remote.analysis as CodebaseAnalysis, uploadProgress: null };
+        writeAnalysisState(applicationId, next);
+        return next;
+      }
+      if (remote && ['FAILED', 'CANCELLED'].includes(String(remote.status))) throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
+    } else if (state?.analysis && ['COMPLETED', 'PARTIAL'].includes(state.analysis.status)) {
+      return state;
+    } else if (state?.analysis && ['FAILED', 'CANCELLED'].includes(state.analysis.status)) {
+      throw new Error('FLOW_CODEBASE_ANALYSIS_FAILED');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error('FLOW_CODEBASE_ANALYSIS_TIMEOUT');
+}
+
+async function currentFlowCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisState> {
+  const workspace = selectedWorkspaces.get(applicationId);
+  if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
+  let state = readAnalysisState(applicationId);
+  const analysis = state?.analysis;
+  const cleanAndCurrent = Boolean(
+    analysis && ['COMPLETED', 'PARTIAL'].includes(analysis.status)
+    && analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
+    && analysis.revision === workspace.snapshot.revision
+    && analysis.branch === workspace.snapshot.branch
+    && analysis.dirty === workspace.snapshot.dirty
+    && !workspace.snapshot.dirty,
+  );
+  if (cleanAndCurrent && state) return state;
+
+  if (state?.mode === 'cloud') {
+    await beginCodebaseAnalysisWithConsent(applicationId, workspace.root, workspace.snapshot, {
+      workspaceId: workspace.cloudId, repositorySnapshotId: workspace.snapshotId,
+    });
+  } else {
+    beginLocalCodebaseAnalysis(applicationId, workspace.root, workspace.snapshot);
+  }
+  state = await waitForCodebaseAnalysis(applicationId);
+  if (!state.analysis || state.analysis.repositoryFingerprint !== workspace.snapshot.repositoryFingerprint) {
+    throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
+  }
+  return state;
+}
+
+function flowInputFromInitialization(initialization: Record<string, any>) {
+  const report = initialization.codeReviewReport ?? {};
+  return {
+    id: String(initialization.flowId),
+    name: String(initialization.manifest?.flowName ?? initialization.flow?.name ?? 'Flow'),
+    states: (report.stateFindings ?? []).map((item: any) => ({
+      id: String(item.stateId), stateName: String(item.stateName ?? item.stateId), category: item.category ?? null,
+      role: item.role ?? null, terminalKind: item.terminalKind ?? null,
+    })),
+    transitions: (report.transitionFindings ?? []).map((item: any) => ({
+      id: String(item.transitionId), fromStateId: String(item.fromStateId), toStateId: String(item.toStateId), action: item.action ?? null,
+    })),
+  } as any;
+}
+
+async function submitCurrentFlowMappings(applicationId: string, initialization: Record<string, any>) {
+  const state = await currentFlowCodebaseAnalysis(applicationId);
+  if (!state.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
+  const retrieval = retrieveFlowCheckpointCandidates(state.analysis, flowInputFromInitialization(initialization));
+  let consentMode = state.mode === 'cloud' ? 'CLOUD_APPROVED' : 'LOCAL_GRAPH_ONLY';
+  if (state.mode === 'local') {
+    const consented = await requestFlowMappingAiConsent(applicationId, String(initialization.manifest?.flowName ?? 'Flow'), retrieval.mappings as any);
+    consentMode = consented ? 'LOCAL_EXCERPTS_APPROVED' : 'LOCAL_GRAPH_ONLY';
+  }
+  const mappings = retrieval.mappings.map((mapping) => ({
+    ...mapping,
+    candidates: mapping.candidates.map((candidate) => {
+      const excerpt = candidate.evidence.find((item) => item.excerpt)?.excerpt ?? null;
+      return { ...candidate, file: candidate.path, excerpt: consentMode.endsWith('APPROVED') && excerpt ? redactSecrets(excerpt).content : null };
+    }),
+  }));
+  return cloud.submitFlowMappingCandidates(String(initialization.id), {
+    analysis: retrieval.analysis, retrievalVersion: retrieval.retrievalVersion, consentMode, mappings,
   });
 }
 
@@ -1537,13 +1666,18 @@ function registerIpc(): void {
     if (typeof value.flowId !== 'string' || typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string' || typeof value.flowVersionId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_REQUEST');
     const workspace = selectedWorkspaces.get(value.applicationId);
     if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
-    return cloud.initializeFlow(value.flowId, {
+    // Establish freshness before creating a scan tied to this repository snapshot.
+    await currentFlowCodebaseAnalysis(value.applicationId);
+    const created = await cloud.initializeFlow(value.flowId, {
       flowVersionId: value.flowVersionId,
       workspaceId: workspace.cloudId,
       repositorySnapshotId: workspace.snapshotId,
       environmentId: value.environmentId,
       instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
     });
+    const initialization = (created.initialization ?? created) as Record<string, any>;
+    const mapped = await submitCurrentFlowMappings(value.applicationId, initialization);
+    return { ...created, initialization: mapped, codeReviewReport: mapped.codeReviewReport };
   });
   ipcMain.handle(IPC.getFlowInitialization, async (event, initializationId: unknown) => {
     assertTrustedSender(event);
@@ -1553,7 +1687,20 @@ function registerIpc(): void {
   ipcMain.handle(IPC.analyzeFlowInitialization, async (event, initializationId: unknown) => {
     assertTrustedSender(event);
     if (typeof initializationId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
-    return cloud.analyzeFlowInitialization(initializationId);
+    const base = await cloud.analyzeFlowInitialization(initializationId);
+    const applicationId = String(base.applicationId ?? '');
+    if (!applicationId) throw new Error('FLOW_INITIALIZATION_APPLICATION_REQUIRED');
+    return submitCurrentFlowMappings(applicationId, base as Record<string, any>);
+  });
+  ipcMain.handle(IPC.confirmFlowMapping, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; checkpointId?: unknown; candidateId?: unknown; placementKind?: unknown; anchorText?: unknown };
+    if (typeof value.initializationId !== 'string' || typeof value.checkpointId !== 'string' || typeof value.candidateId !== 'string') throw new Error('INVALID_FLOW_MAPPING_CONFIRMATION');
+    return cloud.confirmFlowMapping(value.initializationId, value.checkpointId, {
+      candidateId: value.candidateId,
+      ...(typeof value.placementKind === 'string' ? { placementKind: value.placementKind } : {}),
+      ...(typeof value.anchorText === 'string' ? { anchorText: value.anchorText } : {}),
+    });
   });
   ipcMain.handle(IPC.setFlowInitializationMode, async (event, input: unknown) => {
     assertTrustedSender(event);

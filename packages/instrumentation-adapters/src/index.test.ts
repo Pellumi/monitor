@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createApprovalHash, detectAdapters, getAdapter, type LocalProjectContext } from './index';
+import { calculateFlowAnchorHash, createApprovalHash, detectAdapters, getAdapter, type LocalProjectContext } from './index';
 
 function fixture(input: { dependencies: Record<string, string>; entry: string; content: string }): LocalProjectContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-adapter-'));
@@ -266,6 +266,132 @@ app.listen(3000);
   assert.match(fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8'), /state:order/);
   assert.equal((await adapter.validate(flowContext, result)).valid, true);
   await assert.rejects(adapter.propose({ ...flowContext, flowManifest: { ...baseManifest, checkpoints: [{ ...baseManifest.checkpoints[0], mapping: { file: null, symbol: null, confidence: 0.2, rationale: 'Unmapped' } }] } }), /FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED/);
+});
+
+test('Flow v2 proposals consume every resolved mapping without keyword rediscovery', async () => {
+  const content = `import express from 'express';
+const app = express();
+async function beginCheckout() {
+  const order = await loadCart();
+  if (order.ready) {
+    await charge(order);
+  }
+  return order;
+}
+app.post('/checkout', async (_req, res) => res.json(await beginCheckout()));
+app.listen(3000);
+`;
+  const context = fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content });
+  const mapping = (placementKind: string, anchor: string, startLine: number, endLine = startLine) => ({
+    status: 'RESOLVED', file: 'src/index.ts', symbol: 'beginCheckout', startLine, endLine,
+    placementKind, anchor, anchorHash: calculateFlowAnchorHash('src/index.ts', 'beginCheckout', placementKind, anchor), confidence: 0.94,
+    rationale: 'Grounded in the codebase analysis', evidenceIds: [], alternatives: [], userConfirmed: true, userOverrode: false,
+  });
+  const checkpoint = (id: string, placementKind: string, anchor: string, startLine: number, endLine = startLine) => ({
+    id, kind: id.startsWith('state:') ? 'STATE' : 'TRANSITION', stateId: id.startsWith('state:') ? id : null,
+    transitionId: id.startsWith('transition:') ? id : null, stateRole: 'NORMAL', terminalKind: null,
+    eventType: 'FLOW_CHECKPOINT_REACHED', expectedState: id, fromCheckpointId: null, toCheckpointId: null,
+    required: true, mapping: mapping(placementKind, anchor, startLine, endLine),
+  });
+  const manifest = {
+    version: '2.0', graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64),
+    repositorySnapshotId: '00000000-0000-4000-8000-000000000021', initialStateId: 'checkout',
+    terminalStateIds: ['complete'], paths: [['checkout', 'complete']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+    checkpoints: [
+      checkpoint('state:checkout', 'FUNCTION_ENTRY', 'async function beginCheckout()', 3),
+      checkpoint('transition:cart-loaded', 'AFTER_STATEMENT', 'const order = await loadCart();', 4),
+      checkpoint('transition:charge', 'BRANCH_ENTRY', 'if (order.ready)', 5, 7),
+      checkpoint('state:complete', 'BEFORE_STATEMENT', 'return order;', 8),
+    ],
+  };
+  const flowContext = {
+    ...context, instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: manifest.graphVersionId, flowInitializationId: '00000000-0000-4000-8000-000000000023',
+    flowManifest: manifest as never,
+  };
+  const adapter = getAdapter('express');
+  const plan = await adapter.propose(flowContext);
+  const checkpointOperations = plan.operations.filter((operation) => operation.eventMappings.some((item) => item.checkpointId));
+  assert.equal(checkpointOperations.length, manifest.checkpoints.length);
+  assert.deepEqual(checkpointOperations.map((operation) => operation.id), manifest.checkpoints.map((item) => item.id));
+  const result = await adapter.apply(flowContext, {
+    plan, approvedFileScopes: plan.approvedFileScopes, approvedCommandIds: [],
+    approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []),
+    checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')),
+  });
+  const instrumented = fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8');
+  for (const item of manifest.checkpoints) assert.match(instrumented, new RegExp(`tellann:checkpoint:${item.id}`));
+  assert.match(instrumented, /transition:cart-loaded[\s\S]*return order/);
+  assert.equal((await adapter.validate(flowContext, result)).valid, true);
+});
+
+test('Flow v2 proposal is atomic and rejects unresolved, stale, or unsupported checkpoint mappings', async () => {
+  const content = `import express from 'express';
+const app = express();
+async function beginCheckout() { return true; }
+app.listen(3000);
+`;
+  const context = fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content });
+  const baseMapping = {
+    status: 'RESOLVED', file: 'src/index.ts', symbol: 'beginCheckout', startLine: 3, endLine: 3,
+    placementKind: 'FUNCTION_ENTRY', anchor: 'async function beginCheckout()',
+    anchorHash: calculateFlowAnchorHash('src/index.ts', 'beginCheckout', 'FUNCTION_ENTRY', 'async function beginCheckout()'), confidence: 0.95,
+    rationale: 'Grounded mapping', evidenceIds: [], alternatives: [], userConfirmed: true, userOverrode: false,
+  };
+  const makeContext = (mapping: Record<string, unknown>) => ({
+    ...context, instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: '00000000-0000-4000-8000-000000000020', flowInitializationId: '00000000-0000-4000-8000-000000000023',
+    flowManifest: {
+      version: '2.0', graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64),
+      repositorySnapshotId: '00000000-0000-4000-8000-000000000021', initialStateId: 'checkout', terminalStateIds: ['checkout'],
+      paths: [['checkout']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+      checkpoints: [{ id: 'state:checkout', kind: 'STATE', stateId: 'checkout', transitionId: null, stateRole: 'INITIAL', terminalKind: null,
+        eventType: 'FLOW_INITIAL_STATE', expectedState: 'checkout', fromCheckpointId: null, toCheckpointId: null, required: true, mapping }],
+    } as never,
+  });
+  const adapter = getAdapter('express');
+  await assert.rejects(adapter.propose(makeContext({ ...baseMapping, status: 'AMBIGUOUS' })), /FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:state:checkout/);
+  await assert.rejects(adapter.propose(makeContext({ ...baseMapping, anchorHash: 'f'.repeat(64) })), /STALE_FLOW_CHECKPOINT_ANCHOR:state:checkout/);
+  await assert.rejects(adapter.propose(makeContext({ ...baseMapping, placementKind: 'COMPONENT_MOUNT' })), /UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:state:checkout/);
+});
+
+test('Flow v2 supports method, arrow-function, and named route-handler entry placements', async () => {
+  const content = `import express from 'express';
+const app = express();
+class CheckoutService { approve() { return true; } }
+const submitCheckout = async () => { return new CheckoutService().approve(); };
+async function routeCheckout(_req: unknown, res: any) { return res.json(await submitCheckout()); }
+app.post('/checkout', routeCheckout);
+app.listen(3000);
+`;
+  const context = fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content });
+  const placements = [
+    ['state:approved', 'approve', 'FUNCTION_ENTRY', 'approve()', 3],
+    ['transition:submit', 'submitCheckout', 'FUNCTION_ENTRY', 'const submitCheckout = async ()', 4],
+    ['transition:route', 'routeCheckout', 'ROUTE_HANDLER_ENTRY', 'async function routeCheckout', 5],
+  ] as const;
+  const manifest = {
+    version: '2.0', graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64),
+    repositorySnapshotId: '00000000-0000-4000-8000-000000000021', initialStateId: 'approved', terminalStateIds: ['approved'],
+    paths: [['approved']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+    checkpoints: placements.map(([id, symbol, placementKind, anchorText, line]) => ({
+      id, kind: id.startsWith('state:') ? 'STATE' : 'TRANSITION', stateId: id.startsWith('state:') ? id : null,
+      transitionId: id.startsWith('transition:') ? id : null, stateRole: 'NORMAL', terminalKind: null,
+      eventType: 'FLOW_CHECKPOINT_REACHED', expectedState: id, fromCheckpointId: null, toCheckpointId: null, required: true,
+      mapping: { status: 'RESOLVED', file: 'src/index.ts', symbol, startLine: line, endLine: line, placementKind,
+        anchor: anchorText, anchorHash: calculateFlowAnchorHash('src/index.ts', symbol, placementKind, anchorText), confidence: 0.95, rationale: 'Resolved', evidenceIds: [],
+        alternatives: [], userConfirmed: true, userOverrode: false },
+    })),
+  };
+  const flowContext = { ...context, instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: manifest.graphVersionId, flowInitializationId: '00000000-0000-4000-8000-000000000023', flowManifest: manifest as never };
+  const adapter = getAdapter('express');
+  const plan = await adapter.propose(flowContext);
+  const result = await adapter.apply(flowContext, { plan, approvedFileScopes: plan.approvedFileScopes, approvedCommandIds: [],
+    approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []), checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')) });
+  const instrumented = fs.readFileSync(path.join(context.workspaceRoot, 'src/index.ts'), 'utf8');
+  for (const [id] of placements) assert.match(instrumented, new RegExp(`tellann:checkpoint:${id}`));
+  assert.equal((await adapter.validate(flowContext, result)).valid, true);
 });
 
 test('stale target hashes and production application are rejected before writes', async () => {

@@ -1877,12 +1877,25 @@ model FlowScan {
   binding              FlowProjectBinding   @relation(fields: [bindingId], references: [id], onDelete: Cascade)
   repositorySnapshotId String
   repositorySnapshot   RepositorySnapshot   @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  codebaseAnalysisJobId String?
+  codebaseAnalysisJob   CodebaseAnalysisJob? @relation(fields: [codebaseAnalysisJobId], references: [id], onDelete: SetNull)
   parentScanId         String?
   parentScan           FlowScan?            @relation("FlowScanParent", fields: [parentScanId], references: [id], onDelete: SetNull)
   childScans           FlowScan[]           @relation("FlowScanParent")
   kind                 FlowScanKind
   status               FlowScanStatus       @default(CREATED)
   scannerVersion       String
+  analysisMode         String?
+  analysisGraphVersion String?
+  analysisContentHash  String?
+  analysisRevision     String?
+  analysisBranch       String?
+  analysisDirty        Boolean?
+  retrievalVersion     String?
+  mappingStatus        String?
+  mappingProgress      Json?
+  candidateEvidence    Json?
+  mappingProvenance    Json?
   detectedRoutes       Json?
   detectedComponents   Json?
   detectedEndpoints    Json?
@@ -1899,6 +1912,7 @@ model FlowScan {
 
   @@index([bindingId, createdAt])
   @@index([applicationId, flowId, status])
+  @@index([codebaseAnalysisJobId])
 }
 
 model FlowInitialization {
@@ -1919,7 +1933,10 @@ model FlowInitialization {
   mode                   FlowInitializationMode?
   stage                  FlowInitializationStage  @default(SCANNING)
   manifestVersion        String                   @default("1.0")
+  mappingVersion         String                   @default("1.0")
   manifest               Json?
+  finalMappings          Json?
+  mappingConfirmations   Json?
   reportProvenance       Json?
   selectedTargetAdapters String[]                 @default([])
   roadmapRevision        Int                      @default(1)
@@ -2256,6 +2273,7 @@ model CodebaseAnalysisJob {
   analyzerRuns            AnalyzerRun[]
   warnings                AnalysisWarning[]
   projections             AnalysisProjection[]
+  flowScans               FlowScan[]
 
   @@index([status, scheduledAt])
   @@index([applicationId, createdAt])

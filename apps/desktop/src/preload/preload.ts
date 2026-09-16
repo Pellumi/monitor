@@ -71,6 +71,7 @@ const IPC = {
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
   analyzeFlowInitialization: 'tellann:flow:initialization:analyze',
+  confirmFlowMapping: 'tellann:flow:initialization:mapping:confirm',
   setFlowInitializationMode: 'tellann:flow:initialization:mode',
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
@@ -258,6 +259,8 @@ contextBridge.exposeInMainWorld('tellann', {
     initializeFlow: (input: unknown) => ipcRenderer.invoke(IPC.initializeFlow, input),
     getFlowInitialization: (initializationId: string) => ipcRenderer.invoke(IPC.getFlowInitialization, initializationId),
     analyzeFlowInitialization: (initializationId: string) => ipcRenderer.invoke(IPC.analyzeFlowInitialization, initializationId),
+    confirmFlowMapping: (initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string) =>
+      ipcRenderer.invoke(IPC.confirmFlowMapping, { initializationId, checkpointId, candidateId, placementKind, anchorText }),
     setFlowInitializationMode: (initializationId: string, mode: 'AUTOMATED' | 'MANUAL') => ipcRenderer.invoke(IPC.setFlowInitializationMode, { initializationId, mode }),
     updateFlowRoadmapStep: (initializationId: string, stepId: string, completed: boolean) => ipcRenderer.invoke(IPC.updateFlowRoadmapStep, { initializationId, stepId, completed }),
     startFlowVerification: (initializationId: string) => ipcRenderer.invoke(IPC.startFlowVerification, initializationId),

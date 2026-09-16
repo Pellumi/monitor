@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { PrismaClient } from '@tellann/db';
-import { analyzeFlowInitialization, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
+import { resolveFlowCheckpointMappings } from '@tellann/ai';
+import { analyzeFlowInitialization, applyEvidenceGroundedMappings, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { sdkReadiness } from './sdk-setup-routes';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
@@ -43,10 +45,10 @@ export function createFlowLifecycleRouter(input: {
 
   function scheduleReportEnrichment(initializationId: string, report: Record<string, any>, baseProvenance: Record<string, unknown>) {
     void enrichFlowCodeReview(report)
-      .then((enriched) => prisma.flowInitialization.update({ where: { id: initializationId }, data: {
+      .then((enriched) => prisma.flowInitialization.updateMany({ where: { id: initializationId, mappingVersion: '1.0' }, data: {
         stage: 'REVIEW_READY', codeReviewReport: enriched.report as any, reportProvenance: { ...baseProvenance, ...enriched.provenance, completedAt: new Date().toISOString() },
       } }))
-      .catch((error) => prisma.flowInitialization.update({ where: { id: initializationId }, data: {
+      .catch((error) => prisma.flowInitialization.updateMany({ where: { id: initializationId, mappingVersion: '1.0' }, data: {
         stage: 'REVIEW_READY', reportProvenance: { ...baseProvenance, engine: 'RULES_FALLBACK', aiErrorSafe: String(error instanceof Error ? error.message : error).slice(0, 500), completedAt: new Date().toISOString() },
       } }).catch(() => undefined));
   }
@@ -172,6 +174,105 @@ export function createFlowLifecycleRouter(input: {
     return initialization;
   }
 
+  function boundedMappingBundle(value: unknown) {
+    if (!value || typeof value !== 'object') throw new Error('INVALID_FLOW_MAPPING_BUNDLE');
+    const body = value as Record<string, any>;
+    const serialized = JSON.stringify(body);
+    if (Buffer.byteLength(serialized) > 750_000) throw new Error('FLOW_MAPPING_BUNDLE_TOO_LARGE');
+    const analysis = body.analysis && typeof body.analysis === 'object' ? body.analysis : null;
+    const mappings = Array.isArray(body.mappings) ? body.mappings : [];
+    if (!analysis || !String(analysis.id ?? '') || mappings.length > 250) throw new Error('INVALID_FLOW_MAPPING_BUNDLE');
+    for (const mapping of mappings) {
+      if (!mapping || typeof mapping !== 'object' || !String(mapping.checkpointId ?? '')) throw new Error('INVALID_FLOW_MAPPING_BUNDLE');
+      if (!Array.isArray(mapping.candidates) || mapping.candidates.length > 8) throw new Error('INVALID_FLOW_MAPPING_CANDIDATES');
+      const files = new Set<string>();
+      for (const candidate of mapping.candidates) {
+        const file = String(candidate.file ?? candidate.path ?? '');
+        if (!file || file.includes('..') || file.startsWith('/') || /^[A-Za-z]:/.test(file)) throw new Error('INVALID_FLOW_MAPPING_PATH');
+        files.add(file);
+        if (files.size > 5) throw new Error('FLOW_MAPPING_FILE_LIMIT_EXCEEDED');
+        if (String(candidate.excerpt ?? '').length > 12_000) throw new Error('FLOW_MAPPING_EXCERPT_TOO_LARGE');
+      }
+    }
+    return { analysis, mappings, retrievalVersion: String(body.retrievalVersion ?? 'flow-mapping/2'), consentMode: String(body.consentMode ?? 'LOCAL_GRAPH_ONLY') };
+  }
+
+  async function resolveSubmittedMappings(initialization: any, bundleValue: unknown) {
+    const bundle = boundedMappingBundle(bundleValue);
+    const manifest = initialization.manifest as any;
+    const allowed = new Map((manifest?.checkpoints ?? []).map((checkpoint: any) => [String(checkpoint.id), checkpoint]));
+    if (!allowed.size || bundle.mappings.length !== allowed.size) throw new Error('ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED');
+    const report = initialization.codeReviewReport as any;
+    const states = new Map((report?.stateFindings ?? []).map((item: any) => [`state:${item.stateId}`, item]));
+    const transitions = new Map((report?.transitionFindings ?? []).map((item: any) => [`transition:${item.transitionId}`, item]));
+    const stateNames = new Map((report?.stateFindings ?? []).map((item: any) => [String(item.stateId), String(item.stateName ?? item.stateId)]));
+    const checkpoints = bundle.mappings.map((item: any) => {
+      const checkpoint = allowed.get(String(item.checkpointId)) as any;
+      if (!checkpoint) throw new Error('UNKNOWN_FLOW_CHECKPOINT');
+      const transition = transitions.get(String(item.checkpointId)) as any;
+      const state = states.get(String(item.checkpointId)) as any;
+      return {
+        checkpointId: String(item.checkpointId),
+        kind: checkpoint.kind,
+        label: String(checkpoint.label ?? state?.stateName ?? transition?.action ?? checkpoint.id),
+        stateRole: checkpoint.stateRole ?? null,
+        fromLabel: transition ? stateNames.get(String(transition.fromStateId)) ?? null : null,
+        toLabel: transition ? stateNames.get(String(transition.toStateId)) ?? null : null,
+        candidates: item.candidates.map((candidate: any) => ({
+          id: String(candidate.id), entityId: String(candidate.entityId), file: String(candidate.file ?? candidate.path),
+          symbol: candidate.symbol == null ? null : String(candidate.symbol),
+          startLine: Number.isInteger(candidate.startLine) ? candidate.startLine : null,
+          endLine: Number.isInteger(candidate.endLine) ? candidate.endLine : null,
+          score: Math.max(0, Math.min(1, Number(candidate.score ?? candidate.confidence ?? 0))),
+          confidence: Math.max(0, Math.min(1, Number(candidate.confidence ?? candidate.score ?? 0))),
+          placementKinds: Array.isArray(candidate.placementKinds) ? candidate.placementKinds.map(String) : ['FUNCTION_ENTRY'],
+          evidenceIds: Array.isArray(candidate.evidenceIds) && candidate.evidenceIds.length
+            ? candidate.evidenceIds.map(String)
+            : ((Array.isArray(candidate.evidence) ? candidate.evidence : []).slice(0, 8).map((evidence: any, index: number) =>
+                `${evidence.analyzer ?? 'analysis'}:${evidence.path ?? candidate.path}:${evidence.startLine ?? index}`)).concat(
+                  (Array.isArray(candidate.evidence) && candidate.evidence.length) ? [] : [`entity:${candidate.entityId ?? candidate.id}`],
+                ),
+          rationale: String(candidate.rationale ?? `Ranked ${candidate.name ?? candidate.symbol ?? candidate.path} from codebase entities, graph relationships, and feature evidence.`),
+          excerpt: bundle.consentMode.endsWith('APPROVED')
+            ? String(candidate.excerpt ?? candidate.evidence?.find((item: any) => item.excerpt)?.excerpt ?? '') : null,
+        })),
+      };
+    });
+    const resolved = await resolveFlowCheckpointMappings({
+      flowName: String(manifest.flowName ?? initialization.flow?.name ?? 'Flow'),
+      analysis: { id: String(bundle.analysis.id), graphVersion: String(bundle.analysis.graphVersion ?? ''), contentHash: String(bundle.analysis.contentHash ?? '') },
+      checkpoints,
+    }, bundle.consentMode.endsWith('APPROVED') ? {} : { providers: [] });
+    const base = { manifest, report } as ReturnType<typeof analyzeFlowInitialization>;
+    const enriched = applyEvidenceGroundedMappings(base, resolved.mappings as any, {
+      ...resolved.provenance, analysisId: bundle.analysis.id, graphVersion: bundle.analysis.graphVersion,
+      contentHash: bundle.analysis.contentHash, revision: bundle.analysis.revision ?? null,
+      branch: bundle.analysis.branch ?? null, dirty: Boolean(bundle.analysis.dirty),
+      retrievalVersion: bundle.retrievalVersion, consentMode: bundle.consentMode,
+    });
+    const unresolved = Number((enriched.report.summary as any).unresolvedCount ?? 0);
+    const roadmapRevision = initialization.roadmapRevision + 1;
+    const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
+      stage: 'REVIEW_READY', manifestVersion: '2.0', mappingVersion: '2.0', manifest: enriched.manifest as any,
+      finalMappings: resolved.mappings as any, codeReviewReport: enriched.report as any,
+      reportProvenance: { analysis: (enriched.report as any).analysis, ai: (enriched.report as any).ai },
+      roadmapRevision, manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
+      failureReasonSafe: unresolved ? `${unresolved} checkpoint mappings need review` : null,
+    } });
+    await prisma.flowScan.update({ where: { id: initialization.scanId }, data: {
+      status: 'COMPLETED', conformanceFindings: enriched.report as any,
+      completedAt: new Date(),
+      analysisMode: bundle.consentMode === 'CLOUD_APPROVED' ? 'CLOUD_APPROVED' : 'LOCAL_ONLY',
+      analysisGraphVersion: String(bundle.analysis.graphVersion ?? ''), analysisContentHash: String(bundle.analysis.contentHash ?? ''),
+      analysisRevision: bundle.analysis.revision ?? null, analysisBranch: bundle.analysis.branch ?? null, analysisDirty: Boolean(bundle.analysis.dirty),
+      retrievalVersion: bundle.retrievalVersion, mappingStatus: unresolved ? 'NEEDS_REVIEW' : 'READY',
+      mappingProgress: (enriched.report as any).progress,
+      mappingProvenance: { analysis: (enriched.report as any).analysis, ai: (enriched.report as any).ai },
+      candidateEvidence: bundle.mappings,
+    } as any });
+    return updated;
+  }
+
   router.get('/flow-initializations/:initializationId', async (req: FlowRequest, res: Response) => {
     const initialization = await ownedInitialization(req, res);
     if (initialization) res.json(initialization);
@@ -192,6 +293,14 @@ export function createFlowLifecycleRouter(input: {
     if (!initialization) return;
     const mode = req.body?.mode === 'MANUAL' ? 'MANUAL' : req.body?.mode === 'AUTOMATED' ? 'AUTOMATED' : null;
     if (!mode) return res.status(400).json({ error: 'INVALID_FLOW_INITIALIZATION_MODE' });
+    if (mode === 'AUTOMATED') {
+      const report = initialization.codeReviewReport as any;
+      const unresolved = Number(report?.summary?.unresolvedCount ?? 1);
+      const checkpoints = Array.isArray((initialization.manifest as any)?.checkpoints) ? (initialization.manifest as any).checkpoints : [];
+      if (initialization.mappingVersion !== '2.0' || unresolved > 0 || !checkpoints.length || checkpoints.some((item: any) => item.mapping?.status !== 'RESOLVED')) {
+        return res.status(409).json({ error: 'ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED', unresolvedCount: unresolved });
+      }
+    }
     const stage = mode === 'MANUAL' ? 'ROADMAP_READY' : 'AWAITING_APPROVAL';
     const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: { mode, stage } });
     return res.json(updated);
@@ -215,6 +324,60 @@ export function createFlowLifecycleRouter(input: {
     } catch (error) {
       return res.status(422).json({ error: error instanceof Error ? error.message : 'FLOW_ANALYSIS_FAILED' });
     }
+  });
+
+  router.post('/flow-initializations/:initializationId/mapping-candidates', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    try {
+      return res.json(await resolveSubmittedMappings(initialization, req.body));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'FLOW_MAPPING_FAILED';
+      return res.status(message.includes('TOO_LARGE') ? 413 : 422).json({ error: message });
+    }
+  });
+
+  router.post('/flow-initializations/:initializationId/mappings/:checkpointId/confirm', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const manifest = initialization.manifest as any;
+    const report = initialization.codeReviewReport as any;
+    const checkpoint = manifest?.checkpoints?.find((item: any) => item.id === req.params.checkpointId);
+    if (!checkpoint) return res.status(404).json({ error: 'FLOW_CHECKPOINT_NOT_FOUND' });
+    const candidateId = String(req.body?.candidateId ?? '');
+    const candidate = checkpoint.mapping?.alternatives?.find((item: any) => String(item.id) === candidateId);
+    if (!candidate) return res.status(404).json({ error: 'FLOW_MAPPING_CANDIDATE_NOT_FOUND' });
+    const placementKind = String(req.body?.placementKind ?? candidate.placementKind ?? candidate.placementKinds?.[0] ?? '');
+    if (candidate.placementKind ? candidate.placementKind !== placementKind : !candidate.placementKinds?.includes(placementKind)) return res.status(422).json({ error: 'UNSUPPORTED_FLOW_MAPPING_PLACEMENT' });
+    const anchorText = String(req.body?.anchorText ?? candidate.anchor ?? candidate.symbol ?? '');
+    if (!anchorText) return res.status(422).json({ error: 'FLOW_MAPPING_ANCHOR_REQUIRED' });
+    const mapping = {
+      checkpointId: checkpoint.id, status: 'RESOLVED', entityId: candidate.entityId, candidateId: candidate.id,
+      file: candidate.file ?? candidate.path, symbol: candidate.symbol ?? null,
+      startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
+      placementKind, anchor: anchorText,
+      anchorHash: crypto.createHash('sha256').update(`${candidate.file ?? candidate.path}\0${candidate.symbol ?? ''}\0${placementKind}\0${anchorText}`).digest('hex'),
+      confidence: candidate.confidence ?? candidate.score ?? 0, rationale: String(req.body?.rationale ?? candidate.rationale ?? 'Confirmed by user.'),
+      evidenceIds: candidate.evidenceIds ?? [], alternatives: checkpoint.mapping.alternatives,
+      userConfirmed: true, userOverrode: true,
+    };
+    const mappings = manifest.checkpoints.map((item: any) => item.id === checkpoint.id ? mapping : item.mapping);
+    const enriched = applyEvidenceGroundedMappings({ manifest, report } as any, mappings, {
+      ...(report.analysis ?? {}), ...(report.ai ?? {}),
+      analysisId: report.analysis?.jobId ?? report.analysis?.analysisId,
+      snapshotId: report.analysis?.snapshotId,
+      consentMode: report.ai?.consentMode,
+      engine: report.engine === 'HYBRID' ? 'HYBRID_AI' : 'GRAPH_ONLY',
+    });
+    const roadmapRevision = initialization.roadmapRevision + 1;
+    const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
+      manifest: enriched.manifest as any, mappingVersion: '2.0', finalMappings: mappings as any,
+      mappingConfirmations: { ...((initialization.mappingConfirmations as any) ?? {}), [checkpoint.id]: { candidateId, confirmedAt: new Date().toISOString(), userId: req.user!.id } } as any,
+      codeReviewReport: enriched.report as any, roadmapRevision,
+      manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
+      failureReasonSafe: (enriched.report.summary as any).unresolvedCount ? `${(enriched.report.summary as any).unresolvedCount} checkpoint mappings need review` : null,
+    } });
+    return res.json(updated);
   });
 
   router.post('/flow-initializations/:initializationId/roadmap/:stepId/progress', async (req: FlowRequest, res: Response) => {

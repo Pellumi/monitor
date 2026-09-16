@@ -176,6 +176,159 @@ export function analyzeFlowInitialization(snapshot: JsonRecord, repository: Json
   return { manifest, report };
 }
 
+export type EvidenceGroundedMapping = {
+  checkpointId: string;
+  status: 'RESOLVED' | 'AMBIGUOUS' | 'UNRESOLVED' | 'UNSUPPORTED';
+  entityId?: string | null;
+  candidateId?: string | null;
+  file: string | null;
+  symbol: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  anchorText?: string | null;
+  anchor?: string | null;
+  anchorHash?: string | null;
+  confidence: number;
+  rationale: string;
+  evidenceIds?: string[];
+  alternatives?: JsonRecord[];
+  userConfirmed?: boolean;
+  userOverridden?: boolean;
+  userOverrode?: boolean;
+};
+
+/**
+ * Merge the authoritative codebase-analysis result into the compatibility
+ * report. The declared graph and marker identities stay unchanged; only the
+ * evidence-backed repository placement is replaced.
+ */
+export function applyEvidenceGroundedMappings(
+  base: ReturnType<typeof analyzeFlowInitialization>,
+  mappings: EvidenceGroundedMapping[],
+  provenance: JsonRecord,
+) {
+  const normalizeAlternative = (candidate: JsonRecord) => {
+    const placementKind = String(candidate.placementKind ?? records(candidate.placementKinds)[0] ?? (Array.isArray(candidate.placementKinds) ? candidate.placementKinds[0] : 'FUNCTION_ENTRY'));
+    const file = String(candidate.file ?? candidate.path ?? '');
+    const anchor = String(candidate.anchor ?? candidate.anchorText ?? candidate.symbol ?? candidate.name ?? '');
+    return {
+      id: String(candidate.id), entityId: candidate.entityId == null ? null : String(candidate.entityId),
+      evidenceIds: Array.isArray(candidate.evidenceIds) ? candidate.evidenceIds.map(String) : [],
+      file, symbol: candidate.symbol == null ? null : String(candidate.symbol),
+      startLine: Math.max(1, Number(candidate.startLine) || 1), endLine: Math.max(Math.max(1, Number(candidate.startLine) || 1), Number(candidate.endLine) || Number(candidate.startLine) || 1),
+      placementKind, anchor,
+      anchorHash: String(candidate.anchorHash ?? crypto.createHash('sha256').update(`${file}\0${candidate.symbol ?? ''}\0${placementKind}\0${anchor}`).digest('hex')),
+      confidence: Math.max(0, Math.min(1, Number(candidate.confidence ?? candidate.score ?? 0))),
+      rationale: String(candidate.rationale ?? 'Ranked by codebase analysis.'),
+      relationshipPaths: Array.isArray(candidate.relationshipPaths) ? candidate.relationshipPaths.map((path: any) => Array.isArray(path) ? path.map(String) : [String(path.relationshipId ?? path.type ?? '')].filter(Boolean)) : [],
+      featureEvidence: Array.isArray(candidate.featureEvidence) ? candidate.featureEvidence.map(String) : Array.isArray(candidate.featureIds) ? candidate.featureIds.map(String) : [],
+    };
+  };
+  const checkpointById = new Map(base.manifest.checkpoints.map((checkpoint) => [checkpoint.id, checkpoint]));
+  const normalizedMappings = mappings.map((mapping) => {
+    const checkpoint = checkpointById.get(mapping.checkpointId);
+    const file = mapping.file ?? null;
+    const symbol = mapping.symbol ?? null;
+    return {
+      ...mapping,
+      candidateId: mapping.candidateId ?? null,
+      anchor: mapping.anchor ?? mapping.anchorText ?? null,
+      userOverrode: mapping.userOverrode ?? mapping.userOverridden ?? false,
+      evidenceIds: mapping.evidenceIds ?? [],
+      alternatives: (mapping.alternatives ?? []).map(normalizeAlternative),
+      manualInstruction: `Add the ${checkpoint?.label ?? mapping.checkpointId} checkpoint in ${file ?? 'the matching file'}${symbol ? ` near ${symbol}` : ''}.`,
+      instrumentationIntent: {
+        eventType: checkpoint?.eventType ?? 'FLOW_STATE_REACHED',
+        placementDescription: mapping.rationale,
+      },
+    };
+  });
+  const byCheckpoint = new Map(normalizedMappings.map((mapping) => [mapping.checkpointId, mapping]));
+  const checkpoints = base.manifest.checkpoints.map((checkpoint) => {
+    const mapping = byCheckpoint.get(checkpoint.id);
+    return mapping ? { ...checkpoint, mapping } : checkpoint;
+  });
+  const finding = (checkpointId: string, current: JsonRecord) => {
+    const mapping = byCheckpoint.get(checkpointId);
+    if (!mapping) return current;
+    return { ...current, implemented: mapping.status === 'RESOLVED', mapping };
+  };
+  const stateFindings = base.report.stateFindings.map((item) => finding(`state:${item.stateId}`, item));
+  const transitionFindings = base.report.transitionFindings.map((item) => finding(`transition:${item.transitionId}`, item));
+  const missingStates = stateFindings.filter((item) => !item.implemented);
+  const incompleteTransitions = transitionFindings.filter((item) => !item.implemented);
+  const allMappings = checkpoints.map((checkpoint) => checkpoint.mapping as EvidenceGroundedMapping);
+  const resolved = allMappings.filter((mapping) => mapping.status === 'RESOLVED').length;
+  const ambiguous = allMappings.filter((mapping) => mapping.status === 'AMBIGUOUS').length;
+  const unsupported = allMappings.filter((mapping) => mapping.status === 'UNSUPPORTED').length;
+  const unresolved = allMappings.length - resolved;
+  const recommendationFor = (item: JsonRecord, kind: 'STATE' | 'TRANSITION') => {
+    const checkpointId = kind === 'STATE' ? `state:${item.stateId}` : `transition:${item.transitionId}`;
+    const mapping = byCheckpoint.get(checkpointId);
+    const label = kind === 'STATE'
+      ? String(item.stateName ?? item.stateId)
+      : String(item.action ?? item.transitionId);
+    return {
+      checkpointId, kind, action: mapping?.status === 'AMBIGUOUS' ? 'Choose a repository location' : 'Place this checkpoint manually',
+      label, detail: mapping?.rationale ?? 'No codebase-analysis candidate matched this checkpoint.', mapping,
+    };
+  };
+  const analysis = {
+    jobId: String(provenance.analysisId ?? provenance.jobId ?? 'local-analysis'),
+    snapshotId: String(provenance.snapshotId ?? provenance.analysisId ?? 'local-snapshot'),
+    mode: provenance.consentMode === 'CLOUD_APPROVED' ? 'CLOUD_APPROVED' as const : 'LOCAL_ONLY' as const,
+    graphVersion: provenance.graphVersion == null ? null : String(provenance.graphVersion),
+    contentHash: String(provenance.contentHash ?? ''), revision: provenance.revision == null ? null : String(provenance.revision),
+    branch: provenance.branch == null ? null : String(provenance.branch), dirty: Boolean(provenance.dirty), current: provenance.current !== false,
+  };
+  const ai = {
+    attempted: provenance.engine === 'HYBRID_AI',
+    provider: provenance.provider === 'gemini' ? 'GEMINI' as const : provenance.provider === 'deepseek' ? 'DEEPSEEK' as const : null,
+    model: provenance.model == null ? null : String(provenance.model),
+    promptVersion: String(provenance.promptVersion ?? 'flow-code-mapping/2'), promptHash: String(provenance.promptHash ?? ''),
+    fallbackUsed: Boolean(provenance.fallbackUsed), repaired: Boolean(provenance.repaired),
+    consentMode: provenance.consentMode === 'CLOUD_APPROVED' ? 'CLOUD_APPROVED' as const
+      : provenance.consentMode === 'LOCAL_EXCERPTS_APPROVED' ? 'LOCAL_EXCERPTS_APPROVED' as const : 'GRAPH_ONLY' as const,
+    resolvedAt: new Date().toISOString(),
+  };
+  return {
+    manifest: {
+      ...base.manifest, version: '2.0' as const, checkpoints,
+      codebaseAnalysisJobId: analysis.jobId, codebaseSnapshotId: analysis.snapshotId,
+      retrievalVersion: String(provenance.retrievalVersion ?? 'flow-mapping/2'),
+    },
+    report: {
+      ...base.report,
+      version: '2.0' as const,
+      engine: provenance.engine === 'HYBRID_AI' ? 'HYBRID' as const : 'GRAPH_ONLY' as const,
+      progress: {
+        status: unresolved ? 'NEEDS_REVIEW' : 'READY', completedCheckpoints: checkpoints.length, totalCheckpoints: checkpoints.length,
+        resolvedCount: resolved, ambiguousCount: ambiguous, unresolvedCount: unresolved, unsupportedCount: unsupported,
+        message: unresolved ? `${unresolved} checkpoint mappings need review` : 'Every checkpoint has a safe repository placement.',
+        updatedAt: new Date().toISOString(),
+      },
+      analysis, ai,
+      summary: {
+        ...base.report.summary,
+        mappedStates: stateFindings.length - missingStates.length,
+        mappedTransitions: transitionFindings.length - incompleteTransitions.length,
+        resolvedCount: resolved, ambiguousCount: ambiguous, unresolvedCount: unresolved, unsupportedCount: unsupported,
+      },
+      stateFindings, transitionFindings, missingStates, incompleteTransitions,
+      evidence: allMappings.flatMap((mapping) => (mapping.alternatives ?? []).map((candidate: any) => ({
+        id: String(candidate.id), kind: 'CODEBASE_CANDIDATE', file: candidate.file ?? null, symbol: candidate.symbol ?? null,
+        startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null, summary: candidate.rationale,
+      }))).slice(0, 250),
+      recommendations: [
+        ...missingStates.map((item) => recommendationFor(item, 'STATE')),
+        ...incompleteTransitions.map((item) => recommendationFor(item, 'TRANSITION')),
+      ],
+      limitations: [...base.report.limitations, 'Automated initialization is blocked until every checkpoint has a safe resolved placement.'],
+    },
+  };
+}
+
 export function buildManualRoadmap(
   manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
   revision = 1,
@@ -217,8 +370,9 @@ export function buildManualRoadmap(
         : isTerminal
           ? 'the flow reaches this end state'
           : 'the flow reaches this state';
-    const placement = checkpoint.mapping.file
-      ? `Add this call in ${checkpoint.mapping.file}${checkpoint.mapping.symbol ? ` (near ${checkpoint.mapping.symbol})` : ''}, at the point where ${where}.`
+    const mapping = checkpoint.mapping as JsonRecord;
+    const placement = mapping.file
+      ? `Add this call in ${mapping.file}${mapping.startLine ? `:${mapping.startLine}` : ''}${mapping.symbol ? ` (near ${mapping.symbol})` : ''}, at the point where ${where}. ${mapping.rationale ?? ''}`.trim()
       : `Tellann could not find where this happens in your code. Add this call yourself at the point where ${where}.`;
     // Boundary checkpoints are what initialization checks for; the rest are extra
     // detail the user can add later, and saying so keeps the roadmap honest about
@@ -239,7 +393,9 @@ export function buildManualRoadmap(
       // Keep every step actionable so the manual roadmap can actually be completed.
       status: index === 0 ? 'CURRENT' : 'PENDING',
       dependencies: checkpoint.fromCheckpointId ? [checkpoint.fromCheckpointId] : [],
-      file: checkpoint.mapping.file, symbol: checkpoint.mapping.symbol,
+      file: mapping.file ?? null, symbol: mapping.symbol ?? null,
+      startLine: mapping.startLine ?? null, endLine: mapping.endLine ?? null,
+      confidence: mapping.confidence ?? 0, alternatives: mapping.alternatives ?? [], placementKind: mapping.placementKind ?? null,
       snippet: checkpointSnippet(checkpoint.eventType, (checkpoint as any).marker ?? { flow: (manifest as any).flowKey ?? 'flow', state: checkpoint.stateId, transition: checkpoint.transitionId }),
       eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
     };
