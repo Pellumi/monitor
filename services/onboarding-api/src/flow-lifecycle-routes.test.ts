@@ -345,7 +345,9 @@ test('a Flow with fifty-odd checkpoints and real excerpts is accepted, not refus
         checkpointId, status: 'AMBIGUOUS',
         candidates: Array.from({ length: 6 }, (_, index) => ({
           id: `${checkpointId}:c${index}`, entityId: `entity-${index}`,
-          file: `src/area-${index}/file.ts`, symbol: `handler${index}`,
+          // Retrieval bounds a shortlist to five files, and the endpoint enforces
+          // the same, so a realistic bundle never spans more than that.
+          file: `src/area-${index % 5}/file.ts`, symbol: `handler${index}`,
           startLine: 4, endLine: 40, score: 0.6 - index * 0.05, confidence: 0.6 - index * 0.05,
           placementKinds: ['FUNCTION_ENTRY'], evidenceIds: [`evidence-${index}`],
           rationale: 'Ranked by codebase analysis.',
