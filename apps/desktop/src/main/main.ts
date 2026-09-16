@@ -20,6 +20,7 @@ import {
   projectAnalysis,
   redactSecrets,
   scanWorkspace,
+  workingTreeIdentity,
 } from '@tellann/project-intelligence';
 import { BrowserObserver, type GuidedRunState } from '@tellann/browser-observer';
 import { DesktopCloudClient } from './cloud-client';
@@ -708,6 +709,23 @@ function patchLocalAnalysis(applicationId: string, patch: Partial<CodebaseAnalys
   writeAnalysisState(applicationId, { ...state, analysis: { ...state.analysis, ...patch } });
 }
 
+/**
+ * The tree an analysis is about to describe.
+ *
+ * Prefers the value the scan already computed, and measures it directly when the
+ * snapshot predates that field — otherwise a folder attached before the hash
+ * existed would record null, never match on the next launch, and re-analyse
+ * forever.
+ */
+function workingTreeHashOf(root: string, snapshot: RepositorySnapshotSummary): string | null {
+  if (snapshot.workingTreeHash) return snapshot.workingTreeHash;
+  try {
+    return workingTreeIdentity(root);
+  } catch {
+    return null;
+  }
+}
+
 function pendingAnalysis(snapshot: RepositorySnapshotSummary, message: string): CodebaseAnalysis {
   return {
     id: `pending:${snapshot.repositoryFingerprint.slice(0, 24)}`,
@@ -786,7 +804,7 @@ function beginLocalCodebaseAnalysis(
     workspaceRoot: root,
     workspaceId: snapshot.workspaceId,
     repositoryFingerprint: snapshot.repositoryFingerprint,
-    workingTreeHash: snapshot.workingTreeHash ?? null,
+    workingTreeHash: workingTreeHashOf(root, snapshot),
     updatedAt: new Date().toISOString(),
     analysis: pendingAnalysis(snapshot, 'Queued for local analysis'),
     uploadProgress: null,
@@ -1115,15 +1133,21 @@ function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysi
   if (!workspace?.cloudId || !workspace.snapshotId) return null;
   const state = readAnalysisState(applicationId);
   const analysis = state?.analysis;
-  const sameWorkingTree = workspace.snapshot.workingTreeHash
-    ? state?.workingTreeHash === workspace.snapshot.workingTreeHash
-    : !workspace.snapshot.dirty && analysis?.dirty === false;
+  if (!analysis || !['COMPLETED', 'PARTIAL'].includes(analysis.status)) return null;
+  // Measure the tree now rather than trusting the snapshot taken when the folder
+  // was attached. That snapshot is restored from disk on launch and never
+  // refreshed, so comparing against it would both miss real edits made between
+  // sessions and — for a folder attached before this hash existed — never match,
+  // re-analysing on every single run.
+  let liveTree: string | null = null;
+  try {
+    liveTree = workingTreeIdentity(workspace.root);
+  } catch {
+    liveTree = null;
+  }
   const current = Boolean(
-    analysis && ['COMPLETED', 'PARTIAL'].includes(analysis.status)
-    && analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
-    && analysis.revision === workspace.snapshot.revision
-    && analysis.branch === workspace.snapshot.branch
-    && sameWorkingTree,
+    analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
+    && liveTree && state?.workingTreeHash === liveTree,
   );
   return current && state ? state : null;
 }
@@ -1131,26 +1155,13 @@ function readCurrentFlowCodebaseAnalysis(applicationId: string): CodebaseAnalysi
 async function currentFlowCodebaseAnalysis(applicationId: string): Promise<CodebaseAnalysisState> {
   const workspace = selectedWorkspaces.get(applicationId);
   if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
-  let state = readAnalysisState(applicationId);
-  const analysis = state?.analysis;
   // An analysis is current when it describes the tree that is on disk now. A
   // dirty checkout is allowed to be current, as long as it is the *same* dirty
-  // checkout: requiring a clean tree meant anyone mid-change re-analysed and
-  // re-consented on every Flow, which is the opposite of "stale results are
-  // never used with only a warning" — it just made the guard fire constantly.
-  // Snapshots from a scanner that predates the working-tree hash keep the old
-  // conservative rule, because for those the tree genuinely is unknown.
-  const sameWorkingTree = workspace.snapshot.workingTreeHash
-    ? state?.workingTreeHash === workspace.snapshot.workingTreeHash
-    : !workspace.snapshot.dirty && analysis?.dirty === false;
-  const current = Boolean(
-    analysis && ['COMPLETED', 'PARTIAL'].includes(analysis.status)
-    && analysis.repositoryFingerprint === workspace.snapshot.repositoryFingerprint
-    && analysis.revision === workspace.snapshot.revision
-    && analysis.branch === workspace.snapshot.branch
-    && sameWorkingTree,
-  );
-  if (current && state) return state;
+  // checkout: requiring a clean tree meant anyone mid-change re-analysed, and
+  // re-consented, on every Flow.
+  let state = readCurrentFlowCodebaseAnalysis(applicationId);
+  if (state) return state;
+  state = readAnalysisState(applicationId);
 
   if (state?.mode === 'cloud') {
     await beginCodebaseAnalysisWithConsent(applicationId, workspace.root, workspace.snapshot, {
@@ -1381,7 +1392,7 @@ async function beginCloudCodebaseAnalysis(
       workspaceRoot: selectedPath,
       workspaceId: registered.workspaceId,
       repositoryFingerprint: snapshot.repositoryFingerprint,
-      workingTreeHash: snapshot.workingTreeHash ?? null,
+      workingTreeHash: workingTreeHashOf(selectedPath, snapshot),
       updatedAt: new Date().toISOString(),
       analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
       uploadProgress: { sent: 0, total: 1 },
@@ -1416,7 +1427,7 @@ async function beginCloudCodebaseAnalysis(
       workspaceRoot: selectedPath,
       workspaceId: registered.workspaceId,
       repositoryFingerprint: snapshot.repositoryFingerprint,
-      workingTreeHash: snapshot.workingTreeHash ?? null,
+      workingTreeHash: workingTreeHashOf(selectedPath, snapshot),
       updatedAt: new Date().toISOString(),
       analysis: state?.analysis ?? pendingAnalysis(snapshot, 'Queued for analysis'),
       uploadProgress: null,

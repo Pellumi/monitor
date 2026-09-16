@@ -101,6 +101,94 @@ function git(root: string, args: string[]): string | null {
   }
 }
 
+const MANIFEST_NAMES = ['package.json', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb', 'pyproject.toml', 'requirements.txt'];
+
+function manifestHashesOf(resolvedRoot: string): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const name of MANIFEST_NAMES) {
+    const target = path.join(resolvedRoot, name);
+    if (fs.existsSync(target)) hashes[name] = hash(fs.readFileSync(target));
+  }
+  return hashes;
+}
+
+/** Bounds on hashing dirty file contents, so a huge rebase stays cheap to identify. */
+const HASHED_DIRTY_FILE_LIMIT = 500;
+const HASHED_DIRTY_FILE_BYTES = 2_000_000;
+
+function manifestIdentityOf(hashes: Record<string, string>): string {
+  return Object.entries(hashes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, digest]) => `${name}:${digest}`)
+    // A NUL separator, written as a code point so no control character has to sit in this file.
+    .join(String.fromCharCode(0));
+}
+
+/**
+ * What the working tree looks like right now, including uncommitted edits.
+ *
+ * `repositoryFingerprint` folds in the revision, so at a single commit it is the
+ * same value for every possible set of local changes. Anything that needs to
+ * know whether a checkout is still the one it looked at before therefore cannot
+ * use it, and the only safe fallback was "a dirty checkout is never the same" —
+ * which meant a developer with uncommitted work re-analysed constantly.
+ *
+ * The porcelain status names every changed path; size and mtime catch a further
+ * edit to a path that was already dirty. Cost is one `git status` and one stat
+ * per changed file, so this is cheap enough to ask on demand rather than
+ * trusting a snapshot taken when the folder was first attached.
+ */
+export function workingTreeIdentity(
+  root: string,
+  revision?: string | null,
+  manifestIdentity?: string | null,
+  status?: string | null,
+): string {
+  const resolvedRoot = path.resolve(root);
+  const porcelain = status ?? git(resolvedRoot, ['status', '--porcelain']) ?? '';
+  const head = revision !== undefined ? revision : git(resolvedRoot, ['rev-parse', 'HEAD']);
+  // Derived here when the caller has not already computed it. Getting this wrong
+  // is invisible in isolation and total in effect: a value that disagrees with
+  // the one the scan recorded makes every launch look like a changed tree.
+  const manifests = manifestIdentity ?? manifestIdentityOf(manifestHashesOf(resolvedRoot));
+  const dirtyPaths = porcelain
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    // A porcelain line is a one or two character status, whitespace, then the
+    // path. Taking it by column would be simpler, but the git helper trims its
+    // output — so a leading-space status like " M app.js" arrives one character
+    // short and a fixed offset eats into the filename instead of the status.
+    .map((line) => line.replace(/^\S{1,2}\s+/, ''))
+    // A rename reads "old -> new"; the new path is the one on disk.
+    .map((entry) => (entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry))
+    .map((entry) => entry.replace(/^"|"$/g, ''))
+    .filter(Boolean)
+    .sort();
+  const stamps = dirtyPaths.map((relative, index) => {
+    try {
+      const target = path.join(resolvedRoot, relative);
+      const stats = fs.statSync(target);
+      if (!stats.isFile()) return `${relative}:dir`;
+      // Content, not size and mtime. Editing `1` to `2` keeps the size, and two
+      // writes in the same millisecond keep the mtime, so a stamp built from
+      // those can miss a real change. It also cuts the other way: a checkout or
+      // a formatter that rewrites a file without changing it would have looked
+      // like a different tree and forced a needless re-analysis.
+      if (index < HASHED_DIRTY_FILE_LIMIT && stats.size <= HASHED_DIRTY_FILE_BYTES) {
+        return `${relative}:${hash(fs.readFileSync(target))}`;
+      }
+      // Past those bounds reading every file stops being cheap, and size with
+      // mtime is the honest approximation.
+      return `${relative}:${stats.size}:${Math.trunc(stats.mtimeMs)}`;
+    } catch {
+      // Deleted since `git status` ran, which is itself part of the state.
+      return `${relative}:missing`;
+    }
+  });
+  return hash(`${head ?? ''}\0${manifests}\0${stamps.join('\n')}`);
+}
+
 function githubRemote(remote: string | null): { originHash: string; cloneUrl: string } | null {
   if (!remote) return null;
   const scpMatch = remote.match(/^git@github\.com:([^/\s]+)\/([^\s]+?)(?:\.git)?$/i);
@@ -197,12 +285,7 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     for (const match of content.matchAll(ENDPOINT_PATTERN)) endpoints.add(match[1]);
   }
 
-  const manifestNames = ['package.json', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb', 'pyproject.toml', 'requirements.txt'];
-  const manifestHashes: Record<string, string> = {};
-  for (const name of manifestNames) {
-    const target = path.join(resolvedRoot, name);
-    if (fs.existsSync(target)) manifestHashes[name] = hash(fs.readFileSync(target));
-  }
+  const manifestHashes = manifestHashesOf(resolvedRoot);
 
   const packageManager =
     fs.existsSync(path.join(resolvedRoot, 'pnpm-lock.yaml')) ? 'pnpm' :
@@ -230,37 +313,11 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   const branch = git(resolvedRoot, ['branch', '--show-current']);
   const status = git(resolvedRoot, ['status', '--porcelain']);
   const remote = githubRemote(git(resolvedRoot, ['remote', 'get-url', 'origin']));
-  const portableManifestIdentity = Object.entries(manifestHashes)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, digest]) => `${name}:${digest}`)
-    .join('\0');
+  const portableManifestIdentity = manifestIdentityOf(manifestHashes);
 
   const divergence = divergenceFrom(resolvedRoot, options.upstreamBranch);
 
-  // What the working tree looks like right now, including edits that are not
-  // committed. `repositoryFingerprint` folds in the revision, so it cannot tell
-  // two different sets of uncommitted changes at the same commit apart — which
-  // meant anything downstream had to treat every dirty checkout as unknown, and
-  // a developer with uncommitted work could never have a current analysis. The
-  // porcelain status names every changed path; size and mtime catch a further
-  // edit to a path that was already dirty. It costs one stat per changed file.
-  const dirtyPaths = (status ?? '')
-    .split('\n')
-    .map((line) => line.slice(3).trim())
-    .filter(Boolean)
-    .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry)
-    .map((entry) => entry.replace(/^"|"$/g, ''))
-    .sort();
-  const dirtyStamps = dirtyPaths.map((relative) => {
-    try {
-      const stats = fs.statSync(path.join(resolvedRoot, relative));
-      return `${relative}:${stats.size}:${Math.trunc(stats.mtimeMs)}`;
-    } catch {
-      // Deleted since `git status` ran, which is itself part of the state.
-      return `${relative}:missing`;
-    }
-  });
-  const workingTreeHash = hash(`${revision ?? ''}\0${portableManifestIdentity}\0${dirtyStamps.join('\n')}`);
+  const workingTreeHash = workingTreeIdentity(resolvedRoot, revision, portableManifestIdentity, status);
 
   return {
     workspaceId: options.workspaceId,

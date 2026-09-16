@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { scanWorkspace } from './index';
+import { scanWorkspace, workingTreeIdentity } from './index';
 
 test('discovers launchable package scripts without executing repository code', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-scan-'));
@@ -90,4 +90,35 @@ test('a dirty checkout still has a stable identity that changes when the tree do
   // A new untracked file changes it too.
   fs.writeFileSync(path.join(root, 'extra.js'), 'export const b = 3;\n');
   assert.notEqual(scanWorkspace(root, options).workingTreeHash, dirty.workingTreeHash);
+});
+
+test('the standalone working-tree identity agrees with the one the scan records', () => {
+  // The desktop records this value when an analysis starts and recomputes it on
+  // the next launch to decide whether that analysis still describes the folder.
+  // If the two ever disagreed, every launch would look like a changed tree and
+  // re-analyse — so agreement is the whole point, not an implementation detail.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-identity-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'] });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'identity', dependencies: { react: '^19.0.0' } }));
+  fs.writeFileSync(path.join(root, 'app.js'), 'export const a = 1;\n');
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const options = { workspaceId: '00000000-0000-4000-8000-00000000000a' };
+  assert.equal(workingTreeIdentity(root), scanWorkspace(root, options).workingTreeHash, 'clean tree');
+
+  fs.writeFileSync(path.join(root, 'app.js'), 'export const a = 2;\n');
+  const dirty = workingTreeIdentity(root);
+  assert.equal(dirty, scanWorkspace(root, options).workingTreeHash, 'dirty tree');
+
+  // Asking twice without touching anything is the "came back to the app" case.
+  assert.equal(workingTreeIdentity(root), dirty, 'stable while nothing changes');
+
+  // And it moves the moment the tree does.
+  fs.writeFileSync(path.join(root, 'app.js'), 'export const a = 3;\n');
+  assert.notEqual(workingTreeIdentity(root), dirty, 'a further edit is a different tree');
 });
