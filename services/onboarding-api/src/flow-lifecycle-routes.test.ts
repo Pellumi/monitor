@@ -94,11 +94,24 @@ async function cleanup(value: Seed) {
   await prisma.user.deleteMany({ where: { id: value.user.id } });
 }
 
-function request(baseUrl: string, userId: string, pathname: string, init: RequestInit = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
+async function request(baseUrl: string, userId: string, pathname: string, init: RequestInit = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
     ...init,
     headers: { 'content-type': 'application/json', 'x-test-user': userId, ...init.headers },
   });
+  // Read once: a response body can only be consumed a single time, and an
+  // assertion message that reads it would leave nothing for the assertion.
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    json: () => JSON.parse(text) as any,
+  };
+}
+
+/** Assert the status, and show the server's own words when it disagrees. */
+function expectStatus(response: { status: number; text: string }, expected: number) {
+  assert.equal(response.status, expected, response.text);
 }
 
 /** The bundle Electron submits: ranked candidates, one per declared checkpoint. */
@@ -160,8 +173,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
         awaitingAnalysis: true,
       }),
     });
-    assert.equal(created.status, 201, await created.text());
-    const body = await created.json() as any;
+    expectStatus(created, 201);
+    const body = created.json();
     const initializationId = String(body.initialization.id);
     assert.equal(body.initialization.stage, 'SCANNING');
     assert.equal(body.scan.mappingStatus, 'WAITING_FOR_ANALYSIS');
@@ -178,8 +191,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
         message: 'Searching the analysed codebase', updatedAt: new Date().toISOString(),
       } }),
     });
-    assert.equal(progressed.status, 200, await progressed.text());
-    const progressView = await (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/progress`)).json() as any;
+    expectStatus(progressed, 200);
+    const progressView = (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/progress`)).json();
     assert.equal(progressView.progress.status, 'RETRIEVING');
     assert.equal(progressView.mappingStatus, 'RETRIEVING');
 
@@ -188,8 +201,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
     const submitted = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mapping-candidates`, {
       method: 'POST', body: JSON.stringify(mappingBundle(checkpointIds)),
     });
-    assert.equal(submitted.status, 200, await submitted.text());
-    const mapped = await submitted.json() as any;
+    expectStatus(submitted, 200);
+    const mapped = submitted.json();
     assert.equal(mapped.stage, 'REVIEW_READY');
     assert.equal(mapped.mappingVersion, '2.0');
     assert.equal(mapped.codeReviewReport.progress.status, 'NEEDS_REVIEW');
@@ -201,7 +214,7 @@ test('a Flow initializes, resolves and verifies against a real database', async 
       method: 'POST', body: JSON.stringify({ mode: 'AUTOMATED' }),
     });
     assert.equal(tooEarly.status, 409);
-    assert.equal((await tooEarly.json() as any).error, 'ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED');
+    assert.equal(tooEarly.json().error, 'ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED');
 
     // 5. The user chooses a location for each one. This is the step that had no
     //    caller in the UI at all, so nothing could ever leave NEEDS_REVIEW.
@@ -213,10 +226,10 @@ test('a Flow initializes, resolves and verifies against a real database', async 
           placementKind: 'FUNCTION_ENTRY', anchorText: 'function checkout()',
         }),
       });
-      assert.equal(confirmed.status, 200, await confirmed.text());
+      expectStatus(confirmed, 200);
     }
 
-    const ready = await (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/report`)).json() as any;
+    const ready = (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/report`)).json();
     assert.equal(ready.report.progress.status, 'READY');
     assert.equal(ready.report.progress.unresolvedCount, 0);
 
@@ -224,8 +237,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
     const allowed = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mode`, {
       method: 'POST', body: JSON.stringify({ mode: 'AUTOMATED' }),
     });
-    assert.equal(allowed.status, 200, await allowed.text());
-    assert.equal((await allowed.json() as any).stage, 'AWAITING_APPROVAL');
+    expectStatus(allowed, 200);
+    assert.equal(allowed.json().stage, 'AWAITING_APPROVAL');
 
     // 7. Automated initialization promised a marker for every checkpoint, so the
     //    boundaries alone are not enough to call it done.
@@ -239,8 +252,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
         { file: 'src/paid.ts', line: 9, flow: markerFor(`state:${STATE_DONE}`).flow, state: markerFor(`state:${STATE_DONE}`).state },
       ] }),
     });
-    assert.equal(boundaryOnly.status, 200, await boundaryOnly.text());
-    const partial = await boundaryOnly.json() as any;
+    expectStatus(boundaryOnly, 200);
+    const partial = boundaryOnly.json();
     assert.equal(partial.completed, false, 'automated mode requires every checkpoint');
     assert.equal(partial.verification.requirement, 'ALL_CHECKPOINTS');
     assert.deepEqual(partial.missingCheckpointIds, [`transition:${TRANSITION}`]);
@@ -254,8 +267,8 @@ test('a Flow initializes, resolves and verifies against a real database', async 
         { file: 'src/pay.ts', line: 5, flow: markerFor(`transition:${TRANSITION}`).flow, transition: markerFor(`transition:${TRANSITION}`).transition },
       ] }),
     });
-    assert.equal(complete.status, 200, await complete.text());
-    const done = await complete.json() as any;
+    expectStatus(complete, 200);
+    const done = complete.json();
     assert.equal(done.completed, true, JSON.stringify(done.verification));
     assert.equal(done.verification.status, 'COMPLETED');
     assert.deepEqual(done.verification.markerProblems, []);
