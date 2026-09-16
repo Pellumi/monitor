@@ -925,8 +925,15 @@ app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res:
     } });
     if (seedStates.length === 0) return created;
 
+    // States and transitions are read back ordered by createdAt, and Postgres
+    // gives every row written inside one transaction the same now(). Stamp each
+    // row explicitly so the seeded graph keeps the template's reading order
+    // instead of coming back shuffled.
+    const seededAt = Date.now();
+    const stampedAt = (index: number) => new Date(seededAt + index);
+
     const nodesByName = new Map<string, { id: string }>();
-    for (const state of seedStates) {
+    for (const [index, state] of seedStates.entries()) {
       const node = await tx.behaviorGraphNode.create({ data: {
         graphId: created.id,
         stateName: state.name,
@@ -937,10 +944,11 @@ app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res:
         terminalKind: state.role === 'TERMINAL' ? (state.terminalKind as any) : null,
         provenance: StateProvenance.USER_AUTHORED,
         declaredById: req.user?.id ?? null,
+        createdAt: stampedAt(index),
       } });
       nodesByName.set(state.name, node);
     }
-    for (const transition of domainTemplate!.transitions) {
+    for (const [index, transition] of domainTemplate!.transitions.entries()) {
       const fromNode = nodesByName.get(transition.from.toUpperCase().trim());
       const toNode = nodesByName.get(transition.to.toUpperCase().trim());
       if (!fromNode || !toNode) continue;
@@ -950,6 +958,7 @@ app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res:
         toNodeId: toNode.id,
         action: transition.action ?? null,
         provenance: StateProvenance.USER_AUTHORED,
+        createdAt: stampedAt(index),
       } });
     }
     return created;
