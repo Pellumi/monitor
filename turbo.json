@@ -93,6 +93,7 @@
       "inputs": ["src/**/*.ts", "src/**/*.tsx", "tsconfig.json"]
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     }
