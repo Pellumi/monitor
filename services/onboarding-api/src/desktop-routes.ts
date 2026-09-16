@@ -63,6 +63,20 @@ const TERMINAL_STATUSES = new Set<QARunStatus>([
   QARunStatus.CANCELLED,
 ]);
 
+/**
+ * First value that is actually present, treating empty and whitespace-only
+ * strings as absent. Producers on this path send every field every time and
+ * leave the ones they cannot fill as `''`, which `??` and `||` chains handle
+ * differently — this makes the intent explicit.
+ */
+export function firstNonEmptyValue(...values: unknown[]): string {
+  for (const value of values) {
+    const candidate = value == null ? '' : String(value).trim();
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
 function safeArtifact(artifact: { bytes: bigint } & Record<string, unknown>) {
   return { ...artifact, bytes: artifact.bytes.toString() };
 }
@@ -1066,8 +1080,16 @@ export function createDesktopRouter(input: {
     const metadata = req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
     const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : '';
     const eventType = String(req.body?.eventType ?? '');
-    const flowVersionId = String(req.body?.flowVersionId ?? metadata.flowVersionId ?? '');
-    const stateKey = String(req.body?.stateKey ?? metadata.stateKey ?? req.body?.toStateKey ?? metadata.toStateKey ?? metadata.state ?? metadata.stateId ?? '');
+    // `??` is the wrong operator for these chains: the desktop always sends a
+    // `stateKey` field, and for a `{ flow, state }` marker it sends it as an
+    // empty string. An empty string is not nullish, so a `??` chain stops dead
+    // on it and never reaches the marker's own fields.
+    const flowVersionId = firstNonEmptyValue(req.body?.flowVersionId, metadata.flowVersionId);
+    const stateKey = firstNonEmptyValue(
+      req.body?.stateKey, metadata.stateKey,
+      req.body?.toStateKey, metadata.toStateKey,
+      metadata.state, metadata.stateId,
+    );
     // A marker written from the instrumentation snippet identifies its flow and
     // state by slug, in `metadata.flow` / `metadata.state`. Only the boundary can
     // resolve those against the run's flow and snapshot, so anything carrying a

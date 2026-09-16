@@ -4698,10 +4698,67 @@ button:disabled {
 }
 .run-coverage,
 .run-findings,
-.run-timeline {
+.run-timeline,
+.run-waiting {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-1);
+}
+/* The only panel in the workspace before the boundary opens, so it carries the
+   weight the coverage and findings panels carry afterwards. */
+.run-waiting {
+  padding: 16px 18px;
+}
+.run-waiting > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.run-waiting > header svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-subtle);
+}
+.run-waiting > header small {
+  display: block;
+  color: var(--text-subtle);
+  font: 10px/1.4 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-waiting > header strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-strong);
+  font-size: 15px;
+  line-height: 1.4;
+}
+.run-waiting dl {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+.run-waiting dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+.run-waiting dt {
+  color: var(--text-subtle);
+  font: 10px/1.6 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-waiting dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .run-coverage {
   padding: 12px 14px;

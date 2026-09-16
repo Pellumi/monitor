@@ -506,7 +506,12 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
     if (!supported.has(eventType)) continue;
     const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {};
     await observer.recordFlowEvent(event);
-    const stateKey = String(metadata.stateKey ?? metadata.toStateKey ?? '');
+    // A marker from the instrumentation snippet names its state in
+    // `metadata.state`. Without it here the desktop forwards an empty stateKey
+    // and the event is refused before the boundary ever sees the marker.
+    const stateKey = [metadata.stateKey, metadata.toStateKey, metadata.state, metadata.stateId]
+      .map((value) => (value == null ? '' : String(value).trim()))
+      .find((value) => value !== '') ?? '';
     const boundary = await cloud.boundaryEvent(active.runId, {
       eventId: event.eventId,
       eventType,

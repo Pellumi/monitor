@@ -27,6 +27,7 @@ import {
   GitBranch,
   Globe2,
   GraduationCap,
+  Hourglass,
   HelpCircle,
   KeyRound,
   Lock,
@@ -11471,7 +11472,24 @@ export function NewRunPage() {
             />
           </label>
           <label className="full">
-            Instrumentation evidence
+            <span className="field-label-with-tooltip">
+              Instrumentation evidence
+              <span
+                className="tooltip-trigger"
+                tabIndex={0}
+                title="Optional. If you let Tellann patch your code with QA-only hooks, the run can watch your app's state (Redux, Context, useState) instead of only the screen. Picking that manifest stamps the report with exactly which files were patched and when it was verified. A browser-only run still captures clicks, pages, network, and screenshots."
+              >
+                <HelpCircle size={13} />
+                <span className="tooltip-bubble">
+                  Optional. If you let Tellann patch your code with QA-only
+                  hooks, the run can watch your app&apos;s state (Redux,
+                  Context, useState) instead of only the screen. Picking that
+                  manifest stamps the report with exactly which files were
+                  patched and when it was verified. A browser-only run still
+                  captures clicks, pages, network, and screenshots.
+                </span>
+              </span>
+            </span>
             <SelectField
               value={patchSetId}
               onValueChange={setPatchSetId}
@@ -11897,6 +11915,15 @@ export function LiveRunPage() {
   const stateArtifacts = run.stateArtifacts ?? [];
   const flowStateHistory = run.flowStateHistory ?? [];
   const counts = run.liveCounts ?? ({} as Record<LiveEvidence["kind"], number>);
+  // Before the boundary opens, coverage, findings and the diagnostic facts can
+  // only report zero. Shown together they read as a wall of failure next to the
+  // one thing there is to do, so the workspace carries a single status panel
+  // until the application reports the Flow's first state.
+  const preBoundary = run.phase === "PRE_BOUNDARY";
+  const initialStateName =
+    plan?.states.find((state) => state.key === plan.initialStateKey)?.name ??
+    plan?.initialStateKey ??
+    null;
   const tabCount = (entry: (typeof EVIDENCE_TABS)[number]) =>
     entry.value === "FINDINGS"
       ? findings.length
@@ -12058,7 +12085,38 @@ export function LiveRunPage() {
           <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
         <div className="run-workspace">
-          {coverage ? (
+          {preBoundary ? (
+            <section className="run-waiting">
+              <header>
+                <Hourglass size={18} />
+                <div>
+                  <small>Waiting to start</small>
+                  <strong>
+                    {initialStateName
+                      ? `Your application has not reported ${initialStateName} yet`
+                      : "Your application has not reported the Flow's first state yet"}
+                  </strong>
+                </div>
+              </header>
+              <dl>
+                <div>
+                  <dt>Browser is on</dt>
+                  <dd>{currentObservation?.url || run.targetUrl}</dd>
+                </div>
+                <div>
+                  <dt>Flow events received</dt>
+                  <dd>
+                    {counts.FLOW ?? 0}
+                    {counts.FLOW
+                      ? " · open the Flow tab to see what each one reported"
+                      : " · nothing has reached Tellann from your application"}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {!preBoundary && coverage ? (
             <section className="run-coverage">
               <header>
                 <div>
@@ -12091,19 +12149,13 @@ export function LiveRunPage() {
                   }}
                 />
               </div>
-              {coverage.remainingStateKeys.length ? (
-                <p>
-                  Still to cover:{" "}
-                  {coverage.remainingStateKeys
-                    .map((key) => plan?.states.find((state) => state.key === key)?.name ?? key)
-                    .join(", ")}
-                </p>
-              ) : (
+              {coverage.remainingStateKeys.length ? null : (
                 <p>Every declared state in this Flow has been visited.</p>
               )}
             </section>
           ) : null}
 
+          {preBoundary ? null : (
           <div className="run-facts">
             <article>
               <small>Current route</small>
@@ -12142,7 +12194,9 @@ export function LiveRunPage() {
               </span>
             </article>
           </div>
+          )}
 
+          {preBoundary && !findings.length ? null : (
           <section className="run-findings">
             <header>
               <h2>Findings</h2>
@@ -12167,6 +12221,7 @@ export function LiveRunPage() {
               </p>
             )}
           </section>
+          )}
 
           {flowStateHistory.length ? (
             <section className="run-timeline">
