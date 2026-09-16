@@ -993,6 +993,31 @@ type FlowMappingExcerpt = {
  * the main process. Running them there froze the window for long enough that
  * Windows offered to close the app.
  */
+/**
+ * How much of a shortlist is worth sending.
+ *
+ * Retrieval returns up to eight candidates per checkpoint; a resolver only ever
+ * weighs the top few, and a Flow can declare fifty checkpoints. These bounds
+ * keep a large Flow's submission proportionate without narrowing the shortlist
+ * the user reviews, which is rebuilt from the same candidates server-side.
+ */
+const MAX_CANDIDATES_PER_CHECKPOINT = 6;
+const MAX_EXCERPTS_PER_CHECKPOINT = 4;
+const MAX_EXCERPT_CHARS = 6_000;
+
+/**
+ * Stable ids for the evidence a candidate rests on.
+ *
+ * Mirrors what the server derives when a bundle omits them, so a citation means
+ * the same thing either way — but computed here, the evidence records
+ * themselves no longer have to be sent to produce it.
+ */
+function evidenceIdsFor(candidate: { entityId?: string; id: string; path?: string; evidence?: Array<{ analyzer?: string; path?: string; startLine?: number | null }> }): string[] {
+  const derived = (candidate.evidence ?? []).slice(0, 8).map((item, index) =>
+    `${item.analyzer ?? 'analysis'}:${item.path ?? candidate.path ?? ''}:${item.startLine ?? index}`);
+  return derived.length ? derived : [`entity:${candidate.entityId ?? candidate.id}`];
+}
+
 function runFlowMappingRetrieval(input: {
   analysis: CodebaseAnalysis;
   flow: unknown;
@@ -1228,14 +1253,25 @@ function beginFlowMappingInBackground(applicationId: string, initialization: Rec
   });
 }
 
-/** Say what went wrong in the user's terms; the raw code goes to the log only. */
+/**
+ * Say what went wrong in the user's terms — and when there are no such terms,
+ * say the code rather than something unactionable.
+ *
+ * A bare "try again" for a cause that will recur on every attempt is worse than
+ * useless: it sends the user round a loop and leaves nobody, including whoever
+ * has to fix it, any better informed. Codes are internal identifiers, never
+ * source text, so they are safe to show.
+ */
 function flowMappingFailureMessage(code: string): string {
   if (code.includes('FLOW_WORKSPACE_SCAN_REQUIRED')) return 'Attach a project folder before mapping this Flow.';
   if (code.includes('FLOW_CODEBASE_ANALYSIS_TIMEOUT')) return 'Analysing your code took too long. Try again.';
   if (code.includes('FLOW_CODEBASE_ANALYSIS_FAILED')) return 'Your code could not be analysed. Try re-scanning the folder.';
   if (code.includes('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED')) return 'Your code changed while it was being analysed. Try again.';
   if (code.includes('FLOW_CODE_MAPPING_V2_DISABLED')) return 'Evidence-grounded mapping is turned off on this server.';
-  return 'Mapping could not be completed. Try again.';
+  if (code.includes('FLOW_MAPPING_BUNDLE_TOO_LARGE')) return 'This Flow produced more evidence than the server accepts. Re-run the analysis.';
+  if (code.includes('ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED')) return 'Mapping did not cover every checkpoint in this Flow. Re-run the analysis.';
+  const safe = code.replace(/\s+/g, ' ').trim().slice(0, 140);
+  return safe ? `Mapping could not be completed (${safe}).` : 'Mapping could not be completed. Try again.';
 }
 
 async function submitCurrentFlowMappings(applicationId: string, initialization: Record<string, any>) {
@@ -1285,11 +1321,37 @@ async function runFlowMappingSubmission(
   }
   const shareExcerpts = consentMode.endsWith('APPROVED');
   const mappings = retrieval.mappings.map((mapping: any) => ({
-    ...mapping,
-    candidates: mapping.candidates.map((candidate: any) => ({
-      ...candidate,
+    checkpointId: mapping.checkpointId,
+    kind: mapping.kind,
+    name: mapping.name,
+    status: mapping.status,
+    confidence: mapping.confidence,
+    // Only the candidates' own facts travel. The retrieval result also carries
+    // the query it was matched against, a score breakdown, and every candidate's
+    // full evidence records including their excerpts — none of which the server
+    // reads, and together enough to push a fifty-checkpoint Flow past the size
+    // the submission endpoint will accept. Citations are sent as ids so the
+    // claim is still traceable without shipping the evidence bodies twice.
+    candidates: mapping.candidates.slice(0, MAX_CANDIDATES_PER_CHECKPOINT).map((candidate: any, index: number) => ({
+      id: candidate.id,
+      entityId: candidate.entityId,
+      name: candidate.name,
       file: candidate.path,
-      excerpt: shareExcerpts ? (excerpts.get(candidate.id)?.content ?? null) : null,
+      symbol: candidate.symbol,
+      startLine: candidate.startLine,
+      endLine: candidate.endLine,
+      score: candidate.score,
+      confidence: candidate.confidence,
+      placementKinds: candidate.placementKinds,
+      featureIds: candidate.featureIds,
+      relationshipPaths: candidate.relationshipPaths,
+      evidenceIds: evidenceIdsFor(candidate),
+      rationale: candidate.rationale ?? `Ranked ${candidate.name ?? candidate.path} from codebase entities, graph relationships, and feature evidence.`,
+      // Source only travels for the candidates a resolver would actually weigh
+      // between, and only as much of it as the decision needs.
+      excerpt: shareExcerpts && index < MAX_EXCERPTS_PER_CHECKPOINT
+        ? (excerpts.get(candidate.id)?.content ?? null)?.slice(0, MAX_EXCERPT_CHARS) ?? null
+        : null,
     })),
   }));
   progress('RESOLVING', 'Pinpointing where each checkpoint belongs');

@@ -233,7 +233,11 @@ export function createFlowLifecycleRouter(input: {
     if (!value || typeof value !== 'object') throw new Error('INVALID_FLOW_MAPPING_BUNDLE');
     const body = value as Record<string, any>;
     const serialized = JSON.stringify(body);
-    if (Buffer.byteLength(serialized) > 750_000) throw new Error('FLOW_MAPPING_BUNDLE_TOO_LARGE');
+    // Sized for a real Flow, not a fixture. Fifty-odd checkpoints with a
+    // shortlist and bounded excerpts each is a legitimate submission and lands
+    // around two megabytes; the old limit rejected it outright, which surfaced
+    // as mapping simply failing with nothing to act on.
+    if (Buffer.byteLength(serialized) > 8_000_000) throw new Error('FLOW_MAPPING_BUNDLE_TOO_LARGE');
     const analysis = body.analysis && typeof body.analysis === 'object' ? body.analysis : null;
     const mappings = Array.isArray(body.mappings) ? body.mappings : [];
     if (!analysis || !String(analysis.id ?? '') || mappings.length > 250) throw new Error('INVALID_FLOW_MAPPING_BUNDLE');

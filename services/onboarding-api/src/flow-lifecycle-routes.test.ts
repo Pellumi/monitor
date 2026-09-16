@@ -25,7 +25,7 @@ const TRANSITION = '20000000-0000-4000-8000-00000000a001';
 
 type Seed = Awaited<ReturnType<typeof seed>>;
 
-async function seed() {
+async function seed(shape?: { states: number; transitions: number }) {
   const suffix = crypto.randomUUID().slice(0, 8);
   const user = await prisma.user.create({ data: { email: `flow-init-${suffix}@example.test` } });
   const organization = await prisma.organization.create({ data: { name: 'Flow init', slug: `flow-init-${suffix}`, createdByUserId: user.id } });
@@ -44,14 +44,27 @@ async function seed() {
   const flow = await prisma.behaviorGraph.create({ data: {
     applicationId: application.id, name: `Checkout ${suffix}`, workflowType: 'USER_JOURNEY', status: 'COMPLETE',
   } });
-  const snapshotJson = {
-    name: flow.name,
-    states: [
-      { id: STATE_START, stateName: 'Cart viewed', category: 'UI', role: 'INITIAL' },
-      { id: STATE_DONE, stateName: 'Paid', category: 'UI', role: 'TERMINAL', terminalKind: 'SUCCESS' },
-    ],
-    transitions: [{ id: TRANSITION, fromStateId: STATE_START, toStateId: STATE_DONE, action: 'Submit payment' }],
-  };
+  const snapshotJson = shape
+    ? {
+        name: flow.name,
+        states: Array.from({ length: shape.states }, (_, index) => ({
+          id: `wide-s${index}`, stateName: `Step ${index}`, category: 'UI',
+          role: index === 0 ? 'INITIAL' : index === shape.states - 1 ? 'TERMINAL' : 'NORMAL',
+          terminalKind: index === shape.states - 1 ? 'SUCCESS' : null,
+        })),
+        transitions: Array.from({ length: shape.transitions }, (_, index) => ({
+          id: `wide-t${index}`, fromStateId: `wide-s${index % shape.states}`,
+          toStateId: `wide-s${(index + 1) % shape.states}`, action: `Action ${index}`,
+        })),
+      }
+    : {
+        name: flow.name,
+        states: [
+          { id: STATE_START, stateName: 'Cart viewed', category: 'UI', role: 'INITIAL' },
+          { id: STATE_DONE, stateName: 'Paid', category: 'UI', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+        ],
+        transitions: [{ id: TRANSITION, fromStateId: STATE_START, toStateId: STATE_DONE, action: 'Submit payment' }],
+      };
   const version = await prisma.behaviorGraphVersion.create({ data: {
     graphId: flow.id, version: 1, snapshot: snapshotJson as never, lifecycleStatus: 'PUBLISHED',
   } });
@@ -285,6 +298,71 @@ test('a Flow initializes, resolves and verifies against a real database', async 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await cleanup(data);
-    await prisma.$disconnect();
+  }
+});
+
+test('a Flow with fifty-odd checkpoints and real excerpts is accepted, not refused for size', async () => {
+  // The submission for a 22-state, 34-transition Flow with a shortlist and
+  // bounded source per checkpoint is upwards of a megabyte. The endpoint used
+  // to cap bundles at 750KB — a size chosen for a three-state fixture — so a
+  // real Flow was rejected outright, and because nothing surfaced the reason it
+  // looked simply like mapping failing.
+  const data = await seed({ states: 22, transitions: 34 });
+  const app = express();
+  app.use(express.json({ limit: '30mb' }));
+  const verifyJwt = (req: Request & { user?: { id: string; email: string } }, res: Response, next: NextFunction) => {
+    if (String(req.headers['x-test-user'] ?? '') !== data.user.id) return res.status(401).json({ error: 'UNAUTHENTICATED' });
+    req.user = { id: data.user.id, email: data.user.email };
+    next();
+  };
+  app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership: (_q, _s, next) => next() }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const created = await request(baseUrl, data.user.id, `/flows/${data.flow.id}/initializations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        flowVersionId: data.version.id, workspaceId: data.workspace.id,
+        repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id,
+        awaitingAnalysis: true,
+      }),
+    });
+    expectStatus(created, 201);
+    const initialization = created.json().initialization;
+    const checkpointIds = (initialization.manifest.checkpoints as Array<{ id: string }>).map((item) => item.id);
+    assert.equal(checkpointIds.length, 56);
+
+    const excerpt = 'const handler = () => {};\n'.repeat(230).slice(0, 6_000);
+    const bundle = {
+      analysis: { id: 'analysis-wide', graphVersion: 'g', contentHash: 'c', revision: 'abc1234', branch: 'main', dirty: true },
+      retrievalVersion: '2.0.0',
+      consentMode: 'LOCAL_EXCERPTS_APPROVED',
+      mappings: checkpointIds.map((checkpointId) => ({
+        checkpointId, status: 'AMBIGUOUS',
+        candidates: Array.from({ length: 6 }, (_, index) => ({
+          id: `${checkpointId}:c${index}`, entityId: `entity-${index}`,
+          file: `src/area-${index}/file.ts`, symbol: `handler${index}`,
+          startLine: 4, endLine: 40, score: 0.6 - index * 0.05, confidence: 0.6 - index * 0.05,
+          placementKinds: ['FUNCTION_ENTRY'], evidenceIds: [`evidence-${index}`],
+          rationale: 'Ranked by codebase analysis.',
+          excerpt: index < 4 ? excerpt : null,
+        })),
+      })),
+    };
+    const bytes = Buffer.byteLength(JSON.stringify(bundle));
+    assert.ok(bytes > 1_000_000, `the bundle should be realistically large, was ${bytes}`);
+
+    const submitted = await request(baseUrl, data.user.id, `/flow-initializations/${initialization.id}/mapping-candidates`, {
+      method: 'POST', body: JSON.stringify(bundle),
+    });
+    expectStatus(submitted, 200);
+    assert.equal(submitted.json().codeReviewReport.progress.totalCheckpoints, 56);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await cleanup(data);
   }
 });

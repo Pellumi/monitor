@@ -8427,12 +8427,20 @@ export function InstrumentationPage() {
     flowId && flowInitialization?.mode === "AUTOMATED",
   );
   // Automated initialization is atomic across every declared checkpoint, so a
-  // single unplaced one blocks it. v1 reports carry no per-checkpoint status;
-  // treat those as ready so an old initialization is not stranded.
-  const unresolvedCheckpoints = (() => {
+  // single unplaced one blocks it — and so does a review that predates
+  // evidence-grounded mapping, because it has no placements at all. Treating
+  // that older shape as "nothing unresolved" enabled the button and turned a
+  // knowable precondition into ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED from the
+  // server, which tells the user nothing they can act on.
+  const automatedBlocker = (() => {
     const report = flowInitialization?.codeReviewReport as any;
-    if (!report || report.version !== "2.0") return 0;
-    return Number(report.summary?.unresolvedCount ?? 0);
+    if (!report) return "This Flow has not been reviewed against your code yet.";
+    if (report.version !== "2.0") {
+      return "Re-run the analysis to locate every checkpoint before Tellann can add them for you.";
+    }
+    const remaining = Number(report.summary?.unresolvedCount ?? 0);
+    if (!remaining) return null;
+    return `${remaining} checkpoint${remaining === 1 ? "" : "s"} still need${remaining === 1 ? "s" : ""} a location above.`;
   })();
   const multipleEnvironments = application.environments.length > 1;
   const toggleManualSetup = () => setManualSetupOpen((current) => !current);
@@ -8634,7 +8642,7 @@ export function InstrumentationPage() {
                   <button
                     className={`button${instrumentationEntitled ? " primary" : ""}`}
                     disabled={
-                      busy || !instrumentationEntitled || unresolvedCheckpoints > 0
+                      busy || !instrumentationEntitled || Boolean(automatedBlocker)
                     }
                     onClick={() => void chooseInitializationMode("AUTOMATED")}
                   >
@@ -8642,14 +8650,10 @@ export function InstrumentationPage() {
                     Prepare the change
                   </button>
                   {/* Automated initialization writes every declared checkpoint
-                      at once, so it cannot start while any of them is still
-                      without a confirmed location. Say how many, not just no. */}
-                  {unresolvedCheckpoints > 0 ? (
-                    <p className="muted mt-2">
-                      {unresolvedCheckpoints} checkpoint
-                      {unresolvedCheckpoints === 1 ? "" : "s"} still need
-                      {unresolvedCheckpoints === 1 ? "s" : ""} a location above.
-                    </p>
+                      at once, so it cannot start until each one has a location.
+                      Say what is missing, not just no. */}
+                  {automatedBlocker ? (
+                    <p className="muted mt-2">{automatedBlocker}</p>
                   ) : null}
                 </article>
               </div>
