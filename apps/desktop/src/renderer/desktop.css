@@ -662,6 +662,11 @@ button:disabled {
 }
 .summary-grid,
 .metric-grid {
+  /* Columns follow the number of metrics, so a group of three fills the row
+     instead of leaving the fourth track of a hardcoded grid empty. */
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
@@ -677,6 +682,23 @@ button:disabled {
 .metric + .metric {
   border-left: 1px solid var(--border-subtle);
 }
+/* Narrow windows still wrap to two per row; the divider then has to follow the
+   grid rather than the source order, or the first cell of row two keeps one. */
+@media (max-width: 1180px) {
+  .summary-grid,
+  .metric-grid {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .summary-grid > div:nth-child(odd),
+  .metric:nth-child(odd) {
+    border-left: 0;
+  }
+  .summary-grid > div:nth-child(n + 3),
+  .metric:nth-child(n + 3) {
+    border-top: 1px solid var(--border-subtle);
+  }
+}
 .summary-grid dt,
 .metric span,
 .detail-list dt {
@@ -691,6 +713,31 @@ button:disabled {
 }
 .detail-list > div {
   background: var(--surface-1);
+}
+
+/* The shared metric group carries no top margin, because elsewhere it opens a
+   page; here it follows the card heading. */
+.flow-review-panel .metric-grid {
+  margin-top: 12px;
+}
+
+/* Flow review findings: the count carries the tone, so nothing has to be said
+   twice per row and a zero reads as cleared rather than as a warning. */
+.flow-review-findings {
+  margin: 12px 0 0;
+}
+.flow-review-findings dd {
+  color: var(--caution);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.flow-review-findings dd[data-findings="none"] {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+/* Font comes from .content-card p, so this is the card's body voice. */
+.flow-review-findings-note {
+  margin: 10px 0 0;
 }
 
 /* ── Tables and list views ─────────────────────────────────────────────── */

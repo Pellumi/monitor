@@ -34,6 +34,9 @@
 
   --danger: #ff99a4;
   --warning: #fce100;
+  /* Caution reads as "needs your attention" in running text and numerals, where
+     --warning is only ever a dot and is too hot to set type in. */
+  --caution: #e8c56e;
   --success: #6ccb5f;
   --on-danger: #000000;
 
@@ -74,6 +77,7 @@
 
     --danger: #c42b1c;
     --warning: #9d5d00;
+    --caution: #8a5a00;
     --success: #0f7b0f;
     --on-danger: #ffffff;
 

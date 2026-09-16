@@ -99,6 +99,13 @@ import {
 } from "./components/desktop-ui";
 import { AppWindow, Info } from "lucide-react";
 import { FlowEditor } from "./flow-editor/flow-editor";
+import {
+  flowInitializationHref,
+  isFlowInitializable,
+  isFlowReadyToRun,
+  nextFlowToInitialize,
+  nonProductionEnvironmentId,
+} from "./flow-initialization";
 
 function ActionTooltip({
   content,
@@ -230,15 +237,6 @@ function ApplicationRequired() {
   const section = location.pathname.split("/")[1] || "applications";
   return (
     <Navigate replace to={`/applications?next=${encodeURIComponent(section)}`} />
-  );
-}
-
-/** The environment SDK setup targets: the first one that is not observation-only. */
-function sdkSetupEnvironmentId(
-  application: { environments: Array<{ id: string; type: string }> } | undefined | null,
-) {
-  return (
-    application?.environments.find((item) => item.type !== "PRODUCTION")?.id ?? ""
   );
 }
 
@@ -615,7 +613,7 @@ export function NewApplicationPage() {
     const attached = await attachWorkspace(created.id).catch(() => null);
     navigate(
       attached
-        ? sdkSetupHref(created.id, sdkSetupEnvironmentId(created))
+        ? sdkSetupHref(created.id, nonProductionEnvironmentId(created))
         : `/applications/${created.id}`,
     );
   };
@@ -714,22 +712,6 @@ function useProject() {
   };
 }
 
-/**
- * A run needs a Flow that is both published (a version was published from the
- * declare view) and initialized in *this* project — an active binding whose
- * initialization has completed. A Flow short of that cannot start a run.
- */
-function isFlowReadyToRun(item: DeclaredFlowSummary) {
-  const binding = (item as any)?.projectBindings?.[0] as
-    | { status?: string; initializations?: Array<{ status?: string }> }
-    | undefined;
-  return (
-    Boolean(item.publishedVersionId) &&
-    binding?.status === "ACTIVE" &&
-    binding.initializations?.[0]?.status === "COMPLETED"
-  );
-}
-
 function formatRunStatus(status: string) {
   return status.toLowerCase().replaceAll("_", " ");
 }
@@ -766,19 +748,22 @@ export function ApplicationOverviewPage() {
   useEffect(() => {
     if (projectId) void refreshRuns(projectId).catch(() => undefined);
   }, [projectId, refreshRuns]);
-  const sdkEnvironmentId = sdkSetupEnvironmentId(application);
+  const sdkEnvironmentId = nonProductionEnvironmentId(application);
   const sdkStatus = useSdkConnectionStatus(projectId, sdkEnvironmentId);
-  const [flowReady, setFlowReady] = useState<boolean | null>(null);
+  // The Flows themselves, not just a ready/not-ready flag: the "Initialize a Flow"
+  // step has to name the Flow it sends you to, or it lands on Intent with nothing
+  // selected and no way forward.
+  const [flows, setFlows] = useState<DeclaredFlowSummary[] | null>(null);
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
-    setFlowReady(null);
+    setFlows(null);
     void getDeclaredFlows(projectId)
       .then((items) => {
-        if (!cancelled) setFlowReady(items.some(isFlowReadyToRun));
+        if (!cancelled) setFlows(items);
       })
       .catch(() => {
-        if (!cancelled) setFlowReady(false);
+        if (!cancelled) setFlows([]);
       });
     return () => {
       cancelled = true;
@@ -795,6 +780,13 @@ export function ApplicationOverviewPage() {
     );
 
   const latestRun = runs[projectId]?.[0];
+  const flowReady = flows === null ? null : flows.some(isFlowReadyToRun);
+  const flowToInitialize = nextFlowToInitialize(flows ?? []);
+  // Without a published Flow to point at there is nothing to initialize yet, so
+  // the step falls back to Intent, where one gets declared and published first.
+  const initializeFlowHref =
+    flowInitializationHref(projectId, flowToInitialize, sdkEnvironmentId) ??
+    `/applications/${projectId}/intent`;
   const steps: JourneyStep[] = [
     {
       title: "Attach your project folder",
@@ -837,14 +829,13 @@ export function ApplicationOverviewPage() {
       done: flowReady === true,
       known: flowReady !== null,
       doneDetail: "Ready to run",
-      href: `/applications/${projectId}/intent`,
+      href: initializeFlowHref,
       action: (
-        <Link
-          className="button primary"
-          to={`/applications/${projectId}/intent`}
-        >
+        <Link className="button primary" to={initializeFlowHref}>
           <Workflow size={15} />
-          Open Intent
+          {flowToInitialize
+            ? `Initialize “${flowToInitialize.name}”`
+            : "Open Intent"}
         </Link>
       ),
     },
@@ -3449,9 +3440,9 @@ function ManualIntentBuilder({
   };
 
   const initializeActiveFlow = async () => {
-    if (!activeFlow?.publishedVersionId || !application?.environments[0]?.id)
-      return;
-    const environmentId = application.environments[0].id;
+    // Production is observation-only — initializing against it is rejected.
+    const environmentId = nonProductionEnvironmentId(application);
+    if (!activeFlow?.publishedVersionId || !environmentId) return;
     const setup = await window.tellann?.setup.getSdkSetup(
       projectId,
       environmentId,
@@ -4230,7 +4221,7 @@ function ManualIntentBuilder({
                 disabled={
                   busy ||
                   !workspaceAttached ||
-                  !application?.environments[0]?.id ||
+                  !nonProductionEnvironmentId(application) ||
                   !activeFlow.publishedVersionId
                 }
                 onClick={() =>
@@ -4781,6 +4772,22 @@ export function IntentPage() {
       navigate(`/applications/${projectId}/intent/flows/${flow.id}`),
     [navigate, projectId],
   );
+  // Declaring a Flow is only half of it: until it is bound to the attached project
+  // no QA run can start, and Instrumentation is where that binding happens.
+  const initializeEnvironmentId = nonProductionEnvironmentId(application);
+  const initializeFlow = useCallback(
+    (flow: DeclaredFlowSummary) => {
+      const href = flowInitializationHref(
+        projectId,
+        flow,
+        initializeEnvironmentId,
+      );
+      if (href) navigate(href);
+    },
+    [navigate, projectId, initializeEnvironmentId],
+  );
+  const canInitialize = (flow: DeclaredFlowSummary) =>
+    isFlowInitializable(flow) && Boolean(initializeEnvironmentId);
   const openFlowMenu = (
     flow: DeclaredFlowSummary,
     event: Parameters<typeof showMenu>[0],
@@ -4791,11 +4798,15 @@ export function IntentPage() {
         label: flow.status === "DRAFT" ? "Open and edit" : "View flow",
         accelerator: "Enter",
       },
+      ...(canInitialize(flow)
+        ? [{ id: "initialize", label: "Initialize in project…" }]
+        : []),
       { id: "copy", label: "Copy flow ID" },
-      { type: "separator" },
+      { type: "separator" as const },
       { id: "delete", label: "Delete…", accelerator: "Delete", enabled: !busy },
     ]).then((choice) => {
       if (choice === "open") openFlow(flow);
+      if (choice === "initialize") initializeFlow(flow);
       if (choice === "copy") void navigator.clipboard?.writeText(flow.id);
       if (choice === "delete") setFlowToDelete({ id: flow.id, name: flow.name });
     });
@@ -5559,6 +5570,14 @@ export function IntentPage() {
                       <Pencil size={14} />
                       {flowList.selected.status === "DRAFT" ? "Open and edit" : "View flow"}
                     </button>
+                    {canInitialize(flowList.selected) ? (
+                      <button
+                        className="button primary"
+                        onClick={() => initializeFlow(flowList.selected!)}
+                      >
+                        <Workflow size={14} /> Initialize in project
+                      </button>
+                    ) : null}
                     <button
                       className="button"
                       disabled={busy}
@@ -6457,6 +6476,10 @@ function FlowReviewPanel({
     ["Edge cases", report.edgeCases],
     ["Terminal outcomes", report.uncoveredTerminalOutcomes],
   ] as const;
+  const blockingFindings = groups.reduce(
+    (total, [, findings]) => total + findings.length,
+    0,
+  );
   return (
     <section className="content-card flow-review-panel">
       <div className="card-heading">
@@ -6479,7 +6502,7 @@ function FlowReviewPanel({
           ) : null}
         </div>
       </div>
-      <div className="flow-review-metrics">
+      <div className="metric-grid">
         <Metric
           label="States mapped"
           value={`${report.summary.mappedStates}/${report.summary.totalStates}`}
@@ -6493,19 +6516,23 @@ function FlowReviewPanel({
           value={String(initialization.manifest?.terminalStateIds.length ?? 0)}
         />
       </div>
-      <div className="flow-review-findings">
+      {/* Four counts read as one grouped fact, not four cards; the count itself
+          carries the tone, so a zero stops looking like something to act on. */}
+      <dl className="detail-list flow-review-findings">
         {groups.map(([title, findings]) => (
-          <article key={title}>
-            <strong>{title}</strong>
-            <span>{findings.length}</span>
-            <p>
-              {findings.length
-                ? "Review the evidence before choosing an initialization path."
-                : "No blocking finding detected."}
-            </p>
-          </article>
+          <div key={title}>
+            <dt>{title}</dt>
+            <dd data-findings={findings.length ? "present" : "none"}>
+              {findings.length}
+            </dd>
+          </div>
         ))}
-      </div>
+      </dl>
+      <p className="flow-review-findings-note">
+        {blockingFindings
+          ? "Review the evidence below before choosing an initialization path."
+          : "No blocking findings. Choose how this Flow's start and finish should be marked."}
+      </p>
       <AccordionItem value="flow-review-evidence">
         <AccordionTrigger>Review evidence and recommendations</AccordionTrigger>
         <AccordionContent>
@@ -7513,6 +7540,7 @@ export function InstrumentationPage() {
     listInstrumentationPlans,
     approveInstrumentation,
     applyInstrumentation,
+    getDeclaredFlows,
     initializeFlow,
     getFlowInitialization,
     analyzeFlowInitialization,
@@ -7601,6 +7629,27 @@ export function InstrumentationPage() {
     );
     return () => window.clearInterval(timer);
   }, [flowInitialization?.stage, refreshFlowInitialization]);
+
+  // Once the SDK is connected the next step is a specific Flow, so the connected
+  // card needs to know which published Flow is still waiting to be initialized.
+  // Only relevant when no Flow is already in the URL.
+  const [initializableFlows, setInitializableFlows] = useState<
+    DeclaredFlowSummary[]
+  >([]);
+  useEffect(() => {
+    if (!projectId || flowId) return;
+    let cancelled = false;
+    void getDeclaredFlows(projectId)
+      .then((items) => {
+        if (!cancelled) setInitializableFlows(items);
+      })
+      .catch(() => {
+        if (!cancelled) setInitializableFlows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [getDeclaredFlows, projectId, flowId]);
 
   const setupConnected = Boolean((manualSetup?.readiness as any)?.connected);
   useEffect(() => {
@@ -7921,6 +7970,12 @@ export function InstrumentationPage() {
   // to wait for.
   const setupResolved = setupChecked || !environmentId;
   const checkingSetup = !setupResolved && !initializationId;
+  const flowToInitialize = nextFlowToInitialize(initializableFlows);
+  // Re-entering this page with the Flow's context is what unlocks the analysis
+  // step below; Intent is only the right destination when nothing is published.
+  const initializeFlowHref =
+    flowInitializationHref(projectId, flowToInitialize, environmentId) ??
+    `/applications/${projectId}/intent`;
   const flowAutomated = Boolean(
     flowId && flowInitialization?.mode === "AUTOMATED",
   );
@@ -8227,16 +8282,15 @@ export function InstrumentationPage() {
             <span className="step-label">Tellann SDK · Connected</span>
             <h2>Tellann is connected to this project</h2>
             <p>
-              {environment?.name ?? "This environment"} is sending events. Next,
-              initialize a Flow so Tellann knows which journey to check.
+              {environment?.name ?? "This environment"} is sending events.{" "}
+              {flowToInitialize
+                ? `Next, initialize “${flowToInitialize.name}” so Tellann knows which journey to check.`
+                : "Next, declare and publish a Flow so Tellann knows which journey to check."}
             </p>
             <div className="card-actions">
-              <Link
-                className="button primary"
-                to={`/applications/${projectId}/intent`}
-              >
+              <Link className="button primary" to={initializeFlowHref}>
                 <Workflow size={15} />
-                Initialize a Flow
+                {flowToInitialize ? "Initialize a Flow" : "Declare a Flow"}
               </Link>
               <button className="button" onClick={toggleManualSetup}>
                 <Code2 size={15} />
@@ -8862,13 +8916,26 @@ export function InstrumentationDetailPage() {
   // null = not yet checked. A Flow only counts once it is published AND has an
   // active, completed initialization in this project — the same bar NewRunPage
   // enforces before a run can start.
-  const [hasInitializedFlow, setHasInitializedFlow] = useState<boolean | null>(
-    null,
-  );
+  const [declaredFlows, setDeclaredFlows] = useState<
+    DeclaredFlowSummary[] | null
+  >(null);
+  const hasInitializedFlow =
+    declaredFlows === null ? null : declaredFlows.some(isFlowReadyToRun);
   const plan = record?.planJson as InstrumentationPlan | undefined;
   const environment = application?.environments.find(
     (item) => item.id === record?.environmentId,
   );
+  // Initialize into the environment this task instrumented, unless that is
+  // production — initialization is rejected there.
+  const flowToInitialize = nextFlowToInitialize(declaredFlows ?? []);
+  const initializeFlowHref =
+    flowInitializationHref(
+      projectId,
+      flowToInitialize,
+      environment && environment.type !== "PRODUCTION"
+        ? environment.id
+        : nonProductionEnvironmentId(application),
+    ) ?? `/applications/${projectId}/intent`;
   const installRequired =
     plan?.validationCommands.some((command) => command.id === "install-sdk") ??
     false;
@@ -9038,11 +9105,10 @@ export function InstrumentationDetailPage() {
     let cancelled = false;
     void getDeclaredFlows(projectId)
       .then((items) => {
-        if (cancelled) return;
-        setHasInitializedFlow(items.some(isFlowReadyToRun));
+        if (!cancelled) setDeclaredFlows(items);
       })
       .catch(() => {
-        if (!cancelled) setHasInitializedFlow(false);
+        if (!cancelled) setDeclaredFlows([]);
       });
     return () => {
       cancelled = true;
@@ -9484,9 +9550,10 @@ export function InstrumentationDetailPage() {
             {telemetryVerified && !hasInitializedFlow ? (
               <Link
                 className="inline-flex items-center gap-2 bg-(--accent) text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-(--accent) transition-colors"
-                to={`/applications/${projectId}/intent`}
+                to={initializeFlowHref}
               >
-                <ArrowRight size={15} /> Initialize a Flow
+                <ArrowRight size={15} />{" "}
+                {flowToInitialize ? "Initialize a Flow" : "Declare a Flow"}
               </Link>
             ) : null}
             <Link

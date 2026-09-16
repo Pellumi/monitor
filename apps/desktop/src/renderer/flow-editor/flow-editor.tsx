@@ -52,6 +52,8 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { confirmAction, showMenu } from '../components/desktop-ui';
+import { useDesktop } from '../desktop-context';
+import { flowInitializationHref, nonProductionEnvironmentId } from '../flow-initialization';
 import {
   estimateStateWidth,
   flowEdgeTypes,
@@ -250,6 +252,17 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
 
   const editable = flowIsEditable(flow);
   const proposed = (flow as { aiDraftStatus?: string | null } | null)?.aiDraftStatus === 'PENDING_REVIEW';
+
+  // Publishing a Flow does not bind it to the attached project — Instrumentation
+  // does that, and it needs the Flow's context in the URL to offer the analysis
+  // step at all. Offer the jump from here while the Flow is in front of the user.
+  const { applications } = useDesktop();
+  const application = applications.find((item) => item.id === projectId);
+  const projectBinding = (flow as { projectBindings?: Array<{ status?: string }> } | null)
+    ?.projectBindings?.[0];
+  const initializeHref = editable || projectBinding?.status === 'ACTIVE'
+    ? null
+    : flowInitializationHref(projectId, flow, nonProductionEnvironmentId(application));
   const readiness = useMemo<PublishReadiness>(
     () => evaluatePublishReadiness({
       states: flow?.states ?? [],
@@ -692,10 +705,22 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
               </span>
             </>
           ) : (
-            <button className="button" type="button" disabled={pending} onClick={() => void editor.revise()}>
-              <Unlock size={14} />
-              {editor.pendingAction === 'revise' ? 'Creating…' : 'Create revision'}
-            </button>
+            <>
+              {initializeHref ? (
+                <Link
+                  className="button primary"
+                  to={initializeHref}
+                  title="Map this Flow onto the attached project so QA runs can start"
+                >
+                  <Workflow size={14} />
+                  Initialize in project
+                </Link>
+              ) : null}
+              <button className="button" type="button" disabled={pending} onClick={() => void editor.revise()}>
+                <Unlock size={14} />
+                {editor.pendingAction === 'revise' ? 'Creating…' : 'Create revision'}
+              </button>
+            </>
           )}
         </div>
       </header>

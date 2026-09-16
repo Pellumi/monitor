@@ -5313,14 +5313,11 @@ button:disabled {
     rgba(9, 9, 10, 0.96)
   );
 }
+/* Surface, border, radius and padding come from .content-card in the desktop layer. */
 .flow-review-panel {
   min-width: 0;
   max-width: 100%;
   margin-top: 1.25rem;
-  padding: 1.1rem;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-0);
   box-sizing: border-box;
 }
 .flow-review-heading-row,
@@ -6252,44 +6249,6 @@ button:disabled {
   font-size: 12px;
 }
 
-.flow-review-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 18px 0;
-}
-
-.flow-review-findings {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 18px;
-}
-
-.flow-review-findings article {
-  position: relative;
-  min-height: 118px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface-0);
-}
-
-.flow-review-findings article > span {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  font: 600 12px/1 monospace;
-  color: var(--on-accent);
-  background: #e8c56e;
-  padding: 5px 7px;
-}
-
-.flow-review-findings p {
-  margin: 28px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .flow-roadmap-shell {
   overflow: hidden;
 }
@@ -6403,11 +6362,10 @@ button:disabled {
 
 .flow-roadmap-step.is-blocked .flow-roadmap-node {
   border-color: #745d2c;
-  color: #e8c56e;
+  color: var(--caution);
 }
 
 @media (max-width: 1050px) {
-  .flow-review-findings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .flow-roadmap { grid-template-columns: minmax(280px, 1fr); }
 }
 
