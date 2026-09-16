@@ -230,7 +230,10 @@ test('a Flow initializes, resolves and verifies against a real database', async 
     }
 
     const ready = (await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/report`)).json();
-    assert.equal(ready.report.progress.status, 'READY');
+    const afterConfirm = await prisma.flowInitialization.findUniqueOrThrow({ where: { id: initializationId } });
+    const statuses = ((afterConfirm.manifest as any).checkpoints as any[])
+      .map((item) => `${item.id}=${item.mapping?.status ?? 'NONE'}`).join(' ');
+    assert.equal(ready.report.progress.status, 'READY', `${statuses} | summary=${JSON.stringify(ready.report.summary)}`);
     assert.equal(ready.report.progress.unresolvedCount, 0);
 
     // 6. Now automated mode is allowed.
