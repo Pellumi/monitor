@@ -52,6 +52,14 @@ const IPC = {
   reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
   // Mirrors DELETE_DECLARED_FLOW_CHANNEL in main.ts.
   deleteDeclaredFlow: 'tellann:cloud:intent:delete',
+  // Mirrors FLOW_EDITOR_CHANNELS in main.ts.
+  updateDeclaredTransition: 'tellann:cloud:intent:transition:update',
+  deleteDeclaredTransition: 'tellann:cloud:intent:transition:delete',
+  updateDeclaredFlow: 'tellann:cloud:intent:update',
+  getFlowDraftHistory: 'tellann:cloud:intent:draft-history:list',
+  restoreFlowDraft: 'tellann:cloud:intent:draft-history:restore',
+  dismissFlowSuggestion: 'tellann:cloud:intent:suggestions:dismiss',
+  resolveAiFlowDraft: 'tellann:cloud:intent:ai-draft:resolve',
   generateFlowSuggestions: 'tellann:cloud:intent:suggestions:generate',
   getFlowSuggestions: 'tellann:cloud:intent:suggestions:list',
   acceptFlowSuggestion: 'tellann:cloud:intent:suggestions:accept',
@@ -217,7 +225,7 @@ contextBridge.exposeInMainWorld('tellann', {
   intent: {
     listDeclaredFlows: (applicationId: string) => ipcRenderer.invoke(IPC.getDeclaredFlows, applicationId),
     getDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getDeclaredFlow, { applicationId, flowId }),
-    createDeclaredFlow: (applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string) => ipcRenderer.invoke(IPC.createDeclaredFlow, { applicationId, name, workflowType, purpose, scopeStatement }),
+    createDeclaredFlow: (applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string) => ipcRenderer.invoke(IPC.createDeclaredFlow, { applicationId, name, workflowType, purpose, scopeStatement, template }),
     addDeclaredState: (applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.addDeclaredState, { applicationId, flowId, stateName, category, role, terminalKind }),
     updateDeclaredState: (applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.updateDeclaredState, { applicationId, flowId, stateId, stateName, category, role, terminalKind }),
     deleteDeclaredState: (applicationId: string, flowId: string, stateId: string) => ipcRenderer.invoke(IPC.deleteDeclaredState, { applicationId, flowId, stateId }),
@@ -225,6 +233,20 @@ contextBridge.exposeInMainWorld('tellann', {
     completeDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.completeDeclaredFlow, { applicationId, flowId }),
     reopenDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.reopenDeclaredFlow, { applicationId, flowId }),
     deleteDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.deleteDeclaredFlow, { applicationId, flowId }),
+    updateDeclaredTransition: (applicationId: string, flowId: string, transitionId: string, action: string) =>
+      ipcRenderer.invoke(IPC.updateDeclaredTransition, { applicationId, flowId, transitionId, action }),
+    deleteDeclaredTransition: (applicationId: string, flowId: string, transitionId: string) =>
+      ipcRenderer.invoke(IPC.deleteDeclaredTransition, { applicationId, flowId, transitionId }),
+    updateDeclaredFlow: (applicationId: string, flowId: string, input: unknown) =>
+      ipcRenderer.invoke(IPC.updateDeclaredFlow, { applicationId, flowId, input }),
+    getFlowDraftHistory: (applicationId: string, flowId: string) =>
+      ipcRenderer.invoke(IPC.getFlowDraftHistory, { applicationId, flowId }),
+    restoreFlowDraft: (applicationId: string, flowId: string, snapshotId: string) =>
+      ipcRenderer.invoke(IPC.restoreFlowDraft, { applicationId, flowId, snapshotId }),
+    dismissFlowSuggestion: (applicationId: string, flowId: string, suggestionId: string) =>
+      ipcRenderer.invoke(IPC.dismissFlowSuggestion, { applicationId, flowId, suggestionId }),
+    resolveAiFlowDraft: (applicationId: string, flowId: string, decision: 'accept' | 'decline') =>
+      ipcRenderer.invoke(IPC.resolveAiFlowDraft, { applicationId, flowId, decision }),
     generateFlowSuggestions: (applicationId: string, flowId: string, input: unknown) => ipcRenderer.invoke(IPC.generateFlowSuggestions, { applicationId, flowId, input }),
     getFlowSuggestions: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getFlowSuggestions, { applicationId, flowId }),
     acceptFlowSuggestion: (applicationId: string, flowId: string, suggestionId: string) => ipcRenderer.invoke(IPC.acceptFlowSuggestion, { applicationId, flowId, suggestionId }),

@@ -123,7 +123,7 @@ type DesktopContextValue = {
   getReport(runId: string): Promise<QualityReport>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-  createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+  createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
   addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
   updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
   deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
@@ -623,7 +623,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getReport: (runId) => bridge().runs.getReport(runId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
-    createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement)),
+    createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement, template) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement, template)),
     addDeclaredState: (applicationId, flowId, stateName, category, role, terminalKind) => perform(() => bridge().intent.addDeclaredState(applicationId, flowId, stateName, category, role, terminalKind)),
     updateDeclaredState: (applicationId, flowId, stateId, stateName, category, role, terminalKind) => perform(() => bridge().intent.updateDeclaredState(applicationId, flowId, stateId, stateName, category, role, terminalKind)),
     deleteDeclaredState: (applicationId, flowId, stateId) => perform(() => bridge().intent.deleteDeclaredState(applicationId, flowId, stateId)),

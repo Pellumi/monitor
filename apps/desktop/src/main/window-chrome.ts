@@ -44,9 +44,11 @@ type PersistedWindowState = {
 export type ContextMenuItemInput = {
   id?: string;
   label?: string;
-  type?: 'normal' | 'separator';
+  type?: 'normal' | 'separator' | 'checkbox';
   enabled?: boolean;
+  checked?: boolean;
   accelerator?: string;
+  submenu?: ContextMenuItemInput[];
 };
 
 export type ConfirmInput = {
@@ -508,15 +510,22 @@ export function registerWindowIpc(assertTrustedSender: (event: Electron.IpcMainI
         settled = true;
         resolve(value);
       };
-      const template: MenuItemConstructorOptions[] = items.slice(0, 40).map((item) => item.type === 'separator'
-        ? { type: 'separator' }
-        : {
+      const toTemplate = (list: ContextMenuItemInput[], depth: number): MenuItemConstructorOptions[] =>
+        list.slice(0, 40).map((item): MenuItemConstructorOptions => {
+          if (item.type === 'separator') return { type: 'separator' };
+          const submenu = depth < 2 && Array.isArray(item.submenu) ? toTemplate(item.submenu, depth + 1) : undefined;
+          if (submenu) return { label: String(item.label ?? ''), enabled: item.enabled !== false, submenu };
+          return {
             label: String(item.label ?? ''),
+            type: item.type === 'checkbox' ? 'checkbox' : 'normal',
+            checked: item.type === 'checkbox' ? item.checked === true : undefined,
             enabled: item.enabled !== false,
             accelerator: item.accelerator,
             registerAccelerator: false,
             click: () => settle(item.id ?? null),
-          });
+          };
+        });
+      const template = toTemplate(items, 0);
       // The close callback can run before the click handler, so give a
       // selection a moment to land before treating the menu as dismissed.
       Menu.buildFromTemplate(template).popup({ window: target, callback: () => setTimeout(() => settle(null), 60) });

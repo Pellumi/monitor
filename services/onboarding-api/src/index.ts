@@ -2281,11 +2281,6 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
         data: { isActive: false }
       });
 
-      const latestGraph = await prisma.behaviorGraph.findFirst({
-        where: { applicationId: appId, environmentId: devEnv.id, graphType: 'DECLARED' },
-        orderBy: { version: 'desc' },
-      });
-
       const graph = await prisma.behaviorGraph.create({
         data: {
           applicationId: appId,
@@ -2295,7 +2290,8 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
           graphType: 'DECLARED',
           sourceType: 'USER_DECLARATION',
           isActive: true,
-          version: (latestGraph?.version ?? 0) + 1,
+          // Each flow keeps its own version line: v1 until a revision is opened.
+          version: 1,
         }
       });
       graphId = graph.id;
@@ -2309,6 +2305,10 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
             behaviorKey: state.name,
             canonicalBehavior: state.name,
             category: state.category,
+            // Carry the template's entry/exit roles through — a seeded graph
+            // without them fails publish validation.
+            role: state.role ?? 'NORMAL',
+            terminalKind: state.role === 'TERMINAL' ? (state.terminalKind ?? 'SUCCESS') : null,
             provenance: 'USER_AUTHORED',
           }
         });

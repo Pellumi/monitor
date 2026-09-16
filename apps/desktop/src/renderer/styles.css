@@ -2936,6 +2936,10 @@ select:focus-visible {
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
+  /* Tailwind preflight puts `max-width: 100%` on every img, so a container
+     narrower than the avatar squashes it into an oval. min-width beats
+     max-width, so the box stays square whatever width the rail offers. */
+  min-width: 30px;
   border: 1px solid var(--border-strong);
   border-radius: 50%;
   background: var(--surface-2);
@@ -3078,7 +3082,7 @@ img.profile-avatar {
   display: block;
 }
 .routed-shell[data-sidebar-mode="icon"] .sidebar-profile {
-  padding: 8px 10px;
+  padding: 8px 0;
 }
 .routed-shell[data-sidebar-mode="icon"] .profile-trigger {
   justify-content: center;

@@ -684,6 +684,8 @@ export class DesktopCloudClient {
       scopeStatement: string;
       exclusions?: string[];
       tags?: string[];
+      /** Starting-point template key — seeds states and transitions server-side. */
+      template?: string;
     },
   ): Promise<DeclaredFlowSummary> {
     return this.request<DeclaredFlowSummary>(
@@ -753,6 +755,87 @@ export class DesktopCloudClient {
         method: "POST",
         body: JSON.stringify({ ...input, provenance: "USER_DECLARED" }),
       },
+    );
+  }
+
+  async updateDeclaredTransition(
+    applicationId: string,
+    flowId: string,
+    transitionId: string,
+    input: { action: string },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/declared-flow/${flowId}/transitions/${transitionId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    );
+  }
+
+  async deleteDeclaredTransition(
+    applicationId: string,
+    flowId: string,
+    transitionId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/declared-flow/${flowId}/transitions/${transitionId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async updateDeclaredFlow(
+    applicationId: string,
+    flowId: string,
+    input: {
+      name?: string;
+      purpose?: string;
+      scopeStatement?: string;
+      workflowType?: string;
+    },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    );
+  }
+
+  /** Rollback points (d1, d2, …) recorded within the flow's current version. */
+  async flowDraftHistory(applicationId: string, flowId: string): Promise<Json> {
+    const response = await this.request<{ success: boolean; data: Json }>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/draft-history`,
+    );
+    return response.data;
+  }
+
+  async restoreFlowDraft(
+    applicationId: string,
+    flowId: string,
+    snapshotId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/draft-history/${snapshotId}/restore`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async dismissFlowSuggestion(
+    applicationId: string,
+    flowId: string,
+    suggestionId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/${suggestionId}/dismiss`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  /** Accepts or discards a flow draft generated from documents. */
+  async resolveAiFlowDraft(
+    applicationId: string,
+    flowId: string,
+    decision: "accept" | "decline",
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}/ai-draft/${decision}`,
+      { method: "POST", body: JSON.stringify({}) },
     );
   }
 

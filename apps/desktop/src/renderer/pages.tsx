@@ -98,6 +98,7 @@ import {
   useSelectableList,
 } from "./components/desktop-ui";
 import { AppWindow, Info } from "lucide-react";
+import { FlowEditor } from "./flow-editor/flow-editor";
 
 function ActionTooltip({
   content,
@@ -4320,25 +4321,16 @@ export function DeclaredFlowPage() {
     );
   }
 
+  // The canvas replaces the step-by-step form: states and transitions are
+  // edited on the graph, with suggestions, history and settings in its panel.
   return (
-    <Page
-      title="Edit declared flow"
-      description="Add the expected states and transitions, then complete the flow when it is ready for QA."
-      actions={
-        <Link className="button" to={`/applications/${projectId}/intent`}>
-          Back to Intent
-        </Link>
-      }
-    >
-      <ManualIntentBuilder
-        projectId={projectId}
-        flows={flows}
-        refreshFlows={refreshFlows}
-        initialFlowId={flowId}
-        showPlanBanner={false}
-        onFlowDeleted={() => navigate(`/applications/${projectId}/intent`)}
-      />
-    </Page>
+    <FlowEditor
+      key={flowId}
+      projectId={projectId}
+      flowId={flowId}
+      onClose={() => navigate(`/applications/${projectId}/intent`)}
+      onDeleted={() => navigate(`/applications/${projectId}/intent`)}
+    />
   );
 }
 
@@ -4430,28 +4422,35 @@ const FLOW_STARTING_POINTS: Array<{
   flowName: string;
   workflowType: string;
   purpose: string;
+  /**
+   * Domain template the API seeds the new flow from. Omitted for the blank
+   * starting point, which opens an empty canvas by design.
+   */
+  template?: string;
   icon: typeof Workflow;
 }> = [
   {
     key: "ECOMMERCE",
     label: "E-commerce store",
     description:
-      "Start a typical shop journey: browse, cart, checkout, order confirmation.",
+      "Preloads a typical shop journey: browse, product, cart, checkout, order tracking.",
     flowName: "Checkout",
     workflowType: "CHECKOUT",
     purpose:
       "Let a shopper move from reviewing their cart through payment to an order confirmation.",
+    template: "ECOMMERCE",
     icon: ShoppingCart,
   },
   {
     key: "LMS",
     label: "Education / LMS",
     description:
-      "Start a typical learning journey: course catalog, enrolment, lesson, completion.",
+      "Preloads a typical learning journey: course catalog, enrolment, lesson, completion.",
     flowName: "Course enrollment",
     workflowType: "ENROLLMENT",
     purpose:
       "Let a learner move from browsing courses through enrolment to completing a lesson.",
+    template: "LMS",
     icon: GraduationCap,
   },
   {
@@ -4946,6 +4945,7 @@ export function IntentPage() {
         option.workflowType,
         option.purpose,
         "",
+        option.template,
       );
       await refreshFlows();
       navigate(`/applications/${activeProjectId}/intent/flows/${flow.id}`);
@@ -10065,7 +10065,7 @@ export function RunsPage() {
     <Page
       title="QA Runs"
       description="Guided browser execution, captured evidence, reconciliation, and report processing."
-      layout={!loading && items.length ? "fill" : "scroll"}
+      layout={!loading ? "fill" : "scroll"}
       toolbar={
         items.length ? (
           <input
@@ -11761,7 +11761,7 @@ export function ReportsPage() {
     <Page
       title="Reports"
       description="Canonical quality reports generated from guided QA evidence and reconciliation."
-      layout={!loading && reportRuns.length ? "fill" : "scroll"}
+      layout={!loading ? "fill" : "scroll"}
     >
       {loading ? (
         <LoadingState />

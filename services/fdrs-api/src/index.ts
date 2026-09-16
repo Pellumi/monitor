@@ -10,7 +10,7 @@ import { compileFlowRuleset } from './compiler';
 import { runReconciliation } from './reconciliation';
 import { generateAiFlowDraft, generateFlowSuggestions } from '@tellann/ai';
 import { validateGeneratedGraph } from '@tellann/graph-validation';
-import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet } from '@tellann/rules';
+import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps, reconstructRuleSet, getDomainTemplate, type DomainTemplate } from '@tellann/rules';
 import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
@@ -235,6 +235,46 @@ async function ensureDraftBaseline(tx: any, graphId: string, version: number, no
     select: { id: true },
   });
   if (!existing) await writeDraftSnapshot(tx, graphId, version, 0, 'Revision baseline', nodes, edges);
+}
+
+// Pre-mutation graph contents, captured inside a transaction before an edit is
+// applied so the d0 rollback baseline reflects what the author started from.
+async function loadDraftBaseline(tx: any, graphId: string) {
+  const nodes = await tx.behaviorGraphNode.findMany({ where: { graphId } });
+  const edges = await tx.behaviorGraphEdge.findMany({ where: { graphId }, include: { fromNode: true, toNode: true } });
+  return { nodes, edges };
+}
+
+// Records one draft edit: ensures a d0 baseline exists, bumps `draftSeq`, and
+// writes the post-mutation rollback snapshot. The published `version` is never
+// touched here — only opening a new revision moves that.
+// Pass `expectedDraftSeq` to make the bump an optimistic lock: an edit that
+// landed since the caller read the graph makes this throw GRAPH_REVISION_STALE.
+async function recordDraftMutation(
+  tx: any,
+  graphId: string,
+  version: number,
+  label: string,
+  baseline: { nodes: any[]; edges: any[] },
+  createdById?: string | null,
+  expectedDraftSeq?: number,
+) {
+  await ensureDraftBaseline(tx, graphId, version, baseline.nodes, baseline.edges);
+  let updatedGraph;
+  if (expectedDraftSeq === undefined) {
+    updatedGraph = await tx.behaviorGraph.update({ where: { id: graphId }, data: { draftSeq: { increment: 1 } } });
+  } else {
+    const guarded = await tx.behaviorGraph.updateMany({
+      where: { id: graphId, draftSeq: expectedDraftSeq },
+      data: { draftSeq: { increment: 1 } },
+    });
+    if (guarded.count !== 1) throw new Error('GRAPH_REVISION_STALE');
+    updatedGraph = await tx.behaviorGraph.findUniqueOrThrow({ where: { id: graphId } });
+  }
+  const nextNodes = await tx.behaviorGraphNode.findMany({ where: { graphId } });
+  const nextEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId }, include: { fromNode: true, toNode: true } });
+  await writeDraftSnapshot(tx, graphId, version, updatedGraph.draftSeq, label, nextNodes, nextEdges, createdById ?? null);
+  return updatedGraph;
 }
 
 // Retires queued suggestions whose proposed states + transitions are already
@@ -562,15 +602,6 @@ async function createGraphFromWorkflow(params: {
     });
   }
 
-  const latestGraph = await prisma.behaviorGraph.findFirst({
-    where: {
-      applicationId: params.applicationId,
-      environmentId: params.environmentId || null,
-      graphType: GraphType.DECLARED,
-    },
-    orderBy: { version: 'desc' },
-  });
-
   const graph = await prisma.behaviorGraph.create({
     data: {
       applicationId: params.applicationId,
@@ -580,7 +611,8 @@ async function createGraphFromWorkflow(params: {
       graphType: GraphType.DECLARED,
       sourceType: params.sourceType,
       isActive: true,
-      version: (latestGraph?.version ?? 0) + 1,
+      // Each flow keeps its own version line: v1 until a revision is opened.
+      version: 1,
       declaredById: params.declaredById || null,
     },
   });
@@ -824,31 +856,104 @@ async function publishCanonicalFlow(applicationId: string, flowId: string, publi
   return { status: 200 as const, body: { flowId: flow.id, version, validation, diagrams } };
 }
 
+/**
+ * Resolve the states of a domain template to the role/terminalKind shape the
+ * Flow model stores. Templates that do not annotate roles fall back to graph
+ * shape: the first state nothing points at is the entry, every leaf is an exit.
+ * Without this a seeded Flow would fail validateFlow at publish time.
+ */
+function templateSeedStates(template: DomainTemplate) {
+  const hasIncoming = new Set(template.transitions.map((transition) => transition.to));
+  const hasOutgoing = new Set(template.transitions.map((transition) => transition.from));
+  const annotated = template.states.some((state) => state.role);
+  let initialTaken = template.states.some((state) => state.role === 'INITIAL');
+  return template.states.map((state) => {
+    let role = state.role ?? 'NORMAL';
+    let terminalKind = state.terminalKind ?? null;
+    if (!annotated) {
+      if (!initialTaken && !hasIncoming.has(state.name)) {
+        role = 'INITIAL';
+        initialTaken = true;
+      } else if (!hasOutgoing.has(state.name)) {
+        role = 'TERMINAL';
+        terminalKind = 'SUCCESS';
+      }
+    }
+    if (role === 'TERMINAL' && !terminalKind) terminalKind = 'SUCCESS';
+    if (role !== 'TERMINAL') terminalKind = null;
+    return { name: state.name.toUpperCase().trim(), category: state.category, role, terminalKind };
+  });
+}
+
 // Canonical Flow API. The older /declared-flow family remains available as a compatibility alias.
 app.post('/v1/applications/:appId/flows', async (req: AuthenticatedRequest, res: Response) => {
   const { appId } = req.params;
-  const { name, purpose, scopeStatement, exclusions, tags, workflowType } = req.body ?? {};
+  const { name, purpose, scopeStatement, exclusions, tags, workflowType, template } = req.body ?? {};
   if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'FLOW_NAME_REQUIRED' });
   // Scope may be left blank at creation (e.g. the web graph editor creates the
   // flow first and lets the author fill in scope from the side panel) but must
   // be supplied before publishing — validateFlow enforces that at publish time.
 
+  // A starting-point template (E-commerce, LMS, …) seeds the draft with its
+  // states and transitions. CUSTOM and an unknown key both resolve to the blank
+  // template, which seeds nothing — the author starts from an empty canvas.
+  const domainTemplate = typeof template === 'string' && template.trim()
+    ? getDomainTemplate(template.trim())
+    : null;
+  const seedStates = domainTemplate ? templateSeedStates(domainTemplate) : [];
+
   const environment = await prisma.environment.findFirst({ where: { applicationId: appId, isDefault: true } });
-  const flow = await prisma.behaviorGraph.create({ data: {
-    applicationId: appId,
-    environmentId: environment?.id ?? null,
-    name: name.trim(),
-    purpose: typeof purpose === 'string' ? purpose.trim() : null,
-    scopeStatement: typeof scopeStatement === 'string' ? scopeStatement.trim() : '',
-    exclusions: Array.isArray(exclusions) ? exclusions.filter((item): item is string => typeof item === 'string') : [],
-    tags: Array.isArray(tags) ? tags.filter((item): item is string => typeof item === 'string') : [],
-    workflowType: typeof workflowType === 'string' ? workflowType : 'CUSTOM',
-    lifecycleStatus: 'DRAFT',
-    status: FlowStatus.DRAFT,
-    graphType: GraphType.DECLARED,
-    sourceType: GraphSourceType.USER_DECLARATION,
-    declaredById: req.user?.id,
-  } });
+  const flow = await prisma.$transaction(async (tx) => {
+    const created = await tx.behaviorGraph.create({ data: {
+      applicationId: appId,
+      environmentId: environment?.id ?? null,
+      name: name.trim(),
+      purpose: typeof purpose === 'string' ? purpose.trim() : null,
+      scopeStatement: typeof scopeStatement === 'string' ? scopeStatement.trim() : '',
+      exclusions: Array.isArray(exclusions) ? exclusions.filter((item): item is string => typeof item === 'string') : [],
+      tags: Array.isArray(tags) ? tags.filter((item): item is string => typeof item === 'string') : [],
+      // The template's own workflowType wins when one is seeded: suggestion
+      // rulesets fall back to it as the domain key when no profile is set.
+      workflowType: seedStates.length > 0
+        ? domainTemplate!.workflowType
+        : typeof workflowType === 'string' ? workflowType : 'CUSTOM',
+      lifecycleStatus: 'DRAFT',
+      status: FlowStatus.DRAFT,
+      graphType: GraphType.DECLARED,
+      sourceType: GraphSourceType.USER_DECLARATION,
+      declaredById: req.user?.id,
+    } });
+    if (seedStates.length === 0) return created;
+
+    const nodesByName = new Map<string, { id: string }>();
+    for (const state of seedStates) {
+      const node = await tx.behaviorGraphNode.create({ data: {
+        graphId: created.id,
+        stateName: state.name,
+        behaviorKey: state.name,
+        canonicalBehavior: state.name,
+        category: normalizeStateCategory(state.category),
+        role: state.role === 'INITIAL' || state.role === 'TERMINAL' ? state.role : 'NORMAL',
+        terminalKind: state.role === 'TERMINAL' ? (state.terminalKind as any) : null,
+        provenance: StateProvenance.USER_AUTHORED,
+        declaredById: req.user?.id ?? null,
+      } });
+      nodesByName.set(state.name, node);
+    }
+    for (const transition of domainTemplate!.transitions) {
+      const fromNode = nodesByName.get(transition.from.toUpperCase().trim());
+      const toNode = nodesByName.get(transition.to.toUpperCase().trim());
+      if (!fromNode || !toNode) continue;
+      await tx.behaviorGraphEdge.create({ data: {
+        graphId: created.id,
+        fromNodeId: fromNode.id,
+        toNodeId: toNode.id,
+        action: transition.action ?? null,
+        provenance: StateProvenance.USER_AUTHORED,
+      } });
+    }
+    return created;
+  });
   return res.status(201).json(flow);
 });
 
@@ -2283,9 +2388,11 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/apply-selec
   if (!review.validation.valid) return res.status(422).json({ error: 'INVALID_SELECTED_FLOW_REVIEW', validation: review.validation });
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const lockedGraph = await tx.behaviorGraph.findFirst({ where: { id: req.params.flowId, applicationId: req.params.appId }, select: { version: true, lifecycleStatus: true } });
+      const lockedGraph = await tx.behaviorGraph.findFirst({ where: { id: req.params.flowId, applicationId: req.params.appId }, select: { version: true, draftSeq: true, lifecycleStatus: true } });
       if (!lockedGraph || lockedGraph.lifecycleStatus !== 'DRAFT') throw new Error('GRAPH_REVISION_STALE');
       if (lockedGraph.version !== review.graph.version) throw new Error('GRAPH_REVISION_STALE');
+      if (lockedGraph.draftSeq !== review.graph.draftSeq) throw new Error('GRAPH_REVISION_STALE');
+      const baseline = await loadDraftBaseline(tx, req.params.flowId);
       const currentNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: req.params.flowId } });
       const nodesByName = new Map(currentNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node]));
       const createdNodes = [];
@@ -2319,9 +2426,17 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/apply-selec
         createdBy: req.user?.id ?? null,
       } });
       if (review.reviewId) await tx.declaredStateSuggestion.updateMany({ where: { flowId: req.params.flowId, reviewId: review.reviewId, id: { notIn: suggestionIds }, status: { in: ['PENDING', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
-      const updated = await tx.behaviorGraph.updateMany({ where: { id: req.params.flowId, version: review.graph.version }, data: { version: { increment: 1 } } });
-      if (updated.count !== 1) throw new Error('GRAPH_REVISION_STALE');
-      return { createdNodes, createdEdges, graphVersion: review.graph.version + 1 };
+      // The published `version` stays frozen while drafting; the applied batch
+      // bumps `draftSeq` (guarded against concurrent edits) and leaves a rollback point.
+      const mutated = createdNodes.length > 0 || createdEdges.length > 0;
+      const updatedGraph = mutated
+        ? await recordDraftMutation(
+            tx, req.params.flowId, review.graph.version,
+            `Applied ${suggestionIds.length} suggestion${suggestionIds.length === 1 ? '' : 's'}`,
+            baseline, req.user?.id ?? null, lockedGraph.draftSeq,
+          )
+        : lockedGraph;
+      return { createdNodes, createdEdges, graphVersion: review.graph.version, draftSeq: updatedGraph.draftSeq, mutated };
     });
     const refreshed = await prisma.behaviorGraph.findUnique({ where: { id: req.params.flowId }, include: { nodes: true, edges: true } });
     const validation = validateFlow(refreshed!.nodes as any, refreshed!.edges as any);
@@ -2708,30 +2823,39 @@ app.post('/applications/:id/declared-flow/:flowId/states', async (req: Request, 
     if (role === 'TERMINAL' && !terminalKind) return res.status(400).json({ error: 'FLOW_TERMINAL_KIND_REQUIRED' });
     const canonicalBehavior = await normalizeIntent(stateName, applicationId);
 
-    // Save BehaviorGraphNode
-    const node = await prisma.behaviorGraphNode.create({
-      data: {
-        graphId: flowId,
-        stateName: stateName.toUpperCase().trim(),
-        role: role === 'INITIAL' || role === 'TERMINAL' ? role : 'NORMAL',
-        terminalKind: role === 'TERMINAL' ? terminalKind : null,
-        behaviorKey: canonicalBehavior,
-        category: normalizeStateCategory(category),
-        provenance: normalizeProvenance(provenance),
-        declaredById: declaredById || null,
-        canonicalBehavior,
-        description: typeof description === 'string' ? description : null,
-        actor: typeof actor === 'string' ? actor : null,
-        system: typeof system === 'string' ? system : null,
-        componentRef: typeof componentRef === 'string' ? componentRef : null,
-        endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
-        expectedInput: expectedInput ?? undefined,
-        expectedOutput: expectedOutput ?? undefined,
-      },
-    });
+    const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
+      // Save BehaviorGraphNode
+      const node = await tx.behaviorGraphNode.create({
+        data: {
+          graphId: flowId,
+          stateName: stateName.toUpperCase().trim(),
+          role: role === 'INITIAL' || role === 'TERMINAL' ? role : 'NORMAL',
+          terminalKind: role === 'TERMINAL' ? terminalKind : null,
+          behaviorKey: canonicalBehavior,
+          category: normalizeStateCategory(category),
+          provenance: normalizeProvenance(provenance),
+          declaredById: declaredById || null,
+          canonicalBehavior,
+          description: typeof description === 'string' ? description : null,
+          actor: typeof actor === 'string' ? actor : null,
+          system: typeof system === 'string' ? system : null,
+          componentRef: typeof componentRef === 'string' ? componentRef : null,
+          endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
+          expectedInput: expectedInput ?? undefined,
+          expectedOutput: expectedOutput ?? undefined,
+        },
+      });
 
-    const updatedGraph = await prisma.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-    res.status(201).json({ state: node, suggestions: [], graphVersion: updatedGraph.version });
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, flow.version, `Added state ${node.stateName}`, baseline, declaredById || null,
+      );
+      return { node, updatedGraph };
+    });
+    res.status(201).json({
+      state: result.node, suggestions: [],
+      graphVersion: result.updatedGraph.version, draftSeq: result.updatedGraph.draftSeq,
+    });
   } catch (err) {
     console.error('[FDRS] Add state node error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2759,14 +2883,17 @@ app.patch('/applications/:id/declared-flow/:flowId/states/:stateId', async (req:
     if (nextRole === 'TERMINAL' && !terminalKind) return res.status(400).json({ error: 'FLOW_TERMINAL_KIND_REQUIRED' });
     const canonicalBehavior = await normalizeIntent(normalizedName, applicationId);
     const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
       const state = await tx.behaviorGraphNode.update({ where: { id: stateId }, data: {
         stateName: normalizedName, category: normalizeStateCategory(category), role: nextRole,
         terminalKind: nextRole === 'TERMINAL' ? terminalKind : null,
         behaviorKey: canonicalBehavior, canonicalBehavior,
       } });
       await tx.declaredStateSuggestion.updateMany({ where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
-      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-      return { state, graphVersion: updatedGraph.version };
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, graph.version, `Edited state ${state.stateName}`, baseline,
+      );
+      return { state, graphVersion: updatedGraph.version, draftSeq: updatedGraph.draftSeq };
     });
     return res.json(result);
   } catch (error) {
@@ -2784,12 +2911,18 @@ app.delete('/applications/:id/declared-flow/:flowId/states/:stateId', async (req
     const state = await prisma.behaviorGraphNode.findFirst({ where: { id: stateId, graphId: flowId } });
     if (!state) return res.status(404).json({ error: 'FLOW_STATE_NOT_FOUND' });
     const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
       const deletedTransitions = await tx.behaviorGraphEdge.deleteMany({ where: { graphId: flowId, OR: [{ fromNodeId: stateId }, { toNodeId: stateId }] } });
       await tx.declaredStateSuggestion.updateMany({ where: { parentStateId: stateId }, data: { parentStateId: null } });
       await tx.declaredStateSuggestion.updateMany({ where: { flowId, status: { in: ['PENDING', 'SUGGESTED', 'EDITED'] } }, data: { status: 'SUPERSEDED' } });
       await tx.behaviorGraphNode.delete({ where: { id: stateId } });
-      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-      return { deletedStateId: stateId, deletedTransitionCount: deletedTransitions.count, graphVersion: updatedGraph.version };
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, graph.version, `Deleted state ${state.stateName}`, baseline,
+      );
+      return {
+        deletedStateId: stateId, deletedTransitionCount: deletedTransitions.count,
+        graphVersion: updatedGraph.version, draftSeq: updatedGraph.draftSeq,
+      };
     });
     return res.json(result);
   } catch (error) {
@@ -2813,38 +2946,47 @@ app.post('/applications/:id/declared-flow/:flowId/transitions', async (req: Requ
     if (flow.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
     const endpoints = await prisma.behaviorGraphNode.count({ where: { graphId: flowId, id: { in: [fromStateId, toStateId] } } });
     if (endpoints !== new Set([fromStateId, toStateId]).size) return res.status(400).json({ error: 'FLOW_INVALID_TRANSITION_REFERENCE' });
-    const edge = await prisma.behaviorGraphEdge.create({
-      data: {
-        graphId: flowId,
-        fromNodeId: fromStateId,
-        toNodeId: toStateId,
-        action: action || null,
-        condition: typeof condition === 'string' ? condition : null,
-        actor: typeof actor === 'string' ? actor : null,
-        system: typeof system === 'string' ? system : null,
-        componentRef: typeof componentRef === 'string' ? componentRef : null,
-        endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
-        expectedInput: expectedInput ?? undefined,
-        expectedOutput: expectedOutput ?? undefined,
-        provenance: normalizeProvenance(provenance),
-      },
-      include: {
-        fromNode: true,
-        toNode: true,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
+      const edge = await tx.behaviorGraphEdge.create({
+        data: {
+          graphId: flowId,
+          fromNodeId: fromStateId,
+          toNodeId: toStateId,
+          action: action || null,
+          condition: typeof condition === 'string' ? condition : null,
+          actor: typeof actor === 'string' ? actor : null,
+          system: typeof system === 'string' ? system : null,
+          componentRef: typeof componentRef === 'string' ? componentRef : null,
+          endpointRef: typeof endpointRef === 'string' ? endpointRef : null,
+          expectedInput: expectedInput ?? undefined,
+          expectedOutput: expectedOutput ?? undefined,
+          provenance: normalizeProvenance(provenance),
+        },
+        include: {
+          fromNode: true,
+          toNode: true,
+        },
+      });
+
+      // Compatibility format for response
+      const formattedEdge = {
+        ...edge,
+        fromStateId: edge.fromNodeId,
+        toStateId: edge.toNodeId,
+        fromState: edge.fromNode,
+        toState: edge.toNode
+      };
+
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, flow.version, `Added transition ${edge.fromNode.stateName} → ${edge.toNode.stateName}`, baseline,
+      );
+      return { formattedEdge, updatedGraph };
     });
-
-    // Compatibility format for response
-    const formattedEdge = {
-      ...edge,
-      fromStateId: edge.fromNodeId,
-      toStateId: edge.toNodeId,
-      fromState: edge.fromNode,
-      toState: edge.toNode
-    };
-
-    const updatedGraph = await prisma.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-    res.status(201).json({ ...formattedEdge, graphVersion: updatedGraph.version });
+    res.status(201).json({
+      ...result.formattedEdge,
+      graphVersion: result.updatedGraph.version, draftSeq: result.updatedGraph.draftSeq,
+    });
   } catch (err) {
     console.error('[FDRS] Add edge error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2867,9 +3009,15 @@ app.patch('/applications/:id/declared-flow/:flowId/transitions/:transitionId', a
     if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'actor')) data.actor = typeof actor === 'string' && actor.trim() ? actor.trim() : null;
     if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'system')) data.system = typeof system === 'string' && system.trim() ? system.trim() : null;
     const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
       const edge = await tx.behaviorGraphEdge.update({ where: { id: transitionId }, data, include: { fromNode: true, toNode: true } });
-      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-      return { ...edge, fromStateId: edge.fromNodeId, toStateId: edge.toNodeId, fromState: edge.fromNode, toState: edge.toNode, graphVersion: updatedGraph.version };
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, flow.version, `Edited transition ${edge.fromNode.stateName} → ${edge.toNode.stateName}`, baseline,
+      );
+      return {
+        ...edge, fromStateId: edge.fromNodeId, toStateId: edge.toNodeId, fromState: edge.fromNode, toState: edge.toNode,
+        graphVersion: updatedGraph.version, draftSeq: updatedGraph.draftSeq,
+      };
     });
     return res.json(result);
   } catch (error) {
@@ -2888,9 +3036,12 @@ app.delete('/applications/:id/declared-flow/:flowId/transitions/:transitionId', 
     const edge = await prisma.behaviorGraphEdge.findFirst({ where: { id: transitionId, graphId: flowId } });
     if (!edge) return res.status(404).json({ error: 'FLOW_TRANSITION_NOT_FOUND' });
     const result = await prisma.$transaction(async (tx) => {
+      const baseline = await loadDraftBaseline(tx, flowId);
       await tx.behaviorGraphEdge.delete({ where: { id: transitionId } });
-      const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { version: { increment: 1 } } });
-      return { deletedTransitionId: transitionId, graphVersion: updatedGraph.version };
+      const updatedGraph = await recordDraftMutation(
+        tx, flowId, flow.version, 'Deleted transition', baseline,
+      );
+      return { deletedTransitionId: transitionId, graphVersion: updatedGraph.version, draftSeq: updatedGraph.draftSeq };
     });
     return res.json(result);
   } catch (error) {
@@ -2903,138 +3054,22 @@ app.delete('/applications/:id/declared-flow/:flowId/transitions/:transitionId', 
 // 3. Suggestions Acceptance & Rejection
 // ─────────────────────────────────────────────────────────────
 
-/** POST /applications/:id/declared-flow/:flowId/suggestions/:sid/accept - Accept suggestion */
-app.post('/applications/:id/declared-flow/:flowId/suggestions/:sid/accept', async (req: Request, res: Response) => {
-  const { id: applicationId, flowId, sid } = req.params;
-
-  try {
-    const suggestion = await prisma.declaredStateSuggestion.findUnique({
-      where: { id: sid },
-      include: { parentState: true },
-    });
-
-    if (!suggestion) {
-      return res.status(404).json({ error: 'Suggestion not found' });
-    }
-
-    const appRecord = await prisma.application.findUnique({
-      where: { id: applicationId },
-      select: { organizationId: true },
-    });
-
-    // Update Suggestion status
-    const updatedSuggestion = await prisma.declaredStateSuggestion.update({
-      where: { id: sid },
-      data: {
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
-        acceptedBy: typeof req.body.acceptedBy === 'string' ? req.body.acceptedBy : null,
-      },
-    });
-
-    await recordSuggestionOutcome({
-      suggestionId: sid,
-      applicationId,
-      outcome: 'ACCEPTED',
-      suggestion: {
-        ...suggestion,
-        parentState: suggestion.parentState ?? undefined,
-      },
-    });
-
-    const statePayload = Array.isArray(suggestion.suggestedStatesJson)
-      ? suggestion.suggestedStatesJson as Array<{ name: string; category?: string }>
-      : [{ name: suggestion.suggestedStateName, category: suggestion.category }];
-    const existingNodes = await prisma.behaviorGraphNode.findMany({ where: { graphId: flowId } });
-    const nodesByKey = new Map(existingNodes.map((node) => [node.stateName.toUpperCase(), node]));
-    const createdNodes = [];
-
-    for (const state of statePayload) {
-      const stateName = String(state.name || suggestion.suggestedStateName).toUpperCase().trim();
-      if (nodesByKey.has(stateName)) continue;
-      const canonicalBehavior = await normalizeIntent(stateName, applicationId);
-      const newNode = await prisma.behaviorGraphNode.create({
-        data: {
-          graphId: flowId,
-          stateName,
-          behaviorKey: canonicalBehavior,
-          category: normalizeStateCategory(state.category || suggestion.category),
-          provenance: StateProvenance.SUGGESTED_ACCEPTED,
-          canonicalBehavior,
-        },
-      });
-      nodesByKey.set(stateName, newNode);
-      createdNodes.push(newNode);
-    }
-
-    const transitionPayload = Array.isArray(suggestion.suggestedTransitionsJson)
-      ? suggestion.suggestedTransitionsJson as Array<{ from: string; to: string; action?: string }>
-      : [];
-    const createdEdges = [];
-    for (const transition of transitionPayload) {
-      const fromNode = nodesByKey.get(String(transition.from).toUpperCase().trim());
-      const toNode = nodesByKey.get(String(transition.to).toUpperCase().trim());
-      if (!fromNode || !toNode) continue;
-      const edge = await prisma.behaviorGraphEdge.create({
-        data: {
-          graphId: flowId,
-          fromNodeId: fromNode.id,
-          toNodeId: toNode.id,
-          action: transition.action || null,
-          provenance: StateProvenance.SUGGESTED_ACCEPTED,
-        },
-      });
-      createdEdges.push(edge);
-    }
-
-    // Also trigger suggestions for this new node
-    const primaryNode = createdNodes[0] ?? nodesByKey.get(suggestion.suggestedStateName.toUpperCase());
-    const suggestionsList = primaryNode ? await getSuggestions(primaryNode.stateName, applicationId) : [];
-    const newSuggestions = [];
-    for (const sug of suggestionsList) {
-      const dbSug = await prisma.declaredStateSuggestion.create({
-        data: {
-          parentStateId: primaryNode?.id,
-          organizationId: appRecord?.organizationId ?? null,
-          applicationId,
-          flowId,
-          suggestedStateName: sug.suggestedStateName,
-          category: sug.category,
-          sourceTier: sug.sourceTier,
-          rationale: sug.rationale,
-          confidence: sug.confidence,
-          patternId: sug.patternId,
-          status: 'SUGGESTED',
-        },
-      });
-      newSuggestions.push(dbSug);
-    }
-
-    if (appRecord?.organizationId) {
-      await prisma.ruleFeedback.create({
-        data: {
-          organizationId: appRecord.organizationId,
-          applicationId,
-          suggestionId: sid,
-          feedbackType: 'ACCEPTED',
-          beforeJson: suggestion as any,
-          afterJson: { createdNodeIds: createdNodes.map((node) => node.id), createdEdgeIds: createdEdges.map((edge) => edge.id) } as any,
-          createdBy: typeof req.body.acceptedBy === 'string' ? req.body.acceptedBy : null,
-        },
-      });
-    }
-
-    res.json({
-      suggestion: updatedSuggestion,
-      state: createdNodes[0] ?? null,
-      states: createdNodes,
-      transitions: createdEdges,
-      suggestions: newSuggestions,
-    });
-  } catch (err) {
-    console.error('[FDRS] Accept suggestion error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+/**
+ * POST /applications/:id/declared-flow/:flowId/suggestions/:sid/accept — retired 2026-09-16.
+ *
+ * The old handler wrote states and edges straight onto the graph: no `draftSeq`
+ * bump and no FlowDraftSnapshot, so an acceptance through here left no rollback
+ * point and never appeared in draft history. The canonical route below does both
+ * in one transaction and re-validates a stale suggestion against the current
+ * graph. Neither the desktop app nor the dashboard ever called this one.
+ */
+app.post('/applications/:id/declared-flow/:flowId/suggestions/:sid/accept', (req: Request, res: Response) => {
+  const replacement = `/v1/applications/${req.params.id}/declared-flows/${req.params.flowId}/suggestions/${req.params.sid}/accept`;
+  res.status(410).json({
+    error: 'ENDPOINT_RETIRED',
+    message: `This endpoint no longer accepts suggestions. Use POST ${replacement} instead.`,
+    replacement,
+  });
 });
 
 /** PATCH /applications/:id/declared-flow/:flowId/suggestions/:sid - Edit suggestion */
@@ -3397,6 +3432,7 @@ app.post('/applications/:id/declared-flow/:flowId/reopen', async (req: Request, 
   try {
     const flow = await prisma.behaviorGraph.findUnique({
       where: { id: flowId },
+      include: { nodes: true, edges: { include: { fromNode: true, toNode: true } } },
     });
 
     if (!flow) {
@@ -3406,15 +3442,21 @@ app.post('/applications/:id/declared-flow/:flowId/reopen', async (req: Request, 
       return res.json(flow);
     }
 
-    const updatedFlow = await prisma.behaviorGraph.update({
-      where: { id: flowId },
-      data: {
-        status: FlowStatus.DRAFT,
-        lifecycleStatus: 'DRAFT',
-        version: flow.version + 1,
-        publishedVersionId: null,
-        completedAt: null,
-      },
+    const updatedFlow = await prisma.$transaction(async (tx) => {
+      const graph = await tx.behaviorGraph.update({
+        where: { id: flowId },
+        data: {
+          status: FlowStatus.DRAFT,
+          lifecycleStatus: 'DRAFT',
+          version: flow.version + 1,
+          // New revision opens with a fresh draft counter and a d0 rollback baseline.
+          draftSeq: 0,
+          publishedVersionId: null,
+          completedAt: null,
+        },
+      });
+      await writeDraftSnapshot(tx, flowId, graph.version, 0, 'Revision opened', flow.nodes, flow.edges);
+      return graph;
     });
 
     res.json(updatedFlow);

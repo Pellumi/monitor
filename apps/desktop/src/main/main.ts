@@ -1382,9 +1382,9 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.createDeclaredFlow, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { applicationId?: unknown; name?: unknown; workflowType?: unknown; purpose?: unknown; scopeStatement?: unknown };
+    const value = input as { applicationId?: unknown; name?: unknown; workflowType?: unknown; purpose?: unknown; scopeStatement?: unknown; template?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.name !== 'string' || typeof value.workflowType !== 'string' || typeof value.scopeStatement !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
-    return cloud.createDeclaredFlow(value.applicationId, { name: value.name, workflowType: value.workflowType, purpose: typeof value.purpose === 'string' ? value.purpose : undefined, scopeStatement: value.scopeStatement });
+    return cloud.createDeclaredFlow(value.applicationId, { name: value.name, workflowType: value.workflowType, purpose: typeof value.purpose === 'string' ? value.purpose : undefined, scopeStatement: value.scopeStatement, template: typeof value.template === 'string' ? value.template : undefined });
   });
   ipcMain.handle(IPC.addDeclaredState, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -1429,6 +1429,63 @@ function registerIpc(): void {
     const value = input as { applicationId?: unknown; flowId?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
     return cloud.deleteDeclaredFlow(value.applicationId, value.flowId);
+  });
+  // Graph editor channels, mirrored in preload; kept out of the prebuilt shared contracts.
+  const FLOW_EDITOR_CHANNELS = {
+    updateTransition: 'tellann:cloud:intent:transition:update',
+    deleteTransition: 'tellann:cloud:intent:transition:delete',
+    updateFlow: 'tellann:cloud:intent:update',
+    draftHistory: 'tellann:cloud:intent:draft-history:list',
+    restoreDraft: 'tellann:cloud:intent:draft-history:restore',
+    dismissSuggestion: 'tellann:cloud:intent:suggestions:dismiss',
+    resolveAiDraft: 'tellann:cloud:intent:ai-draft:resolve',
+  } as const;
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.updateTransition, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; transitionId?: unknown; action?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.transitionId !== 'string' || typeof value.action !== 'string') throw new Error('INVALID_DECLARED_TRANSITION_UPDATE_REQUEST');
+    return cloud.updateDeclaredTransition(value.applicationId, value.flowId, value.transitionId, { action: value.action });
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.deleteTransition, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; transitionId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.transitionId !== 'string') throw new Error('INVALID_DECLARED_TRANSITION_DELETE_REQUEST');
+    return cloud.deleteDeclaredTransition(value.applicationId, value.flowId, value.transitionId);
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.updateFlow, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; input?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || !value.input || typeof value.input !== 'object') throw new Error('INVALID_DECLARED_FLOW_UPDATE_REQUEST');
+    const fields = value.input as Record<string, unknown>;
+    const update: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string } = {};
+    for (const key of ['name', 'purpose', 'scopeStatement', 'workflowType'] as const) {
+      if (typeof fields[key] === 'string') update[key] = fields[key] as string;
+    }
+    return cloud.updateDeclaredFlow(value.applicationId, value.flowId, update);
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.draftHistory, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_DECLARED_FLOW_REQUEST');
+    return cloud.flowDraftHistory(value.applicationId, value.flowId);
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.restoreDraft, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; snapshotId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.snapshotId !== 'string') throw new Error('INVALID_FLOW_DRAFT_RESTORE_REQUEST');
+    return cloud.restoreFlowDraft(value.applicationId, value.flowId, value.snapshotId);
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.dismissSuggestion, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; suggestionId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.suggestionId !== 'string') throw new Error('INVALID_FLOW_SUGGESTION_ACTION');
+    return cloud.dismissFlowSuggestion(value.applicationId, value.flowId, value.suggestionId);
+  });
+  ipcMain.handle(FLOW_EDITOR_CHANNELS.resolveAiDraft, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown; decision?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || (value.decision !== 'accept' && value.decision !== 'decline')) throw new Error('INVALID_FLOW_AI_DRAFT_REQUEST');
+    return cloud.resolveAiFlowDraft(value.applicationId, value.flowId, value.decision);
   });
   ipcMain.handle(IPC.generateFlowSuggestions, async (event, input: unknown) => {
     assertTrustedSender(event);

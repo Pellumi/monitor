@@ -172,7 +172,7 @@ declare global {
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
         getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-        createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+        createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
         addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
         updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
         deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
@@ -181,6 +181,17 @@ declare global {
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         /** Permanently deletes the flow and everything recorded against it. */
         deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        updateDeclaredTransition(applicationId: string, flowId: string, transitionId: string, action: string): Promise<Record<string, unknown>>;
+        deleteDeclaredTransition(applicationId: string, flowId: string, transitionId: string): Promise<Record<string, unknown>>;
+        updateDeclaredFlow(
+          applicationId: string,
+          flowId: string,
+          input: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string },
+        ): Promise<Record<string, unknown>>;
+        getFlowDraftHistory(applicationId: string, flowId: string): Promise<FlowDraftHistory>;
+        restoreFlowDraft(applicationId: string, flowId: string, snapshotId: string): Promise<Record<string, unknown>>;
+        dismissFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+        resolveAiFlowDraft(applicationId: string, flowId: string, decision: 'accept' | 'decline'): Promise<Record<string, unknown>>;
         generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
         getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
         acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
@@ -325,7 +336,31 @@ declare global {
 
   type DesktopContextMenuItem =
     | { type: 'separator' }
-    | { id: string; label: string; enabled?: boolean; accelerator?: string; type?: 'normal' };
+    | {
+        id: string;
+        label: string;
+        enabled?: boolean;
+        accelerator?: string;
+        type?: 'normal' | 'checkbox';
+        checked?: boolean;
+        submenu?: DesktopContextMenuItem[];
+      };
+
+  /** Rollback points within a flow's current version (d1, d2, …). */
+  type FlowDraftHistory = {
+    version: number;
+    draftSeq: number;
+    current: { stateCount: number; transitionCount: number };
+    snapshots: Array<{
+      id: string;
+      draftSeq: number;
+      label?: string | null;
+      stateCount: number;
+      transitionCount: number;
+      createdAt: string;
+      isCurrent: boolean;
+    }>;
+  };
 }
 
 export {};

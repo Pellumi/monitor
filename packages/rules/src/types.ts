@@ -37,9 +37,16 @@ export type FlowCriticality = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type SuggestionStatus = 'SUGGESTED' | 'ACCEPTED' | 'REJECTED' | 'EDITED';
 export type SuggestionSource = 'RULE' | 'TEMPLATE' | 'AI' | 'USER';
 
+export type FlowStateRole = 'INITIAL' | 'NORMAL' | 'TERMINAL';
+export type FlowTerminalKind = 'SUCCESS' | 'FAILURE' | 'CANCELLATION' | 'ALTERNATE';
+
 export interface StateTemplate {
   name: string;
   category: FlowStateCategory;
+  /** Entry and exit points of the seeded graph. Omitted states default to NORMAL. */
+  role?: FlowStateRole;
+  /** Required when `role` is TERMINAL — a Flow cannot be published without it. */
+  terminalKind?: FlowTerminalKind;
 }
 
 export interface TransitionTemplate {

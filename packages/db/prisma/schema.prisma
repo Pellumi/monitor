@@ -1292,6 +1292,9 @@ model BehaviorGraph {
   name               String
   status             FlowStatus          @default(DRAFT)
   lifecycleStatus    FlowLifecycleStatus @default(DRAFT)
+  // Published revision number. Every flow starts its own line at 1 and only
+  // moves when a new revision is opened (revise / reopen) — never on an edit.
+  // In-progress edits are counted by `draftSeq` below.
   version            Int                 @default(1)
   graphType          GraphType           @default(DECLARED)
   sourceType         GraphSourceType     @default(USER_DECLARATION)
@@ -1307,10 +1310,10 @@ model BehaviorGraph {
   // document) is awaiting the author's accept/discard decision. Cleared on accept.
   aiDraftStatus      String?
   aiDraftSourceName  String?
-  // Number of graph mutations (accepted suggestions, restores) applied since the
-  // current `version` was opened for drafting. The published `version` stays
-  // frozen while drafting; `draftSeq` is the in-progress counter. Reset to 0 when
-  // a new revision is opened.
+  // Number of graph mutations (manual edits, accepted suggestions, restores)
+  // applied since the current `version` was opened for drafting. The published
+  // `version` stays frozen while drafting; `draftSeq` is the in-progress
+  // counter. Reset to 0 when a new revision is opened.
   draftSeq           Int                 @default(0)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt

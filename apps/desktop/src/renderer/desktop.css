@@ -359,6 +359,7 @@ kbd {
   width: 26px;
   height: 26px;
   flex: 0 0 26px;
+  min-width: 26px;
   border: 0;
   background: var(--accent);
   color: var(--on-accent);
