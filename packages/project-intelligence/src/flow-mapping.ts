@@ -284,15 +284,40 @@ function placementKinds(entity: CodeEntity): FlowPlacementKind[] {
   }
 }
 
-function sourceLocation(entity: CodeEntity): { path: string; startLine: number | null; endLine: number | null; symbol: string | null } | null {
+/**
+ * The component a file-scoped route renders.
+ *
+ * A Next.js `page.tsx` becomes a `ui_route` entity named after its URL, derived
+ * from where the file sits rather than from any declaration — so it carries a
+ * path, line 1, and no symbol. Instrumentation needs a real declaration to
+ * anchor against, and a person reviewing the mapping needs a name to recognise,
+ * so resolve the route to the component declared in the same file.
+ */
+function routeComponent(entity: CodeEntity, byPath: Map<string, CodeEntity[]>): CodeEntity | null {
+  if (!entity.path) return null;
+  const declared = (byPath.get(entity.path) ?? []).filter((item) =>
+    item.id !== entity.id && (item.type === 'function' || item.type === 'class') && item.startLine !== null);
+  if (!declared.length) return null;
+  // A React component is conventionally PascalCase; prefer one, and otherwise
+  // take the outermost declaration in the file rather than guessing.
+  return declared.find((item) => /^[A-Z]/.test(item.name))
+    ?? [...declared].sort((left, right) => (left.startLine ?? 0) - (right.startLine ?? 0))[0];
+}
+
+const SYMBOL_BEARING_TYPES = ['function', 'method', 'class', 'ui_action', 'endpoint'];
+
+function sourceLocation(entity: CodeEntity, byPath: Map<string, CodeEntity[]>): { path: string; startLine: number | null; endLine: number | null; symbol: string | null } | null {
   const evidence = entity.evidence.find((item) => item.path);
   const candidatePath = entity.path ?? evidence?.path;
   if (!candidatePath) return null;
+  const component = entity.type === 'ui_route' ? routeComponent(entity, byPath) : null;
   return {
     path: candidatePath.replaceAll('\\', '/'),
-    startLine: entity.startLine ?? evidence?.startLine ?? null,
-    endLine: entity.endLine ?? evidence?.endLine ?? null,
-    symbol: evidence?.symbol ?? (['function', 'method', 'class', 'ui_action', 'endpoint'].includes(entity.type) ? entity.name : null),
+    startLine: component?.startLine ?? entity.startLine ?? evidence?.startLine ?? null,
+    endLine: component?.endLine ?? entity.endLine ?? evidence?.endLine ?? null,
+    symbol: component?.name
+      ?? evidence?.symbol
+      ?? (SYMBOL_BEARING_TYPES.includes(entity.type) ? entity.name : null),
   };
 }
 
@@ -360,8 +385,9 @@ function candidateFor(
   entity: CodeEntity,
   query: FlowMappingQuery,
   byId: Map<string, CodeEntity>,
+  byPath: Map<string, CodeEntity[]>,
 ): FlowMappingCandidate | null {
-  const location = sourceLocation(entity);
+  const location = sourceLocation(entity, byPath);
   if (!location) return null;
   const document = documentForEntity(entity);
   const actionVerb = query.kind === 'TRANSITION' ? splitTerms(query.name)[0] : null;
@@ -450,10 +476,17 @@ export function retrieveFlowMappings(input: RetrieveFlowMappingsInput): FlowMapp
   const maxCandidates = Math.min(Math.max(input.maxCandidates ?? 8, 1), 8);
   const maxFiles = Math.min(Math.max(input.maxFiles ?? 5, 1), 5);
   const byId = new Map(input.analysis.entities.map((entity) => [entity.id, entity]));
+  const byPath = new Map<string, CodeEntity[]>();
+  for (const entity of input.analysis.entities) {
+    if (!entity.path) continue;
+    const existing = byPath.get(entity.path);
+    if (existing) existing.push(entity);
+    else byPath.set(entity.path, [entity]);
+  }
   const mappings = buildFlowMappingQueries(input.flow).map((query): FlowCheckpointMapping => {
     const candidates = boundedCandidates(
       input.analysis.entities
-        .map((entity) => candidateFor(input.analysis, entity, query, byId))
+        .map((entity) => candidateFor(input.analysis, entity, query, byId, byPath))
         .filter((candidate): candidate is FlowMappingCandidate => candidate !== null),
       maxCandidates,
       maxFiles,

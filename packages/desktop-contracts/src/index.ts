@@ -945,7 +945,12 @@ export const ManualRoadmapStepSchema = z.object({
   file: z.string().nullable(), symbol: z.string().nullable(), snippet: z.string(), eventType: z.string().nullable(), checkpointId: z.string().nullable(),
   required: z.boolean().optional(), marker: FlowMarkerSchema.nullable().optional(),
   startLine: z.number().int().positive().nullable().optional(), endLine: z.number().int().positive().nullable().optional(),
-  confidence: z.number().min(0).max(1).optional(), alternatives: z.array(z.unknown()).optional(), placementKind: FlowPlacementKindSchema.nullable().optional(),
+  confidence: z.number().min(0).max(1).optional(), placementKind: FlowPlacementKindSchema.nullable().optional(),
+  // The same ranked candidates the review showed, so "do it yourself" is offered
+  // the evidence the automated path would have used rather than a bare filename.
+  alternatives: z.array(FlowMappingCandidateSchema).optional(),
+  rationale: z.string().nullable().optional(), anchor: z.string().nullable().optional(),
+  evidenceIds: z.array(z.string()).optional(),
   userCompletedAt: z.string().datetime().nullable(), verificationEvidence: z.array(z.any()),
 });
 export const ManualRoadmapSchema = z.object({
@@ -961,6 +966,18 @@ export const CheckpointCoverageSchema = z.object({
   method: z.enum(['STATIC_CODE_SCAN', 'RUNTIME_TELEMETRY']).optional(),
   codeEvidence: z.array(z.object({ checkpointId: z.string(), file: z.string(), line: z.number().int() })).optional(),
   scannedAt: z.string().datetime().nullable().optional(),
+  /**
+   * Markers the scan found that it could not accept, each with the file and line
+   * it sits on. A duplicate or a marker naming a checkpoint this Flow does not
+   * declare is a real defect in the instrumented code, not an absence, so it
+   * fails verification loudly rather than being counted as nothing found.
+   */
+  markerProblems: z.array(z.object({
+    code: z.enum(['DUPLICATE_MARKER', 'UNKNOWN_MARKER']),
+    checkpointId: z.string().nullable(), file: z.string(), line: z.number().int(),
+  })).optional(),
+  /** Which rule decided completeness: every checkpoint, or the Flow's boundaries. */
+  requirement: z.enum(['ALL_CHECKPOINTS', 'BOUNDARIES']).optional(),
 });
 
 export const FlowInitializationSchema = z.object({

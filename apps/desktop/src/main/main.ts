@@ -1,12 +1,12 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -967,31 +967,78 @@ async function requestUploadConsent(
   });
 }
 
+/** One candidate's source, as it would be sent: bounded, and already redacted. */
+type FlowMappingExcerpt = {
+  candidateId: string;
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  content: string;
+  redactions: number;
+};
+
+/** Never send a whole file because a candidate's range happened to be wide. */
+const FLOW_EXCERPT_MAX_LINES = 120;
+const FLOW_EXCERPT_MAX_CHARS = 12_000;
+
+/**
+ * Read each candidate's own lines out of the attached folder, and redact them.
+ *
+ * The analyser's stored evidence is a by-product of indexing — often a single
+ * line, often absent — so resolving against it asked the model to pick an exact
+ * insertion point from almost nothing. The candidate already carries the range
+ * that matters, so read that range from the file the user actually has. Nothing
+ * here leaves the device; consent is asked separately, with these in hand.
+ */
+function extractFlowMappingExcerpts(
+  workspaceRoot: string,
+  mappings: Array<{ candidates?: Array<{ id?: string; path?: string; startLine?: number | null; endLine?: number | null; evidence?: Array<{ excerpt?: string | null }> }> }>,
+): Map<string, FlowMappingExcerpt> {
+  const byCandidate = new Map<string, FlowMappingExcerpt>();
+  for (const candidate of mappings.flatMap((mapping) => mapping.candidates ?? [])) {
+    if (!candidate.path || !candidate.id) continue;
+    let raw: string | null = null;
+    try {
+      const absolute = resolveWithinWorkspace(workspaceRoot, candidate.path);
+      const lines = readFileSync(absolute, 'utf8').replaceAll('\r\n', '\n').split('\n');
+      const start = Math.max(1, candidate.startLine ?? 1);
+      const end = Math.min(lines.length, Math.max(start, candidate.endLine ?? start), start + FLOW_EXCERPT_MAX_LINES - 1);
+      raw = lines.slice(start - 1, end).join('\n');
+    } catch {
+      // A file that moved since analysis still has whatever the graph captured.
+      raw = candidate.evidence?.find((item) => item.excerpt)?.excerpt ?? null;
+    }
+    if (!raw?.trim()) continue;
+    const redacted = redactSecrets(raw.slice(0, FLOW_EXCERPT_MAX_CHARS));
+    byCandidate.set(String(candidate.id), {
+      candidateId: String(candidate.id), path: String(candidate.path),
+      startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
+      content: redacted.content, redactions: redacted.redactions,
+    });
+  }
+  return byCandidate;
+}
+
 async function requestFlowMappingAiConsent(
   applicationId: string,
   flowName: string,
-  mappings: Array<{ candidates?: Array<{ path?: string; startLine?: number | null; endLine?: number | null; evidence?: Array<{ excerpt?: string | null }> }> }>,
+  extracted: FlowMappingExcerpt[],
 ): Promise<boolean> {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
-  const candidates = mappings.flatMap((mapping) => mapping.candidates ?? []);
-  const excerpts = [...new Map(candidates
-    .filter((candidate) => candidate.path)
-    .map((candidate) => [String(candidate.path), {
-      path: String(candidate.path), startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
-    }])).values()].slice(0, 5);
-  const rawExcerpts = candidates.slice(0, 8)
-    .map((candidate) => candidate.evidence?.find((item) => item.excerpt)?.excerpt ?? '')
-    .filter(Boolean);
-  const redacted = rawExcerpts.map((excerpt) => redactSecrets(String(excerpt)));
-  if (!redacted.length) return false;
+  if (!extracted.length) return false;
+  // The dialog lists the files and line ranges that would be sent, so what is
+  // shown is exactly what leaves the device — not a sample of it.
+  const excerpts = [...new Map(extracted.map((item) => [item.path, {
+    path: item.path, startLine: item.startLine, endLine: item.endLine,
+  }])).values()].slice(0, 5);
   const requestId = crypto.randomUUID();
   const request: CodebaseUploadConsentRequest = {
     requestId, applicationId, workspaceName: flowName, fileCount: excerpts.length,
-    compressedBytes: Buffer.byteLength(redacted.map((item) => item.content).join('\n')),
+    compressedBytes: Buffer.byteLength(extracted.map((item) => item.content).join('\n')),
     repositoryLabel: 'the attached local-only workspace', branch: null, revision: null, dirty: true,
-    languages: [], redactions: redacted.reduce((total, item) => total + item.redactions, 0),
-    redactedFiles: redacted.filter((item) => item.redactions > 0).length,
-    exclusions: [], truncated: candidates.length > 8, purpose: 'FLOW_MAPPING_AI', flowName, excerpts,
+    languages: [], redactions: extracted.reduce((total, item) => total + item.redactions, 0),
+    redactedFiles: new Set(extracted.filter((item) => item.redactions > 0).map((item) => item.path)).size,
+    exclusions: [], truncated: extracted.length > excerpts.length, purpose: 'FLOW_MAPPING_AI', flowName, excerpts,
   };
   return new Promise<boolean>((resolve) => {
     let settled = false;
@@ -1057,37 +1104,124 @@ async function currentFlowCodebaseAnalysis(applicationId: string): Promise<Codeb
   return state;
 }
 
-function flowInputFromInitialization(initialization: Record<string, any>) {
+/**
+ * The document retrieval ranks against.
+ *
+ * Checkpoint identity comes from the initialization's own findings, because the
+ * manifest the server will match against was built from the published version's
+ * snapshot — using anything else risks a checkpoint id the server rejects. The
+ * declared Flow supplies the semantics that snapshot does not carry forward:
+ * a state's category and canonical behaviour, a transition's condition, and the
+ * Flow's purpose and scope. Those are exactly the fields the query builder
+ * weights context on, so leaving them null quietly halves the ranking signal.
+ */
+function flowInputFromInitialization(initialization: Record<string, any>, detail: DeclaredFlowDetail | null) {
   const report = initialization.codeReviewReport ?? {};
+  const declaredStates = new Map((detail?.states ?? []).map((item) => [String(item.id), item]));
+  const declaredTransitions = new Map((detail?.transitions ?? []).map((item) => [String(item.id), item]));
   return {
     id: String(initialization.flowId),
-    name: String(initialization.manifest?.flowName ?? initialization.flow?.name ?? 'Flow'),
-    states: (report.stateFindings ?? []).map((item: any) => ({
-      id: String(item.stateId), stateName: String(item.stateName ?? item.stateId), category: item.category ?? null,
-      role: item.role ?? null, terminalKind: item.terminalKind ?? null,
-    })),
-    transitions: (report.transitionFindings ?? []).map((item: any) => ({
-      id: String(item.transitionId), fromStateId: String(item.fromStateId), toStateId: String(item.toStateId), action: item.action ?? null,
-    })),
+    name: String(detail?.name ?? initialization.manifest?.flowName ?? initialization.flow?.name ?? 'Flow'),
+    purpose: detail?.purpose ?? null,
+    scopeStatement: detail?.scopeStatement ?? null,
+    tags: detail?.tags ?? null,
+    states: (report.stateFindings ?? []).map((item: any) => {
+      const declared = declaredStates.get(String(item.stateId));
+      return {
+        id: String(item.stateId),
+        stateName: String(declared?.stateName ?? item.stateName ?? item.stateId),
+        category: declared?.category ?? item.category ?? null,
+        role: declared?.role ?? item.role ?? null,
+        terminalKind: declared?.terminalKind ?? item.terminalKind ?? null,
+        canonicalBehavior: declared?.canonicalBehavior ?? null,
+      };
+    }),
+    transitions: (report.transitionFindings ?? []).map((item: any) => {
+      const declared = declaredTransitions.get(String(item.transitionId));
+      return {
+        id: String(item.transitionId),
+        fromStateId: String(item.fromStateId),
+        toStateId: String(item.toStateId),
+        action: declared?.action ?? item.action ?? null,
+        condition: declared?.condition ?? null,
+      };
+    }),
   } as any;
 }
 
+/**
+ * Tell the waiting window which stage mapping has reached.
+ *
+ * Analysis of a large repository runs for minutes, and a banner that never
+ * changes across that reads as a hang. This is reported rather than inferred
+ * because only this process knows which step it is on — and it is deliberately
+ * fire-and-forget: a progress update that failed must never be the reason a
+ * mapping run fails.
+ */
+function reportFlowMappingProgress(
+  initializationId: string,
+  status: 'WAITING_FOR_ANALYSIS' | 'RETRIEVING' | 'CONTEXTUALIZING' | 'RESOLVING' | 'FAILED',
+  totalCheckpoints: number,
+  message: string,
+): void {
+  void cloud.reportFlowMappingProgress(initializationId, {
+    status, completedCheckpoints: 0, totalCheckpoints,
+    resolvedCount: 0, ambiguousCount: 0, unresolvedCount: totalCheckpoints, unsupportedCount: 0,
+    message, updatedAt: new Date().toISOString(),
+  }).catch(() => undefined);
+}
+
 async function submitCurrentFlowMappings(applicationId: string, initialization: Record<string, any>) {
-  const state = await currentFlowCodebaseAnalysis(applicationId);
-  if (!state.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
-  const retrieval = retrieveFlowCheckpointCandidates(state.analysis, flowInputFromInitialization(initialization));
+  const workspace = selectedWorkspaces.get(applicationId);
+  if (!workspace?.root) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
+  const initializationId = String(initialization.id);
+  const checkpointCount = Array.isArray(initialization.manifest?.checkpoints) ? initialization.manifest.checkpoints.length : 0;
+  const progress = (status: Parameters<typeof reportFlowMappingProgress>[1], message: string) =>
+    reportFlowMappingProgress(initializationId, status, checkpointCount, message);
+  progress('WAITING_FOR_ANALYSIS', 'Checking that the analysis matches your current code');
+  try {
+    const state = await currentFlowCodebaseAnalysis(applicationId);
+    if (!state.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
+    return await runFlowMappingSubmission(applicationId, initialization, workspace.root, state, progress);
+  } catch (error) {
+    progress('FAILED', 'Mapping could not be completed');
+    throw error;
+  }
+}
+
+async function runFlowMappingSubmission(
+  applicationId: string,
+  initialization: Record<string, any>,
+  workspaceRoot: string,
+  state: CodebaseAnalysisState,
+  progress: (status: 'WAITING_FOR_ANALYSIS' | 'RETRIEVING' | 'CONTEXTUALIZING' | 'RESOLVING' | 'FAILED', message: string) => void,
+) {
+  progress('RETRIEVING', 'Searching the analysed codebase for each checkpoint');
+  // Enrichment only: a Flow that cannot be fetched still maps, just with less
+  // context, so this must never be the thing that fails initialization.
+  const detail = await cloud.declaredFlow(applicationId, String(initialization.flowId)).catch(() => null);
+  const retrieval = retrieveFlowCheckpointCandidates(state.analysis!, flowInputFromInitialization(initialization, detail));
+  progress('CONTEXTUALIZING', 'Reading the shortlisted files');
+  const excerpts = extractFlowMappingExcerpts(workspaceRoot, retrieval.mappings as any);
   let consentMode = state.mode === 'cloud' ? 'CLOUD_APPROVED' : 'LOCAL_GRAPH_ONLY';
   if (state.mode === 'local') {
-    const consented = await requestFlowMappingAiConsent(applicationId, String(initialization.manifest?.flowName ?? 'Flow'), retrieval.mappings as any);
+    // Asking is only meaningful when there is something to send. With nothing
+    // extracted, skip the dialog and stay graph-only — the report records that,
+    // so the absence is visible rather than looking like a refusal.
+    const consented = excerpts.size > 0
+      && await requestFlowMappingAiConsent(applicationId, String(initialization.manifest?.flowName ?? 'Flow'), [...excerpts.values()]);
     consentMode = consented ? 'LOCAL_EXCERPTS_APPROVED' : 'LOCAL_GRAPH_ONLY';
   }
+  const shareExcerpts = consentMode.endsWith('APPROVED');
   const mappings = retrieval.mappings.map((mapping) => ({
     ...mapping,
-    candidates: mapping.candidates.map((candidate) => {
-      const excerpt = candidate.evidence.find((item) => item.excerpt)?.excerpt ?? null;
-      return { ...candidate, file: candidate.path, excerpt: consentMode.endsWith('APPROVED') && excerpt ? redactSecrets(excerpt).content : null };
-    }),
+    candidates: mapping.candidates.map((candidate) => ({
+      ...candidate,
+      file: candidate.path,
+      excerpt: shareExcerpts ? (excerpts.get(candidate.id)?.content ?? null) : null,
+    })),
   }));
+  progress('RESOLVING', 'Pinpointing where each checkpoint belongs');
   return cloud.submitFlowMappingCandidates(String(initialization.id), {
     analysis: retrieval.analysis, retrievalVersion: retrieval.retrievalVersion, consentMode, mappings,
   });
@@ -1291,6 +1425,11 @@ function parseInstrumentationContext(input: unknown) {
     flowId: typeof value.flowId === 'string' ? value.flowId : undefined,
     flowVersionId: typeof value.flowVersionId === 'string' ? value.flowVersionId : undefined,
     flowInitializationId: typeof value.flowInitializationId === 'string' ? value.flowInitializationId : undefined,
+    // Present when the user is proposing for several frameworks at once, so a
+    // Flow whose checkpoints span those packages can be split between them.
+    selectedAdapterIds: Array.isArray(value.selectedAdapterIds)
+      ? value.selectedAdapterIds.filter((item): item is string => typeof item === 'string') as Array<'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs'>
+      : undefined,
   };
 }
 
@@ -1666,14 +1805,23 @@ function registerIpc(): void {
     if (typeof value.flowId !== 'string' || typeof value.applicationId !== 'string' || typeof value.environmentId !== 'string' || typeof value.flowVersionId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_REQUEST');
     const workspace = selectedWorkspaces.get(value.applicationId);
     if (!workspace?.cloudId || !workspace.snapshotId) throw new Error('FLOW_WORKSPACE_SCAN_REQUIRED');
-    // Establish freshness before creating a scan tied to this repository snapshot.
-    await currentFlowCodebaseAnalysis(value.applicationId);
+    // Establish freshness before creating a scan tied to this repository snapshot,
+    // and tell the server which analysed tree this initialization describes. The
+    // server records it, keys idempotency on it, and — because it knows an
+    // evidence-grounded bundle is coming — does not publish the filename-matched
+    // fallback as if it were the finished review.
+    const analysisState = await currentFlowCodebaseAnalysis(value.applicationId);
+    const analysis = analysisState.analysis!;
     const created = await cloud.initializeFlow(value.flowId, {
       flowVersionId: value.flowVersionId,
       workspaceId: workspace.cloudId,
       repositorySnapshotId: workspace.snapshotId,
       environmentId: value.environmentId,
       instrumentationPlanId: typeof value.instrumentationPlanId === 'string' ? value.instrumentationPlanId : null,
+      codebaseAnalysis: {
+        id: analysis.id, graphVersion: analysis.graphVersion, contentHash: analysis.contentHash,
+        revision: analysis.revision, branch: analysis.branch, dirty: analysis.dirty,
+      },
     });
     const initialization = (created.initialization ?? created) as Record<string, any>;
     const mapped = await submitCurrentFlowMappings(value.applicationId, initialization);

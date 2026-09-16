@@ -2,8 +2,11 @@ import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { PrismaClient } from '@tellann/db';
 import { resolveFlowCheckpointMappings } from '@tellann/ai';
-import { analyzeFlowInitialization, applyEvidenceGroundedMappings, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
+import { analyzeFlowInitialization, applyEvidenceGroundedMappings, assertEvidenceGroundedContract, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { sdkReadiness } from './sdk-setup-routes';
+import { FlowAnalysisProgressSchema } from '@tellann/desktop-contracts';
+import { flowMappingMode } from './flow-mapping-flag';
+import { recordFlowMappingMetric } from './flow-mapping-telemetry';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
 type FlowRequest = Request & { user?: { id: string; email: string } };
@@ -25,6 +28,20 @@ function keys(value: unknown, candidates: string[]): Set<string> {
     }
   }
   return result;
+}
+
+/**
+ * The identity of an insertion point.
+ *
+ * Both the confirm route and re-analysis have to agree on this exactly: it is
+ * what decides whether a location the user already chose is still the same
+ * location after the code, or the analysis, has moved. The adapter recomputes
+ * the same hash from the file on disk before it writes anything.
+ */
+function flowAnchorHash(file: unknown, symbol: unknown, placementKind: unknown, anchorText: unknown): string {
+  return crypto.createHash('sha256')
+    .update(`${String(file ?? '')}\0${symbol == null ? '' : String(symbol)}\0${String(placementKind ?? '')}\0${String(anchorText ?? '')}`)
+    .digest('hex');
 }
 
 function setDiff(previous: Set<string>, current: Set<string>) {
@@ -126,8 +143,31 @@ export function createFlowLifecycleRouter(input: {
       where: { bindingId_flowVersionId: { bindingId: binding.id, flowVersionId: version.id } },
       include: { scan: true },
     });
-    if (existing?.scan.repositorySnapshotId === repository.id && !['FAILED', 'ROLLED_BACK'].includes(existing.status)) {
-      return res.status(200).json({ binding, scan: existing.scan, initialization: existing, codeReviewReport: existing.codeReviewReport, idempotent: true });
+    // Which analysed working tree this initialization describes. Electron proves
+    // the tree is current before calling, and sends its identity so the server
+    // can record it and refuse to treat a later, different tree as the same job.
+    const analysisIdentity = req.body?.codebaseAnalysis && typeof req.body.codebaseAnalysis === 'object'
+      ? {
+          id: String((req.body.codebaseAnalysis as any).id ?? ''),
+          graphVersion: String((req.body.codebaseAnalysis as any).graphVersion ?? ''),
+          contentHash: String((req.body.codebaseAnalysis as any).contentHash ?? ''),
+          revision: (req.body.codebaseAnalysis as any).revision == null ? null : String((req.body.codebaseAnalysis as any).revision),
+          branch: (req.body.codebaseAnalysis as any).branch == null ? null : String((req.body.codebaseAnalysis as any).branch),
+          dirty: Boolean((req.body.codebaseAnalysis as any).dirty),
+        }
+      : null;
+    if (analysisIdentity && !analysisIdentity.id) return res.status(422).json({ error: 'CURRENT_CODEBASE_ANALYSIS_REQUIRED' });
+    // Idempotency spans the whole input to mapping, not just the snapshot row:
+    // the same repository snapshot analysed again at a different content hash is
+    // a different job and has to produce a new scan.
+    const reusable = existing
+      && existing.scan.repositorySnapshotId === repository.id
+      && !['FAILED', 'ROLLED_BACK'].includes(existing.status)
+      && (!analysisIdentity
+        || ((existing.scan as any).analysisContentHash === analysisIdentity.contentHash
+          && (existing.scan as any).codebaseAnalysisJobId === analysisIdentity.id));
+    if (reusable) {
+      return res.status(200).json({ binding, scan: existing!.scan, initialization: existing, codeReviewReport: existing!.codeReviewReport, idempotent: true });
     }
     let analysis: ReturnType<typeof analyzeFlowInitialization>;
     try {
@@ -153,14 +193,25 @@ export function createFlowLifecycleRouter(input: {
       conformanceFindings: report as any,
       startedAt: new Date(),
       completedAt: new Date(),
-    } });
+      ...(analysisIdentity ? {
+        analysisContentHash: analysisIdentity.contentHash, analysisGraphVersion: analysisIdentity.graphVersion,
+        analysisRevision: analysisIdentity.revision, analysisBranch: analysisIdentity.branch, analysisDirty: analysisIdentity.dirty,
+        mappingStatus: 'WAITING_FOR_ANALYSIS',
+      } : {}),
+    } as any });
     const roadmapRevision = (existing?.roadmapRevision ?? 0) + 1;
     const initialization = await prisma.flowInitialization.upsert({
       where: { bindingId_flowVersionId: { bindingId: binding.id, flowVersionId: version.id } },
       create: { organizationId: workspace.organizationId, applicationId: flow.applicationId, flowId: flow.id, flowVersionId: version.id, bindingId: binding.id, scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : null, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision, report) as any, codeReviewReport: report as any },
       update: { scanId: scan.id, instrumentationPlanId: typeof req.body.instrumentationPlanId === 'string' ? req.body.instrumentationPlanId : undefined, stage: 'SCANNING', manifestVersion: manifest.version, manifest: manifest as any, reportProvenance: { engine: report.engine, repositorySnapshotId: repository.id, graphHash: manifest.graphHash, status: 'ENRICHING' }, roadmapRevision, manualRoadmap: buildManualRoadmap(manifest, roadmapRevision, report) as any, verification: undefined, codeReviewReport: report as any, status: 'PROPOSED', failureReasonSafe: null },
     });
-    scheduleReportEnrichment(initialization.id, report, { repositorySnapshotId: repository.id, graphHash: manifest.graphHash });
+    // A caller that proved its analysis is current is going to submit an
+    // evidence-grounded bundle next. Enriching the filename-matched report here
+    // would present that fallback as a finished review and race the real one, so
+    // the legacy path only runs for callers that have no analysis to offer.
+    if (!analysisIdentity) {
+      scheduleReportEnrichment(initialization.id, report, { repositorySnapshotId: repository.id, graphHash: manifest.graphHash });
+    }
     await prisma.flowProjectBinding.update({ where: { id: binding.id }, data: { currentScanId: scan.id } });
     return res.status(201).json({ binding, scan, initialization, codeReviewReport: report });
   });
@@ -198,14 +249,39 @@ export function createFlowLifecycleRouter(input: {
   }
 
   async function resolveSubmittedMappings(initialization: any, bundleValue: unknown) {
+    const mode = flowMappingMode();
+    if (mode === 'off') throw new Error('FLOW_CODE_MAPPING_V2_DISABLED');
     const bundle = boundedMappingBundle(bundleValue);
+    if (mode === 'shadow') {
+      // Record what retrieval found and what it would have cost, but leave the
+      // published review alone. Nothing downstream may read a shadow scan as if
+      // it were a resolved mapping, so the initialization row is untouched.
+      const coverage = bundle.mappings.reduce((totals: Record<string, number>, mapping: any) => {
+        const status = String(mapping.status ?? 'UNRESOLVED');
+        totals[status] = (totals[status] ?? 0) + 1;
+        return totals;
+      }, {});
+      await prisma.flowScan.update({ where: { id: initialization.scanId }, data: {
+        analysisGraphVersion: String(bundle.analysis.graphVersion ?? ''), analysisContentHash: String(bundle.analysis.contentHash ?? ''),
+        analysisRevision: bundle.analysis.revision ?? null, analysisBranch: bundle.analysis.branch ?? null, analysisDirty: Boolean(bundle.analysis.dirty),
+        retrievalVersion: bundle.retrievalVersion, mappingStatus: 'SHADOW',
+        candidateEvidence: bundle.mappings, mappingProvenance: { shadow: true, coverage },
+      } as any });
+      recordFlowMappingMetric({
+        name: 'flow_mapping.resolution', initializationId: String(initialization.id), flowId: String(initialization.flowId),
+        retrievalVersion: bundle.retrievalVersion, total: bundle.mappings.length,
+        resolved: coverage.RESOLVED ?? 0, ambiguous: coverage.AMBIGUOUS ?? 0,
+        unresolved: coverage.UNRESOLVED ?? 0, unsupported: coverage.UNSUPPORTED ?? 0,
+      });
+      return initialization;
+    }
     const manifest = initialization.manifest as any;
     const allowed = new Map((manifest?.checkpoints ?? []).map((checkpoint: any) => [String(checkpoint.id), checkpoint]));
     if (!allowed.size || bundle.mappings.length !== allowed.size) throw new Error('ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED');
     const report = initialization.codeReviewReport as any;
     const states = new Map((report?.stateFindings ?? []).map((item: any) => [`state:${item.stateId}`, item]));
     const transitions = new Map((report?.transitionFindings ?? []).map((item: any) => [`transition:${item.transitionId}`, item]));
-    const stateNames = new Map((report?.stateFindings ?? []).map((item: any) => [String(item.stateId), String(item.stateName ?? item.stateId)]));
+    const stateNames = new Map<string, string>((report?.stateFindings ?? []).map((item: any) => [String(item.stateId), String(item.stateName ?? item.stateId)] as [string, string]));
     const checkpoints = bundle.mappings.map((item: any) => {
       const checkpoint = allowed.get(String(item.checkpointId)) as any;
       if (!checkpoint) throw new Error('UNKNOWN_FLOW_CHECKPOINT');
@@ -243,18 +319,43 @@ export function createFlowLifecycleRouter(input: {
       analysis: { id: String(bundle.analysis.id), graphVersion: String(bundle.analysis.graphVersion ?? ''), contentHash: String(bundle.analysis.contentHash ?? '') },
       checkpoints,
     }, bundle.consentMode.endsWith('APPROVED') ? {} : { providers: [] });
+    // A confirmation survives re-analysis only when both the checkpoint and the
+    // anchor it was made against are unchanged, and the fresh retrieval still
+    // offers that location. Anything else is a decision the user has to make
+    // again — reusing it would silently instrument a place the evidence no
+    // longer supports.
+    const confirmations = ((initialization.mappingConfirmations as any) ?? {}) as Record<string, any>;
+    const candidatesByCheckpoint = new Map(checkpoints.map((item) => [item.checkpointId, item.candidates]));
+    let preservedConfirmations = 0;
+    let droppedConfirmations = 0;
+    const finalMappings = resolved.mappings.map((mapping: any) => {
+      const stored = confirmations[mapping.checkpointId]?.mapping;
+      if (!stored) return mapping;
+      const unchangedAnchor = flowAnchorHash(stored.file, stored.symbol, stored.placementKind, stored.anchor) === stored.anchorHash;
+      const stillOffered = (candidatesByCheckpoint.get(mapping.checkpointId) ?? [])
+        .some((candidate: any) => candidate.file === stored.file && (candidate.symbol ?? null) === (stored.symbol ?? null));
+      if (!unchangedAnchor || !stillOffered) {
+        droppedConfirmations += 1;
+        return mapping;
+      }
+      preservedConfirmations += 1;
+      return { ...stored, checkpointId: mapping.checkpointId, alternatives: mapping.alternatives, userConfirmed: true, userOverrode: true };
+    });
     const base = { manifest, report } as ReturnType<typeof analyzeFlowInitialization>;
-    const enriched = applyEvidenceGroundedMappings(base, resolved.mappings as any, {
+    const enriched = applyEvidenceGroundedMappings(base, finalMappings as any, {
       ...resolved.provenance, analysisId: bundle.analysis.id, graphVersion: bundle.analysis.graphVersion,
       contentHash: bundle.analysis.contentHash, revision: bundle.analysis.revision ?? null,
       branch: bundle.analysis.branch ?? null, dirty: Boolean(bundle.analysis.dirty),
       retrievalVersion: bundle.retrievalVersion, consentMode: bundle.consentMode,
     });
+    assertEvidenceGroundedContract(enriched);
     const unresolved = Number((enriched.report.summary as any).unresolvedCount ?? 0);
     const roadmapRevision = initialization.roadmapRevision + 1;
+    const keptConfirmations = Object.fromEntries(Object.entries(confirmations)
+      .filter(([checkpointId]) => finalMappings.some((mapping: any) => mapping.checkpointId === checkpointId && mapping.userConfirmed)));
     const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
       stage: 'REVIEW_READY', manifestVersion: '2.0', mappingVersion: '2.0', manifest: enriched.manifest as any,
-      finalMappings: resolved.mappings as any, codeReviewReport: enriched.report as any,
+      finalMappings: finalMappings as any, mappingConfirmations: keptConfirmations as any, codeReviewReport: enriched.report as any,
       reportProvenance: { analysis: (enriched.report as any).analysis, ai: (enriched.report as any).ai },
       roadmapRevision, manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
       failureReasonSafe: unresolved ? `${unresolved} checkpoint mappings need review` : null,
@@ -267,9 +368,29 @@ export function createFlowLifecycleRouter(input: {
       analysisRevision: bundle.analysis.revision ?? null, analysisBranch: bundle.analysis.branch ?? null, analysisDirty: Boolean(bundle.analysis.dirty),
       retrievalVersion: bundle.retrievalVersion, mappingStatus: unresolved ? 'NEEDS_REVIEW' : 'READY',
       mappingProgress: (enriched.report as any).progress,
-      mappingProvenance: { analysis: (enriched.report as any).analysis, ai: (enriched.report as any).ai },
+      mappingProvenance: {
+        analysis: (enriched.report as any).analysis, ai: (enriched.report as any).ai,
+        confirmations: { preserved: preservedConfirmations, dropped: droppedConfirmations },
+      },
       candidateEvidence: bundle.mappings,
     } as any });
+    const summary = enriched.report.summary as any;
+    recordFlowMappingMetric({
+      name: 'flow_mapping.resolution', initializationId: String(initialization.id), flowId: String(initialization.flowId),
+      retrievalVersion: bundle.retrievalVersion, total: Number(summary.resolvedCount ?? 0) + Number(summary.unresolvedCount ?? 0),
+      resolved: Number(summary.resolvedCount ?? 0), ambiguous: Number(summary.ambiguousCount ?? 0),
+      unresolved: Number(summary.unresolvedCount ?? 0), unsupported: Number(summary.unsupportedCount ?? 0),
+    });
+    const ai = (enriched.report as any).ai ?? {};
+    recordFlowMappingMetric({
+      name: 'flow_mapping.provider', initializationId: String(initialization.id),
+      provider: ai.provider ?? null, model: ai.model ?? null, attempted: Boolean(ai.attempted),
+      fallbackUsed: Boolean(ai.fallbackUsed), repaired: Boolean(ai.repaired), consentMode: String(ai.consentMode ?? 'GRAPH_ONLY'),
+    });
+    recordFlowMappingMetric({
+      name: 'flow_mapping.confirmations', initializationId: String(initialization.id),
+      preserved: preservedConfirmations, dropped: droppedConfirmations,
+    });
     return updated;
   }
 
@@ -326,6 +447,40 @@ export function createFlowLifecycleRouter(input: {
     }
   });
 
+  /**
+   * Where mapping has got to, for the window that is waiting on it.
+   *
+   * Analysis can take minutes on a large repository, and a single unchanging
+   * "reviewing your code" banner across that is indistinguishable from a hang.
+   * Electron reports each stage as it enters it; this is the record the UI reads
+   * and the one that survives a window reload.
+   */
+  router.post('/flow-initializations/:initializationId/mapping-progress', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const parsed = FlowAnalysisProgressSchema.safeParse(req.body?.progress);
+    if (!parsed.success) return res.status(422).json({ error: 'INVALID_FLOW_MAPPING_PROGRESS' });
+    await prisma.flowScan.update({ where: { id: initialization.scanId }, data: {
+      mappingProgress: parsed.data as any, mappingStatus: parsed.data.status,
+    } as any });
+    return res.json({ initializationId: initialization.id, progress: parsed.data });
+  });
+
+  router.get('/flow-initializations/:initializationId/progress', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const report = initialization.codeReviewReport as any;
+    return res.json({
+      initializationId: initialization.id,
+      stage: initialization.stage,
+      // The scan carries in-flight progress; the report carries the outcome. The
+      // report wins once it exists, because by then the counts are final.
+      progress: report?.progress ?? (initialization.scan as any).mappingProgress ?? null,
+      mappingStatus: (initialization.scan as any).mappingStatus ?? null,
+      analysis: report?.analysis ?? null,
+    });
+  });
+
   router.post('/flow-initializations/:initializationId/mapping-candidates', async (req: FlowRequest, res: Response) => {
     const initialization = await ownedInitialization(req, res);
     if (!initialization) return;
@@ -356,12 +511,21 @@ export function createFlowLifecycleRouter(input: {
       file: candidate.file ?? candidate.path, symbol: candidate.symbol ?? null,
       startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
       placementKind, anchor: anchorText,
-      anchorHash: crypto.createHash('sha256').update(`${candidate.file ?? candidate.path}\0${candidate.symbol ?? ''}\0${placementKind}\0${anchorText}`).digest('hex'),
+      anchorHash: flowAnchorHash(candidate.file ?? candidate.path, candidate.symbol ?? null, placementKind, anchorText),
       confidence: candidate.confidence ?? candidate.score ?? 0, rationale: String(req.body?.rationale ?? candidate.rationale ?? 'Confirmed by user.'),
       evidenceIds: candidate.evidenceIds ?? [], alternatives: checkpoint.mapping.alternatives,
       userConfirmed: true, userOverrode: true,
     };
     const mappings = manifest.checkpoints.map((item: any) => item.id === checkpoint.id ? mapping : item.mapping);
+    // Store the placement itself, not just which candidate was picked: a later
+    // analysis produces new candidate ids, so an id alone could never be matched
+    // back and every confirmation would be lost on every re-analysis.
+    const confirmation = { candidateId, mapping, confirmedAt: new Date().toISOString(), userId: req.user!.id };
+    recordFlowMappingMetric({
+      name: 'flow_mapping.override', initializationId: String(initialization.id),
+      checkpointId: checkpoint.id, candidateId,
+      previousStatus: String(checkpoint.mapping?.status ?? 'UNKNOWN'),
+    });
     const enriched = applyEvidenceGroundedMappings({ manifest, report } as any, mappings, {
       ...(report.analysis ?? {}), ...(report.ai ?? {}),
       analysisId: report.analysis?.jobId ?? report.analysis?.analysisId,
@@ -369,10 +533,11 @@ export function createFlowLifecycleRouter(input: {
       consentMode: report.ai?.consentMode,
       engine: report.engine === 'HYBRID' ? 'HYBRID_AI' : 'GRAPH_ONLY',
     });
+    assertEvidenceGroundedContract(enriched);
     const roadmapRevision = initialization.roadmapRevision + 1;
     const updated = await prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
       manifest: enriched.manifest as any, mappingVersion: '2.0', finalMappings: mappings as any,
-      mappingConfirmations: { ...((initialization.mappingConfirmations as any) ?? {}), [checkpoint.id]: { candidateId, confirmedAt: new Date().toISOString(), userId: req.user!.id } } as any,
+      mappingConfirmations: { ...((initialization.mappingConfirmations as any) ?? {}), [checkpoint.id]: confirmation } as any,
       codeReviewReport: enriched.report as any, roadmapRevision,
       manualRoadmap: buildManualRoadmap(enriched.manifest as any, roadmapRevision, enriched.report as any) as any,
       failureReasonSafe: (enriched.report.summary as any).unresolvedCount ? `${(enriched.report.summary as any).unresolvedCount} checkpoint mappings need review` : null,
@@ -427,7 +592,7 @@ export function createFlowLifecycleRouter(input: {
       transition: typeof match.transition === 'string' ? match.transition : null,
       checkpointId: typeof match.checkpointId === 'string' ? match.checkpointId : null,
     }));
-    const verification = evaluateCodeScanCoverage(manifest, matches, new Date().toISOString());
+    const verification = evaluateCodeScanCoverage(manifest, matches, new Date().toISOString(), { mode: initialization.mode });
     const completed = verification.status === 'COMPLETED';
     const roadmap = initialization.manualRoadmap as any;
     if (roadmap?.steps) {
@@ -442,6 +607,13 @@ export function createFlowLifecycleRouter(input: {
       } }),
       ...(completed ? [prisma.flowProjectBinding.update({ where: { id: initialization.bindingId }, data: { status: 'ACTIVE', initializedAt: new Date() } })] : []),
     ]);
+    recordFlowMappingMetric({
+      name: 'flow_mapping.validation', initializationId: String(initialization.id),
+      requirement: String((verification as any).requirement ?? 'BOUNDARIES'), status: verification.status,
+      observed: verification.observedCheckpointIds.length, missing: verification.missingCheckpointIds.length,
+      duplicateMarkers: (verification as any).markerProblems?.filter((item: any) => item.code === 'DUPLICATE_MARKER').length ?? 0,
+      unknownMarkers: (verification as any).markerProblems?.filter((item: any) => item.code === 'UNKNOWN_MARKER').length ?? 0,
+    });
     // A scan that found no boundary marker is a normal outcome the user acts on,
     // not a failed request: the caller needs the resolved verification either way,
     // so the outcome travels in the body rather than in the status code.

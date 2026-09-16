@@ -74,25 +74,40 @@ export type ResolvedFlowMapping = {
   userOverridden: boolean;
 };
 
+/**
+ * What retrieval alone can conclude, with no model and no source in hand.
+ *
+ * It deliberately never resolves. Ranking can say which file a checkpoint is
+ * about; it cannot say which line inside that file is the right place to insert
+ * a call, and a resolved mapping is a promise that it can — the contract and the
+ * instrumentation adapter both require an exact anchor and its hash before
+ * anything is written. Claiming RESOLVED here would produce a mapping that is
+ * rejected several steps later, with no way to say why.
+ *
+ * So a shortlist becomes AMBIGUOUS and goes to the user, who picks a candidate
+ * and supplies the anchor with it. That is the same outcome the plan asks for
+ * when consent is declined or every provider fails: keep the evidence, keep the
+ * choice, and never quietly downgrade a guess into an edit.
+ */
 function deterministic(checkpoint: FlowMappingResolutionInput['checkpoints'][number]): ResolvedFlowMapping {
-  const [best, second] = checkpoint.candidates;
-  const unambiguous = Boolean(best && best.score >= 0.8 && (!second || best.score - second.score >= 0.12));
+  const [best] = checkpoint.candidates;
   return {
     checkpointId: checkpoint.checkpointId,
-    status: unambiguous ? 'RESOLVED' : best ? 'AMBIGUOUS' : 'UNRESOLVED',
-    entityId: unambiguous ? best.entityId : null,
-    candidateId: unambiguous ? best.id : null,
-    file: unambiguous ? best.file : null,
-    symbol: unambiguous ? best.symbol : null,
-    startLine: unambiguous ? best.startLine : null,
-    endLine: unambiguous ? best.endLine : null,
-    placementKind: unambiguous && best.placementKinds.length === 1
-      ? PlacementKind.safeParse(best.placementKinds[0]).data ?? null : null,
+    status: best ? 'AMBIGUOUS' : 'UNRESOLVED',
+    entityId: null,
+    candidateId: null,
+    file: null,
+    symbol: null,
+    startLine: null,
+    endLine: null,
+    placementKind: null,
     anchorText: null,
     anchorHash: null,
-    confidence: unambiguous ? best.confidence : 0,
-    rationale: best ? best.rationale : 'No codebase-analysis candidate matched this checkpoint.',
-    evidenceIds: unambiguous ? best.evidenceIds : [],
+    confidence: 0,
+    rationale: best
+      ? 'Ranked from codebase analysis alone — choose the exact place this happens.'
+      : 'No codebase-analysis candidate matched this checkpoint.',
+    evidenceIds: [],
     alternatives: checkpoint.candidates,
     userConfirmed: false,
     userOverridden: false,

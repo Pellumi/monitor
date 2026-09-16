@@ -10,6 +10,7 @@ import {
 } from "@tellann/agent-policy";
 import type { RepositorySnapshotSummary } from "@tellann/desktop-contracts";
 import {
+  assignFlowCheckpoints,
   createApprovalHash,
   detectAdapters,
   getAdapter,
@@ -51,6 +52,12 @@ type EnvironmentContext = {
   flowId?: string;
   flowVersionId?: string;
   flowInitializationId?: string;
+  /**
+   * Every adapter the user is proposing for in this pass. A Flow can span a web
+   * app and an API, and the checkpoints are split across those packages, so each
+   * adapter needs to know which share is its own and which are someone else's.
+   */
+  selectedAdapterIds?: FrameworkId[];
 };
 
 type LocalApproval = {
@@ -358,7 +365,7 @@ export class InstrumentationController {
       | "flowId"
       | "flowVersionId"
       | "flowInitializationId"
-    > & { flowManifest?: any },
+    > & { flowManifest?: any; flowCheckpointIds?: string[] },
   ): LocalProjectContext {
     return {
       workspaceRoot: workspace.root,
@@ -369,6 +376,7 @@ export class InstrumentationController {
       flowVersionId: flow?.flowVersionId,
       flowInitializationId: flow?.flowInitializationId,
       flowManifest: flow?.flowManifest,
+      flowCheckpointIds: flow?.flowCheckpointIds,
     };
   }
 
@@ -397,10 +405,35 @@ export class InstrumentationController {
       input.instrumentationPurpose === "FLOW" && input.flowInitializationId
         ? await this.cloud.flowInitialization(input.flowInitializationId)
         : null;
+    // Split the Flow across the packages being instrumented. With one adapter
+    // this assigns it everything and behaves exactly as before; with several it
+    // is what lets a single Flow reach both a web app and its API.
+    let flowCheckpointIds: string[] | undefined;
+    if (input.instrumentationPurpose === "FLOW" && initialization?.manifest) {
+      const selected = input.selectedAdapterIds?.length
+        ? input.selectedAdapterIds
+        : [input.adapterId];
+      const assignment = assignFlowCheckpoints(
+        workspace.root,
+        initialization.manifest as any,
+        selected,
+      );
+      if (assignment.unassigned.length) {
+        // Name the files: "outside the framework package" is only actionable if
+        // the user can see which checkpoint landed where.
+        throw new Error(
+          `FLOW_CHECKPOINT_OUTSIDE_DETECTED_PACKAGES:${assignment.unassigned
+            .map((item) => item.file || item.checkpointId)
+            .join(",")}`,
+        );
+      }
+      flowCheckpointIds = assignment.byAdapter[input.adapterId] ?? [];
+    }
     const plan = await getAdapter(input.adapterId).propose(
       this.context(workspace, input.environmentType, {
         ...input,
         flowManifest: initialization?.manifest,
+        flowCheckpointIds,
       }),
     );
     const packageManifest =

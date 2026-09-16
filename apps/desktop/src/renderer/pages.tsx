@@ -6459,7 +6459,423 @@ export function IntentDetailPage() {
   );
 }
 
+type FlowMappingCandidateView = {
+  id: string;
+  entityId?: string | null;
+  file?: string | null;
+  path?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  placementKinds?: string[];
+  anchor?: string | null;
+  confidence?: number;
+  score?: number;
+  rationale?: string;
+  evidenceIds?: string[];
+  excerpt?: string | null;
+};
+
+type FlowMappingView = {
+  status?: string;
+  file?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  anchor?: string | null;
+  confidence?: number;
+  rationale?: string;
+  alternatives?: FlowMappingCandidateView[];
+  evidenceIds?: string[];
+  manualInstruction?: string;
+  userConfirmed?: boolean;
+  userOverrode?: boolean;
+};
+
+type FlowCheckpointView = {
+  id: string;
+  kind: string;
+  label?: string;
+  stateRole?: string | null;
+  terminalKind?: string | null;
+  mapping?: FlowMappingView;
+};
+
+const FLOW_MAPPING_STATUS_LABEL: Record<string, string> = {
+  RESOLVED: "Located",
+  AMBIGUOUS: "Needs a choice",
+  UNRESOLVED: "Not found",
+  UNSUPPORTED: "Cannot be placed here",
+};
+
+const FLOW_PROGRESS_LABEL: Record<string, string> = {
+  WAITING_FOR_ANALYSIS: "Waiting for your code to be analysed",
+  RETRIEVING: "Searching the analysed codebase",
+  CONTEXTUALIZING: "Reading the shortlisted files",
+  RESOLVING: "Pinpointing each checkpoint",
+  NEEDS_REVIEW: "Needs your review",
+  READY: "Ready",
+  FAILED: "Analysis failed",
+};
+
+function placementLabel(kind?: string | null): string {
+  if (!kind) return "";
+  return kind.toLowerCase().replaceAll("_", " ");
+}
+
+function confidenceLabel(value?: number | null): string | null {
+  return typeof value === "number" && value > 0
+    ? `${Math.round(value * 100)}% confidence`
+    : null;
+}
+
+function locationLabel(
+  file?: string | null,
+  symbol?: string | null,
+  startLine?: number | null,
+): string | null {
+  if (!file) return null;
+  return `${file}${startLine ? `:${startLine}` : ""}${symbol ? ` · ${symbol}` : ""}`;
+}
+
+/**
+ * One declared checkpoint and the place in the repository it maps to.
+ *
+ * A row is the whole decision: what was declared, where Tellann believes it
+ * lives, why, and — when the evidence supports more than one place — the ranked
+ * alternatives to choose between. Nothing here asks the user to go and find the
+ * location themselves; that was the failure this review replaces.
+ */
+function FlowMappingRow({
+  checkpoint,
+  busy,
+  onConfirm,
+  onReveal,
+}: {
+  checkpoint: FlowCheckpointView;
+  busy: boolean;
+  onConfirm(checkpointId: string, candidate: FlowMappingCandidateView): void;
+  onReveal(file: string, line?: number | null): void;
+}) {
+  const mapping = checkpoint.mapping ?? {};
+  const status = String(mapping.status ?? "UNRESOLVED");
+  const resolved = status === "RESOLVED";
+  const alternatives = mapping.alternatives ?? [];
+  const location = locationLabel(
+    mapping.file,
+    mapping.symbol,
+    mapping.startLine,
+  );
+  const confidence = confidenceLabel(mapping.confidence);
+  const [openCandidates, setOpenCandidates] = useState(false);
+
+  return (
+    <div className="flow-mapping-row" data-status={status}>
+      <div className="flow-mapping-row-head">
+        <div className="flow-mapping-row-title">
+          <strong>{checkpoint.label ?? checkpoint.id}</strong>
+          {checkpoint.stateRole && checkpoint.stateRole !== "NORMAL" ? (
+            <span className="muted">
+              {checkpoint.stateRole === "INITIAL" ? "start" : "finish"}
+            </span>
+          ) : null}
+        </div>
+        <Status>{FLOW_MAPPING_STATUS_LABEL[status] ?? status}</Status>
+      </div>
+      {location ? (
+        <div className="flow-mapping-location">
+          <code>{location}</code>
+          <div className="flow-mapping-location-meta">
+            {mapping.placementKind ? (
+              <span className="muted">
+                at {placementLabel(mapping.placementKind)}
+              </span>
+            ) : null}
+            {confidence ? <span className="muted">{confidence}</span> : null}
+            {mapping.userConfirmed ? (
+              <span className="muted">chosen by you</span>
+            ) : null}
+            <button
+              className="button subtle"
+              onClick={() => onReveal(mapping.file!, mapping.startLine)}
+            >
+              <FileSearch size={14} />
+              Show me where
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {mapping.rationale ? <p>{mapping.rationale}</p> : null}
+      {resolved ? null : (
+        <div className="flow-mapping-resolve">
+          <p className="muted">
+            {status === "AMBIGUOUS"
+              ? `The evidence points at ${alternatives.length} place${alternatives.length === 1 ? "" : "s"}. Pick the one where this happens.`
+              : status === "UNSUPPORTED"
+                ? "Tellann found this behaviour but cannot safely insert a line at that exact point. Choose another location, or add it yourself with manual initialization."
+                : "Tellann could not find where this happens in your analysed code. Choose a location below, or add it yourself with manual initialization."}
+          </p>
+          {alternatives.length ? (
+            <>
+              <button
+                className="button"
+                onClick={() => setOpenCandidates((open) => !open)}
+              >
+                <ChevronDown size={14} />
+                {openCandidates ? "Hide" : "Show"} {alternatives.length}{" "}
+                candidate{alternatives.length === 1 ? "" : "s"}
+              </button>
+              {openCandidates ? (
+                <ul className="flow-candidate-list">
+                  {alternatives.map((candidate) => {
+                    const file = candidate.file ?? candidate.path ?? "";
+                    const candidateConfidence = confidenceLabel(
+                      candidate.confidence ?? candidate.score,
+                    );
+                    const kinds = candidate.placementKind
+                      ? [candidate.placementKind]
+                      : (candidate.placementKinds ?? []);
+                    return (
+                      <li key={candidate.id}>
+                        <div className="flow-candidate-head">
+                          <code>
+                            {locationLabel(
+                              file,
+                              candidate.symbol,
+                              candidate.startLine,
+                            )}
+                          </code>
+                          {candidateConfidence ? (
+                            <span className="muted">
+                              {candidateConfidence}
+                            </span>
+                          ) : null}
+                        </div>
+                        {candidate.rationale ? (
+                          <p className="muted">{candidate.rationale}</p>
+                        ) : null}
+                        {/* The excerpt is what makes this a decision rather
+                            than a guess — show the code before confirming. */}
+                        {candidate.excerpt ? (
+                          <pre className="flow-candidate-excerpt">
+                            {candidate.excerpt.slice(0, 1200)}
+                          </pre>
+                        ) : null}
+                        <div className="flow-candidate-actions">
+                          {kinds.length ? (
+                            <span className="muted">
+                              {placementLabel(kinds[0])}
+                            </span>
+                          ) : null}
+                          {file ? (
+                            <button
+                              className="button subtle"
+                              onClick={() =>
+                                onReveal(file, candidate.startLine)
+                              }
+                            >
+                              <FileSearch size={14} />
+                              Open
+                            </button>
+                          ) : null}
+                          <button
+                            className="button primary"
+                            disabled={busy || !kinds.length}
+                            onClick={() => onConfirm(checkpoint.id, candidate)}
+                          >
+                            <Check size={14} />
+                            Use this location
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The evidence-grounded review of a published Flow against the analysed
+ * codebase.
+ *
+ * Reads the v2 report where there is one and falls back to the v1 summary for
+ * initializations recorded before evidence-grounded mapping existed, so an old
+ * record still opens instead of rendering blank.
+ */
 function FlowReviewPanel({
+  initialization,
+  onReanalyze,
+  onConfirmMapping,
+  onRevealEvidence,
+  busy,
+}: {
+  initialization: FlowInitialization;
+  onReanalyze?: () => void;
+  onConfirmMapping?(
+    checkpointId: string,
+    candidate: FlowMappingCandidateView,
+  ): void;
+  onRevealEvidence?(file: string, line?: number | null): void;
+  busy?: boolean;
+}) {
+  const report = initialization.codeReviewReport as any;
+  if (!report) return <LoadingState />;
+  if (report.version !== "2.0") {
+    return (
+      <LegacyFlowReviewPanel
+        initialization={initialization}
+        onReanalyze={onReanalyze}
+        busy={busy}
+      />
+    );
+  }
+
+  const checkpoints = ((initialization.manifest as any)?.checkpoints ??
+    []) as FlowCheckpointView[];
+  const states = checkpoints.filter((item) => item.kind === "STATE");
+  const transitions = checkpoints.filter((item) => item.kind === "TRANSITION");
+  const progress = report.progress ?? {};
+  const analysis = report.analysis ?? {};
+  const ai = report.ai ?? {};
+  const remaining = Number(progress.unresolvedCount ?? 0);
+  const staged = !["READY", "NEEDS_REVIEW"].includes(
+    String(progress.status ?? ""),
+  );
+
+  const groups: Array<[string, FlowCheckpointView[]]> = [
+    ["States", states],
+    ["Transitions", transitions],
+  ];
+
+  return (
+    <section className="content-card flow-review-panel">
+      <div className="card-heading">
+        <div>
+          <small>Code review</small>
+          <h2>Where this Flow lives in your code</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <Status>
+            {ai.attempted && ai.provider
+              ? `${String(ai.provider).toLowerCase()} + analysis`
+              : "analysis only"}
+          </Status>
+          {onReanalyze ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={onReanalyze}
+              title="Analyse the project again and rebuild these locations"
+            >
+              <RefreshCw size={15} />
+              Re-run analysis
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Freshness first: a location is only as trustworthy as the analysis it
+          came from, so say which commit it describes before showing any of it. */}
+      <dl className="detail-list flow-analysis-identity">
+        <div>
+          <dt>Analysed</dt>
+          <dd>
+            {analysis.branch ?? "this folder"}
+            {analysis.revision
+              ? ` · ${String(analysis.revision).slice(0, 8)}`
+              : ""}
+            {analysis.dirty ? " · uncommitted changes" : ""}
+          </dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>
+            {analysis.mode === "CLOUD_APPROVED"
+              ? "Uploaded for analysis"
+              : "Stayed on this device"}
+          </dd>
+        </div>
+        <div>
+          <dt>Checkpoints located</dt>
+          <dd>
+            {Number(progress.resolvedCount ?? 0)}/
+            {Number(progress.totalCheckpoints ?? checkpoints.length)}
+          </dd>
+        </div>
+      </dl>
+
+      {staged ? (
+        <div className="context-banner mt-4!">
+          <Activity size={15} />
+          {FLOW_PROGRESS_LABEL[String(progress.status)] ??
+            "Working through your code…"}
+        </div>
+      ) : null}
+
+      <p className="flow-review-findings-note">
+        {remaining
+          ? `${remaining} of ${Number(progress.totalCheckpoints ?? checkpoints.length)} checkpoints still need a location. Choose one for each, or use manual initialization and place them yourself.`
+          : "Every declared state and transition has a location in your code."}
+      </p>
+
+      {ai.consentMode === "GRAPH_ONLY" && ai.attempted === false ? (
+        <p className="muted">
+          These locations come from the codebase analysis alone — no source was
+          sent to an AI provider. They are still evidence-backed; the ranking is
+          just less specific about exactly which line to use.
+        </p>
+      ) : null}
+
+      {groups.map(([title, items]) =>
+        items.length ? (
+          <div className="flow-mapping-group" key={title}>
+            <h3>{title}</h3>
+            {items.map((checkpoint) => (
+              <FlowMappingRow
+                key={checkpoint.id}
+                checkpoint={checkpoint}
+                busy={Boolean(busy)}
+                onConfirm={(checkpointId, candidate) =>
+                  onConfirmMapping?.(checkpointId, candidate)
+                }
+                onReveal={(file, line) => onRevealEvidence?.(file, line)}
+              />
+            ))}
+          </div>
+        ) : null,
+      )}
+
+      {report.edgeCases?.length ? (
+        <AccordionItem value="flow-review-edge-cases">
+          <AccordionTrigger>
+            Problems with the declared Flow itself ({report.edgeCases.length})
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="stack">
+              {report.edgeCases.map((item: any, index: number) => (
+                <div className="muted-callout" key={`${item.code}-${index}`}>
+                  <strong>{formatEnum(String(item.code))}</strong>
+                  {item.explanation ? <p>{String(item.explanation)}</p> : null}
+                </div>
+              ))}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      ) : null}
+    </section>
+  );
+}
+
+/** The pre-evidence review, kept so initializations recorded before v2 still open. */
+function LegacyFlowReviewPanel({
   initialization,
   onReanalyze,
   busy,
@@ -6468,18 +6884,7 @@ function FlowReviewPanel({
   onReanalyze?: () => void;
   busy?: boolean;
 }) {
-  const report = initialization.codeReviewReport;
-  if (!report) return <LoadingState />;
-  const groups = [
-    ["Missing states", report.missingStates],
-    ["Incomplete transitions", report.incompleteTransitions],
-    ["Edge cases", report.edgeCases],
-    ["Terminal outcomes", report.uncoveredTerminalOutcomes],
-  ] as const;
-  const blockingFindings = groups.reduce(
-    (total, [, findings]) => total + findings.length,
-    0,
-  );
+  const report = initialization.codeReviewReport as any;
   return (
     <section className="content-card flow-review-panel">
       <div className="card-heading">
@@ -6488,14 +6893,9 @@ function FlowReviewPanel({
           <h2>Declared intent against the repository</h2>
         </div>
         <div className="flex items-center gap-2">
-          <Status>{report.engine.replace("_", " ")}</Status>
+          <Status>recorded before evidence mapping</Status>
           {onReanalyze ? (
-            <button
-              className="button"
-              disabled={busy}
-              onClick={onReanalyze}
-              title="Regenerate this review — useful if it was produced by an older version of Tellann"
-            >
+            <button className="button" disabled={busy} onClick={onReanalyze}>
               <RefreshCw size={15} />
               Re-run analysis
             </button>
@@ -6511,90 +6911,11 @@ function FlowReviewPanel({
           label="Transitions mapped"
           value={`${report.summary.mappedTransitions}/${report.summary.totalTransitions}`}
         />
-        <Metric
-          label="Terminals"
-          value={String(initialization.manifest?.terminalStateIds.length ?? 0)}
-        />
       </div>
-      {/* Four counts read as one grouped fact, not four cards; the count itself
-          carries the tone, so a zero stops looking like something to act on. */}
-      <dl className="detail-list flow-review-findings">
-        {groups.map(([title, findings]) => (
-          <div key={title}>
-            <dt>{title}</dt>
-            <dd data-findings={findings.length ? "present" : "none"}>
-              {findings.length}
-            </dd>
-          </div>
-        ))}
-      </dl>
       <p className="flow-review-findings-note">
-        {blockingFindings
-          ? "Review the evidence below before choosing an initialization path."
-          : "No blocking findings. Choose how this Flow's start and finish should be marked."}
+        This review predates evidence-grounded mapping. Re-run the analysis to
+        get exact file locations for every checkpoint.
       </p>
-      <AccordionItem value="flow-review-evidence">
-        <AccordionTrigger>Review evidence and recommendations</AccordionTrigger>
-        <AccordionContent>
-          <div className="stack">
-            {report.recommendations.length ? (
-              report.recommendations.map((item: any, index: number) => {
-                const confidencePct =
-                  typeof item.mapping?.confidence === "number"
-                    ? Math.round(item.mapping.confidence * 100)
-                    : null;
-                const hasFileMapping = Boolean(item.mapping?.file);
-                return (
-                  <div
-                    className="muted-callout"
-                    key={`${item.checkpointId ?? "recommendation"}-${index}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>
-                        {String(item.label ?? item.action ?? "Review mapping")}
-                      </strong>
-                      {item.priority ? (
-                        <Status>{String(item.priority)}</Status>
-                      ) : null}
-                    </div>
-                    <p>
-                      {String(
-                        item.detail ??
-                          item.action ??
-                          "Review this declared checkpoint against the repository.",
-                      )}
-                    </p>
-                    {hasFileMapping ? (
-                      <code>
-                        {String(item.mapping.file)}
-                        {item.mapping.symbol ? ` · ${item.mapping.symbol}` : ""}
-                        {confidencePct !== null
-                          ? ` · ${confidencePct}% confidence`
-                          : ""}
-                      </code>
-                    ) : (
-                      <p className="muted">
-                        {String(
-                          item.mapping?.rationale ??
-                            "No confident file mapping was found.",
-                        )}{" "}
-                        Use manual initialization to add this checkpoint at the
-                        correct location yourself, or add more repository
-                        evidence (routes, endpoints, or components) and re-run
-                        analysis.
-                      </p>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <p className="muted">
-                No remediation is required by the static review.
-              </p>
-            )}
-          </div>
-        </AccordionContent>
-      </AccordionItem>
     </section>
   );
 }
@@ -6638,6 +6959,7 @@ function FlowRoadmap({
   onToggle,
   onVerify,
   onRebuild,
+  onRevealEvidence,
 }: {
   roadmap: ManualRoadmap;
   manifest?: {
@@ -6650,6 +6972,8 @@ function FlowRoadmap({
   onToggle(stepId: string, completed: boolean): void;
   onVerify(): void;
   onRebuild?: () => void;
+  /** Opens a step's location in the editor; absent when no folder is attached. */
+  onRevealEvidence?: (file: string, line?: number | null) => void;
 }) {
   const stepById = useMemo(
     () => new Map(roadmap.steps.map((step) => [step.id, step] as const)),
@@ -6819,10 +7143,42 @@ function FlowRoadmap({
         <div className="flow-graph-panel-row">
           <small>Where to add it</small>
           {step.file ? (
-            <code>
-              {step.file}
-              {step.symbol ? ` · ${step.symbol}` : ""}
-            </code>
+            <>
+              <code>
+                {step.file}
+                {step.startLine ? `:${step.startLine}` : ""}
+                {step.symbol ? ` · ${step.symbol}` : ""}
+              </code>
+              {/* Manual placement gets the same evidence the automated path
+                  would have acted on: where, at what kind of point, why, and
+                  how sure — not just a filename. */}
+              <div className="flow-mapping-location-meta">
+                {step.placementKind ? (
+                  <span className="muted">
+                    at {placementLabel(step.placementKind)}
+                  </span>
+                ) : null}
+                {confidenceLabel(step.confidence) ? (
+                  <span className="muted">
+                    {confidenceLabel(step.confidence)}
+                  </span>
+                ) : null}
+                {onRevealEvidence ? (
+                  <button
+                    className="button subtle"
+                    onClick={() =>
+                      onRevealEvidence(step.file!, step.startLine)
+                    }
+                  >
+                    <FileSearch size={14} />
+                    Show me where
+                  </button>
+                ) : null}
+              </div>
+              {step.rationale ? (
+                <p className="muted">{step.rationale}</p>
+              ) : null}
+            </>
           ) : (
             <span className="muted">
               Tellann could not pinpoint this. Add the line wherever this
@@ -6830,6 +7186,32 @@ function FlowRoadmap({
             </span>
           )}
         </div>
+        {step.alternatives?.length ? (
+          <div className="flow-graph-panel-row">
+            <small>Other places it could go</small>
+            <ul className="flow-candidate-list">
+              {step.alternatives.slice(0, 4).map((candidate) => (
+                <li key={candidate.id}>
+                  <div className="flow-candidate-head">
+                    <code>
+                      {candidate.file}
+                      {candidate.startLine ? `:${candidate.startLine}` : ""}
+                      {candidate.symbol ? ` · ${candidate.symbol}` : ""}
+                    </code>
+                    {confidenceLabel(candidate.confidence) ? (
+                      <span className="muted">
+                        {confidenceLabel(candidate.confidence)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {candidate.rationale ? (
+                    <p className="muted">{candidate.rationale}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {step.snippet ? (
           <div className="flow-graph-panel-row">
             <CopyableCodeBlock
@@ -7548,6 +7930,8 @@ export function InstrumentationPage() {
     updateFlowRoadmapStep,
     verifyFlowCheckpointsInCode,
     getFlowVerification,
+    confirmFlowMapping,
+    openCodebaseEvidence,
   } = useProject();
   const navigate = useNavigate();
   const branchConfirmation = useOffQaBranchConfirmation(projectId);
@@ -7629,6 +8013,49 @@ export function InstrumentationPage() {
     );
     return () => window.clearInterval(timer);
   }, [flowInitialization?.stage, refreshFlowInitialization]);
+
+  // Choosing a location for an ambiguous checkpoint. The server recomputes the
+  // anchor hash from the candidate the user picked, so the reply already
+  // carries the rebuilt manifest, report and roadmap.
+  const confirmMapping = useCallback(
+    async (checkpointId: string, candidate: FlowMappingCandidateView) => {
+      if (!initializationId) return;
+      setFlowLoadError(null);
+      try {
+        const updated = await confirmFlowMapping(
+          initializationId,
+          checkpointId,
+          candidate.id,
+          candidate.placementKind ?? candidate.placementKinds?.[0],
+          candidate.anchor ?? candidate.symbol ?? undefined,
+        );
+        setFlowInitialization(updated as FlowInitialization);
+      } catch (cause) {
+        setFlowLoadError(normalizeDesktopError(cause));
+      }
+    },
+    [confirmFlowMapping, initializationId],
+  );
+
+  const revealEvidence = useCallback(
+    (file: string, line?: number | null) => {
+      if (!projectId) return;
+      void openCodebaseEvidence({
+        applicationId: projectId,
+        path: file,
+        ...(line ? { line } : {}),
+      }).then((result) => {
+        if (!result?.opened) {
+          setFlowLoadError(
+            result?.reason === "FILE_NOT_FOUND"
+              ? `${file} is no longer in the attached project. Re-run the analysis.`
+              : "That file could not be opened from the attached project.",
+          );
+        }
+      });
+    },
+    [openCodebaseEvidence, projectId],
+  );
 
   // Once the SDK is connected the next step is a specific Flow, so the connected
   // card needs to know which published Flow is still waiting to be initialized.
@@ -7841,6 +8268,9 @@ export function InstrumentationPage() {
       environmentType: environment.type,
       adapterId,
       instrumentationPurpose,
+      // A Flow's checkpoints are split across whichever packages are being
+      // instrumented together, so each adapter has to know the whole set.
+      selectedAdapterIds: selectedAdapters,
       ...flowContext,
     });
   };
@@ -7979,6 +8409,14 @@ export function InstrumentationPage() {
   const flowAutomated = Boolean(
     flowId && flowInitialization?.mode === "AUTOMATED",
   );
+  // Automated initialization is atomic across every declared checkpoint, so a
+  // single unplaced one blocks it. v1 reports carry no per-checkpoint status;
+  // treat those as ready so an old initialization is not stranded.
+  const unresolvedCheckpoints = (() => {
+    const report = flowInitialization?.codeReviewReport as any;
+    if (!report || report.version !== "2.0") return 0;
+    return Number(report.summary?.unresolvedCount ?? 0);
+  })();
   const multipleEnvironments = application.environments.length > 1;
   const toggleManualSetup = () => setManualSetupOpen((current) => !current);
   const manualSetupLabel = manualSetupOpen
@@ -8132,6 +8570,8 @@ export function InstrumentationPage() {
                     )
                 : undefined
             }
+            onConfirmMapping={confirmMapping}
+            onRevealEvidence={revealEvidence}
           />
           {!flowInitialization.mode &&
           flowInitialization.stage === "REVIEW_READY" ? (
@@ -8176,20 +8616,40 @@ export function InstrumentationPage() {
                   </p>
                   <button
                     className={`button${instrumentationEntitled ? " primary" : ""}`}
-                    disabled={busy || !instrumentationEntitled}
+                    disabled={
+                      busy || !instrumentationEntitled || unresolvedCheckpoints > 0
+                    }
                     onClick={() => void chooseInitializationMode("AUTOMATED")}
                   >
                     <Sparkles size={15} />
                     Prepare the change
                   </button>
+                  {/* Automated initialization writes every declared checkpoint
+                      at once, so it cannot start while any of them is still
+                      without a confirmed location. Say how many, not just no. */}
+                  {unresolvedCheckpoints > 0 ? (
+                    <p className="muted mt-2">
+                      {unresolvedCheckpoints} checkpoint
+                      {unresolvedCheckpoints === 1 ? "" : "s"} still need
+                      {unresolvedCheckpoints === 1 ? "s" : ""} a location above.
+                    </p>
+                  ) : null}
                 </article>
               </div>
             </section>
           ) : null}
           {flowInitialization.stage === "SCANNING" ? (
-            <div className="context-banner">
+            <div className="context-banner mt-4!">
               <Activity size={15} />
-              Tellann is reviewing your code for this Flow…
+              {/* Naming the stage is the difference between waiting and
+                  wondering whether it has hung — analysis of a large project
+                  runs for minutes. */}
+              {FLOW_PROGRESS_LABEL[
+                String(
+                  (flowInitialization as any).scan?.mappingProgress?.status ??
+                    "",
+                )
+              ] ?? "Tellann is reviewing your code for this Flow…"}
             </div>
           ) : null}
           {flowAutomated &&
@@ -8255,6 +8715,7 @@ export function InstrumentationPage() {
                       )
                   : undefined
               }
+              onRevealEvidence={workspace ? revealEvidence : undefined}
             />
           ) : null}
           {flowInitialization.stage === "COMPLETED" ? (

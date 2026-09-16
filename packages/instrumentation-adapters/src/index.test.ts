@@ -3,13 +3,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { calculateFlowAnchorHash, createApprovalHash, detectAdapters, getAdapter, type LocalProjectContext } from './index';
+import { assignFlowCheckpoints, calculateFlowAnchorHash, createApprovalHash, detectAdapters, getAdapter, type LocalProjectContext } from './index';
 
-function fixture(input: { dependencies: Record<string, string>; entry: string; content: string }): LocalProjectContext {
+function fixture(input: { dependencies: Record<string, string>; entry: string; content: string; extraFiles?: Record<string, string> }): LocalProjectContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-adapter-'));
   fs.mkdirSync(path.join(root, path.dirname(input.entry)), { recursive: true });
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { build: 'tsc --noEmit' }, dependencies: input.dependencies }, null, 2));
   fs.writeFileSync(path.join(root, input.entry), input.content);
+  for (const [relativePath, content] of Object.entries(input.extraFiles ?? {})) {
+    fs.mkdirSync(path.join(root, path.dirname(relativePath)), { recursive: true });
+    fs.writeFileSync(path.join(root, relativePath), content);
+  }
   return {
     workspaceRoot: root,
     environmentType: 'DEVELOPMENT',
@@ -352,7 +356,120 @@ app.listen(3000);
   const adapter = getAdapter('express');
   await assert.rejects(adapter.propose(makeContext({ ...baseMapping, status: 'AMBIGUOUS' })), /FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:state:checkout/);
   await assert.rejects(adapter.propose(makeContext({ ...baseMapping, anchorHash: 'f'.repeat(64) })), /STALE_FLOW_CHECKPOINT_ANCHOR:state:checkout/);
-  await assert.rejects(adapter.propose(makeContext({ ...baseMapping, placementKind: 'COMPONENT_MOUNT' })), /UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:state:checkout/);
+  await assert.rejects(adapter.propose(makeContext({ ...baseMapping, placementKind: 'COMPONENT_MOUNT' })), /SAFE_COMPONENT_BOUNDARY_NOT_FOUND|STALE_FLOW_CHECKPOINT_SYMBOL/);
+});
+
+/**
+ * A file-scoped route has no exported symbol to name, so a component-mount
+ * mapping has to be able to stand on the file alone. This is the plan's lead
+ * case — a declared `LOGIN PAGE` state landing on a real React page.
+ */
+function componentMountManifest(input: { file: string; symbol: string | null; anchorText: string; startLine: number; endLine: number }) {
+  return {
+    version: '2.0', graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64),
+    repositorySnapshotId: '00000000-0000-4000-8000-000000000021', initialStateId: 'login', terminalStateIds: ['login'],
+    paths: [['login']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+    checkpoints: [{
+      id: 'state:login', kind: 'STATE', stateId: 'login', transitionId: null, stateRole: 'INITIAL', terminalKind: null,
+      eventType: 'FLOW_INITIAL_STATE', expectedState: 'login', fromCheckpointId: null, toCheckpointId: null, required: true,
+      mapping: {
+        status: 'RESOLVED', file: input.file, symbol: input.symbol, startLine: input.startLine, endLine: input.endLine,
+        placementKind: 'COMPONENT_MOUNT', anchor: input.anchorText,
+        anchorHash: calculateFlowAnchorHash(input.file, input.symbol, 'COMPONENT_MOUNT', input.anchorText),
+        confidence: 0.92, rationale: 'Login route component', evidenceIds: ['evidence-1'], alternatives: [],
+        userConfirmed: false, userOverrode: false,
+      },
+    }],
+  } as never;
+}
+
+test('Flow v2 mounts a React checkpoint on a default-exported component with no mapped symbol', async () => {
+  const page = `export default function LoginPage() {
+  return <form />;
+}
+`;
+  const context = {
+    ...fixture({
+      dependencies: { react: '^19.0.0', vite: '^7.0.0' }, entry: 'src/main.tsx',
+      content: `import React from 'react';
+createRoot(document.body).render(<div />);
+`,
+      extraFiles: { 'src/LoginPage.tsx': page },
+    }),
+    instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: '00000000-0000-4000-8000-000000000020', flowInitializationId: '00000000-0000-4000-8000-000000000023',
+    // The mapping carries no symbol at all, exactly as a file-scoped route arrives.
+    flowManifest: componentMountManifest({ file: 'src/LoginPage.tsx', symbol: null, anchorText: 'export default function LoginPage()', startLine: 1, endLine: 3 }),
+  };
+  const adapter = getAdapter('react-vite');
+  const plan = await adapter.propose(context);
+  const checkpoint = plan.operations.find((operation) => operation.id === 'state:login');
+  assert.equal(checkpoint?.relativePath, 'src/LoginPage.tsx');
+  assert.equal(checkpoint?.placementKind, 'COMPONENT_MOUNT');
+
+  const task = {
+    plan, approvedFileScopes: plan.approvedFileScopes, approvedCommandIds: [],
+    approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []),
+    checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-checkpoint-')),
+  };
+  await adapter.apply(context, task);
+  const written = fs.readFileSync(path.join(context.workspaceRoot, 'src/LoginPage.tsx'), 'utf8');
+  assert.match(written, /useEffect\(\(\) => \{/, 'mounts through an effect');
+  assert.match(written, /\}, \[\]\);/, 'runs once on mount');
+  assert.match(written, /tellann:checkpoint:state:login/);
+  assert.match(written, /from "react"|from 'react'/);
+
+  assert.equal(written.match(/tellann:checkpoint:state:login/g)?.length, 1, 'one marker per checkpoint');
+  assert.equal(written.match(/useEffect\(/g)?.length, 1, 'one effect per checkpoint');
+
+  // The insert moved the component, so the mapping's source range no longer
+  // holds its anchor. Proposing again has to fail closed and send the user back
+  // to analysis rather than instrument a line that has since shifted.
+  await assert.rejects(adapter.propose(context), /STALE_FLOW_CHECKPOINT_SOURCE_RANGE:state:login/);
+});
+
+test('Flow v2 refuses a component mount in a Next.js App Router server component', async () => {
+  const serverPage = `export default function Page() {
+  return <main />;
+}
+`;
+  const base = {
+    instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: '00000000-0000-4000-8000-000000000020', flowInitializationId: '00000000-0000-4000-8000-000000000023',
+  };
+  const serverContext = {
+    ...fixture({
+      dependencies: { next: '^15.0.0' }, entry: 'app/layout.tsx',
+      content: `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+`,
+      extraFiles: { 'app/login/page.tsx': serverPage },
+    }),
+    ...base,
+    flowManifest: componentMountManifest({ file: 'app/login/page.tsx', symbol: null, anchorText: 'export default function Page()', startLine: 1, endLine: 3 }),
+  };
+  await assert.rejects(getAdapter('nextjs').propose(serverContext), /UNSUPPORTED_SERVER_COMPONENT_MOUNT:state:login/);
+
+  const clientPage = `'use client';
+export default function Page() {
+  return <main />;
+}
+`;
+  const clientContext = {
+    ...fixture({
+      dependencies: { next: '^15.0.0' }, entry: 'app/layout.tsx',
+      content: `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+`,
+      extraFiles: { 'app/login/page.tsx': clientPage },
+    }),
+    ...base,
+    flowManifest: componentMountManifest({ file: 'app/login/page.tsx', symbol: null, anchorText: 'export default function Page()', startLine: 2, endLine: 4 }),
+  };
+  const plan = await getAdapter('nextjs').propose(clientContext);
+  assert.equal(plan.operations.find((operation) => operation.id === 'state:login')?.placementKind, 'COMPONENT_MOUNT');
 });
 
 test('Flow v2 supports method, arrow-function, and named route-handler entry placements', async () => {
@@ -443,4 +560,72 @@ test('an already installed SDK does not request registry access or redundant ins
 
   assert.equal(plan.validationCommands.some((command) => command.id === 'install-sdk'), false);
   assert.deepEqual(plan.networkRequirements, []);
+});
+
+test('a Flow that spans packages is split across adapters instead of refused', () => {
+  // A login page in the web app and its handler in the API is one Flow and two
+  // packages. No single framework adapter can instrument both, so the manifest
+  // is divided by which detected package holds each file; together the approved
+  // plans still cover every checkpoint.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-monorepo-'));
+  fs.mkdirSync(path.join(root, 'apps/web/app/login'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'services/api/src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root', private: true }));
+  fs.writeFileSync(path.join(root, 'apps/web/package.json'), JSON.stringify({ name: 'web', dependencies: { next: '^15.0.0' } }));
+  fs.writeFileSync(path.join(root, 'services/api/package.json'), JSON.stringify({ name: 'api', dependencies: { express: '^4.21.0' } }));
+  fs.writeFileSync(path.join(root, 'apps/web/app/login/page.tsx'), "'use client';\nexport default function Page() { return <main />; }\n");
+  fs.writeFileSync(path.join(root, 'services/api/src/login.ts'), 'export async function handleLogin() { return true; }\n');
+
+  const manifest = {
+    checkpoints: [
+      { id: 'state:login', mapping: { file: 'apps/web/app/login/page.tsx' } },
+      { id: 'transition:submit', mapping: { file: 'services/api/src/login.ts' } },
+    ],
+  } as never;
+
+  const split = assignFlowCheckpoints(root, manifest, ['nextjs', 'express']);
+  assert.deepEqual(split.byAdapter.nextjs, ['state:login']);
+  assert.deepEqual(split.byAdapter.express, ['transition:submit']);
+  assert.deepEqual(split.unassigned, []);
+
+  // With only the web adapter selected, the API checkpoint is reported by file
+  // rather than swallowed, so the user can be told what is still uncovered.
+  const partial = assignFlowCheckpoints(root, manifest, ['nextjs']);
+  assert.deepEqual(partial.byAdapter.nextjs, ['state:login']);
+  assert.deepEqual(partial.unassigned, [{ checkpointId: 'transition:submit', file: 'services/api/src/login.ts' }]);
+});
+
+test('an adapter given its share proposes only that share', async () => {
+  const content = `import express from 'express';
+const app = express();
+async function handleLogin() { return true; }
+async function handleLogout() { return true; }
+app.listen(3000);
+`;
+  const anchorFor = (symbol: string) => `async function ${symbol}()`;
+  const mappingFor = (symbol: string, line: number) => ({
+    status: 'RESOLVED', file: 'src/index.ts', symbol, startLine: line, endLine: line,
+    placementKind: 'FUNCTION_ENTRY', anchor: anchorFor(symbol),
+    anchorHash: calculateFlowAnchorHash('src/index.ts', symbol, 'FUNCTION_ENTRY', anchorFor(symbol)),
+    confidence: 0.95, rationale: 'Grounded', evidenceIds: ['e1'], alternatives: [],
+    userConfirmed: true, userOverrode: false,
+  });
+  const context = {
+    ...fixture({ dependencies: { express: '^4.21.0' }, entry: 'src/index.ts', content }),
+    instrumentationPurpose: 'FLOW' as const, flowId: '00000000-0000-4000-8000-000000000022',
+    flowVersionId: '00000000-0000-4000-8000-000000000020', flowInitializationId: '00000000-0000-4000-8000-000000000023',
+    flowManifest: {
+      version: '2.0', graphVersionId: '00000000-0000-4000-8000-000000000020', graphHash: 'b'.repeat(64),
+      repositorySnapshotId: '00000000-0000-4000-8000-000000000021', initialStateId: 'in', terminalStateIds: ['out'],
+      paths: [['in', 'out']], unreachableStateIds: [], generatedAt: new Date().toISOString(),
+      checkpoints: [
+        { id: 'state:in', kind: 'STATE', stateId: 'in', transitionId: null, stateRole: 'INITIAL', terminalKind: null, eventType: 'FLOW_INITIAL_STATE', expectedState: 'in', fromCheckpointId: null, toCheckpointId: null, required: true, mapping: mappingFor('handleLogin', 3) },
+        { id: 'state:out', kind: 'STATE', stateId: 'out', transitionId: null, stateRole: 'TERMINAL', terminalKind: 'SUCCESS', eventType: 'FLOW_TERMINAL_STATE', expectedState: 'out', fromCheckpointId: null, toCheckpointId: null, required: true, mapping: mappingFor('handleLogout', 4) },
+      ],
+    } as never,
+    flowCheckpointIds: ['state:in'],
+  };
+  const plan = await getAdapter('express').propose(context);
+  const checkpointOps = plan.operations.filter((operation) => operation.eventMappings.some((item) => item.checkpointId));
+  assert.deepEqual(checkpointOps.map((operation) => operation.id), ['state:in']);
 });

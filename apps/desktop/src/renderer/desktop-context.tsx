@@ -143,6 +143,8 @@ type DesktopContextValue = {
   getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
   analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
   confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
+  /** Open an evidence location in the user's editor. The path is repository-relative. */
+  openCodebaseEvidence(input: { applicationId: string; path: string; line?: number }): Promise<{ opened: boolean; reason?: string }>;
   setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
   updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
   startFlowVerification(initializationId: string): Promise<Record<string, any>>;
@@ -208,6 +210,8 @@ type InstrumentationEnvironmentInput = {
   flowId?: string;
   flowVersionId?: string;
   flowInitializationId?: string;
+  /** Every adapter in this proposal, so a Flow spanning packages can be split. */
+  selectedAdapterIds?: InstrumentationDetection['adapterId'][];
 };
 
 const DesktopContext = createContext<DesktopContextValue | null>(null);
@@ -644,6 +648,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
     analyzeFlowInitialization: (initializationId) => perform(() => bridge().intent.analyzeFlowInitialization(initializationId)),
     confirmFlowMapping: (initializationId, checkpointId, candidateId, placementKind, anchorText) => perform(() => bridge().intent.confirmFlowMapping(initializationId, checkpointId, candidateId, placementKind, anchorText)),
+    openCodebaseEvidence: (input) => bridge().projects.openCodebaseEvidence(input),
     setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
     startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),

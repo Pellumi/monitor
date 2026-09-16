@@ -740,6 +740,173 @@ button:disabled {
   margin: 10px 0 0;
 }
 
+/* ── Evidence-grounded Flow mapping review ─────────────────────────────── */
+
+/* A quieter button for the two navigational actions inside a mapping row, so
+   the one decision in the row ("use this location") stays the loud one. */
+.button.subtle {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 8px;
+}
+.button.subtle:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+
+.flow-analysis-identity {
+  margin-top: 12px;
+}
+.flow-analysis-identity > div {
+  padding: 8px 12px;
+}
+.flow-analysis-identity dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.flow-mapping-group {
+  margin-top: 18px;
+}
+.flow-mapping-group > h3 {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font: 600 11px var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The left edge carries the status, so a scan down the list reads as a column
+   of outcomes rather than as a wall of identically weighted cards. */
+.flow-mapping-row {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--surface-4);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+.flow-mapping-row[data-status="RESOLVED"] {
+  border-left-color: var(--success);
+}
+.flow-mapping-row[data-status="AMBIGUOUS"] {
+  border-left-color: var(--caution);
+}
+.flow-mapping-row[data-status="UNRESOLVED"],
+.flow-mapping-row[data-status="UNSUPPORTED"] {
+  border-left-color: var(--danger);
+}
+.flow-mapping-row p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.flow-mapping-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.flow-mapping-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.flow-mapping-row-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-mapping-row-title .muted {
+  font-size: 11px;
+}
+
+.flow-mapping-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.flow-mapping-location code {
+  overflow-wrap: anywhere;
+  font: 11px var(--font-mono);
+}
+.flow-mapping-location-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.flow-mapping-resolve {
+  margin-top: 10px;
+}
+.flow-mapping-resolve > .button {
+  margin-top: 8px;
+}
+
+.flow-candidate-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.flow-candidate-list > li {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-0);
+}
+.flow-candidate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flow-candidate-head code {
+  overflow-wrap: anywhere;
+  font: 11px var(--font-mono);
+}
+/* The excerpt is the evidence the choice rests on; it is bounded so a long
+   candidate cannot push the decision off screen. */
+.flow-candidate-excerpt {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  color: var(--text);
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+}
+.flow-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.flow-candidate-actions > .muted {
+  margin-right: auto;
+}
+
+@media (max-width: 640px) {
+  .flow-mapping-row-head,
+  .flow-candidate-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 /* ── Tables and list views ─────────────────────────────────────────────── */
 .data-table {
   overflow: hidden;

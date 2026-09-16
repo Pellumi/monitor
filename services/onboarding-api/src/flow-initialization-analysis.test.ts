@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeFlowInitialization, applyEvidenceGroundedMappings, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
+import { analyzeFlowInitialization, applyEvidenceGroundedMappings, assertEvidenceGroundedContract, buildManualRoadmap, calculateCheckpointCoverage, evaluateCodeScanCoverage } from './flow-initialization-analysis';
 import { enrichFlowCodeReview } from './flow-review-enrichment';
 
 const repository = {
@@ -121,7 +121,7 @@ test('evidence-grounded mappings replace fallback locations for every checkpoint
   const base = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000017', undefined, 'Authentication');
   const mappings = base.manifest.checkpoints.map((checkpoint, index) => ({
     checkpointId: checkpoint.id,
-    status: 'RESOLVED',
+    status: 'RESOLVED' as const,
     entityId: `entity-${index}`,
     candidateId: `candidate-${index}`,
     file: index === 0 ? 'src/auth/GuestGate.tsx' : index === 1 ? 'src/auth/LoginPage.tsx' : 'src/auth/GuestGate.tsx',
@@ -177,7 +177,14 @@ test('boundary checkpoints are the only required ones, and markers read in plain
   const transitionStep = roadmap.steps.find((step) => step.id === 'transition:t2');
   assert.equal(transitionStep?.snippet, "TELLANN.trackEvent('FLOW_TRANSITION', { flow: 'checkout', transition: 'submit-payment' });");
   assert.equal(transitionStep?.required, false);
-  assert.ok(String(transitionStep?.description).startsWith('Optional'), 'optional steps say so before the placement advice');
+  // Non-boundary checkpoints do not gate setup, but automated initialization
+  // still writes every one of them — so the roadmap says when a step is needed
+  // rather than calling it optional and implying it does not matter.
+  assert.ok(
+    String(transitionStep?.description).startsWith('Not needed to finish setup'),
+    'steps that do not gate setup say so before the placement advice',
+  );
+  assert.ok(!String(transitionStep?.description).includes('Optional'));
 });
 
 test('states that share a name get distinct markers', () => {
@@ -233,4 +240,152 @@ test('a code scan initializes the flow from the start marker and one finish mark
     { file: 'src/receipt.ts', line: 40, flow: 'checkout', state: 'order-confirmed' },
   ]);
   assert.deepEqual(foreign.observedCheckpointIds, ['state:c'], 'another flow’s marker never satisfies this one');
+});
+
+/** A manifest with one state and one terminal, enough to exercise scan coverage. */
+function scanFixture() {
+  const snapshot = {
+    name: 'Checkout',
+    states: [
+      { id: 's1', stateName: 'Cart viewed', role: 'INITIAL' },
+      { id: 's2', stateName: 'Paid', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+    ],
+    transitions: [{ id: 't1', fromStateId: 's1', toStateId: 's2', action: 'Submit payment' }],
+  };
+  const repository = { id: '00000000-0000-4000-8000-000000000031', routeSummary: [], endpointSummary: [], frameworkSummary: [] };
+  return analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000030', undefined, 'Checkout').manifest;
+}
+
+test('manual initialization is satisfied by the boundaries; automated is not', () => {
+  const manifest = scanFixture();
+  const boundaryMarkers = [
+    { file: 'src/cart.tsx', line: 10, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/paid.tsx', line: 20, flow: 'checkout', state: 'paid', transition: null },
+  ];
+
+  const manual = evaluateCodeScanCoverage(manifest, boundaryMarkers, undefined, { mode: 'MANUAL' });
+  assert.equal(manual.status, 'COMPLETED');
+  assert.equal(manual.requirement, 'BOUNDARIES');
+
+  // Automated initialization wrote a marker for the transition too, so the same
+  // two markers mean the apply did not land everything it promised.
+  const automated = evaluateCodeScanCoverage(manifest, boundaryMarkers, undefined, { mode: 'AUTOMATED' });
+  assert.equal(automated.status, 'INCOMPLETE');
+  assert.equal(automated.requirement, 'ALL_CHECKPOINTS');
+  assert.deepEqual(automated.missingCheckpointIds, ['transition:t1']);
+
+  const complete = evaluateCodeScanCoverage(manifest, [
+    ...boundaryMarkers,
+    { file: 'src/pay.ts', line: 5, flow: 'checkout', state: null, transition: 'submit-payment' },
+  ], undefined, { mode: 'AUTOMATED' });
+  assert.equal(complete.status, 'COMPLETED');
+  assert.deepEqual(complete.missingCheckpointIds, []);
+});
+
+test('a duplicate or unrecognised marker fails verification with its file and line', () => {
+  const manifest = scanFixture();
+  const verification = evaluateCodeScanCoverage(manifest, [
+    { file: 'src/cart.tsx', line: 10, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/cart-copy.tsx', line: 3, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/paid.tsx', line: 20, flow: 'checkout', state: 'paid', transition: null },
+    { file: 'src/stale.tsx', line: 7, flow: 'checkout', state: 'removed-state', transition: null },
+  ], undefined, { mode: 'MANUAL' });
+
+  assert.equal(verification.status, 'INCOMPLETE', 'boundaries alone do not excuse a bad marker');
+  assert.deepEqual(
+    verification.markerProblems.map((item) => [item.code, item.file, item.line]),
+    [['DUPLICATE_MARKER', 'src/cart-copy.tsx', 3], ['UNKNOWN_MARKER', 'src/stale.tsx', 7]],
+  );
+
+  // Another Flow's markers legitimately share a file and are not this Flow's problem.
+  const neighbourly = evaluateCodeScanCoverage(manifest, [
+    { file: 'src/cart.tsx', line: 10, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/paid.tsx', line: 20, flow: 'checkout', state: 'paid', transition: null },
+    { file: 'src/cart.tsx', line: 11, flow: 'onboarding', state: 'welcome', transition: null },
+  ], undefined, { mode: 'MANUAL' });
+  assert.deepEqual(neighbourly.markerProblems, []);
+  assert.equal(neighbourly.status, 'COMPLETED');
+});
+
+test('the v2 contract is enforced at the write, not discovered by the adapter later', () => {
+  const snapshot = {
+    name: 'Checkout',
+    states: [
+      { id: 's1', stateName: 'Cart viewed', role: 'INITIAL' },
+      { id: 's2', stateName: 'Paid', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+    ],
+    transitions: [{ id: 't1', fromStateId: 's1', toStateId: 's2', action: 'Submit payment' }],
+  };
+  const repository = { id: '00000000-0000-4000-8000-000000000031', routeSummary: [], endpointSummary: [], frameworkSummary: [] };
+  const base = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000030', undefined, 'Checkout');
+  const resolvedMapping = (checkpointId: string, symbol: string) => ({
+    checkpointId, status: 'RESOLVED' as const, entityId: `entity:${symbol}`, candidateId: `candidate:${symbol}`,
+    file: 'src/checkout.ts', symbol, startLine: 4, endLine: 12,
+    placementKind: 'FUNCTION_ENTRY', anchorText: `function ${symbol}()`, anchorHash: 'a'.repeat(64),
+    confidence: 0.9, rationale: 'Grounded.', evidenceIds: [`evidence:${symbol}`],
+    alternatives: [], userConfirmed: false, userOverridden: false,
+  });
+  const provenance = {
+    engine: 'HYBRID_AI', analysisId: 'analysis-1', snapshotId: 'snapshot-1', contentHash: 'content-1',
+    retrievalVersion: 'flow-mapping/2', provider: 'gemini', model: 'gemini-test', consentMode: 'CLOUD_APPROVED',
+  };
+
+  const good = applyEvidenceGroundedMappings(
+    base,
+    base.manifest.checkpoints.map((checkpoint, index) => resolvedMapping(checkpoint.id, `step${index}`)),
+    provenance,
+  );
+  assert.doesNotThrow(() => assertEvidenceGroundedContract(good));
+  // Every finding can be joined back to its checkpoint without rebuilding prefixes.
+  assert.ok(good.report.stateFindings.every((item: any) => typeof item.checkpointId === 'string'));
+
+  // A checkpoint left without a mapping is the drift the adapter used to find
+  // several steps later, with nothing useful to say about it.
+  const partial = applyEvidenceGroundedMappings(
+    base,
+    base.manifest.checkpoints.slice(0, 1).map((checkpoint) => resolvedMapping(checkpoint.id, 'step0')),
+    provenance,
+  );
+  assert.throws(() => assertEvidenceGroundedContract(partial), /INVALID_FLOW_MAPPING_MANIFEST/);
+
+  // So is a resolved mapping that cites no evidence for its claim.
+  const uncited = applyEvidenceGroundedMappings(
+    base,
+    base.manifest.checkpoints.map((checkpoint, index) => ({ ...resolvedMapping(checkpoint.id, `step${index}`), evidenceIds: [] })),
+    provenance,
+  );
+  assert.throws(() => assertEvidenceGroundedContract(uncited), /INVALID_FLOW_MAPPING_(MANIFEST|REPORT)/);
+});
+
+test('the manual roadmap carries the same evidence the automated path would act on', () => {
+  const snapshot = {
+    name: 'Checkout',
+    states: [
+      { id: 's1', stateName: 'Cart viewed', role: 'INITIAL' },
+      { id: 's2', stateName: 'Paid', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+    ],
+    transitions: [{ id: 't1', fromStateId: 's1', toStateId: 's2', action: 'Submit payment' }],
+  };
+  const repository = { id: '00000000-0000-4000-8000-000000000031', routeSummary: [], endpointSummary: [], frameworkSummary: [] };
+  const base = analyzeFlowInitialization(snapshot, repository, '00000000-0000-4000-8000-000000000030', undefined, 'Checkout');
+  const enriched = applyEvidenceGroundedMappings(
+    base,
+    base.manifest.checkpoints.map((checkpoint) => ({
+      checkpointId: checkpoint.id, status: 'RESOLVED' as const, entityId: 'e1', candidateId: 'c1',
+      file: 'src/checkout.ts', symbol: 'checkout', startLine: 4, endLine: 12,
+      placementKind: 'FUNCTION_ENTRY', anchorText: 'function checkout()', anchorHash: 'a'.repeat(64),
+      confidence: 0.88, rationale: 'The cart page renders here.', evidenceIds: ['evidence:1'],
+      alternatives: [{ id: 'c2', entityId: 'e2', file: 'src/other.ts', symbol: 'other', startLine: 2, endLine: 9, placementKinds: ['FUNCTION_ENTRY'], confidence: 0.5, rationale: 'Also plausible.', evidenceIds: ['evidence:2'] }],
+      userConfirmed: false, userOverridden: false,
+    })),
+    { engine: 'HYBRID_AI', analysisId: 'a1', snapshotId: 's1', contentHash: 'c1', retrievalVersion: 'flow-mapping/2', provider: 'gemini', model: 'g', consentMode: 'CLOUD_APPROVED' },
+  );
+
+  const roadmap = buildManualRoadmap(enriched.manifest as any, 1, enriched.report as any);
+  const step = roadmap.steps.find((item: any) => item.id === `state:s1`)!;
+  assert.equal(step.rationale, 'The cart page renders here.');
+  assert.equal(step.anchor, 'function checkout()');
+  assert.deepEqual(step.evidenceIds, ['evidence:1']);
+  assert.equal((step.alternatives as any[])[0].id, 'c2');
+  assert.equal(step.placementKind, 'FUNCTION_ENTRY');
 });

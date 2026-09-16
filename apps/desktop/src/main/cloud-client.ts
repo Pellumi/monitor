@@ -978,6 +978,16 @@ export class DesktopCloudClient {
     });
   }
 
+  async reportFlowMappingProgress(
+    initializationId: string,
+    progress: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mapping-progress`,
+      { method: "POST", body: JSON.stringify({ progress }) },
+    );
+  }
+
   async submitFlowMappingCandidates(
     initializationId: string,
     input: Json,

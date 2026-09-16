@@ -144,3 +144,70 @@ test('bounds candidates, deduplicates locations and reports an honest no-match',
   assert.deepEqual(verifying.candidates, []);
   assert.equal(verifying.confidence, 0);
 });
+
+test('resolves a file-scoped route to the component declared in the same file', () => {
+  // A Next.js `page.tsx` is discovered from its location, so the route entity
+  // has no symbol and no real line range. Without resolving it to the component
+  // the file declares, instrumentation has nothing to anchor against and every
+  // route state falls back to manual placement.
+  const input = analysis([
+    entity({ id: 'route-login', type: 'ui_route', name: '/sign-in', path: 'apps/web/app/sign-in/page.tsx', startLine: 1, endLine: null }),
+    entity({ id: 'login-component', type: 'function', name: 'SignInPage', path: 'apps/web/app/sign-in/page.tsx', startLine: 4, endLine: 26 }),
+    entity({ id: 'login-helper', type: 'function', name: 'formatError', path: 'apps/web/app/sign-in/page.tsx', startLine: 28, endLine: 31 }),
+  ]);
+
+  const result = retrieveFlowMappings({ flow: flow(), analysis: input });
+  const candidate = result.mappings.find((item) => item.checkpointId === `state:${STATE_LOGIN}`)!.candidates[0];
+
+  assert.equal(candidate.entityId, 'route-login');
+  assert.equal(candidate.symbol, 'SignInPage', 'prefers the component over a lowercase helper');
+  assert.equal(candidate.startLine, 4);
+  assert.equal(candidate.endLine, 26);
+  assert.ok(candidate.placementKinds.includes('COMPONENT_MOUNT'));
+});
+
+test('ranks frontend and backend evidence by what the checkpoint actually is', () => {
+  // The same concept exists on both sides of a monorepo. A UI state should land
+  // on the page, and the work it triggers should land on the handler — getting
+  // this backwards is how a checkpoint ends up instrumenting the wrong tier.
+  const entities = [
+    entity({ id: 'web-login', type: 'ui_route', name: '/login', path: 'apps/web/app/login/page.tsx', startLine: 1, endLine: 40 }),
+    entity({ id: 'api-login', type: 'endpoint', name: 'POST /login', path: 'services/api/src/login.ts', startLine: 4, endLine: 30 }),
+    entity({ id: 'verify-fn', type: 'function', name: 'verifyCredentials', path: 'services/api/src/verify.ts', startLine: 2, endLine: 20 }),
+  ];
+  const result = retrieveFlowMappings({ flow: flow(), analysis: analysis(entities) });
+
+  const login = result.mappings.find((item) => item.checkpointId === `state:${STATE_LOGIN}`)!;
+  const verifying = result.mappings.find((item) => item.checkpointId === `state:${STATE_VERIFY}`)!;
+
+  assert.equal(login.candidates[0].entityId, 'web-login', 'a UI state prefers the page');
+  assert.equal(verifying.candidates[0].entityId, 'verify-fn', 'a process state prefers the work');
+});
+
+test('keeps monorepo paths distinct and survives a partial analysis', () => {
+  const entities = [
+    entity({ id: 'web-login', type: 'ui_route', name: '/login', path: 'apps/web/app/login/page.tsx', startLine: 1, endLine: 40 }),
+    entity({ id: 'admin-login', type: 'ui_route', name: '/login', path: 'apps/admin/app/login/page.tsx', startLine: 1, endLine: 40 }),
+  ];
+  const partial = { ...analysis(entities), status: 'PARTIAL' as const };
+  const result = retrieveFlowMappings({ flow: flow(), analysis: partial });
+  const login = result.mappings.find((item) => item.checkpointId === `state:${STATE_LOGIN}`)!;
+
+  // Two equally good candidates in different packages is exactly the case the
+  // user has to settle, so it must not be silently resolved to one of them.
+  assert.equal(login.status, 'AMBIGUOUS');
+  assert.equal(new Set(login.candidates.map((item) => item.path)).size, 2);
+  assert.equal(result.coverage.total, 4);
+});
+
+test('reports no candidates for a checkpoint whose language was not analysed', () => {
+  // An unsupported language yields no entities for those files at all; the
+  // honest answer is an empty shortlist, not a low-confidence guess elsewhere.
+  const entities = [entity({ id: 'unrelated', type: 'function', name: 'renderInvoice', path: 'billing/invoice.rb', startLine: 1, endLine: 5 })];
+  const result = retrieveFlowMappings({ flow: flow(), analysis: analysis(entities) });
+
+  for (const mapping of result.mappings) {
+    assert.deepEqual(mapping.candidates, [], `${mapping.checkpointId} has no candidates`);
+    assert.equal(mapping.status, 'UNRESOLVED');
+  }
+});

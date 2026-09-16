@@ -7,6 +7,7 @@ import semver from 'semver';
 import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
 import { z } from 'zod';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
+import { FlowPlacementKindSchema } from '@tellann/desktop-contracts';
 import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@tellann/desktop-contracts';
 
 export const INSTRUMENTATION_CONTRACT_VERSION = '1.0';
@@ -43,6 +44,17 @@ export type LocalProjectContext = {
   flowVersionId?: string;
   flowInitializationId?: string;
   flowManifest?: FlowInitializationManifest;
+  /**
+   * The checkpoints this adapter is responsible for.
+   *
+   * A Flow crosses packages — a login page in the web app, its handler in the
+   * API — and no single framework adapter can instrument both. The caller splits
+   * the manifest by which detected package holds each file and hands each
+   * adapter its share; together the approved plans still cover every checkpoint.
+   * Omitted means this adapter owns every checkpoint, which is the single-package
+   * case and stays exactly as strict as before.
+   */
+  flowCheckpointIds?: string[];
 };
 
 export type DetectionResult = {
@@ -89,11 +101,15 @@ export type PatchOperation = {
   branch?: 'THEN' | 'ELSE';
 };
 
-export const FlowPlacementKindSchema = z.enum([
-  'FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY',
-  'BEFORE_STATEMENT', 'AFTER_STATEMENT', 'BRANCH_ENTRY',
-]);
+// Re-exported from the contracts package rather than redeclared: a placement the
+// retrieval engine can rank and the resolver can return but this adapter cannot
+// apply is a mapping that dies at proposal, which is exactly the drift a second
+// copy of the enum invites.
+export { FlowPlacementKindSchema };
 export type FlowPlacementKind = z.infer<typeof FlowPlacementKindSchema>;
+
+/** Placements that instrument the entry of a callable rather than a statement. */
+const CALLABLE_ENTRY_PLACEMENTS: FlowPlacementKind[] = ['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'];
 
 export type InstrumentationPlan = {
   contractVersion: string;
@@ -561,6 +577,45 @@ const DEFINITIONS: AdapterDefinition[] = [
   { id: 'nestjs', packageNames: ['@nestjs/core'], versionPackage: '@nestjs/core', supportedVersionRange: '>=9 <12', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/NestFactory\.create\s*\(/, /bootstrap\s*\(/] },
 ];
 
+/**
+ * Which detected framework package holds each of a Flow's checkpoint files.
+ *
+ * The caller uses this to split a manifest across adapters before proposing, so
+ * a Flow that spans a web app and an API produces one plan per package rather
+ * than a blanket refusal. Files that fall inside no detected package come back
+ * under `unassigned`, which is what the caller reports to the user.
+ */
+export function assignFlowCheckpoints(
+  workspaceRoot: string,
+  manifest: FlowInitializationManifest | null | undefined,
+  adapterIds: FrameworkId[],
+): { byAdapter: Record<string, string[]>; unassigned: Array<{ checkpointId: string; file: string }> } {
+  const byAdapter: Record<string, string[]> = {};
+  const unassigned: Array<{ checkpointId: string; file: string }> = [];
+  const roots = adapterIds.map((id) => {
+    const definition = DEFINITIONS.find((item) => item.id === id)!;
+    return { id, relativeRoot: frameworkPackage(workspaceRoot, definition)?.relativeRoot ?? null };
+  }).filter((item) => item.relativeRoot !== null);
+  for (const checkpoint of manifest?.checkpoints ?? []) {
+    const file = String((checkpoint.mapping as { file?: string | null })?.file ?? '');
+    if (!file) {
+      unassigned.push({ checkpointId: checkpoint.id, file: '' });
+      continue;
+    }
+    // Deepest package wins: in a monorepo `apps/web` is more specific than the
+    // repository root, and a file under it belongs to the web app.
+    const owner = roots
+      .filter((item) => !item.relativeRoot || file.startsWith(`${item.relativeRoot}/`))
+      .sort((left, right) => (right.relativeRoot?.length ?? 0) - (left.relativeRoot?.length ?? 0))[0];
+    if (!owner) {
+      unassigned.push({ checkpointId: checkpoint.id, file });
+      continue;
+    }
+    (byAdapter[owner.id] ??= []).push(checkpoint.id);
+  }
+  return { byAdapter, unassigned };
+}
+
 function addNamedImport(source: SourceFile, moduleSpecifier: string, names: string[]): void {
   const existing = source.getImportDeclaration((declaration) => declaration.getModuleSpecifierValue() === moduleSpecifier);
   if (existing) {
@@ -616,21 +671,122 @@ function symbolPlacementKind(source: SourceFile, symbol: string): 'FUNCTION_ENTR
   return null;
 }
 
+function functionBlock(node: Node | null | undefined) {
+  if (!node) return null;
+  if (!Node.isFunctionDeclaration(node) && !Node.isFunctionExpression(node) && !Node.isArrowFunction(node)) return null;
+  const body = node.getBody();
+  return body && Node.isBlock(body) ? body : null;
+}
+
+function namedDeclaration(source: SourceFile, symbol: string): Node | null {
+  return source.getFunction(symbol)
+    ?? source.getClass(symbol)
+    ?? source.getVariableDeclaration(symbol)?.getInitializer()
+    ?? null;
+}
+
+function defaultExportedDeclaration(source: SourceFile): Node | null {
+  const assignment = source.getExportAssignment((item) => !item.isExportEquals());
+  if (assignment) {
+    const expression = assignment.getExpression();
+    return Node.isIdentifier(expression) ? namedDeclaration(source, expression.getText()) : expression;
+  }
+  return source.getFunctions().find((item) => item.isDefaultExport())
+    ?? source.getClasses().find((item) => item.isDefaultExport())
+    ?? null;
+}
+
+/**
+ * Resolve the React component a `COMPONENT_MOUNT` placement targets.
+ *
+ * The mapping may carry no symbol. Analysis derives file-scoped routes — a
+ * Next.js `page.tsx`, an App Router `layout.tsx` — from where the file sits
+ * rather than from a named export, so the route entity has a path and no
+ * symbol at all. Falling back to the file's default export is what a developer
+ * reading the same file would do, and it keeps every route state reachable by
+ * automated initialization instead of silently forcing manual placement.
+ */
+function componentMountTarget(source: SourceFile, symbol: string | null): { name: string | null; block: ReturnType<typeof functionBlock> } | null {
+  const declaration = symbol ? namedDeclaration(source, symbol) : defaultExportedDeclaration(source);
+  const block = functionBlock(declaration);
+  if (!block) return null;
+  const name = symbol
+    ?? (declaration && Node.isFunctionDeclaration(declaration) ? declaration.getName() ?? null : null)
+    ?? declaration?.getFirstAncestorByKind(SyntaxKind.VariableDeclaration)?.getName()
+    ?? null;
+  // A mount effect only makes sense inside something that renders. Requiring
+  // either a component-cased name or literal JSX keeps a plain helper function
+  // from being instrumented as though it were a screen.
+  const rendersJsx = block.getDescendants().some((item) =>
+    Node.isJsxElement(item) || Node.isJsxSelfClosingElement(item) || Node.isJsxFragment(item));
+  if (!rendersJsx && !(name && /^[A-Z]/.test(name))) return null;
+  return { name, block };
+}
+
+const NEXT_APP_SEGMENT = /(^|\/)app\/(.*\/)?(page|layout|template|default)\.[cm]?[jt]sx?$/;
+
+/**
+ * Next.js App Router segments render on the server unless the file opts in with
+ * `'use client'`. A mount effect there never runs, so it would be a silently
+ * dead checkpoint — refuse instead, and let the user pick another candidate.
+ */
+function isServerComponentFile(file: string, content: string): boolean {
+  if (!NEXT_APP_SEGMENT.test(file)) return false;
+  return !/^\s*(['"])use client\1/m.test(content);
+}
+
+/** How this file should reach `useEffect`, and the import that has to exist first. */
+function reactEffectAccess(source: SourceFile, commonJs: boolean): { expression: string; add(): void } {
+  if (commonJs) {
+    const statement = "const TellannReact = require('react');";
+    return {
+      expression: 'TellannReact.useEffect',
+      add: () => { if (!source.getFullText().includes(statement)) source.insertStatements(0, statement); },
+    };
+  }
+  const existing = source.getImportDeclaration((declaration) => declaration.getModuleSpecifierValue() === 'react');
+  // `import * as React from 'react'` cannot carry named imports; go through the
+  // namespace rather than rewriting an import the project already relies on.
+  const namespace = existing?.getNamespaceImport()?.getText();
+  if (namespace) return { expression: `${namespace}.useEffect`, add: () => undefined };
+  if (existing?.getNamedImports().some((item) => item.getName() === 'useEffect')) {
+    return { expression: 'useEffect', add: () => undefined };
+  }
+  if (existing) return { expression: 'useEffect', add: () => { existing.addNamedImport('useEffect'); } };
+  return {
+    expression: 'useEffect',
+    add: () => { source.insertImportDeclaration(0, { moduleSpecifier: 'react', namedImports: ['useEffect'] }); },
+  };
+}
+
 function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, commonJs: boolean): void {
-  if (!operation.symbol || !operation.importModule) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (!operation.importModule) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (!operation.symbol && operation.placementKind !== 'COMPONENT_MOUNT') throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
   const marker = `tellann:checkpoint:${operation.id}`;
   if (source.getFullText().includes(marker)) return;
   addCheckpointImport(source, operation.importModule, commonJs);
   const placementKind = operation.placementKind ?? 'FUNCTION_ENTRY';
   const statement = checkpointStatement(operation);
-  if (['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'].includes(placementKind)) {
-    const body = symbolBody(source, operation.symbol);
-    if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
+  if (placementKind === 'COMPONENT_MOUNT') {
+    const target = componentMountTarget(source, operation.symbol ?? null);
+    if (!target?.block) throw new Error(`SAFE_COMPONENT_BOUNDARY_NOT_FOUND:${operation.id}`);
+    const effect = reactEffectAccess(source, commonJs);
+    effect.add();
+    // The empty dependency list is what makes this a mount checkpoint, and the
+    // marker comment above already makes a second apply a no-op.
+    target.block.insertStatements(0, `${effect.expression}(() => {\n${statement}\n}, []);`);
+    return;
+  }
+  const symbol = operation.symbol;
+  if (!symbol) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (CALLABLE_ENTRY_PLACEMENTS.includes(placementKind)) {
+    const body = symbolBody(source, symbol);
+    if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${symbol}`);
     (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0, statement);
     return;
   }
   if (!operation.anchorText) throw new Error(`FLOW_CHECKPOINT_ANCHOR_REQUIRED:${operation.id}`);
-  const scope = symbolBody(source, operation.symbol);
+  const scope = symbolBody(source, symbol);
   if (!scope) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
   if (placementKind === 'BRANCH_ENTRY') {
     const branches = scope.getDescendantsOfKind(SyntaxKind.IfStatement).filter((item) => {
@@ -760,7 +916,7 @@ function mappingIsResolved(mapping: FlowCheckpointMappingLike, manifestVersion: 
 
 function validateResolvedFlowMapping(root: string, checkpointId: string, mapping: FlowCheckpointMappingLike, manifestVersion: string): {
   file: string;
-  symbol: string;
+  symbol: string | null;
   placementKind: FlowPlacementKind;
   anchorText?: string;
   anchorHash?: string;
@@ -768,34 +924,42 @@ function validateResolvedFlowMapping(root: string, checkpointId: string, mapping
   endLine?: number;
   branch?: 'THEN' | 'ELSE';
 } {
-  if (!mappingIsResolved(mapping, manifestVersion) || !mapping.file || !mapping.symbol) {
+  if (!mappingIsResolved(mapping, manifestVersion) || !mapping.file) {
     throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
   }
   const placementKind = manifestVersion === '2.0' ? mapping.placementKind : 'FUNCTION_ENTRY';
   const parsedPlacement = FlowPlacementKindSchema.safeParse(placementKind);
   if (!parsedPlacement.success) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+  // A component mount is the one placement that can stand on the file alone:
+  // a file-scoped route has no exported symbol to name. Every other placement
+  // still has to say which callable it belongs to.
+  const componentMount = parsedPlacement.data === 'COMPONENT_MOUNT';
+  if (!mapping.symbol && !componentMount) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
   const target = resolveWithinWorkspace(root, mapping.file);
   if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`STALE_FLOW_CHECKPOINT_FILE:${checkpointId}`);
   const content = fs.readFileSync(target, 'utf8');
   const project = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true });
   const source = project.createSourceFile(mapping.file, content);
-  const body = symbolBody(source, mapping.symbol);
+  const body = componentMount ? componentMountTarget(source, mapping.symbol ?? null)?.block : symbolBody(source, mapping.symbol!);
   if (!body) throw new Error(`STALE_FLOW_CHECKPOINT_SYMBOL:${checkpointId}`);
-  if (manifestVersion !== '2.0') return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data };
+  if (manifestVersion !== '2.0') return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data };
   const anchorText = mappingAnchorText(mapping);
   if (!anchorText || !mapping.anchorHash || !mapping.startLine || !mapping.endLine || mapping.endLine < mapping.startLine) {
     throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
   }
-  if (calculateFlowAnchorHash(mapping.file, mapping.symbol, parsedPlacement.data, anchorText) !== mapping.anchorHash) throw new Error(`STALE_FLOW_CHECKPOINT_ANCHOR:${checkpointId}`);
+  if (calculateFlowAnchorHash(mapping.file, mapping.symbol ?? null, parsedPlacement.data, anchorText) !== mapping.anchorHash) throw new Error(`STALE_FLOW_CHECKPOINT_ANCHOR:${checkpointId}`);
   const mappedLines = content.replaceAll('\r\n', '\n').split('\n').slice(mapping.startLine - 1, mapping.endLine).join('\n');
   if (!mappedLines.includes(anchorText)) throw new Error(`STALE_FLOW_CHECKPOINT_SOURCE_RANGE:${checkpointId}`);
-  if (['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'].includes(parsedPlacement.data)) {
-    const actualPlacement = symbolPlacementKind(source, mapping.symbol);
-    const acceptsAnyCallable = parsedPlacement.data === 'FUNCTION_ENTRY' || parsedPlacement.data === 'CALLBACK_ENTRY' || parsedPlacement.data === 'ROUTE_HANDLER_ENTRY';
-    if (!actualPlacement || (!acceptsAnyCallable && actualPlacement !== parsedPlacement.data)) {
-      throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
-    }
-    return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  if (componentMount) {
+    if (isServerComponentFile(mapping.file, content)) throw new Error(`UNSUPPORTED_SERVER_COMPONENT_MOUNT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol ?? null, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  }
+  if (CALLABLE_ENTRY_PLACEMENTS.includes(parsedPlacement.data)) {
+    // Every callable-entry placement accepts any callable shape — a route
+    // handler is still a function — so the only thing to reject here is a
+    // symbol that no longer resolves to something with a block body.
+    if (!symbolPlacementKind(source, mapping.symbol!)) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
   }
   const scope = body.getDescendants();
   if (parsedPlacement.data === 'BRANCH_ENTRY') {
@@ -804,11 +968,11 @@ function validateResolvedFlowMapping(root: string, checkpointId: string, mapping
     const branch = (mapping.branch ?? mapping.branchArm) === 'ELSE' ? 'ELSE' : 'THEN';
     const targetBranch = branch === 'ELSE' ? matches[0]?.getElseStatement() : matches[0]?.getThenStatement();
     if (matches.length !== 1 || !targetBranch || !Node.isBlock(targetBranch)) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
-    return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine, branch };
+    return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine, branch };
   }
   const statements = scope.filter((item) => Node.isStatement(item) && item.getText() === anchorText);
   if (statements.length !== 1) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
-  return { file: mapping.file, symbol: mapping.symbol, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
 }
 
 class TypeScriptAdapter implements InstrumentationAdapter {
@@ -922,9 +1086,17 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     if (input.instrumentationPurpose === 'FLOW' && !input.flowManifest) throw new Error('FLOW_INITIALIZATION_MANIFEST_REQUIRED');
     const manifest = input.instrumentationPurpose === 'FLOW' ? input.flowManifest : null;
     const manifestVersion = String((manifest as unknown as { version?: string } | null)?.version ?? '1.0');
-    const manifestCheckpoints = manifest?.checkpoints ?? [];
-    const unresolved = manifestCheckpoints.filter((checkpoint) => !mappingIsResolved(checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion));
+    const declaredCheckpoints = manifest?.checkpoints ?? [];
+    // Everything the Flow declares still has to be resolved before anything is
+    // written, even the parts another adapter will instrument: an atomic plan
+    // that skipped a checkpoint because someone else *might* cover it would not
+    // be atomic at all.
+    const unresolved = declaredCheckpoints.filter((checkpoint) => !mappingIsResolved(checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion));
     if (unresolved.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolved.map((item) => item.id).join(',')}`);
+    const assigned = input.flowCheckpointIds ? new Set(input.flowCheckpointIds) : null;
+    const manifestCheckpoints = assigned
+      ? declaredCheckpoints.filter((checkpoint) => assigned.has(checkpoint.id))
+      : declaredCheckpoints;
     for (const checkpoint of manifestCheckpoints) {
       const mapping = validateResolvedFlowMapping(input.workspaceRoot, checkpoint.id, checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion);
       if (detectedPackage.relativeRoot && !mapping.file.startsWith(`${detectedPackage.relativeRoot}/`)) {

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { FlowCodeReviewReportV2Schema, FlowInitializationManifestV2Schema } from '@tellann/desktop-contracts';
 
 type JsonRecord = Record<string, any>;
 
@@ -208,39 +209,65 @@ export function applyEvidenceGroundedMappings(
   mappings: EvidenceGroundedMapping[],
   provenance: JsonRecord,
 ) {
+  // Every field the candidate contract requires has to be present and non-empty
+  // here, because this is the last place that knows how to derive one. A
+  // candidate with no id or no file is not a choice a user could act on, so it
+  // is dropped rather than emitted hollow.
   const normalizeAlternative = (candidate: JsonRecord) => {
-    const placementKind = String(candidate.placementKind ?? records(candidate.placementKinds)[0] ?? (Array.isArray(candidate.placementKinds) ? candidate.placementKinds[0] : 'FUNCTION_ENTRY'));
+    const placementKind = String(candidate.placementKind ?? (Array.isArray(candidate.placementKinds) ? candidate.placementKinds[0] : null) ?? 'FUNCTION_ENTRY');
     const file = String(candidate.file ?? candidate.path ?? '');
-    const anchor = String(candidate.anchor ?? candidate.anchorText ?? candidate.symbol ?? candidate.name ?? '');
+    const id = String(candidate.id ?? '');
+    const entityId = candidate.entityId == null ? null : String(candidate.entityId);
+    const symbol = candidate.symbol == null ? null : String(candidate.symbol);
+    const anchor = String(candidate.anchor ?? candidate.anchorText ?? symbol ?? candidate.name ?? '') || file;
+    const startLine = Math.max(1, Number(candidate.startLine) || 1);
+    const declaredEvidence = Array.isArray(candidate.evidenceIds) ? candidate.evidenceIds.map(String).filter(Boolean) : [];
+    if (!id || !file) return null;
     return {
-      id: String(candidate.id), entityId: candidate.entityId == null ? null : String(candidate.entityId),
-      evidenceIds: Array.isArray(candidate.evidenceIds) ? candidate.evidenceIds.map(String) : [],
-      file, symbol: candidate.symbol == null ? null : String(candidate.symbol),
-      startLine: Math.max(1, Number(candidate.startLine) || 1), endLine: Math.max(Math.max(1, Number(candidate.startLine) || 1), Number(candidate.endLine) || Number(candidate.startLine) || 1),
+      id, entityId,
+      // At least one citation is required: fall back to the entity the candidate
+      // came from so a claim is always traceable to something in the analysis.
+      evidenceIds: declaredEvidence.length ? declaredEvidence : [`entity:${entityId ?? id}`],
+      file, symbol,
+      startLine, endLine: Math.max(startLine, Number(candidate.endLine) || startLine),
       placementKind, anchor,
-      anchorHash: String(candidate.anchorHash ?? crypto.createHash('sha256').update(`${file}\0${candidate.symbol ?? ''}\0${placementKind}\0${anchor}`).digest('hex')),
+      anchorHash: String(candidate.anchorHash ?? crypto.createHash('sha256').update(`${file}\0${symbol ?? ''}\0${placementKind}\0${anchor}`).digest('hex')),
       confidence: Math.max(0, Math.min(1, Number(candidate.confidence ?? candidate.score ?? 0))),
-      rationale: String(candidate.rationale ?? 'Ranked by codebase analysis.'),
+      rationale: String(candidate.rationale ?? '') || 'Ranked by codebase analysis.',
       relationshipPaths: Array.isArray(candidate.relationshipPaths) ? candidate.relationshipPaths.map((path: any) => Array.isArray(path) ? path.map(String) : [String(path.relationshipId ?? path.type ?? '')].filter(Boolean)) : [],
       featureEvidence: Array.isArray(candidate.featureEvidence) ? candidate.featureEvidence.map(String) : Array.isArray(candidate.featureIds) ? candidate.featureIds.map(String) : [],
     };
   };
   const checkpointById = new Map(base.manifest.checkpoints.map((checkpoint) => [checkpoint.id, checkpoint]));
+  // The mapping contract requires every key to be present — `nullable` accepts
+  // null, not a missing property — so each one is spelled out rather than left
+  // to whatever the resolver happened to include.
   const normalizedMappings = mappings.map((mapping) => {
     const checkpoint = checkpointById.get(mapping.checkpointId);
     const file = mapping.file ?? null;
     const symbol = mapping.symbol ?? null;
     return {
       ...mapping,
+      checkpointId: mapping.checkpointId,
+      status: mapping.status,
+      entityId: mapping.entityId ?? null,
       candidateId: mapping.candidateId ?? null,
+      file, symbol,
+      startLine: mapping.startLine ?? null,
+      endLine: mapping.endLine ?? null,
+      placementKind: mapping.placementKind ?? null,
       anchor: mapping.anchor ?? mapping.anchorText ?? null,
+      anchorHash: mapping.anchorHash ?? null,
+      confidence: Math.max(0, Math.min(1, Number(mapping.confidence ?? 0))),
+      rationale: String(mapping.rationale ?? '') || 'No rationale was recorded for this placement.',
+      userConfirmed: mapping.userConfirmed ?? false,
       userOverrode: mapping.userOverrode ?? mapping.userOverridden ?? false,
       evidenceIds: mapping.evidenceIds ?? [],
-      alternatives: (mapping.alternatives ?? []).map(normalizeAlternative),
+      alternatives: (mapping.alternatives ?? []).map(normalizeAlternative).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null),
       manualInstruction: `Add the ${checkpoint?.label ?? mapping.checkpointId} checkpoint in ${file ?? 'the matching file'}${symbol ? ` near ${symbol}` : ''}.`,
       instrumentationIntent: {
         eventType: checkpoint?.eventType ?? 'FLOW_STATE_REACHED',
-        placementDescription: mapping.rationale,
+        placementDescription: String(mapping.rationale ?? '') || 'Placement selected from ranked codebase evidence.',
       },
     };
   });
@@ -249,10 +276,13 @@ export function applyEvidenceGroundedMappings(
     const mapping = byCheckpoint.get(checkpoint.id);
     return mapping ? { ...checkpoint, mapping } : checkpoint;
   });
-  const finding = (checkpointId: string, current: JsonRecord) => {
+  // Every v2 finding carries the checkpoint id it belongs to, so a reader can
+  // join it back to the manifest without rebuilding `state:`/`transition:`
+  // prefixes for itself.
+  const finding = (checkpointId: string, current: JsonRecord): JsonRecord => {
     const mapping = byCheckpoint.get(checkpointId);
-    if (!mapping) return current;
-    return { ...current, implemented: mapping.status === 'RESOLVED', mapping };
+    if (!mapping) return { ...current, checkpointId };
+    return { ...current, checkpointId, implemented: mapping.status === 'RESOLVED', mapping };
   };
   const stateFindings = base.report.stateFindings.map((item) => finding(`state:${item.stateId}`, item));
   const transitionFindings = base.report.transitionFindings.map((item) => finding(`transition:${item.transitionId}`, item));
@@ -329,6 +359,27 @@ export function applyEvidenceGroundedMappings(
   };
 }
 
+/**
+ * Enforce the v2 contract before anything evidence-grounded is persisted.
+ *
+ * The schemas existed but nothing parsed against them, so producers were free
+ * to drift — a finding without its checkpoint id, a candidate citing no
+ * evidence — and the first thing to notice was the instrumentation adapter,
+ * several steps later and with no way to say what was wrong. Validating here
+ * turns that into one refusal at the write that caused it.
+ *
+ * The parsed value is deliberately discarded: object schemas strip unknown keys
+ * and the stored record is richer than the contract's floor.
+ */
+export function assertEvidenceGroundedContract(enriched: { manifest: unknown; report: unknown }): void {
+  const describe = (issues: Array<{ path: Array<string | number>; message: string }>) =>
+    issues.slice(0, 3).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');
+  const manifest = FlowInitializationManifestV2Schema.safeParse(enriched.manifest);
+  if (!manifest.success) throw new Error(`INVALID_FLOW_MAPPING_MANIFEST:${describe(manifest.error.issues as any)}`);
+  const report = FlowCodeReviewReportV2Schema.safeParse(enriched.report);
+  if (!report.success) throw new Error(`INVALID_FLOW_MAPPING_REPORT:${describe(report.error.issues as any)}`);
+}
+
 export function buildManualRoadmap(
   manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
   revision = 1,
@@ -374,11 +425,12 @@ export function buildManualRoadmap(
     const placement = mapping.file
       ? `Add this call in ${mapping.file}${mapping.startLine ? `:${mapping.startLine}` : ''}${mapping.symbol ? ` (near ${mapping.symbol})` : ''}, at the point where ${where}. ${mapping.rationale ?? ''}`.trim()
       : `Tellann could not find where this happens in your code. Add this call yourself at the point where ${where}.`;
-    // Boundary checkpoints are what initialization checks for; the rest are extra
-    // detail the user can add later, and saying so keeps the roadmap honest about
-    // how little is actually needed to get to a QA run.
+    // Only the boundaries gate manual initialization, so the rest can wait — but
+    // "optional" overstated that. Automated initialization writes every one of
+    // these, and each adds reconciliation fidelity, so the wording says when it
+    // is needed rather than implying it does not matter.
     const description = (checkpoint as any).required === false
-      ? `Optional — not needed to initialize this flow. ${placement}`
+      ? `Not needed to finish setup — add it whenever you want this step tracked. ${placement}`
       : placement;
     return {
       id: checkpoint.id,
@@ -396,12 +448,16 @@ export function buildManualRoadmap(
       file: mapping.file ?? null, symbol: mapping.symbol ?? null,
       startLine: mapping.startLine ?? null, endLine: mapping.endLine ?? null,
       confidence: mapping.confidence ?? 0, alternatives: mapping.alternatives ?? [], placementKind: mapping.placementKind ?? null,
+      // The review's reasoning travels with the step: a developer placing this
+      // by hand needs the same "why here" the automated path acted on.
+      rationale: mapping.rationale ?? null, anchor: mapping.anchor ?? mapping.anchorText ?? null,
+      evidenceIds: Array.isArray(mapping.evidenceIds) ? mapping.evidenceIds.map(String) : [],
       snippet: checkpointSnippet(checkpoint.eventType, (checkpoint as any).marker ?? { flow: (manifest as any).flowKey ?? 'flow', state: checkpoint.stateId, transition: checkpoint.transitionId }),
       eventType: checkpoint.eventType, checkpointId: checkpoint.id, userCompletedAt: null, verificationEvidence: [],
     };
   });
   const requiredIds = manifest.checkpoints.filter((item) => item.required).map((item) => item.id);
-  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Check your code for the start and finish markers', description: 'Once the start marker and at least one finish marker are in your code, Tellann searches the attached project for them. No run of your app is needed to initialize the flow.', status: 'PENDING', dependencies: requiredIds, required: true, marker: null, file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, userCompletedAt: null, verificationEvidence: [] });
+  steps.push({ id: 'verify:walkthrough', groupId: 'spine', kind: 'VERIFY', title: 'Check your code for the start and finish markers', description: 'Once the start marker and at least one finish marker are in your code, Tellann searches the attached project for them. No run of your app is needed to initialize the flow.', status: 'PENDING', dependencies: requiredIds, required: true, marker: null, file: null, symbol: null, snippet: '', eventType: null, checkpointId: null, rationale: null, anchor: null, evidenceIds: [], userCompletedAt: null, verificationEvidence: [] });
   return { version: '1.0' as const, revision, groups, steps, generatedAt: now };
 }
 
@@ -447,16 +503,26 @@ export type FlowMarkerMatch = {
 /**
  * Resolve the markers a code scan found against the declared manifest.
  *
- * Initialization is satisfied by the flow's boundaries alone — the declared initial
- * state and at least one declared terminal state. Anything else the scan finds is
- * recorded as observed, but never gates the flow: the point of the boundaries is
- * that they tell Tellann where the flow starts and ends in the code, which is all a
- * QA run needs to correlate the rest.
+ * What counts as complete depends on how the Flow was initialized, and the two
+ * answers are genuinely different promises:
+ *
+ * - Manual initialization asks the user for the Flow's boundaries only — the
+ *   declared initial state and one declared terminal state. That is all a QA run
+ *   needs to correlate the rest, and demanding more would turn a short setup
+ *   into a long plotting exercise.
+ * - Automated initialization wrote a marker for every declared checkpoint, so
+ *   every one of them has to be there. A plan that emitted twelve markers and
+ *   landed two is a failed apply, and reporting it as complete would hide that.
+ *
+ * Either way a duplicate or unrecognised marker is a defect in the instrumented
+ * code rather than an absence, so it is reported with its file and line instead
+ * of being quietly folded into a set.
  */
 export function evaluateCodeScanCoverage(
   manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
   matches: FlowMarkerMatch[],
   scannedAt = new Date().toISOString(),
+  options: { mode?: 'MANUAL' | 'AUTOMATED' | null } = {},
 ) {
   const checkpoints = (manifest.checkpoints ?? []) as Array<Record<string, any>>;
   const byMarker = new Map<string, string>();
@@ -467,7 +533,11 @@ export function evaluateCodeScanCoverage(
     byMarker.set(`${marker.flow}#${name}`, checkpoint.id);
   }
   const knownIds = new Set(checkpoints.map((checkpoint) => String(checkpoint.id)));
+  const flowKey = markerSlug((manifest as any).flowKey ?? '');
   const evidence: Array<{ checkpointId: string; file: string; line: number }> = [];
+  const markerProblems: Array<{ code: 'DUPLICATE_MARKER' | 'UNKNOWN_MARKER'; checkpointId: string | null; file: string; line: number }> = [];
+  const seenLocations = new Set<string>();
+  const firstSeen = new Map<string, string>();
   for (const match of matches) {
     const name = match.transition ? `transition/${markerSlug(match.transition)}` : match.state ? `state/${markerSlug(match.state)}` : null;
     const resolved = match.checkpointId && knownIds.has(match.checkpointId)
@@ -475,7 +545,24 @@ export function evaluateCodeScanCoverage(
       : name && match.flow
         ? byMarker.get(`${markerSlug(match.flow)}#${name}`)
         : undefined;
-    if (!resolved) continue;
+    if (!resolved) {
+      // Only a marker that claims to belong to *this* Flow is a problem. Another
+      // Flow's markers legitimately share the file.
+      const claimsThisFlow = match.flow ? markerSlug(match.flow) === flowKey : Boolean(match.checkpointId);
+      if (claimsThisFlow) {
+        markerProblems.push({ code: 'UNKNOWN_MARKER', checkpointId: match.checkpointId ?? null, file: match.file, line: match.line });
+      }
+      continue;
+    }
+    const location = `${resolved}\0${match.file}:${match.line}`;
+    if (seenLocations.has(location)) continue;
+    seenLocations.add(location);
+    const previous = firstSeen.get(resolved);
+    if (previous && previous !== `${match.file}:${match.line}`) {
+      markerProblems.push({ code: 'DUPLICATE_MARKER', checkpointId: resolved, file: match.file, line: match.line });
+    } else if (!previous) {
+      firstSeen.set(resolved, `${match.file}:${match.line}`);
+    }
     evidence.push({ checkpointId: resolved, file: match.file, line: match.line });
   }
   const observedCheckpointIds = [...new Set(evidence.map((item) => item.checkpointId))];
@@ -483,16 +570,24 @@ export function evaluateCodeScanCoverage(
   const terminalCheckpointIds = (manifest.terminalStateIds ?? []).map((id) => `state:${id}`);
   const foundInitial = observedCheckpointIds.includes(initialCheckpointId);
   const foundTerminals = terminalCheckpointIds.filter((id) => observedCheckpointIds.includes(id));
-  const missingCheckpointIds = [
-    ...(foundInitial ? [] : [initialCheckpointId]),
-    ...(foundTerminals.length ? [] : terminalCheckpointIds),
-  ];
+  const everyCheckpoint = options.mode === 'AUTOMATED';
+  const missingCheckpointIds = everyCheckpoint
+    ? [...knownIds].filter((id) => !observedCheckpointIds.includes(id))
+    : [
+        ...(foundInitial ? [] : [initialCheckpointId]),
+        ...(foundTerminals.length ? [] : terminalCheckpointIds),
+      ];
+  const complete = missingCheckpointIds.length === 0
+    && markerProblems.length === 0
+    && (everyCheckpoint || (foundInitial && foundTerminals.length > 0));
   return {
-    status: (foundInitial && foundTerminals.length ? 'COMPLETED' : 'INCOMPLETE') as 'COMPLETED' | 'INCOMPLETE',
+    status: (complete ? 'COMPLETED' : 'INCOMPLETE') as 'COMPLETED' | 'INCOMPLETE',
     method: 'STATIC_CODE_SCAN' as const,
+    requirement: (everyCheckpoint ? 'ALL_CHECKPOINTS' : 'BOUNDARIES') as 'ALL_CHECKPOINTS' | 'BOUNDARIES',
     startedAt: scannedAt,
     observedCheckpointIds,
     missingCheckpointIds,
+    markerProblems,
     reachedTerminalStateIds: foundTerminals.map((id) => id.slice('state:'.length)),
     orderingErrors: [] as Array<Record<string, unknown>>,
     verifiedPath: foundInitial && foundTerminals.length ? [initialCheckpointId, foundTerminals[0]] : [],
