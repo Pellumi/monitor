@@ -127,6 +127,7 @@ type DesktopContextValue = {
     runId: string,
     format: ReportExportFormat,
   ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
+  getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
   createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
@@ -657,6 +658,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
     saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
+    getArtifactDownloadUrl: (runId, artifactId) => bridge().runs.getArtifactDownloadUrl(runId, artifactId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
     createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement, template) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement, template)),

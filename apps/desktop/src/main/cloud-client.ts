@@ -1209,6 +1209,10 @@ export class DesktopCloudClient {
     return this.request(`/qa-runs/${runId}/protected-values/${valueId}/reveal`, { method: "POST" });
   }
 
+  async getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }> {
+    return this.request(`/qa-runs/${runId}/artifacts/${artifactId}/download`);
+  }
+
   async mentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]> {
     return this.request(`/qa-runs/${runId}/mentionable-members?q=${encodeURIComponent(query.slice(0, 100))}`);
   }

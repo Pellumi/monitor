@@ -133,6 +133,7 @@ const IPC = {
   setRunInteractionMode: 'tellann:run:interaction-mode',
   retryRunSynchronization: 'tellann:run:synchronization:retry',
   revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  getArtifactDownloadUrl: 'tellann:run:artifact:download-url',
   searchRunMentionableMembers: 'tellann:run:members:search',
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
@@ -325,6 +326,8 @@ contextBridge.exposeInMainWorld('tellann', {
     retrySynchronization: (runId: string) => ipcRenderer.invoke(IPC.retryRunSynchronization, runId),
     revealProtectedValue: (runId: string, valueId: string) =>
       ipcRenderer.invoke(IPC.revealRunProtectedValue, { runId, valueId }),
+    getArtifactDownloadUrl: (runId: string, artifactId: string) =>
+      ipcRenderer.invoke(IPC.getArtifactDownloadUrl, { runId, artifactId }),
     searchMentionableMembers: (runId: string, query: string) => ipcRenderer.invoke(IPC.searchRunMentionableMembers, { runId, query }),
     onLifecycleEvent: (callback: (event: unknown) => void) => {
       const subscription = (_: unknown, data: unknown) => callback(data);

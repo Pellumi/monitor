@@ -12620,10 +12620,12 @@ function ArtifactLayout({
   items,
   heading,
   showStorage = false,
+  runId,
 }: {
   items: unknown[];
   heading: string;
   showStorage?: boolean;
+  runId?: string;
 }) {
   if (!items.length)
     return (
@@ -12641,6 +12643,25 @@ function ArtifactLayout({
         </div>
         <strong>{items.length}</strong>
       </div>
+      <ArtifactGrid items={items} showStorage={showStorage} runId={runId} />
+    </section>
+  );
+}
+
+function ArtifactGrid({
+  items,
+  showStorage,
+  runId,
+}: {
+  items: unknown[];
+  showStorage: boolean;
+  runId?: string;
+}) {
+  const { getArtifactDownloadUrl } = useDesktop();
+  const [selectedArtifactUrl, setSelectedArtifactUrl] = useState<string | null>(null);
+
+  return (
+    <>
       <div className="artifact-grid">
         {items.map((value, index) => {
           const item = asRecord(value);
@@ -12653,6 +12674,24 @@ function ArtifactLayout({
                     "_",
                     " ",
                   )}
+                  {runId && typeof item.id === "string" && ["SCREENSHOT", "INSPECT_SCREENSHOT", "SANITIZED_FINAL_SCREENSHOT"].includes(String(item.artifactType)) ? (
+                    <button
+                      type="button"
+                      className="ml-2 px-2 py-0.5 text-xs bg-[var(--primary)] text-white rounded cursor-pointer"
+                      onClick={async () => {
+                        try {
+                          const result = await getArtifactDownloadUrl(runId, item.id as string);
+                          if (result.url) {
+                            setSelectedArtifactUrl(result.url);
+                          }
+                        } catch (e) {
+                          console.error("Failed to load artifact", e);
+                        }
+                      }}
+                    >
+                      View
+                    </button>
+                  ) : null}
                 </span>
                 <Status>
                   {displayValue(item.privacyClassification, "Internal")}
@@ -12696,7 +12735,28 @@ function ArtifactLayout({
           );
         })}
       </div>
-    </section>
+      {selectedArtifactUrl ? (
+        <dialog
+          className="fixed inset-0 m-auto bg-black/80 backdrop-blur-sm border-0 w-screen h-screen z-50 flex items-center justify-center p-4 cursor-zoom-out"
+          open
+          onClick={() => setSelectedArtifactUrl(null)}
+        >
+          <img
+            src={selectedArtifactUrl}
+            alt="Artifact Preview"
+            className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer"
+            onClick={() => setSelectedArtifactUrl(null)}
+          >
+            ✕
+          </button>
+        </dialog>
+      ) : null}
+    </>
   );
 }
 
@@ -13241,7 +13301,7 @@ export function RunDetailPage() {
           ))}
         </TabsList>
         <TabsContent value="evidence">
-          <ArtifactLayout items={artifacts} heading="Captured evidence" />
+          <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
         </TabsContent>
         <TabsContent value="findings">
           <FindingsLayout items={findings} />
@@ -13282,6 +13342,7 @@ export function RunDetailPage() {
             items={artifacts}
             heading="Run artifacts"
             showStorage
+            runId={runId}
           />
         </TabsContent>
       </Tabs>
@@ -13452,7 +13513,7 @@ export function ReportsPage() {
 
 /** Display order for the download control. The plan decides which are offered. */
 const REPORT_DOWNLOAD_FORMATS = [
-  { value: "PDF", label: "PDF", hint: "Tellann's watermarked report document." },
+  { value: "PDF", label: "PDF", hint: "Tellann's report document." },
   { value: "HTML", label: "HTML", hint: "The same document as a web page." },
   { value: "CSV", label: "CSV", hint: "Findings and coverage gaps as a flat table." },
   { value: "JSON", label: "JSON", hint: "The report payload, unchanged." },
@@ -13595,18 +13656,58 @@ function ReportFindingTitles({
   items: Record<string, unknown>[];
   label: string;
 }) {
+  const [page, setPage] = useState(0);
+  const itemsPerPage = 10;
+  
   if (!items.length) return null;
+  
+  const totalPages = Math.ceil(items.length / itemsPerPage);
+  // Ensure page is within bounds in case items array changes
+  const safePage = Math.min(page, Math.max(0, totalPages - 1));
+  const visibleItems = items.slice(safePage * itemsPerPage, (safePage + 1) * itemsPerPage);
+
   return (
     <div className="report-title-group">
       <h3>{label}</h3>
       <ul className="report-title-list">
-        {items.map((item, index) => (
-          <li key={String(item.id ?? index)}>
+        {visibleItems.map((item, index) => (
+          <li key={String(item.id ?? (safePage * itemsPerPage + index))}>
             <Status>{String(item.priority ?? "MEDIUM")}</Status>
             <span>{String(item.title ?? item.suggestedAction ?? "Finding")}</span>
           </li>
         ))}
       </ul>
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="analysis-btn-secondary"
+            disabled={safePage === 0}
+            onClick={(e) => {
+              e.preventDefault();
+              setPage(p => Math.max(0, p - 1));
+            }}
+            style={{ opacity: safePage === 0 ? 0.5 : 1, cursor: safePage === 0 ? 'not-allowed' : 'pointer' }}
+          >
+            Previous
+          </button>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            Page {safePage + 1} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="analysis-btn-secondary"
+            disabled={safePage === totalPages - 1}
+            onClick={(e) => {
+              e.preventDefault();
+              setPage(p => Math.min(totalPages - 1, p + 1));
+            }}
+            style={{ opacity: safePage === totalPages - 1 ? 0.5 : 1, cursor: safePage === totalPages - 1 ? 'not-allowed' : 'pointer' }}
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -13619,6 +13720,19 @@ function ReportFindingTitles({
  * here buried the result. The page answers "what happened and is it good" and
  * names what was found; the explanations leave in the downloaded report.
  */
+function formatReportDuration(ms: unknown): string {
+  if (ms == null) return "Not recorded";
+  const num = Number(ms);
+  if (!Number.isFinite(num) || num < 0) return "0s";
+  const total = Math.floor(num / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function ReportDetailPage() {
   const { projectId } = useParams();
   const [searchParams] = useSearchParams();
@@ -13739,7 +13853,7 @@ export function ReportDetailPage() {
           <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
           <div><dt>Environment</dt><dd>{report.environment.name} · {report.environment.type}</dd></div>
           <div><dt>Outcome</dt><dd>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</dd></div>
-          <div><dt>Duration</dt><dd>{runSummary.durationMs == null ? "Not recorded" : `${(Number(runSummary.durationMs) / 1000).toFixed(1)} seconds`}</dd></div>
+          <div><dt>Duration</dt><dd>{formatReportDuration(runSummary.durationMs)}</dd></div>
           <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
           <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
         </dl>

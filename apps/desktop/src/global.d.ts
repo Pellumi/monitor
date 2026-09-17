@@ -253,6 +253,7 @@ declare global {
           runId: string,
           format: ReportExportFormat,
         ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
+        getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }>;
         start(input: StartGuidedRunInput): Promise<GuidedRunState>;
         pause(): Promise<GuidedRunState>;
         resume(): Promise<GuidedRunState>;

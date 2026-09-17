@@ -3494,6 +3494,14 @@ function registerIpc(): void {
     }
     return cloud.revealProtectedValue(value.runId, value.valueId);
   });
+  ipcMain.handle(IPC.getArtifactDownloadUrl, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { runId?: unknown; artifactId?: unknown };
+    if (typeof value.runId !== 'string' || typeof value.artifactId !== 'string') {
+      throw new Error('RUN_AND_ARTIFACT_ID_REQUIRED');
+    }
+    return cloud.getArtifactDownloadUrl(value.runId, value.artifactId);
+  });
   ipcMain.handle(IPC.searchRunMentionableMembers, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { runId?: unknown; query?: unknown };

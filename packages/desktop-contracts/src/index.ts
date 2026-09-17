@@ -1303,6 +1303,7 @@ export const IPC = {
   setRunInteractionMode: 'tellann:run:interaction-mode',
   retryRunSynchronization: 'tellann:run:synchronization:retry',
   revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  getArtifactDownloadUrl: 'tellann:run:artifact:download-url',
   searchRunMentionableMembers: 'tellann:run:members:search',
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
