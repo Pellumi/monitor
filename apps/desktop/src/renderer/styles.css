@@ -3626,6 +3626,7 @@ button:disabled {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  padding: 3px 8px 0 7px;
   gap: 6px;
   white-space: nowrap;
   color: var(--text);
@@ -6607,10 +6608,11 @@ button:disabled {
   white-space: nowrap;
 }
 .overview-progress-step.is-current {
-  color: var(--strong);
+  color: var(--text-strong);
 }
 .overview-progress-step.is-current .overview-progress-marker {
-  border-color: var(--strong);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .overview-progress-step.is-done {
   color: var(--text);

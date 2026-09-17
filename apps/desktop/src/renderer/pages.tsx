@@ -12677,7 +12677,8 @@ function ArtifactGrid({
                   {runId && typeof item.id === "string" && ["SCREENSHOT", "INSPECT_SCREENSHOT", "SANITIZED_FINAL_SCREENSHOT"].includes(String(item.artifactType)) ? (
                     <button
                       type="button"
-                      className="ml-2 px-2 py-0.5 text-xs bg-[var(--primary)] text-white rounded cursor-pointer"
+                      className="button secondary"
+                      style={{ marginLeft: "12px", padding: "2px 8px", fontSize: "11px", height: "auto", minHeight: "0" }}
                       onClick={async () => {
                         try {
                           const result = await getArtifactDownloadUrl(runId, item.id as string);
@@ -12689,7 +12690,7 @@ function ArtifactGrid({
                         }
                       }}
                     >
-                      View
+                      View screenshot
                     </button>
                   ) : null}
                 </span>
@@ -12749,7 +12750,7 @@ function ArtifactGrid({
           />
           <button
             type="button"
-            className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer"
+            className="absolute top-16 right-16 bg-black/70 hover:bg-black text-white rounded-full w-12 h-12 flex items-center justify-center cursor-pointer text-xl shadow-2xl border border-white/10 backdrop-blur-md transition-colors"
             onClick={() => setSelectedArtifactUrl(null)}
           >
             ✕
