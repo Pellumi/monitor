@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -47,6 +47,7 @@ import {
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher } from './application-launcher';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
+import { renderQualityReport, qualityReportFileBase, type QualityReportFormat } from './quality-report-document';
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
@@ -2194,6 +2195,55 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
     return cloud.runReport(runId);
+  });
+  /**
+   * The report page shows the summary and the finding titles; the complete
+   * report is written to a file the user saves. The plan decides which formats
+   * are offered, and that is re-resolved from the cloud here rather than
+   * trusted from the renderer, so a picker rendered before a downgrade cannot
+   * produce a format the organisation is no longer entitled to.
+   */
+  ipcMain.handle(IPC.saveRunReportDownload, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { runId?: unknown; format?: unknown };
+    if (typeof value.runId !== 'string') throw new Error('INVALID_RUN_ID');
+    const format = String(value.format ?? 'JSON').toUpperCase() as QualityReportFormat;
+    if (!['JSON', 'PDF', 'CSV', 'HTML'].includes(format)) throw new Error('UNSUPPORTED_REPORT_FORMAT');
+
+    // A report still being generated answers with a status stub rather than the
+    // payload. Writing that to a file would hand the user an empty document.
+    const report = (await cloud.runReport(value.runId)) as unknown as Record<string, unknown>;
+    if (!report || typeof report !== 'object' || !report.application || !report.summary) {
+      throw new Error('The report is still being generated. Try the download again once it is ready.');
+    }
+
+    const applicationId = String((report.application as Record<string, unknown> | undefined)?.id ?? '');
+    const applications = await cloud.applications().catch(() => [] as DesktopApplication[]);
+    const application = applications.find((item) => item.id === applicationId);
+    // An organisation whose entitlement could not be resolved keeps the format
+    // every plan includes rather than the one that was asked for.
+    const entitled = application?.entitlements?.reportFormats ?? ['JSON'];
+    if (!entitled.includes(format)) {
+      const error = new Error(
+        entitled.length
+          ? `Your plan can download this report as ${entitled.join(', ')}.`
+          : 'Your plan does not include report downloads.',
+      );
+      (error as NodeJS.ErrnoException).code = 'REPORT_FORMAT_NOT_ENTITLED';
+      throw error;
+    }
+
+    const documentInput = { report, generatedAt: new Date().toISOString() };
+    const { buffer, extension, filterName } = await renderQualityReport(documentInput, format);
+    const filename = `${qualityReportFileBase(documentInput)}.${extension}`;
+    const save = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Save quality report',
+      defaultPath: path.join(app.getPath('documents'), filename),
+      filters: [{ name: filterName, extensions: [extension] }],
+    });
+    if (save.canceled || !save.filePath) return { cancelled: true };
+    await fs.writeFile(save.filePath, buffer);
+    return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath), format };
   });
   ipcMain.handle(IPC.getDeclaredFlows, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

@@ -23,6 +23,7 @@ import type {
   DesktopSession,
   QARunSummary,
   QualityReport,
+  ReportExportFormat,
   RepositorySnapshotSummary,
   StartGuidedRunInput,
   SourceDocumentSummary,
@@ -121,6 +122,11 @@ type DesktopContextValue = {
   getRun(runId: string): Promise<Record<string, unknown>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
+  /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
+  saveReportDownload(
+    runId: string,
+    format: ReportExportFormat,
+  ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
   createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
@@ -650,6 +656,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getRun: (runId) => bridge().runs.get(runId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
+    saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
     createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement, template) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement, template)),

@@ -330,12 +330,26 @@ export class DesktopCloudClient {
           const features = (entitlement.features as Json | undefined) ?? {};
           const enabled = (feature: string) =>
             features[feature] === true || typeof features[feature] === "string";
+          // The cloud resolves the tier-to-format table. A server that predates
+          // the field still says whether exporting is entitled at all, and an
+          // entitled-but-unknown tier degrades to JSON rather than opening up
+          // every format.
+          const reportFormats = Array.isArray(entitlement.reportFormats)
+            ? (entitlement.reportFormats as unknown[])
+                .map((format) => String(format).toUpperCase())
+                .filter((format): format is DesktopEntitlements["reportFormats"][number] =>
+                  format === "JSON" || format === "PDF" || format === "CSV" || format === "HTML",
+                )
+            : enabled("REPORT_EXPORT")
+              ? (["JSON"] as DesktopEntitlements["reportFormats"])
+              : [];
           return [
             organizationId,
             {
               planType: String(
                 entitlement.planType,
               ) as DesktopEntitlements["planType"],
+              reportFormats,
               features: {
                 DESKTOP_GUIDED_RUNS: enabled("DESKTOP_GUIDED_RUNS"),
                 DOCUMENT_FLOW_INFERENCE: enabled("DOCUMENT_FLOW_INFERENCE"),

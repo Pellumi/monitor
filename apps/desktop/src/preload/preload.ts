@@ -41,6 +41,7 @@ const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
+  saveRunReportDownload: 'tellann:cloud:runs:report:download',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -315,6 +316,8 @@ contextBridge.exposeInMainWorld('tellann', {
     get: (runId: string) => ipcRenderer.invoke(IPC.getRun, runId),
     getReplay: (runId: string) => ipcRenderer.invoke(IPC.getRunReplay, runId),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.getRunReport, runId),
+    saveReportDownload: (runId: string, format: 'JSON' | 'PDF' | 'CSV' | 'HTML') =>
+      ipcRenderer.invoke(IPC.saveRunReportDownload, { runId, format }),
     start: (input: unknown) => ipcRenderer.invoke(IPC.startGuidedRun, input),
     pause: () => ipcRenderer.invoke(IPC.pauseGuidedRun),
     resume: () => ipcRenderer.invoke(IPC.resumeGuidedRun),

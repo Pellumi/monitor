@@ -1098,7 +1098,12 @@ app.get('/organizations/:orgId/entitlement', verifyJwt, verifyOrgMembership, asy
   const { orgId } = req.params;
   try {
     const entitlement = await entitlementChecker.getEntitlement(orgId);
-    res.json(entitlement);
+    // Desktop generates report downloads locally, so it needs the formats the
+    // plan entitles rather than only whether the export feature is on at all.
+    res.json({
+      ...entitlement,
+      reportFormats: reportFormatsForTier(entitlement.features[Feature.REPORT_EXPORT]),
+    });
   } catch (err: any) {
     console.error('[Onboarding] Get entitlement error', err);
     res.status(500).json({ error: err.message || 'Internal server error' });

@@ -282,14 +282,14 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
   });
 
   return (
-    <details className="rounded border border-[#262626] bg-black">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-white">
+    <details className="rounded border border-[#262626] bg-[#0f0f0f]">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-neutral-200">
         <Settings2 className="h-3.5 w-3.5" />
         Advanced configuration
       </summary>
       <div className="space-y-4 border-t border-[#262626] px-4 py-4">
         <div>
-          <p className="text-sm font-medium text-white">Telemetry destination</p>
+          <p className="text-sm font-medium text-neutral-200">Telemetry destination</p>
           <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">
             Tellann Cloud selects this automatically. Change it only when using a self-hosted gateway, regional endpoint, or corporate telemetry relay.
           </p>
@@ -299,7 +299,7 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
             type="checkbox"
             checked={customized}
             onChange={(event) => setCustomized(event.target.checked)}
-            className="h-4 w-4 accent-white"
+            className="h-4 w-4 accent-neutral-200"
           />
           Use a custom gateway endpoint
         </label>
@@ -314,7 +314,7 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
             onChange={(event) => setEndpoint(event.target.value)}
             disabled={!customized}
             placeholder="https://telemetry.example.com"
-            className="w-full rounded border border-[#262626] bg-[#131313] px-3 py-2 font-mono text-xs text-white disabled:cursor-not-allowed disabled:text-[#666] focus:border-[#666] focus:outline-none"
+            className="w-full rounded border border-[#262626] bg-[#131313] px-3 py-2 font-mono text-xs text-neutral-200 disabled:cursor-not-allowed disabled:text-[#666] focus:border-[#666] focus:outline-none"
           />
           <p className="mt-2 font-mono text-[11px] text-[#666]">HTTPS is required. Localhost may use HTTP for development.</p>
         </div>
@@ -438,15 +438,15 @@ export default function ConnectApplicationPage() {
   if (setup.isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center font-mono text-xs uppercase tracking-wider text-[#8e9192]">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin text-white" />
+        <Loader2 className="mr-2 h-4 w-4 animate-spin text-neutral-200" />
         Loading Connection Setup…
       </div>
     );
   }
   if (setup.error || !setup.data) {
     return (
-      <div className="mx-auto mt-16 max-w-xl rounded-md border border-[#262626] bg-[#131313] p-6 font-mono text-xs text-white">
-        <TriangleAlert className="mb-3 h-5 w-5 text-white" />
+      <div className="mx-auto mt-16 max-w-xl rounded-md border border-[#262626] bg-[#131313] p-6 font-mono text-xs text-neutral-200">
+        <TriangleAlert className="mb-3 h-5 w-5 text-neutral-200" />
         {setup.error?.message ?? "SDK setup is unavailable."}
       </div>
     );
@@ -482,11 +482,11 @@ export default function ConnectApplicationPage() {
   return (
     <main className="mx-auto w-full space-y-6 pb-16">
       {readiness.connected ? (
-        <section className="rounded-md border border-white bg-[#131313] p-6">
+        <section className="rounded-md border border-neutral-300 bg-[#131313] p-6">
           <div className="flex items-start gap-3">
-            <Check className="mt-1 h-5 w-5 shrink-0 text-white" />
+            <Check className="mt-1 h-5 w-5 shrink-0 text-neutral-200" />
             <div>
-              <h2 className="text-xl font-semibold text-white">Tellann is connected</h2>
+              <h2 className="text-xl font-semibold text-neutral-200">Tellann is connected</h2>
               <p className="mt-1 text-sm leading-relaxed text-[#c4c7c8]">
                 Next, declare the Flow you want Tellann to check, or run a walkthrough right away.
               </p>
@@ -494,14 +494,14 @@ export default function ConnectApplicationPage() {
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
-              className="inline-flex items-center gap-2 rounded bg-white px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+              className="inline-flex items-center gap-2 rounded bg-neutral-200 px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-neutral-900 transition-colors hover:bg-neutral-300"
               href={`/declare?appId=${encodedAppId}`}
             >
               <Workflow className="h-4 w-4" />
               Declare your first Flow
             </Link>
             <Link
-              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-[#0f0f0f] px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-neutral-200"
               href={`/qa-runs/new?appId=${encodedAppId}`}
             >
               <Play className="h-4 w-4" />
@@ -517,7 +517,7 @@ export default function ConnectApplicationPage() {
           <p className="font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">
             {descriptor.environmentName} · {descriptor.environmentType}
           </p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-neutral-200">
             Connect {descriptor.applicationName}
           </h1>
           <p className="mt-2 text-base leading-relaxed text-[#c4c7c8]">
@@ -531,19 +531,19 @@ export default function ConnectApplicationPage() {
             return (
               <li
                 key={step.label}
-                className={`rounded border bg-black p-4 ${
-                  step.done ? "border-white" : isCurrent ? "border-[#444748]" : "border-[#262626]"
+                className={`rounded border bg-[#0f0f0f] p-4 ${
+                  step.done ? "border-neutral-300" : isCurrent ? "border-[#444748]" : "border-[#262626]"
                 }`}
               >
                 <div className="flex items-center gap-2">
                   {step.done ? (
-                    <Check className="h-4 w-4 shrink-0 text-white" />
+                    <Check className="h-4 w-4 shrink-0 text-neutral-200" />
                   ) : isCurrent ? (
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#8e9192]" />
                   ) : (
                     <Circle className="h-4 w-4 shrink-0 text-[#444748]" />
                   )}
-                  <span className={`font-mono text-[11px] uppercase tracking-[0.08em] ${step.done ? "text-white" : "text-[#8e9192]"}`}>
+                  <span className={`font-mono text-[11px] uppercase tracking-[0.08em] ${step.done ? "text-neutral-200" : "text-[#8e9192]"}`}>
                     {index + 1}. {step.label}
                   </span>
                 </div>
@@ -564,11 +564,11 @@ export default function ConnectApplicationPage() {
             disabled={setup.isFetching}
             className={`inline-flex items-center gap-2 rounded border font-mono text-xs uppercase tracking-wider px-4 py-2 transition-all ${
               setup.isFetching
-                ? "border-neutral-400 bg-[#1c1c1c] text-white opacity-90 cursor-not-allowed"
-                : "border-[#444748] bg-black text-[#8e9192] hover:border-neutral-400 hover:text-white"
+                ? "border-neutral-400 bg-[#1c1c1c] text-neutral-200 opacity-90 cursor-not-allowed"
+                : "border-[#444748] bg-[#0f0f0f] text-[#8e9192] hover:border-neutral-400 hover:text-neutral-200"
             }`}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-white" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-neutral-200" : ""}`} />
             {setup.isFetching ? "Checking connection…" : "Check connection now"}
           </button>
         </div>
@@ -578,10 +578,10 @@ export default function ConnectApplicationPage() {
       <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-white" />
+            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-neutral-200" />
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-white">Prefer automatic setup? Use Tellann Desktop</h2>
+                <h2 className="text-sm font-semibold text-neutral-200">Prefer automatic setup? Use Tellann Desktop</h2>
                 {desktopInstalled ? (
                   <span className="border border-[#444748] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#8e9192]">
                     Recommended
@@ -601,8 +601,8 @@ export default function ConnectApplicationPage() {
               disabled={createHandoff.isPending}
               className={`inline-flex items-center gap-2 rounded px-4 py-2 text-xs uppercase tracking-[0.08em] transition-colors disabled:opacity-50 ${
                 desktopInstalled
-                  ? "bg-white font-semibold text-black hover:bg-[#e2e2e2]"
-                  : "border border-[#444748] bg-black font-mono text-[#c4c7c8] hover:border-neutral-500 hover:text-white"
+                  ? "bg-neutral-200 font-semibold text-neutral-900 hover:bg-neutral-300"
+                  : "border border-[#444748] bg-[#0f0f0f] font-mono text-[#c4c7c8] hover:border-neutral-500 hover:text-neutral-200"
               }`}
             >
               {createHandoff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Laptop className="h-4 w-4" />}
@@ -610,7 +610,7 @@ export default function ConnectApplicationPage() {
             </button>
             {desktopInstalled ? null : (
               <a
-                className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+                className="inline-flex items-center gap-2 rounded border border-[#444748] bg-[#0f0f0f] px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-neutral-200"
                 href={`${marketingUrl}/desktop${handoff ? `?handoff=${encodeURIComponent(handoff.handoffToken)}` : ""}`}
               >
                 <Download className="h-4 w-4" />
@@ -640,8 +640,8 @@ export default function ConnectApplicationPage() {
                       aria-pressed={framework === item.id}
                       className={`rounded border px-3 py-2.5 text-left font-mono text-xs transition-colors ${
                         framework === item.id
-                          ? "border-white bg-black font-semibold text-white"
-                          : "border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                          ? "border-neutral-300 bg-[#0f0f0f] font-semibold text-neutral-200"
+                          : "border-[#262626] bg-[#0f0f0f] text-[#8e9192] hover:border-[#444748] hover:text-neutral-200"
                       }`}
                     >
                       {item.label}
@@ -667,8 +667,8 @@ export default function ConnectApplicationPage() {
                         aria-pressed={manager === item}
                         className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
                           manager === item
-                            ? "bg-white font-semibold text-black"
-                            : "border border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                            ? "bg-neutral-200 font-semibold text-neutral-900"
+                            : "border border-[#262626] bg-[#0f0f0f] text-[#8e9192] hover:border-[#444748] hover:text-neutral-200"
                         }`}
                       >
                         {item}
@@ -713,7 +713,7 @@ export default function ConnectApplicationPage() {
                   <p className="font-mono text-xs text-red-400">{createKey.error.message}</p>
                 ) : null}
                 {!rawKey && !createKey.isPending ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#262626] bg-black px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#262626] bg-[#0f0f0f] px-4 py-3">
                     <p className="max-w-xl text-xs leading-relaxed text-[#8e9192]">
                       {descriptor.hasActiveKey
                         ? "This environment already has a key. Keys are shown only once, so use the one you saved or generate a new one — existing keys keep working."
@@ -721,7 +721,7 @@ export default function ConnectApplicationPage() {
                     </p>
                     <button
                       onClick={() => generateKey()}
-                      className="rounded bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+                      className="rounded bg-neutral-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-neutral-900 transition-colors hover:bg-neutral-300"
                     >
                       {descriptor.hasActiveKey ? "Generate new key" : "Generate setup key"}
                     </button>
@@ -776,11 +776,11 @@ export default function ConnectApplicationPage() {
 function StepHeading({ step, title, description }: { step: number; title: string; description?: string }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#444748] font-mono text-[11px] text-white">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#444748] font-mono text-[11px] text-neutral-200">
         {step}
       </span>
       <div>
-        <h2 className="text-base font-semibold text-white">{title}</h2>
+        <h2 className="text-base font-semibold text-neutral-200">{title}</h2>
         {description ? <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">{description}</p> : null}
       </div>
     </div>
@@ -804,12 +804,12 @@ function CodeBox({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs uppercase tracking-wider text-[#8e9192]">{title}</span>
-        <button onClick={onCopy} aria-label={`Copy ${title}`} className="text-[#8e9192] hover:text-white transition-colors">
-          {copied ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
+        <button onClick={onCopy} aria-label={`Copy ${title}`} className="text-[#8e9192] hover:text-neutral-200 transition-colors">
+          {copied ? <Check className="h-4 w-4 text-neutral-200" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
       <pre
-        className={`overflow-auto rounded border border-[#262626] bg-black p-4 font-mono text-xs text-white ${
+        className={`overflow-auto rounded border border-[#262626] bg-[#0f0f0f] p-4 font-mono text-xs text-neutral-200 ${
           multiline ? "min-h-64 whitespace-pre" : "whitespace-pre-wrap"
         }`}
       >

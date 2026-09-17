@@ -16,6 +16,7 @@ import type {
   DesktopSession,
   QARunSummary,
   QualityReport,
+  ReportExportFormat,
   RepositorySnapshotSummary,
   CodebaseAnalysis,
   StartGuidedRunInput,
@@ -248,6 +249,10 @@ declare global {
         get(runId: string): Promise<Record<string, unknown>>;
         getReplay(runId: string): Promise<Record<string, unknown>>;
         getReport(runId: string): Promise<QualityReport>;
+        saveReportDownload(
+          runId: string,
+          format: ReportExportFormat,
+        ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
         start(input: StartGuidedRunInput): Promise<GuidedRunState>;
         pause(): Promise<GuidedRunState>;
         resume(): Promise<GuidedRunState>;

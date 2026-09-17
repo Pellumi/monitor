@@ -75,6 +75,7 @@ import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   DeclaredStateSuggestion,
+  DesktopApplication,
   FlowReviewPreview,
   FlowSuggestionMeta,
   FlowInitialization,
@@ -13449,11 +13450,180 @@ export function ReportsPage() {
   );
 }
 
+/** Display order for the download control. The plan decides which are offered. */
+const REPORT_DOWNLOAD_FORMATS = [
+  { value: "PDF", label: "PDF", hint: "Tellann's watermarked report document." },
+  { value: "HTML", label: "HTML", hint: "The same document as a web page." },
+  { value: "CSV", label: "CSV", hint: "Findings and coverage gaps as a flat table." },
+  { value: "JSON", label: "JSON", hint: "The report payload, unchanged." },
+] as const;
+
+type ReportDownloadFormat = (typeof REPORT_DOWNLOAD_FORMATS)[number]["value"];
+
+function bestEntitledFormat(allowed: readonly string[]): ReportDownloadFormat {
+  return (
+    REPORT_DOWNLOAD_FORMATS.find((item) => allowed.includes(item.value))?.value ?? "JSON"
+  );
+}
+
+function titleCasePlan(plan: string | undefined) {
+  return plan ? plan.charAt(0) + plan.slice(1).toLowerCase() : undefined;
+}
+
+/**
+ * Where the complete report leaves the app. The page above it is a summary, so
+ * this is the only route to the evidence, next steps, and appendix behind it.
+ *
+ * Formats the organisation's plan does not include stay visible but locked:
+ * a missing control reads as a missing feature, a locked one reads as a plan
+ * boundary. Main re-resolves the entitlement before it writes anything, so this
+ * control is a affordance, not the gate.
+ */
+function ReportDownloadCard({
+  runId,
+  entitlements,
+}: {
+  runId: string | null;
+  entitlements: DesktopApplication["entitlements"];
+}) {
+  const { saveReportDownload } = useDesktop();
+  // A null entitlement means the cloud could not be asked, not that the plan
+  // excludes exporting; every plan includes JSON, so that stays available.
+  const allowed = entitlements ? entitlements.reportFormats : ["JSON"];
+  const allowedKey = allowed.join(",");
+  const [format, setFormat] = useState<ReportDownloadFormat>(() => bestEntitledFormat(allowed));
+  const [lockedFormat, setLockedFormat] = useState<ReportDownloadFormat | null>(null);
+  const [status, setStatus] = useState<{
+    tone: "idle" | "saving" | "saved" | "error";
+    message: string | null;
+  }>({ tone: "idle", message: null });
+
+  // A plan change between visits must not leave a locked format selected.
+  useEffect(() => {
+    setFormat((current) => (allowed.includes(current) ? current : bestEntitledFormat(allowed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedKey]);
+
+  const download = async () => {
+    if (!runId) return;
+    setStatus({ tone: "saving", message: null });
+    try {
+      const result = await saveReportDownload(runId, format);
+      setStatus(
+        result.cancelled
+          ? { tone: "idle", message: null }
+          : { tone: "saved", message: `Saved ${result.filename ?? "the report"}.` },
+      );
+    } catch (error) {
+      setStatus({ tone: "error", message: normalizeDesktopError(error) });
+    }
+  };
+
+  const selected = REPORT_DOWNLOAD_FORMATS.find((item) => item.value === format);
+  const exportable = allowed.length > 0;
+  return (
+    <section className="content-card report-download">
+      <div className="card-heading">
+        <div>
+          <small>Full report</small>
+          <h2>Download the complete report</h2>
+        </div>
+        {entitlements?.planType ? <Status>{entitlements.planType}</Status> : null}
+      </div>
+      <p>
+        Every finding with its evidence, rationale, and next step, the declared coverage gaps, the
+        risks found outside this Flow, the annotations, and the capture appendix. PDF and HTML are
+        printed on Tellann's watermarked report design.
+      </p>
+      <div className="report-format-picker" role="radiogroup" aria-label="Report format">
+        {REPORT_DOWNLOAD_FORMATS.map((item) => {
+          const entitled = allowed.includes(item.value);
+          return (
+            <button
+              key={item.value}
+              type="button"
+              role="radio"
+              aria-checked={entitled && format === item.value}
+              className={`report-format${entitled && format === item.value ? " selected" : ""}${entitled ? "" : " locked"}`}
+              title={entitled ? item.hint : `${item.label} is not included on your plan.`}
+              onClick={() => (entitled ? setFormat(item.value) : setLockedFormat(item.value))}
+            >
+              {entitled ? null : <Lock size={12} />}
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="report-download-actions">
+        <button
+          className="button primary"
+          type="button"
+          disabled={!runId || !exportable || status.tone === "saving"}
+          onClick={() => void download()}
+        >
+          <ArrowDownToLine size={15} />
+          {status.tone === "saving" ? "Preparing…" : `Download ${format}`}
+        </button>
+        <small>
+          {exportable
+            ? selected?.hint
+            : "Report downloads are not included on this plan."}
+        </small>
+      </div>
+      {status.message ? (
+        <p className={`report-download-status${status.tone === "error" ? " is-error" : ""}`} role={status.tone === "error" ? "alert" : "status"}>
+          {status.message}
+        </p>
+      ) : null}
+      <EntitlementModal
+        isOpen={lockedFormat !== null}
+        feature="REPORT_EXPORT"
+        featureName={`${lockedFormat ?? "Report"} downloads`}
+        currentPlan={titleCasePlan(entitlements?.planType)}
+        description={`Downloading this report as ${lockedFormat} is not included on your organization's current plan. Your plan covers ${allowed.join(", ") || "no export format"}.`}
+        onClose={() => setLockedFormat(null)}
+      />
+    </section>
+  );
+}
+
+/** Priority pill plus title. What the finding means lives in the downloaded report. */
+function ReportFindingTitles({
+  items,
+  label,
+}: {
+  items: Record<string, unknown>[];
+  label: string;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="report-title-group">
+      <h3>{label}</h3>
+      <ul className="report-title-list">
+        {items.map((item, index) => (
+          <li key={String(item.id ?? index)}>
+            <Status>{String(item.priority ?? "MEDIUM")}</Status>
+            <span>{String(item.title ?? item.suggestedAction ?? "Finding")}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The report summary.
+ *
+ * What the run established fills tens of pages: every finding's rationale,
+ * evidence, and next step, the coverage gaps, the appendix. Rendering all of it
+ * here buried the result. The page answers "what happened and is it good" and
+ * names what was found; the explanations leave in the downloaded report.
+ */
 export function ReportDetailPage() {
   const { projectId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get("runId");
-  const { getReport, revealProtectedValue } = useDesktop();
+  const { getReport, revealProtectedValue, applications } = useDesktop();
   const [report, setReport] = useState<QualityReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
@@ -13475,14 +13645,12 @@ export function ReportDetailPage() {
         description="The report is still processing, expired, or the source run was not provided."
       />
     );
+  const application = applications.find((item) => item.id === projectId);
   const sections = asRecord(report.sections);
   const flowSummary = asRecord(sections.flowSummary);
   const runSummary = asRecord(sections.runSummary);
   const inFlow = asRecord(sections.inFlowFindings);
   const appendix = asRecord(sections.evidenceAppendix);
-  const recommendations = Array.isArray(inFlow.recommendedNextActions)
-    ? inFlow.recommendedNextActions.map(asRecord)
-    : [];
   const detailedFindings = Array.isArray(inFlow.findings)
     ? inFlow.findings.map(asRecord)
     : [];
@@ -13495,19 +13663,25 @@ export function ReportDetailPage() {
   const evidenceEvents = Array.isArray(appendix.events)
     ? appendix.events.map(asRecord)
     : [];
-  const limitations = Array.isArray(appendix.limitations)
-    ? appendix.limitations.map(String)
-    : [];
+  const missingStateCount = Array.isArray(inFlow.missingStates) ? inFlow.missingStates.length : 0;
+  const missingTransitionCount = Array.isArray(inFlow.missingTransitions)
+    ? inFlow.missingTransitions.length
+    : 0;
   const protectedValues = evidenceEvents.flatMap((event) =>
     Array.isArray(event.protectedValues)
       ? event.protectedValues.map((value) => ({ event, value: asRecord(value) }))
       : [],
   );
-  const eventCounts = asRecord(runSummary.eventCounts);
   const viewportHistory = Array.isArray(runSummary.viewportHistory)
     ? runSummary.viewportHistory.map(asRecord)
     : [];
   const latestViewport = viewportHistory.at(-1);
+  const severityCounts = detailedFindings.reduce<Record<string, number>>((counts, finding) => {
+    const priority = String(finding.priority ?? "MEDIUM").toUpperCase();
+    counts[priority] = (counts[priority] ?? 0) + 1;
+    return counts;
+  }, {});
+  const eventTotal = Number(appendix.eventTotal ?? evidenceEvents.length);
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -13551,123 +13725,124 @@ export function ReportDetailPage() {
           value={report.summary.criticalOrHighFindings}
         />
       </div>
+
       <section className="content-card report-section">
         <div className="card-heading">
-          <div><small>1 · Flow summary</small><h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2></div>
+          <div>
+            <small>Flow and run</small>
+            <h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2>
+          </div>
           <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status>
         </div>
         <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
         <dl className="detail-list report-detail-grid">
-          <div><dt>Scope</dt><dd>{String(flowSummary.scope ?? report.flow?.scopeStatement ?? "Not declared")}</dd></div>
-          <div><dt>Initial state</dt><dd>{String(flowSummary.initialState ?? report.flow?.initialStateKey ?? "Not declared")}</dd></div>
-          <div><dt>Terminal states</dt><dd>{Array.isArray(flowSummary.terminalStates) ? flowSummary.terminalStates.map(String).join(", ") : report.flow?.terminalStateKeys.join(", ") || "Not declared"}</dd></div>
-          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
-          <div><dt>Provenance</dt><dd>{String(flowSummary.provenance ?? report.expectedIntent?.provenance ?? "Not recorded")}</dd></div>
-        </dl>
-      </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>2 · QA run summary</small><h2>Capture scope and boundary outcome</h2></div><Status>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</Status></div>
-        <dl className="detail-list report-detail-grid">
           <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
-          <div><dt>Environment</dt><dd>{String(asRecord(runSummary.environment).name ?? report.environment.name)} · {String(asRecord(runSummary.environment).type ?? report.environment.type)}</dd></div>
-          <div><dt>Capture tracks</dt><dd>{Array.isArray(runSummary.captureTracks) ? runSummary.captureTracks.map(String).join(", ") : report.captureTracks.join(", ")}</dd></div>
+          <div><dt>Environment</dt><dd>{report.environment.name} · {report.environment.type}</dd></div>
+          <div><dt>Outcome</dt><dd>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</dd></div>
           <div><dt>Duration</dt><dd>{runSummary.durationMs == null ? "Not recorded" : `${(Number(runSummary.durationMs) / 1000).toFixed(1)} seconds`}</dd></div>
-          <div><dt>Repository revision</dt><dd>{String(runSummary.repositoryRevision ?? report.repository?.revision ?? "Not attached")}</dd></div>
-          <div><dt>Instrumentation</dt><dd>{runSummary.instrumentationAvailable ? "Validated instrumentation attached" : "Browser-level evidence only"}</dd></div>
-          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px · ${String(latestViewport.devicePixelRatio ?? 1)}× DPR` : "Not recorded"}{viewportHistory.length > 1 ? ` · ${viewportHistory.length - 1} resize ${viewportHistory.length === 2 ? "change" : "changes"}` : ""}</dd></div>
+          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
+          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
         </dl>
-        {runSummary.captureDegraded ? <div className="report-warning" role="alert"><AlertTriangle size={18} /> Capture was degraded. Review limitations and capture findings before relying on coverage.</div> : null}
-        {Object.keys(eventCounts).length ? <div className="report-counts" aria-label="Evidence counts">{Object.entries(eventCounts).map(([type, count]) => <span key={type}><strong>{Number(count)}</strong>{type.replace(/^QA_/, "").replaceAll("_", " ").toLowerCase()}</span>)}</div> : null}
+        {runSummary.captureDegraded ? (
+          <div className="report-warning" role="alert">
+            <AlertTriangle size={18} /> Capture was degraded. Read the limitations in the downloaded
+            report before relying on coverage.
+          </div>
+        ) : null}
+      </section>
+
+      <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
+
+      <section className="content-card report-section">
+        <div className="card-heading">
+          <div>
+            <small>Findings</small>
+            <h2>What this run found</h2>
+          </div>
+          <Status>{`${detailedFindings.length + criticalFindings.length} total`}</Status>
+        </div>
+        <div className="report-counts" aria-label="Findings by priority">
+          {(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const)
+            .filter((priority) => severityCounts[priority])
+            .map((priority) => (
+              <span key={priority}>
+                <strong>{severityCounts[priority]}</strong>
+                {priority.toLowerCase()}
+              </span>
+            ))}
+          <span><strong>{missingStateCount}</strong>states not reached</span>
+          <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
+          <span><strong>{annotations.length}</strong>annotations</span>
+          <span><strong>{eventTotal}</strong>evidence events</span>
+        </div>
+        {detailedFindings.length || criticalFindings.length ? (
+          <>
+            <ReportFindingTitles items={detailedFindings} label="In this Flow" />
+            <ReportFindingTitles items={criticalFindings} label="Outside this Flow" />
+            <p className="report-note">
+              Why each one matters, the evidence behind it, and the next step are in the downloadable
+              report.
+            </p>
+          </>
+        ) : (
+          <EmptyRunSection
+            title="No findings"
+            description="This run produced no evidence-backed issue that needs your attention."
+          />
+        )}
       </section>
 
       <section className="content-card report-section">
-        <div className="card-heading"><div><small>3 · In-Flow findings</small><h2>Recommended next actions</h2></div><Status>{recommendations.length} prioritized</Status></div>
-        {recommendations.length ? (
-          <ol className="report-recommendations">
-            {recommendations.map((item, index) => (
-              <li key={String(item.id ?? index)}>
-                <div className="report-priority"><span>{index + 1}</span><Status>{String(item.priority ?? "MEDIUM")}</Status><small>{String(item.generator ?? "RULES")}</small></div>
-                <div><h3>{String(item.title ?? item.suggestedAction ?? "Recommended improvement")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>Next step: {String(item.suggestedAction ?? "Investigate and repeat the affected step.")}</strong><small>Expected outcome: {String(item.expectedOutcome ?? "The Flow completes reliably.")} · Confidence {Math.round(Number(item.confidence ?? 0) * 100)}%</small></div>
-              </li>
-            ))}
-          </ol>
-        ) : <EmptyRunSection title="No prioritized improvements" description="The deterministic analysis found no in-Flow recommendation for this run." />}
-        {detailedFindings.length ? (
-          <details className="report-details" open>
-            <summary>Detailed findings by state and transition ({detailedFindings.length})</summary>
-            <div className="report-finding-list">{detailedFindings.map((item, index) => <article key={String(item.id ?? index)}><div><Status>{String(item.priority ?? "INFO")}</Status><small>{String(item.generator ?? "RULES")}</small></div><h3>{String(item.title ?? "Finding")}</h3><p>{String(item.rationale ?? item.impact ?? "No rationale recorded.")}</p><small>State: {String(item.affectedState ?? "not linked")} · Transition: {String(item.affectedTransition ?? "not linked")} · Effort: {String(item.effort ?? "unknown")}</small></article>)}</div>
+        <div className="card-heading">
+          <div>
+            <small>Evidence</small>
+            <h2>Where to look further</h2>
+          </div>
+          <Status>{`${eventTotal} events`}</Status>
+        </div>
+        <div className="report-links">
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
+            Review evidence timeline
+          </Link>
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
+            View Flow reconciliation
+          </Link>
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}`}>
+            Open QA run
+          </Link>
+        </div>
+        {protectedValues.length ? (
+          <details className="report-details protected-values">
+            <summary>Protected values ({protectedValues.length})</summary>
+            <p>
+              Values stay masked, and are never written to a downloaded report. Authorized reveals
+              are individual, rate limited, audited, and never cached.
+            </p>
+            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
+            {protectedValues.map(({ event, value }, index) => {
+              const valueId = String(value.id ?? "");
+              const canReveal = String(value.kind) === "ENCRYPTED";
+              return (
+                <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}>
+                  <div>
+                    <strong>{String(value.keyPath ?? "protected value")}</strong>
+                    <small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>
+                    {revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}
+                  </div>
+                  {canReveal && valueId && revealedValues[valueId] === undefined ? (
+                    <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}>
+                      <Unlock size={15} />
+                      {revealBusy === valueId ? "Authorizing…" : "Reveal"}
+                    </button>
+                  ) : (
+                    <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>
+                  )}
+                </div>
+              );
+            })}
           </details>
         ) : null}
       </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>4 · Critical system-wide findings</small><h2>Risks outside the selected Flow</h2></div><Status>{criticalFindings.length}</Status></div>
-        {criticalFindings.length ? <div className="report-finding-list">{criticalFindings.map((item, index) => <article key={String(item.id ?? index)}><Status>{String(item.priority ?? "HIGH")}</Status><h3>{String(item.title ?? "Critical finding")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>{String(item.suggestedAction ?? "Investigate immediately.")}</strong></article>)}</div> : <p>No high-confidence high-severity out-of-Flow failures were recorded.</p>}
-      </section>
-
-      <section className="content-card report-section" id="annotations">
-        <div className="card-heading"><div><small>5 · User annotations</small><h2>Inspect-mode feedback</h2></div><Status>{annotations.length}</Status></div>
-        {annotations.length ? <div className="annotation-list">{annotations.map((annotation, index) => { const author = asRecord(annotation.author); const mentioned = Array.isArray(annotation.mentionedTeammates) ? annotation.mentionedTeammates.map(asRecord) : []; return <article className="annotation-card" key={String(annotation.id ?? index)}><div className="annotation-pin">{String(annotation.pin ?? index + 1)}</div><div><p>{String(annotation.comment ?? "")}</p><small>{String(author.displayName ?? "QA author")} · {formatDate(annotation.timestamp)} · {String(annotation.route ?? "unknown route")} · state {String(annotation.flowState ?? "outside boundary")}</small>{mentioned.length ? <div className="annotation-mentions">Mentioned: {mentioned.map((member) => `@${String(member.displayName ?? "member")}`).join(", ")}</div> : null}</div></article>; })}</div> : <p>No inspect-mode annotations were added during this run.</p>}
-      </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>6 · Evidence appendix</small><h2>Auditable capture record</h2></div><Status>{evidenceEvents.length} events</Status></div>
-        <div className="report-links"><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>Review evidence timeline</Link><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>View Flow reconciliation</Link></div>
-        {limitations.length ? <div className="report-limitations"><strong>Capture limitations</strong><ul>{limitations.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-        {protectedValues.length ? (
-          <div className="protected-values">
-            <h3>Protected values</h3>
-            <p>Values stay masked. Authorized reveals are individual, rate limited, audited, and never cached.</p>
-            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
-            {protectedValues.map(({ event, value }, index) => { const valueId = String(value.id ?? ""); const canReveal = String(value.kind) === "ENCRYPTED"; return <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}><div><strong>{String(value.keyPath ?? "protected value")}</strong><small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>{revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}</div>{canReveal && valueId && revealedValues[valueId] === undefined ? <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}><Unlock size={15} />{revealBusy === valueId ? "Authorizing…" : "Reveal"}</button> : <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>}</div>; })}
-          </div>
-        ) : null}
-        <details className="report-details"><summary>Evidence index (showing up to 100 of {evidenceEvents.length})</summary><div className="evidence-index">{evidenceEvents.slice(0, 100).map((event, index) => <div key={String(event.id ?? index)}><span>{formatDate(event.timestamp)}</span><strong>{String(event.type ?? "EVENT")}</strong><span>{String(event.route ?? "No route")}</span><Status>{String(event.scope ?? "IN_FLOW")}</Status></div>)}</div></details>
-      </section>
-      {report.instrumentation ? (
-        <section className="content-card mt-4">
-          <div className="card-heading">
-            <div>
-              <small>Instrumentation manifest</small>
-              <h2>{report.instrumentation.adapterId}</h2>
-            </div>
-            <Status>{report.instrumentation.status}</Status>
-          </div>
-          <dl className="detail-list">
-            <div>
-              <dt>Plan</dt>
-              <dd>{report.instrumentation.planId.slice(0, 8)}</dd>
-            </div>
-            <div>
-              <dt>Adapter version</dt>
-              <dd>{report.instrumentation.adapterVersion}</dd>
-            </div>
-            <div>
-              <dt>Manifest version</dt>
-              <dd>{report.instrumentation.manifestVersion}</dd>
-            </div>
-            <div>
-              <dt>Validated</dt>
-              <dd>
-                {report.instrumentation.validatedAt
-                  ? new Date(
-                      report.instrumentation.validatedAt,
-                    ).toLocaleString()
-                  : "Not validated"}
-              </dd>
-            </div>
-          </dl>
-        </section>
-      ) : null}
-      {!sections.inFlowFindings && report.findings.length ? (
-        <FindingsLayout items={report.findings} />
-      ) : !sections.inFlowFindings ? (
-        <EmptyRunSection
-          title="No findings"
-          description="This report did not identify any evidence-backed issues that need your attention."
-        />
-      ) : null}
     </Page>
   );
 }

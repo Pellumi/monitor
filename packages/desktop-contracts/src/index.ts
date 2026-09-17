@@ -1227,6 +1227,7 @@ export const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
+  saveRunReportDownload: 'tellann:cloud:runs:report:download',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -1362,8 +1363,16 @@ export const DesktopSessionSchema = z.object({
   }).nullable(),
 });
 
+/** A format the organisation's plan may download a quality report in. */
+export const ReportExportFormatSchema = z.enum(['JSON', 'PDF', 'CSV', 'HTML']);
+
 export const DesktopEntitlementsSchema = z.object({
   planType: z.enum(['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE']),
+  /**
+   * Resolved from the organisation's REPORT_EXPORT tier by the cloud, which
+   * owns the tier-to-format table. Empty means the plan cannot export at all.
+   */
+  reportFormats: z.array(ReportExportFormatSchema).default([]),
   features: z.object({
     DESKTOP_GUIDED_RUNS: z.boolean(),
     DOCUMENT_FLOW_INFERENCE: z.boolean(),
@@ -1518,6 +1527,7 @@ export type QAElementFingerprint = z.infer<typeof QAElementFingerprintSchema>;
 export type CreateQARunAnnotation = z.infer<typeof CreateQARunAnnotationSchema>;
 export type RunLifecycleEvent = z.infer<typeof RunLifecycleEventSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
+export type ReportExportFormat = z.infer<typeof ReportExportFormatSchema>;
 export type DesktopEntitlements = z.infer<typeof DesktopEntitlementsSchema>;
 export type DesktopApplication = z.infer<typeof DesktopApplicationSchema>;
 export type DesktopOrganization = z.infer<typeof DesktopOrganizationSchema>;
