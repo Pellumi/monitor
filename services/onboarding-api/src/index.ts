@@ -2448,27 +2448,36 @@ app.get('/applications/:appId/onboarding-progress', async (req: Request, res: Re
   try {
     let progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } });
     if (!progress) return res.status(404).json({ error: 'Onboarding progress not found' });
-    if (!progress.demonstrationCompleted) {
+    if (!progress.demonstrationCompleted || !progress.firstReportGenerated || !progress.analysisGenerated) {
       const completedRun = await prisma.qARun.findFirst({
-        where: { applicationId: appId, status: 'COMPLETED' },
+        where: { applicationId: appId, status: { in: ['COMPLETED', 'COMPLETED_INCOMPLETE'] } },
         select: { id: true, organizationId: true, environmentId: true },
         orderBy: { endedAt: 'desc' },
       });
       if (completedRun) {
-        const updated = await prisma.applicationOnboardingProgress.updateMany({
-          where: { applicationId: appId, demonstrationCompleted: false },
-          data: { demonstrationCompleted: true },
-        });
-        if (updated.count === 1) {
-          await emitActivationEvent(
-            completedRun.organizationId,
-            appId,
-            completedRun.environmentId,
-            'DEMO_COMPLETED',
-            { source: 'QA_RUN_RECONCILIATION', runId: completedRun.id },
-          );
+        const updateData: any = {};
+        if (!progress.demonstrationCompleted) updateData.demonstrationCompleted = true;
+        if (!progress.firstReportGenerated) updateData.firstReportGenerated = true;
+        if (!progress.analysisGenerated) updateData.analysisGenerated = true;
+
+        if (Object.keys(updateData).length > 0) {
+          const updated = await prisma.applicationOnboardingProgress.updateMany({
+            where: { applicationId: appId },
+            data: updateData,
+          });
+          
+          if (updated.count === 1 && updateData.demonstrationCompleted) {
+            await emitActivationEvent(
+              completedRun.organizationId,
+              appId,
+              completedRun.environmentId,
+              'DEMO_COMPLETED',
+              { source: 'QA_RUN_RECONCILIATION', runId: completedRun.id },
+            );
+          }
+          
+          progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } }) ?? progress;
         }
-        progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } }) ?? progress;
       }
     }
     res.json(progress);

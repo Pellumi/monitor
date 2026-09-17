@@ -30,7 +30,9 @@ export function DashboardProvider({
   data: DashboardOverviewResponse | null;
   hasApplications: boolean;
 }) {
-  const [firstAnalysisAcknowledged, setFirstAnalysisAcknowledged] = useState(false);
+  const [firstAnalysisAcknowledged, setFirstAnalysisAcknowledged] = useState(
+    data?.onboarding?.firstAnalysisReviewed ?? false
+  );
   const [userRole, setUserRole] = useState<UserRole>("DEVELOPER");
 
   const state = useMemo(
