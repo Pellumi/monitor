@@ -9,244 +9,41 @@ import { z } from 'zod';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import { FlowPlacementKindSchema } from '@tellann/desktop-contracts';
 import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import {
+  CALLABLE_ENTRY_PLACEMENTS,
+  calculateFlowAnchorHash,
+  currentGitRevision,
+  fileHash,
+  hash,
+  INSTRUMENTATION_CONTRACT_VERSION,
+  INSTRUMENTATION_MANIFEST_VERSION,
+  SDK_FALLBACK_INSTALL_SPEC,
+  validateInstrumentationPlan,
+  type AdapterEvidence,
+  type ApprovedInstrumentationTask,
+  type DetectionResult,
+  type FlowPlacementKind,
+  type InstrumentationAdapter,
+  type InstrumentationPlan,
+  type LocalProjectContext,
+  type PatchFileResult,
+  type PatchOperation,
+  type PatchResult,
+  type Risk,
+  type RollbackResult,
+  type StructuredCommand,
+  type ValidationResult,
+  type FrameworkId,
+} from './contracts';
 
-export const INSTRUMENTATION_CONTRACT_VERSION = '1.0';
-export const INSTRUMENTATION_MANIFEST_VERSION = '1.0';
+export * from './contracts';
+import { beginPatch, finalizePatch, hashChecks, restorePatch, rollbackPatch } from './patching';
+export * from './patching';
+import { pythonAdapters } from './python-adapter';
+export * from './python-adapter';
 
-export const RiskSchema = z.enum(['LOW', 'MEDIUM', 'HIGH']);
-export const OperationKindSchema = z.enum(['CREATE_FILE', 'UPDATE_SOURCE', 'UPDATE_PACKAGE']);
-export const FrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
-export const PlanStatusSchema = z.enum([
-  'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
-  'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
-]);
 
-export type Risk = z.infer<typeof RiskSchema>;
-export type FrameworkId = z.infer<typeof FrameworkIdSchema>;
 
-export type StructuredCommand = {
-  id: string;
-  executable: string;
-  args: string[];
-  cwd: string;
-  timeoutMs: number;
-  allowedEnvironmentKeys: string[];
-  purpose: string;
-  networkRequired: boolean;
-  /**
-   * Offered, but not selected by default.
-   *
-   * A full production build is the most expensive thing in the whole
-   * initialization, and what it is being asked is whether a handful of inserted
-   * marker calls broke the project. When the project can answer that with a type
-   * check, the build stops being the default way to ask and stays available for
-   * anyone who wants it.
-   */
-  optional?: boolean;
-};
-
-export type LocalProjectContext = {
-  workspaceRoot: string;
-  environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
-  snapshot: RepositorySnapshotSummary;
-  instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
-  flowId?: string;
-  flowVersionId?: string;
-  flowInitializationId?: string;
-  flowManifest?: FlowInitializationManifest;
-  /**
-   * The checkpoints this adapter is responsible for.
-   *
-   * A Flow crosses packages — a login page in the web app, its handler in the
-   * API — and no single framework adapter can instrument both. The caller splits
-   * the manifest by which detected package holds each file and hands each
-   * adapter its share; together the approved plans still cover every checkpoint.
-   * Omitted means this adapter owns every checkpoint, which is the single-package
-   * case and stays exactly as strict as before.
-   */
-  flowCheckpointIds?: string[];
-};
-
-export type DetectionResult = {
-  adapterId: FrameworkId;
-  adapterVersion: string;
-  supported: boolean;
-  confidence: number;
-  frameworkVersion: string | null;
-  supportedVersionRange: string;
-  evidence: string[];
-  reasons: string[];
-};
-
-export type AdapterEvidence = {
-  entryPoints: Array<{ file: string; symbol: string | null; confidence: number }>;
-  existingInstrumentation: Array<{ file: string; marker: string }>;
-  semanticBoundaries: Array<{
-    file: string;
-    symbol: string | null;
-    eventType: string;
-    confidence: number;
-    rationale: string;
-  }>;
-};
-
-export type PatchOperation = {
-  id: string;
-  kind: z.infer<typeof OperationKindSchema>;
-  relativePath: string;
-  symbol: string | null;
-  transformId: string;
-  transformVersion: string;
-  expectedHash: string | null;
-  description: string;
-  eventMappings: Array<{ eventType: string; expectedState: string | null; checkpointId?: string; stateId?: string | null; transitionId?: string | null; terminalKind?: string | null }>;
-  content?: string;
-  importModule?: string;
-  flowInitializationId?: string;
-  placementKind?: FlowPlacementKind;
-  anchorText?: string;
-  anchorHash?: string;
-  startLine?: number;
-  endLine?: number;
-  branch?: 'THEN' | 'ELSE';
-};
-
-// Re-exported from the contracts package rather than redeclared: a placement the
-// retrieval engine can rank and the resolver can return but this adapter cannot
-// apply is a mapping that dies at proposal, which is exactly the drift a second
-// copy of the enum invites.
-export { FlowPlacementKindSchema };
-export type FlowPlacementKind = z.infer<typeof FlowPlacementKindSchema>;
-
-/** Placements that instrument the entry of a callable rather than a statement. */
-const CALLABLE_ENTRY_PLACEMENTS: FlowPlacementKind[] = ['FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY'];
-
-export type InstrumentationPlan = {
-  contractVersion: string;
-  manifestVersion: string;
-  id: string;
-  taskKey: string;
-  adapterId: FrameworkId;
-  adapterVersion: string;
-  frameworkVersion: string | null;
-  supportedVersionRange: string;
-  baseRevision: string | null;
-  repositoryFingerprint: string;
-  approvedFileScopes: string[];
-  packageChanges: Array<{ packageName: string; version: string; kind: 'dependency' | 'devDependency' }>;
-  operations: PatchOperation[];
-  validationCommands: StructuredCommand[];
-  networkRequirements: string[];
-  risk: Risk;
-  riskReasons: string[];
-  evidence: AdapterEvidence;
-  instrumentationPurpose: 'BOOTSTRAP' | 'FLOW';
-  flowId: string | null;
-  flowVersionId: string | null;
-  flowInitializationId?: string | null;
-  flowManifest?: FlowInitializationManifest | null;
-  createdAt: string;
-};
-
-export type ApprovedInstrumentationTask = {
-  plan: InstrumentationPlan;
-  approvedFileScopes: string[];
-  approvedCommandIds: string[];
-  approvalHash: string;
-  checkpointDirectory: string;
-};
-
-export type PatchFileResult = {
-  relativePath: string;
-  beforeHash: string | null;
-  afterHash: string;
-  changed: boolean;
-};
-
-export type PatchResult = {
-  planId: string;
-  checkpointId: string;
-  checkpointDirectory: string;
-  baseRevision: string | null;
-  files: PatchFileResult[];
-  changedFiles: string[];
-  diff: string;
-  diffHash: string;
-  appliedAt: string;
-};
-
-export type ValidationResult = {
-  valid: boolean;
-  checks: Array<{ name: string; passed: boolean; output: string }>;
-};
-
-export type RollbackResult = {
-  rolledBackFiles: string[];
-  conflicts: Array<{ relativePath: string; reason: string }>;
-  verified: boolean;
-};
-
-export interface InstrumentationAdapter {
-  readonly id: FrameworkId;
-  readonly version: string;
-  readonly supportedVersionRange: string;
-  detect(input: LocalProjectContext): DetectionResult;
-  index(input: LocalProjectContext): Promise<AdapterEvidence>;
-  propose(input: LocalProjectContext): Promise<InstrumentationPlan>;
-  apply(input: LocalProjectContext, task: ApprovedInstrumentationTask): Promise<PatchResult>;
-  validate(input: LocalProjectContext, result: PatchResult): Promise<ValidationResult>;
-  rollback(input: LocalProjectContext, result: PatchResult): Promise<RollbackResult>;
-}
-
-const PLAN_SCHEMA = z.object({
-  contractVersion: z.literal(INSTRUMENTATION_CONTRACT_VERSION),
-  manifestVersion: z.literal(INSTRUMENTATION_MANIFEST_VERSION),
-  id: z.string().uuid(),
-  taskKey: z.string().min(32),
-  adapterId: FrameworkIdSchema,
-  adapterVersion: z.string(),
-  frameworkVersion: z.string().nullable(),
-  supportedVersionRange: z.string(),
-  baseRevision: z.string().nullable(),
-  repositoryFingerprint: z.string().min(32),
-  approvedFileScopes: z.array(z.string()),
-  packageChanges: z.array(z.object({ packageName: z.string(), version: z.string(), kind: z.enum(['dependency', 'devDependency']) })),
-  operations: z.array(z.object({
-    id: z.string(), kind: OperationKindSchema, relativePath: z.string(), symbol: z.string().nullable(), transformId: z.string(),
-    transformVersion: z.string(), expectedHash: z.string().nullable(), description: z.string(),
-    eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable(), checkpointId: z.string().optional(), stateId: z.string().nullable().optional(), transitionId: z.string().nullable().optional(), terminalKind: z.string().nullable().optional() })),
-    content: z.string().optional(), importModule: z.string().optional(), flowInitializationId: z.string().uuid().optional(),
-    placementKind: FlowPlacementKindSchema.optional(), anchorText: z.string().optional(), anchorHash: z.string().optional(),
-    startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional(), branch: z.enum(['THEN', 'ELSE']).optional(),
-  })),
-  validationCommands: z.array(z.object({
-    id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
-    allowedEnvironmentKeys: z.array(z.string()), purpose: z.string(), networkRequired: z.boolean(),
-    optional: z.boolean().optional(),
-  })),
-  networkRequirements: z.array(z.string()),
-  risk: RiskSchema,
-  riskReasons: z.array(z.string()),
-  evidence: z.any(),
-  instrumentationPurpose: z.enum(['BOOTSTRAP', 'FLOW']).default('BOOTSTRAP'),
-  flowId: z.string().uuid().nullable().optional(),
-  flowVersionId: z.string().uuid().nullable().optional(),
-  flowInitializationId: z.string().uuid().nullable().optional(),
-  flowManifest: z.any().nullable().optional(),
-  createdAt: z.string(),
-});
-
-export function validateInstrumentationPlan(value: unknown): InstrumentationPlan {
-  return PLAN_SCHEMA.parse(value) as InstrumentationPlan;
-}
-
-function hash(value: string | Buffer): string {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
-
-export function calculateFlowAnchorHash(file: string, symbol: string | null, placementKind: string, anchorText: string): string {
-  return hash(`${file}\0${symbol ?? ''}\0${placementKind}\0${anchorText.replaceAll('\r\n', '\n')}`);
-}
 
 function normalizeVersion(value: string | undefined): string | null {
   if (!value) return null;
@@ -283,11 +80,18 @@ function isCommonJsEntry(root: string, relativePath: string): boolean {
 function generatedFileFor(definition: AdapterDefinition, entryFile: string): string {
   const extension = path.extname(entryFile).toLowerCase();
   const typed = ['.ts', '.tsx', '.mts', '.cts'].includes(extension);
-  if (definition.id === 'nextjs') return typed ? 'src/tellann.tsx' : 'src/tellann.js';
-  if (definition.sdkPackage === '@tellann/frontend-sdk') return typed ? 'src/tellann.ts' : 'src/tellann.js';
-  if (extension === '.cjs') return 'src/tellann.cjs';
-  if (extension === '.mjs') return 'src/tellann.mjs';
-  return typed ? 'src/tellann.ts' : 'src/tellann.js';
+  // The definition's own path supplies the directory, because not every
+  // framework keeps application code in `src/`: Remix uses `app/`, and writing
+  // a generated module into a directory the framework does not compile would
+  // produce an import that resolves at type-check time and fails at runtime.
+  const directory = definition.generatedFile.includes('/')
+    ? definition.generatedFile.slice(0, definition.generatedFile.lastIndexOf('/') + 1)
+    : '';
+  if (definition.id === 'nextjs') return `${directory}tellann.${typed ? 'tsx' : 'js'}`;
+  if (definition.sdkPackage === '@tellann/frontend-sdk') return `${directory}tellann.${typed ? 'ts' : 'js'}`;
+  if (extension === '.cjs') return `${directory}tellann.cjs`;
+  if (extension === '.mjs') return `${directory}tellann.mjs`;
+  return `${directory}tellann.${typed ? 'ts' : 'js'}`;
 }
 
 function findSourceFiles(root: string, max = 5_000): string[] {
@@ -348,20 +152,42 @@ function withinPackage(relativeRoot: string, relativePath: string): string {
   return relativeRoot ? path.posix.join(relativeRoot, relativePath) : relativePath;
 }
 
-function fileHash(root: string, relativePath: string): string | null {
-  const target = resolveWithinWorkspace(root, relativePath);
-  return fs.existsSync(target) ? hash(fs.readFileSync(target)) : null;
-}
+// Cached for the process: a plan is rebuilt each time the user revisits the review
+// screen, and the newest published version does not change on that timescale.
+const latestPublishedVersions = new Map<string, string | null>();
 
-function currentGitRevision(root: string): string | null {
+// `npm view` is used rather than a direct registry fetch so the lookup honours the
+// user's registry configuration and credentials, including a private mirror.
+function latestPublishedVersion(packageName: string): string | null {
+  const cached = latestPublishedVersions.get(packageName);
+  if (cached !== undefined) return cached;
+  let resolved: string | null = null;
   try {
-    return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).trim() || null;
+    const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const output = execFileSync(executable, ['view', packageName, 'version'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+    }).trim();
+    // An unpublished package prints nothing and still exits zero.
+    if (semver.valid(output)) resolved = output;
   } catch {
-    return null;
+    // Planning stays usable without a registry; the caller falls back to the tag.
   }
+  latestPublishedVersions.set(packageName, resolved);
+  return resolved;
 }
 
-function commandFor(root: string, packageRoot: string, relativePackageRoot: string, snapshot: RepositorySnapshotSummary, sdkPackage: string): StructuredCommand[] {
+type SdkInstallSpec = { install: string; dependency: string };
+
+function resolveSdkInstallSpec(sdkPackage: string): SdkInstallSpec {
+  const latest = latestPublishedVersion(sdkPackage);
+  // The command pins the exact version it was approved against; package.json keeps
+  // the ordinary caret range so the project can take later patches on its own.
+  return latest
+    ? { install: latest, dependency: `^${latest}` }
+    : { install: SDK_FALLBACK_INSTALL_SPEC, dependency: SDK_FALLBACK_INSTALL_SPEC };
+}
+
+function commandFor(root: string, packageRoot: string, relativePackageRoot: string, snapshot: RepositorySnapshotSummary, sdkPackage: string, installSpec: string): StructuredCommand[] {
   const manager = snapshot.packageManager;
   if (!manager || !['pnpm', 'npm', 'yarn', 'bun'].includes(manager)) return [];
   const executable = process.platform === 'win32' ? `${manager}.cmd` : manager;
@@ -376,8 +202,8 @@ function commandFor(root: string, packageRoot: string, relativePackageRoot: stri
   const commands: StructuredCommand[] = [];
   if (!sdkResolves) {
     const installArgs = manager === 'npm'
-      ? ['install', `${sdkPackage}@^0.1.0`]
-      : ['add', `${sdkPackage}@^0.1.0`];
+      ? ['install', `${sdkPackage}@${installSpec}`]
+      : ['add', `${sdkPackage}@${installSpec}`];
     commands.push({
       id: 'install-sdk', executable, args: installArgs, cwd: relativePackageRoot || '.', timeoutMs: 15 * 60_000,
       allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'],
@@ -464,11 +290,23 @@ function updatePackageDependency(source: string, section: 'dependencies' | 'devD
   return `${source.slice(0, close).trimEnd()}${insertion}${source.slice(close)}`;
 }
 
+/**
+ * The browser configuration module.
+ *
+ * Configuration is read from whichever prefix the framework's bundler exposes,
+ * because each one exposes only its own: Vite and Remix expose `VITE_`,
+ * SvelteKit and Astro expose `PUBLIC_`, Nuxt exposes `NUXT_PUBLIC_` and
+ * Next.js exposes `NEXT_PUBLIC_`. Reading only `VITE_` meant a correct value in
+ * an Astro or SvelteKit project was simply invisible to the application.
+ */
 function generatedFrontendModule(typed: boolean): string {
   const runDeclaration = typed
     ? `const run = (globalThis as typeof globalThis & { __TELLANN_RUN__?: Record<string, string> }).__TELLANN_RUN__ ?? {};`
     : `const run = globalThis.__TELLANN_RUN__ ?? {};`;
-  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { TELLANN } from '@tellann/frontend-sdk';\n\n${runDeclaration}\nconst configured = import.meta.env ?? {};\n\nTELLANN.initialize({\n  endpoint: run.relayEndpoint ?? configured.VITE_TELLANN_GATEWAY_URL ?? '/tellann-relay',\n  applicationId: run.applicationId ?? configured.VITE_TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? configured.VITE_TELLANN_ENVIRONMENT_ID,\n  apiKey: run.relayToken ?? configured.VITE_TELLANN_INGESTION_KEY,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid TELLANN.verifyInstallation();\n\nexport { TELLANN };\n/* tellann:generated:end */\n`;
+  const readDeclaration = typed
+    ? `const read = (name: string): string | undefined =>`
+    : `const read = (name) =>`;
+  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { TELLANN } from '@tellann/frontend-sdk';\n\n${runDeclaration}\nconst configured = (typeof import.meta !== 'undefined' && import.meta.env) || {};\nconst processEnv = (typeof process !== 'undefined' && process.env) || {};\n${readDeclaration}\n  ['VITE_', 'PUBLIC_', 'NUXT_PUBLIC_', 'NEXT_PUBLIC_', '']\n    .map((prefix) => configured[prefix + name] ?? processEnv[prefix + name])\n    .find((value) => typeof value === 'string' && value.length > 0);\n\nTELLANN.initialize({\n  endpoint: run.relayEndpoint ?? read('TELLANN_GATEWAY_URL') ?? '/tellann-relay',\n  applicationId: run.applicationId ?? read('TELLANN_APPLICATION_ID') ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? read('TELLANN_ENVIRONMENT_ID'),\n  apiKey: run.relayToken ?? read('TELLANN_INGESTION_KEY'),\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid TELLANN.verifyInstallation();\n\nexport { TELLANN };\n/* tellann:generated:end */\n`;
 }
 
 function backendInitialization(): string {
@@ -490,7 +328,9 @@ function generatedBackendModule(adapterId: FrameworkId, commonJs: boolean): stri
   if (commonJs) {
     const names = adapterId === 'express' ? 'TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware'
       : adapterId === 'fastify' ? 'TELLANN, tellannFastifyPlugin'
-        : 'TELLANN';
+        : adapterId === 'koa' ? 'TELLANN, tellannKoaMiddleware'
+          : adapterId === 'hapi' ? 'TELLANN, tellannHapiPlugin'
+            : 'TELLANN';
     return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */
 const { ${names} } = require('@tellann/backend-sdk');
 
@@ -504,6 +344,10 @@ module.exports = { ${names} };
     ? `import { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware };`
     : adapterId === 'fastify'
       ? `import { TELLANN, tellannFastifyPlugin } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannFastifyPlugin };`
+      : adapterId === 'koa'
+      ? `import { TELLANN, tellannKoaMiddleware } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannKoaMiddleware };`
+      : adapterId === 'hapi'
+      ? `import { TELLANN, tellannHapiPlugin } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannHapiPlugin };`
       : adapterId === 'nestjs'
         ? `import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable, catchError, tap, throwError } from 'rxjs';
@@ -600,6 +444,19 @@ const DEFINITIONS: AdapterDefinition[] = [
   { id: 'express', packageNames: ['express'], versionPackage: 'express', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/\.listen\s*\(/, /express\s*\(/] },
   { id: 'fastify', packageNames: ['fastify'], versionPackage: 'fastify', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/fastify\s*\(/i, /\.listen\s*\(/] },
   { id: 'nestjs', packageNames: ['@nestjs/core'], versionPackage: '@nestjs/core', supportedVersionRange: '>=9 <12', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/NestFactory\.create\s*\(/, /bootstrap\s*\(/] },
+
+  // Frameworks whose integration is a single side-effect import at the client
+  // entry point. They are all Vite- or bundler-based, so the generated module's
+  // `import.meta.env` lookup resolves, and the fallbacks cover the one that
+  // does not (Angular) without changing how the module is written.
+  { id: 'sveltekit', packageNames: ['@sveltejs/kit'], versionPackage: '@sveltejs/kit', supportedVersionRange: '>=1 <3', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/hooks\.client\.[jt]s$/, /(^|\/)src\/routes\/\+layout\.[jt]s$/], symbolMatchers: [/export/, /handleError/, /load/] },
+  { id: 'nuxt', packageNames: ['nuxt'], versionPackage: 'nuxt', supportedVersionRange: '>=3 <5', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'plugins/tellann.ts', entryMatchers: [/(^|\/)plugins\/[^/]+\.client\.[jt]s$/, /(^|\/)app\.vue$/], symbolMatchers: [/defineNuxtPlugin\s*\(/, /<script/, /export\s+default/] },
+  { id: 'astro', packageNames: ['astro'], versionPackage: 'astro', supportedVersionRange: '>=3 <6', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/(scripts|lib)\/[^/]+\.[jt]s$/, /(^|\/)src\/client\.[jt]s$/], symbolMatchers: [/export/, /document\./, /window\./] },
+  { id: 'remix', packageNames: ['@remix-run/react'], versionPackage: '@remix-run/react', supportedVersionRange: '>=2 <4', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'app/tellann.ts', entryMatchers: [/(^|\/)app\/entry\.client\.[jt]sx?$/], symbolMatchers: [/hydrateRoot\s*\(/, /startTransition\s*\(/, /RemixBrowser/] },
+  { id: 'angular', packageNames: ['@angular/core'], versionPackage: '@angular/core', supportedVersionRange: '>=15 <21', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/bootstrapApplication\s*\(/, /platformBrowserDynamic\s*\(/, /bootstrapModule\s*\(/] },
+
+  { id: 'koa', packageNames: ['koa'], versionPackage: 'koa', supportedVersionRange: '>=2 <4', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/new\s+Koa\s*\(/, /Koa\s*\(/, /\.listen\s*\(/] },
+  { id: 'hapi', packageNames: ['@hapi/hapi'], versionPackage: '@hapi/hapi', supportedVersionRange: '>=20 <22', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/Hapi\.server\s*\(/, /\.server\s*\(/, /\.start\s*\(/] },
 ];
 
 /**
@@ -855,7 +712,31 @@ function insertBeforeListen(source: SourceFile, variableName: string, statementT
   listen.replaceWithText(`${statementText}\n${listen.getText()}`);
 }
 
+/** A bare import of the generated module, which initializes on evaluation. */
+function addSideEffectImport(source: SourceFile, moduleSpecifier: string, commonJs: boolean): void {
+  if (commonJs) {
+    const statement = `require(${JSON.stringify(moduleSpecifier)});`;
+    if (!source.getFullText().includes(statement)) source.insertStatements(0, statement);
+    return;
+  }
+  if (!source.getImportDeclarations().some((declaration) => declaration.getModuleSpecifierValue() === moduleSpecifier)) {
+    source.insertImportDeclaration(0, { moduleSpecifier });
+  }
+}
+
+/**
+ * Frameworks whose integration is exactly one side-effect import at the client
+ * entry point. They render with their own root, so there is no provider to wrap
+ * and no server object to decorate: importing the generated module once, as
+ * early as the bundle evaluates, is the whole integration.
+ */
+const SIDE_EFFECT_ENTRY_ADAPTERS: FrameworkId[] = ['react-vite', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular'];
+
 function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, moduleSpecifier: string, commonJs: boolean): void {
+  if (SIDE_EFFECT_ENTRY_ADAPTERS.includes(definition.id)) {
+    addSideEffectImport(source, moduleSpecifier, commonJs);
+    return;
+  }
   if (definition.id === 'react-vite') {
     if (commonJs) {
       const statement = `require(${JSON.stringify(moduleSpecifier)});`;
@@ -906,6 +787,24 @@ function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, 
     const application = frameworkVariable(source, /NestFactory\.create\s*\(/);
     if (!application) throw new Error('SAFE_NEST_APP_NOT_FOUND');
     appendAfterVariable(source, application, `${application}.useGlobalInterceptors(new TellannInterceptor());`);
+    return;
+  }
+  if (definition.id === 'koa') {
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannKoaMiddleware']);
+    else addNamedImport(source, moduleSpecifier, ['tellannKoaMiddleware']);
+    const application = frameworkVariable(source, /new\s+Koa\s*\(/);
+    if (!application) throw new Error('SAFE_KOA_APP_NOT_FOUND');
+    // First in the chain, so the timing it records covers the middleware that
+    // runs after it rather than only the handler at the end.
+    appendAfterVariable(source, application, `${application}.use(tellannKoaMiddleware());`);
+    return;
+  }
+  if (definition.id === 'hapi') {
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannHapiPlugin']);
+    else addNamedImport(source, moduleSpecifier, ['tellannHapiPlugin']);
+    const application = frameworkVariable(source, /\.server\s*\(/);
+    if (!application) throw new Error('SAFE_HAPI_SERVER_NOT_FOUND');
+    appendAfterVariable(source, application, `void ${application}.register(tellannHapiPlugin);`);
     return;
   }
   throw new Error(`UNSUPPORTED_ENTRY_TRANSFORM:${definition.id}`);
@@ -1160,7 +1059,8 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     }
     const canonical = JSON.stringify({ adapter: this.id, version: this.version, revision: input.snapshot.revision, fingerprint: input.snapshot.repositoryFingerprint, operations: operations.map(({ content, ...operation }) => operation) });
     const taskKey = hash(canonical);
-    const validationCommands = commandFor(input.workspaceRoot, detectedPackage.root, detectedPackage.relativeRoot, input.snapshot, this.definition.sdkPackage);
+    const sdkInstallSpec = resolveSdkInstallSpec(this.definition.sdkPackage);
+    const validationCommands = commandFor(input.workspaceRoot, detectedPackage.root, detectedPackage.relativeRoot, input.snapshot, this.definition.sdkPackage, sdkInstallSpec.install);
     return {
       contractVersion: INSTRUMENTATION_CONTRACT_VERSION, manifestVersion: INSTRUMENTATION_MANIFEST_VERSION,
       id: crypto.randomUUID(), taskKey, adapterId: this.id, adapterVersion: this.version,
@@ -1172,7 +1072,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       frameworkVersion: detection.frameworkVersion, supportedVersionRange: this.supportedVersionRange,
       baseRevision: input.snapshot.revision, repositoryFingerprint: input.snapshot.repositoryFingerprint,
       approvedFileScopes: [...new Set(operations.map((operation) => operation.relativePath))],
-      packageChanges: [{ packageName: this.definition.sdkPackage, version: '^0.1.0', kind: 'dependency' }],
+      packageChanges: [{ packageName: this.definition.sdkPackage, version: sdkInstallSpec.dependency, kind: 'dependency' }],
       operations, validationCommands,
       networkRequirements: validationCommands.some((command) => command.id === 'install-sdk')
         ? ['Package registry access when the SDK is not already installed']
@@ -1188,33 +1088,10 @@ class TypeScriptAdapter implements InstrumentationAdapter {
   }
 
   async apply(input: LocalProjectContext, task: ApprovedInstrumentationTask): Promise<PatchResult> {
-    if (input.environmentType === 'PRODUCTION') throw new Error('PRODUCTION_OBSERVATION_ONLY');
-    const plan = validateInstrumentationPlan(task.plan);
-    if (plan.adapterId !== this.id) throw new Error('ADAPTER_PLAN_MISMATCH');
-    if (plan.repositoryFingerprint !== input.snapshot.repositoryFingerprint || plan.baseRevision !== input.snapshot.revision) throw new Error('STALE_INSTRUMENTATION_PLAN');
-    if (plan.baseRevision && currentGitRevision(input.workspaceRoot) !== plan.baseRevision) throw new Error('STALE_INSTRUMENTATION_BASE_REVISION');
-    const approved = new Set(task.approvedFileScopes);
-    if (plan.operations.some((operation) => !approved.has(operation.relativePath) || !plan.approvedFileScopes.includes(operation.relativePath))) throw new Error('TASK_SCOPE_EXPANSION_DENIED');
-    const expectedApprovalHash = hash(JSON.stringify({ planId: plan.id, taskKey: plan.taskKey, files: [...approved].sort(), commands: [...task.approvedCommandIds].sort() }));
-    if (task.approvalHash !== expectedApprovalHash) throw new Error('INVALID_TASK_APPROVAL');
-    for (const operation of plan.operations) {
-      if (fileHash(input.workspaceRoot, operation.relativePath) !== operation.expectedHash) throw new Error(`STALE_TARGET_FILE:${operation.relativePath}`);
-    }
-    fs.mkdirSync(task.checkpointDirectory, { recursive: true });
-    const checkpointId = crypto.randomUUID();
-    const checkpointRoot = path.join(task.checkpointDirectory, checkpointId);
-    fs.mkdirSync(checkpointRoot, { recursive: true });
-    const before = new Map<string, string | null>();
-    const after = new Map<string, string>();
-    for (const operation of plan.operations) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, operation.relativePath);
-      const original = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : null;
-      before.set(operation.relativePath, original);
-      const backupTarget = path.join(checkpointRoot, operation.relativePath.replaceAll('/', path.sep));
-      fs.mkdirSync(path.dirname(backupTarget), { recursive: true });
-      if (original !== null) fs.writeFileSync(backupTarget, original);
-      else fs.writeFileSync(`${backupTarget}.tellann-absent`, 'absent');
-    }
+    // Validation, scope enforcement and the pre-write backup are the same for
+    // every adapter, and live in `patching.ts` so there is one copy of them.
+    const session = beginPatch(input, task, this.id);
+    const plan = session.plan;
     try {
     const packageOperation = plan.operations.find((operation) => operation.id === 'package-sdk');
     if (packageOperation) {
@@ -1249,43 +1126,15 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       applySemanticCheckpoint(source, operation, isCommonJsEntry(input.workspaceRoot, operation.relativePath));
       source.saveSync();
     }
-    const files: PatchFileResult[] = [];
-    const diffParts: string[] = [];
-    for (const relativePath of before.keys()) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, relativePath);
-      const exists = fs.existsSync(target);
-      const content = exists ? fs.readFileSync(target, 'utf8') : '';
-      const original = before.get(relativePath) ?? null;
-      after.set(relativePath, content);
-      const changed = original === null ? exists : original !== content;
-      files.push({ relativePath, beforeHash: original === null ? null : hash(original), afterHash: hash(content), changed });
-      if (changed) diffParts.push(`--- a/${relativePath}\n+++ b/${relativePath}\n@@ Tellann instrumentation @@\n-${original ?? ''}\n+${content}`);
-    }
-    const diff = diffParts.join('\n');
-    const manifest = { planId: plan.id, checkpointId, files, baseRevision: plan.baseRevision, appliedAt: new Date().toISOString() };
-    fs.writeFileSync(path.join(checkpointRoot, 'manifest.json'), JSON.stringify(manifest, null, 2));
-    return { planId: plan.id, checkpointId, checkpointDirectory: task.checkpointDirectory, baseRevision: plan.baseRevision, files, changedFiles: files.filter((file) => file.changed).map((file) => file.relativePath), diff, diffHash: hash(diff), appliedAt: manifest.appliedAt };
+    return finalizePatch(input, task, session);
     } catch (error) {
-      for (const relativePath of before.keys()) {
-        const target = resolveWithinWorkspace(input.workspaceRoot, relativePath);
-        const backup = path.join(checkpointRoot, relativePath.replaceAll('/', path.sep));
-        if (fs.existsSync(`${backup}.tellann-absent`)) fs.rmSync(target, { force: true });
-        else {
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.copyFileSync(backup, target);
-        }
-      }
+      restorePatch(input, session);
       throw error;
     }
   }
 
   async validate(input: LocalProjectContext, result: PatchResult): Promise<ValidationResult> {
-    const checks: ValidationResult['checks'] = [];
-    for (const file of result.files) {
-      const current = fileHash(input.workspaceRoot, file.relativePath);
-      const unchangedAbsent = !file.changed && file.beforeHash === null && current === null;
-      checks.push({ name: `hash:${file.relativePath}`, passed: unchangedAbsent || current === file.afterHash, output: unchangedAbsent || current === file.afterHash ? 'Expected instrumented hash present' : 'File changed after instrumentation' });
-    }
+    const checks: ValidationResult['checks'] = hashChecks(input, result);
     const packageOperation = result.files.find((file) => /(^|\/)package\.json$/.test(file.relativePath));
     const packageJson = packageOperation ? readJson(resolveWithinWorkspace(input.workspaceRoot, packageOperation.relativePath)) : {};
     checks.push({ name: 'sdk-dependency', passed: Boolean(packageJson.dependencies?.[this.definition.sdkPackage] || packageJson.devDependencies?.[this.definition.sdkPackage]), output: this.definition.sdkPackage });
@@ -1321,32 +1170,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
   }
 
   async rollback(input: LocalProjectContext, result: PatchResult): Promise<RollbackResult> {
-    const checkpointRoot = path.join(result.checkpointDirectory, result.checkpointId);
-    const rolledBackFiles: string[] = [];
-    const conflicts: RollbackResult['conflicts'] = [];
-    for (const file of result.files) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, file.relativePath);
-      const currentHash = fileHash(input.workspaceRoot, file.relativePath);
-      const unchangedAbsent = !file.changed && file.beforeHash === null && currentHash === null;
-      if (!unchangedAbsent && currentHash !== file.afterHash) {
-        conflicts.push({ relativePath: file.relativePath, reason: 'File changed after Tellann instrumentation; rollback would overwrite user work' });
-        continue;
-      }
-      const backup = path.join(checkpointRoot, file.relativePath.replaceAll('/', path.sep));
-      if (fs.existsSync(`${backup}.tellann-absent`)) fs.rmSync(target, { force: true });
-      else {
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.copyFileSync(backup, target);
-      }
-      rolledBackFiles.push(file.relativePath);
-    }
-    const verified = conflicts.length === 0 && result.files.every((file) => {
-      const backup = path.join(checkpointRoot, file.relativePath.replaceAll('/', path.sep));
-      return fs.existsSync(`${backup}.tellann-absent`)
-        ? !fs.existsSync(resolveWithinWorkspace(input.workspaceRoot, file.relativePath))
-        : fileHash(input.workspaceRoot, file.relativePath) === hash(fs.readFileSync(backup));
-    });
-    return { rolledBackFiles, conflicts, verified };
+    return rollbackPatch(input, result);
   }
 }
 
@@ -1377,7 +1201,13 @@ export function refreshPatchResult(input: LocalProjectContext, result: PatchResu
   return next;
 }
 
-export const adapters: InstrumentationAdapter[] = DEFINITIONS.map((definition) => new TypeScriptAdapter(definition));
+// Both adapter families satisfy one contract, so detection, proposal, approval
+// and rollback are the same code path whichever language a project is written
+// in; only the adapter that is selected differs.
+export const adapters: InstrumentationAdapter[] = [
+  ...DEFINITIONS.map((definition) => new TypeScriptAdapter(definition)),
+  ...pythonAdapters,
+];
 export const adapterRegistry = new Map(adapters.map((adapter) => [adapter.id, adapter]));
 
 export function detectAdapters(input: LocalProjectContext): DetectionResult[] {
@@ -1394,4 +1224,15 @@ export function createApprovalHash(plan: InstrumentationPlan, files: string[], c
   return hash(JSON.stringify({ planId: plan.id, taskKey: plan.taskKey, files: [...files].sort(), commands: [...commandIds].sort() }));
 }
 
-export const plannedAdapterOrder = ['react-vite', 'nextjs', 'express', 'fastify', 'nestjs', 'django', 'flask', 'fastapi', 'laravel', 'aspnet-core', 'spring-boot'] as const;
+/**
+ * Preference order when several adapters detect the same workspace.
+ *
+ * Everything up to `starlette` is implemented; the remainder is the roadmap,
+ * kept here so the ordering is decided once rather than re-argued per caller.
+ */
+export const plannedAdapterOrder = [
+  'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
+  'express', 'fastify', 'nestjs', 'koa', 'hapi',
+  'django', 'fastapi', 'flask', 'starlette',
+  'laravel', 'aspnet-core', 'spring-boot',
+] as const;

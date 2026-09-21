@@ -172,6 +172,26 @@ export const DesktopPermissionSchema = z.object({
   expiresAt: z.string().datetime().nullable().default(null),
 });
 
+/**
+ * Every framework an instrumentation adapter can attach to.
+ *
+ * Declared once, here, and imported by the adapters, the desktop main process
+ * and the onboarding service. It was previously spelled out in four places,
+ * which meant adding a framework silently rejected its own plans everywhere the
+ * list had not been updated.
+ */
+export const INSTRUMENTATION_FRAMEWORK_IDS = [
+  // JavaScript and TypeScript
+  'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
+  'express', 'fastify', 'nestjs', 'koa', 'hapi',
+  // Python
+  'django', 'flask', 'fastapi', 'starlette',
+] as const;
+
+export const InstrumentationFrameworkIdSchema = z.enum(INSTRUMENTATION_FRAMEWORK_IDS);
+
+export type InstrumentationFrameworkId = z.infer<typeof InstrumentationFrameworkIdSchema>;
+
 export const FrameworkEvidenceSchema = z.object({
   framework: z.string(),
   version: z.string().nullable(),
@@ -206,6 +226,11 @@ export const RepositorySnapshotSummarySchema = z.object({
     args: z.array(z.string()),
     cwd: z.string(),
     scriptName: z.string(),
+    /**
+     * Which runtime starts this command. Absent means `node`, so snapshots
+     * taken by an older scanner keep parsing and keep their meaning.
+     */
+    runtime: z.enum(['node', 'python']).optional(),
   })).optional(),
   suggestedApplicationUrls: z.array(z.object({
     url: z.string().url(),
@@ -695,7 +720,7 @@ export const QualityReportSchema = z.object({
     redactionSummary: z.unknown(),
   }).nullable(),
   instrumentation: z.object({
-    patchSetId: z.string().uuid(), planId: z.string().uuid(), adapterId: z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']),
+    patchSetId: z.string().uuid(), planId: z.string().uuid(), adapterId: InstrumentationFrameworkIdSchema,
     adapterVersion: z.string(), manifestVersion: z.string(), status: z.string(), risk: z.string(),
     changedFileHashes: z.unknown(), validation: z.unknown().nullable(),
     appliedAt: z.string().datetime().or(z.date()).nullable(), validatedAt: z.string().datetime().or(z.date()).nullable(),
@@ -1073,8 +1098,6 @@ export const IntentDraftSchema = z.object({
   acceptedGraphId: z.string().nullable().optional(), acceptedGraphVersionId: z.string().nullable().optional(), createdAt: z.string().or(z.date()).optional(),
   evidence: z.array(z.any()).optional(),
 }).passthrough();
-
-export const InstrumentationFrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
 
 export const SdkTargetKindSchema = z.enum(['FRONTEND', 'BACKEND']);
 export const SdkConnectionMethodSchema = z.enum(['MANUAL', 'DESKTOP']);

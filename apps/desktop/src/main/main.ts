@@ -6,21 +6,21 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
   answerFromAnalysis,
   blastRadiusInAnalysis,
-  buildSanitizedSourceArchive,
   compareAnalyses,
   describeEntity,
   hierarchyChildren,
-  previewSanitizedSourceArchive,
   projectAnalysis,
   redactSecrets,
   scanWorkspace,
   workingTreeIdentity,
+  type previewSanitizedSourceArchive,
+  type SanitizedArchive,
 } from '@tellann/project-intelligence';
 import {
   BrowserObserver,
@@ -110,6 +110,18 @@ const relay = new LocalRunRelay();
 const applicationLauncher = new LocalApplicationLauncher();
 const selectedWorkspaces = new Map<string, SelectedWorkspace>();
 const codebaseWorkers = new Map<string, Worker>();
+
+/**
+ * Cooperative cancellation for the stage before a cloud analysis job exists.
+ *
+ * Preparing and uploading the snapshot is the longest part of an attach, and
+ * there is no job id to cancel yet — so Cancel has to be answered by this
+ * process: the token is flipped here, `abort` stops the archive worker, and the
+ * upload stops between parts.
+ */
+type SnapshotUploadCancellation = { cancelled: boolean; abort: (() => void) | null };
+const snapshotUploads = new Map<string, SnapshotUploadCancellation>();
+const SNAPSHOT_UPLOAD_CANCELLED = 'CODEBASE_SNAPSHOT_UPLOAD_CANCELLED';
 
 /**
  * Callers waiting on a local analysis that is already running.
@@ -1169,9 +1181,9 @@ async function requestUploadConsent(
   selectedPath: string,
   snapshot: RepositorySnapshotSummary,
 ): Promise<boolean> {
-  let preview: ReturnType<typeof previewSanitizedSourceArchive>;
+  let preview: SourceArchivePreview;
   try {
-    preview = previewSanitizedSourceArchive(selectedPath);
+    preview = await previewSourceArchiveInWorker(selectedPath);
   } catch {
     return false;
   }
@@ -1774,6 +1786,8 @@ async function beginCloudCodebaseAnalysis(
   snapshot: RepositorySnapshotSummary,
   registered: { workspaceId: string; repositorySnapshotId: string },
 ): Promise<void> {
+  const cancellation: SnapshotUploadCancellation = { cancelled: false, abort: null };
+  snapshotUploads.set(applicationId, cancellation);
   try {
     writeAnalysisState(applicationId, {
       mode: 'cloud',
@@ -1786,7 +1800,8 @@ async function beginCloudCodebaseAnalysis(
       analysis: pendingAnalysis(snapshot, 'Preparing the sanitized source snapshot'),
       uploadProgress: { sent: 0, total: 1 },
     });
-    const archive = buildSanitizedSourceArchive(selectedPath);
+    const archive = await buildSourceArchiveInWorker(selectedPath, cancellation);
+    if (cancellation.cancelled) throw new Error(SNAPSHOT_UPLOAD_CANCELLED);
     const created = await cloud.uploadCodebaseSnapshot(applicationId, {
       workspaceId: registered.workspaceId,
       repositorySnapshotId: registered.repositorySnapshotId,
@@ -1797,7 +1812,11 @@ async function beginCloudCodebaseAnalysis(
       repositoryIdentity: snapshot.repositoryOriginHash ?? snapshot.portableManifestIdentity ?? null,
       scannerVersion: snapshot.scannerVersion,
       archive,
+      shouldCancel: () => cancellation.cancelled,
       onProgress: (sent, total) => {
+        // A part that lands after Cancel must not re-report progress over the
+        // cancelled state the click already wrote.
+        if (cancellation.cancelled) return;
         const state = readAnalysisState(applicationId);
         if (!state) return;
         writeAnalysisState(applicationId, {
@@ -1809,6 +1828,12 @@ async function beginCloudCodebaseAnalysis(
         });
       },
     });
+    if (cancellation.cancelled) {
+      // Cancelled in the window between the last check and the job being
+      // created, so the job that now exists is cancelled rather than orphaned.
+      await cloud.cancelCloudCodebaseAnalysis(applicationId, created.jobId).catch(() => undefined);
+      throw new Error(SNAPSHOT_UPLOAD_CANCELLED);
+    }
     const state = readAnalysisState(applicationId);
     writeAnalysisState(applicationId, {
       mode: 'cloud',
@@ -1822,6 +1847,12 @@ async function beginCloudCodebaseAnalysis(
       uploadProgress: null,
     });
   } catch (error) {
+    // Cancelling is a decision, not a failure: it must not be answered with the
+    // local analysis the upload failure path falls back to.
+    if (cancellation.cancelled || (error instanceof Error && error.message === SNAPSHOT_UPLOAD_CANCELLED)) {
+      markAnalysisCancelled(applicationId);
+      return;
+    }
     // The upload failed, so no cloud job exists to wait for. Fall back to a
     // local analysis and say why rather than showing a job that will never move.
     console.warn('[codebase-analysis] Source upload failed; analysing locally instead', error);
@@ -1829,7 +1860,92 @@ async function beginCloudCodebaseAnalysis(
     patchLocalAnalysis(applicationId, {
       warnings: ['The source snapshot could not be uploaded, so this analysis ran on your machine instead.'],
     });
+  } finally {
+    if (snapshotUploads.get(applicationId) === cancellation) snapshotUploads.delete(applicationId);
   }
+}
+
+/** Record a run the member stopped, and clear the progress it was reporting. */
+function markAnalysisCancelled(applicationId: string): void {
+  const state = readAnalysisState(applicationId);
+  if (!state) return;
+  writeAnalysisState(applicationId, {
+    ...state,
+    uploadProgress: null,
+    analysis: state.analysis
+      ? {
+        ...state.analysis,
+        status: 'CANCELLED',
+        stageMessage: 'Analysis cancelled',
+        completedAt: new Date().toISOString(),
+      }
+      : state.analysis,
+  });
+}
+
+/** What the consent dialog is told about the folder before anything is sent. */
+type SourceArchivePreview = ReturnType<typeof previewSanitizedSourceArchive>;
+type SourceArchiveWorkerMessage = {
+  type: string;
+  archive?: SanitizedArchive;
+  preview?: SourceArchivePreview;
+  message?: string;
+};
+
+/**
+ * Read the folder in a worker, so the window keeps painting — and so Cancel is
+ * answered while the archive is being built rather than after.
+ *
+ * The consent preview has no Cancel behind it, so it passes no cancellation.
+ */
+function runSourceArchiveWorker(
+  input: { root: string; mode: 'archive' | 'preview' },
+  cancellation: SnapshotUploadCancellation | null,
+): Promise<SourceArchiveWorkerMessage> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'source-archive-worker.js'), {
+      workerData: input,
+    });
+    let settled = false;
+    const settle = (run: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (cancellation) cancellation.abort = null;
+      void worker.terminate().catch(() => undefined);
+      run();
+    };
+    if (cancellation) {
+      cancellation.abort = () => settle(() => reject(new Error(SNAPSHOT_UPLOAD_CANCELLED)));
+      if (cancellation.cancelled) {
+        cancellation.abort();
+        return;
+      }
+    }
+    worker.on('message', (message: SourceArchiveWorkerMessage) => settle(() => resolve(message)));
+    worker.on('error', (error) => settle(() => reject(error)));
+    worker.on('exit', (code) => {
+      if (code !== 0) settle(() => reject(new Error(`SOURCE_ARCHIVE_FAILED:${code}`)));
+    });
+  });
+}
+
+async function buildSourceArchiveInWorker(
+  root: string,
+  cancellation: SnapshotUploadCancellation,
+): Promise<SanitizedArchive> {
+  const message = await runSourceArchiveWorker({ root, mode: 'archive' }, cancellation);
+  if (message.type !== 'complete' || !message.archive) {
+    throw new Error(message.message ?? 'SOURCE_ARCHIVE_FAILED');
+  }
+  return message.archive;
+}
+
+async function previewSourceArchiveInWorker(root: string): Promise<SourceArchivePreview> {
+  const message = await runSourceArchiveWorker({ root, mode: 'preview' }, null);
+  if (message.type !== 'complete' || !message.preview) {
+    throw new Error(message.message ?? 'SOURCE_ARCHIVE_PREVIEW_FAILED');
+  }
+  return message.preview;
 }
 
 /**
@@ -1987,7 +2103,7 @@ function parseInstrumentationContext(input: unknown) {
     // Present when the user is proposing for several frameworks at once, so a
     // Flow whose checkpoints span those packages can be split between them.
     selectedAdapterIds: Array.isArray(value.selectedAdapterIds)
-      ? value.selectedAdapterIds.filter((item): item is string => typeof item === 'string') as Array<'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs'>
+      ? value.selectedAdapterIds.filter((item): item is InstrumentationFrameworkId => typeof item === 'string' && (INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(item))
       : undefined,
   };
 }
@@ -2884,6 +3000,15 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const state = readAnalysisState(applicationId);
+    // Before a job exists there is nothing for the API to cancel, and no local
+    // worker either: the run being stopped is the archive build or the upload.
+    const upload = snapshotUploads.get(applicationId);
+    if (upload) {
+      upload.cancelled = true;
+      upload.abort?.();
+      markAnalysisCancelled(applicationId);
+      return { cancelled: true };
+    }
     if (state?.mode === 'cloud' && state.cloudJobId) {
       await cloud.cancelCloudCodebaseAnalysis(applicationId, state.cloudJobId).catch(() => undefined);
       return { cancelled: true };
@@ -3220,8 +3345,8 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const context = parseInstrumentationContext(input);
     const adapterId = (input as { adapterId?: unknown }).adapterId;
-    if (!['react-vite', 'nextjs', 'express', 'fastify', 'nestjs'].includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
-    return instrumentation.propose({ ...context, adapterId: adapterId as 'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs' });
+    if (!(INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
+    return instrumentation.propose({ ...context, adapterId: adapterId as InstrumentationFrameworkId });
   });
   ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

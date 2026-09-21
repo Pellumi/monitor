@@ -103,7 +103,10 @@ export function planIncremental(
   cache: AnalysisCache | null,
   analyzerVersion: string,
 ): IncrementalPlan {
-  const present = new Set(inventory.analyzable);
+  // Both language families share one plan: a change to a Python file has to
+  // invalidate its fragment exactly as a change to a TypeScript one does.
+  const sources = [...inventory.analyzable, ...inventory.pythonAnalyzable];
+  const present = new Set(sources);
   const empty: IncrementalPlan = {
     mode: 'full',
     dirty: new Set(present),
@@ -121,7 +124,7 @@ export function planIncremental(
   }
 
   const currentHashes = new Map<string, string>();
-  for (const file of inventory.analyzable) {
+  for (const file of sources) {
     const hash = hashFile(root, file);
     if (hash) currentHashes.set(file, hash);
   }

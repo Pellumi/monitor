@@ -340,6 +340,21 @@ function mergeEnvironmentFile(
   return `${lines.filter(Boolean).join("\n")}\n`;
 }
 
+/**
+ * The environment-variable prefix each frontend framework exposes to client
+ * code. Server frameworks, Python included, read unprefixed variables, so they
+ * are simply absent from this map.
+ */
+const FRONTEND_ADAPTER_PREFIXES = new Map<string, string>([
+  ["nextjs", "NEXT_PUBLIC_"],
+  ["react-vite", "VITE_"],
+  ["remix", "VITE_"],
+  ["sveltekit", "PUBLIC_"],
+  ["astro", "PUBLIC_"],
+  ["nuxt", "NUXT_PUBLIC_"],
+  ["angular", "VITE_"],
+]);
+
 export class InstrumentationController {
   constructor(
     private readonly cloud: DesktopCloudClient,
@@ -704,14 +719,11 @@ export class InstrumentationController {
       );
       if (!envOperation || !ignoreOperation)
         throw new Error("PERMANENT_SETUP_ENVIRONMENT_SCOPE_MISSING");
-      const frontend =
-        plan.adapterId === "react-vite" || plan.adapterId === "nextjs";
-      const prefix =
-        plan.adapterId === "nextjs"
-          ? "NEXT_PUBLIC_"
-          : plan.adapterId === "react-vite"
-            ? "VITE_"
-            : "";
+      const frontend = FRONTEND_ADAPTER_PREFIXES.has(plan.adapterId);
+      // Each bundler only exposes variables carrying its own prefix, so the
+      // value has to be written under the prefix the framework actually reads;
+      // a correct value under the wrong prefix is invisible to the application.
+      const prefix = FRONTEND_ADAPTER_PREFIXES.get(plan.adapterId) ?? "";
       const environmentValues = frontend
         ? {
             [`${prefix}TELLANN_GATEWAY_URL`]: String(setup.gatewayEndpoint),

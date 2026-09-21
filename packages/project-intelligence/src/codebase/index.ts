@@ -9,6 +9,7 @@ import { buildInventory, planArchive, packageOwnerIndex } from './inventory';
 import type { Inventory } from './inventory';
 import { Budget, collectDeclarations, createAnalysisProgram, resolveReferences } from './program';
 import { applyFrameworkAdapters, detectFileScopedRoutes, linkTestSubjects } from './frameworks';
+import { analyzePythonSources } from './python';
 import { analyzeDocumentation } from './docs';
 import { discoverFeatures } from './features';
 import { analyzeArchitecture, blastRadius } from './architecture';
@@ -22,6 +23,7 @@ export * from './architecture';
 export * from './evidence-bundle';
 export * from './query';
 export { canonicalRoute, endpointId } from './frameworks';
+export { analyzePythonSources, pythonModuleName } from './python';
 export { blastRadius };
 
 /** Bumped whenever a change would make cached fragments wrong. */
@@ -175,7 +177,7 @@ export function analyzeCodebase(
   const dirty = Boolean(git(root, ['status', '--porcelain']));
 
   const fileHashes = new Map<string, string>();
-  for (const file of inventory.analyzable) {
+  for (const file of [...inventory.analyzable, ...inventory.pythonAnalyzable]) {
     const hash = hashFile(root, file);
     if (hash) fileHashes.set(file, hash);
   }
@@ -211,6 +213,29 @@ export function analyzeCodebase(
       applyFrameworkAdapters, environmentKeys, emitFor, fileHashes,
     );
     analyzedFiles = emitFor ? emitFor.size + plan.reusable.length : program.sourceFiles.length;
+  }
+
+  onProgress?.('GRAPHING', 58, `Reading ${inventory.pythonAnalyzable.length} Python source file(s)`);
+  // Runs after the TypeScript passes so endpoints declared on both sides land
+  // on the same node: a browser `fetch('/api/users')` and a FastAPI
+  // `@router.get('/users')` resolve to one endpoint identity, which is what
+  // makes a frontend-to-backend path a single graph walk in a polyglot
+  // repository.
+  if (plan.mode !== 'unchanged') {
+    const python = analyzePythonSources(root, inventory, graph, {
+      emitFor: plan.mode === 'incremental' ? plan.dirty : null,
+      fileHashes,
+      environmentKeys,
+    });
+    analyzedFiles += plan.mode === 'incremental'
+      ? inventory.pythonAnalyzable.filter((file) => plan.dirty.has(file)).length
+      : python.files;
+    stats = {
+      ...stats,
+      callSites: stats.callSites + python.calls,
+      internalCalls: stats.internalCalls + python.internalCalls,
+      unresolvedCalls: stats.unresolvedCalls + python.unresolvedCalls,
+    };
   }
 
   onProgress?.('GRAPHING', 62, 'Applying framework and documentation analyzers');
@@ -252,7 +277,7 @@ export function analyzeCodebase(
       .sort(([, left], [, right]) => right - left);
     const total = languages.reduce((sum, [, count]) => sum + count, 0);
     graph.warn(
-      `Deep analysis covers TypeScript and JavaScript. ${total} file(s) in ${languages.map(([language, count]) => `${language} (${count})`).join(', ')} received hierarchy and manifest results only.`,
+      `Deep analysis covers TypeScript, JavaScript and Python. ${total} file(s) in ${languages.map(([language, count]) => `${language} (${count})`).join(', ')} received hierarchy and manifest results only.`,
     );
     graph.finding({
       id: stableId('finding', `unsupported:${languages.map(([language]) => language).join(',')}`),
@@ -282,7 +307,7 @@ export function analyzeCodebase(
     }
   }
 
-  const analyzableTotal = inventory.analyzable.length;
+  const analyzableTotal = inventory.analyzable.length + inventory.pythonAnalyzable.length;
   const unsupportedTotal = Object.values(inventory.unsupportedLanguageFiles).reduce((sum, value) => sum + value, 0);
   // Coverage is measured in files, not in distinct extensions: a repository with
   // ten TypeScript files beside five thousand Python ones is not 91% covered.

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tellann"
+version = "0.1.0"
+description = "Tellann SDK for Python: behaviour telemetry for Django, Flask, FastAPI and Starlette applications."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Tellann" }]
+keywords = ["telemetry", "observability", "django", "flask", "fastapi"]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: System :: Monitoring",
+]
+# No runtime dependencies on purpose: the SDK is installed into applications
+# that pin their own versions of everything, and delivery needs only the
+# standard library.
+dependencies = []
+
+[project.optional-dependencies]
+django = ["Django>=3.2"]
+flask = ["Flask>=2.0"]
+fastapi = ["fastapi>=0.95"]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://tellann.com"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tellann"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

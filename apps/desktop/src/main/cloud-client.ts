@@ -1516,6 +1516,12 @@ export class DesktopCloudClient {
       scannerVersion: string;
       archive: { checksum: string; fileCount: number; excludedFiles: number; uncompressedBytes: number; buffer: Buffer };
       onProgress?: (sent: number, total: number) => void;
+      /**
+       * Asked before each part and before the job is created. A cancelled
+       * upload throws, which takes the same path as a failed one: the partial
+       * upload is deleted rather than left on the server.
+       */
+      shouldCancel?: () => boolean;
     },
   ): Promise<{ snapshotId: string; jobId: string }> {
     const PART_BYTES = 3 * 1024 * 1024;
@@ -1535,6 +1541,7 @@ export class DesktopCloudClient {
 
     try {
       for (let part = 0; part < total; part += 1) {
+        if (input.shouldCancel?.()) throw new Error('CODEBASE_SNAPSHOT_UPLOAD_CANCELLED');
         const slice = input.archive.buffer.subarray(part * PART_BYTES, (part + 1) * PART_BYTES);
         await this.request<Json>(
           `/applications/${applicationId}/codebase/uploads/${uploadId}/parts/${part}`,
@@ -1543,6 +1550,7 @@ export class DesktopCloudClient {
         input.onProgress?.(part + 1, total);
       }
 
+      if (input.shouldCancel?.()) throw new Error('CODEBASE_SNAPSHOT_UPLOAD_CANCELLED');
       const created = await this.request<Json>(`/applications/${applicationId}/codebase/snapshots`, {
         method: 'POST',
         body: JSON.stringify({

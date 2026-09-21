@@ -1,0 +1,74 @@
+"""Tellann SDK for Python.
+
+The public surface mirrors `@tellann/backend-sdk`, so the same concepts appear
+under the same names in both languages::
+
+    from tellann import TELLANN
+
+    TELLANN.initialize(
+        endpoint="https://gateway.example.com",
+        application_id="...",
+        environment_id="...",
+    )
+    TELLANN.verify_installation()
+
+Framework integrations are imported on demand, so installing this package never
+requires a framework the project does not use.
+"""
+
+from __future__ import annotations
+
+from .client import TELLANN, TellannBackend
+from .events import EVENT_TYPES, MAX_EVENT_BYTES, SOURCE, TellannEvent
+from .transport import EventTransport
+
+__version__ = "0.1.0"
+
+__all__ = [
+    "EVENT_TYPES",
+    "EventTransport",
+    "MAX_EVENT_BYTES",
+    "SOURCE",
+    "TELLANN",
+    "TellannBackend",
+    "TellannEvent",
+    "__version__",
+    "capture_error",
+    "checkpoint",
+    "instrument_django",
+    "instrument_fastapi",
+    "instrument_flask",
+    "instrument_starlette",
+    "track_api",
+    "track_event",
+    "track_state",
+]
+
+
+def track_api(*args, **kwargs) -> None:
+    """Module-level helper, matching the JavaScript SDK's loose functions."""
+    TELLANN.track_api(*args, **kwargs)
+
+
+def track_event(*args, **kwargs) -> None:
+    TELLANN.track_event(*args, **kwargs)
+
+
+def track_state(*args, **kwargs) -> None:
+    TELLANN.track_state(*args, **kwargs)
+
+
+def capture_error(*args, **kwargs) -> None:
+    TELLANN.capture_error(*args, **kwargs)
+
+
+def checkpoint(*args, **kwargs) -> None:
+    TELLANN.checkpoint(*args, **kwargs)
+
+
+def __getattr__(name: str):
+    if name.startswith("instrument_"):
+        from . import integrations
+
+        return getattr(integrations, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

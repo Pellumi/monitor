@@ -6,7 +6,13 @@ type SetupRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: SetupRequest, res: Response, next: NextFunction) => unknown;
 
 const FRONTEND_SOURCES = ['frontend-sdk', 'react-sdk', 'browser'];
-const BACKEND_SOURCES = ['backend-sdk', 'node-sdk', 'server'];
+// `python-sdk` is what the Python SDK stamps on every event. Without it here a
+// Django or FastAPI service would deliver telemetry and still read as "not
+// connected", because readiness is decided by which source produced events.
+const BACKEND_SOURCES = ['backend-sdk', 'node-sdk', 'server', 'python-sdk'];
+
+/** Adapters that instrument the browser half of an application. */
+const FRONTEND_ADAPTERS = ['react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular'];
 const HANDOFF_TTL_MS = 15 * 60 * 1_000;
 
 function digest(value: string): string {
@@ -64,8 +70,11 @@ export async function sdkReadiness(prisma: PrismaClient, applicationId: string, 
       : [];
     if (packageChanges.some((change) => change.packageName === '@tellann/frontend-sdk')) configuredKinds.add('FRONTEND');
     if (packageChanges.some((change) => change.packageName === '@tellann/backend-sdk')) configuredKinds.add('BACKEND');
+    // The Python SDK is one distribution for every Python framework, and every
+    // Python framework this system instruments runs on the server.
+    if (packageChanges.some((change) => change.packageName === 'tellann')) configuredKinds.add('BACKEND');
     if (packageChanges.length === 0) {
-      configuredKinds.add(['react-vite', 'nextjs'].includes(plan.adapterId) ? 'FRONTEND' : 'BACKEND');
+      configuredKinds.add(FRONTEND_ADAPTERS.includes(plan.adapterId) ? 'FRONTEND' : 'BACKEND');
     }
   }
   const buildTarget = (targetId: string, kind: 'FRONTEND' | 'BACKEND', sources: string[]) => {
@@ -93,16 +102,30 @@ function snippets(endpoint: string, applicationId: string, environmentId: string
   const shared = `endpoint: '${endpoint}',\n    apiKey: process.env.TELLANN_INGESTION_KEY,\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'`;
   return [
     {
-      id: 'frontend', kind: 'FRONTEND', label: 'Browser application', packageName: '@tellann/frontend-sdk', packageVersion: '^0.1.0',
+      id: 'frontend', kind: 'FRONTEND', label: 'Browser application', packageName: '@tellann/frontend-sdk', packageVersion: 'latest',
       installCommands: { npm: 'npm install @tellann/frontend-sdk', pnpm: 'pnpm add @tellann/frontend-sdk', yarn: 'yarn add @tellann/frontend-sdk', bun: 'bun add @tellann/frontend-sdk' },
       environmentVariables: { endpoint: 'NEXT_PUBLIC_TELLANN_GATEWAY_URL or VITE_TELLANN_GATEWAY_URL', key: 'NEXT_PUBLIC_TELLANN_INGESTION_KEY or VITE_TELLANN_INGESTION_KEY' },
       snippet: `import { TELLANN } from '@tellann/frontend-sdk';\n\n// Initialize Tellann browser telemetry\nTELLANN.initialize({\n    endpoint: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_GATEWAY_URL) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_GATEWAY_URL) || '${endpoint}',\n    apiKey: (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TELLANN_INGESTION_KEY) || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELLANN_INGESTION_KEY),\n    applicationId: '${applicationId}',\n    environmentId: '${environmentId}'\n});\nvoid TELLANN.verifyInstallation();`,
     },
     {
-      id: 'backend', kind: 'BACKEND', label: 'Node.js server', packageName: '@tellann/backend-sdk', packageVersion: '^0.1.0',
+      id: 'backend', kind: 'BACKEND', label: 'Node.js server', packageName: '@tellann/backend-sdk', packageVersion: 'latest',
       installCommands: { npm: 'npm install @tellann/backend-sdk', pnpm: 'pnpm add @tellann/backend-sdk', yarn: 'yarn add @tellann/backend-sdk', bun: 'bun add @tellann/backend-sdk' },
       environmentVariables: { endpoint: 'TELLANN_GATEWAY_URL', key: 'TELLANN_INGESTION_KEY' },
       snippet: `import { TELLANN } from '@tellann/backend-sdk';\n\nTELLANN.initialize({\n    ${shared}\n});\nawait TELLANN.verifyInstallation();`,
+    },
+    {
+      // One distribution covers Django, Flask, FastAPI and Starlette; which
+      // integration is used is a one-line choice in the application, not a
+      // different package to install.
+      id: 'python', kind: 'BACKEND', label: 'Python server', packageName: 'tellann', packageVersion: '>=0.1,<1',
+      installCommands: {
+        pip: 'python -m pip install tellann',
+        poetry: 'poetry add tellann',
+        uv: 'uv add tellann',
+        pipenv: 'pipenv install tellann',
+      },
+      environmentVariables: { endpoint: 'TELLANN_GATEWAY_URL', key: 'TELLANN_INGESTION_KEY' },
+      snippet: `from tellann import TELLANN\n\nTELLANN.initialize(\n    endpoint='${endpoint}',\n    api_key=os.environ.get('TELLANN_INGESTION_KEY'),\n    application_id='${applicationId}',\n    environment_id='${environmentId}',\n)\nTELLANN.verify_installation()`,
     },
   ];
 }
