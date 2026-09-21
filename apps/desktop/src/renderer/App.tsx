@@ -52,6 +52,14 @@ function AppVersion() {
   return <footer className="auth-footer">Tellann Desktop{version ? ` ${version}` : ''}</footer>;
 }
 
+function secureStorageLabel() {
+  const platform = document.documentElement.dataset.platform;
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  if (platform === 'linux') return 'your Linux keyring';
+  return 'your operating system';
+}
+
 class RendererErrorBoundary extends Component<
   { children: ReactNode },
   { error: Error | null }
@@ -124,7 +132,7 @@ function AuthenticatedApp() {
           <h1>{bridgeAvailable ? 'Sign in to Tellann' : 'Open Tellann in the desktop app'}</h1>
           <p>
             {bridgeAvailable
-              ? 'Sign-in opens in your browser. Source code stays on this device, and your device credential is protected by Windows.'
+              ? `Sign-in opens in your browser. Source code stays on this device, and your device credential is protected by ${secureStorageLabel()}.`
               : 'This URL is only the renderer preview. Authentication, application access, and managed-browser controls are provided by Electron.'}
           </p>
 

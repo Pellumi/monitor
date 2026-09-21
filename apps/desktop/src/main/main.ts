@@ -51,6 +51,7 @@ import { renderQualityReport, qualityReportFileBase, type QualityReportFormat } 
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
+import { packagedBrowserExecutable } from './browser-executable';
 import {
   attachWindowChrome,
   handleSecondInstanceArgv,
@@ -68,7 +69,6 @@ loadDesktopEnvironment();
 
 let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;
-const packagedChromiumPath = path.join(process.resourcesPath, 'chromium', 'chrome-win64', 'chrome.exe');
 const cloud = new DesktopCloudClient();
 const notificationClient = new DesktopNotificationClient({
   apiUrl: process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000',
@@ -534,7 +534,7 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
 }
 
 const observer = new BrowserObserver({
-  executablePath: app.isPackaged ? packagedChromiumPath : undefined,
+  executablePath: app.isPackaged ? packagedBrowserExecutable(process.resourcesPath) : undefined,
   // Headless mode is reserved for deterministic installed-application
   // acceptance. Normal desktop runs always show the managed browser.
   headless: process.env.TELLANN_BROWSER_HEADLESS === 'true',

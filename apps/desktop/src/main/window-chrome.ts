@@ -281,7 +281,8 @@ export function attachWindowChrome(target: BrowserWindow) {
     void refreshThemedIcons();
     if (unreadWhileAway) {
       unreadWhileAway = 0;
-      target.setOverlayIcon(null, '');
+      if (process.platform === 'win32') target.setOverlayIcon(null, '');
+      else app.setBadgeCount(0);
     }
   });
   target.on('resize', scheduleSave);
@@ -444,7 +445,11 @@ export function requestAttention() {
 export function noteBackgroundNotification() {
   if (!window || window.isDestroyed() || window.isFocused()) return;
   unreadWhileAway += 1;
-  window.setOverlayIcon(badgeIcon(), `${unreadWhileAway} unread notification${unreadWhileAway === 1 ? '' : 's'}`);
+  if (process.platform === 'win32') {
+    window.setOverlayIcon(badgeIcon(), `${unreadWhileAway} unread notification${unreadWhileAway === 1 ? '' : 's'}`);
+  } else {
+    app.setBadgeCount(unreadWhileAway);
+  }
   window.flashFrame(true);
 }
 

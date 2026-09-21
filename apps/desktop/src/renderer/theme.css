@@ -53,6 +53,15 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* Keep Linux metrics close to the Windows shell when Segoe/Cascadia are not
+   installed. Explicit families avoid Chromium resolving `system-ui`
+   differently between GNOME, KDE and minimal desktop environments. */
+:root[data-platform="linux"] {
+  --font-ui: "Noto Sans", "Ubuntu", "DejaVu Sans", sans-serif;
+  --font-display: "Noto Sans", "Ubuntu", "DejaVu Sans", sans-serif;
+  --font-mono: "Noto Sans Mono", "Ubuntu Mono", "DejaVu Sans Mono", monospace;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
