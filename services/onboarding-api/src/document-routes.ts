@@ -262,10 +262,6 @@ export function createDocumentRouter(input: {
 
     // 4) Materialise a DRAFT declared flow pending review.
     const devEnv = await prisma.environment.findFirst({ where: { applicationId: app.id, isDefault: true } });
-    const latest = await prisma.behaviorGraph.findFirst({
-      where: { applicationId: app.id, environmentId: devEnv?.id ?? null, graphType: 'DECLARED' },
-      orderBy: { version: 'desc' },
-    });
     const normalize = (value: string) => value.toUpperCase().trim().replace(/\s+/g, '_');
 
     const graph = await prisma.behaviorGraph.create({
@@ -278,7 +274,8 @@ export function createDocumentRouter(input: {
         graphType: 'DECLARED', sourceType: 'SYSTEM_GENERATED',
         lifecycleStatus: 'DRAFT', status: 'DRAFT',
         declaredById: req.user!.id,
-        version: (latest?.version ?? 0) + 1,
+        // Each flow keeps its own version line: v1 until a revision is opened.
+        version: 1,
         aiDraftStatus: 'PENDING_REVIEW',
         aiDraftSourceName: filename,
       },

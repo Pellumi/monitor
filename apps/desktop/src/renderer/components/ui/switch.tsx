@@ -47,10 +47,10 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
         ref={ref}
         onClick={handleClick}
         className={cn(
-          "peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border p-[2px] transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-not-allowed disabled:opacity-40",
+          "peer inline-flex h-6 w-11 shrink-0 cursor-default items-center rounded-full border p-[2px] transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent) focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-not-allowed disabled:opacity-40",
           isChecked
-            ? "bg-white border-white"
-            : "bg-zinc-950 border-zinc-700 hover:border-zinc-500",
+            ? "bg-(--accent) border-(--accent)"
+            : "bg-(--surface-0) border-(--border-strong) hover:border-(--border-strong)",
           className
         )}
         {...props}
@@ -60,8 +60,8 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
           className={cn(
             "pointer-events-none block h-5 w-5 rounded-sm transition-transform duration-200 ease-in-out shadow-sm",
             isChecked
-              ? "translate-x-5 bg-black"
-              : "translate-x-0 bg-zinc-400"
+              ? "translate-x-5 bg-(--surface-0)"
+              : "translate-x-0 bg-(--surface-4)"
           )}
         />
       </button>

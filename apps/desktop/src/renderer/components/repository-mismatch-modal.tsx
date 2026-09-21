@@ -47,13 +47,6 @@ export function RepositoryMismatchModal() {
         aria-modal="true"
         aria-labelledby="repository-mismatch-title"
       >
-        <div className="flex items-center justify-between mb-5">
-          <span className="text-white text-[20px] font-extrabold tracking-tight">TELLANN</span>
-          <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-            FOLDER // MISMATCH
-          </span>
-        </div>
-
         <h2 id="repository-mismatch-title">That folder is a different repository</h2>
         <p>{repositoryMismatch.message}</p>
 
@@ -61,7 +54,7 @@ export function RepositoryMismatchModal() {
           <div className="context-banner">
             <p className="m-0! leading-relaxed text-left break-words">
               This application is bound to{' '}
-              <code className="bg-[#18181b] text-[#ffffff] px-1.5 py-0.5 rounded font-mono text-[12px] border border-[#27272a] break-all inline">
+              <code className="bg-(--surface-1) text-(--text-strong) px-1.5 py-0.5 rounded font-mono text-[12px] border border-(--border) break-all inline">
                 {repositoryMismatch.expectedCloneUrl}
               </code>
               . Choose your local checkout of that repository instead.

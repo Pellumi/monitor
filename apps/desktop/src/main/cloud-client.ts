@@ -157,6 +157,8 @@ export class DesktopCloudClient {
     string,
     { value: unknown; cachedAt: number }
   >();
+  /** Bumped by every write so reads that started before it are never cached or shared. */
+  private readGeneration = 0;
   private rateLimitedUntil = 0;
   private activeSignIn: {
     controller: AbortController;
@@ -328,12 +330,26 @@ export class DesktopCloudClient {
           const features = (entitlement.features as Json | undefined) ?? {};
           const enabled = (feature: string) =>
             features[feature] === true || typeof features[feature] === "string";
+          // The cloud resolves the tier-to-format table. A server that predates
+          // the field still says whether exporting is entitled at all, and an
+          // entitled-but-unknown tier degrades to JSON rather than opening up
+          // every format.
+          const reportFormats = Array.isArray(entitlement.reportFormats)
+            ? (entitlement.reportFormats as unknown[])
+                .map((format) => String(format).toUpperCase())
+                .filter((format): format is DesktopEntitlements["reportFormats"][number] =>
+                  format === "JSON" || format === "PDF" || format === "CSV" || format === "HTML",
+                )
+            : enabled("REPORT_EXPORT")
+              ? (["JSON"] as DesktopEntitlements["reportFormats"])
+              : [];
           return [
             organizationId,
             {
               planType: String(
                 entitlement.planType,
               ) as DesktopEntitlements["planType"],
+              reportFormats,
               features: {
                 DESKTOP_GUIDED_RUNS: enabled("DESKTOP_GUIDED_RUNS"),
                 DOCUMENT_FLOW_INFERENCE: enabled("DOCUMENT_FLOW_INFERENCE"),
@@ -656,6 +672,14 @@ export class DesktopCloudClient {
     return Array.isArray(flows) ? flows : [];
   }
 
+  /** Permanently deletes a declared flow with its versions, QA runs, reports, bindings and scans. */
+  async deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}`,
+      { method: "DELETE" },
+    );
+  }
+
   async declaredFlow(
     applicationId: string,
     flowId: string,
@@ -674,6 +698,8 @@ export class DesktopCloudClient {
       scopeStatement: string;
       exclusions?: string[];
       tags?: string[];
+      /** Starting-point template key — seeds states and transitions server-side. */
+      template?: string;
     },
   ): Promise<DeclaredFlowSummary> {
     return this.request<DeclaredFlowSummary>(
@@ -743,6 +769,87 @@ export class DesktopCloudClient {
         method: "POST",
         body: JSON.stringify({ ...input, provenance: "USER_DECLARED" }),
       },
+    );
+  }
+
+  async updateDeclaredTransition(
+    applicationId: string,
+    flowId: string,
+    transitionId: string,
+    input: { action: string },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/declared-flow/${flowId}/transitions/${transitionId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    );
+  }
+
+  async deleteDeclaredTransition(
+    applicationId: string,
+    flowId: string,
+    transitionId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/declared-flow/${flowId}/transitions/${transitionId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async updateDeclaredFlow(
+    applicationId: string,
+    flowId: string,
+    input: {
+      name?: string;
+      purpose?: string;
+      scopeStatement?: string;
+      workflowType?: string;
+    },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    );
+  }
+
+  /** Rollback points (d1, d2, …) recorded within the flow's current version. */
+  async flowDraftHistory(applicationId: string, flowId: string): Promise<Json> {
+    const response = await this.request<{ success: boolean; data: Json }>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/draft-history`,
+    );
+    return response.data;
+  }
+
+  async restoreFlowDraft(
+    applicationId: string,
+    flowId: string,
+    snapshotId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/draft-history/${snapshotId}/restore`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async dismissFlowSuggestion(
+    applicationId: string,
+    flowId: string,
+    suggestionId: string,
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/declared-flows/${flowId}/suggestions/${suggestionId}/dismiss`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  /** Accepts or discards a flow draft generated from documents. */
+  async resolveAiFlowDraft(
+    applicationId: string,
+    flowId: string,
+    decision: "accept" | "decline",
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/v1/applications/${applicationId}/flows/${flowId}/ai-draft/${decision}`,
+      { method: "POST", body: JSON.stringify({}) },
     );
   }
 
@@ -867,6 +974,29 @@ export class DesktopCloudClient {
     );
   }
 
+  /**
+   * The published graph snapshot a run reconciles against. Read by version
+   * rather than through the canonical flow endpoint, because the draft graph
+   * can move on while a run is still in progress.
+   */
+  async flowVersionGraph(
+    applicationId: string,
+    flowId: string,
+    versionId: string,
+  ): Promise<{
+    flowId: string;
+    versionId: string;
+    version: number | null;
+    name: string | null;
+    purpose: string | null;
+    states: Array<Record<string, unknown>>;
+    transitions: Array<Record<string, unknown>>;
+  }> {
+    return this.request(
+      `/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}`,
+    );
+  }
+
   async initializeFlow(flowId: string, input: Json): Promise<Json> {
     return this.request(`/flows/${flowId}/initializations`, {
       method: "POST",
@@ -883,6 +1013,64 @@ export class DesktopCloudClient {
       method: "POST",
       body: JSON.stringify({}),
     });
+  }
+
+  async reportFlowMappingProgress(
+    initializationId: string,
+    progress: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mapping-progress`,
+      { method: "POST", body: JSON.stringify({ progress }) },
+    );
+  }
+
+  async submitFlowMappingCandidates(
+    initializationId: string,
+    input: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mapping-candidates`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  /**
+   * Where mapping has got to, without the record it is working on.
+   *
+   * The full initialization carries the manifest, the report, the roadmap and
+   * every mapping; this carries the stage and the counts. It is what a window
+   * waiting on a mapping run actually reads, and re-reading the former to learn
+   * the latter is what made waiting expensive.
+   */
+  async flowInitializationProgress(initializationId: string): Promise<Json> {
+    return this.request(`/flow-initializations/${initializationId}/progress`, { method: "GET" });
+  }
+
+  /** Ask the resolver again with the evidence the scan already holds. */
+  async retryFlowMappingResolution(initializationId: string): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/resolve-retry`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async confirmFlowMappings(initializationId: string, confirmations: Json[]): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mappings/confirm`,
+      { method: "POST", body: JSON.stringify({ confirmations }) },
+    );
+  }
+
+  async confirmFlowMapping(
+    initializationId: string,
+    checkpointId: string,
+    input: Json,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/mappings/${encodeURIComponent(checkpointId)}/confirm`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
   }
 
   async setFlowInitializationMode(
@@ -1019,6 +1207,10 @@ export class DesktopCloudClient {
 
   async revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }> {
     return this.request(`/qa-runs/${runId}/protected-values/${valueId}/reveal`, { method: "POST" });
+  }
+
+  async getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }> {
+    return this.request(`/qa-runs/${runId}/artifacts/${artifactId}/download`);
   }
 
   async mentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]> {
@@ -1324,6 +1516,12 @@ export class DesktopCloudClient {
       scannerVersion: string;
       archive: { checksum: string; fileCount: number; excludedFiles: number; uncompressedBytes: number; buffer: Buffer };
       onProgress?: (sent: number, total: number) => void;
+      /**
+       * Asked before each part and before the job is created. A cancelled
+       * upload throws, which takes the same path as a failed one: the partial
+       * upload is deleted rather than left on the server.
+       */
+      shouldCancel?: () => boolean;
     },
   ): Promise<{ snapshotId: string; jobId: string }> {
     const PART_BYTES = 3 * 1024 * 1024;
@@ -1343,6 +1541,7 @@ export class DesktopCloudClient {
 
     try {
       for (let part = 0; part < total; part += 1) {
+        if (input.shouldCancel?.()) throw new Error('CODEBASE_SNAPSHOT_UPLOAD_CANCELLED');
         const slice = input.archive.buffer.subarray(part * PART_BYTES, (part + 1) * PART_BYTES);
         await this.request<Json>(
           `/applications/${applicationId}/codebase/uploads/${uploadId}/parts/${part}`,
@@ -1351,6 +1550,7 @@ export class DesktopCloudClient {
         input.onProgress?.(part + 1, total);
       }
 
+      if (input.shouldCancel?.()) throw new Error('CODEBASE_SNAPSHOT_UPLOAD_CANCELLED');
       const created = await this.request<Json>(`/applications/${applicationId}/codebase/snapshots`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1826,9 +2026,16 @@ export class DesktopCloudClient {
   ): Promise<T> {
     const method = String(init.method ?? "GET").toUpperCase();
     if (method !== "GET") {
-      this.readCache.clear();
-      return this.requestOnce<T>(pathName, init, retry);
+      // Invalidate before and after: a read that runs while the write is in
+      // flight would otherwise cache (and hand out) the pre-write response.
+      this.invalidateReads();
+      try {
+        return await this.requestOnce<T>(pathName, init, retry);
+      } finally {
+        this.invalidateReads();
+      }
     }
+    const generation = this.readGeneration;
     const cached = this.readCache.get(pathName);
     if (Date.now() < this.rateLimitedUntil) {
       if (cached) return cached.value as T;
@@ -1852,7 +2059,8 @@ export class DesktopCloudClient {
     if (existing) return existing as Promise<T>;
     const pending = this.requestOnce<T>(pathName, init, retry)
       .then((value) => {
-        this.readCache.set(pathName, { value, cachedAt: Date.now() });
+        if (generation === this.readGeneration)
+          this.readCache.set(pathName, { value, cachedAt: Date.now() });
         return value;
       })
       .catch((error) => {
@@ -1864,9 +2072,18 @@ export class DesktopCloudClient {
         }
         throw error;
       })
-      .finally(() => this.inflightReads.delete(pathName));
+      .finally(() => {
+        if (this.inflightReads.get(pathName) === pending)
+          this.inflightReads.delete(pathName);
+      });
     this.inflightReads.set(pathName, pending);
     return pending;
+  }
+
+  private invalidateReads() {
+    this.readGeneration += 1;
+    this.readCache.clear();
+    this.inflightReads.clear();
   }
 
   private async requestOnce<T = unknown>(

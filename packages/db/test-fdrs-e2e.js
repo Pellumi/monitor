@@ -32,12 +32,13 @@ async function runTest() {
   let failureStateId;
   if (failureSug) {
     console.log(`\n--- Step 3: Accepting Suggestion for LOGIN_FAILURE (Pattern: ${failureSug.patternId}) ---`);
-    const acceptRes = await fetch(`http://localhost:3008/applications/${appId}/declared-flow/${flowId}/suggestions/${failureSug.id}/accept`, {
+    const acceptRes = await fetch(`http://localhost:3008/v1/applications/${appId}/declared-flows/${flowId}/suggestions/${failureSug.id}/accept`, {
       method: 'POST'
     });
     const acceptData = await acceptRes.json();
-    failureStateId = acceptData.state.id;
-    console.log(`Successfully accepted suggestion. Created State: ${acceptData.state.stateName} (ID: ${failureStateId}) with provenance: ${acceptData.state.provenance}`);
+    const acceptedState = acceptData.data.createdNodes[0];
+    failureStateId = acceptedState.id;
+    console.log(`Successfully accepted suggestion. Created State: ${acceptedState.stateName} (ID: ${failureStateId}) with provenance: ${acceptedState.provenance}`);
   } else {
     console.log('LOGIN_FAILURE suggestion not found, adding manually.');
     const failRes = await fetch(`http://localhost:3008/applications/${appId}/declared-flow/${flowId}/states`, {

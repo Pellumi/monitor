@@ -23,6 +23,7 @@ import type {
   DesktopSession,
   QARunSummary,
   QualityReport,
+  ReportExportFormat,
   RepositorySnapshotSummary,
   StartGuidedRunInput,
   SourceDocumentSummary,
@@ -100,7 +101,8 @@ type DesktopContextValue = {
   refreshOrganizations(): Promise<DesktopOrganization[]>;
   /** Creates the application in the cloud, then refreshes the local list. */
   createApplication(input: CreateApplicationInput): Promise<DesktopApplication | null>;
-  attachWorkspace(applicationId: string): Promise<LocalWorkspace | null>;
+  /** Attaches a folder: the one given (dropped onto the window) or one picked in the folder dialog. */
+  attachWorkspace(applicationId: string, folder?: { path: string; name: string }): Promise<LocalWorkspace | null>;
   /** Set when the last attach was refused because the folder is a different repository. */
   repositoryMismatch: RepositoryMismatchPrompt | null;
   dismissRepositoryMismatch(): void;
@@ -120,15 +122,22 @@ type DesktopContextValue = {
   getRun(runId: string): Promise<Record<string, unknown>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
+  /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
+  saveReportDownload(
+    runId: string,
+    format: ReportExportFormat,
+  ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
+  getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }>;
   getDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
   getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-  createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+  createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
   addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
   updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
   deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
   addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
   completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+  deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
   generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
   getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
   acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
@@ -139,7 +148,14 @@ type DesktopContextValue = {
   getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
   initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  /** Stage and counts only; the record itself is fetched when the stage changes. */
+  getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;
   analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+  retryFlowMappingResolution(initializationId: string): Promise<Record<string, any>>;
+  confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
+  confirmFlowMappings(initializationId: string, confirmations: Array<{ checkpointId: string; candidateId: string; placementKind?: string; anchorText?: string }>): Promise<Record<string, any>>;
+  /** Open an evidence location in the user's editor. The path is repository-relative. */
+  openCodebaseEvidence(input: { applicationId: string; path: string; line?: number }): Promise<{ opened: boolean; reason?: string }>;
   setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
   updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
   startFlowVerification(initializationId: string): Promise<Record<string, any>>;
@@ -191,6 +207,8 @@ type DesktopContextValue = {
   pauseRun(): Promise<GuidedRunState>;
   resumeRun(): Promise<GuidedRunState>;
   setRunInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
+  /** Raises the managed browser window above the desktop app. */
+  focusRunBrowser(): Promise<GuidedRunState>;
   retryRunSynchronization(runId: string): Promise<Record<string, unknown>>;
   revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
   endRun(): Promise<GuidedRunState>;
@@ -205,6 +223,8 @@ type InstrumentationEnvironmentInput = {
   flowId?: string;
   flowVersionId?: string;
   flowInitializationId?: string;
+  /** Every adapter in this proposal, so a Flow spanning packages can be split. */
+  selectedAdapterIds?: InstrumentationDetection['adapterId'][];
 };
 
 const DesktopContext = createContext<DesktopContextValue | null>(null);
@@ -302,11 +322,21 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, []);
 
+  // The main process pushes the run state as it changes. Polling for a full
+  // copy of it several times a second meant serialising the whole evidence ring
+  // buffer across IPC on every tick, whether or not anything had happened.
+  useEffect(() => {
+    if (!window.tellann?.runs?.onStateChanged) return;
+    return window.tellann.runs.onStateChanged((state) => setActiveRun(state));
+  }, []);
+
+  // A slow reconcile behind the push, so a dropped message cannot strand the
+  // page on a stale state for the rest of the run.
   useEffect(() => {
     if (!activeRun || ['COMPLETED', 'FAILED'].includes(activeRun.status)) return;
     const timer = window.setInterval(() => {
       void bridge().runs.getActive().then((state) => setActiveRun(state)).catch(() => undefined);
-    }, 1_500);
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [activeRun?.status]);
 
@@ -467,8 +497,8 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const attachWorkspace = useCallback(async (applicationId: string) => perform(async () => {
-    const selected = await bridge().projects.chooseWorkspace();
+  const attachWorkspace = useCallback(async (applicationId: string, folder?: { path: string; name: string }) => perform(async () => {
+    const selected = folder ?? await bridge().projects.chooseWorkspace();
     if (!selected) return null;
     setRepositoryMismatch(null);
     // The workspace id is derived in the main process from the folder path, so
@@ -572,6 +602,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return next;
   }), [perform]);
 
+  // Deliberately outside `perform`: the run page reports this one inline, next
+  // to the control that asked for it, rather than in the app-level error slot.
+  const focusRunBrowser = useCallback(async () => {
+    const next = await bridge().runs.focusBrowser();
+    setActiveRun(next);
+    return next;
+  }, []);
+
   const retryRunSynchronization = useCallback((runId: string) =>
     perform(() => bridge().runs.retrySynchronization(runId)), [perform]);
 
@@ -619,15 +657,18 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getRun: (runId) => bridge().runs.get(runId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
+    saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
+    getArtifactDownloadUrl: (runId, artifactId) => bridge().runs.getArtifactDownloadUrl(runId, artifactId),
     getDeclaredFlows: (applicationId) => bridge().intent.listDeclaredFlows(applicationId),
     getDeclaredFlow: (applicationId, flowId) => bridge().intent.getDeclaredFlow(applicationId, flowId),
-    createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement)),
+    createDeclaredFlow: (applicationId, name, workflowType, purpose, scopeStatement, template) => perform(() => bridge().intent.createDeclaredFlow(applicationId, name, workflowType, purpose, scopeStatement, template)),
     addDeclaredState: (applicationId, flowId, stateName, category, role, terminalKind) => perform(() => bridge().intent.addDeclaredState(applicationId, flowId, stateName, category, role, terminalKind)),
     updateDeclaredState: (applicationId, flowId, stateId, stateName, category, role, terminalKind) => perform(() => bridge().intent.updateDeclaredState(applicationId, flowId, stateId, stateName, category, role, terminalKind)),
     deleteDeclaredState: (applicationId, flowId, stateId) => perform(() => bridge().intent.deleteDeclaredState(applicationId, flowId, stateId)),
     addDeclaredTransition: (applicationId, flowId, fromStateId, toStateId, action) => perform(() => bridge().intent.addDeclaredTransition(applicationId, flowId, fromStateId, toStateId, action)),
     completeDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.completeDeclaredFlow(applicationId, flowId)),
     reopenDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.reopenDeclaredFlow(applicationId, flowId)),
+    deleteDeclaredFlow: (applicationId, flowId) => perform(() => bridge().intent.deleteDeclaredFlow(applicationId, flowId)),
     generateFlowSuggestions: (applicationId, flowId, input) => bridge().intent.generateFlowSuggestions(applicationId, flowId, input),
     getFlowSuggestions: (applicationId, flowId) => bridge().intent.getFlowSuggestions(applicationId, flowId),
     acceptFlowSuggestion: (applicationId, flowId, suggestionId) => bridge().intent.acceptFlowSuggestion(applicationId, flowId, suggestionId),
@@ -638,7 +679,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getFlowDiagrams: (applicationId, flowId, versionId) => bridge().intent.getFlowDiagrams(applicationId, flowId, versionId),
     initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
     getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
+    // Deliberately outside `perform`: this runs on a timer while the user waits,
+    // and a transient failure to read progress is not an app-level error.
+    getFlowInitializationProgress: (initializationId) => bridge().intent.getFlowInitializationProgress(initializationId),
     analyzeFlowInitialization: (initializationId) => perform(() => bridge().intent.analyzeFlowInitialization(initializationId)),
+    retryFlowMappingResolution: (initializationId) => perform(() => bridge().intent.retryFlowMappingResolution(initializationId)),
+    confirmFlowMapping: (initializationId, checkpointId, candidateId, placementKind, anchorText) => perform(() => bridge().intent.confirmFlowMapping(initializationId, checkpointId, candidateId, placementKind, anchorText)),
+    confirmFlowMappings: (initializationId, confirmations) => perform(() => bridge().intent.confirmFlowMappings(initializationId, confirmations)),
+    openCodebaseEvidence: (input) => bridge().projects.openCodebaseEvidence(input),
     setFlowInitializationMode: (initializationId, mode) => perform(() => bridge().intent.setFlowInitializationMode(initializationId, mode)),
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
     startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),
@@ -683,13 +731,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     pauseRun,
     resumeRun,
     setRunInteractionMode,
+    focusRunBrowser,
     retryRunSynchronization,
     revealProtectedValue,
     endRun,
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, resumeRun, setRunInteractionMode, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);

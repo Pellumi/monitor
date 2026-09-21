@@ -7,6 +7,7 @@ import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "./core/dashboard-provider";
 import { UserRole } from "./core/types";
 import { Activity, ArrowRight, Play, Plus, Zap } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function DashboardHeader() {
   const { appId } = useSelectedApplication();
@@ -120,17 +121,17 @@ export function DashboardHeader() {
 
         {/* Date Range Selector */}
         {state.lifecycle === "ACTIVE" && (
-          <select
-            aria-label="Time range selector"
-            value={range}
-            onChange={(event) => setRange(event.target.value)}
-            className="bg-[#141414] border border-[#2d2d2d] text-neutral-300 text-xs rounded px-2.5 py-1.5 focus:outline-none font-mono cursor-pointer"
-          >
-            <option value="latest">Last demonstration</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="all">All time</option>
-          </select>
+          <Select value={range} onValueChange={setRange} width="180px">
+            <SelectTrigger className="bg-[#141414] border-[#2d2d2d] text-neutral-300 text-xs font-mono py-1.5 px-2.5">
+              <SelectValue placeholder="Select range" />
+            </SelectTrigger>
+            <SelectContent className="font-mono">
+              <SelectItem value="latest">Last demonstration</SelectItem>
+              <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="30d">Last 30 days</SelectItem>
+              <SelectItem value="all">All time</SelectItem>
+            </SelectContent>
+          </Select>
         )}
 
         {/* Dynamic Primary Action */}

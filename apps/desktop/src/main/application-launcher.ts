@@ -11,6 +11,8 @@ export type LocalLaunchCommand = {
   args: string[];
   cwd: string;
   scriptName: string;
+  /** Absent means `node`, so a command from an older scan still launches. */
+  runtime?: "node" | "python";
 };
 
 export type LaunchCorrelation = {
@@ -34,6 +36,57 @@ export type PermanentLaunchEnvironment = {
 const ALLOWED_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const ALLOWED_SCRIPTS = new Set(["dev", "start", "serve", "preview"]);
 
+const ALLOWED_PYTHON_EXECUTABLES = new Set(["python", "python3", "py"]);
+
+/** A module path or `module:attribute` target, and nothing else. */
+const PYTHON_TARGET = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(:[A-Za-z_][A-Za-z0-9_]*)?$/;
+
+/**
+ * Python launch commands, as an allowlist of exact shapes.
+ *
+ * The scanner builds these from what it detected, and the scanner reads the
+ * repository, so the argument vector is not trusted here just because it
+ * arrived in a snapshot. Only these three forms are ever spawned, with the one
+ * variable part - a module path - constrained to characters a Python module
+ * name can contain. Nothing runs through a shell.
+ */
+const PYTHON_COMMAND_SHAPES: Array<{
+  scriptName: string;
+  matches: (args: string[]) => boolean;
+}> = [
+  {
+    scriptName: "runserver",
+    matches: (args) => args.length === 2 && args[0] === "manage.py" && args[1] === "runserver",
+  },
+  {
+    scriptName: "uvicorn",
+    matches: (args) =>
+      args.length === 4
+      && args[0] === "-m"
+      && args[1] === "uvicorn"
+      && PYTHON_TARGET.test(args[2])
+      && args[3] === "--reload",
+  },
+  {
+    scriptName: "flask",
+    matches: (args) =>
+      args.length === 5
+      && args[0] === "-m"
+      && args[1] === "flask"
+      && args[2] === "--app"
+      && PYTHON_TARGET.test(args[3])
+      && args[4] === "run",
+  },
+];
+
+function isApprovedPythonCommand(command: LocalLaunchCommand): boolean {
+  const executable = command.executable.replace(/\.exe$/i, "");
+  if (!ALLOWED_PYTHON_EXECUTABLES.has(executable)) return false;
+  return PYTHON_COMMAND_SHAPES.some(
+    (shape) => shape.scriptName === command.scriptName && shape.matches(command.args),
+  );
+}
+
 function safeOutput(value: string): string {
   return value
     .replace(/(bearer\s+)[a-z0-9._~+\/-]+=*/gi, "$1[REDACTED]")
@@ -47,6 +100,14 @@ function safeOutput(value: string): string {
 async function resolveExecutable(
   command: LocalLaunchCommand,
 ): Promise<{ executable: string; args: string[] }> {
+  if (command.runtime === "python") {
+    if (!isApprovedPythonCommand(command)) {
+      throw new Error("UNAPPROVED_APPLICATION_LAUNCH_COMMAND");
+    }
+    // Spawned by name so the interpreter on PATH is used, which is the one an
+    // activated virtual environment puts there.
+    return { executable: command.executable, args: command.args };
+  }
   const manager = command.executable.replace(/\.(cmd|exe)$/i, "");
   if (
     !ALLOWED_MANAGERS.has(manager) ||
@@ -90,6 +151,45 @@ async function resolveExecutable(
   throw new Error(`SAFE_${manager.toUpperCase()}_EXECUTABLE_NOT_FOUND`);
 }
 
+/**
+ * The working directory a command may run in.
+ *
+ * Node launches stay at the repository root, exactly as before. A Python
+ * project frequently sits in a subdirectory - `backend/` beside a `web/` - and
+ * `manage.py runserver` has to run there, so a subdirectory is allowed for
+ * those, resolved through `resolveWithinWorkspace` so it cannot escape the
+ * workspace.
+ */
+function assertLaunchScope(command: LocalLaunchCommand, workspaceRoot: string): string {
+  if (command.runtime !== "python" && command.cwd !== ".") {
+    throw new Error("APPLICATION_LAUNCH_SCOPE_INVALID");
+  }
+  return resolveWithinWorkspace(workspaceRoot, command.cwd);
+}
+
+/**
+ * The thing the command is about to run still exists.
+ *
+ * For Node that is the package script; for Python it is `manage.py`, or the
+ * project directory itself for a module-launched server. A snapshot can be
+ * minutes old, and launching a script the user has since deleted produces a
+ * confusing process failure instead of a clear one.
+ */
+function assertLaunchTargetPresent(command: LocalLaunchCommand, cwd: string): void {
+  if (command.runtime === "python") {
+    if (command.scriptName === "runserver" && !fs.existsSync(path.join(cwd, "manage.py"))) {
+      throw new Error("APPLICATION_LAUNCH_SCRIPT_STALE");
+    }
+    return;
+  }
+  const packageJson = JSON.parse(
+    fs.readFileSync(resolveWithinWorkspace(cwd, "package.json"), "utf8"),
+  ) as { scripts?: Record<string, unknown> };
+  if (typeof packageJson.scripts?.[command.scriptName] !== "string") {
+    throw new Error("APPLICATION_LAUNCH_SCRIPT_STALE");
+  }
+}
+
 export function launchApprovalHash(
   command: LocalLaunchCommand,
   workspaceRoot: string,
@@ -124,17 +224,8 @@ export class LocalApplicationLauncher {
     correlation: LaunchCorrelation,
   ): Promise<{ pid: number; approvalHash: string }> {
     if (this.active) throw new Error("LOCAL_APPLICATION_ALREADY_RUNNING");
-    if (command.cwd !== ".")
-      throw new Error("APPLICATION_LAUNCH_SCOPE_INVALID");
-    const cwd = resolveWithinWorkspace(workspaceRoot, command.cwd);
-    const packageJson = JSON.parse(
-      fs.readFileSync(
-        resolveWithinWorkspace(workspaceRoot, "package.json"),
-        "utf8",
-      ),
-    ) as { scripts?: Record<string, unknown> };
-    if (typeof packageJson.scripts?.[command.scriptName] !== "string")
-      throw new Error("APPLICATION_LAUNCH_SCRIPT_STALE");
+    const cwd = assertLaunchScope(command, workspaceRoot);
+    assertLaunchTargetPresent(command, cwd);
     const resolved = await resolveExecutable(command);
     this.output = "";
     const child = spawn(resolved.executable, resolved.args, {
@@ -190,12 +281,8 @@ export class LocalApplicationLauncher {
     environment: PermanentLaunchEnvironment,
   ): Promise<{ pid: number; approvalHash: string }> {
     if (this.active) throw new Error("LOCAL_APPLICATION_ALREADY_RUNNING");
-    const cwd = resolveWithinWorkspace(workspaceRoot, command.cwd);
-    const packageJson = JSON.parse(
-      fs.readFileSync(resolveWithinWorkspace(cwd, "package.json"), "utf8"),
-    ) as { scripts?: Record<string, unknown> };
-    if (typeof packageJson.scripts?.[command.scriptName] !== "string")
-      throw new Error("APPLICATION_LAUNCH_SCRIPT_STALE");
+    const cwd = assertLaunchScope(command, workspaceRoot);
+    assertLaunchTargetPresent(command, cwd);
     const resolved = await resolveExecutable(command);
     this.output = "";
     const child = spawn(resolved.executable, resolved.args, {

@@ -73,16 +73,10 @@ export function UploadConsentModal() {
         aria-modal="true"
         aria-labelledby="upload-consent-title"
       >
-        <div className="flex items-center justify-between mb-5">
-          <span className="text-white text-[20px] font-extrabold tracking-tight">TELLANN</span>
-          <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-            SOURCE // CONSENT
-          </span>
-        </div>
-
         <h2 id="upload-consent-title">
-          Upload {request.fileCount} files ({formatBytes(request.compressedBytes)} compressed) for
-          full codebase analysis?
+          {request.purpose === 'FLOW_MAPPING_AI'
+            ? `Send ${request.fileCount} redacted code excerpt${request.fileCount === 1 ? '' : 's'} (${formatBytes(request.compressedBytes)}) to map “${request.flowName ?? 'this Flow'}”?`
+            : `Upload ${request.fileCount} files (${formatBytes(request.compressedBytes)} compressed) for full codebase analysis?`}
         </h2>
 
         <table role="presentation" className="consent-table">
@@ -114,6 +108,16 @@ export function UploadConsentModal() {
           </tbody>
         </table>
 
+        {request.purpose === 'FLOW_MAPPING_AI' && request.excerpts?.length ? (
+          <div className="permission-summary">
+            <ShieldCheck />
+            <div>
+              <strong>Only these bounded excerpts leave this device</strong>
+              <p>{request.excerpts.map((item) => `${item.path}${item.startLine ? `:${item.startLine}` : ''}`).join(', ')}</p>
+            </div>
+          </div>
+        ) : null}
+
         {request.truncated ? (
           <div className="context-banner">
             This repository exceeds the upload budget, so lower-priority files (documentation
@@ -135,7 +139,7 @@ export function UploadConsentModal() {
 
         <div className="desktop-modal-actions">
           <button type="button" disabled={submitting} onClick={() => answer(false)}>
-            Keep analysis local
+            {request.purpose === 'FLOW_MAPPING_AI' ? 'Use graph only' : 'Keep analysis local'}
           </button>
           <button
             className="confirm"
@@ -143,7 +147,7 @@ export function UploadConsentModal() {
             disabled={submitting}
             onClick={() => answer(true)}
           >
-            Upload and analyze
+            {request.purpose === 'FLOW_MAPPING_AI' ? 'Send excerpts and continue' : 'Upload and analyze'}
           </button>
         </div>
       </div>

@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { Prisma, type PrismaClient } from '@tellann/db';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
-import { InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
+import { INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
 import { flowInitializationResetOnRejection } from './instrumentation-flow-reset';
 
 type InstrumentationRequest = Request & { user?: { id: string; email: string } };
@@ -26,7 +26,7 @@ const PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'V
 // (STALE, REJECTED, FAILED, ROLLED_BACK) is terminal and must be superseded by a
 // fresh plan rather than handed back.
 const RESUMABLE_PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'VALIDATION_FAILED', 'COMPLETED']);
-const ADAPTERS = new Set(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
+const ADAPTERS = new Set<string>(INSTRUMENTATION_FRAMEWORK_IDS);
 const SDK_PACKAGES = new Set(['@tellann/frontend-sdk', '@tellann/backend-sdk']);
 const PACKAGE_MANAGERS = new Set(['pnpm', 'pnpm.cmd', 'npm', 'npm.cmd', 'yarn', 'yarn.cmd', 'bun', 'bun.exe']);
 const COMMAND_ENVIRONMENT_KEYS = new Set(['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);

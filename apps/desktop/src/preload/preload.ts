@@ -1,4 +1,24 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+
+// Mirrors WINDOW_CHANNELS in main/window-chrome.ts.
+const WINDOW_IPC = {
+  state: 'tellann:window:state',
+  getState: 'tellann:window:state:get',
+  navigate: 'tellann:window:navigate',
+  command: 'tellann:window:command',
+  consumeCommand: 'tellann:window:command:consume',
+  contextMenu: 'tellann:window:context-menu',
+  confirm: 'tellann:window:confirm',
+  setMode: 'tellann:window:mode',
+} as const;
+
+function subscribe<T>(channel: string, callback: (value: T) => void) {
+  const subscription = (_: unknown, data: T) => callback(data);
+  ipcRenderer.on(channel, subscription);
+  return () => {
+    ipcRenderer.removeListener(channel, subscription);
+  };
+}
 
 const IPC = {
   getVersion: 'tellann:version',
@@ -21,6 +41,7 @@ const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
+  saveRunReportDownload: 'tellann:cloud:runs:report:download',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -30,6 +51,16 @@ const IPC = {
   addDeclaredTransition: 'tellann:cloud:intent:transition:add',
   completeDeclaredFlow: 'tellann:cloud:intent:complete',
   reopenDeclaredFlow: 'tellann:cloud:intent:reopen',
+  // Mirrors DELETE_DECLARED_FLOW_CHANNEL in main.ts.
+  deleteDeclaredFlow: 'tellann:cloud:intent:delete',
+  // Mirrors FLOW_EDITOR_CHANNELS in main.ts.
+  updateDeclaredTransition: 'tellann:cloud:intent:transition:update',
+  deleteDeclaredTransition: 'tellann:cloud:intent:transition:delete',
+  updateDeclaredFlow: 'tellann:cloud:intent:update',
+  getFlowDraftHistory: 'tellann:cloud:intent:draft-history:list',
+  restoreFlowDraft: 'tellann:cloud:intent:draft-history:restore',
+  dismissFlowSuggestion: 'tellann:cloud:intent:suggestions:dismiss',
+  resolveAiFlowDraft: 'tellann:cloud:intent:ai-draft:resolve',
   generateFlowSuggestions: 'tellann:cloud:intent:suggestions:generate',
   getFlowSuggestions: 'tellann:cloud:intent:suggestions:list',
   acceptFlowSuggestion: 'tellann:cloud:intent:suggestions:accept',
@@ -40,7 +71,12 @@ const IPC = {
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
+  getFlowInitializationProgress: 'tellann:flow:initialization:progress',
   analyzeFlowInitialization: 'tellann:flow:initialization:analyze',
+  retryFlowMappingResolution: 'tellann:flow:initialization:mapping:retry',
+  confirmFlowMapping: 'tellann:flow:initialization:mapping:confirm',
+  confirmFlowMappings: 'tellann:flow:initialization:mapping:confirm-many',
+  resetFlowMappingConsent: 'tellann:flow:initialization:mapping:consent:reset',
   setFlowInitializationMode: 'tellann:flow:initialization:mode',
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
@@ -97,10 +133,13 @@ const IPC = {
   setRunInteractionMode: 'tellann:run:interaction-mode',
   retryRunSynchronization: 'tellann:run:synchronization:retry',
   revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  getArtifactDownloadUrl: 'tellann:run:artifact:download-url',
   searchRunMentionableMembers: 'tellann:run:members:search',
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
+  focusRunBrowser: 'tellann:run:browser:focus',
+  runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
@@ -195,13 +234,28 @@ contextBridge.exposeInMainWorld('tellann', {
   intent: {
     listDeclaredFlows: (applicationId: string) => ipcRenderer.invoke(IPC.getDeclaredFlows, applicationId),
     getDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getDeclaredFlow, { applicationId, flowId }),
-    createDeclaredFlow: (applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string) => ipcRenderer.invoke(IPC.createDeclaredFlow, { applicationId, name, workflowType, purpose, scopeStatement }),
+    createDeclaredFlow: (applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string) => ipcRenderer.invoke(IPC.createDeclaredFlow, { applicationId, name, workflowType, purpose, scopeStatement, template }),
     addDeclaredState: (applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.addDeclaredState, { applicationId, flowId, stateName, category, role, terminalKind }),
     updateDeclaredState: (applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.updateDeclaredState, { applicationId, flowId, stateId, stateName, category, role, terminalKind }),
     deleteDeclaredState: (applicationId: string, flowId: string, stateId: string) => ipcRenderer.invoke(IPC.deleteDeclaredState, { applicationId, flowId, stateId }),
     addDeclaredTransition: (applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string) => ipcRenderer.invoke(IPC.addDeclaredTransition, { applicationId, flowId, fromStateId, toStateId, action }),
     completeDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.completeDeclaredFlow, { applicationId, flowId }),
     reopenDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.reopenDeclaredFlow, { applicationId, flowId }),
+    deleteDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.deleteDeclaredFlow, { applicationId, flowId }),
+    updateDeclaredTransition: (applicationId: string, flowId: string, transitionId: string, action: string) =>
+      ipcRenderer.invoke(IPC.updateDeclaredTransition, { applicationId, flowId, transitionId, action }),
+    deleteDeclaredTransition: (applicationId: string, flowId: string, transitionId: string) =>
+      ipcRenderer.invoke(IPC.deleteDeclaredTransition, { applicationId, flowId, transitionId }),
+    updateDeclaredFlow: (applicationId: string, flowId: string, input: unknown) =>
+      ipcRenderer.invoke(IPC.updateDeclaredFlow, { applicationId, flowId, input }),
+    getFlowDraftHistory: (applicationId: string, flowId: string) =>
+      ipcRenderer.invoke(IPC.getFlowDraftHistory, { applicationId, flowId }),
+    restoreFlowDraft: (applicationId: string, flowId: string, snapshotId: string) =>
+      ipcRenderer.invoke(IPC.restoreFlowDraft, { applicationId, flowId, snapshotId }),
+    dismissFlowSuggestion: (applicationId: string, flowId: string, suggestionId: string) =>
+      ipcRenderer.invoke(IPC.dismissFlowSuggestion, { applicationId, flowId, suggestionId }),
+    resolveAiFlowDraft: (applicationId: string, flowId: string, decision: 'accept' | 'decline') =>
+      ipcRenderer.invoke(IPC.resolveAiFlowDraft, { applicationId, flowId, decision }),
     generateFlowSuggestions: (applicationId: string, flowId: string, input: unknown) => ipcRenderer.invoke(IPC.generateFlowSuggestions, { applicationId, flowId, input }),
     getFlowSuggestions: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getFlowSuggestions, { applicationId, flowId }),
     acceptFlowSuggestion: (applicationId: string, flowId: string, suggestionId: string) => ipcRenderer.invoke(IPC.acceptFlowSuggestion, { applicationId, flowId, suggestionId }),
@@ -212,7 +266,14 @@ contextBridge.exposeInMainWorld('tellann', {
     getFlowDiagrams: (applicationId: string, flowId: string, versionId: string) => ipcRenderer.invoke(IPC.getFlowDiagrams, { applicationId, flowId, versionId }),
     initializeFlow: (input: unknown) => ipcRenderer.invoke(IPC.initializeFlow, input),
     getFlowInitialization: (initializationId: string) => ipcRenderer.invoke(IPC.getFlowInitialization, initializationId),
+    getFlowInitializationProgress: (initializationId: string) => ipcRenderer.invoke(IPC.getFlowInitializationProgress, initializationId),
     analyzeFlowInitialization: (initializationId: string) => ipcRenderer.invoke(IPC.analyzeFlowInitialization, initializationId),
+    retryFlowMappingResolution: (initializationId: string) => ipcRenderer.invoke(IPC.retryFlowMappingResolution, initializationId),
+    confirmFlowMapping: (initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string) =>
+      ipcRenderer.invoke(IPC.confirmFlowMapping, { initializationId, checkpointId, candidateId, placementKind, anchorText }),
+    confirmFlowMappings: (initializationId: string, confirmations: unknown[]) =>
+      ipcRenderer.invoke(IPC.confirmFlowMappings, { initializationId, confirmations }),
+    resetFlowMappingConsent: (applicationId: string) => ipcRenderer.invoke(IPC.resetFlowMappingConsent, applicationId),
     setFlowInitializationMode: (initializationId: string, mode: 'AUTOMATED' | 'MANUAL') => ipcRenderer.invoke(IPC.setFlowInitializationMode, { initializationId, mode }),
     updateFlowRoadmapStep: (initializationId: string, stepId: string, completed: boolean) => ipcRenderer.invoke(IPC.updateFlowRoadmapStep, { initializationId, stepId, completed }),
     startFlowVerification: (initializationId: string) => ipcRenderer.invoke(IPC.startFlowVerification, initializationId),
@@ -256,6 +317,8 @@ contextBridge.exposeInMainWorld('tellann', {
     get: (runId: string) => ipcRenderer.invoke(IPC.getRun, runId),
     getReplay: (runId: string) => ipcRenderer.invoke(IPC.getRunReplay, runId),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.getRunReport, runId),
+    saveReportDownload: (runId: string, format: 'JSON' | 'PDF' | 'CSV' | 'HTML') =>
+      ipcRenderer.invoke(IPC.saveRunReportDownload, { runId, format }),
     start: (input: unknown) => ipcRenderer.invoke(IPC.startGuidedRun, input),
     pause: () => ipcRenderer.invoke(IPC.pauseGuidedRun),
     resume: () => ipcRenderer.invoke(IPC.resumeGuidedRun),
@@ -263,12 +326,20 @@ contextBridge.exposeInMainWorld('tellann', {
     retrySynchronization: (runId: string) => ipcRenderer.invoke(IPC.retryRunSynchronization, runId),
     revealProtectedValue: (runId: string, valueId: string) =>
       ipcRenderer.invoke(IPC.revealRunProtectedValue, { runId, valueId }),
+    getArtifactDownloadUrl: (runId: string, artifactId: string) =>
+      ipcRenderer.invoke(IPC.getArtifactDownloadUrl, { runId, artifactId }),
     searchMentionableMembers: (runId: string, query: string) => ipcRenderer.invoke(IPC.searchRunMentionableMembers, { runId, query }),
     onLifecycleEvent: (callback: (event: unknown) => void) => {
       const subscription = (_: unknown, data: unknown) => callback(data);
       ipcRenderer.on(IPC.runLifecycleEvent, subscription);
       return () => ipcRenderer.removeListener(IPC.runLifecycleEvent, subscription);
     },
+    onStateChanged: (callback: (state: unknown) => void) => {
+      const subscription = (_: unknown, data: unknown) => callback(data);
+      ipcRenderer.on(IPC.runStateChanged, subscription);
+      return () => ipcRenderer.removeListener(IPC.runStateChanged, subscription);
+    },
+    focusBrowser: () => ipcRenderer.invoke(IPC.focusRunBrowser),
     end: () => ipcRenderer.invoke(IPC.endGuidedRun),
     getActive: () => ipcRenderer.invoke(IPC.getRunState),
   },
@@ -318,5 +389,16 @@ contextBridge.exposeInMainWorld('tellann', {
     openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
     openPath: (path: string) => ipcRenderer.invoke(IPC.openPath, path),
     openProfile: () => ipcRenderer.invoke(IPC.openProfile),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  },
+  window: {
+    getState: () => ipcRenderer.invoke(WINDOW_IPC.getState),
+    onStateChange: (callback: (state: unknown) => void) => subscribe(WINDOW_IPC.state, callback),
+    onNavigate: (callback: (direction: 'back' | 'forward') => void) => subscribe(WINDOW_IPC.navigate, callback),
+    onCommand: (callback: (command: string) => void) => subscribe(WINDOW_IPC.command, callback),
+    consumePendingCommand: () => ipcRenderer.invoke(WINDOW_IPC.consumeCommand),
+    setMode: (mode: 'auth' | 'main') => ipcRenderer.invoke(WINDOW_IPC.setMode, mode),
+    showContextMenu: (items: unknown[]) => ipcRenderer.invoke(WINDOW_IPC.contextMenu, items),
+    confirm: (input: unknown) => ipcRenderer.invoke(WINDOW_IPC.confirm, input),
   },
 });

@@ -11,6 +11,7 @@
   "dependencies": {
     "@tellann/agent-policy": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
+    "axe-core": "4.12.1",
     "playwright": "^1.58.0"
   },
   "devDependencies": {

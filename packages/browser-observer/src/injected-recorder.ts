@@ -368,25 +368,62 @@ export function installQaRecorder(config: {
   const wanted = ['paint', 'largest-contentful-paint', 'layout-shift', 'longtask', 'event', 'resource'];
   const observedTypes = wanted.filter((type) => supportedEntryTypes.includes(type));
   const unsupportedTypes = wanted.filter((type) => !supportedEntryTypes.includes(type));
+  /**
+   * Interaction latencies for this route, newest first. INP is the 98th
+   * percentile of them, which is what the metric is actually defined as: the
+   * single longest interaction is noise on a page with hundreds of them, and
+   * reporting that as "worst interaction" overstated the problem.
+   */
+  let interactionDurations: number[] = [];
+  const percentileInteraction = (): number | null => {
+    if (!interactionDurations.length) return null;
+    const sorted = [...interactionDurations].sort((a, b) => b - a);
+    // web-vitals discards one interaction per 50, floor-capped at the worst.
+    const index = Math.min(sorted.length - 1, Math.floor(sorted.length / 50));
+    return Math.round(sorted[index]);
+  };
   const freshMetrics = () => ({
     lcp: null as number | null,
     fcp: null as number | null,
     cls: observedTypes.includes('layout-shift') ? 0 : null,
     longTasks: observedTypes.includes('longtask') ? 0 : null,
+    /** Total blocking time contributed by long tasks, in milliseconds. */
+    longTaskMs: observedTypes.includes('longtask') ? 0 : null,
+    /** Where the browser attributed the worst long task, when it says. */
+    longestTaskMs: observedTypes.includes('longtask') ? 0 : null,
+    longestTaskAttribution: null as string | null,
     longestInteractionMs: observedTypes.includes('event') ? 0 : null,
+    /** Interaction to Next Paint for this route. */
+    inpMs: observedTypes.includes('event') ? null as number | null : null,
+    interactionCount: observedTypes.includes('event') ? 0 : null,
     resourceCount: observedTypes.includes('resource') ? 0 : null,
     transferredBytes: observedTypes.includes('resource') ? 0 : null,
+    /** Resources the browser reported with a zero-length body, i.e. failures. */
+    failedResourceCount: observedTypes.includes('resource') ? 0 : null,
+    /** Seconds this route spent hidden, which invalidates paint timings. */
+    hiddenMs: 0,
   });
   let metrics = freshMetrics();
   let metricsRoute = location.pathname;
+  let hiddenSince: number | null = document.visibilityState === 'hidden' ? performance.now() : null;
+
+  const settleHidden = () => {
+    if (hiddenSince === null) return;
+    metrics.hiddenMs += performance.now() - hiddenSince;
+    hiddenSince = null;
+  };
 
   const flushRouteMetrics = (reason: string) => {
+    settleHidden();
+    if (document.visibilityState === 'hidden') hiddenSince = performance.now();
     send({
       type: 'performance',
       metadata: {
         route: metricsRoute,
         reason,
         ...metrics,
+        inpMs: percentileInteraction(),
+        hiddenMs: Math.round(metrics.hiddenMs),
         supported: observedTypes.length > 0,
         unsupportedMetrics: unsupportedTypes,
       },
@@ -394,7 +431,45 @@ export function installQaRecorder(config: {
   };
   const resetRouteMetrics = () => {
     metrics = freshMetrics();
+    interactionDurations = [];
+    hiddenSince = document.visibilityState === 'hidden' ? performance.now() : null;
     metricsRoute = location.pathname;
+  };
+
+  // A route that spent time in a background tab has meaningless paint timings,
+  // so the reader needs to know that rather than seeing an unexplained 30s LCP.
+  addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenSince = performance.now();
+    else settleHidden();
+  });
+
+  /**
+   * The navigation timing breakdown. `domContentLoaded` and `load` alone cannot
+   * separate "the server was slow" from "our bundle was slow", which is the
+   * first question anyone asks about a slow route.
+   */
+  const navigationBreakdown = () => {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (!navigation) return {};
+    const round = (value: number | undefined) => (value == null || Number.isNaN(value) ? null : Math.round(value));
+    return {
+      domContentLoadedMs: round(navigation.domContentLoadedEventEnd),
+      loadMs: round(navigation.loadEventEnd),
+      ttfbMs: round(navigation.responseStart),
+      requestMs: round(navigation.responseStart - navigation.requestStart),
+      responseMs: round(navigation.responseEnd - navigation.responseStart),
+      dnsMs: round(navigation.domainLookupEnd - navigation.domainLookupStart),
+      tcpMs: round(navigation.connectEnd - navigation.connectStart),
+      tlsMs: navigation.secureConnectionStart
+        ? round(navigation.connectEnd - navigation.secureConnectionStart)
+        : null,
+      redirectCount: navigation.redirectCount,
+      redirectMs: round(navigation.redirectEnd - navigation.redirectStart),
+      domInteractiveMs: round(navigation.domInteractive),
+      transferSize: navigation.transferSize ?? null,
+      encodedBodySize: navigation.encodedBodySize ?? null,
+      navigationType: navigation.type,
+    };
   };
 
   try {
@@ -406,27 +481,51 @@ export function installQaRecorder(config: {
         if (entry.entryType === 'layout-shift' && !(entry as any).hadRecentInput) {
           metrics.cls = Number(metrics.cls ?? 0) + (entry as any).value;
         }
-        if (entry.entryType === 'longtask') metrics.longTasks = Number(metrics.longTasks ?? 0) + 1;
+        if (entry.entryType === 'longtask') {
+          metrics.longTasks = Number(metrics.longTasks ?? 0) + 1;
+          // Blocking time is what the main thread stole from the user, which is
+          // the part of a long task that actually hurts.
+          metrics.longTaskMs = Number(metrics.longTaskMs ?? 0) + Math.max(0, entry.duration - 50);
+          if (entry.duration > Number(metrics.longestTaskMs ?? 0)) {
+            metrics.longestTaskMs = Math.round(entry.duration);
+            const attribution = (entry as any).attribution?.[0];
+            metrics.longestTaskAttribution = attribution
+              ? String(attribution.containerType === 'window'
+                ? attribution.name || 'window'
+                : `${attribution.containerType}:${attribution.containerName || attribution.containerId || attribution.containerSrc || 'unnamed'}`).slice(0, 200)
+              : null;
+          }
+        }
         if (entry.entryType === 'event') {
+          metrics.interactionCount = Number(metrics.interactionCount ?? 0) + 1;
           metrics.longestInteractionMs = Math.max(Number(metrics.longestInteractionMs ?? 0), entry.duration);
+          interactionDurations.push(entry.duration);
+          // Unbounded growth on a long-lived SPA route would leak; the tail is
+          // all the percentile needs.
+          if (interactionDurations.length > 500) interactionDurations.shift();
         }
         if (entry.entryType === 'resource') {
+          const resource = entry as PerformanceResourceTiming;
           metrics.resourceCount = Number(metrics.resourceCount ?? 0) + 1;
-          metrics.transferredBytes = Number(metrics.transferredBytes ?? 0)
-            + ((entry as PerformanceResourceTiming).transferSize || 0);
+          metrics.transferredBytes = Number(metrics.transferredBytes ?? 0) + (resource.transferSize || 0);
+          // A resource that transferred nothing and decoded to nothing did not
+          // arrive: a broken image or font that no network panel filter catches.
+          if (!resource.transferSize && !resource.decodedBodySize && resource.responseEnd > 0) {
+            metrics.failedResourceCount = Number(metrics.failedResourceCount ?? 0) + 1;
+          }
         }
       }
     }).observe({ entryTypes: observedTypes, ...(observedTypes.includes('event') ? { durationThreshold: 40 } : {}) } as PerformanceObserverInit);
     addEventListener('load', () => {
-      const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
       send({
         type: 'performance',
         metadata: {
           route: location.pathname,
           reason: 'load',
           ...metrics,
-          domContentLoadedMs: navigation?.domContentLoadedEventEnd ?? null,
-          loadMs: navigation?.loadEventEnd ?? null,
+          inpMs: percentileInteraction(),
+          hiddenMs: Math.round(metrics.hiddenMs),
+          ...navigationBreakdown(),
           supported: true,
           unsupportedMetrics: unsupportedTypes,
         },

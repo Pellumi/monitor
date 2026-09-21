@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { discoverPythonProjects, type PythonProject } from '@tellann/python-project';
 import { digest, slash } from './core';
 
 export const IGNORED_DIRECTORIES = new Set([
@@ -8,8 +9,18 @@ export const IGNORED_DIRECTORIES = new Set([
   '.nuxt', '.output', '.parcel-cache', '.yarn', '.pnpm-store', '.gradle', '.idea', '.vscode', '.claude', '.husky', '.changeset', 'storybook-static',
 ]);
 
-/** Extensions the semantic analyzers understand end to end. */
+/** Extensions the TypeScript semantic analyzers understand end to end. */
 export const ANALYZABLE = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
+
+/**
+ * Extensions the Python analyzer understands end to end.
+ *
+ * Kept separate from `ANALYZABLE` because the two are fed to different engines:
+ * one builds a TypeScript program, the other reads Python structure directly.
+ * Merging them would hand `.py` files to the TypeScript compiler, which reports
+ * every one of them as a syntax error.
+ */
+export const PYTHON_ANALYZABLE = new Set(['.py', '.pyi']);
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.ts': 'TypeScript', '.tsx': 'TypeScript', '.mts': 'TypeScript', '.cts': 'TypeScript',
@@ -37,18 +48,23 @@ const LANGUAGE_BY_FILENAME: Record<string, string> = {
  * reason. Prisma and GraphQL are absent too, because their schemas are read.
  */
 const DEEP_ANALYSIS_GAP_LANGUAGES = new Set([
-  'Python', 'Java', 'Go', 'Rust', 'C#', 'PHP', 'Ruby', 'Kotlin', 'Swift',
+  'Java', 'Go', 'Rust', 'C#', 'PHP', 'Ruby', 'Kotlin', 'Swift',
   'Scala', 'C', 'C++', 'Objective-C', 'Vue', 'Svelte',
 ]);
 
 /** Text we are willing to place in a cloud snapshot. */
 const ARCHIVABLE = new Set([
   ...ANALYZABLE,
+  ...PYTHON_ANALYZABLE,
   '.json', '.md', '.mdx', '.txt', '.yaml', '.yml', '.toml', '.graphql', '.gql',
   '.prisma', '.sql', '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.env.example',
+  '.cfg', '.ini',
 ]);
 
-const ARCHIVABLE_FILENAMES = new Set(['dockerfile', 'makefile', 'procfile', '.env.example', '.nvmrc']);
+const ARCHIVABLE_FILENAMES = new Set([
+  'dockerfile', 'makefile', 'procfile', '.env.example', '.nvmrc',
+  'pipfile', '.python-version',
+]);
 
 /** Paths whose contents never leave the device, whatever they contain. */
 const SECRET_PATH = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_rsa|id_ed25519|.*\.(pem|key|p12|pfx|jks|keystore))$/i;
@@ -77,7 +93,10 @@ export type InventoryFile = {
   extension: string;
   language: string | null;
   bytes: number;
+  /** Readable end to end by the TypeScript semantic passes. */
   analyzable: boolean;
+  /** Readable end to end by the Python passes. */
+  pythonAnalyzable: boolean;
   archivable: boolean;
   generated: boolean;
   test: boolean;
@@ -90,17 +109,29 @@ export type PackageBoundary = {
   root: string;
   name: string;
   kind: 'application' | 'service' | 'package';
+  /**
+   * Which manifest declared this boundary. A repository can hold both, and the
+   * two resolve dependency names in different namespaces, so `requests` the
+   * PyPI distribution is never confused with an npm package of the same name.
+   */
+  ecosystem: 'node' | 'python';
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
   scripts: Record<string, string>;
   private: boolean;
+  /** For Python boundaries: pip, poetry, uv, pipenv, pdm or conda. */
+  packageManager?: string;
 };
 
 export type Inventory = {
   files: InventoryFile[];
   analyzable: string[];
+  /** Python sources to hand to the Python passes. */
+  pythonAnalyzable: string[];
   directories: string[];
   packages: PackageBoundary[];
+  /** Python projects discovered from their manifests. */
+  pythonProjects: PythonProject[];
   languageBytes: Record<string, number>;
   unsupportedLanguageFiles: Record<string, number>;
   exclusions: Record<ExclusionReason, number>;
@@ -110,10 +141,11 @@ export type Inventory = {
 
 const GENERATED = /(^|\/)(generated|__generated__|\.generated|migrations)\//i;
 const GENERATED_FILE = /\.(generated|gen)\.[cm]?[jt]sx?$/i;
-const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$/i;
+const TEST_FILE =
+  /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)(test_[^/]+|[^/]+_test|conftest)\.py$/i;
 const CONFIG_FILE =
-  /(^|\/)(package\.json|tsconfig[^/]*\.json|.*\.config\.[cm]?[jt]s|pnpm-workspace\.yaml|docker-compose[^/]*\.ya?ml|Dockerfile|\.env\.example|turbo\.json|nest-cli\.json|next\.config\.[cm]?[jt]s)$/i;
-const DOC_FILE = /\.(md|mdx|txt)$/i;
+  /(^|\/)(package\.json|tsconfig[^/]*\.json|.*\.config\.[cm]?[jt]s|pnpm-workspace\.yaml|docker-compose[^/]*\.ya?ml|Dockerfile|\.env\.example|turbo\.json|nest-cli\.json|next\.config\.[cm]?[jt]s|pyproject\.toml|setup\.py|setup\.cfg|manage\.py|settings\.py|Pipfile|requirements(-[a-z0-9._-]+)?\.txt|tox\.ini|pytest\.ini|gunicorn\.conf\.py|alembic\.ini)$/i;
+const DOC_FILE = /\.(md|mdx|txt|rst)$/i;
 
 function classifyLanguage(relative: string, extension: string): string | null {
   const base = path.basename(relative).toLowerCase();
@@ -207,13 +239,14 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
       if (bytes > maxFileBytes) {
         // A source file we cannot read leaves a hole in the graph; an oversized
         // lockfile or asset does not.
-        exclusions[ANALYZABLE.has(extension) ? 'oversized-source' : 'oversized'] += 1;
+        exclusions[ANALYZABLE.has(extension) || PYTHON_ANALYZABLE.has(extension) ? 'oversized-source' : 'oversized'] += 1;
         continue;
       }
       const language = classifyLanguage(relative, extension);
       const analyzable = ANALYZABLE.has(extension);
+      const pythonAnalyzable = PYTHON_ANALYZABLE.has(extension);
       if (language) languageBytes[language] = (languageBytes[language] ?? 0) + bytes;
-      if (!analyzable && language && DEEP_ANALYSIS_GAP_LANGUAGES.has(language)) {
+      if (!analyzable && !pythonAnalyzable && language && DEEP_ANALYSIS_GAP_LANGUAGES.has(language)) {
         unsupportedLanguageFiles[language] = (unsupportedLanguageFiles[language] ?? 0) + 1;
       }
       if (base === 'package.json') manifestPaths.push(absolute);
@@ -224,6 +257,7 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
         language,
         bytes,
         analyzable,
+        pythonAnalyzable,
         archivable: ARCHIVABLE.has(extension) || ARCHIVABLE_FILENAMES.has(base),
         generated: GENERATED.test(relative) || GENERATED_FILE.test(relative),
         test: TEST_FILE.test(relative),
@@ -244,20 +278,58 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
       root: relativeRoot,
       name: typeof manifest.name === 'string' ? manifest.name : path.basename(path.dirname(manifestPath)),
       kind: packageKind(relativeRoot, manifest),
+      ecosystem: 'node',
       dependencies: normalizeVersionMap(manifest.dependencies),
       devDependencies: normalizeVersionMap(manifest.devDependencies),
       scripts: normalizeVersionMap(manifest.scripts),
       private: manifest.private === true,
     });
   }
+
+  // Python projects are boundaries too. Without them a Django service has no
+  // owning package, so every one of its files is attributed to the repository
+  // root and the architecture view shows one undifferentiated blob.
+  const pythonProjects = discoverPythonProjects(root);
+  for (const project of pythonProjects) {
+    const dependencies: Record<string, string> = {};
+    const devDependencies: Record<string, string> = {};
+    for (const dependency of Object.values(project.dependencies)) {
+      const target = dependency.development ? devDependencies : dependencies;
+      target[dependency.name] = dependency.specifier || '*';
+    }
+    // One boundary per directory, whichever manifests it holds. A polyglot
+    // directory - a package.json beside a pyproject.toml - is one package with
+    // two dependency sets, not two packages competing for the same identity.
+    const existing = packages.find((item) => item.root === project.root);
+    if (existing) {
+      Object.assign(existing.dependencies, dependencies);
+      Object.assign(existing.devDependencies, devDependencies);
+      existing.packageManager ??= project.manager;
+      continue;
+    }
+    packages.push({
+      root: project.root,
+      name: project.name,
+      kind: packageKind(project.root, {}),
+      ecosystem: 'python',
+      dependencies,
+      devDependencies,
+      scripts: {},
+      private: true,
+      packageManager: project.manager,
+    });
+  }
+
   packages.sort((left, right) => (left.root < right.root ? -1 : left.root > right.root ? 1 : 0));
 
   const excludedTotal = Object.values(exclusions).reduce((sum, value) => sum + value, 0);
   return {
     files,
     analyzable: files.filter((file) => file.analyzable && !file.generated).map((file) => file.path),
+    pythonAnalyzable: files.filter((file) => file.pythonAnalyzable && !file.generated).map((file) => file.path),
     directories: directories.sort(),
     packages,
+    pythonProjects,
     languageBytes,
     unsupportedLanguageFiles,
     exclusions,
@@ -330,11 +402,12 @@ export type ArchivePlan = {
  * losing whatever sorted last alphabetically.
  */
 function archivePriority(file: InventoryFile): number {
-  if (file.analyzable && !file.test && !file.generated) return 0;
+  const source = file.analyzable || file.pythonAnalyzable;
+  if (source && !file.test && !file.generated) return 0;
   if (file.configuration) return 1;
-  if (file.analyzable && file.test) return 2;
+  if (source && file.test) return 2;
   if (file.extension === '.prisma' || file.extension === '.graphql' || file.extension === '.gql') return 1;
-  if (file.analyzable) return 3;
+  if (source) return 3;
   if (file.documentation) return 4;
   return 5;
 }

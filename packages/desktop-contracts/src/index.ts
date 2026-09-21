@@ -70,6 +70,8 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_STORAGE_MUTATION',
   'QA_CLIENT_STATE_MUTATION',
   'QA_PAGE_PERFORMANCE',
+  'QA_ACCESSIBILITY_SCAN',
+  'QA_STATE_SNAPSHOT',
   'QA_FLOW_EVENT',
   'QA_CAPTURE_DEGRADED',
 ]);
@@ -170,6 +172,26 @@ export const DesktopPermissionSchema = z.object({
   expiresAt: z.string().datetime().nullable().default(null),
 });
 
+/**
+ * Every framework an instrumentation adapter can attach to.
+ *
+ * Declared once, here, and imported by the adapters, the desktop main process
+ * and the onboarding service. It was previously spelled out in four places,
+ * which meant adding a framework silently rejected its own plans everywhere the
+ * list had not been updated.
+ */
+export const INSTRUMENTATION_FRAMEWORK_IDS = [
+  // JavaScript and TypeScript
+  'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
+  'express', 'fastify', 'nestjs', 'koa', 'hapi',
+  // Python
+  'django', 'flask', 'fastapi', 'starlette',
+] as const;
+
+export const InstrumentationFrameworkIdSchema = z.enum(INSTRUMENTATION_FRAMEWORK_IDS);
+
+export type InstrumentationFrameworkId = z.infer<typeof InstrumentationFrameworkIdSchema>;
+
 export const FrameworkEvidenceSchema = z.object({
   framework: z.string(),
   version: z.string().nullable(),
@@ -184,6 +206,12 @@ export const RepositorySnapshotSummarySchema = z.object({
   dirty: z.boolean(),
   repositoryFingerprint: z.string().min(32),
   portableManifestIdentity: z.string().min(32).nullable().optional(),
+  /**
+   * Identity of the working tree as it stands, uncommitted edits included.
+   * Optional so a snapshot taken by an older scanner still parses; callers treat
+   * its absence as "unknown", not as "unchanged".
+   */
+  workingTreeHash: z.string().optional(),
   repositoryOriginHash: z.string().min(32).nullable().optional(),
   repositoryCloneUrl: z.string().url().nullable().optional(),
   upstreamBranch: z.string().nullable().optional(),
@@ -198,6 +226,11 @@ export const RepositorySnapshotSummarySchema = z.object({
     args: z.array(z.string()),
     cwd: z.string(),
     scriptName: z.string(),
+    /**
+     * Which runtime starts this command. Absent means `node`, so snapshots
+     * taken by an older scanner keep parsing and keep their meaning.
+     */
+    runtime: z.enum(['node', 'python']).optional(),
   })).optional(),
   suggestedApplicationUrls: z.array(z.object({
     url: z.string().url(),
@@ -687,7 +720,7 @@ export const QualityReportSchema = z.object({
     redactionSummary: z.unknown(),
   }).nullable(),
   instrumentation: z.object({
-    patchSetId: z.string().uuid(), planId: z.string().uuid(), adapterId: z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']),
+    patchSetId: z.string().uuid(), planId: z.string().uuid(), adapterId: InstrumentationFrameworkIdSchema,
     adapterVersion: z.string(), manifestVersion: z.string(), status: z.string(), risk: z.string(),
     changedFileHashes: z.unknown(), validation: z.unknown().nullable(),
     appliedAt: z.string().datetime().or(z.date()).nullable(), validatedAt: z.string().datetime().or(z.date()).nullable(),
@@ -805,25 +838,149 @@ export const FlowProjectBindingSchema = z.object({
  * two a flow cannot be initialized without: its initial state and one terminal.
  */
 export const FlowMarkerSchema = z.object({ flow: z.string(), state: z.string().nullable(), transition: z.string().nullable() });
-export const FlowCheckpointSchema = z.object({
+const FlowCheckpointBaseSchema = z.object({
   id: z.string(), kind: z.enum(['STATE', 'TRANSITION']), stateId: z.string().nullable(), transitionId: z.string().nullable(),
   stateRole: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']).nullable(), terminalKind: z.string().nullable(), eventType: z.string(),
   expectedState: z.string().nullable(), fromCheckpointId: z.string().nullable(), toCheckpointId: z.string().nullable(), required: z.boolean(),
   label: z.string().optional(), marker: FlowMarkerSchema.nullable().optional(),
-  mapping: z.object({ file: z.string().nullable(), symbol: z.string().nullable(), confidence: z.number().min(0).max(1), rationale: z.string() }),
 });
-export const FlowInitializationManifestSchema = z.object({
+export const FlowCheckpointMappingV1Schema = z.object({
+  file: z.string().nullable(), symbol: z.string().nullable(), confidence: z.number().min(0).max(1), rationale: z.string(),
+});
+export const FlowCheckpointSchema = FlowCheckpointBaseSchema.extend({ mapping: FlowCheckpointMappingV1Schema });
+
+export const FlowMappingStatusSchema = z.enum(['RESOLVED', 'AMBIGUOUS', 'UNRESOLVED', 'UNSUPPORTED']);
+export const FlowPlacementKindSchema = z.enum([
+  'COMPONENT_MOUNT', 'FUNCTION_ENTRY', 'BRANCH_ENTRY', 'BEFORE_STATEMENT', 'AFTER_STATEMENT', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY',
+]);
+export const FlowAnalysisStatusSchema = z.enum([
+  'WAITING_FOR_ANALYSIS', 'RETRIEVING', 'CONTEXTUALIZING', 'RESOLVING', 'NEEDS_REVIEW', 'READY', 'FAILED',
+]);
+export const FlowAnalysisProgressSchema = z.object({
+  status: FlowAnalysisStatusSchema,
+  completedCheckpoints: z.number().int().nonnegative(), totalCheckpoints: z.number().int().nonnegative(),
+  resolvedCount: z.number().int().nonnegative(), ambiguousCount: z.number().int().nonnegative(),
+  unresolvedCount: z.number().int().nonnegative(), unsupportedCount: z.number().int().nonnegative(),
+  message: z.string().nullable().optional(), updatedAt: z.string().datetime(),
+});
+export const FlowMappingCandidateSchema = z.object({
+  id: z.string().min(1), entityId: z.string().nullable(), evidenceIds: z.array(z.string()).min(1),
+  file: z.string().min(1), symbol: z.string().nullable(), startLine: z.number().int().positive(), endLine: z.number().int().positive(),
+  placementKind: FlowPlacementKindSchema, anchor: z.string().min(1), anchorHash: z.string().min(1),
+  confidence: z.number().min(0).max(1), rationale: z.string().min(1),
+  relationshipPaths: z.array(z.array(z.string())).default([]), featureEvidence: z.array(z.string()).default([]),
+}).superRefine((candidate, context) => {
+  if (candidate.endLine < candidate.startLine) context.addIssue({ code: z.ZodIssueCode.custom, message: 'endLine must be greater than or equal to startLine', path: ['endLine'] });
+});
+export const FlowCheckpointMappingV2Schema = z.object({
+  status: FlowMappingStatusSchema, candidateId: z.string().nullable(), entityId: z.string().nullable(), evidenceIds: z.array(z.string()),
+  file: z.string().nullable(), symbol: z.string().nullable(), startLine: z.number().int().positive().nullable(), endLine: z.number().int().positive().nullable(),
+  placementKind: FlowPlacementKindSchema.nullable(), anchor: z.string().nullable(), anchorHash: z.string().nullable(),
+  confidence: z.number().min(0).max(1), rationale: z.string(), alternatives: z.array(FlowMappingCandidateSchema),
+  manualInstruction: z.string(), instrumentationIntent: z.object({ eventType: z.string(), placementDescription: z.string() }),
+  userConfirmed: z.boolean(), userOverrode: z.boolean(),
+}).superRefine((mapping, context) => {
+  if (mapping.startLine != null && mapping.endLine != null && mapping.endLine < mapping.startLine) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'endLine must be greater than or equal to startLine', path: ['endLine'] });
+  }
+  if (mapping.status === 'RESOLVED' && (!mapping.candidateId || mapping.evidenceIds.length === 0 || !mapping.file || !mapping.anchor || !mapping.anchorHash || !mapping.placementKind || mapping.startLine == null || mapping.endLine == null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'resolved mappings require a candidate, cited evidence, file, source range, placement kind, anchor and anchor hash' });
+  }
+});
+export const FlowCheckpointV2Schema = FlowCheckpointBaseSchema.extend({ mapping: FlowCheckpointMappingV2Schema });
+
+export const FlowInitializationManifestV1Schema = z.object({
   version: z.literal('1.0'), graphVersionId: z.string().uuid(), graphHash: z.string(), repositorySnapshotId: z.string().uuid(),
   flowKey: z.string().optional(), flowName: z.string().optional(),
   initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
+  // A branchy Flow has combinatorially many distinct paths, so enumeration is
+  // bounded and says when it stopped. Reachability is computed separately and
+  // stays exact either way.
+  pathsTruncated: z.boolean().optional(),
   unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointSchema), generatedAt: z.string().datetime(),
 });
-export const FlowCodeReviewReportSchema = z.object({
+export const FlowInitializationManifestV2Schema = z.object({
+  version: z.literal('2.0'), graphVersionId: z.string().uuid(), graphHash: z.string(), repositorySnapshotId: z.string().uuid(),
+  // Local-only analyses use device-scoped opaque ids rather than cloud UUIDs.
+  codebaseAnalysisJobId: z.string().min(1), codebaseSnapshotId: z.string().min(1), retrievalVersion: z.string().min(1),
+  flowKey: z.string().optional(), flowName: z.string().optional(),
+  initialStateId: z.string(), terminalStateIds: z.array(z.string()), paths: z.array(z.array(z.string())),
+  pathsTruncated: z.boolean().optional(),
+  unreachableStateIds: z.array(z.string()), checkpoints: z.array(FlowCheckpointV2Schema), generatedAt: z.string().datetime(),
+});
+export const FlowInitializationManifestSchema = z.discriminatedUnion('version', [FlowInitializationManifestV1Schema, FlowInitializationManifestV2Schema]);
+
+const FlowStateFindingV1Schema = z.object({
+  stateId: z.string(), stateName: z.string().nullable().optional(), role: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']),
+  terminalKind: z.string().nullable(), implemented: z.boolean(), mapping: FlowCheckpointMappingV1Schema,
+}).passthrough();
+const FlowTransitionFindingV1Schema = z.object({
+  transitionId: z.string(), fromStateId: z.string(), toStateId: z.string(), action: z.string().nullable(),
+  implemented: z.boolean(), mapping: FlowCheckpointMappingV1Schema,
+}).passthrough();
+const FlowReviewEdgeCaseSchema = z.object({ code: z.string(), stateId: z.string().optional(), severity: z.string() }).passthrough();
+const FlowUncoveredTerminalSchema = z.object({ stateId: z.string(), terminalKind: z.string().nullable() }).passthrough();
+const FlowReviewEvidenceV1Schema = z.object({ file: z.string().nullable(), symbol: z.string().nullable(), text: z.string(), kind: z.string() }).passthrough();
+const FlowReviewRecommendationV1Schema = z.object({
+  checkpointId: z.string(), kind: z.enum(['STATE', 'TRANSITION']), action: z.string(), label: z.string(), detail: z.string(), mapping: FlowCheckpointMappingV1Schema,
+}).passthrough();
+export const FlowCodeReviewReportV1Schema = z.object({
   version: z.literal('1.0'), kind: z.literal('FLOW_CODE_REVIEW'), generatedAt: z.string().datetime(), engine: z.enum(['HYBRID', 'RULES_FALLBACK']),
   summary: z.object({ mappedStates: z.number().int(), totalStates: z.number().int(), mappedTransitions: z.number().int(), totalTransitions: z.number().int() }),
-  stateFindings: z.array(z.any()), transitionFindings: z.array(z.any()), missingStates: z.array(z.any()), incompleteTransitions: z.array(z.any()),
-  edgeCases: z.array(z.any()), uncoveredTerminalOutcomes: z.array(z.any()), evidence: z.array(z.any()), recommendations: z.array(z.any()), limitations: z.array(z.string()),
+  stateFindings: z.array(FlowStateFindingV1Schema), transitionFindings: z.array(FlowTransitionFindingV1Schema),
+  missingStates: z.array(FlowStateFindingV1Schema), incompleteTransitions: z.array(FlowTransitionFindingV1Schema),
+  edgeCases: z.array(FlowReviewEdgeCaseSchema), uncoveredTerminalOutcomes: z.array(FlowUncoveredTerminalSchema),
+  evidence: z.array(FlowReviewEvidenceV1Schema), recommendations: z.array(FlowReviewRecommendationV1Schema), limitations: z.array(z.string()),
 });
+const FlowStateFindingV2Schema = z.object({
+  checkpointId: z.string(), stateId: z.string(), stateName: z.string().nullable().optional(), role: z.enum(['INITIAL', 'NORMAL', 'TERMINAL']),
+  terminalKind: z.string().nullable(), implemented: z.boolean(), mapping: FlowCheckpointMappingV2Schema,
+}).passthrough();
+const FlowTransitionFindingV2Schema = z.object({
+  checkpointId: z.string(), transitionId: z.string(), fromStateId: z.string(), toStateId: z.string(), action: z.string().nullable(),
+  implemented: z.boolean(), mapping: FlowCheckpointMappingV2Schema,
+}).passthrough();
+export const FlowAnalysisIdentitySchema = z.object({
+  jobId: z.string().min(1), snapshotId: z.string().min(1), mode: z.enum(['CLOUD_APPROVED', 'LOCAL_ONLY']),
+  graphVersion: z.string().nullable(), contentHash: z.string(), revision: z.string().nullable(), branch: z.string().nullable(), dirty: z.boolean(), current: z.boolean(),
+});
+export const FlowAiProvenanceSchema = z.object({
+  attempted: z.boolean(), provider: z.enum(['GEMINI', 'DEEPSEEK']).nullable(), model: z.string().nullable(),
+  promptVersion: z.string(), promptHash: z.string(), fallbackUsed: z.boolean(), repaired: z.boolean(),
+  consentMode: z.enum(['CLOUD_APPROVED', 'LOCAL_EXCERPTS_APPROVED', 'GRAPH_ONLY']), resolvedAt: z.string().datetime().nullable(),
+  // Resolution runs in batches, so "it did not answer" is a count rather than a
+  // yes or no. Without these a run where every call timed out is indistinguishable
+  // from one where the model considered every checkpoint and was unsure — and the
+  // two ask completely different things of the person reading the review.
+  batches: z.number().int().nonnegative().optional(),
+  batchesFailed: z.number().int().nonnegative().optional(),
+  cachedCount: z.number().int().nonnegative().optional(),
+  failed: z.boolean().optional(),
+  failureReasonSafe: z.string().nullable().optional(),
+});
+const FlowReviewEvidenceV2Schema = z.object({
+  id: z.string(), kind: z.string(), file: z.string().nullable(), symbol: z.string().nullable(),
+  startLine: z.number().int().positive().nullable(), endLine: z.number().int().positive().nullable(), summary: z.string(),
+}).passthrough();
+const FlowReviewRecommendationV2Schema = z.object({
+  checkpointId: z.string(), action: z.string(), detail: z.string(), priority: z.enum(['BLOCKING', 'HIGH', 'MEDIUM', 'LOW']).optional(),
+}).passthrough();
+export const FlowCodeReviewReportV2Schema = z.object({
+  version: z.literal('2.0'), kind: z.literal('FLOW_CODE_REVIEW'), generatedAt: z.string().datetime(),
+  engine: z.enum(['HYBRID', 'AI_ASSISTED', 'GRAPH_ONLY', 'RULES_FALLBACK']), progress: FlowAnalysisProgressSchema,
+  summary: z.object({
+    mappedStates: z.number().int().nonnegative(), totalStates: z.number().int().nonnegative(),
+    mappedTransitions: z.number().int().nonnegative(), totalTransitions: z.number().int().nonnegative(),
+    resolvedCount: z.number().int().nonnegative(), ambiguousCount: z.number().int().nonnegative(),
+    unresolvedCount: z.number().int().nonnegative(), unsupportedCount: z.number().int().nonnegative(),
+  }),
+  stateFindings: z.array(FlowStateFindingV2Schema), transitionFindings: z.array(FlowTransitionFindingV2Schema),
+  missingStates: z.array(FlowStateFindingV2Schema), incompleteTransitions: z.array(FlowTransitionFindingV2Schema),
+  edgeCases: z.array(FlowReviewEdgeCaseSchema), uncoveredTerminalOutcomes: z.array(FlowUncoveredTerminalSchema),
+  evidence: z.array(FlowReviewEvidenceV2Schema), recommendations: z.array(FlowReviewRecommendationV2Schema), limitations: z.array(z.string()),
+  analysis: FlowAnalysisIdentitySchema, ai: FlowAiProvenanceSchema,
+});
+export const FlowCodeReviewReportSchema = z.discriminatedUnion('version', [FlowCodeReviewReportV1Schema, FlowCodeReviewReportV2Schema]);
 export const FlowReviewEnrichmentSchema = z.object({
   recommendations: z.array(z.object({ checkpointId: z.string(), explanation: z.string(), priority: z.enum(['BLOCKING', 'HIGH', 'MEDIUM', 'LOW']) })),
   edgeCaseExplanations: z.array(z.object({ code: z.string(), explanation: z.string() })),
@@ -834,6 +991,13 @@ export const ManualRoadmapStepSchema = z.object({
   description: z.string(), status: z.enum(['PENDING', 'CURRENT', 'DONE', 'VERIFIED', 'BLOCKED']), dependencies: z.array(z.string()),
   file: z.string().nullable(), symbol: z.string().nullable(), snippet: z.string(), eventType: z.string().nullable(), checkpointId: z.string().nullable(),
   required: z.boolean().optional(), marker: FlowMarkerSchema.nullable().optional(),
+  startLine: z.number().int().positive().nullable().optional(), endLine: z.number().int().positive().nullable().optional(),
+  confidence: z.number().min(0).max(1).optional(), placementKind: FlowPlacementKindSchema.nullable().optional(),
+  // The same ranked candidates the review showed, so "do it yourself" is offered
+  // the evidence the automated path would have used rather than a bare filename.
+  alternatives: z.array(FlowMappingCandidateSchema).optional(),
+  rationale: z.string().nullable().optional(), anchor: z.string().nullable().optional(),
+  evidenceIds: z.array(z.string()).optional(),
   userCompletedAt: z.string().datetime().nullable(), verificationEvidence: z.array(z.any()),
 });
 export const ManualRoadmapSchema = z.object({
@@ -849,6 +1013,18 @@ export const CheckpointCoverageSchema = z.object({
   method: z.enum(['STATIC_CODE_SCAN', 'RUNTIME_TELEMETRY']).optional(),
   codeEvidence: z.array(z.object({ checkpointId: z.string(), file: z.string(), line: z.number().int() })).optional(),
   scannedAt: z.string().datetime().nullable().optional(),
+  /**
+   * Markers the scan found that it could not accept, each with the file and line
+   * it sits on. A duplicate or a marker naming a checkpoint this Flow does not
+   * declare is a real defect in the instrumented code, not an absence, so it
+   * fails verification loudly rather than being counted as nothing found.
+   */
+  markerProblems: z.array(z.object({
+    code: z.enum(['DUPLICATE_MARKER', 'UNKNOWN_MARKER']),
+    checkpointId: z.string().nullable(), file: z.string(), line: z.number().int(),
+  })).optional(),
+  /** Which rule decided completeness: every checkpoint, or the Flow's boundaries. */
+  requirement: z.enum(['ALL_CHECKPOINTS', 'BOUNDARIES']).optional(),
 });
 
 export const FlowInitializationSchema = z.object({
@@ -922,8 +1098,6 @@ export const IntentDraftSchema = z.object({
   acceptedGraphId: z.string().nullable().optional(), acceptedGraphVersionId: z.string().nullable().optional(), createdAt: z.string().or(z.date()).optional(),
   evidence: z.array(z.any()).optional(),
 }).passthrough();
-
-export const InstrumentationFrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
 
 export const SdkTargetKindSchema = z.enum(['FRONTEND', 'BACKEND']);
 export const SdkConnectionMethodSchema = z.enum(['MANUAL', 'DESKTOP']);
@@ -1076,6 +1250,7 @@ export const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
+  saveRunReportDownload: 'tellann:cloud:runs:report:download',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -1095,7 +1270,12 @@ export const IPC = {
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
+  getFlowInitializationProgress: 'tellann:flow:initialization:progress',
   analyzeFlowInitialization: 'tellann:flow:initialization:analyze',
+  retryFlowMappingResolution: 'tellann:flow:initialization:mapping:retry',
+  confirmFlowMapping: 'tellann:flow:initialization:mapping:confirm',
+  confirmFlowMappings: 'tellann:flow:initialization:mapping:confirm-many',
+  resetFlowMappingConsent: 'tellann:flow:initialization:mapping:consent:reset',
   setFlowInitializationMode: 'tellann:flow:initialization:mode',
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
@@ -1146,10 +1326,15 @@ export const IPC = {
   setRunInteractionMode: 'tellann:run:interaction-mode',
   retryRunSynchronization: 'tellann:run:synchronization:retry',
   revealRunProtectedValue: 'tellann:run:protected-value:reveal',
+  getArtifactDownloadUrl: 'tellann:run:artifact:download-url',
   searchRunMentionableMembers: 'tellann:run:members:search',
   runLifecycleEvent: 'tellann:run:lifecycle',
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
+  /** renderer -> main: raise the managed browser window above the desktop app. */
+  focusRunBrowser: 'tellann:run:browser:focus',
+  /** main -> renderer: the active run's state changed. Replaces polling. */
+  runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
@@ -1202,8 +1387,16 @@ export const DesktopSessionSchema = z.object({
   }).nullable(),
 });
 
+/** A format the organisation's plan may download a quality report in. */
+export const ReportExportFormatSchema = z.enum(['JSON', 'PDF', 'CSV', 'HTML']);
+
 export const DesktopEntitlementsSchema = z.object({
   planType: z.enum(['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE']),
+  /**
+   * Resolved from the organisation's REPORT_EXPORT tier by the cloud, which
+   * owns the tier-to-format table. Empty means the plan cannot export at all.
+   */
+  reportFormats: z.array(ReportExportFormatSchema).default([]),
   features: z.object({
     DESKTOP_GUIDED_RUNS: z.boolean(),
     DOCUMENT_FLOW_INFERENCE: z.boolean(),
@@ -1281,6 +1474,9 @@ export const CodebaseUploadConsentRequestSchema = z.object({
   redactedFiles: z.number().int().nonnegative(),
   exclusions: z.array(z.object({ reason: z.string(), count: z.number().int() })),
   truncated: z.boolean(),
+  purpose: z.enum(['CODEBASE_ANALYSIS', 'FLOW_MAPPING_AI']).default('CODEBASE_ANALYSIS'),
+  flowName: z.string().optional(),
+  excerpts: z.array(z.object({ path: z.string(), startLine: z.number().int().positive().nullable(), endLine: z.number().int().positive().nullable() })).optional(),
 });
 
 /** main → renderer: an application was created, renamed or deleted in the cloud. */
@@ -1316,6 +1512,10 @@ export type FlowDiagram = z.infer<typeof FlowDiagramSchema>;
 export type FlowProjectBinding = z.infer<typeof FlowProjectBindingSchema>;
 export type FlowInitialization = z.infer<typeof FlowInitializationSchema>;
 export type FlowCheckpoint = z.infer<typeof FlowCheckpointSchema>;
+export type FlowCheckpointV2 = z.infer<typeof FlowCheckpointV2Schema>;
+export type FlowMappingCandidate = z.infer<typeof FlowMappingCandidateSchema>;
+export type FlowCheckpointMappingV2 = z.infer<typeof FlowCheckpointMappingV2Schema>;
+export type FlowAnalysisProgress = z.infer<typeof FlowAnalysisProgressSchema>;
 export type FlowInitializationManifest = z.infer<typeof FlowInitializationManifestSchema>;
 export type FlowCodeReviewReport = z.infer<typeof FlowCodeReviewReportSchema>;
 export type ManualRoadmap = z.infer<typeof ManualRoadmapSchema>;
@@ -1351,6 +1551,7 @@ export type QAElementFingerprint = z.infer<typeof QAElementFingerprintSchema>;
 export type CreateQARunAnnotation = z.infer<typeof CreateQARunAnnotationSchema>;
 export type RunLifecycleEvent = z.infer<typeof RunLifecycleEventSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
+export type ReportExportFormat = z.infer<typeof ReportExportFormatSchema>;
 export type DesktopEntitlements = z.infer<typeof DesktopEntitlementsSchema>;
 export type DesktopApplication = z.infer<typeof DesktopApplicationSchema>;
 export type DesktopOrganization = z.infer<typeof DesktopOrganizationSchema>;

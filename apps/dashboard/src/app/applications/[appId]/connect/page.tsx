@@ -9,7 +9,7 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { Button } from "@/components/ui/button";
 
 type Target = {
-  id: "frontend" | "backend";
+  id: "frontend" | "backend" | "python";
   kind: "FRONTEND" | "BACKEND";
   label: string;
   packageName: string;
@@ -88,20 +88,39 @@ type FrameworkId =
   | "react-vite"
   | "react-cra"
   | "sveltekit"
+  | "nuxt"
+  | "astro"
+  | "remix"
+  | "angular"
   | "vanilla"
   | "node"
   | "nextjs-server"
-  | "deno";
+  | "deno"
+  | "django"
+  | "fastapi"
+  | "flask"
+  | "starlette"
+  | "python-other";
 
 type SnippetContext = { packageName: string; endpoint: string; applicationId: string; environmentId: string };
 
 type FrameworkOption = {
   id: FrameworkId;
   label: string;
-  kind: "FRONTEND" | "BACKEND";
+  /** Which target's package and install commands this framework uses. */
+  targetId: Target["id"];
+  /** The section it appears under. Python is its own section because its
+   *  package, its package managers and its snippets are all different, even
+   *  though every Python framework here runs on the server. */
+  group: "FRONTEND" | "BACKEND" | "PYTHON";
   envVars: { url: string; key: string } | null;
+  /** Overrides the default npm-family package managers. */
+  packageManagers?: string[];
   build: (ctx: SnippetContext) => string;
 };
+
+const PACKAGE_MANAGERS = ["pnpm", "npm", "yarn", "bun"];
+const PYTHON_PACKAGE_MANAGERS = ["pip", "poetry", "uv", "pipenv"];
 
 function frontendSnippet(opts: {
   ctx: SnippetContext;
@@ -127,11 +146,35 @@ function frontendSnippet(opts: {
   return lines.join("\n");
 }
 
+function pythonSnippet(opts: {
+  ctx: SnippetContext;
+  comment: string;
+  extraImport?: string;
+  trailer?: string[];
+}): string {
+  const lines = ["import os", "", "from tellann import TELLANN"];
+  if (opts.extraImport) lines.push(opts.extraImport);
+  lines.push(
+    "",
+    opts.comment,
+    "TELLANN.initialize(",
+    `    endpoint=os.environ.get("TELLANN_GATEWAY_URL", "${opts.ctx.endpoint}"),`,
+    '    api_key=os.environ.get("TELLANN_INGESTION_KEY"),',
+    `    application_id="${opts.ctx.applicationId}",`,
+    `    environment_id="${opts.ctx.environmentId}",`,
+    ")",
+    "TELLANN.verify_installation()",
+    ...(opts.trailer ?? []),
+  );
+  return lines.join("\n");
+}
+
 const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "nextjs",
     label: "Next.js",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "NEXT_PUBLIC_TELLANN_GATEWAY_URL", key: "NEXT_PUBLIC_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -144,7 +187,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "react-vite",
     label: "Vite (React / Vue / Svelte)",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "VITE_TELLANN_GATEWAY_URL", key: "VITE_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -157,7 +201,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "react-cra",
     label: "Create React App",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "REACT_APP_TELLANN_GATEWAY_URL", key: "REACT_APP_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -170,7 +215,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "sveltekit",
     label: "SvelteKit",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "PUBLIC_TELLANN_GATEWAY_URL", key: "PUBLIC_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -182,9 +228,76 @@ const FRAMEWORKS: FrameworkOption[] = [
       }),
   },
   {
+    id: "nuxt",
+    label: "Nuxt",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "NUXT_PUBLIC_TELLANN_GATEWAY_URL", key: "NUXT_PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      [
+        `import { TELLANN } from '${ctx.packageName}';`,
+        "",
+        "// plugins/tellann.client.ts — runs once, on the client only",
+        "export default defineNuxtPlugin(() => {",
+        "    const config = useRuntimeConfig();",
+        "    TELLANN.initialize({",
+        `        endpoint: config.public.tellannGatewayUrl || '${ctx.endpoint}',`,
+        "        apiKey: config.public.tellannIngestionKey,",
+        `        applicationId: '${ctx.applicationId}',`,
+        `        environmentId: '${ctx.environmentId}'`,
+        "    });",
+        "    void TELLANN.verifyInstallation();",
+        "});",
+      ].join("\n"),
+  },
+  {
+    id: "astro",
+    label: "Astro",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "PUBLIC_TELLANN_GATEWAY_URL", key: "PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Import from a client script in your base layout: <script>import '../lib/tellann';</script>",
+        urlExpr: `import.meta.env.PUBLIC_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "import.meta.env.PUBLIC_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "remix",
+    label: "Remix / React Router",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "VITE_TELLANN_GATEWAY_URL", key: "VITE_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize from app/entry.client.tsx, before hydrateRoot",
+        urlExpr: `import.meta.env.VITE_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "import.meta.env.VITE_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "angular",
+    label: "Angular",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: null,
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        extraImport: "import { environment } from './environments/environment';",
+        comment: "// Initialize from src/main.ts, before bootstrapApplication",
+        urlExpr: `environment.tellannGatewayUrl || '${ctx.endpoint}'`,
+        keyExpr: "environment.tellannIngestionKey",
+      }),
+  },
+  {
     id: "vanilla",
     label: "Vanilla / other",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: null,
     build: (ctx) =>
       frontendSnippet({
@@ -196,8 +309,9 @@ const FRAMEWORKS: FrameworkOption[] = [
   },
   {
     id: "node",
-    label: "Node.js (Express / Fastify / Nest)",
-    kind: "BACKEND",
+    label: "Node.js (Express / Fastify / Nest / Koa / hapi)",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -217,7 +331,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "nextjs-server",
     label: "Next.js (server)",
-    kind: "BACKEND",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -238,7 +353,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "deno",
     label: "Deno",
-    kind: "BACKEND",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -255,18 +371,109 @@ const FRAMEWORKS: FrameworkOption[] = [
         "await TELLANN.verifyInstallation();",
       ].join("\n"),
   },
+  {
+    id: "django",
+    label: "Django",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# settings.py — initialize once, then register the middleware",
+        trailer: [
+          "",
+          "MIDDLEWARE = [",
+          '    "tellann.integrations.django_middleware.TellannMiddleware",',
+          "    # ... your existing middleware",
+          "]",
+        ],
+      }),
+  },
+  {
+    id: "fastapi",
+    label: "FastAPI",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize before the app handles its first request",
+        extraImport: "from tellann import instrument_fastapi",
+        trailer: ["", "app = FastAPI()", "instrument_fastapi(app)"],
+      }),
+  },
+  {
+    id: "flask",
+    label: "Flask",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Works for a module-level app and inside an application factory",
+        extraImport: "from tellann import instrument_flask",
+        trailer: ["", "app = Flask(__name__)", "instrument_flask(app)"],
+      }),
+  },
+  {
+    id: "starlette",
+    label: "Starlette",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize before the app handles its first request",
+        extraImport: "from tellann import instrument_starlette",
+        trailer: ["", "app = Starlette(routes=routes)", "instrument_starlette(app)"],
+      }),
+  },
+  {
+    id: "python-other",
+    label: "Other Python",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize as early as your process starts, then report what matters",
+        trailer: [
+          "",
+          '# TELLANN.track_api("POST", "/invoices/{pk}", 201, duration_ms=12.5)',
+          '# TELLANN.capture_error(error)',
+        ],
+      }),
+  },
 ];
 
-const FRAMEWORK_GROUPS: Array<{ kind: FrameworkOption["kind"]; label: string }> = [
-  { kind: "FRONTEND", label: "Frontend / browser" },
-  { kind: "BACKEND", label: "Backend / server" },
+const FRAMEWORK_GROUPS: Array<{ group: FrameworkOption["group"]; label: string }> = [
+  { group: "FRONTEND", label: "Frontend / browser" },
+  { group: "BACKEND", label: "Backend / server" },
+  { group: "PYTHON", label: "Python" },
 ];
 
-const PACKAGE_MANAGERS = ["pnpm", "npm", "yarn", "bun"];
 
-/** Plain Node and Deno read `.env`; the framework dev servers also load `.env.local`. */
-function envFileFor(framework: FrameworkId): string {
-  return framework === "node" || framework === "deno" ? ".env" : ".env.local";
+/**
+ * Where the environment variables go.
+ *
+ * Plain Node and Deno read `.env`, the JavaScript framework dev servers also
+ * load `.env.local`, and Python has no `.env.local` convention at all — every
+ * loader in that ecosystem, from `python-dotenv` to Django's own tooling,
+ * reads `.env`.
+ */
+function envFileFor(framework: FrameworkOption): string {
+  if (framework.group === "PYTHON") return ".env";
+  return framework.id === "node" || framework.id === "deno" ? ".env" : ".env.local";
 }
 
 function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor: Descriptor; fallbackEndpoint: string; onSaved: () => void }) {
@@ -282,14 +489,14 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
   });
 
   return (
-    <details className="rounded border border-[#262626] bg-black">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-white">
+    <details className="rounded border border-[#262626] bg-[#0f0f0f]">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs uppercase tracking-wider text-[#8e9192] hover:text-neutral-200">
         <Settings2 className="h-3.5 w-3.5" />
         Advanced configuration
       </summary>
       <div className="space-y-4 border-t border-[#262626] px-4 py-4">
         <div>
-          <p className="text-sm font-medium text-white">Telemetry destination</p>
+          <p className="text-sm font-medium text-neutral-200">Telemetry destination</p>
           <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">
             Tellann Cloud selects this automatically. Change it only when using a self-hosted gateway, regional endpoint, or corporate telemetry relay.
           </p>
@@ -299,7 +506,7 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
             type="checkbox"
             checked={customized}
             onChange={(event) => setCustomized(event.target.checked)}
-            className="h-4 w-4 accent-white"
+            className="h-4 w-4 accent-neutral-200"
           />
           Use a custom gateway endpoint
         </label>
@@ -314,7 +521,7 @@ function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor
             onChange={(event) => setEndpoint(event.target.value)}
             disabled={!customized}
             placeholder="https://telemetry.example.com"
-            className="w-full rounded border border-[#262626] bg-[#131313] px-3 py-2 font-mono text-xs text-white disabled:cursor-not-allowed disabled:text-[#666] focus:border-[#666] focus:outline-none"
+            className="w-full rounded border border-[#262626] bg-[#131313] px-3 py-2 font-mono text-xs text-neutral-200 disabled:cursor-not-allowed disabled:text-[#666] focus:border-[#666] focus:outline-none"
           />
           <p className="mt-2 font-mono text-[11px] text-[#666]">HTTPS is required. Localhost may use HTTP for development.</p>
         </div>
@@ -400,7 +607,19 @@ export default function ConnectApplicationPage() {
   };
 
   const activeFramework = FRAMEWORKS.find((item) => item.id === framework) ?? null;
-  const target = setup.data?.targets.find((item) => item.kind === activeFramework?.kind);
+  // Matched by target id, because two targets now share the BACKEND kind: the
+  // Node one and the Python one install different packages with different
+  // package managers. Falling back to the kind keeps this working against an
+  // onboarding service that has not shipped the Python target yet.
+  const target = activeFramework
+    ? setup.data?.targets.find((item) => item.id === activeFramework.targetId)
+      ?? setup.data?.targets.find((item) => item.kind === (activeFramework.group === "FRONTEND" ? "FRONTEND" : "BACKEND"))
+    : undefined;
+  const managers = activeFramework?.packageManagers ?? PACKAGE_MANAGERS;
+  // Switching from a JavaScript framework to a Python one leaves `manager` set
+  // to something like `pnpm`, which has no install command on the Python
+  // target; the first supported manager is shown instead of an empty box.
+  const activeManager = managers.includes(manager) ? manager : managers[0];
   const resolvedEndpoint = setup.data ? resolveGatewayEndpoint(setup.data) : "";
   const snippet =
     target && setup.data && activeFramework
@@ -418,7 +637,7 @@ export default function ConnectApplicationPage() {
       ? ""
       : activeFramework.id === "deno"
         ? `deno add npm:${target.packageName}`
-        : target.installCommands[manager] ?? "";
+        : target.installCommands[activeManager] ?? "";
   const keyValue =
     rawKey ??
     (createKey.isPending
@@ -438,15 +657,15 @@ export default function ConnectApplicationPage() {
   if (setup.isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center font-mono text-xs uppercase tracking-wider text-[#8e9192]">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin text-white" />
+        <Loader2 className="mr-2 h-4 w-4 animate-spin text-neutral-200" />
         Loading Connection Setup…
       </div>
     );
   }
   if (setup.error || !setup.data) {
     return (
-      <div className="mx-auto mt-16 max-w-xl rounded-md border border-[#262626] bg-[#131313] p-6 font-mono text-xs text-white">
-        <TriangleAlert className="mb-3 h-5 w-5 text-white" />
+      <div className="mx-auto mt-16 max-w-xl rounded-md border border-[#262626] bg-[#131313] p-6 font-mono text-xs text-neutral-200">
+        <TriangleAlert className="mb-3 h-5 w-5 text-neutral-200" />
         {setup.error?.message ?? "SDK setup is unavailable."}
       </div>
     );
@@ -482,11 +701,11 @@ export default function ConnectApplicationPage() {
   return (
     <main className="mx-auto w-full space-y-6 pb-16">
       {readiness.connected ? (
-        <section className="rounded-md border border-white bg-[#131313] p-6">
+        <section className="rounded-md border border-neutral-300 bg-[#131313] p-6">
           <div className="flex items-start gap-3">
-            <Check className="mt-1 h-5 w-5 shrink-0 text-white" />
+            <Check className="mt-1 h-5 w-5 shrink-0 text-neutral-200" />
             <div>
-              <h2 className="text-xl font-semibold text-white">Tellann is connected</h2>
+              <h2 className="text-xl font-semibold text-neutral-200">Tellann is connected</h2>
               <p className="mt-1 text-sm leading-relaxed text-[#c4c7c8]">
                 Next, declare the Flow you want Tellann to check, or run a walkthrough right away.
               </p>
@@ -494,14 +713,14 @@ export default function ConnectApplicationPage() {
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
-              className="inline-flex items-center gap-2 rounded bg-white px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+              className="inline-flex items-center gap-2 rounded bg-neutral-200 px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-neutral-900 transition-colors hover:bg-neutral-300"
               href={`/declare?appId=${encodedAppId}`}
             >
               <Workflow className="h-4 w-4" />
               Declare your first Flow
             </Link>
             <Link
-              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+              className="inline-flex items-center gap-2 rounded border border-[#444748] bg-[#0f0f0f] px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-neutral-200"
               href={`/qa-runs/new?appId=${encodedAppId}`}
             >
               <Play className="h-4 w-4" />
@@ -517,7 +736,7 @@ export default function ConnectApplicationPage() {
           <p className="font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">
             {descriptor.environmentName} · {descriptor.environmentType}
           </p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-neutral-200">
             Connect {descriptor.applicationName}
           </h1>
           <p className="mt-2 text-base leading-relaxed text-[#c4c7c8]">
@@ -531,19 +750,19 @@ export default function ConnectApplicationPage() {
             return (
               <li
                 key={step.label}
-                className={`rounded border bg-black p-4 ${
-                  step.done ? "border-white" : isCurrent ? "border-[#444748]" : "border-[#262626]"
+                className={`rounded border bg-[#0f0f0f] p-4 ${
+                  step.done ? "border-neutral-300" : isCurrent ? "border-[#444748]" : "border-[#262626]"
                 }`}
               >
                 <div className="flex items-center gap-2">
                   {step.done ? (
-                    <Check className="h-4 w-4 shrink-0 text-white" />
+                    <Check className="h-4 w-4 shrink-0 text-neutral-200" />
                   ) : isCurrent ? (
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#8e9192]" />
                   ) : (
                     <Circle className="h-4 w-4 shrink-0 text-[#444748]" />
                   )}
-                  <span className={`font-mono text-[11px] uppercase tracking-[0.08em] ${step.done ? "text-white" : "text-[#8e9192]"}`}>
+                  <span className={`font-mono text-[11px] uppercase tracking-[0.08em] ${step.done ? "text-neutral-200" : "text-[#8e9192]"}`}>
                     {index + 1}. {step.label}
                   </span>
                 </div>
@@ -564,11 +783,11 @@ export default function ConnectApplicationPage() {
             disabled={setup.isFetching}
             className={`inline-flex items-center gap-2 rounded border font-mono text-xs uppercase tracking-wider px-4 py-2 transition-all ${
               setup.isFetching
-                ? "border-neutral-400 bg-[#1c1c1c] text-white opacity-90 cursor-not-allowed"
-                : "border-[#444748] bg-black text-[#8e9192] hover:border-neutral-400 hover:text-white"
+                ? "border-neutral-400 bg-[#1c1c1c] text-neutral-200 opacity-90 cursor-not-allowed"
+                : "border-[#444748] bg-[#0f0f0f] text-[#8e9192] hover:border-neutral-400 hover:text-neutral-200"
             }`}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-white" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${setup.isFetching ? "animate-spin text-neutral-200" : ""}`} />
             {setup.isFetching ? "Checking connection…" : "Check connection now"}
           </button>
         </div>
@@ -578,10 +797,10 @@ export default function ConnectApplicationPage() {
       <section className="rounded-md border border-[#262626] bg-[#131313] p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-white" />
+            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-neutral-200" />
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-white">Prefer automatic setup? Use Tellann Desktop</h2>
+                <h2 className="text-sm font-semibold text-neutral-200">Prefer automatic setup? Use Tellann Desktop</h2>
                 {desktopInstalled ? (
                   <span className="border border-[#444748] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#8e9192]">
                     Recommended
@@ -601,8 +820,8 @@ export default function ConnectApplicationPage() {
               disabled={createHandoff.isPending}
               className={`inline-flex items-center gap-2 rounded px-4 py-2 text-xs uppercase tracking-[0.08em] transition-colors disabled:opacity-50 ${
                 desktopInstalled
-                  ? "bg-white font-semibold text-black hover:bg-[#e2e2e2]"
-                  : "border border-[#444748] bg-black font-mono text-[#c4c7c8] hover:border-neutral-500 hover:text-white"
+                  ? "bg-neutral-200 font-semibold text-neutral-900 hover:bg-neutral-300"
+                  : "border border-[#444748] bg-[#0f0f0f] font-mono text-[#c4c7c8] hover:border-neutral-500 hover:text-neutral-200"
               }`}
             >
               {createHandoff.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Laptop className="h-4 w-4" />}
@@ -610,7 +829,7 @@ export default function ConnectApplicationPage() {
             </button>
             {desktopInstalled ? null : (
               <a
-                className="inline-flex items-center gap-2 rounded border border-[#444748] bg-black px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-white"
+                className="inline-flex items-center gap-2 rounded border border-[#444748] bg-[#0f0f0f] px-4 py-2 font-mono text-xs uppercase tracking-wider text-[#c4c7c8] transition-colors hover:border-neutral-500 hover:text-neutral-200"
                 href={`${marketingUrl}/desktop${handoff ? `?handoff=${encodeURIComponent(handoff.handoffToken)}` : ""}`}
               >
                 <Download className="h-4 w-4" />
@@ -630,18 +849,18 @@ export default function ConnectApplicationPage() {
           <StepHeading step={1} title="What's your app built with?" />
           <div className="space-y-4 pl-9">
             {FRAMEWORK_GROUPS.map((group) => (
-              <div key={group.kind}>
+              <div key={group.group}>
                 <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">{group.label}</p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {FRAMEWORKS.filter((item) => item.kind === group.kind).map((item) => (
+                  {FRAMEWORKS.filter((item) => item.group === group.group).map((item) => (
                     <button
                       key={item.id}
                       onClick={() => chooseFramework(item.id)}
                       aria-pressed={framework === item.id}
                       className={`rounded border px-3 py-2.5 text-left font-mono text-xs transition-colors ${
                         framework === item.id
-                          ? "border-white bg-black font-semibold text-white"
-                          : "border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                          ? "border-neutral-300 bg-[#0f0f0f] font-semibold text-neutral-200"
+                          : "border-[#262626] bg-[#0f0f0f] text-[#8e9192] hover:border-[#444748] hover:text-neutral-200"
                       }`}
                     >
                       {item.label}
@@ -660,15 +879,15 @@ export default function ConnectApplicationPage() {
               <div className="space-y-3 pl-9">
                 {activeFramework.id === "deno" ? null : (
                   <div className="flex flex-wrap gap-2">
-                    {PACKAGE_MANAGERS.map((item) => (
+                    {managers.map((item) => (
                       <button
                         key={item}
                         onClick={() => setManager(item)}
-                        aria-pressed={manager === item}
+                        aria-pressed={activeManager === item}
                         className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
-                          manager === item
-                            ? "bg-white font-semibold text-black"
-                            : "border border-[#262626] bg-black text-[#8e9192] hover:border-[#444748] hover:text-white"
+                          activeManager === item
+                            ? "bg-neutral-200 font-semibold text-neutral-900"
+                            : "border border-[#262626] bg-[#0f0f0f] text-[#8e9192] hover:border-[#444748] hover:text-neutral-200"
                         }`}
                       >
                         {item}
@@ -688,7 +907,7 @@ export default function ConnectApplicationPage() {
             <div className="space-y-4">
               <StepHeading
                 step={3}
-                title={activeFramework.envVars ? `Add these to ${envFileFor(activeFramework.id)}` : "Your setup key"}
+                title={activeFramework.envVars ? `Add these to ${envFileFor(activeFramework)}` : "Your setup key"}
                 description={
                   activeFramework.envVars
                     ? "Keep this file out of version control."
@@ -698,7 +917,7 @@ export default function ConnectApplicationPage() {
               <div className="space-y-3 pl-9">
                 {activeFramework.envVars ? (
                   <CodeBox
-                    title={envFileFor(activeFramework.id)}
+                    title={envFileFor(activeFramework)}
                     value={envBlock}
                     copied={copied === "env"}
                     onCopy={() => void copy("env", envBlock)}
@@ -713,7 +932,7 @@ export default function ConnectApplicationPage() {
                   <p className="font-mono text-xs text-red-400">{createKey.error.message}</p>
                 ) : null}
                 {!rawKey && !createKey.isPending ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#262626] bg-black px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#262626] bg-[#0f0f0f] px-4 py-3">
                     <p className="max-w-xl text-xs leading-relaxed text-[#8e9192]">
                       {descriptor.hasActiveKey
                         ? "This environment already has a key. Keys are shown only once, so use the one you saved or generate a new one — existing keys keep working."
@@ -721,7 +940,7 @@ export default function ConnectApplicationPage() {
                     </p>
                     <button
                       onClick={() => generateKey()}
-                      className="rounded bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#e2e2e2]"
+                      className="rounded bg-neutral-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-neutral-900 transition-colors hover:bg-neutral-300"
                     >
                       {descriptor.hasActiveKey ? "Generate new key" : "Generate setup key"}
                     </button>
@@ -776,11 +995,11 @@ export default function ConnectApplicationPage() {
 function StepHeading({ step, title, description }: { step: number; title: string; description?: string }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#444748] font-mono text-[11px] text-white">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#444748] font-mono text-[11px] text-neutral-200">
         {step}
       </span>
       <div>
-        <h2 className="text-base font-semibold text-white">{title}</h2>
+        <h2 className="text-base font-semibold text-neutral-200">{title}</h2>
         {description ? <p className="mt-1 text-xs leading-relaxed text-[#8e9192]">{description}</p> : null}
       </div>
     </div>
@@ -804,12 +1023,12 @@ function CodeBox({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs uppercase tracking-wider text-[#8e9192]">{title}</span>
-        <button onClick={onCopy} aria-label={`Copy ${title}`} className="text-[#8e9192] hover:text-white transition-colors">
-          {copied ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
+        <button onClick={onCopy} aria-label={`Copy ${title}`} className="text-[#8e9192] hover:text-neutral-200 transition-colors">
+          {copied ? <Check className="h-4 w-4 text-neutral-200" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
       <pre
-        className={`overflow-auto rounded border border-[#262626] bg-black p-4 font-mono text-xs text-white ${
+        className={`overflow-auto rounded border border-[#262626] bg-[#0f0f0f] p-4 font-mono text-xs text-neutral-200 ${
           multiline ? "min-h-64 whitespace-pre" : "whitespace-pre-wrap"
         }`}
       >

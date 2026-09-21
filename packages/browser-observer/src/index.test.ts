@@ -10,6 +10,8 @@ import {
   liveEvidenceForBridgePayload,
   liveEvidenceForNetworkRequest,
   navigateToRunTarget,
+  normalizeFlowKey,
+  redactAriaSnapshot,
   sanitizeCapturedUrl,
 } from './index';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
@@ -180,4 +182,45 @@ test('route, viewport, storage, and performance recorder messages have live acti
   for (const payload of payloads) {
     assert.ok(liveEvidenceForBridgePayload(payload), `${payload.type} should be visible in live activity`);
   }
+});
+
+test('flow keys normalise the same way the server boundary evaluator normalises them', () => {
+  assert.equal(normalizeFlowKey('Checkout Payment'), 'checkout_payment');
+  assert.equal(normalizeFlowKey('  CART-review  '), 'cart_review');
+  assert.equal(normalizeFlowKey('__Sign In!__'), 'sign_in');
+  assert.equal(normalizeFlowKey(null), '');
+});
+
+test('aria snapshots keep structure but never the values typed into fields', () => {
+  const snapshot = [
+    '- textbox "Email": someone@example.test',
+    '- button "Continue"',
+  ].join('\n');
+  const redacted = redactAriaSnapshot(snapshot);
+  assert.ok(!redacted.includes('someone@example.test'));
+  assert.ok(redacted.includes('[PROTECTED]'));
+  assert.ok(redacted.includes('button "Continue"'));
+});
+
+test('performance rows report the navigation breakdown and real INP, not just paint marks', () => {
+  const row = liveEvidenceForBridgePayload({
+    type: 'performance',
+    metadata: {
+      route: '/checkout',
+      ttfbMs: 180,
+      lcp: 1400,
+      inpMs: 210,
+      interactionCount: 12,
+      longTasks: 3,
+      longTaskMs: 240,
+      longestTaskMs: 120,
+      longestTaskAttribution: 'script:/assets/vendor.js',
+      failedResourceCount: 2,
+    },
+  });
+  const labels = (row?.details ?? []).map((entry) => `${entry.label}=${entry.value}`);
+  assert.ok(labels.includes('TTFB=180 ms'), labels.join(' | '));
+  assert.ok(labels.includes('INP=210 ms over 12 interactions'), labels.join(' | '));
+  assert.ok(labels.some((entry) => entry.startsWith('Longest task=120 ms in script:')), labels.join(' | '));
+  assert.ok(labels.includes('Failed resources=2'), labels.join(' | '));
 });

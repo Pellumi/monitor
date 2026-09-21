@@ -10,6 +10,7 @@ import {
 } from "@tellann/agent-policy";
 import type { RepositorySnapshotSummary } from "@tellann/desktop-contracts";
 import {
+  assignFlowCheckpoints,
   createApprovalHash,
   detectAdapters,
   getAdapter,
@@ -51,6 +52,12 @@ type EnvironmentContext = {
   flowId?: string;
   flowVersionId?: string;
   flowInitializationId?: string;
+  /**
+   * Every adapter the user is proposing for in this pass. A Flow can span a web
+   * app and an API, and the checkpoints are split across those packages, so each
+   * adapter needs to know which share is its own and which are someone else's.
+   */
+  selectedAdapterIds?: FrameworkId[];
 };
 
 type LocalApproval = {
@@ -132,10 +139,13 @@ function buildProducedOutput(output: string): boolean {
   });
 }
 
+/** The commands whose failure may be the project's own, not Tellann's. */
+const PROJECT_HEALTH_COMMANDS = new Set(["validate-build", "validate-types"]);
+
 function validationCheckForCommand(
   result: CommandResult,
 ): ValidationResult["checks"][number] {
-  if (result.id === "validate-build" && result.passed) {
+  if (PROJECT_HEALTH_COMMANDS.has(result.id) && result.passed) {
     const warningCount = (
       result.output.match(/\bwarning\b|\(\s*!\s*\)/gi) ?? []
     ).length;
@@ -152,7 +162,7 @@ function validationCheckForCommand(
   // errors unrelated to Tellann" would send the member looking for errors that
   // do not exist.
   if (
-    result.id === "validate-build" &&
+    PROJECT_HEALTH_COMMANDS.has(result.id) &&
     !result.passed &&
     !buildProducedOutput(result.output)
   ) {
@@ -163,7 +173,7 @@ function validationCheckForCommand(
     };
   }
   if (
-    result.id === "validate-build" &&
+    PROJECT_HEALTH_COMMANDS.has(result.id) &&
     !result.passed &&
     !isTellannRelatedBuildFailure(result.output)
   ) {
@@ -330,6 +340,21 @@ function mergeEnvironmentFile(
   return `${lines.filter(Boolean).join("\n")}\n`;
 }
 
+/**
+ * The environment-variable prefix each frontend framework exposes to client
+ * code. Server frameworks, Python included, read unprefixed variables, so they
+ * are simply absent from this map.
+ */
+const FRONTEND_ADAPTER_PREFIXES = new Map<string, string>([
+  ["nextjs", "NEXT_PUBLIC_"],
+  ["react-vite", "VITE_"],
+  ["remix", "VITE_"],
+  ["sveltekit", "PUBLIC_"],
+  ["astro", "PUBLIC_"],
+  ["nuxt", "NUXT_PUBLIC_"],
+  ["angular", "VITE_"],
+]);
+
 export class InstrumentationController {
   constructor(
     private readonly cloud: DesktopCloudClient,
@@ -358,7 +383,7 @@ export class InstrumentationController {
       | "flowId"
       | "flowVersionId"
       | "flowInitializationId"
-    > & { flowManifest?: any },
+    > & { flowManifest?: any; flowCheckpointIds?: string[] },
   ): LocalProjectContext {
     return {
       workspaceRoot: workspace.root,
@@ -369,6 +394,7 @@ export class InstrumentationController {
       flowVersionId: flow?.flowVersionId,
       flowInitializationId: flow?.flowInitializationId,
       flowManifest: flow?.flowManifest,
+      flowCheckpointIds: flow?.flowCheckpointIds,
     };
   }
 
@@ -397,10 +423,35 @@ export class InstrumentationController {
       input.instrumentationPurpose === "FLOW" && input.flowInitializationId
         ? await this.cloud.flowInitialization(input.flowInitializationId)
         : null;
+    // Split the Flow across the packages being instrumented. With one adapter
+    // this assigns it everything and behaves exactly as before; with several it
+    // is what lets a single Flow reach both a web app and its API.
+    let flowCheckpointIds: string[] | undefined;
+    if (input.instrumentationPurpose === "FLOW" && initialization?.manifest) {
+      const selected = input.selectedAdapterIds?.length
+        ? input.selectedAdapterIds
+        : [input.adapterId];
+      const assignment = assignFlowCheckpoints(
+        workspace.root,
+        initialization.manifest as any,
+        selected,
+      );
+      if (assignment.unassigned.length) {
+        // Name the files: "outside the framework package" is only actionable if
+        // the user can see which checkpoint landed where.
+        throw new Error(
+          `FLOW_CHECKPOINT_OUTSIDE_DETECTED_PACKAGES:${assignment.unassigned
+            .map((item) => item.file || item.checkpointId)
+            .join(",")}`,
+        );
+      }
+      flowCheckpointIds = assignment.byAdapter[input.adapterId] ?? [];
+    }
     const plan = await getAdapter(input.adapterId).propose(
       this.context(workspace, input.environmentType, {
         ...input,
         flowManifest: initialization?.manifest,
+        flowCheckpointIds,
       }),
     );
     const packageManifest =
@@ -526,6 +577,49 @@ export class InstrumentationController {
     return this.cloud.rejectInstrumentation(applicationId, planId, reason);
   }
 
+  /**
+   * Install the SDK on its own, before anything is written.
+   *
+   * Dependency installation is the longest step in applying a plan and the only
+   * one that needs the network, but it is not a change to the user's code: it
+   * needs no checkpoint and nothing about it to roll back. Running it inside
+   * `apply` meant it began only after the user had finished reading the diff and
+   * pressed the button, so its minutes were minutes of watching a spinner.
+   * Started at approval instead, it overlaps with the reading.
+   *
+   * Idempotent: a second call with a recorded success does nothing.
+   */
+  async installDependencies(
+    applicationId: string,
+    planId: string,
+    onProgress?: (update: InstrumentationProgressUpdate) => void,
+  ) {
+    const workspace = this.selected(applicationId);
+    const plan = this.localPlan(planId);
+    const approval = this.localApproval(planId);
+    if (approval.applicationId !== applicationId) throw new Error("INVALID_LOCAL_APPROVAL_SCOPE");
+    const command = plan.validationCommands.find((item) => item.id === "install-sdk");
+    if (!command) return { installed: true, skipped: "NO_INSTALL_REQUIRED" as const };
+    if (!approval.commandIds.includes("install-sdk")) throw new Error("SDK_INSTALL_COMMAND_APPROVAL_REQUIRED");
+    const recorded = readLocalState<CommandResult>(`instrumentation-install:${planId}`);
+    if (recorded?.passed) return { installed: true, skipped: "ALREADY_INSTALLED" as const, result: recorded };
+    onProgress?.({
+      step: "COMMAND:install-sdk", status: "RUNNING", message: command.purpose,
+      detail: `${command.executable} ${command.args.join(" ")}`, at: new Date().toISOString(),
+    });
+    const result = await runCommand(command, workspace.root);
+    writeLocalState(`instrumentation-install:${planId}`, result);
+    onProgress?.({
+      step: "COMMAND:install-sdk",
+      status: result.passed ? "DONE" : "FAILED",
+      message: result.passed
+        ? `Finished in ${Math.max(1, Math.round(result.durationMs / 1000))}s`
+        : `Failed after ${Math.max(1, Math.round(result.durationMs / 1000))}s`,
+      detail: null, at: new Date().toISOString(),
+    });
+    return { installed: result.passed, result };
+  }
+
   async apply(
     applicationId: string,
     planId: string,
@@ -625,14 +719,11 @@ export class InstrumentationController {
       );
       if (!envOperation || !ignoreOperation)
         throw new Error("PERMANENT_SETUP_ENVIRONMENT_SCOPE_MISSING");
-      const frontend =
-        plan.adapterId === "react-vite" || plan.adapterId === "nextjs";
-      const prefix =
-        plan.adapterId === "nextjs"
-          ? "NEXT_PUBLIC_"
-          : plan.adapterId === "react-vite"
-            ? "VITE_"
-            : "";
+      const frontend = FRONTEND_ADAPTER_PREFIXES.has(plan.adapterId);
+      // Each bundler only exposes variables carrying its own prefix, so the
+      // value has to be written under the prefix the framework actually reads;
+      // a correct value under the wrong prefix is invisible to the application.
+      const prefix = FRONTEND_ADAPTER_PREFIXES.get(plan.adapterId) ?? "";
       const environmentValues = frontend
         ? {
             [`${prefix}TELLANN_GATEWAY_URL`]: String(setup.gatewayEndpoint),
@@ -681,10 +772,19 @@ export class InstrumentationController {
       report("CREDENTIALS", "DONE", "Setup key added");
       patch = refreshPatchResult(context, patch);
       appliedPatch = patch;
+      // An install that already ran at approval time is not run again; its
+      // result still counts towards validation, because validation is about
+      // whether the SDK is present, not about when it arrived.
+      const completedInstall = readLocalState<CommandResult>(`instrumentation-install:${planId}`);
+      const installAlreadyDone = Boolean(completedInstall?.passed);
       const commands = plan.validationCommands.filter((command) =>
-        approval.commandIds.includes(command.id),
+        approval.commandIds.includes(command.id)
+        && !(installAlreadyDone && command.id === "install-sdk"),
       );
-      const commandResults: CommandResult[] = [];
+      const commandResults: CommandResult[] = installAlreadyDone && completedInstall ? [completedInstall] : [];
+      if (installAlreadyDone) {
+        report("COMMAND:install-sdk", "DONE", "Already installed while you reviewed the changes");
+      }
       for (const command of commands) {
         const step = `COMMAND:${command.id}`;
         report(step, "RUNNING", command.purpose, `${command.executable} ${command.args.join(" ")}`);

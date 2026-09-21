@@ -1292,6 +1292,9 @@ model BehaviorGraph {
   name               String
   status             FlowStatus          @default(DRAFT)
   lifecycleStatus    FlowLifecycleStatus @default(DRAFT)
+  // Published revision number. Every flow starts its own line at 1 and only
+  // moves when a new revision is opened (revise / reopen) — never on an edit.
+  // In-progress edits are counted by `draftSeq` below.
   version            Int                 @default(1)
   graphType          GraphType           @default(DECLARED)
   sourceType         GraphSourceType     @default(USER_DECLARATION)
@@ -1307,10 +1310,10 @@ model BehaviorGraph {
   // document) is awaiting the author's accept/discard decision. Cleared on accept.
   aiDraftStatus      String?
   aiDraftSourceName  String?
-  // Number of graph mutations (accepted suggestions, restores) applied since the
-  // current `version` was opened for drafting. The published `version` stays
-  // frozen while drafting; `draftSeq` is the in-progress counter. Reset to 0 when
-  // a new revision is opened.
+  // Number of graph mutations (manual edits, accepted suggestions, restores)
+  // applied since the current `version` was opened for drafting. The published
+  // `version` stays frozen while drafting; `draftSeq` is the in-progress
+  // counter. Reset to 0 when a new revision is opened.
   draftSeq           Int                 @default(0)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
@@ -1874,12 +1877,25 @@ model FlowScan {
   binding              FlowProjectBinding   @relation(fields: [bindingId], references: [id], onDelete: Cascade)
   repositorySnapshotId String
   repositorySnapshot   RepositorySnapshot   @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  codebaseAnalysisJobId String?
+  codebaseAnalysisJob   CodebaseAnalysisJob? @relation(fields: [codebaseAnalysisJobId], references: [id], onDelete: SetNull)
   parentScanId         String?
   parentScan           FlowScan?            @relation("FlowScanParent", fields: [parentScanId], references: [id], onDelete: SetNull)
   childScans           FlowScan[]           @relation("FlowScanParent")
   kind                 FlowScanKind
   status               FlowScanStatus       @default(CREATED)
   scannerVersion       String
+  analysisMode         String?
+  analysisGraphVersion String?
+  analysisContentHash  String?
+  analysisRevision     String?
+  analysisBranch       String?
+  analysisDirty        Boolean?
+  retrievalVersion     String?
+  mappingStatus        String?
+  mappingProgress      Json?
+  candidateEvidence    Json?
+  mappingProvenance    Json?
   detectedRoutes       Json?
   detectedComponents   Json?
   detectedEndpoints    Json?
@@ -1896,6 +1912,7 @@ model FlowScan {
 
   @@index([bindingId, createdAt])
   @@index([applicationId, flowId, status])
+  @@index([codebaseAnalysisJobId])
 }
 
 model FlowInitialization {
@@ -1916,7 +1933,10 @@ model FlowInitialization {
   mode                   FlowInitializationMode?
   stage                  FlowInitializationStage  @default(SCANNING)
   manifestVersion        String                   @default("1.0")
+  mappingVersion         String                   @default("1.0")
   manifest               Json?
+  finalMappings          Json?
+  mappingConfirmations   Json?
   reportProvenance       Json?
   selectedTargetAdapters String[]                 @default([])
   roadmapRevision        Int                      @default(1)
@@ -2253,6 +2273,7 @@ model CodebaseAnalysisJob {
   analyzerRuns            AnalyzerRun[]
   warnings                AnalysisWarning[]
   projections             AnalysisProjection[]
+  flowScans               FlowScan[]
 
   @@index([status, scheduledAt])
   @@index([applicationId, createdAt])

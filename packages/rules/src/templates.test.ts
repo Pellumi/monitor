@@ -38,3 +38,41 @@ test('authentication template covers alternate login outcomes', () => {
     assert.equal(names.has(expected), true, `${expected} should be suggested after LOGIN`);
   }
 });
+
+test('every seeding template produces a publishable graph shape', () => {
+  for (const [key, template] of Object.entries(domainTemplates)) {
+    if (template.states.length === 0) continue;
+    const names = new Set(template.states.map((state) => state.name));
+    const initial = template.states.filter((state) => state.role === 'INITIAL');
+    const terminal = template.states.filter((state) => state.role === 'TERMINAL');
+
+    assert.equal(initial.length, 1, `${key} should declare exactly one initial state`);
+    assert.ok(terminal.length > 0, `${key} should declare at least one terminal state`);
+    for (const state of terminal) {
+      assert.ok(state.terminalKind, `${key}.${state.name} must name its completion kind`);
+    }
+    for (const transition of template.transitions) {
+      assert.ok(names.has(transition.from), `${key} transition references unknown state ${transition.from}`);
+      assert.ok(names.has(transition.to), `${key} transition references unknown state ${transition.to}`);
+      assert.notEqual(
+        template.states.find((state) => state.name === transition.from)?.role,
+        'TERMINAL',
+        `${key}.${transition.from} is terminal and cannot have outgoing transitions`,
+      );
+    }
+    const reachable = new Set([initial[0].name]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const transition of template.transitions) {
+        if (reachable.has(transition.from) && !reachable.has(transition.to)) {
+          reachable.add(transition.to);
+          grew = true;
+        }
+      }
+    }
+    for (const state of template.states) {
+      assert.ok(reachable.has(state.name), `${key}.${state.name} is unreachable from the initial state`);
+    }
+  }
+});

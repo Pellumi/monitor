@@ -9,7 +9,6 @@ import {
   type CSSProperties,
 } from "react";
 import {
-  Accessibility,
   Activity,
   AlertTriangle,
   ArrowRight,
@@ -28,9 +27,19 @@ import {
   GitBranch,
   Globe2,
   GraduationCap,
+  Hourglass,
   HelpCircle,
   KeyRound,
   Lock,
+  ArrowDownToLine,
+  Clock,
+  CloudUpload,
+  ExternalLink,
+  Filter,
+  Gauge,
+  MessageSquare,
+  MoreHorizontal,
+  MousePointerClick,
   Network,
   Play,
   Plus,
@@ -42,6 +51,7 @@ import {
   Sparkles,
   TerminalSquare,
   Trash2,
+  TriangleAlert,
   Unlock,
   Workflow,
   X,
@@ -65,6 +75,7 @@ import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   DeclaredStateSuggestion,
+  DesktopApplication,
   FlowReviewPreview,
   FlowSuggestionMeta,
   FlowInitialization,
@@ -78,7 +89,7 @@ import type {
   DocumentImportResult,
   IntentDraftJob,
 } from "@tellann/desktop-contracts";
-import type { LiveEvidence } from "@tellann/browser-observer";
+import type { GuidedRunState, LiveEvidence } from "@tellann/browser-observer";
 import { useDesktop, normalizeDesktopError } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
 import { FlowDiagram } from "./components/flow-diagram";
@@ -90,6 +101,35 @@ import {
   AccordionContent,
 } from "./components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import {
+  formatEnum,
+  showMenu,
+  statusTone,
+  useSelectableList,
+} from "./components/desktop-ui";
+import { AppWindow, Info } from "lucide-react";
+import { FlowEditor } from "./flow-editor/flow-editor";
+import {
+  flowInitializationHref,
+  isFlowInitializable,
+  isFlowReadyToRun,
+  nextFlowToInitialize,
+  nonProductionEnvironmentId,
+} from "./flow-initialization";
+
+/**
+ * Adapters that instrument the browser half of an application. Used to
+ * preselect a target and to label the detection list.
+ */
+const FRONTEND_ADAPTER_IDS = [
+  "react-vite",
+  "nextjs",
+  "sveltekit",
+  "nuxt",
+  "astro",
+  "remix",
+  "angular",
+];
 
 function ActionTooltip({
   content,
@@ -120,9 +160,9 @@ function ActionTooltip({
             bottom: "100%",
             left: "50%",
             transform: "translateX(-50%) translateY(-6px)",
-            backgroundColor: "#000000",
-            color: "#ffffff",
-            border: "1px solid #333333",
+            backgroundColor: "var(--surface-0)",
+            color: "var(--text-strong)",
+            border: "1px solid var(--border-strong)",
             padding: "4px 8px",
             borderRadius: "4px",
             fontSize: "11px",
@@ -141,27 +181,46 @@ function ActionTooltip({
   );
 }
 
+/**
+ * A routed view: a fixed toolbar (title, optional filter or view controls,
+ * commands) over the scrolling content. `fill` gives the content the full
+ * height so list and detail panes scroll on their own.
+ */
 export function Page({
   title,
   description,
   actions,
+  toolbar,
+  layout = "scroll",
   children,
 }: {
   title: string;
   description: string;
   actions?: ReactNode;
+  toolbar?: ReactNode;
+  layout?: "scroll" | "fill";
   children: ReactNode;
 }) {
+  // Short descriptions (an organization name) read as a subtitle; longer
+  // explanations stay out of the way in a tooltip.
+  const shortDescription = description && description.length <= 48;
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
+    <div className={`page${layout === "fill" ? " page-fill" : ""}`}>
+      <header className="page-toolbar">
+        <div className="page-toolbar-title">
           <h1>{title}</h1>
-          <p>{description}</p>
+          {shortDescription ? (
+            <span className="page-toolbar-subtitle">{description}</span>
+          ) : description ? (
+            <span className="page-toolbar-hint" title={description} aria-label={description} role="img">
+              <Info size={14} />
+            </span>
+          ) : null}
         </div>
+        {toolbar ? <div className="page-toolbar-center">{toolbar}</div> : <div className="page-toolbar-spacer" />}
         {actions ? <div className="page-actions">{actions}</div> : null}
       </header>
-      {children}
+      <div className="page-body">{children}</div>
     </div>
   );
 }
@@ -188,10 +247,11 @@ function EmptyState({
 }
 
 function Status({ children }: { children: ReactNode }) {
+  const text = typeof children === "string" ? children : null;
   return (
-    <span className="status-pill">
-      {/* <span aria-hidden="true" /> */}
-      {children}
+    <span className="status-pill" data-tone={text ? statusTone(text) : "neutral"}>
+      <span aria-hidden="true" />
+      {text ? formatEnum(text) : children}
     </span>
   );
 }
@@ -201,15 +261,6 @@ function ApplicationRequired() {
   const section = location.pathname.split("/")[1] || "applications";
   return (
     <Navigate replace to={`/applications?next=${encodeURIComponent(section)}`} />
-  );
-}
-
-/** The environment SDK setup targets: the first one that is not observation-only. */
-function sdkSetupEnvironmentId(
-  application: { environments: Array<{ id: string; type: string }> } | undefined | null,
-) {
-  return (
-    application?.environments.find((item) => item.type !== "PRODUCTION")?.id ?? ""
   );
 }
 
@@ -285,16 +336,25 @@ export function RootResolver() {
   );
 }
 
+const applicationKey = (application: { id: string }) => application.id;
+const runKey = (run: QARunSummary) => run.id;
+const flowKey = (flow: DeclaredFlowSummary) => flow.id;
+
 export function ApplicationsPage() {
   const { applications, workspaces, runs, refreshRuns, attachWorkspace, busy } =
     useDesktop();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const next = searchParams.get("next");
   const [query, setQuery] = useState("");
-  const visible = applications.filter((item) =>
-    `${item.name} ${item.organizationName}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+  const visible = useMemo(
+    () =>
+      applications.filter((item) =>
+        `${item.name} ${item.organizationName}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+      ),
+    [applications, query],
   );
 
   useEffect(() => {
@@ -304,99 +364,185 @@ export function ApplicationsPage() {
     }
   }, [applications, refreshRuns, runs]);
 
+  const openApplication = useCallback(
+    (application: { id: string }) => {
+      localStorage.setItem("tellann:last-project", application.id);
+      navigate(
+        next
+          ? `/applications/${application.id}/${next}`
+          : `/applications/${application.id}`,
+      );
+    },
+    [navigate, next],
+  );
+
+  const list = useSelectableList({
+    items: visible,
+    getKey: applicationKey,
+    onOpen: openApplication,
+    onContextMenu: (application, event) => {
+      const workspace = workspaces[application.id];
+      void showMenu(event, [
+        { id: "open", label: "Open", accelerator: "Enter" },
+        { id: "run", label: "New QA run" },
+        { type: "separator" },
+        {
+          id: "attach",
+          label: workspace ? "Change project folder…" : "Attach project folder…",
+          enabled: !busy,
+        },
+        { id: "reveal", label: "Show folder in Explorer", enabled: Boolean(workspace) },
+        { type: "separator" },
+        { id: "copy", label: "Copy application ID" },
+      ]).then((choice) => {
+        if (choice === "open") openApplication(application);
+        if (choice === "run")
+          navigate(`/applications/${application.id}/qa-runs/new`);
+        if (choice === "attach") void attachWorkspace(application.id);
+        if (choice === "reveal" && workspace)
+          void window.tellann?.system.openPath(workspace.path);
+        if (choice === "copy")
+          void window.tellann?.system.copyText(application.id);
+      });
+    },
+  });
+
+  const selected = list.selected;
+  const selectedWorkspace = selected ? workspaces[selected.id] : undefined;
+  const selectedRun = selected ? runs[selected.id]?.[0] : undefined;
+
   return (
     <Page
       title="Applications"
       description="Connect a Tellann application to a local workspace, a development URL, or a staging URL."
+      layout={applications.length ? "fill" : "scroll"}
+      toolbar={
+        applications.length ? (
+          <input
+            className="toolbar-search"
+            data-search-input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter applications (Ctrl+F)"
+            aria-label="Filter applications"
+          />
+        ) : null
+      }
       actions={
         <Link className="button primary" to="/applications/new">
+          <Plus size={15} />
           Create application
         </Link>
       }
     >
       {next ? (
-        <div className="context-banner">
-          Select an application to continue to <strong>{next}</strong>.
+        <div className="context-banner infobar">
+          <Info size={16} />
+          <span>
+            Select an application to continue to <strong>{formatEnum(next.replace(/-/g, "_"))}</strong>.
+          </span>
         </div>
       ) : null}
-      <div className="filter-row">
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter applications"
-          aria-label="Filter applications"
-        />
-      </div>
-      {visible.length ? (
-        <div className="project-grid">
-          {visible.map((application) => {
-            const workspace = workspaces[application.id];
-            const latestRun = runs[application.id]?.[0];
-            const destination = next
-              ? `/applications/${application.id}/${next}`
-              : `/applications/${application.id}`;
-            return (
-              <article className="project-card" key={application.id}>
-                <div className="card-heading">
-                  <div>
-                    <small>{application.organizationName}</small>
-                    <h2>{application.name}</h2>
+      {applications.length ? (
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="Applications"
+              style={{ "--list-columns": "minmax(200px, 1.6fr) minmax(120px, 1fr) minmax(100px, 0.8fr) 130px" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Name</span>
+                <span>Workspace</span>
+                <span>Latest run</span>
+                <span>Status</span>
+              </div>
+              {visible.map((application) => {
+                const workspace = workspaces[application.id];
+                const latestRun = runs[application.id]?.[0];
+                return (
+                  <div className="list-row" key={application.id} {...list.rowProps(application)}>
+                    <span className="list-cell-primary">
+                      <strong>{application.name}</strong>
+                      <small>{application.organizationName}</small>
+                    </span>
+                    <span>{workspace?.name ?? "Not attached"}</span>
+                    <span>{latestRun ? formatEnum(latestRun.status) : "None"}</span>
+                    <span>
+                      <Status>{workspace ? "Analyzed" : "Browser only"}</Status>
+                    </span>
                   </div>
-                  <Status>
-                    {workspace ? "Analyzed" : "Browser-only ready"}
-                  </Status>
+                );
+              })}
+              {!visible.length ? (
+                <div className="list-empty">No applications match “{query}”.</div>
+              ) : null}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Application details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>{selected.organizationName}</small>
+                  <h2>{selected.name}</h2>
                 </div>
-                <div className="tag-list">
-                  {application.environments.map((environment) => (
-                    <span key={environment.id}>{environment.type}</span>
-                  ))}
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openApplication(selected)}>
+                    <AppWindow size={15} />
+                    Open
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void attachWorkspace(selected.id)}
+                  >
+                    <FolderOpen size={15} />
+                    {selectedWorkspace ? "Change folder" : "Attach folder"}
+                  </button>
                 </div>
-                <dl className="summary-grid">
+                <dl className="property-list">
                   <div>
                     <dt>Workspace</dt>
-                    <dd>{workspace?.name ?? "Not attached"}</dd>
+                    <dd>{selectedWorkspace?.name ?? "Not attached"}</dd>
+                  </div>
+                  <div>
+                    <dt>Location</dt>
+                    <dd className="mono selectable">{selectedWorkspace?.path ?? "—"}</dd>
                   </div>
                   <div>
                     <dt>Stack</dt>
+                    <dd>{selectedWorkspace?.snapshot.frameworks[0]?.framework ?? "URL mode"}</dd>
+                  </div>
+                  <div>
+                    <dt>Branch</dt>
+                    <dd>{selectedWorkspace?.snapshot.branch ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Environments</dt>
                     <dd>
-                      {workspace?.snapshot.frameworks[0]?.framework ??
-                        "URL mode"}
+                      {selected.environments.map((environment) => formatEnum(environment.type)).join(", ") || "None"}
                     </dd>
                   </div>
                   <div>
                     <dt>Latest run</dt>
-                    <dd>{latestRun?.status ?? "None"}</dd>
+                    <dd>{selectedRun ? formatEnum(selectedRun.status) : "None"}</dd>
                   </div>
                   <div>
                     <dt>Findings</dt>
-                    <dd>
-                      {latestRun ? latestRun.findingCount : "No run data"}
-                    </dd>
+                    <dd>{selectedRun ? selectedRun.findingCount : "No run data"}</dd>
+                  </div>
+                  <div>
+                    <dt>Application ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
                   </div>
                 </dl>
-                <div className="card-actions">
-                  <Link
-                    className="button primary"
-                    to={destination}
-                    onClick={() =>
-                      localStorage.setItem(
-                        "tellann:last-project",
-                        application.id,
-                      )
-                    }
-                  >
-                    Open application
-                  </Link>
-                  <button
-                    disabled={busy}
-                    onClick={() => void attachWorkspace(application.id)}
-                  >
-                    Attach folder
-                  </button>
-                </div>
-              </article>
-            );
-          })}
+              </div>
+            ) : (
+              <div className="detail-empty">Select an application to see its details.</div>
+            )}
+          </aside>
         </div>
       ) : (
         <EmptyState
@@ -491,7 +637,7 @@ export function NewApplicationPage() {
     const attached = await attachWorkspace(created.id).catch(() => null);
     navigate(
       attached
-        ? sdkSetupHref(created.id, sdkSetupEnvironmentId(created))
+        ? sdkSetupHref(created.id, nonProductionEnvironmentId(created))
         : `/applications/${created.id}`,
     );
   };
@@ -567,13 +713,13 @@ export function NewApplicationPage() {
           {busy ? "Creating…" : "Create application"}
           <ArrowRight size={16} />
         </button>
-        <p className="wizard-footnote">
+        {/* <p className="wizard-footnote">
           The application is created in Tellann Cloud, so it appears in the web
           dashboard immediately and everyone signed in is notified. A folder
           picker opens next for read-only analysis, then Tellann takes you
           straight to connecting the SDK. Skip the folder to stay browser-only
           and attach one later from the Applications list.
-        </p>
+        </p> */}
       </section>
     </Page>
   );
@@ -588,22 +734,6 @@ function useProject() {
     application: desktop.applications.find((item) => item.id === projectId),
     workspace: projectId ? desktop.workspaces[projectId] : undefined,
   };
-}
-
-/**
- * A run needs a Flow that is both published (a version was published from the
- * declare view) and initialized in *this* project — an active binding whose
- * initialization has completed. A Flow short of that cannot start a run.
- */
-function isFlowReadyToRun(item: DeclaredFlowSummary) {
-  const binding = (item as any)?.projectBindings?.[0] as
-    | { status?: string; initializations?: Array<{ status?: string }> }
-    | undefined;
-  return (
-    Boolean(item.publishedVersionId) &&
-    binding?.status === "ACTIVE" &&
-    binding.initializations?.[0]?.status === "COMPLETED"
-  );
 }
 
 function formatRunStatus(status: string) {
@@ -642,19 +772,22 @@ export function ApplicationOverviewPage() {
   useEffect(() => {
     if (projectId) void refreshRuns(projectId).catch(() => undefined);
   }, [projectId, refreshRuns]);
-  const sdkEnvironmentId = sdkSetupEnvironmentId(application);
+  const sdkEnvironmentId = nonProductionEnvironmentId(application);
   const sdkStatus = useSdkConnectionStatus(projectId, sdkEnvironmentId);
-  const [flowReady, setFlowReady] = useState<boolean | null>(null);
+  // The Flows themselves, not just a ready/not-ready flag: the "Initialize a Flow"
+  // step has to name the Flow it sends you to, or it lands on Intent with nothing
+  // selected and no way forward.
+  const [flows, setFlows] = useState<DeclaredFlowSummary[] | null>(null);
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
-    setFlowReady(null);
+    setFlows(null);
     void getDeclaredFlows(projectId)
       .then((items) => {
-        if (!cancelled) setFlowReady(items.some(isFlowReadyToRun));
+        if (!cancelled) setFlows(items);
       })
       .catch(() => {
-        if (!cancelled) setFlowReady(false);
+        if (!cancelled) setFlows([]);
       });
     return () => {
       cancelled = true;
@@ -671,6 +804,13 @@ export function ApplicationOverviewPage() {
     );
 
   const latestRun = runs[projectId]?.[0];
+  const flowReady = flows === null ? null : flows.some(isFlowReadyToRun);
+  const flowToInitialize = nextFlowToInitialize(flows ?? []);
+  // Without a published Flow to point at there is nothing to initialize yet, so
+  // the step falls back to Intent, where one gets declared and published first.
+  const initializeFlowHref =
+    flowInitializationHref(projectId, flowToInitialize, sdkEnvironmentId) ??
+    `/applications/${projectId}/intent`;
   const steps: JourneyStep[] = [
     {
       title: "Attach your project folder",
@@ -713,14 +853,13 @@ export function ApplicationOverviewPage() {
       done: flowReady === true,
       known: flowReady !== null,
       doneDetail: "Ready to run",
-      href: `/applications/${projectId}/intent`,
+      href: initializeFlowHref,
       action: (
-        <Link
-          className="button primary"
-          to={`/applications/${projectId}/intent`}
-        >
+        <Link className="button primary" to={initializeFlowHref}>
           <Workflow size={15} />
-          Open Intent
+          {flowToInitialize
+            ? `Initialize “${flowToInitialize.name}”`
+            : "Open Intent"}
         </Link>
       ),
     },
@@ -1548,7 +1687,7 @@ export function WorkspaceDetails() {
                   fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
-                  color: "var(--muted, #8e9192)",
+                  color: "var(--muted, var(--text-muted))",
                   display: "block",
                   marginBottom: "6px",
                 }}
@@ -1561,8 +1700,8 @@ export function WorkspaceDetails() {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: "8px",
-                  background: "#090909",
-                  border: "1px solid #262626",
+                  background: "var(--surface-0)",
+                  border: "1px solid var(--border)",
                   borderRadius: "6px",
                   padding: "8px 12px",
                 }}
@@ -1578,13 +1717,13 @@ export function WorkspaceDetails() {
                 >
                   <Folder
                     size={15}
-                    style={{ color: "#ffffff", flexShrink: 0 }}
+                    style={{ color: "var(--text-strong)", flexShrink: 0 }}
                   />
                   <span
                     style={{
                       fontFamily: "ui-monospace, monospace",
                       fontSize: "12px",
-                      color: "#ffffff",
+                      color: "var(--text-strong)",
                       wordBreak: "break-all",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -1606,16 +1745,16 @@ export function WorkspaceDetails() {
                     <button
                       type="button"
                       style={{
-                        background: "#131313",
-                        border: "1px solid #262626",
-                        color: "#ffffff",
+                        background: "var(--surface-1)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-strong)",
                         padding: "6px 10px",
                         borderRadius: "4px",
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "6px",
                         fontSize: "12px",
-                        cursor: "pointer",
+                        cursor: "default",
                         transition: "all 0.15s ease",
                       }}
                       onClick={async () => {
@@ -1659,15 +1798,15 @@ export function WorkspaceDetails() {
                     <button
                       type="button"
                       style={{
-                        background: "#131313",
-                        border: "1px solid #262626",
-                        color: "#ffffff",
+                        background: "var(--surface-1)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-strong)",
                         padding: "6px 8px",
                         borderRadius: "4px",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        cursor: "pointer",
+                        cursor: "default",
                         transition: "all 0.15s ease",
                       }}
                       onClick={async () => {
@@ -1689,7 +1828,7 @@ export function WorkspaceDetails() {
                       aria-label="Copy folder path"
                     >
                       {pathCopied ? (
-                        <Check size={14} style={{ color: "#ffffff" }} />
+                        <Check size={14} style={{ color: "var(--text-strong)" }} />
                       ) : (
                         <Copy size={14} />
                       )}
@@ -2141,11 +2280,6 @@ function ConfirmModal({
         >
           <X size={16} />
         </button>
-
-        <div className="confirm-modal-topbar">
-          <span className="confirm-modal-brand">TELLANN</span>
-          <span className="confirm-modal-tag">ACTION // CONFIRMATION</span>
-        </div>
 
         <h2 id="confirm-modal-title" className="confirm-modal-heading">
           {title}
@@ -2606,18 +2740,119 @@ function CappedTextarea({
   );
 }
 
+/**
+ * Confirms permanent deletion of a declared flow. Mirrors the web editor's
+ * "type DELETE <flow name>" gate because the delete also removes the QA runs,
+ * reports, versions, bindings and scans recorded against the flow.
+ */
+function DeleteFlowDialog({
+  flow,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  flow: { id: string; name: string };
+  busy: boolean;
+  onCancel(): void;
+  onConfirm(): Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const expected = `DELETE ${flow.name}`;
+  const canDelete = !busy && !deleting && typed.trim() === expected;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deleting) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleting, onCancel]);
+  const confirm = async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      await onConfirm();
+    } catch (cause) {
+      setError(
+        String(cause instanceof Error ? cause.message : cause)
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .slice(0, 240) || "The flow could not be deleted.",
+      );
+      setDeleting(false);
+    }
+  };
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !deleting) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-flow-title"
+        aria-describedby="delete-flow-description"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canDelete) void confirm();
+        }}
+      >
+        <h2 id="delete-flow-title">Delete “{flow.name}”?</h2>
+        <p id="delete-flow-description">
+          This permanently deletes the flow, its published versions, and the QA
+          runs, reconciliation reports, bindings and scans recorded against it.
+          It cannot be undone. Your documents are kept.
+        </p>
+        <label className="dialog-field">
+          <span>
+            Type <code className="confirm-phrase">{expected}</code> to confirm
+          </span>
+          <input
+            autoFocus
+            value={typed}
+            disabled={deleting}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setTyped(event.target.value)}
+          />
+        </label>
+        {error ? (
+          <p role="alert" className="dialog-error">
+            {error}
+          </p>
+        ) : null}
+        <div className="desktop-modal-actions">
+          <button type="submit" className="destructive" disabled={!canDelete}>
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+          <button type="button" disabled={deleting} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ManualIntentBuilder({
   projectId,
   flows,
   refreshFlows,
   initialFlowId,
   showPlanBanner = true,
+  onFlowDeleted,
 }: {
   projectId: string;
   flows: DeclaredFlowSummary[];
   refreshFlows(): Promise<DeclaredFlowSummary[]>;
   initialFlowId?: string;
   showPlanBanner?: boolean;
+  /** Called after the open flow is deleted; without it the builder switches to another flow. */
+  onFlowDeleted?(flowId: string): void;
 }) {
   const navigate = useNavigate();
   const {
@@ -2629,6 +2864,7 @@ function ManualIntentBuilder({
     addDeclaredTransition,
     completeDeclaredFlow,
     reopenDeclaredFlow,
+    deleteDeclaredFlow,
     getFlowDiagrams,
     initializeFlow,
     rescanFlow,
@@ -3180,6 +3416,23 @@ function ManualIntentBuilder({
     }
   };
 
+  const [flowDeleteOpen, setFlowDeleteOpen] = useState(false);
+  const deleteActiveFlow = async () => {
+    if (!activeFlow) return;
+    const deleted = { id: activeFlow.id, name: activeFlow.name };
+    await deleteDeclaredFlow(projectId, deleted.id);
+    setFlowDeleteOpen(false);
+    if (onFlowDeleted) {
+      onFlowDeleted(deleted.id);
+      return;
+    }
+    // Refresh first so the builder falls back to a flow that still exists.
+    await refreshFlows();
+    setActiveFlow(null);
+    setSelectedFlowId("");
+    setMessage(`“${deleted.name}” was deleted.`);
+  };
+
   const editable = activeFlow?.status !== "COMPLETE";
   const application = applications.find((item) => item.id === projectId);
   const workspaceAttached = Boolean(workspaces[projectId]);
@@ -3211,9 +3464,9 @@ function ManualIntentBuilder({
   };
 
   const initializeActiveFlow = async () => {
-    if (!activeFlow?.publishedVersionId || !application?.environments[0]?.id)
-      return;
-    const environmentId = application.environments[0].id;
+    // Production is observation-only — initializing against it is rejected.
+    const environmentId = nonProductionEnvironmentId(application);
+    if (!activeFlow?.publishedVersionId || !environmentId) return;
     const setup = await window.tellann?.setup.getSdkSetup(
       projectId,
       environmentId,
@@ -3486,15 +3739,15 @@ function ManualIntentBuilder({
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "8px 12px",
-                  background: "#1c1c1c",
-                  border: "1px solid #333",
+                  background: "var(--surface-1)",
+                  border: "1px solid var(--border-strong)",
                   borderRadius: "4px",
                   marginTop: "12px",
                   marginBottom: "-4px",
                 }}
               >
                 <span
-                  style={{ color: "#fff", fontSize: "12px", fontWeight: 600 }}
+                  style={{ color: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}
                 >
                   Editing state: {stateName || "Untitled"}
                 </span>
@@ -3880,6 +4133,31 @@ function ManualIntentBuilder({
                 : "Publish flow"}
             </button>
           </section>
+          <section className="content-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <small>Danger zone</small>
+              <h2>Delete this flow</h2>
+              <p>
+                Permanently removes the flow, its published versions, and the
+                QA runs and reports recorded against it.
+              </p>
+            </div>
+            <button
+              className="button danger"
+              disabled={busy}
+              onClick={() => setFlowDeleteOpen(true)}
+            >
+              <Trash2 size={15} /> Delete flow
+            </button>
+          </section>
+          {flowDeleteOpen ? (
+            <DeleteFlowDialog
+              flow={{ id: activeFlow.id, name: activeFlow.name }}
+              busy={busy}
+              onCancel={() => setFlowDeleteOpen(false)}
+              onConfirm={deleteActiveFlow}
+            />
+          ) : null}
           {diagrams.length ? (
             <section className="content-card published-flow-diagram-card">
               <div className="card-heading">
@@ -3967,7 +4245,7 @@ function ManualIntentBuilder({
                 disabled={
                   busy ||
                   !workspaceAttached ||
-                  !application?.environments[0]?.id ||
+                  !nonProductionEnvironmentId(application) ||
                   !activeFlow.publishedVersionId
                 }
                 onClick={() =>
@@ -4017,6 +4295,7 @@ function ManualIntentBuilder({
 
 export function DeclaredFlowPage() {
   const { flowId } = useParams();
+  const navigate = useNavigate();
   const { projectId, application, getDeclaredFlows } = useProject();
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4057,24 +4336,16 @@ export function DeclaredFlowPage() {
     );
   }
 
+  // The canvas replaces the step-by-step form: states and transitions are
+  // edited on the graph, with suggestions, history and settings in its panel.
   return (
-    <Page
-      title="Edit declared flow"
-      description="Add the expected states and transitions, then complete the flow when it is ready for QA."
-      actions={
-        <Link className="button" to={`/applications/${projectId}/intent`}>
-          Back to Intent
-        </Link>
-      }
-    >
-      <ManualIntentBuilder
-        projectId={projectId}
-        flows={flows}
-        refreshFlows={refreshFlows}
-        initialFlowId={flowId}
-        showPlanBanner={false}
-      />
-    </Page>
+    <FlowEditor
+      key={flowId}
+      projectId={projectId}
+      flowId={flowId}
+      onClose={() => navigate(`/applications/${projectId}/intent`)}
+      onDeleted={() => navigate(`/applications/${projectId}/intent`)}
+    />
   );
 }
 
@@ -4166,28 +4437,35 @@ const FLOW_STARTING_POINTS: Array<{
   flowName: string;
   workflowType: string;
   purpose: string;
+  /**
+   * Domain template the API seeds the new flow from. Omitted for the blank
+   * starting point, which opens an empty canvas by design.
+   */
+  template?: string;
   icon: typeof Workflow;
 }> = [
   {
     key: "ECOMMERCE",
     label: "E-commerce store",
     description:
-      "Start a typical shop journey: browse, cart, checkout, order confirmation.",
+      "Preloads a typical shop journey: browse, product, cart, checkout, order tracking.",
     flowName: "Checkout",
     workflowType: "CHECKOUT",
     purpose:
       "Let a shopper move from reviewing their cart through payment to an order confirmation.",
+    template: "ECOMMERCE",
     icon: ShoppingCart,
   },
   {
     key: "LMS",
     label: "Education / LMS",
     description:
-      "Start a typical learning journey: course catalog, enrolment, lesson, completion.",
+      "Preloads a typical learning journey: course catalog, enrolment, lesson, completion.",
     flowName: "Course enrollment",
     workflowType: "ENROLLMENT",
     purpose:
       "Let a learner move from browsing courses through enrolment to completing a lesson.",
+    template: "LMS",
     icon: GraduationCap,
   },
   {
@@ -4474,6 +4752,7 @@ export function IntentPage() {
     onDocumentImportProgress,
     deleteIntentDraft,
     createDeclaredFlow,
+    deleteDeclaredFlow,
     busy,
   } = useDesktop();
   const navigate = useNavigate();
@@ -4501,12 +4780,67 @@ export function IntentPage() {
   const [entitlementModalOpen, setEntitlementModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creatingFlowKey, setCreatingFlowKey] = useState<string | null>(null);
+  const [flowToDelete, setFlowToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   // The last import stage this page saw, to tell a transition it witnessed
   // (open the finished draft) from a finished import found on arrival (offer it).
   const observedImportRef = useRef<{
     id: string;
     stage: DocumentImportView["stage"];
   } | null>(null);
+
+  const openFlow = useCallback(
+    (flow: DeclaredFlowSummary) =>
+      navigate(`/applications/${projectId}/intent/flows/${flow.id}`),
+    [navigate, projectId],
+  );
+  // Declaring a Flow is only half of it: until it is bound to the attached project
+  // no QA run can start, and Instrumentation is where that binding happens.
+  const initializeEnvironmentId = nonProductionEnvironmentId(application);
+  const initializeFlow = useCallback(
+    (flow: DeclaredFlowSummary) => {
+      const href = flowInitializationHref(
+        projectId,
+        flow,
+        initializeEnvironmentId,
+      );
+      if (href) navigate(href);
+    },
+    [navigate, projectId, initializeEnvironmentId],
+  );
+  const canInitialize = (flow: DeclaredFlowSummary) =>
+    isFlowInitializable(flow) && Boolean(initializeEnvironmentId);
+  const openFlowMenu = (
+    flow: DeclaredFlowSummary,
+    event: Parameters<typeof showMenu>[0],
+  ) => {
+    void showMenu(event, [
+      {
+        id: "open",
+        label: flow.status === "DRAFT" ? "Open and edit" : "View flow",
+        accelerator: "Enter",
+      },
+      ...(canInitialize(flow)
+        ? [{ id: "initialize", label: "Initialize in project…" }]
+        : []),
+      { id: "copy", label: "Copy flow ID" },
+      { type: "separator" as const },
+      { id: "delete", label: "Delete…", accelerator: "Delete", enabled: !busy },
+    ]).then((choice) => {
+      if (choice === "open") openFlow(flow);
+      if (choice === "initialize") initializeFlow(flow);
+      if (choice === "copy") void navigator.clipboard?.writeText(flow.id);
+      if (choice === "delete") setFlowToDelete({ id: flow.id, name: flow.name });
+    });
+  };
+  const flowList = useSelectableList({
+    items: flows,
+    getKey: flowKey,
+    onOpen: openFlow,
+    onContextMenu: openFlowMenu,
+  });
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -4646,6 +4980,7 @@ export function IntentPage() {
         option.workflowType,
         option.purpose,
         "",
+        option.template,
       );
       await refreshFlows();
       navigate(`/applications/${activeProjectId}/intent/flows/${flow.id}`);
@@ -4672,6 +5007,16 @@ export function IntentPage() {
     } catch (error) {
       setDraftManagementMessage(intentErrorMessage(error));
     }
+  };
+
+  const deleteFlow = async () => {
+    if (!flowToDelete) return;
+    const deleted = flowToDelete;
+    await deleteDeclaredFlow(activeProjectId, deleted.id);
+    setFlows((current) => current.filter((flow) => flow.id !== deleted.id));
+    setFlowToDelete(null);
+    setActionMessage(`“${deleted.name}” was deleted.`);
+    await refresh().catch(() => undefined);
   };
 
   const trackImport = (view: DocumentImportView | null) => {
@@ -4779,6 +5124,67 @@ export function IntentPage() {
     navigate(target);
   };
 
+  // Only drafts still awaiting a decision belong in the review queue; reviewed
+  // ones are history and link to the flow they produced.
+  const pendingDrafts = drafts.filter((draft) => draft.status === "PENDING_REVIEW");
+  const reviewedDrafts = drafts.filter((draft) => draft.status !== "PENDING_REVIEW");
+  const renderDraftRow = (draft: IntentDraft) => {
+    const draftName =
+      (draft.draftJson as any)?.workflows?.[0]?.name ?? "Document-derived intent";
+    const accepted = ["ACCEPTED", "PARTIALLY_ACCEPTED"].includes(draft.status);
+    const acceptedFlow = draft.acceptedGraphId
+      ? flows.find((flow) => flow.id === draft.acceptedGraphId)
+      : undefined;
+    const deletable =
+      ["PENDING_REVIEW", "REJECTED", "EXPIRED", "SUPERSEDED"].includes(draft.status) ||
+      (accepted && !acceptedFlow);
+    const detail =
+      draft.status === "SUPERSEDED"
+        ? "Replaced by a revised draft"
+        : accepted && acceptedFlow
+          ? `Accepted into “${acceptedFlow.name}”`
+          : accepted
+            ? "Accepted; the flow it created has since been deleted"
+            : `${draft.source} · ${Math.round(draft.confidence * 100)}% confidence`;
+    return (
+      <div
+        className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
+        key={draft.id}
+      >
+        <Link
+          className="min-w-0 flex-1 flex flex-col gap-0.5 text-inherit hover:no-underline"
+          to={`/applications/${projectId}/intent/drafts/${draft.id}`}
+        >
+          <strong className="truncate" title={draftName}>
+            {draftName}
+          </strong>
+          <small className="break-words">{detail}</small>
+        </Link>
+        <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
+          <Status>{draft.status}</Status>
+          {deletable ? (
+            <button
+              className={`button ${confirmingDraftId === draft.id ? "danger" : ""}`}
+              disabled={busy}
+              onClick={() => void removeDraft(draft)}
+              aria-label={`${confirmingDraftId === draft.id ? "Confirm deletion of" : "Delete"} ${draftName}`}
+            >
+              <Trash2 size={14} />
+              {confirmingDraftId === draft.id ? "Confirm delete" : "Delete"}
+            </button>
+          ) : acceptedFlow ? (
+            <Link
+              className="button"
+              to={`/applications/${projectId}/intent/flows/${acceptedFlow.id}`}
+              title="Accepted drafts are kept as evidence while their flow exists. Delete the flow to remove the draft."
+            >
+              Open flow
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
   const versionedDocuments = documents.filter(
     (document) => document.versions.length > 0,
   );
@@ -4862,20 +5268,20 @@ export function IntentPage() {
                 return (
                   <div
                     key={option.key}
-                    className="flex flex-col justify-between rounded-lg border border-[#262626] bg-[#0c0c0c] p-4 transition-all hover:border-[#383838] hover:bg-[#121212]"
+                    className="flex flex-col justify-between rounded-lg border border-(--border) bg-(--surface-0) p-4 transition-all hover:border-(--border-strong) hover:bg-(--surface-1)"
                   >
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         {option.key === "CUSTOM" && (
-                          <span className="rounded border border-[#262626] bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400">
+                          <span className="rounded border border-(--border) bg-(--surface-1) px-1.5 py-0.5 font-mono text-[9px] text-(--text-muted)">
                             Blank
                           </span>
                         )}
                       </div>
-                      <h3 className="text-sm font-semibold text-white">
+                      <h3 className="text-sm font-semibold text-(--text-strong)">
                         {option.label}
                       </h3>
-                      <p className="text-xs leading-relaxed text-neutral-400">
+                      <p className="text-xs leading-relaxed text-(--text-muted)">
                         {option.description}
                       </p>
                     </div>
@@ -4957,7 +5363,7 @@ export function IntentPage() {
               }}
             >
               <section
-                className="desktop-modal w-full bg-[#131313] border border-[#262626] rounded-xs p-6 shadow-2xl"
+                className="desktop-modal w-full bg-(--surface-1) border border-(--border) rounded-xs p-6 shadow-2xl"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="ready-document-picker-title"
@@ -4966,26 +5372,21 @@ export function IntentPage() {
                 <div className="flex items-center justify-between mb-5">
                   <h2
                     id="ready-document-picker-title"
-                    className="text-white text-[24px] font-semibold tracking-[-0.01em] mb-2"
+                    className="text-(--text-strong) text-[24px] font-semibold tracking-[-0.01em] mb-2"
                   >
                     Choose documents
-                  </h2>{" "}
-                  <div className="flex items-center gap-3">
-                    <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-                      EVIDENCE // SELECTION
-                    </span>
-                  </div>
+                  </h2>
                 </div>
 
                 <p
                   id="ready-document-picker-description"
-                  className="text-[#c4c7c8] text-[14px] leading-relaxed mb-6"
+                  className="text-(--text) text-[14px] leading-relaxed mb-6"
                 >
                   Select the uploaded documents Tellann should use as evidence.
                   Only the latest processed version of each document is shown.
                 </p>
 
-                <div className="bg-[#000000] border border-[#262626] rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-[#262626]">
+                <div className="bg-(--surface-0) border border-(--border) rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-(--border)">
                   {versionedDocuments.map((document) => {
                     const version = document.versions[0];
                     const readiness = documentReadiness(document);
@@ -5002,20 +5403,20 @@ export function IntentPage() {
                     return (
                       <div
                         key={document.id}
-                        className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${
+                        className={`flex items-center justify-between p-4 cursor-default transition-colors ${
                           selected
-                            ? "bg-[#181818]"
-                            : "bg-[#000000] hover:bg-[#131313]"
+                            ? "bg-(--surface-1)"
+                            : "bg-(--surface-0) hover:bg-(--surface-1)"
                         }`}
                         onClick={toggleSelect}
                       >
                         <div className="flex flex-col gap-1 min-w-0 pr-4">
-                          <strong className="text-white text-[13px] font-semibold truncate">
+                          <strong className="text-(--text-strong) text-[13px] font-semibold truncate">
                             {document.filename}
                           </strong>
                           <span
                             className={`font-mono text-[11px] tracking-[0.08em] uppercase ${
-                              readiness.ready ? "text-[#8e9192]" : "text-[#d6a24a]"
+                              readiness.ready ? "text-(--text-muted)" : "text-[#d6a24a]"
                             }`}
                           >
                             {readiness.label}
@@ -5032,7 +5433,7 @@ export function IntentPage() {
                 </div>
 
                 <div
-                  className="text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase mb-6"
+                  className="text-(--text-muted) font-mono text-[11px] tracking-[0.08em] uppercase mb-6"
                   aria-live="polite"
                 >
                   {selectedReadyVersionIds.size
@@ -5043,14 +5444,14 @@ export function IntentPage() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    className="px-5 py-3 border border-[#444748] bg-[#000000] text-[#c4c7c8] hover:text-white hover:border-white font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs transition-colors"
+                    className="px-5 py-3 border border-(--border-strong) bg-(--surface-0) text-(--text) hover:text-(--text-strong) hover:border-(--accent) font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs transition-colors"
                     onClick={() => setDocumentPickerOpen(false)}
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    className="flex-1 px-5 py-3 bg-white text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-[#e6e6e6] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex-1 px-5 py-3 bg-(--accent) text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-(--accent) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     disabled={!selectedReadyVersionIds.size || importActive}
                     onClick={() => void generateReadyDocuments()}
                   >
@@ -5142,134 +5543,166 @@ export function IntentPage() {
               This page refreshes when focused; Sources shows the full library.
             </div>
           ) : null}
-          {drafts.length ? (
+          {draftManagementMessage ? (
+            <div className="context-banner" role="status">
+              <span>{draftManagementMessage}</span>
+              {confirmingDraftId ? (
+                <button
+                  className="button"
+                  onClick={() => {
+                    setConfirmingDraftId(null);
+                    setDraftManagementMessage(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {pendingDrafts.length ? (
             <section className="content-card flex flex-col gap-4 w-full overflow-hidden">
               <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
                 <div className="min-w-0 flex-1">
                   <small>Review queue</small>
-                  <h2 className="break-words">Inferred intent drafts</h2>
+                  <h2 className="break-words">Drafts waiting for review</h2>
                 </div>
                 <div className="shrink-0 self-start sm:self-auto">
-                  <Status>
-                    {
-                      drafts.filter(
-                        (draft) => draft.status === "PENDING_REVIEW",
-                      ).length
-                    }{" "}
-                    pending
-                  </Status>
+                  <Status>{pendingDrafts.length} pending</Status>
                 </div>
               </div>
-              {draftManagementMessage ? (
-                <div className="context-banner" role="status">
-                  <span>{draftManagementMessage}</span>
-                  {confirmingDraftId ? (
-                    <button
-                      className="button"
-                      onClick={() => {
-                        setConfirmingDraftId(null);
-                        setDraftManagementMessage(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
               <div className="stack compact flex flex-col gap-2.5 w-full">
-                {drafts.map((draft) => {
-                  const draftName =
-                    (draft.draftJson as any)?.workflows?.[0]?.name ??
-                    "Document-derived intent";
-                  const deletable = [
-                    "PENDING_REVIEW",
-                    "REJECTED",
-                    "EXPIRED",
-                    "SUPERSEDED",
-                  ].includes(draft.status);
-                  return (
-                    <div
-                      className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full"
-                      key={draft.id}
-                    >
-                      <Link
-                        className="min-w-0 flex-1 flex flex-col gap-0.5 text-inherit hover:no-underline"
-                        to={`/applications/${projectId}/intent/drafts/${draft.id}`}
-                      >
-                        <strong className="truncate" title={draftName}>
-                          {draftName}
-                        </strong>
-                        <small className="break-words">
-                          {draft.status === "SUPERSEDED"
-                            ? "Replaced by a revised draft"
-                            : `${draft.source} · ${Math.round(draft.confidence * 100)}% confidence`}
-                        </small>
-                      </Link>
-                      <div className="shrink-0 self-start sm:self-auto flex items-center gap-2">
-                        <Status>{draft.status}</Status>
-                        {deletable ? (
-                          <button
-                            className={`button ${confirmingDraftId === draft.id ? "danger" : ""}`}
-                            disabled={busy}
-                            onClick={() => void removeDraft(draft)}
-                            aria-label={`${confirmingDraftId === draft.id ? "Confirm deletion of" : "Delete"} ${draftName}`}
-                          >
-                            <Trash2 size={14} />
-                            {confirmingDraftId === draft.id
-                              ? "Confirm delete"
-                              : "Delete"}
-                          </button>
-                        ) : (
-                          <small title="Accepted drafts are retained as evidence for immutable graph versions.">
-                            Retained as graph evidence
-                          </small>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {pendingDrafts.map(renderDraftRow)}
               </div>
             </section>
           ) : null}
           {flows.length ? (
-            <section className="content-card flex flex-col gap-4 w-full overflow-hidden">
-              <div className="card-heading flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 min-w-0">
+            <section className="content-card flex flex-col gap-3 w-full overflow-hidden">
+              <div className="card-heading flex items-center justify-between gap-3 min-w-0">
                 <div className="min-w-0 flex-1">
                   <small>Graph truth</small>
-                  <h2 className="break-words">Declared system flows</h2>
+                  <h2 className="break-words">
+                    Declared system flows{" "}
+                    <span className="card-count">{flows.length}</span>
+                  </h2>
+                </div>
+                {flowList.selected ? (
+                  <div className="detail-actions shrink-0">
+                    <button
+                      className="button"
+                      onClick={() => openFlow(flowList.selected!)}
+                    >
+                      <Pencil size={14} />
+                      {flowList.selected.status === "DRAFT" ? "Open and edit" : "View flow"}
+                    </button>
+                    {canInitialize(flowList.selected) ? (
+                      <button
+                        className="button primary"
+                        onClick={() => initializeFlow(flowList.selected!)}
+                      >
+                        <Workflow size={14} /> Initialize in project
+                      </button>
+                    ) : null}
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setFlowToDelete({
+                          id: flowList.selected!.id,
+                          name: flowList.selected!.name,
+                        })
+                      }
+                      aria-label={`Delete ${flowList.selected.name}`}
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="card-list">
+                <div
+                  className="list-view"
+                  aria-label="Declared system flows"
+                  style={{ "--list-columns": "minmax(220px, 1fr) 110px 70px 150px 26px" } as CSSProperties}
+                  {...flowList.listProps}
+                  onKeyDown={(event) => {
+                    if (event.key === "Delete" && flowList.selected && !busy) {
+                      event.preventDefault();
+                      setFlowToDelete({
+                        id: flowList.selected.id,
+                        name: flowList.selected.name,
+                      });
+                      return;
+                    }
+                    flowList.listProps.onKeyDown(event);
+                  }}
+                >
+                  <div className="list-head" role="presentation">
+                    <span>Name</span>
+                    <span>Status</span>
+                    <span>Version</span>
+                    <span>Modified</span>
+                    <span />
+                  </div>
+                  {flows.map((flow) => (
+                    <div
+                      className="list-row"
+                      key={flow.id}
+                      title={flow.name}
+                      {...flowList.rowProps(flow)}
+                    >
+                      <span className="list-cell-primary">
+                        <strong>{flow.name}</strong>
+                        <small>
+                          {flow.purpose ||
+                            (flow.status === "DRAFT"
+                              ? "Draft · add states and transitions"
+                              : "Declared behavior")}
+                        </small>
+                      </span>
+                      <span>
+                        <Status>{flow.status}</Status>
+                      </span>
+                      <span>{flow.version ? `v${flow.version}` : "—"}</span>
+                      <span>{flow.updatedAt ? formatDate(flow.updatedAt) : "—"}</span>
+                      <button
+                        className="row-action"
+                        aria-label={`More actions for ${flow.name}`}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          flowList.setSelectedKey(flow.id);
+                          openFlowMenu(flow, event);
+                        }}
+                      >
+                        <MoreHorizontal size={15} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="stack compact flex flex-col gap-2.5 w-full">
-                {flows.map((flow) => (
-                  <Link
-                    className="row-card draft-link flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 min-w-0 w-full hover:no-underline"
-                    key={flow.id}
-                    to={`/applications/${projectId}/intent/flows/${flow.id}`}
-                    aria-label={`${flow.status === "DRAFT" ? "Open and edit" : "View"} ${flow.name}`}
-                  >
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <strong className="truncate" title={flow.name}>
-                        {flow.name}
-                      </strong>
-                      <small className="break-words">
-                        {flow.status === "DRAFT"
-                          ? "Draft flow · Open to add states and transitions"
-                          : "Declared behavior · Open to view or reopen"}
-                      </small>
-                    </div>
-                    <div className="source-status shrink-0 flex items-center gap-2.5 self-start sm:self-auto flex-wrap sm:flex-nowrap">
-                      <Status>{flow.status}</Status>
-                      <span className="inline-flex items-center gap-1 text-xs text-neutral-400 whitespace-nowrap">
-                        <Pencil size={13} />{" "}
-                        {flow.status === "DRAFT"
-                          ? "Open and edit"
-                          : "View flow"}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
             </section>
+          ) : null}
+          {reviewedDrafts.length ? (
+            <details className="content-card flex flex-col gap-4 w-full overflow-hidden">
+              <summary className="card-heading flex items-center justify-between gap-3 min-w-0 cursor-default">
+                <div className="min-w-0 flex-1">
+                  <small>History</small>
+                  <h2 className="break-words">Reviewed drafts</h2>
+                </div>
+                <Status>{reviewedDrafts.length}</Status>
+              </summary>
+              <div className="stack compact flex flex-col gap-2.5 w-full mt-4">
+                {reviewedDrafts.map(renderDraftRow)}
+              </div>
+            </details>
+          ) : null}
+          {flowToDelete ? (
+            <DeleteFlowDialog
+              flow={flowToDelete}
+              busy={busy}
+              onCancel={() => setFlowToDelete(null)}
+              onConfirm={deleteFlow}
+            />
           ) : null}
           {!documents.length && !drafts.length && !flows.length && !importView ? (
             <EmptyState
@@ -5857,7 +6290,7 @@ export function IntentDetailPage() {
               </article>
             ))}
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-[#8e9192]">
+              <p className="text-xs text-(--text-muted)">
                 Tellann regenerates the journeys with your answers, and you
                 review the revised draft before anything is saved. Edits made
                 to journeys on this page are not carried into the revision.
@@ -5884,7 +6317,7 @@ export function IntentDetailPage() {
                 </button>
                 {revisionKind === "ANSWERS" && revisionStatus ? (
                   <small
-                    className="text-[#8e9192] font-mono text-[11px]"
+                    className="text-(--text-muted) font-mono text-[11px]"
                     role="status"
                   >
                     {revisionStatus}
@@ -5898,10 +6331,10 @@ export function IntentDetailPage() {
         <AccordionItem value="generation-details" className="my-4">
           <AccordionTrigger>
             <div className="flex flex-col text-left">
-              <strong className="text-white font-semibold">
+              <strong className="text-(--text-strong) font-semibold">
                 Documents and generation details
               </strong>
-              <small className="text-xs text-[#8e9192]">
+              <small className="text-xs text-(--text-muted)">
                 See the evidence and technical information used for this draft.
               </small>
             </div>
@@ -5961,7 +6394,7 @@ export function IntentDetailPage() {
           </div>
           <div>
             <textarea
-              className="w-full min-h-[96px] p-3 bg-black border border-[#262626] rounded text-white text-xs placeholder:text-[#555555] focus:outline-none focus:border-white transition-colors"
+              className="w-full min-h-[96px] p-3 bg-(--surface-0) border border-(--border) rounded text-(--text-strong) text-xs placeholder:text-(--text-subtle) focus:outline-none focus:border-(--accent) transition-colors"
               value={correction}
               disabled={Boolean(revisionJobId) || !pendingReview}
               onChange={(event) => setCorrection(event.target.value)}
@@ -5970,7 +6403,7 @@ export function IntentDetailPage() {
             <div className="flex items-center justify-between gap-3">
               {revisionKind !== "ANSWERS" && revisionStatus ? (
                 <small
-                  className="text-[#8e9192] font-mono text-[11px]"
+                  className="text-(--text-muted) font-mono text-[11px]"
                   role="status"
                 >
                   {revisionStatus}
@@ -6050,7 +6483,675 @@ export function IntentDetailPage() {
   );
 }
 
+type FlowMappingCandidateView = {
+  id: string;
+  entityId?: string | null;
+  file?: string | null;
+  path?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  placementKinds?: string[];
+  anchor?: string | null;
+  confidence?: number;
+  score?: number;
+  rationale?: string;
+  evidenceIds?: string[];
+  excerpt?: string | null;
+};
+
+type FlowMappingView = {
+  status?: string;
+  file?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  anchor?: string | null;
+  confidence?: number;
+  rationale?: string;
+  alternatives?: FlowMappingCandidateView[];
+  evidenceIds?: string[];
+  manualInstruction?: string;
+  userConfirmed?: boolean;
+  userOverrode?: boolean;
+};
+
+type FlowCheckpointView = {
+  id: string;
+  kind: string;
+  label?: string;
+  stateRole?: string | null;
+  terminalKind?: string | null;
+  mapping?: FlowMappingView;
+};
+
+const FLOW_MAPPING_STATUS_LABEL: Record<string, string> = {
+  RESOLVED: "Located",
+  AMBIGUOUS: "Needs a choice",
+  UNRESOLVED: "Not found",
+  UNSUPPORTED: "Cannot be placed here",
+};
+
+const FLOW_PROGRESS_LABEL: Record<string, string> = {
+  WAITING_FOR_ANALYSIS: "Waiting for your code to be analysed",
+  RETRIEVING: "Searching the analysed codebase",
+  CONTEXTUALIZING: "Reading the shortlisted files",
+  RESOLVING: "Pinpointing each checkpoint",
+  NEEDS_REVIEW: "Needs your review",
+  READY: "Ready",
+  FAILED: "Analysis failed",
+};
+
+function placementLabel(kind?: string | null): string {
+  if (!kind) return "";
+  return kind.toLowerCase().replaceAll("_", " ");
+}
+
+function confidenceLabel(value?: number | null): string | null {
+  return typeof value === "number" && value > 0
+    ? `${Math.round(value * 100)}% confidence`
+    : null;
+}
+
+function locationLabel(
+  file?: string | null,
+  symbol?: string | null,
+  startLine?: number | null,
+): string | null {
+  if (!file) return null;
+  return `${file}${startLine ? `:${startLine}` : ""}${symbol ? ` · ${symbol}` : ""}`;
+}
+
+/**
+ * What mapping is doing, while it does it.
+ *
+ * Each of these takes real time on a real repository — analysis can run for
+ * minutes, and the upload consent prompt sits inside the first one. A single
+ * unchanging line is indistinguishable from a hang, so the work is named, in
+ * order, with the current step called out and the ones already behind it
+ * marked done.
+ */
+const FLOW_MAPPING_STAGES = [
+  {
+    id: "WAITING_FOR_ANALYSIS",
+    title: "Reading your code",
+    detail:
+      "Checking the analysis still matches what is on disk, and analysing it again if not.",
+    slow: "On a large project this is the slow part.",
+  },
+  {
+    id: "RETRIEVING",
+    title: "Finding candidates",
+    detail:
+      "Searching the analysed codebase for the places each state and transition could live.",
+    slow: null,
+  },
+  {
+    id: "CONTEXTUALIZING",
+    title: "Reading the shortlist",
+    detail:
+      "Opening the files that matched, so the choice is made against your real code.",
+    slow: null,
+  },
+  {
+    id: "RESOLVING",
+    title: "Pinpointing placements",
+    detail: "Working out the exact place each checkpoint belongs.",
+    slow: null,
+  },
+] as const;
+
+function FlowMappingProgressPanel({
+  progress,
+  checkpointCount,
+  busy,
+  onRetry,
+}: {
+  progress: { status?: string; message?: string | null } | undefined;
+  checkpointCount: number;
+  busy?: boolean;
+  onRetry?: () => void;
+}) {
+  const status = String(progress?.status ?? "WAITING_FOR_ANALYSIS");
+  const failed = status === "FAILED";
+  const activeIndex = FLOW_MAPPING_STAGES.findIndex(
+    (stage) => stage.id === status,
+  );
+  // An unknown status is still forward motion, not a reason to show nothing.
+  const current = activeIndex < 0 ? 0 : activeIndex;
+
+  return (
+    <section
+      className="content-card flow-mapping-progress"
+      aria-busy={!failed}
+      aria-live="polite"
+    >
+      <div className="card-heading">
+        <div>
+          <small>Working</small>
+          <h2>Mapping this Flow to your code</h2>
+        </div>
+        {checkpointCount ? (
+          <Status>{checkpointCount} checkpoints</Status>
+        ) : null}
+      </div>
+
+      {failed ? (
+        <div className="context-banner mt-4!" role="alert">
+          <AlertTriangle size={15} />
+          {progress?.message || "Mapping could not be completed."}
+          {onRetry ? (
+            <button className="button" disabled={busy} onClick={onRetry}>
+              <RefreshCw size={15} />
+              Try again
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <ol className="flow-stage-list">
+            {FLOW_MAPPING_STAGES.map((stage, index) => {
+              const state =
+                index < current ? "done" : index === current ? "current" : "pending";
+              return (
+                <li key={stage.id} className="flow-stage" data-state={state}>
+                  <span className="flow-stage-marker" aria-hidden="true">
+                    {state === "done" ? <Check size={12} /> : null}
+                  </span>
+                  <div>
+                    <strong>{stage.title}</strong>
+                    <p className="muted">
+                      {state === "current" && progress?.message
+                        ? progress.message
+                        : stage.detail}
+                      {state === "current" && stage.slow ? ` ${stage.slow}` : ""}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+
+          {/* A hint of the shape the results will take, so the page reads as
+              filling in rather than as empty. */}
+          <div className="flow-skeleton" aria-hidden="true">
+            {[0, 1, 2].map((row) => (
+              <div className="flow-skeleton-row" key={row}>
+                <span className="flow-skeleton-bar" data-width="title" />
+                <span className="flow-skeleton-bar" data-width="location" />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * One declared checkpoint and the place in the repository it maps to.
+ *
+ * A row is the whole decision: what was declared, where Tellann believes it
+ * lives, why, and — when the evidence supports more than one place — the ranked
+ * alternatives to choose between. Nothing here asks the user to go and find the
+ * location themselves; that was the failure this review replaces.
+ */
+function FlowMappingRow({
+  checkpoint,
+  pendingCandidateId,
+  onConfirm,
+  onReveal,
+}: {
+  checkpoint: FlowCheckpointView;
+  /** The candidate being confirmed for *this* checkpoint, if any. */
+  pendingCandidateId: string | null;
+  onConfirm(checkpointId: string, candidate: FlowMappingCandidateView): void;
+  onReveal(file: string, line?: number | null): void;
+}) {
+  const mapping = checkpoint.mapping ?? {};
+  const status = String(mapping.status ?? "UNRESOLVED");
+  const resolved = status === "RESOLVED";
+  const alternatives = mapping.alternatives ?? [];
+  const location = locationLabel(
+    mapping.file,
+    mapping.symbol,
+    mapping.startLine,
+  );
+  const confidence = confidenceLabel(mapping.confidence);
+  const [openCandidates, setOpenCandidates] = useState(false);
+
+  return (
+    <div className="flow-mapping-row" data-status={status}>
+      <div className="flow-mapping-row-head">
+        <div className="flow-mapping-row-title">
+          <strong>{checkpoint.label ?? checkpoint.id}</strong>
+          {checkpoint.stateRole && checkpoint.stateRole !== "NORMAL" ? (
+            <span className="muted">
+              {checkpoint.stateRole === "INITIAL" ? "start" : "finish"}
+            </span>
+          ) : null}
+        </div>
+        <Status>{FLOW_MAPPING_STATUS_LABEL[status] ?? status}</Status>
+      </div>
+      {location ? (
+        <div className="flow-mapping-location">
+          <code>{location}</code>
+          <div className="flow-mapping-location-meta">
+            {mapping.placementKind ? (
+              <span className="muted">
+                at {placementLabel(mapping.placementKind)}
+              </span>
+            ) : null}
+            {confidence ? <span className="muted">{confidence}</span> : null}
+            {mapping.userConfirmed ? (
+              <span className="muted">chosen by you</span>
+            ) : null}
+            <button
+              className="button subtle"
+              onClick={() => onReveal(mapping.file!, mapping.startLine)}
+            >
+              <FileSearch size={14} />
+              Show me where
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {mapping.rationale ? <p>{mapping.rationale}</p> : null}
+      {resolved ? null : (
+        <div className="flow-mapping-resolve">
+          <p className="muted">
+            {status === "AMBIGUOUS"
+              ? `The evidence points at ${alternatives.length} place${alternatives.length === 1 ? "" : "s"}. Pick the one where this happens.`
+              : status === "UNSUPPORTED"
+                ? "Tellann found this behaviour but cannot safely insert a line at that exact point. Choose another location, or add it yourself with manual initialization."
+                : "Tellann could not find where this happens in your analysed code. Choose a location below, or add it yourself with manual initialization."}
+          </p>
+          {alternatives.length ? (
+            <>
+              <button
+                className="button"
+                onClick={() => setOpenCandidates((open) => !open)}
+              >
+                <ChevronDown size={14} />
+                {openCandidates ? "Hide" : "Show"} {alternatives.length}{" "}
+                candidate{alternatives.length === 1 ? "" : "s"}
+              </button>
+              {openCandidates ? (
+                <ul className="flow-candidate-list">
+                  {alternatives.map((candidate) => {
+                    const file = candidate.file ?? candidate.path ?? "";
+                    const candidateConfidence = confidenceLabel(
+                      candidate.confidence ?? candidate.score,
+                    );
+                    const kinds = candidate.placementKind
+                      ? [candidate.placementKind]
+                      : (candidate.placementKinds ?? []);
+                    return (
+                      <li key={candidate.id}>
+                        <div className="flow-candidate-head">
+                          <code>
+                            {locationLabel(
+                              file,
+                              candidate.symbol,
+                              candidate.startLine,
+                            )}
+                          </code>
+                          {candidateConfidence ? (
+                            <span className="muted">
+                              {candidateConfidence}
+                            </span>
+                          ) : null}
+                        </div>
+                        {candidate.rationale ? (
+                          <p className="muted">{candidate.rationale}</p>
+                        ) : null}
+                        {/* The excerpt is what makes this a decision rather
+                            than a guess — show the code before confirming. */}
+                        {candidate.excerpt ? (
+                          <pre className="flow-candidate-excerpt">
+                            {candidate.excerpt.slice(0, 1200)}
+                          </pre>
+                        ) : null}
+                        <div className="flow-candidate-actions">
+                          {kinds.length ? (
+                            <span className="muted">
+                              {placementLabel(kinds[0])}
+                            </span>
+                          ) : null}
+                          {file ? (
+                            <button
+                              className="button subtle"
+                              onClick={() =>
+                                onReveal(file, candidate.startLine)
+                              }
+                            >
+                              <FileSearch size={14} />
+                              Open
+                            </button>
+                          ) : null}
+                          {/* Confirming one location locks only the siblings
+                              it competes with. Gating this on the shared
+                              desktop busy flag greyed out every candidate of
+                              every checkpoint at once, so one click read as
+                              the whole list going dead. */}
+                          <button
+                            className="button primary"
+                            disabled={
+                              pendingCandidateId !== null || !kinds.length
+                            }
+                            onClick={() => onConfirm(checkpoint.id, candidate)}
+                          >
+                            {pendingCandidateId === candidate.id ? (
+                              <>
+                                <RefreshCw size={14} className="spin" />
+                                Using this location…
+                              </>
+                            ) : (
+                              <>
+                                <Check size={14} />
+                                Use this location
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The evidence-grounded review of a published Flow against the analysed
+ * codebase.
+ *
+ * Reads the v2 report where there is one and falls back to the v1 summary for
+ * initializations recorded before evidence-grounded mapping existed, so an old
+ * record still opens instead of rendering blank.
+ */
+/**
+ * A candidate is worth offering as a bulk acceptance when the ranking is
+ * confident and there is daylight between it and the runner-up. Below that the
+ * choice is genuinely the reviewer's, and pre-selecting it would be asking them
+ * to rubber-stamp a guess.
+ */
+const BULK_ACCEPT_MIN_CONFIDENCE = 0.6;
+const BULK_ACCEPT_MIN_MARGIN = 0.08;
+
+function bulkAcceptable(checkpoints: FlowCheckpointView[]) {
+  const accepted: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }> = [];
+  for (const checkpoint of checkpoints) {
+    const mapping = (checkpoint as any).mapping;
+    if (!mapping || mapping.status === "RESOLVED") continue;
+    const alternatives = (mapping.alternatives ?? []) as FlowMappingCandidateView[];
+    const [best, runnerUp] = alternatives;
+    if (!best) continue;
+    const confidence = Number((best as any).confidence ?? 0);
+    const margin = confidence - Number((runnerUp as any)?.confidence ?? 0);
+    if (confidence < BULK_ACCEPT_MIN_CONFIDENCE) continue;
+    if (runnerUp && margin < BULK_ACCEPT_MIN_MARGIN) continue;
+    accepted.push({ checkpointId: String(checkpoint.id), candidate: best });
+  }
+  return accepted;
+}
+
 function FlowReviewPanel({
+  initialization,
+  onReanalyze,
+  onConfirmMapping,
+  onConfirmMappings,
+  onRetryResolution,
+  onRevealEvidence,
+  pendingMappings,
+  bulkConfirming,
+  busy,
+}: {
+  initialization: FlowInitialization;
+  onReanalyze?: () => void;
+  onConfirmMapping?(
+    checkpointId: string,
+    candidate: FlowMappingCandidateView,
+  ): void;
+  onConfirmMappings?(
+    entries: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }>,
+  ): void;
+  onRetryResolution?(): void;
+  onRevealEvidence?(file: string, line?: number | null): void;
+  /** Checkpoint id -> the candidate id currently being confirmed for it. */
+  pendingMappings?: Record<string, string>;
+  bulkConfirming?: boolean;
+  busy?: boolean;
+}) {
+  const report = initialization.codeReviewReport as any;
+  if (!report) return <LoadingState />;
+  if (report.version !== "2.0") {
+    // While mapping is still running, the only report on record is the
+    // filename-matched fallback. Showing its "0/22 states mapped" next to a
+    // banner saying the real analysis is in progress states a result that has
+    // not been reached yet — and 0/N is the exact thing evidence-grounded
+    // mapping exists to stop saying. The banner speaks for this state instead.
+    const mappingStatus = String(
+      (initialization as any).scan?.mappingStatus ?? "",
+    );
+    const mappingPending =
+      initialization.stage === "SCANNING" ||
+      [
+        "WAITING_FOR_ANALYSIS",
+        "RETRIEVING",
+        "CONTEXTUALIZING",
+        "RESOLVING",
+      ].includes(mappingStatus);
+    if (mappingPending) {
+      return (
+        <FlowMappingProgressPanel
+          progress={(initialization as any).scan?.mappingProgress}
+          checkpointCount={
+            ((initialization.manifest as any)?.checkpoints ?? []).length
+          }
+          busy={busy}
+          onRetry={onReanalyze}
+        />
+      );
+    }
+    return (
+      <LegacyFlowReviewPanel
+        initialization={initialization}
+        onReanalyze={onReanalyze}
+        busy={busy}
+      />
+    );
+  }
+
+  const checkpoints = ((initialization.manifest as any)?.checkpoints ??
+    []) as FlowCheckpointView[];
+  const states = checkpoints.filter((item) => item.kind === "STATE");
+  const transitions = checkpoints.filter((item) => item.kind === "TRANSITION");
+  const progress = report.progress ?? {};
+  const analysis = report.analysis ?? {};
+  const ai = report.ai ?? {};
+  const remaining = Number(progress.unresolvedCount ?? 0);
+  const staged = !["READY", "NEEDS_REVIEW"].includes(
+    String(progress.status ?? ""),
+  );
+
+  const groups: Array<[string, FlowCheckpointView[]]> = [
+    ["States", states],
+    ["Transitions", transitions],
+  ];
+  const acceptable = onConfirmMappings ? bulkAcceptable(checkpoints) : [];
+  // A run where every call failed and a run where the model considered each
+  // checkpoint and was unsure both end as "choose one yourself". They ask
+  // completely different things of the reader, so they no longer look alike.
+  const resolutionFailed = Boolean(ai.failed);
+
+  return (
+    <section className="content-card flow-review-panel">
+      <div className="card-heading">
+        <div>
+          <small>Code review</small>
+          <h2>Where this Flow lives in your code</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <Status>
+            {ai.attempted && ai.provider
+              ? `${String(ai.provider).toLowerCase()} + analysis`
+              : "analysis only"}
+          </Status>
+          {onReanalyze ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={onReanalyze}
+              title="Analyse the project again and rebuild these locations"
+            >
+              <RefreshCw size={15} />
+              Re-run analysis
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Freshness first: a location is only as trustworthy as the analysis it
+          came from, so say which commit it describes before showing any of it. */}
+      <dl className="detail-list flow-analysis-identity">
+        <div>
+          <dt>Analysed</dt>
+          <dd>
+            {analysis.branch ?? "this folder"}
+            {analysis.revision
+              ? ` · ${String(analysis.revision).slice(0, 8)}`
+              : ""}
+            {analysis.dirty ? " · uncommitted changes" : ""}
+          </dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>
+            {analysis.mode === "CLOUD_APPROVED"
+              ? "Uploaded for analysis"
+              : "Stayed on this device"}
+          </dd>
+        </div>
+        <div>
+          <dt>Checkpoints located</dt>
+          <dd>
+            {Number(progress.resolvedCount ?? 0)}/
+            {Number(progress.totalCheckpoints ?? checkpoints.length)}
+          </dd>
+        </div>
+      </dl>
+
+      {staged ? (
+        <div className="context-banner mt-4!">
+          <Activity size={15} />
+          {FLOW_PROGRESS_LABEL[String(progress.status)] ??
+            "Working through your code…"}
+        </div>
+      ) : null}
+
+      <p className="flow-review-findings-note">
+        {remaining
+          ? `${remaining} of ${Number(progress.totalCheckpoints ?? checkpoints.length)} checkpoints still need a location. Choose one for each, or use manual initialization and place them yourself.`
+          : "Every declared state and transition has a location in your code."}
+      </p>
+
+      {resolutionFailed ? (
+        <div className="infobar" data-tone="warning" role="status">
+          <TriangleAlert size={16} />
+          <span>
+            {Number(ai.batchesFailed ?? 0) === Number(ai.batches ?? 0)
+              ? "Automatic placement could not be completed"
+              : `Automatic placement finished for some checkpoints but not others (${Number(ai.batchesFailed ?? 0)} of ${Number(ai.batches ?? 0)} batches failed)`}
+            {ai.failureReasonSafe ? ` — ${String(ai.failureReasonSafe)}.` : "."} The
+            evidence below was still gathered, so you can retry the placement or
+            choose the locations yourself.
+          </span>
+          {onRetryResolution ? (
+            <button className="button" type="button" disabled={busy} onClick={onRetryResolution}>
+              <RefreshCw size={15} />
+              Retry placement
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {ai.consentMode === "GRAPH_ONLY" && ai.attempted === false ? (
+        <p className="muted">
+          These locations come from the codebase analysis alone — no source was
+          sent to an AI provider. They are still evidence-backed; the ranking is
+          just less specific about exactly which line to use.
+        </p>
+      ) : null}
+
+      {acceptable.length > 1 ? (
+        <div className="flow-review-bulk">
+          <button
+            className="button"
+            type="button"
+            disabled={busy || bulkConfirming}
+            onClick={() => onConfirmMappings?.(acceptable)}
+          >
+            {bulkConfirming
+              ? "Accepting…"
+              : `Accept ${acceptable.length} high-confidence locations`}
+          </button>
+          <span className="muted">
+            Only where one candidate clearly leads the ranking. Everything else
+            stays for you to decide.
+          </span>
+        </div>
+      ) : null}
+
+      {groups.map(([title, items]) =>
+        items.length ? (
+          <div className="flow-mapping-group" key={title}>
+            <h3>{title}</h3>
+            {items.map((checkpoint) => (
+              <FlowMappingRow
+                key={checkpoint.id}
+                checkpoint={checkpoint}
+                pendingCandidateId={pendingMappings?.[checkpoint.id] ?? null}
+                onConfirm={(checkpointId, candidate) =>
+                  onConfirmMapping?.(checkpointId, candidate)
+                }
+                onReveal={(file, line) => onRevealEvidence?.(file, line)}
+              />
+            ))}
+          </div>
+        ) : null,
+      )}
+
+      {report.edgeCases?.length ? (
+        <AccordionItem value="flow-review-edge-cases">
+          <AccordionTrigger>
+            Problems with the declared Flow itself ({report.edgeCases.length})
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="stack">
+              {report.edgeCases.map((item: any, index: number) => (
+                <div className="muted-callout" key={`${item.code}-${index}`}>
+                  <strong>{formatEnum(String(item.code))}</strong>
+                  {item.explanation ? <p>{String(item.explanation)}</p> : null}
+                </div>
+              ))}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      ) : null}
+    </section>
+  );
+}
+
+/** The pre-evidence review, kept so initializations recorded before v2 still open. */
+function LegacyFlowReviewPanel({
   initialization,
   onReanalyze,
   busy,
@@ -6059,14 +7160,7 @@ function FlowReviewPanel({
   onReanalyze?: () => void;
   busy?: boolean;
 }) {
-  const report = initialization.codeReviewReport;
-  if (!report) return <LoadingState />;
-  const groups = [
-    ["Missing states", report.missingStates],
-    ["Incomplete transitions", report.incompleteTransitions],
-    ["Edge cases", report.edgeCases],
-    ["Terminal outcomes", report.uncoveredTerminalOutcomes],
-  ] as const;
+  const report = initialization.codeReviewReport as any;
   return (
     <section className="content-card flow-review-panel">
       <div className="card-heading">
@@ -6075,21 +7169,16 @@ function FlowReviewPanel({
           <h2>Declared intent against the repository</h2>
         </div>
         <div className="flex items-center gap-2">
-          <Status>{report.engine.replace("_", " ")}</Status>
+          <Status>recorded before evidence mapping</Status>
           {onReanalyze ? (
-            <button
-              className="button"
-              disabled={busy}
-              onClick={onReanalyze}
-              title="Regenerate this review — useful if it was produced by an older version of Tellann"
-            >
+            <button className="button" disabled={busy} onClick={onReanalyze}>
               <RefreshCw size={15} />
               Re-run analysis
             </button>
           ) : null}
         </div>
       </div>
-      <div className="flow-review-metrics">
+      <div className="metric-grid">
         <Metric
           label="States mapped"
           value={`${report.summary.mappedStates}/${report.summary.totalStates}`}
@@ -6098,86 +7187,11 @@ function FlowReviewPanel({
           label="Transitions mapped"
           value={`${report.summary.mappedTransitions}/${report.summary.totalTransitions}`}
         />
-        <Metric
-          label="Terminals"
-          value={String(initialization.manifest?.terminalStateIds.length ?? 0)}
-        />
       </div>
-      <div className="flow-review-findings">
-        {groups.map(([title, findings]) => (
-          <article key={title}>
-            <strong>{title}</strong>
-            <span>{findings.length}</span>
-            <p>
-              {findings.length
-                ? "Review the evidence before choosing an initialization path."
-                : "No blocking finding detected."}
-            </p>
-          </article>
-        ))}
-      </div>
-      <AccordionItem value="flow-review-evidence">
-        <AccordionTrigger>Review evidence and recommendations</AccordionTrigger>
-        <AccordionContent>
-          <div className="stack">
-            {report.recommendations.length ? (
-              report.recommendations.map((item: any, index: number) => {
-                const confidencePct =
-                  typeof item.mapping?.confidence === "number"
-                    ? Math.round(item.mapping.confidence * 100)
-                    : null;
-                const hasFileMapping = Boolean(item.mapping?.file);
-                return (
-                  <div
-                    className="muted-callout"
-                    key={`${item.checkpointId ?? "recommendation"}-${index}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>
-                        {String(item.label ?? item.action ?? "Review mapping")}
-                      </strong>
-                      {item.priority ? (
-                        <Status>{String(item.priority)}</Status>
-                      ) : null}
-                    </div>
-                    <p>
-                      {String(
-                        item.detail ??
-                          item.action ??
-                          "Review this declared checkpoint against the repository.",
-                      )}
-                    </p>
-                    {hasFileMapping ? (
-                      <code>
-                        {String(item.mapping.file)}
-                        {item.mapping.symbol ? ` · ${item.mapping.symbol}` : ""}
-                        {confidencePct !== null
-                          ? ` · ${confidencePct}% confidence`
-                          : ""}
-                      </code>
-                    ) : (
-                      <p className="muted">
-                        {String(
-                          item.mapping?.rationale ??
-                            "No confident file mapping was found.",
-                        )}{" "}
-                        Use manual initialization to add this checkpoint at the
-                        correct location yourself, or add more repository
-                        evidence (routes, endpoints, or components) and re-run
-                        analysis.
-                      </p>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <p className="muted">
-                No remediation is required by the static review.
-              </p>
-            )}
-          </div>
-        </AccordionContent>
-      </AccordionItem>
+      <p className="flow-review-findings-note">
+        This review predates evidence-grounded mapping. Re-run the analysis to
+        get exact file locations for every checkpoint.
+      </p>
     </section>
   );
 }
@@ -6221,6 +7235,7 @@ function FlowRoadmap({
   onToggle,
   onVerify,
   onRebuild,
+  onRevealEvidence,
 }: {
   roadmap: ManualRoadmap;
   manifest?: {
@@ -6233,6 +7248,8 @@ function FlowRoadmap({
   onToggle(stepId: string, completed: boolean): void;
   onVerify(): void;
   onRebuild?: () => void;
+  /** Opens a step's location in the editor; absent when no folder is attached. */
+  onRevealEvidence?: (file: string, line?: number | null) => void;
 }) {
   const stepById = useMemo(
     () => new Map(roadmap.steps.map((step) => [step.id, step] as const)),
@@ -6402,10 +7419,42 @@ function FlowRoadmap({
         <div className="flow-graph-panel-row">
           <small>Where to add it</small>
           {step.file ? (
-            <code>
-              {step.file}
-              {step.symbol ? ` · ${step.symbol}` : ""}
-            </code>
+            <>
+              <code>
+                {step.file}
+                {step.startLine ? `:${step.startLine}` : ""}
+                {step.symbol ? ` · ${step.symbol}` : ""}
+              </code>
+              {/* Manual placement gets the same evidence the automated path
+                  would have acted on: where, at what kind of point, why, and
+                  how sure — not just a filename. */}
+              <div className="flow-mapping-location-meta">
+                {step.placementKind ? (
+                  <span className="muted">
+                    at {placementLabel(step.placementKind)}
+                  </span>
+                ) : null}
+                {confidenceLabel(step.confidence) ? (
+                  <span className="muted">
+                    {confidenceLabel(step.confidence)}
+                  </span>
+                ) : null}
+                {onRevealEvidence ? (
+                  <button
+                    className="button subtle"
+                    onClick={() =>
+                      onRevealEvidence(step.file!, step.startLine)
+                    }
+                  >
+                    <FileSearch size={14} />
+                    Show me where
+                  </button>
+                ) : null}
+              </div>
+              {step.rationale ? (
+                <p className="muted">{step.rationale}</p>
+              ) : null}
+            </>
           ) : (
             <span className="muted">
               Tellann could not pinpoint this. Add the line wherever this
@@ -6413,6 +7462,32 @@ function FlowRoadmap({
             </span>
           )}
         </div>
+        {step.alternatives?.length ? (
+          <div className="flow-graph-panel-row">
+            <small>Other places it could go</small>
+            <ul className="flow-candidate-list">
+              {step.alternatives.slice(0, 4).map((candidate) => (
+                <li key={candidate.id}>
+                  <div className="flow-candidate-head">
+                    <code>
+                      {candidate.file}
+                      {candidate.startLine ? `:${candidate.startLine}` : ""}
+                      {candidate.symbol ? ` · ${candidate.symbol}` : ""}
+                    </code>
+                    {confidenceLabel(candidate.confidence) ? (
+                      <span className="muted">
+                        {confidenceLabel(candidate.confidence)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {candidate.rationale ? (
+                    <p className="muted">{candidate.rationale}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {step.snippet ? (
           <div className="flow-graph-panel-row">
             <CopyableCodeBlock
@@ -6917,7 +7992,7 @@ function CopyableCodeBlock({
             color: copied ? "#4ade80" : undefined,
             borderColor: copied ? "#22c55e" : undefined,
             transition: "all 0.15s ease",
-            cursor: "pointer",
+            cursor: "default",
           }}
           title="Copy code to clipboard"
         >
@@ -7123,13 +8198,19 @@ export function InstrumentationPage() {
     listInstrumentationPlans,
     approveInstrumentation,
     applyInstrumentation,
+    getDeclaredFlows,
     initializeFlow,
     getFlowInitialization,
+    getFlowInitializationProgress,
     analyzeFlowInitialization,
+    retryFlowMappingResolution,
     setFlowInitializationMode,
     updateFlowRoadmapStep,
     verifyFlowCheckpointsInCode,
     getFlowVerification,
+    confirmFlowMapping,
+    confirmFlowMappings,
+    openCodebaseEvidence,
   } = useProject();
   const navigate = useNavigate();
   const branchConfirmation = useOffQaBranchConfirmation(projectId);
@@ -7203,14 +8284,226 @@ export function InstrumentationPage() {
     );
   }, [initializationId, refreshFlowInitialization]);
 
+  // While mapping runs, poll the progress endpoint rather than the record.
+  //
+  // The initialization carries the manifest, the report, the roadmap, every
+  // mapping and every alternative — megabytes on a real Flow — and none of it
+  // changes until mapping finishes. Re-reading all of it every two seconds to
+  // watch a stage field made the waiting itself expensive. The full record is
+  // fetched once, when the stage it is waiting for actually arrives.
   useEffect(() => {
-    if (flowInitialization?.stage !== "SCANNING") return;
-    const timer = window.setInterval(
-      () => void refreshFlowInitialization().catch(() => undefined),
-      document.hidden ? 10_000 : 2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [flowInitialization?.stage, refreshFlowInitialization]);
+    if (flowInitialization?.stage !== "SCANNING" || !initializationId) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getFlowInitializationProgress(initializationId)
+        .then((update) => {
+          if (cancelled || !update) return;
+          const status = String((update as any).mappingStatus ?? "");
+          const stage = String((update as any).stage ?? "");
+          if (stage !== "SCANNING" || ["READY", "NEEDS_REVIEW", "FAILED", "SHADOW"].includes(status)) {
+            void refreshFlowInitialization().catch(() => undefined);
+            return;
+          }
+          // Keep the banner's counts moving without refetching the record.
+          setFlowInitialization((current) => current && ({
+            ...current,
+            scan: { ...(current as any).scan, mappingStatus: status, mappingProgress: (update as any).progress },
+          }) as FlowInitialization);
+        })
+        .catch(() => undefined);
+    }, document.hidden ? 10_000 : 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [flowInitialization?.stage, getFlowInitializationProgress, initializationId, refreshFlowInitialization]);
+
+  // Which candidate is being confirmed, per checkpoint. Confirming is one IPC
+  // call behind the shared desktop `busy` flag, so driving the buttons off that
+  // flag disabled every checkpoint's candidates at once — the whole list looked
+  // broken because one of its buttons was working. Only the checkpoint being
+  // confirmed belongs in a pending state.
+  const [pendingMappings, setPendingMappings] = useState<
+    Record<string, string>
+  >({});
+
+  // Each confirm replies with a rebuilt snapshot of the entire initialization,
+  // so two in flight together would race and the slower reply would drop the
+  // faster one's checkpoint. Rather than blocking the other buttons to prevent
+  // that, the requests queue: every button stays live, and they go out in the
+  // order they were clicked.
+  const confirmQueue = useRef<Promise<unknown>>(Promise.resolve());
+
+  // Choosing a location for an ambiguous checkpoint. The server recomputes the
+  // anchor hash from the candidate the user picked, so the reply already
+  // carries the rebuilt manifest, report and roadmap.
+  /**
+   * Fold a confirmation's reply into the record already on screen.
+   *
+   * Confirming used to answer with a rebuilt manifest, report and roadmap — and
+   * with fifty checkpoints to work through, that is fifty full rebuilds sent to
+   * a client that was only ever going to change one checkpoint of each. The
+   * reply now carries the checkpoints that moved and the counts that decide
+   * whether the review is finished.
+   */
+  const applyMappingDelta = useCallback((delta: Record<string, any>) => {
+    setFlowInitialization((current) => {
+      if (!current) return current;
+      const moved = new Map<string, any>((delta.checkpoints ?? []).map((item: any) => [String(item.id), item]));
+      const manifest = (current as any).manifest;
+      const report = (current.codeReviewReport ?? {}) as any;
+      return {
+        ...current,
+        stage: delta.stage ?? current.stage,
+        mappingVersion: delta.mappingVersion ?? (current as any).mappingVersion,
+        roadmapRevision: delta.roadmapRevision ?? (current as any).roadmapRevision,
+        failureReasonSafe: delta.failureReasonSafe ?? null,
+        manifest: manifest
+          ? {
+              ...manifest,
+              checkpoints: (manifest.checkpoints ?? []).map((item: any) => moved.get(String(item.id)) ?? item),
+            }
+          : manifest,
+        codeReviewReport: {
+          ...report,
+          progress: delta.progress ?? report.progress,
+          summary: delta.summary ?? report.summary,
+        },
+        scan: {
+          ...(current as any).scan,
+          mappingStatus: delta.progress?.status ?? (current as any).scan?.mappingStatus,
+          mappingProgress: delta.progress ?? (current as any).scan?.mappingProgress,
+        },
+      } as FlowInitialization;
+    });
+  }, []);
+
+  const confirmMapping = useCallback(
+    (checkpointId: string, candidate: FlowMappingCandidateView) => {
+      if (!initializationId) return;
+      setPendingMappings((current) => ({
+        ...current,
+        [checkpointId]: candidate.id,
+      }));
+      const settled = confirmQueue.current.then(async () => {
+        setFlowLoadError(null);
+        try {
+          applyMappingDelta(await confirmFlowMapping(
+            initializationId,
+            checkpointId,
+            candidate.id,
+            candidate.placementKind ?? candidate.placementKinds?.[0],
+            candidate.anchor ?? candidate.symbol ?? undefined,
+          ));
+        } catch (cause) {
+          setFlowLoadError(normalizeDesktopError(cause));
+        } finally {
+          // Leave a newer choice for the same checkpoint pending.
+          setPendingMappings((current) => {
+            if (current[checkpointId] !== candidate.id) return current;
+            const { [checkpointId]: _done, ...rest } = current;
+            return rest;
+          });
+        }
+      });
+      confirmQueue.current = settled.catch(() => undefined);
+    },
+    [applyMappingDelta, confirmFlowMapping, initializationId],
+  );
+
+  const [bulkConfirming, setBulkConfirming] = useState(false);
+
+  /**
+   * Accept a page of candidates in one request.
+   *
+   * Rebuilding the manifest, report and roadmap costs the same for forty
+   * confirmations as for one, and a reviewer who agrees with the ranking should
+   * not have to spend forty round trips saying so.
+   */
+  const confirmMappingsInBulk = useCallback(
+    (
+      entries: Array<{ checkpointId: string; candidate: FlowMappingCandidateView }>,
+    ) => {
+      if (!initializationId || !entries.length) return;
+      setBulkConfirming(true);
+      const settled = confirmQueue.current.then(async () => {
+        setFlowLoadError(null);
+        try {
+          applyMappingDelta(await confirmFlowMappings(
+            initializationId,
+            entries.map(({ checkpointId, candidate }) => ({
+              checkpointId,
+              candidateId: candidate.id,
+              placementKind: candidate.placementKind ?? candidate.placementKinds?.[0],
+              anchorText: candidate.anchor ?? candidate.symbol ?? undefined,
+            })),
+          ));
+        } catch (cause) {
+          setFlowLoadError(normalizeDesktopError(cause));
+        } finally {
+          setBulkConfirming(false);
+        }
+      });
+      confirmQueue.current = settled.catch(() => undefined);
+    },
+    [applyMappingDelta, confirmFlowMappings, initializationId],
+  );
+
+  /**
+   * Ask the resolver again, without re-running anything behind it.
+   *
+   * A provider timeout says nothing about the shortlist it was given, and that
+   * shortlist is still on the scan — so re-analysing the repository to recover
+   * from one would repeat minutes of work that was not wrong.
+   */
+  const retryResolution = useCallback(() => {
+    if (!initializationId) return;
+    setFlowLoadError(null);
+    void retryFlowMappingResolution(initializationId)
+      .then(() => refreshFlowInitialization())
+      .catch((cause) => setFlowLoadError(normalizeDesktopError(cause)));
+  }, [initializationId, refreshFlowInitialization, retryFlowMappingResolution]);
+
+  const revealEvidence = useCallback(
+    (file: string, line?: number | null) => {
+      if (!projectId) return;
+      void openCodebaseEvidence({
+        applicationId: projectId,
+        path: file,
+        ...(line ? { line } : {}),
+      }).then((result) => {
+        if (!result?.opened) {
+          setFlowLoadError(
+            result?.reason === "FILE_NOT_FOUND"
+              ? `${file} is no longer in the attached project. Re-run the analysis.`
+              : "That file could not be opened from the attached project.",
+          );
+        }
+      });
+    },
+    [openCodebaseEvidence, projectId],
+  );
+
+  // Once the SDK is connected the next step is a specific Flow, so the connected
+  // card needs to know which published Flow is still waiting to be initialized.
+  // Only relevant when no Flow is already in the URL.
+  const [initializableFlows, setInitializableFlows] = useState<
+    DeclaredFlowSummary[]
+  >([]);
+  useEffect(() => {
+    if (!projectId || flowId) return;
+    let cancelled = false;
+    void getDeclaredFlows(projectId)
+      .then((items) => {
+        if (!cancelled) setInitializableFlows(items);
+      })
+      .catch(() => {
+        if (!cancelled) setInitializableFlows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [getDeclaredFlows, projectId, flowId]);
 
   const setupConnected = Boolean((manualSetup?.readiness as any)?.connected);
   useEffect(() => {
@@ -7281,8 +8574,12 @@ export function InstrumentationPage() {
     });
     setDetections(result.detections);
     const supported = result.detections.filter((item) => item.supported);
+    // A frontend adapter is preselected when there is one, because the browser
+    // half is where a user's first session comes from. The list is the same one
+    // the instrumenters use, so a newly supported framework is preselected here
+    // without a second place to remember to update.
     const frontend = supported.find((item) =>
-      ["react-vite", "nextjs"].includes(item.adapterId),
+      FRONTEND_ADAPTER_IDS.includes(item.adapterId),
     );
     setSelectedAdapters(
       frontend
@@ -7402,6 +8699,9 @@ export function InstrumentationPage() {
       environmentType: environment.type,
       adapterId,
       instrumentationPurpose,
+      // A Flow's checkpoints are split across whichever packages are being
+      // instrumented together, so each adapter has to know the whole set.
+      selectedAdapterIds: selectedAdapters,
       ...flowContext,
     });
   };
@@ -7511,9 +8811,20 @@ export function InstrumentationPage() {
   const adapterLabels: Record<string, string> = {
     "react-vite": "React (Vite)",
     nextjs: "Next.js",
+    sveltekit: "SvelteKit",
+    nuxt: "Nuxt",
+    astro: "Astro",
+    remix: "Remix",
+    angular: "Angular",
     express: "Express",
     fastify: "Fastify",
     nestjs: "NestJS",
+    koa: "Koa",
+    hapi: "hapi",
+    django: "Django",
+    flask: "Flask",
+    fastapi: "FastAPI",
+    starlette: "Starlette",
   };
   const adapterLabel = (adapterId: unknown) =>
     adapterLabels[String(adapterId)] ?? String(adapterId);
@@ -7531,9 +8842,31 @@ export function InstrumentationPage() {
   // to wait for.
   const setupResolved = setupChecked || !environmentId;
   const checkingSetup = !setupResolved && !initializationId;
+  const flowToInitialize = nextFlowToInitialize(initializableFlows);
+  // Re-entering this page with the Flow's context is what unlocks the analysis
+  // step below; Intent is only the right destination when nothing is published.
+  const initializeFlowHref =
+    flowInitializationHref(projectId, flowToInitialize, environmentId) ??
+    `/applications/${projectId}/intent`;
   const flowAutomated = Boolean(
     flowId && flowInitialization?.mode === "AUTOMATED",
   );
+  // Automated initialization is atomic across every declared checkpoint, so a
+  // single unplaced one blocks it — and so does a review that predates
+  // evidence-grounded mapping, because it has no placements at all. Treating
+  // that older shape as "nothing unresolved" enabled the button and turned a
+  // knowable precondition into ALL_FLOW_CHECKPOINT_MAPPINGS_REQUIRED from the
+  // server, which tells the user nothing they can act on.
+  const automatedBlocker = (() => {
+    const report = flowInitialization?.codeReviewReport as any;
+    if (!report) return "This Flow has not been reviewed against your code yet.";
+    if (report.version !== "2.0") {
+      return "Re-run the analysis to locate every checkpoint before Tellann can add them for you.";
+    }
+    const remaining = Number(report.summary?.unresolvedCount ?? 0);
+    if (!remaining) return null;
+    return `${remaining} checkpoint${remaining === 1 ? "" : "s"} still need${remaining === 1 ? "s" : ""} a location above.`;
+  })();
   const multipleEnvironments = application.environments.length > 1;
   const toggleManualSetup = () => setManualSetupOpen((current) => !current);
   const manualSetupLabel = manualSetupOpen
@@ -7679,7 +9012,7 @@ export function InstrumentationPage() {
             // proposal once a mode is picked.
             onReanalyze={
               initializationId &&
-              flowInitialization.stage === "REVIEW_READY" &&
+              ["REVIEW_READY", "SCANNING"].includes(flowInitialization.stage) &&
               !flowInitialization.mode
                 ? () =>
                     void analyzeFlowInitialization(initializationId).then(
@@ -7687,6 +9020,14 @@ export function InstrumentationPage() {
                     )
                 : undefined
             }
+            onConfirmMapping={confirmMapping}
+            onConfirmMappings={confirmMappingsInBulk}
+            onRetryResolution={
+              initializationId && !flowInitialization.mode ? retryResolution : undefined
+            }
+            onRevealEvidence={revealEvidence}
+            pendingMappings={pendingMappings}
+            bulkConfirming={bulkConfirming}
           />
           {!flowInitialization.mode &&
           flowInitialization.stage === "REVIEW_READY" ? (
@@ -7731,21 +9072,23 @@ export function InstrumentationPage() {
                   </p>
                   <button
                     className={`button${instrumentationEntitled ? " primary" : ""}`}
-                    disabled={busy || !instrumentationEntitled}
+                    disabled={
+                      busy || !instrumentationEntitled || Boolean(automatedBlocker)
+                    }
                     onClick={() => void chooseInitializationMode("AUTOMATED")}
                   >
                     <Sparkles size={15} />
                     Prepare the change
                   </button>
+                  {/* Automated initialization writes every declared checkpoint
+                      at once, so it cannot start until each one has a location.
+                      Say what is missing, not just no. */}
+                  {automatedBlocker ? (
+                    <p className="muted mt-2">{automatedBlocker}</p>
+                  ) : null}
                 </article>
               </div>
             </section>
-          ) : null}
-          {flowInitialization.stage === "SCANNING" ? (
-            <div className="context-banner">
-              <Activity size={15} />
-              Tellann is reviewing your code for this Flow…
-            </div>
           ) : null}
           {flowAutomated &&
           instrumentationPurpose === "FLOW" &&
@@ -7810,6 +9153,7 @@ export function InstrumentationPage() {
                       )
                   : undefined
               }
+              onRevealEvidence={workspace ? revealEvidence : undefined}
             />
           ) : null}
           {flowInitialization.stage === "COMPLETED" ? (
@@ -7837,16 +9181,15 @@ export function InstrumentationPage() {
             <span className="step-label">Tellann SDK · Connected</span>
             <h2>Tellann is connected to this project</h2>
             <p>
-              {environment?.name ?? "This environment"} is sending events. Next,
-              initialize a Flow so Tellann knows which journey to check.
+              {environment?.name ?? "This environment"} is sending events.{" "}
+              {flowToInitialize
+                ? `Next, initialize “${flowToInitialize.name}” so Tellann knows which journey to check.`
+                : "Next, declare and publish a Flow so Tellann knows which journey to check."}
             </p>
             <div className="card-actions">
-              <Link
-                className="button primary"
-                to={`/applications/${projectId}/intent`}
-              >
+              <Link className="button primary" to={initializeFlowHref}>
                 <Workflow size={15} />
-                Initialize a Flow
+                {flowToInitialize ? "Initialize a Flow" : "Declare a Flow"}
               </Link>
               <button className="button" onClick={toggleManualSetup}>
                 <Code2 size={15} />
@@ -8472,13 +9815,26 @@ export function InstrumentationDetailPage() {
   // null = not yet checked. A Flow only counts once it is published AND has an
   // active, completed initialization in this project — the same bar NewRunPage
   // enforces before a run can start.
-  const [hasInitializedFlow, setHasInitializedFlow] = useState<boolean | null>(
-    null,
-  );
+  const [declaredFlows, setDeclaredFlows] = useState<
+    DeclaredFlowSummary[] | null
+  >(null);
+  const hasInitializedFlow =
+    declaredFlows === null ? null : declaredFlows.some(isFlowReadyToRun);
   const plan = record?.planJson as InstrumentationPlan | undefined;
   const environment = application?.environments.find(
     (item) => item.id === record?.environmentId,
   );
+  // Initialize into the environment this task instrumented, unless that is
+  // production — initialization is rejected there.
+  const flowToInitialize = nextFlowToInitialize(declaredFlows ?? []);
+  const initializeFlowHref =
+    flowInitializationHref(
+      projectId,
+      flowToInitialize,
+      environment && environment.type !== "PRODUCTION"
+        ? environment.id
+        : nonProductionEnvironmentId(application),
+    ) ?? `/applications/${projectId}/intent`;
   const installRequired =
     plan?.validationCommands.some((command) => command.id === "install-sdk") ??
     false;
@@ -8560,7 +9916,13 @@ export function InstrumentationDetailPage() {
         setCommands((current) =>
           current.length
             ? current
-            : nextPlan.validationCommands.map((item) => item.id),
+            : nextPlan.validationCommands
+                // An optional command is offered in the list and left unticked:
+                // a full production build to check a few inserted calls is the
+                // longest step in initialization, and the type check beside it
+                // asks the same question in a fraction of the time.
+                .filter((item) => !(item as { optional?: boolean }).optional)
+                .map((item) => item.id),
         );
       }
       const local = await getLocalInstrumentationResult(
@@ -8648,11 +10010,10 @@ export function InstrumentationDetailPage() {
     let cancelled = false;
     void getDeclaredFlows(projectId)
       .then((items) => {
-        if (cancelled) return;
-        setHasInitializedFlow(items.some(isFlowReadyToRun));
+        if (!cancelled) setDeclaredFlows(items);
       })
       .catch(() => {
-        if (!cancelled) setHasInitializedFlow(false);
+        if (!cancelled) setDeclaredFlows([]);
       });
     return () => {
       cancelled = true;
@@ -8990,16 +10351,16 @@ export function InstrumentationDetailPage() {
         </section>
       ) : null}
       {validationSucceeded ? (
-        <section className="bg-[#131313] border border-[#262626] rounded-xs p-6 mb-6">
-          <h2 className="text-2xl font-semibold text-white tracking-tight mb-2">
+        <section className="bg-(--surface-1) border border-(--border) rounded-xs p-6 mb-6">
+          <h2 className="text-2xl font-semibold text-(--text-strong) tracking-tight mb-2">
             {buildFailure
               ? "Tellann is installed — every Tellann check passed"
               : "Tellann is installed and the project build passed"}
           </h2>
 
-          <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
-            <Check size={18} className="text-white shrink-0 mt-0.5" />
-            <span className="text-sm text-[#c4c7c8] leading-relaxed">
+          <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
+            <Check size={18} className="text-(--text-strong) shrink-0 mt-0.5" />
+            <span className="text-sm text-(--text) leading-relaxed">
               {buildFailure
                 ? "The reviewed files are in place and the SDK resolves correctly. Your application's own build reported pre-existing errors that do not reference Tellann, so they don't block this setup, the categorized diagnostics stay available under the technical validation evidence below."
                 : "The reviewed files are in place, the SDK resolves correctly, and the approved TypeScript/Vite build completed successfully."}
@@ -9007,7 +10368,7 @@ export function InstrumentationDetailPage() {
           </div>
 
           {buildWarning ? (
-            <p className="text-xs text-[#8e9192] bg-[#000000] border border-[#262626] p-3 mb-4 leading-relaxed">
+            <p className="text-xs text-(--text-muted) bg-(--surface-0) border border-(--border) p-3 mb-4 leading-relaxed">
               Vite reported a non-blocking import/chunking warning. It does not
               affect the SDK connection and can be optimized later by making
               that module use one consistent import strategy.
@@ -9015,7 +10376,7 @@ export function InstrumentationDetailPage() {
           ) : null}
 
           {!localResult ? (
-            <p className="text-xs text-[#8e9192] bg-[#000000] border border-[#262626] p-3 mb-4 leading-relaxed">
+            <p className="text-xs text-(--text-muted) bg-(--surface-0) border border-(--border) p-3 mb-4 leading-relaxed">
               This completed task was restored from synchronized cloud history.
               Local diff and rollback evidence are available only on the device
               and workspace that originally applied the task.
@@ -9023,11 +10384,11 @@ export function InstrumentationDetailPage() {
           ) : null}
 
           <div className="my-5">
-            <div className="text-[11px] font-mono text-[#8e9192] tracking-wider uppercase mb-3">
+            <div className="text-[11px] font-mono text-(--text-muted) tracking-wider uppercase mb-3">
               WHAT TO DO NEXT
             </div>
-            <div className="bg-[#000000] border border-[#262626] p-4">
-              <ol className="list-decimal list-inside space-y-2 text-sm text-[#e2e2e2] leading-relaxed">
+            <div className="bg-(--surface-0) border border-(--border) p-4">
+              <ol className="list-decimal list-inside space-y-2 text-sm text-(--text) leading-relaxed">
                 {telemetryVerified ? (
                   <li>
                     Telemetry and the onboarding test event have been received.
@@ -9056,9 +10417,9 @@ export function InstrumentationDetailPage() {
           </div>
 
           {telemetryVerified ? (
-            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
-              <Check size={16} className="text-white shrink-0 mt-0.5" />
-              <span className="text-sm text-[#c4c7c8] leading-relaxed">
+            <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
+              <Check size={16} className="text-(--text-strong) shrink-0 mt-0.5" />
+              <span className="text-sm text-(--text) leading-relaxed">
                 Tellann received the onboarding test event. The connection is
                 verified.{" "}
                 {hasInitializedFlow
@@ -9067,12 +10428,12 @@ export function InstrumentationDetailPage() {
               </span>
             </div>
           ) : (
-            <div className="bg-[#000000] border border-[#262626] p-4 my-4 flex items-start gap-3">
+            <div className="bg-(--surface-0) border border-(--border) p-4 my-4 flex items-start gap-3">
               <RefreshCw
                 size={15}
-                className="text-[#8e9192] shrink-0 mt-0.5 animate-spin"
+                className="text-(--text-muted) shrink-0 mt-0.5 animate-spin"
               />
-              <span className="text-sm text-[#c4c7c8] leading-relaxed flex-1">
+              <span className="text-sm text-(--text) leading-relaxed flex-1">
                 Searching automatically for the onboarding test event
                 {environment?.name ? ` from ${environment.name}` : ""}. Start
                 your application and use it once — Tellann checks every few
@@ -9085,7 +10446,7 @@ export function InstrumentationDetailPage() {
           <div className="flex flex-wrap gap-3 my-4 w-full! justify-end">
             {telemetryVerified && hasInitializedFlow ? (
               <Link
-                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
+                className="inline-flex items-center gap-2 bg-(--accent) text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-(--accent) transition-colors"
                 to={`/applications/${projectId}/qa-runs/new`}
               >
                 <Play size={15} /> Run first walkthrough
@@ -9093,25 +10454,26 @@ export function InstrumentationDetailPage() {
             ) : null}
             {telemetryVerified && !hasInitializedFlow ? (
               <Link
-                className="inline-flex items-center gap-2 bg-white text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-[#e6e6e6] transition-colors"
-                to={`/applications/${projectId}/intent`}
+                className="inline-flex items-center gap-2 bg-(--accent) text-black! font-semibold text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:bg-(--accent) transition-colors"
+                to={initializeFlowHref}
               >
-                <ArrowRight size={15} /> Initialize a Flow
+                <ArrowRight size={15} />{" "}
+                {flowToInitialize ? "Initialize a Flow" : "Declare a Flow"}
               </Link>
             ) : null}
             <Link
-              className="inline-flex items-center gap-2 bg-[#000000] border border-[#444748] text-white font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-white transition-colors"
+              className="inline-flex items-center gap-2 bg-(--surface-0) border border-(--border-strong) text-(--text-strong) font-medium text-xs tracking-wider uppercase px-5 py-3 rounded-xs hover:border-(--accent) transition-colors"
               to={`/applications/${projectId}/instrumentation`}
             >
               View instrumentation history
             </Link>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-[#262626]">
+          <div className="mt-6 pt-4 border-t border-(--border)">
             <AccordionItem value="advanced-maintenance" defaultOpen={false}>
               <AccordionTrigger>Advanced maintenance</AccordionTrigger>
               <AccordionContent>
-                <p className="text-xs text-[#8e9192] mb-3">
+                <p className="text-xs text-(--text-muted) mb-3">
                   Use these only after source changes, when troubleshooting, or
                   when intentionally removing Tellann.
                 </p>
@@ -9287,13 +10649,13 @@ export function InstrumentationDetailPage() {
               <button
                 className="button primary"
                 style={{
-                  background: "#ffffff",
-                  color: "#000000",
+                  background: "var(--accent)",
+                  color: "var(--on-accent)",
                   border: "none",
                   fontSize: "11px",
                   fontWeight: 700,
                   padding: "6px 14px",
-                  cursor: "pointer",
+                  cursor: "default",
                   textTransform: "uppercase",
                 }}
                 onClick={() => setEntitlementModalOpen(true)}
@@ -9615,9 +10977,52 @@ function useRuns(projectId?: string) {
   return { items: projectId ? (runs[projectId] ?? []) : [], loading };
 }
 
+function reportHrefFor(projectId: string, run: QARunSummary) {
+  return run.reportId || run.status === "COMPLETED"
+    ? `/applications/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`
+    : null;
+}
+
+function formatRunTime(value: string | null | undefined, fallback: string) {
+  return value ? new Date(value).toLocaleString() : fallback;
+}
+
 export function RunsPage() {
   const { projectId, application } = useProject();
   const { items, loading } = useRuns(projectId);
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const visible = useMemo(() => {
+    const terms = query.trim().toLowerCase();
+    if (!terms) return items;
+    return items.filter((run) =>
+      `${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
+        .toLowerCase()
+        .includes(terms),
+    );
+  }, [items, query]);
+  const openRun = useCallback(
+    (run: QARunSummary) => navigate(`/applications/${projectId}/qa-runs/${run.id}`),
+    [navigate, projectId],
+  );
+  const list = useSelectableList({
+    items: visible,
+    getKey: runKey,
+    onOpen: openRun,
+    onContextMenu: (run, event) => {
+      const report = projectId ? reportHrefFor(projectId, run) : null;
+      void showMenu(event, [
+        { id: "open", label: "Open run", accelerator: "Enter" },
+        { id: "report", label: "View report", enabled: Boolean(report) },
+        { type: "separator" },
+        { id: "copy", label: "Copy run ID" },
+      ]).then((choice) => {
+        if (choice === "open") openRun(run);
+        if (choice === "report" && report) navigate(report);
+        if (choice === "copy") void window.tellann?.system.copyText(run.id);
+      });
+    },
+  });
   if (!projectId) return <ApplicationRequired />;
   if (!application)
     return (
@@ -9626,14 +11031,30 @@ export function RunsPage() {
         description="Select another application."
       />
     );
+  const selected = list.selected;
+  const selectedReport = selected ? reportHrefFor(projectId, selected) : null;
   return (
     <Page
       title="QA Runs"
       description="Guided browser execution, captured evidence, reconciliation, and report processing."
+      layout={!loading ? "fill" : "scroll"}
+      toolbar={
+        items.length ? (
+          <input
+            className="toolbar-search"
+            data-search-input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter runs (Ctrl+F)"
+            aria-label="Filter runs"
+          />
+        ) : null
+      }
       actions={
         <Link
           className="button primary"
           to={`/applications/${projectId}/qa-runs/new`}
+          title="New QA run (Ctrl+N)"
         >
           <Play size={15} />
           New QA run
@@ -9643,7 +11064,100 @@ export function RunsPage() {
       {loading ? (
         <LoadingState />
       ) : items.length ? (
-        <RunTable projectId={projectId} runs={items} />
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="QA runs"
+              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Run</span>
+                <span>Environment</span>
+                <span>Status</span>
+                <span>Evidence</span>
+                <span>Started</span>
+              </div>
+              {visible.map((run) => (
+                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                  <span className="list-cell-primary">
+                    <strong className="mono">{run.id.slice(0, 8)}</strong>
+                    <small>{formatEnum(run.mode)}</small>
+                  </span>
+                  <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
+                  <span>
+                    <Status>{run.status}</Status>
+                  </span>
+                  <span>
+                    {run.artifactCount} artifacts · {run.findingCount} findings
+                  </span>
+                  <span>{formatRunTime(run.startedAt, "Not started")}</span>
+                </div>
+              ))}
+              {!visible.length ? (
+                <div className="list-empty">No runs match “{query}”.</div>
+              ) : null}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Run details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>QA run</small>
+                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
+                </div>
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openRun(selected)}>
+                    Open run
+                  </button>
+                  {selectedReport ? (
+                    <Link className="button" to={selectedReport}>
+                      <BarChart3 size={15} />
+                      View report
+                    </Link>
+                  ) : null}
+                </div>
+                <dl className="property-list">
+                  <div>
+                    <dt>Status</dt>
+                    <dd><Status>{selected.status}</Status></dd>
+                  </div>
+                  <div>
+                    <dt>Mode</dt>
+                    <dd>{formatEnum(selected.mode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Environment</dt>
+                    <dd>{selected.environment?.name ?? selected.environmentId}</dd>
+                  </div>
+                  <div>
+                    <dt>Started</dt>
+                    <dd>{formatRunTime(selected.startedAt, "Not started")}</dd>
+                  </div>
+                  <div>
+                    <dt>Ended</dt>
+                    <dd>{formatRunTime(selected.endedAt, "—")}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifacts</dt>
+                    <dd>{selected.artifactCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Findings</dt>
+                    <dd>{selected.findingCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : (
+              <div className="detail-empty">Select a run to see its details.</div>
+            )}
+          </aside>
+        </div>
       ) : (
         <EmptyState
           icon={<Play size={36} />}
@@ -9988,7 +11502,24 @@ export function NewRunPage() {
             />
           </label>
           <label className="full">
-            Instrumentation evidence
+            <span className="field-label-with-tooltip">
+              Instrumentation evidence
+              <span
+                className="tooltip-trigger"
+                tabIndex={0}
+                title="Optional. If you let Tellann patch your code with QA-only hooks, the run can watch your app's state (Redux, Context, useState) instead of only the screen. Picking that manifest stamps the report with exactly which files were patched and when it was verified. A browser-only run still captures clicks, pages, network, and screenshots."
+              >
+                <HelpCircle size={13} />
+                <span className="tooltip-bubble">
+                  Optional. If you let Tellann patch your code with QA-only
+                  hooks, the run can watch your app&apos;s state (Redux,
+                  Context, useState) instead of only the screen. Picking that
+                  manifest stamps the report with exactly which files were
+                  patched and when it was verified. A browser-only run still
+                  captures clicks, pages, network, and screenshots.
+                </span>
+              </span>
+            </span>
             <SelectField
               value={patchSetId}
               onValueChange={setPatchSetId}
@@ -10037,8 +11568,9 @@ export function NewRunPage() {
             <span>
               <strong>Approve this package script for this run</strong>
               <small>
-                Tellann executes only the selected package.json script without a
-                shell and stops only the process tree it started.
+                Tellann executes only the selected launch command — a
+                package.json script, or your framework's own development server
+                — without a shell, and stops only the process tree it started.
               </small>
             </span>
           </label>
@@ -10111,66 +11643,276 @@ export function NewRunPage() {
   );
 }
 
+/**
+ * What each boundary refusal means for the person driving the browser. The
+ * server's reason codes are precise but unreadable; leaving them on screen left
+ * a run looking stuck with no way to tell what to do about it.
+ */
+const BOUNDARY_REJECTION_GUIDANCE: Record<string, string> = {
+  UNKNOWN_STATE:
+    "Your application reported a state that this Flow version does not declare. Check the state key the SDK is sending.",
+  BEFORE_INITIAL_BOUNDARY:
+    "The Flow has not started yet. Reach its first state in the browser window before the rest of the walkthrough can be recorded.",
+  INITIAL_BOUNDARY_ALREADY_ACCEPTED:
+    "The Flow already started, so this second start event was ignored. Carry on from where you are.",
+  FLOW_VERSION_MISMATCH:
+    "The application is reporting against a different Flow version than this run expects. Restart it so it picks up the published version.",
+  UNKNOWN_TRANSITION:
+    "That move is not a declared transition in this Flow. Follow one of the expected paths, or add the transition to the Flow.",
+  OUT_OF_ORDER_TRANSITION:
+    "That transition started from a different state than the one the run is on. Go back and take the declared path.",
+  UNDECLARED_TERMINAL_STATE:
+    "That state is not declared as an ending for this Flow, so it cannot finish the run.",
+  RUN_PAUSED: "The run is paused, so Flow events are not being accepted. Resume to continue.",
+  AFTER_TERMINAL_BOUNDARY: "This Flow already reached an ending, so later events are not recorded.",
+  FLOW_EVENT_CONTEXT_REQUIRED:
+    "The event arrived without its Flow version or state key. Check the SDK call that reports this state.",
+  UNSUPPORTED_FLOW_EVENT: "The application sent an event type this Flow does not use.",
+  EVENT_ID_COLLISION: "An event with this id was already recorded for a different run.",
+  RUN_IS_TERMINAL: "This run has already finished.",
+  RUN_NOT_FOUND: "The cloud no longer recognises this run.",
+};
+
+type EvidenceTabValue = "CONSOLE" | "NETWORK" | "INTERACTION" | "FLOW" | "PERFORMANCE" | "FINDINGS";
+
+const EVIDENCE_TABS: Array<{
+  value: EvidenceTabValue;
+  label: string;
+  icon: typeof Activity;
+  kinds: Array<LiveEvidence["kind"]>;
+}> = [
+  { value: "CONSOLE", label: "Console", icon: TerminalSquare, kinds: ["CONSOLE"] },
+  { value: "NETWORK", label: "Network", icon: Network, kinds: ["NETWORK"] },
+  { value: "INTERACTION", label: "Interactions", icon: MousePointerClick, kinds: ["INTERACTION", "STORAGE"] },
+  { value: "FLOW", label: "Flow", icon: Workflow, kinds: ["FLOW", "PAGE"] },
+  { value: "PERFORMANCE", label: "Performance", icon: Gauge, kinds: ["PERFORMANCE", "ACCESSIBILITY"] },
+  { value: "FINDINGS", label: "Findings", icon: AlertTriangle, kinds: [] },
+];
+
+/** Rows rendered at once. A log pane only ever shows its tail. */
+const EVIDENCE_WINDOW = 200;
+/** No capture for this long means something is wrong, not that nothing happened. */
+const STALL_AFTER_MS = 30_000;
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  return `${seconds}s`;
+}
+
+/** Status of one expected state, given what the run has actually accepted. */
+type PlanStateStatus = "done" | "current" | "next" | "pending";
+
+function planStateStatuses(run: GuidedRunState): Map<string, PlanStateStatus> {
+  const statuses = new Map<string, PlanStateStatus>();
+  const plan = run.flowPlan;
+  if (!plan) return statuses;
+  const visited = new Set(run.coverage?.visitedStateKeys ?? []);
+  const nextKeys = new Set(
+    run.phase === "PRE_BOUNDARY"
+      ? plan.initialStateKey
+        ? [plan.initialStateKey]
+        : []
+      : plan.transitions
+          .filter((transition) => transition.from === run.currentFlowStateKey)
+          .map((transition) => transition.to),
+  );
+  for (const state of plan.states) {
+    if (state.key === run.currentFlowStateKey && run.phase === "IN_FLOW") statuses.set(state.key, "current");
+    else if (visited.has(state.key)) statuses.set(state.key, "done");
+    else if (nextKeys.has(state.key)) statuses.set(state.key, "next");
+    else statuses.set(state.key, "pending");
+  }
+  return statuses;
+}
+
+/** The one sentence telling the user what to do right now. */
+function runInstruction(run: GuidedRunState): { title: string; detail: string } {
+  const plan = run.flowPlan;
+  if (run.status === "PAUSED") {
+    return {
+      title: "Run paused",
+      detail: "Nothing is being recorded. Resume when you are ready to carry on.",
+    };
+  }
+  if (!plan) {
+    return {
+      title: run.expectedGraphVersionId ? "Loading the expected Flow" : "Observational run",
+      detail: run.expectedGraphVersionId
+        ? "Everything is being captured. The expected states will appear once the accepted graph loads."
+        : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
+    };
+  }
+  const label = (key: string | null) =>
+    plan.states.find((state) => state.key === key)?.name ?? key ?? "the next state";
+  if (run.phase === "PRE_BOUNDARY") {
+    return {
+      title: `Open ${label(plan.initialStateKey)} in the browser`,
+      detail:
+        "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
+    };
+  }
+  if (run.coverage?.terminalReached) {
+    return {
+      title: "This Flow reached an ending",
+      detail: "You can end the run, or keep going to cover the states that are still outstanding.",
+    };
+  }
+  const next = plan.transitions
+    .filter((transition) => transition.from === run.currentFlowStateKey)
+    .map((transition) => label(transition.to));
+  return {
+    title: next.length ? `Continue to ${next.slice(0, 2).join(" or ")}` : "Carry on through the Flow",
+    detail: next.length
+      ? "Drive the application the way a user would. Every step is being recorded against the Flow."
+      : "This state has no declared next step. Move on to whichever state you expect to reach.",
+  };
+}
+
 export function LiveRunPage() {
   const { projectId } = useParams();
-  const { activeRun: run, pauseRun, resumeRun, setRunInteractionMode, endRun, busy } = useDesktop();
-  const [tab, setTab] = useState<"CONSOLE" | "NETWORK" | "ACTIVITY">(
-    "CONSOLE",
-  );
+  const {
+    activeRun: run,
+    pauseRun,
+    resumeRun,
+    setRunInteractionMode,
+    focusRunBrowser,
+    endRun,
+    busy,
+  } = useDesktop();
+  const [tab, setTab] = useState<EvidenceTabValue>("FLOW");
+  const [query, setQuery] = useState("");
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  const [follow, setFollow] = useState(true);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState<number>(() => {
     const saved = localStorage.getItem("tellann:live-flow-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(parsed) && parsed >= 180 && parsed <= 600 ? parsed : 240;
+    return !isNaN(parsed) && parsed >= 180 && parsed <= 600 ? parsed : 260;
   });
   const [evidenceWidth, setEvidenceWidth] = useState<number>(() => {
     const saved = localStorage.getItem("tellann:live-evidence-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 340;
+    return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 360;
   });
 
-  const beginFlowResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = flowWidth;
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = moveEvent.clientX - startX;
-      setFlowWidth(Math.min(600, Math.max(180, startWidth + delta)));
-    };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("flow-resizing");
-      setFlowWidth((current) => {
-        localStorage.setItem("tellann:live-flow-width", String(current));
-        return current;
-      });
-    };
-    document.body.classList.add("flow-resizing");
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  };
+  // Elapsed time and stall detection both need a clock of their own: the run
+  // state only changes when the browser has something to say, which is exactly
+  // when a stall does not.
+  useEffect(() => {
+    if (!run || run.status === "COMPLETED" || run.status === "FAILED") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [run?.status]);
 
-  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = evidenceWidth;
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = startX - moveEvent.clientX;
-      setEvidenceWidth(Math.min(600, Math.max(240, startWidth + delta)));
+  /**
+   * Keeps both panels inside the window. A width saved on a wide monitor used
+   * to survive into a small window and squeeze the middle column to nothing.
+   */
+  useEffect(() => {
+    const clamp = () => {
+      const available = window.innerWidth;
+      const maxSide = Math.max(180, Math.floor((available - 360) / 2));
+      setFlowWidth((current) => Math.min(current, Math.max(180, maxSide)));
+      setEvidenceWidth((current) => Math.min(current, Math.max(240, maxSide)));
     };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("evidence-resizing");
-      setEvidenceWidth((current) => {
-        localStorage.setItem("tellann:live-evidence-width", String(current));
-        return current;
-      });
-    };
-    document.body.classList.add("evidence-resizing");
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, []);
+
+  const beginResize = useCallback(
+    (
+      event: ReactPointerEvent<HTMLDivElement>,
+      edge: "flow" | "evidence",
+    ) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const isFlow = edge === "flow";
+      const setWidth = isFlow ? setFlowWidth : setEvidenceWidth;
+      const storageKey = isFlow ? "tellann:live-flow-width" : "tellann:live-evidence-width";
+      const minWidth = isFlow ? 180 : 240;
+      const startWidth = isFlow ? flowWidth : evidenceWidth;
+      const maxWidth = Math.min(600, Math.max(minWidth, Math.floor((window.innerWidth - 360) / 2)));
+      const className = isFlow ? "flow-resizing" : "evidence-resizing";
+      const onMove = (moveEvent: PointerEvent) => {
+        const delta = isFlow ? moveEvent.clientX - startX : startX - moveEvent.clientX;
+        setWidth(Math.min(maxWidth, Math.max(minWidth, startWidth + delta)));
+      };
+      const onUp = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.body.classList.remove(className);
+        setWidth((current) => {
+          localStorage.setItem(storageKey, String(current));
+          return current;
+        });
+      };
+      document.body.classList.add(className);
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    },
+    [flowWidth, evidenceWidth],
+  );
+
+  /** Double-click resets a panel to its default, the way a splitter should. */
+  const resetWidth = useCallback((edge: "flow" | "evidence") => {
+    if (edge === "flow") {
+      setFlowWidth(260);
+      localStorage.setItem("tellann:live-flow-width", "260");
+    } else {
+      setEvidenceWidth(360);
+      localStorage.setItem("tellann:live-evidence-width", "360");
+    }
+  }, []);
+
+  const activeTab = EVIDENCE_TABS.find((entry) => entry.value === tab) ?? EVIDENCE_TABS[0];
+  const visible = useMemo(() => {
+    if (!run || activeTab.value === "FINDINGS") return [];
+    const needle = query.trim().toLowerCase();
+    return run.evidence.filter((item) => {
+      if (!activeTab.kinds.includes(item.kind)) return false;
+      if (errorsOnly && item.level === "INFO") return false;
+      if (!needle) return true;
+      if (item.message.toLowerCase().includes(needle)) return true;
+      return (item.details ?? []).some(
+        (entry) =>
+          entry.label.toLowerCase().includes(needle) || entry.value.toLowerCase().includes(needle),
+      );
+    });
+  }, [run?.evidence, activeTab, query, errorsOnly]);
+
+  const windowed = visible.length > EVIDENCE_WINDOW ? visible.slice(-EVIDENCE_WINDOW) : visible;
+
+  useEffect(() => {
+    if (!follow) return;
+    const node = listRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [windowed.length, follow, tab]);
+
+  const onListScroll = useCallback(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+    setFollow(atBottom);
+  }, []);
+
+  const runControl = useCallback(async (action: () => Promise<unknown>) => {
+    setControlError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    }
+  }, []);
 
   if (!projectId) return <ApplicationRequired />;
   if (!run)
@@ -10180,25 +11922,44 @@ export function LiveRunPage() {
         title="No active local run"
         description="The requested run is not active on this device. Open its cloud detail or create a new run."
         action={
-          <Link
-            className="button primary"
-            to={`/applications/${projectId}/qa-runs`}
-          >
+          <Link className="button primary" to={`/applications/${projectId}/qa-runs`}>
             Run history
           </Link>
         }
       />
     );
-  const visible = run.evidence.filter((item) =>
-    tab === "ACTIVITY"
-      ? item.kind !== "CONSOLE" && item.kind !== "NETWORK"
-      : item.kind === tab,
-  );
-  const consoleCount = run.evidence.filter((item) => item.kind === "CONSOLE").length;
-  const networkCount = run.evidence.filter((item) => item.kind === "NETWORK").length;
-  const activityCount = run.evidence.length - consoleCount - networkCount;
+
+  const plan = run.flowPlan;
+  const coverage = run.coverage;
+  const statuses = planStateStatuses(run);
+  const instruction = runInstruction(run);
+  const rejection = run.boundaryRejection;
   const currentObservation = run.observations.at(-1);
   const resolution = run.windowResolution;
+  const elapsedMs = now - new Date(run.startedAt).valueOf();
+  const lastEvidenceMs = run.lastEvidenceAt ? now - new Date(run.lastEvidenceAt).valueOf() : null;
+  const stalled =
+    run.status === "RUNNING" && lastEvidenceMs !== null && lastEvidenceMs > STALL_AFTER_MS;
+  // Tolerant of a state written by an older build, which would not carry the
+  // newer collections at all.
+  const findings = [...(run.findings ?? [])].reverse();
+  const stateArtifacts = run.stateArtifacts ?? [];
+  const flowStateHistory = run.flowStateHistory ?? [];
+  const counts = run.liveCounts ?? ({} as Record<LiveEvidence["kind"], number>);
+  // Before the boundary opens, coverage, findings and the diagnostic facts can
+  // only report zero. Shown together they read as a wall of failure next to the
+  // one thing there is to do, so the workspace carries a single status panel
+  // until the application reports the Flow's first state.
+  const preBoundary = run.phase === "PRE_BOUNDARY";
+  const initialStateName =
+    plan?.states.find((state) => state.key === plan.initialStateKey)?.name ??
+    plan?.initialStateKey ??
+    null;
+  const tabCount = (entry: (typeof EVIDENCE_TABS)[number]) =>
+    entry.value === "FINDINGS"
+      ? findings.length
+      : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+
   return (
     <div
       className="live-run-page"
@@ -10209,157 +11970,471 @@ export function LiveRunPage() {
         } as CSSProperties
       }
     >
+      <header className="run-toolbar">
+        <div className="run-toolbar-title">
+          <h1>{plan?.flowName ?? "QA run"}</h1>
+          <span className="run-toolbar-subtitle">
+            {plan?.version != null ? `Version ${plan.version}` : "No accepted Flow"}
+            {" · "}
+            {new URL(run.targetUrl).host}
+          </span>
+        </div>
+        <div className="run-toolbar-meters">
+          <span title="Time since this run started">
+            <Clock size={13} />
+            {formatDuration(elapsedMs)}
+          </span>
+          <span
+            className={stalled ? "is-stalled" : undefined}
+            title="Time since the last captured event"
+          >
+            <Activity size={13} />
+            {lastEvidenceMs === null
+              ? "No events yet"
+              : stalled
+                ? `Quiet for ${formatDuration(lastEvidenceMs)}`
+                : `Last event ${formatDuration(lastEvidenceMs)} ago`}
+          </span>
+          {run.syncBacklog > 0 ? (
+            <span className="is-pending" title="Evidence events still waiting to reach the cloud">
+              <CloudUpload size={13} />
+              {run.syncBacklog} queued
+            </span>
+          ) : null}
+          {run.annotationCount > 0 ? (
+            <span title="Inspect comments saved during this run">
+              <MessageSquare size={13} />
+              {run.annotationCount}
+            </span>
+          ) : null}
+        </div>
+        <div className="run-toolbar-actions">
+          <Status>{run.status}</Status>
+          <button
+            className="button"
+            type="button"
+            disabled={busy || run.status === "COMPLETED" || run.status === "FAILED"}
+            onClick={() => void runControl(focusRunBrowser)}
+          >
+            <ExternalLink size={15} />
+            Show browser
+          </button>
+        </div>
+      </header>
+
       <section className="live-flow">
         <div
           className="flow-resize-handle"
           role="separator"
-          aria-label="Resize flow panel"
+          aria-label="Resize expected Flow panel"
           aria-orientation="vertical"
-          onPointerDown={beginFlowResize}
+          onPointerDown={(event) => beginResize(event, "flow")}
+          onDoubleClick={() => resetWidth("flow")}
         />
-        <h2>Expected flow</h2>
-        <p>
-          {run.expectedGraphVersionId
-            ? `Reconciling against accepted graph version ${run.expectedGraphVersionId.slice(0, 8)}.`
-            : "No accepted intent selected. This is an observational run."}
-        </p>
-        <div className={`flow-step ${run.phase === "IN_FLOW" ? "complete" : "active"}`}>
-          <span>
-            {run.phase === "IN_FLOW" ? <Check /> : 1}
-          </span>
-          <div>
-            <strong>Initial Flow boundary</strong>
-            <small>{run.phase === "IN_FLOW" ? "Accepted by Tellann" : "Waiting for FLOW_INITIAL_STATE"}</small>
-          </div>
+        <div className="run-instruction" data-tone={rejection ? "warning" : "normal"}>
+          <small>What to do now</small>
+          <strong>{instruction.title}</strong>
+          <p>{instruction.detail}</p>
         </div>
-        <div className="flow-step active">
-          <span>2</span>
-          <div>
-            <strong>Verify states and transitions</strong>
-            <small>{run.phase === "IN_FLOW" ? "Meticulous capture is active" : "Detailed values remain off until the boundary"}</small>
+
+        {rejection ? (
+          <div className="run-rejection" role="status">
+            <TriangleAlert size={15} />
+            <div>
+              <strong>Your application reported a state the Flow refused</strong>
+              <p>{BOUNDARY_REJECTION_GUIDANCE[rejection.reason] ?? `The server refused it: ${rejection.reason}.`}</p>
+              <dl>
+                <div>
+                  <dt>Reported</dt>
+                  <dd>{rejection.stateKey ?? "no state key"}</dd>
+                </div>
+                <div>
+                  <dt>Reason</dt>
+                  <dd>
+                    <code>{rejection.reason}</code>
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </div>
+        ) : null}
+
+        <div className="flow-plan-heading">
+          <h2>Expected states</h2>
+          {coverage ? (
+            <span>
+              {coverage.visitedStateKeys.length} / {coverage.expectedStates}
+            </span>
+          ) : null}
         </div>
+
+        {plan && plan.states.length ? (
+          <ol className="flow-plan">
+            {plan.states.map((state, index) => {
+              const status = statuses.get(state.key) ?? "pending";
+              return (
+                <li key={state.key} className="flow-plan-state" data-status={status}>
+                  <span className="flow-plan-marker">
+                    {status === "done" ? <Check size={13} /> : index + 1}
+                  </span>
+                  <div>
+                    <strong>{state.name}</strong>
+                    <small>
+                      {status === "current"
+                        ? "You are here"
+                        : status === "done"
+                          ? "Visited"
+                          : status === "next"
+                            ? "Expected next"
+                            : state.role === "TERMINAL"
+                              ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
+                              : state.role === "INITIAL"
+                                ? "Starting point"
+                                : "Not reached yet"}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="flow-plan-empty">
+            {run.expectedGraphVersionId
+              ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
+              : "This run is observational. Nothing is being compared against a declared Flow."}
+          </p>
+        )}
       </section>
+
       <section className="live-browser">
         <div className="browser-toolbar">
           <Globe2 size={16} />
           <strong>Managed Chromium</strong>
-          <Status>{run.status}</Status>
+          <span className="browser-toolbar-route">
+            {currentObservation?.url || run.targetUrl}
+          </span>
+          <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
-        <div className="browser-canvas">
-          <div className="run-live-overview">
-            <div className="run-live-overview-heading">
-              <div>
-                <small>Live run snapshot</small>
-                <h2>{currentObservation?.title || "Managed browser is running"}</h2>
+        <div className="run-workspace">
+          {preBoundary ? (
+            <section className="run-waiting">
+              <header>
+                <Hourglass size={18} />
+                <div>
+                  <small>Waiting to start</small>
+                  <strong>
+                    {initialStateName
+                      ? `Your application has not reported ${initialStateName} yet`
+                      : "Your application has not reported the Flow's first state yet"}
+                  </strong>
+                </div>
+              </header>
+              <dl>
+                <div>
+                  <dt>Browser is on</dt>
+                  <dd>{currentObservation?.url || run.targetUrl}</dd>
+                </div>
+                <div>
+                  <dt>Flow events received</dt>
+                  <dd>
+                    {counts.FLOW ?? 0}
+                    {counts.FLOW
+                      ? " · open the Flow tab to see what each one reported"
+                      : " · nothing has reached Tellann from your application"}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {!preBoundary && coverage ? (
+            <section className="run-coverage">
+              <header>
+                <div>
+                  <small>Flow coverage</small>
+                  <strong>
+                    {coverage.visitedStateKeys.length} of {coverage.expectedStates} states
+                  </strong>
+                </div>
+                <div>
+                  <small>Transitions</small>
+                  <strong>
+                    {coverage.takenTransitionKeys.length} of {coverage.expectedTransitions}
+                  </strong>
+                </div>
+                <div>
+                  <small>Ending</small>
+                  <strong>{coverage.terminalReached ? "Reached" : "Not yet"}</strong>
+                </div>
+              </header>
+              <div
+                className="run-coverage-bar"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={coverage.expectedStates}
+                aria-valuenow={coverage.visitedStateKeys.length}
+              >
+                <span
+                  style={{
+                    width: `${coverage.expectedStates ? (coverage.visitedStateKeys.length / coverage.expectedStates) * 100 : 0}%`,
+                  }}
+                />
               </div>
-              <Status>{run.phase.replaceAll("_", " ")}</Status>
-            </div>
-            <div className="run-live-metrics">
-              <article>
-                <Globe2 size={18} />
-                <small>Current route</small>
-                <strong>{currentObservation?.stateName || "Waiting for route"}</strong>
-                <span>{currentObservation?.url || run.targetUrl}</span>
-              </article>
-              <article>
-                <Accessibility size={18} />
-                <small>Window resolution</small>
-                <strong>
-                  {resolution
-                    ? `${resolution.innerWidth} × ${resolution.innerHeight}`
-                    : "Detecting…"}
-                </strong>
-                <span>
-                  {resolution
-                    ? `${resolution.outerWidth} × ${resolution.outerHeight} outer · ${resolution.screenWidth} × ${resolution.screenHeight} screen · ${resolution.devicePixelRatio}× DPR`
-                    : "The initial viewport event has not arrived yet."}
-                </span>
-              </article>
-              <article>
-                <Network size={18} />
-                <small>Captured requests</small>
-                <strong>{run.evidenceCounts.QA_REQUEST ?? 0}</strong>
-                <span>{networkCount} currently retained in the live panel</span>
-              </article>
-              <article>
-                <Activity size={18} />
-                <small>Interaction mode</small>
-                <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
-                <span>
-                  {run.interactionMode === "INSPECT"
-                    ? "Select an element in Chromium to add a comment."
-                    : "Application controls perform their normal actions."}
-                </span>
-              </article>
-            </div>
-            <div className={`run-capture-disclosure ${run.phase === "IN_FLOW" ? "active" : ""}`}>
-              <ShieldCheck size={17} />
-              <div>
-                <strong>
-                  {run.phase === "IN_FLOW"
-                    ? "Detailed protected capture is active"
-                    : "Pre-boundary metadata capture is active"}
-                </strong>
-                <span>
-                  {run.phase === "IN_FLOW"
-                    ? "Buttons, forms, protected fields, approved state adapters, storage, requests, routes, and performance are being recorded."
-                    : "Routes, requests, console errors, viewport, performance, and Inspect comments are recorded now. Field and state values remain off until FLOW_INITIAL_STATE is accepted."}
-                </span>
-              </div>
+              {coverage.remainingStateKeys.length ? null : (
+                <p>Every declared state in this Flow has been visited.</p>
+              )}
+            </section>
+          ) : null}
+
+          {preBoundary ? null : (
+          <div className="run-facts">
+            <article>
+              <small>Current route</small>
+              <strong>{currentObservation?.stateName || "Waiting for a route"}</strong>
+              <span>{currentObservation?.url || run.targetUrl}</span>
+            </article>
+            <article>
+              <small>Viewport</small>
+              <strong>
+                {resolution
+                  ? `${resolution.innerWidth} × ${resolution.innerHeight}`
+                  : "Detecting…"}
+              </strong>
+              <span>
+                {resolution
+                  ? `${resolution.screenWidth} × ${resolution.screenHeight} screen · ${resolution.devicePixelRatio}× DPR`
+                  : "The first viewport event has not arrived yet."}
+              </span>
+            </article>
+            <article>
+              <small>Captured events</small>
+              <strong>
+                {Object.values(run.evidenceCounts).reduce((total, value) => total + value, 0)}
+              </strong>
+              <span>
+                {`${run.evidenceCounts.QA_REQUEST ?? 0} requests · $${stateArtifacts.length} state snapshots`}
+              </span>
+            </article>
+            <article>
+              <small>Interaction mode</small>
+              <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+              <span>
+                {run.interactionMode === "INSPECT"
+                  ? "Click any element in the browser window to leave a comment."
+                  : "Controls in the application behave normally."}
+              </span>
+            </article>
+          </div>
+          )}
+
+          {preBoundary && !findings.length ? null : (
+          <section className="run-findings">
+            <header>
+              <h2>Findings</h2>
+              <span>{findings.length}</span>
+            </header>
+            {findings.length ? (
+              <ul>
+                {findings.slice(0, 40).map((finding) => (
+                  <li key={finding.id} data-severity={finding.severity.toLowerCase()}>
+                    <span className="run-finding-severity">{finding.severity}</span>
+                    <div>
+                      <strong>{finding.title}</strong>
+                      <p>{finding.description}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="run-findings-empty">
+                Nothing has gone wrong yet. Console errors, failed requests and accessibility
+                failures appear here as they happen.
+              </p>
+            )}
+          </section>
+          )}
+
+          {flowStateHistory.length ? (
+            <section className="run-timeline">
+              <header>
+                <h2>Timeline</h2>
+                <span>{flowStateHistory.length} accepted steps</span>
+              </header>
+              <ol>
+                {flowStateHistory.map((visit, index) => (
+                  <li key={`${visit.stateKey}-${visit.timestamp}-${index}`}>
+                    <time>{new Date(visit.timestamp).toLocaleTimeString()}</time>
+                    <strong>
+                      {plan?.states.find((state) => state.key === visit.stateKey)?.name ??
+                        visit.stateKey}
+                    </strong>
+                    <small>{visit.eventType.replaceAll("_", " ").toLowerCase()}</small>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+
+          <div className={`run-capture-disclosure ${run.phase === "IN_FLOW" ? "active" : ""}`}>
+            <ShieldCheck size={17} />
+            <div>
+              <strong>
+                {run.phase === "IN_FLOW"
+                  ? "Recording this Flow in full"
+                  : "Recording metadata only, for now"}
+              </strong>
+              <span>
+                {run.phase === "IN_FLOW"
+                  ? "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
+                  : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
+              </span>
             </div>
           </div>
         </div>
       </section>
+
       <aside className="live-evidence">
         <div
           className="evidence-resize-handle"
           role="separator"
           aria-label="Resize evidence panel"
           aria-orientation="vertical"
-          onPointerDown={beginResize}
+          onPointerDown={(event) => beginResize(event, "evidence")}
+          onDoubleClick={() => resetWidth("evidence")}
         />
         <div className="evidence-heading">
           <h2>Live evidence</h2>
-          <span>{run.evidence.length}</span>
+          <div className="evidence-heading-tools">
+            <label className="evidence-search">
+              <Filter size={13} />
+              <input
+                value={query}
+                placeholder="Filter"
+                onChange={(event) => setQuery(event.target.value)}
+                aria-label="Filter evidence"
+              />
+              {query ? (
+                <button type="button" aria-label="Clear filter" onClick={() => setQuery("")}>
+                  <X size={12} />
+                </button>
+              ) : null}
+            </label>
+            <button
+              type="button"
+              className={errorsOnly ? "evidence-toggle selected" : "evidence-toggle"}
+              aria-pressed={errorsOnly}
+              title="Show only warnings and errors"
+              onClick={() => setErrorsOnly((current) => !current)}
+            >
+              <AlertTriangle size={13} />
+            </button>
+            <button
+              type="button"
+              className={follow ? "evidence-toggle selected" : "evidence-toggle"}
+              aria-pressed={follow}
+              title="Follow new events"
+              onClick={() => {
+                setFollow(true);
+                const node = listRef.current;
+                if (node) node.scrollTop = node.scrollHeight;
+              }}
+            >
+              <ArrowDownToLine size={13} />
+            </button>
+          </div>
         </div>
-        <div className="evidence-tabs">
-          <button
-            className={tab === "CONSOLE" ? "selected" : ""}
-            onClick={() => setTab("CONSOLE")}
-          >
-            <TerminalSquare size={14} />
-            Console <span>{consoleCount}</span>
-          </button>
-          <button
-            className={tab === "NETWORK" ? "selected" : ""}
-            onClick={() => setTab("NETWORK")}
-          >
-            <Network size={14} />
-            Network <span>{networkCount}</span>
-          </button>
-          <button
-            className={tab === "ACTIVITY" ? "selected" : ""}
-            onClick={() => setTab("ACTIVITY")}
-          >
-            <Activity size={14} />
-            Activity <span>{activityCount}</span>
-          </button>
+        <div className="evidence-tabs" role="tablist">
+          {EVIDENCE_TABS.map((entry) => {
+            const Icon = entry.icon;
+            return (
+              <button
+                key={entry.value}
+                role="tab"
+                aria-selected={tab === entry.value}
+                className={tab === entry.value ? "selected" : ""}
+                onClick={() => setTab(entry.value)}
+              >
+                <Icon size={13} />
+                {entry.label} <span>{tabCount(entry)}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="evidence-list">
-          {visible.length ? (
-            visible.map((item) => <EvidenceRow key={item.id} item={item} />)
+        <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
+          {activeTab.value === "FINDINGS" ? (
+            findings.length ? (
+              findings.map((finding) => (
+                <div
+                  key={finding.id}
+                  className={`evidence-row evidence-${finding.severity === "LOW" || finding.severity === "INFO" ? "info" : finding.severity === "MEDIUM" ? "warn" : "error"}`}
+                >
+                  <time>{finding.category.replaceAll("_", " ").toLowerCase()}</time>
+                  <span>{finding.severity}</span>
+                  <div className="evidence-row-body">
+                    <p>{finding.title}</p>
+                    <dl>
+                      <div>
+                        <dt>Detail</dt>
+                        <dd>{finding.description}</dd>
+                      </div>
+                      {finding.recommendation ? (
+                        <div>
+                          <dt>Fix</dt>
+                          <dd>{finding.recommendation}</dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="evidence-empty">No findings have been raised in this run.</div>
+            )
           ) : (
-            <div className="evidence-empty">
-              Evidence will appear during the workflow.
-            </div>
+            <>
+              {run.evidenceTrimmed > 0 && !query && !errorsOnly ? (
+                <div className="evidence-trimmed">
+                  {run.evidenceTrimmed} earlier rows were dropped from this panel. Every one of them
+                  is still in the run's evidence.
+                </div>
+              ) : null}
+              {visible.length > windowed.length ? (
+                <div className="evidence-trimmed">
+                  Showing the most recent {windowed.length} of {visible.length} matching rows.
+                </div>
+              ) : null}
+              {windowed.length ? (
+                windowed.map((item, index) => (
+                  <EvidenceRow
+                    key={item.id}
+                    item={item}
+                    continuesGroup={
+                      Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
+                    }
+                  />
+                ))
+              ) : (
+                <div className="evidence-empty">
+                  {query || errorsOnly
+                    ? "No rows match this filter."
+                    : "Evidence will appear here as you use the application."}
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>
+
       <footer className="run-controls">
         <div>
-          <Status>{run.status}</Status>
           <code>{run.runId.slice(0, 8)}</code>
+          <span className="run-mode-status" role="status" aria-live="polite">
+            {controlError
+              ? controlError
+              : run.phase === "IN_FLOW"
+                ? "Recording the Flow in full"
+                : "Metadata only until the Flow starts"}
+          </span>
         </div>
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
@@ -10369,7 +12444,7 @@ export function LiveRunPage() {
                   className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "NAVIGATE"}
                   disabled={busy || run.status === "PAUSED"}
-                  onClick={() => void setRunInteractionMode("NAVIGATE")}
+                  onClick={() => void runControl(() => setRunInteractionMode("NAVIGATE"))}
                 >
                   Navigate
                 </button>
@@ -10377,46 +12452,99 @@ export function LiveRunPage() {
                   className={run.interactionMode === "INSPECT" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "INSPECT"}
                   disabled={busy || run.status === "PAUSED"}
-                  onClick={() => void setRunInteractionMode("INSPECT")}
+                  onClick={() => void runControl(() => setRunInteractionMode("INSPECT"))}
                 >
                   Inspect
                 </button>
               </div>
-              <span className="run-mode-status" role="status" aria-live="polite">
-                {run.interactionMode === "INSPECT" ? "Inspect active in Chromium" : "Navigate active"}
-              </span>
               <button
                 className="button"
                 disabled={busy}
-                onClick={() => void (run.status === "PAUSED" ? resumeRun() : pauseRun())}
+                onClick={() => void runControl(run.status === "PAUSED" ? resumeRun : pauseRun)}
               >
                 {run.status === "PAUSED" ? <Play /> : <CirclePause />}
                 {run.status === "PAUSED" ? "Resume" : "Pause"}
               </button>
-              <button
-                className="button"
-                disabled={busy}
-                onClick={() => void endRun()}
-              >
-                <CircleStop />
-                End run
-              </button>
+              {confirmEnd ? (
+                <>
+                  <button
+                    className="button danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirmEnd(false);
+                      void runControl(endRun);
+                    }}
+                  >
+                    <CircleStop />
+                    {run.phase === "PRE_BOUNDARY" ? "End without the Flow" : "End run"}
+                  </button>
+                  <button className="button" disabled={busy} onClick={() => setConfirmEnd(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button className="button" disabled={busy} onClick={() => setConfirmEnd(true)}>
+                  <CircleStop />
+                  End run
+                </button>
+              )}
             </>
           ) : null}
         </div>
-        <div>{run.phase === "IN_FLOW" ? "In-Flow capture protected" : "Pre-boundary metadata only"}</div>
+        <div>
+          {confirmEnd && run.phase === "PRE_BOUNDARY"
+            ? "This Flow never started, so the run will hold metadata only and will not reconcile."
+            : run.status === "PAUSED"
+              ? "Paused — nothing is being recorded"
+              : `${run.evidence.length} rows shown · ${run.evidenceTrimmed} trimmed`}
+        </div>
       </footer>
     </div>
   );
 }
 
-function EvidenceRow({ item }: { item: LiveEvidence }) {
+function EvidenceRow({
+  item,
+  continuesGroup,
+}: {
+  item: LiveEvidence;
+  continuesGroup?: boolean;
+}) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = () => setMenu(null);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [menu]);
+
+  const copy = (text: string) => {
+    void window.tellann?.system?.copyText?.(text);
+    setMenu(null);
+  };
+
   return (
-    <div className={`evidence-row evidence-${item.level.toLowerCase()}`}>
+    <div
+      className={`evidence-row evidence-${item.level.toLowerCase()}`}
+      data-group-continues={continuesGroup ? "true" : undefined}
+      data-unrecorded={item.recorded === false ? "true" : undefined}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <time>{new Date(item.timestamp).toLocaleTimeString()}</time>
       <span>{item.level}</span>
       <div className="evidence-row-body">
         <p>{item.message}</p>
+        {item.recorded === false ? (
+          <em className="evidence-unrecorded">Seen while paused — not written to evidence</em>
+        ) : null}
         {item.details?.length ? (
           <dl>
             {item.details.map((entry) => (
@@ -10428,6 +12556,34 @@ function EvidenceRow({ item }: { item: LiveEvidence }) {
           </dl>
         ) : null}
       </div>
+      {menu ? (
+        <div className="evidence-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+          <button type="button" role="menuitem" onClick={() => copy(item.message)}>
+            <Copy size={13} />
+            Copy message
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() =>
+              copy(
+                [
+                  `${item.timestamp} ${item.level} ${item.kind}`,
+                  item.message,
+                  ...(item.details ?? []).map((entry) => `${entry.label}: ${entry.value}`),
+                ].join("\n"),
+              )
+            }
+          >
+            <Copy size={13} />
+            Copy row with detail
+          </button>
+          <button type="button" role="menuitem" onClick={() => copy(JSON.stringify(item, null, 2))}>
+            <Code2 size={13} />
+            Copy as JSON
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -10494,10 +12650,12 @@ function ArtifactLayout({
   items,
   heading,
   showStorage = false,
+  runId,
 }: {
   items: unknown[];
   heading: string;
   showStorage?: boolean;
+  runId?: string;
 }) {
   if (!items.length)
     return (
@@ -10515,6 +12673,25 @@ function ArtifactLayout({
         </div>
         <strong>{items.length}</strong>
       </div>
+      <ArtifactGrid items={items} showStorage={showStorage} runId={runId} />
+    </section>
+  );
+}
+
+function ArtifactGrid({
+  items,
+  showStorage,
+  runId,
+}: {
+  items: unknown[];
+  showStorage: boolean;
+  runId?: string;
+}) {
+  const { getArtifactDownloadUrl } = useDesktop();
+  const [selectedArtifactUrl, setSelectedArtifactUrl] = useState<string | null>(null);
+
+  return (
+    <>
       <div className="artifact-grid">
         {items.map((value, index) => {
           const item = asRecord(value);
@@ -10527,6 +12704,25 @@ function ArtifactLayout({
                     "_",
                     " ",
                   )}
+                  {runId && typeof item.id === "string" && ["SCREENSHOT", "INSPECT_SCREENSHOT", "SANITIZED_FINAL_SCREENSHOT"].includes(String(item.artifactType)) ? (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      style={{ marginLeft: "12px", padding: "2px 8px", fontSize: "11px", height: "auto", minHeight: "0" }}
+                      onClick={async () => {
+                        try {
+                          const result = await getArtifactDownloadUrl(runId, item.id as string);
+                          if (result.url) {
+                            setSelectedArtifactUrl(result.url);
+                          }
+                        } catch (e) {
+                          console.error("Failed to load artifact", e);
+                        }
+                      }}
+                    >
+                      View screenshot
+                    </button>
+                  ) : null}
                 </span>
                 <Status>
                   {displayValue(item.privacyClassification, "Internal")}
@@ -10570,7 +12766,28 @@ function ArtifactLayout({
           );
         })}
       </div>
-    </section>
+      {selectedArtifactUrl ? (
+        <dialog
+          className="fixed inset-0 m-auto bg-black/80 backdrop-blur-sm border-0 w-screen h-screen z-50 flex items-center justify-center p-4 cursor-zoom-out"
+          open
+          onClick={() => setSelectedArtifactUrl(null)}
+        >
+          <img
+            src={selectedArtifactUrl}
+            alt="Artifact Preview"
+            className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            className="absolute top-16 right-16 bg-black/70 hover:bg-black text-white rounded-full w-12 h-12 flex items-center justify-center cursor-pointer text-xl shadow-2xl border border-white/10 backdrop-blur-md transition-colors"
+            onClick={() => setSelectedArtifactUrl(null)}
+          >
+            ✕
+          </button>
+        </dialog>
+      ) : null}
+    </>
   );
 }
 
@@ -10603,14 +12820,14 @@ function FindingsLayout({ items }: { items: unknown[] }) {
               <AccordionTrigger className="w-full py-3.5 px-4">
                 <div className="flex items-center justify-between flex-1 min-w-0 pr-2">
                   <div className="flex items-center gap-3 min-w-0 pr-3">
-                    <span className="font-mono text-xs text-[#555] shrink-0">
+                    <span className="font-mono text-xs text-(--text-subtle) shrink-0">
                       {String(index + 1).padStart(2, "0")}
                     </span>
                     <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
-                      <strong className="text-white text-sm font-semibold truncate">
+                      <strong className="text-(--text-strong) text-sm font-semibold truncate">
                         {displayValue(item.title, `Finding ${index + 1}`)}
                       </strong>
-                      <span className="text-[#8e9192] font-mono text-[11px] uppercase tracking-wider shrink-0">
+                      <span className="text-(--text-muted) font-mono text-[11px] uppercase tracking-wider shrink-0">
                         {displayValue(item.category, "Finding")}
                       </span>
                     </div>
@@ -10620,8 +12837,8 @@ function FindingsLayout({ items }: { items: unknown[] }) {
                   </div>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="p-4 pt-3 border-t border-[#262626] bg-[#000000] text-xs text-[#c4c7c8] space-y-3">
-                <p className="leading-relaxed text-sm text-[#e2e2e2]">
+              <AccordionContent className="p-4 pt-3 border-t border-(--border) bg-(--surface-0) text-xs text-(--text) space-y-3">
+                <p className="leading-relaxed text-sm text-(--text)">
                   {displayValue(
                     item.description,
                     "No description was recorded.",
@@ -10635,7 +12852,7 @@ function FindingsLayout({ items }: { items: unknown[] }) {
                 ) : null}
                 {steps.length ? (
                   <div className="space-y-1.5 pt-1">
-                    <small className="block text-[#8e9192] font-mono text-[10px] uppercase tracking-wider mb-1">
+                    <small className="block text-(--text-muted) font-mono text-[10px] uppercase tracking-wider mb-1">
                       Reproduction steps
                     </small>
                     <ol className="list-decimal pl-5 space-y-1 leading-relaxed text-xs">
@@ -11115,7 +13332,7 @@ export function RunDetailPage() {
           ))}
         </TabsList>
         <TabsContent value="evidence">
-          <ArtifactLayout items={artifacts} heading="Captured evidence" />
+          <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
         </TabsContent>
         <TabsContent value="findings">
           <FindingsLayout items={findings} />
@@ -11156,6 +13373,7 @@ export function RunDetailPage() {
             items={artifacts}
             heading="Run artifacts"
             showStorage
+            runId={runId}
           />
         </TabsContent>
       </Tabs>
@@ -11185,58 +13403,125 @@ export function RunSubPage({ kind }: { kind: string }) {
 export function ReportsPage() {
   const { projectId } = useParams();
   const { items, loading } = useRuns(projectId);
-  if (!projectId) return <ApplicationRequired />;
-  const reportRuns = items.filter(
-    (run) => run.reportId || run.status === "COMPLETED",
+  const navigate = useNavigate();
+  const reportRuns = useMemo(
+    () => items.filter((run) => run.reportId || run.status === "COMPLETED"),
+    [items],
   );
+  const openReport = useCallback(
+    (run: QARunSummary) => {
+      if (projectId) navigate(reportHrefFor(projectId, run) ?? `/applications/${projectId}/qa-runs/${run.id}`);
+    },
+    [navigate, projectId],
+  );
+  const list = useSelectableList({
+    items: reportRuns,
+    getKey: runKey,
+    onOpen: openReport,
+    onContextMenu: (run, event) => {
+      void showMenu(event, [
+        { id: "open", label: "Open report", accelerator: "Enter" },
+        { id: "run", label: "Open QA run" },
+        { type: "separator" },
+        { id: "copy", label: "Copy run ID" },
+      ]).then((choice) => {
+        if (choice === "open") openReport(run);
+        if (choice === "run") navigate(`/applications/${projectId}/qa-runs/${run.id}`);
+        if (choice === "copy") void window.tellann?.system.copyText(run.id);
+      });
+    },
+  });
+  if (!projectId) return <ApplicationRequired />;
+  const selected = list.selected;
   return (
     <Page
       title="Reports"
       description="Canonical quality reports generated from guided QA evidence and reconciliation."
+      layout={!loading ? "fill" : "scroll"}
     >
       {loading ? (
         <LoadingState />
       ) : reportRuns.length ? (
-        <div className="project-grid">
-          {reportRuns.map((run) => (
-            <article className="project-card" key={run.id}>
-              <div className="card-heading">
-                <div>
-                  <small>QA report</small>
-                  <h2>{run.id.slice(0, 8)}</h2>
-                </div>
-                <Status>{run.reportId ? "Ready" : "Processing"}</Status>
+        <div className="master-detail">
+          <div className="list-pane">
+            <div
+              className="list-view"
+              aria-label="Reports"
+              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 90px 90px minmax(110px, 1fr) 110px" } as CSSProperties}
+              {...list.listProps}
+            >
+              <div className="list-head" role="presentation">
+                <span>Report</span>
+                <span>Environment</span>
+                <span>Findings</span>
+                <span>Artifacts</span>
+                <span>Completed</span>
+                <span>Status</span>
               </div>
-              <dl className="summary-grid">
-                <div>
-                  <dt>Environment</dt>
-                  <dd>{run.environment?.name ?? "Environment"}</dd>
+              {reportRuns.map((run) => (
+                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                  <span className="list-cell-primary">
+                    <strong className="mono">{run.id.slice(0, 8)}</strong>
+                    <small>QA report</small>
+                  </span>
+                  <span>{run.environment?.name ?? "Environment"}</span>
+                  <span>{run.findingCount}</span>
+                  <span>{run.artifactCount}</span>
+                  <span>{run.endedAt ? new Date(run.endedAt).toLocaleDateString() : "Pending"}</span>
+                  <span>
+                    <Status>{run.reportId ? "Ready" : "Processing"}</Status>
+                  </span>
                 </div>
-                <div>
-                  <dt>Findings</dt>
-                  <dd>{run.findingCount}</dd>
+              ))}
+            </div>
+          </div>
+          <aside className="detail-pane" aria-label="Report details">
+            {selected ? (
+              <div className="detail-content">
+                <div className="detail-header">
+                  <small>QA report</small>
+                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
                 </div>
-                <div>
-                  <dt>Artifacts</dt>
-                  <dd>{run.artifactCount}</dd>
+                <div className="detail-actions">
+                  <button className="button primary" type="button" onClick={() => openReport(selected)}>
+                    <BarChart3 size={15} />
+                    Open report
+                  </button>
+                  <Link className="button" to={`/applications/${projectId}/qa-runs/${selected.id}`}>
+                    Open QA run
+                  </Link>
                 </div>
-                <div>
-                  <dt>Completed</dt>
-                  <dd>
-                    {run.endedAt
-                      ? new Date(run.endedAt).toLocaleDateString()
-                      : "Pending"}
-                  </dd>
-                </div>
-              </dl>
-              <Link
-                className="button primary"
-                to={`/applications/${projectId}/reports/${encodeURIComponent(run.reportId ?? `qa-report:${run.id}`)}?runId=${run.id}`}
-              >
-                Open report
-              </Link>
-            </article>
-          ))}
+                <dl className="property-list">
+                  <div>
+                    <dt>Status</dt>
+                    <dd><Status>{selected.reportId ? "Ready" : "Processing"}</Status></dd>
+                  </div>
+                  <div>
+                    <dt>Environment</dt>
+                    <dd>{selected.environment?.name ?? "Environment"}</dd>
+                  </div>
+                  <div>
+                    <dt>Findings</dt>
+                    <dd>{selected.findingCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifacts</dt>
+                    <dd>{selected.artifactCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Completed</dt>
+                    <dd>{formatRunTime(selected.endedAt, "Pending")}</dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd className="mono selectable">{selected.id}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : (
+              <div className="detail-empty">Select a report to see its details.</div>
+            )}
+          </aside>
         </div>
       ) : (
         <EmptyState
@@ -11257,11 +13542,233 @@ export function ReportsPage() {
   );
 }
 
+/** Display order for the download control. The plan decides which are offered. */
+const REPORT_DOWNLOAD_FORMATS = [
+  { value: "PDF", label: "PDF", hint: "Tellann's report document." },
+  { value: "HTML", label: "HTML", hint: "The same document as a web page." },
+  { value: "CSV", label: "CSV", hint: "Findings and coverage gaps as a flat table." },
+  { value: "JSON", label: "JSON", hint: "The report payload, unchanged." },
+] as const;
+
+type ReportDownloadFormat = (typeof REPORT_DOWNLOAD_FORMATS)[number]["value"];
+
+function bestEntitledFormat(allowed: readonly string[]): ReportDownloadFormat {
+  return (
+    REPORT_DOWNLOAD_FORMATS.find((item) => allowed.includes(item.value))?.value ?? "JSON"
+  );
+}
+
+function titleCasePlan(plan: string | undefined) {
+  return plan ? plan.charAt(0) + plan.slice(1).toLowerCase() : undefined;
+}
+
+/**
+ * Where the complete report leaves the app. The page above it is a summary, so
+ * this is the only route to the evidence, next steps, and appendix behind it.
+ *
+ * Formats the organisation's plan does not include stay visible but locked:
+ * a missing control reads as a missing feature, a locked one reads as a plan
+ * boundary. Main re-resolves the entitlement before it writes anything, so this
+ * control is a affordance, not the gate.
+ */
+function ReportDownloadCard({
+  runId,
+  entitlements,
+}: {
+  runId: string | null;
+  entitlements: DesktopApplication["entitlements"];
+}) {
+  const { saveReportDownload } = useDesktop();
+  // A null entitlement means the cloud could not be asked, not that the plan
+  // excludes exporting; every plan includes JSON, so that stays available.
+  const allowed = entitlements ? entitlements.reportFormats : ["JSON"];
+  const allowedKey = allowed.join(",");
+  const [format, setFormat] = useState<ReportDownloadFormat>(() => bestEntitledFormat(allowed));
+  const [lockedFormat, setLockedFormat] = useState<ReportDownloadFormat | null>(null);
+  const [status, setStatus] = useState<{
+    tone: "idle" | "saving" | "saved" | "error";
+    message: string | null;
+  }>({ tone: "idle", message: null });
+
+  // A plan change between visits must not leave a locked format selected.
+  useEffect(() => {
+    setFormat((current) => (allowed.includes(current) ? current : bestEntitledFormat(allowed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedKey]);
+
+  const download = async () => {
+    if (!runId) return;
+    setStatus({ tone: "saving", message: null });
+    try {
+      const result = await saveReportDownload(runId, format);
+      setStatus(
+        result.cancelled
+          ? { tone: "idle", message: null }
+          : { tone: "saved", message: `Saved ${result.filename ?? "the report"}.` },
+      );
+    } catch (error) {
+      setStatus({ tone: "error", message: normalizeDesktopError(error) });
+    }
+  };
+
+  const selected = REPORT_DOWNLOAD_FORMATS.find((item) => item.value === format);
+  const exportable = allowed.length > 0;
+  return (
+    <section className="content-card report-download">
+      <div className="card-heading">
+        <div>
+          <small>Full report</small>
+          <h2>Download the complete report</h2>
+        </div>
+        {entitlements?.planType ? <Status>{entitlements.planType}</Status> : null}
+      </div>
+      <p>
+        Every finding with its evidence, rationale, and next step, the declared coverage gaps, the
+        risks found outside this Flow, the annotations, and the capture appendix. PDF and HTML are
+        printed on Tellann's watermarked report design.
+      </p>
+      <div className="report-format-picker" role="radiogroup" aria-label="Report format">
+        {REPORT_DOWNLOAD_FORMATS.map((item) => {
+          const entitled = allowed.includes(item.value);
+          return (
+            <button
+              key={item.value}
+              type="button"
+              role="radio"
+              aria-checked={entitled && format === item.value}
+              className={`report-format${entitled && format === item.value ? " selected" : ""}${entitled ? "" : " locked"}`}
+              title={entitled ? item.hint : `${item.label} is not included on your plan.`}
+              onClick={() => (entitled ? setFormat(item.value) : setLockedFormat(item.value))}
+            >
+              {entitled ? null : <Lock size={12} />}
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="report-download-actions">
+        <button
+          className="button primary"
+          type="button"
+          disabled={!runId || !exportable || status.tone === "saving"}
+          onClick={() => void download()}
+        >
+          <ArrowDownToLine size={15} />
+          {status.tone === "saving" ? "Preparing…" : `Download ${format}`}
+        </button>
+        <small>
+          {exportable
+            ? selected?.hint
+            : "Report downloads are not included on this plan."}
+        </small>
+      </div>
+      {status.message ? (
+        <p className={`report-download-status${status.tone === "error" ? " is-error" : ""}`} role={status.tone === "error" ? "alert" : "status"}>
+          {status.message}
+        </p>
+      ) : null}
+      <EntitlementModal
+        isOpen={lockedFormat !== null}
+        feature="REPORT_EXPORT"
+        featureName={`${lockedFormat ?? "Report"} downloads`}
+        currentPlan={titleCasePlan(entitlements?.planType)}
+        description={`Downloading this report as ${lockedFormat} is not included on your organization's current plan. Your plan covers ${allowed.join(", ") || "no export format"}.`}
+        onClose={() => setLockedFormat(null)}
+      />
+    </section>
+  );
+}
+
+/** Priority pill plus title. What the finding means lives in the downloaded report. */
+function ReportFindingTitles({
+  items,
+  label,
+}: {
+  items: Record<string, unknown>[];
+  label: string;
+}) {
+  const [page, setPage] = useState(0);
+  const itemsPerPage = 10;
+  
+  if (!items.length) return null;
+  
+  const totalPages = Math.ceil(items.length / itemsPerPage);
+  // Ensure page is within bounds in case items array changes
+  const safePage = Math.min(page, Math.max(0, totalPages - 1));
+  const visibleItems = items.slice(safePage * itemsPerPage, (safePage + 1) * itemsPerPage);
+
+  return (
+    <div className="report-title-group">
+      <h3>{label}</h3>
+      <ul className="report-title-list">
+        {visibleItems.map((item, index) => (
+          <li key={String(item.id ?? (safePage * itemsPerPage + index))}>
+            <Status>{String(item.priority ?? "MEDIUM")}</Status>
+            <span>{String(item.title ?? item.suggestedAction ?? "Finding")}</span>
+          </li>
+        ))}
+      </ul>
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="analysis-btn-secondary"
+            disabled={safePage === 0}
+            onClick={(e) => {
+              e.preventDefault();
+              setPage(p => Math.max(0, p - 1));
+            }}
+            style={{ opacity: safePage === 0 ? 0.5 : 1, cursor: safePage === 0 ? 'not-allowed' : 'pointer' }}
+          >
+            Previous
+          </button>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            Page {safePage + 1} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="analysis-btn-secondary"
+            disabled={safePage === totalPages - 1}
+            onClick={(e) => {
+              e.preventDefault();
+              setPage(p => Math.min(totalPages - 1, p + 1));
+            }}
+            style={{ opacity: safePage === totalPages - 1 ? 0.5 : 1, cursor: safePage === totalPages - 1 ? 'not-allowed' : 'pointer' }}
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The report summary.
+ *
+ * What the run established fills tens of pages: every finding's rationale,
+ * evidence, and next step, the coverage gaps, the appendix. Rendering all of it
+ * here buried the result. The page answers "what happened and is it good" and
+ * names what was found; the explanations leave in the downloaded report.
+ */
+function formatReportDuration(ms: unknown): string {
+  if (ms == null) return "Not recorded";
+  const num = Number(ms);
+  if (!Number.isFinite(num) || num < 0) return "0s";
+  const total = Math.floor(num / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function ReportDetailPage() {
   const { projectId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get("runId");
-  const { getReport, revealProtectedValue } = useDesktop();
+  const { getReport, revealProtectedValue, applications } = useDesktop();
   const [report, setReport] = useState<QualityReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
@@ -11283,14 +13790,12 @@ export function ReportDetailPage() {
         description="The report is still processing, expired, or the source run was not provided."
       />
     );
+  const application = applications.find((item) => item.id === projectId);
   const sections = asRecord(report.sections);
   const flowSummary = asRecord(sections.flowSummary);
   const runSummary = asRecord(sections.runSummary);
   const inFlow = asRecord(sections.inFlowFindings);
   const appendix = asRecord(sections.evidenceAppendix);
-  const recommendations = Array.isArray(inFlow.recommendedNextActions)
-    ? inFlow.recommendedNextActions.map(asRecord)
-    : [];
   const detailedFindings = Array.isArray(inFlow.findings)
     ? inFlow.findings.map(asRecord)
     : [];
@@ -11303,19 +13808,25 @@ export function ReportDetailPage() {
   const evidenceEvents = Array.isArray(appendix.events)
     ? appendix.events.map(asRecord)
     : [];
-  const limitations = Array.isArray(appendix.limitations)
-    ? appendix.limitations.map(String)
-    : [];
+  const missingStateCount = Array.isArray(inFlow.missingStates) ? inFlow.missingStates.length : 0;
+  const missingTransitionCount = Array.isArray(inFlow.missingTransitions)
+    ? inFlow.missingTransitions.length
+    : 0;
   const protectedValues = evidenceEvents.flatMap((event) =>
     Array.isArray(event.protectedValues)
       ? event.protectedValues.map((value) => ({ event, value: asRecord(value) }))
       : [],
   );
-  const eventCounts = asRecord(runSummary.eventCounts);
   const viewportHistory = Array.isArray(runSummary.viewportHistory)
     ? runSummary.viewportHistory.map(asRecord)
     : [];
   const latestViewport = viewportHistory.at(-1);
+  const severityCounts = detailedFindings.reduce<Record<string, number>>((counts, finding) => {
+    const priority = String(finding.priority ?? "MEDIUM").toUpperCase();
+    counts[priority] = (counts[priority] ?? 0) + 1;
+    return counts;
+  }, {});
+  const eventTotal = Number(appendix.eventTotal ?? evidenceEvents.length);
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -11359,123 +13870,124 @@ export function ReportDetailPage() {
           value={report.summary.criticalOrHighFindings}
         />
       </div>
+
       <section className="content-card report-section">
         <div className="card-heading">
-          <div><small>1 · Flow summary</small><h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2></div>
+          <div>
+            <small>Flow and run</small>
+            <h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2>
+          </div>
           <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status>
         </div>
         <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
         <dl className="detail-list report-detail-grid">
-          <div><dt>Scope</dt><dd>{String(flowSummary.scope ?? report.flow?.scopeStatement ?? "Not declared")}</dd></div>
-          <div><dt>Initial state</dt><dd>{String(flowSummary.initialState ?? report.flow?.initialStateKey ?? "Not declared")}</dd></div>
-          <div><dt>Terminal states</dt><dd>{Array.isArray(flowSummary.terminalStates) ? flowSummary.terminalStates.map(String).join(", ") : report.flow?.terminalStateKeys.join(", ") || "Not declared"}</dd></div>
-          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
-          <div><dt>Provenance</dt><dd>{String(flowSummary.provenance ?? report.expectedIntent?.provenance ?? "Not recorded")}</dd></div>
-        </dl>
-      </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>2 · QA run summary</small><h2>Capture scope and boundary outcome</h2></div><Status>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</Status></div>
-        <dl className="detail-list report-detail-grid">
           <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
-          <div><dt>Environment</dt><dd>{String(asRecord(runSummary.environment).name ?? report.environment.name)} · {String(asRecord(runSummary.environment).type ?? report.environment.type)}</dd></div>
-          <div><dt>Capture tracks</dt><dd>{Array.isArray(runSummary.captureTracks) ? runSummary.captureTracks.map(String).join(", ") : report.captureTracks.join(", ")}</dd></div>
-          <div><dt>Duration</dt><dd>{runSummary.durationMs == null ? "Not recorded" : `${(Number(runSummary.durationMs) / 1000).toFixed(1)} seconds`}</dd></div>
-          <div><dt>Repository revision</dt><dd>{String(runSummary.repositoryRevision ?? report.repository?.revision ?? "Not attached")}</dd></div>
-          <div><dt>Instrumentation</dt><dd>{runSummary.instrumentationAvailable ? "Validated instrumentation attached" : "Browser-level evidence only"}</dd></div>
-          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px · ${String(latestViewport.devicePixelRatio ?? 1)}× DPR` : "Not recorded"}{viewportHistory.length > 1 ? ` · ${viewportHistory.length - 1} resize ${viewportHistory.length === 2 ? "change" : "changes"}` : ""}</dd></div>
+          <div><dt>Environment</dt><dd>{report.environment.name} · {report.environment.type}</dd></div>
+          <div><dt>Outcome</dt><dd>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</dd></div>
+          <div><dt>Duration</dt><dd>{formatReportDuration(runSummary.durationMs)}</dd></div>
+          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
+          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
         </dl>
-        {runSummary.captureDegraded ? <div className="report-warning" role="alert"><AlertTriangle size={18} /> Capture was degraded. Review limitations and capture findings before relying on coverage.</div> : null}
-        {Object.keys(eventCounts).length ? <div className="report-counts" aria-label="Evidence counts">{Object.entries(eventCounts).map(([type, count]) => <span key={type}><strong>{Number(count)}</strong>{type.replace(/^QA_/, "").replaceAll("_", " ").toLowerCase()}</span>)}</div> : null}
+        {runSummary.captureDegraded ? (
+          <div className="report-warning" role="alert">
+            <AlertTriangle size={18} /> Capture was degraded. Read the limitations in the downloaded
+            report before relying on coverage.
+          </div>
+        ) : null}
+      </section>
+
+      <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
+
+      <section className="content-card report-section">
+        <div className="card-heading">
+          <div>
+            <small>Findings</small>
+            <h2>What this run found</h2>
+          </div>
+          <Status>{`${detailedFindings.length + criticalFindings.length} total`}</Status>
+        </div>
+        <div className="report-counts" aria-label="Findings by priority">
+          {(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const)
+            .filter((priority) => severityCounts[priority])
+            .map((priority) => (
+              <span key={priority}>
+                <strong>{severityCounts[priority]}</strong>
+                {priority.toLowerCase()}
+              </span>
+            ))}
+          <span><strong>{missingStateCount}</strong>states not reached</span>
+          <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
+          <span><strong>{annotations.length}</strong>annotations</span>
+          <span><strong>{eventTotal}</strong>evidence events</span>
+        </div>
+        {detailedFindings.length || criticalFindings.length ? (
+          <>
+            <ReportFindingTitles items={detailedFindings} label="In this Flow" />
+            <ReportFindingTitles items={criticalFindings} label="Outside this Flow" />
+            <p className="report-note">
+              Why each one matters, the evidence behind it, and the next step are in the downloadable
+              report.
+            </p>
+          </>
+        ) : (
+          <EmptyRunSection
+            title="No findings"
+            description="This run produced no evidence-backed issue that needs your attention."
+          />
+        )}
       </section>
 
       <section className="content-card report-section">
-        <div className="card-heading"><div><small>3 · In-Flow findings</small><h2>Recommended next actions</h2></div><Status>{recommendations.length} prioritized</Status></div>
-        {recommendations.length ? (
-          <ol className="report-recommendations">
-            {recommendations.map((item, index) => (
-              <li key={String(item.id ?? index)}>
-                <div className="report-priority"><span>{index + 1}</span><Status>{String(item.priority ?? "MEDIUM")}</Status><small>{String(item.generator ?? "RULES")}</small></div>
-                <div><h3>{String(item.title ?? item.suggestedAction ?? "Recommended improvement")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>Next step: {String(item.suggestedAction ?? "Investigate and repeat the affected step.")}</strong><small>Expected outcome: {String(item.expectedOutcome ?? "The Flow completes reliably.")} · Confidence {Math.round(Number(item.confidence ?? 0) * 100)}%</small></div>
-              </li>
-            ))}
-          </ol>
-        ) : <EmptyRunSection title="No prioritized improvements" description="The deterministic analysis found no in-Flow recommendation for this run." />}
-        {detailedFindings.length ? (
-          <details className="report-details" open>
-            <summary>Detailed findings by state and transition ({detailedFindings.length})</summary>
-            <div className="report-finding-list">{detailedFindings.map((item, index) => <article key={String(item.id ?? index)}><div><Status>{String(item.priority ?? "INFO")}</Status><small>{String(item.generator ?? "RULES")}</small></div><h3>{String(item.title ?? "Finding")}</h3><p>{String(item.rationale ?? item.impact ?? "No rationale recorded.")}</p><small>State: {String(item.affectedState ?? "not linked")} · Transition: {String(item.affectedTransition ?? "not linked")} · Effort: {String(item.effort ?? "unknown")}</small></article>)}</div>
+        <div className="card-heading">
+          <div>
+            <small>Evidence</small>
+            <h2>Where to look further</h2>
+          </div>
+          <Status>{`${eventTotal} events`}</Status>
+        </div>
+        <div className="report-links">
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
+            Review evidence timeline
+          </Link>
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
+            View Flow reconciliation
+          </Link>
+          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}`}>
+            Open QA run
+          </Link>
+        </div>
+        {protectedValues.length ? (
+          <details className="report-details protected-values">
+            <summary>Protected values ({protectedValues.length})</summary>
+            <p>
+              Values stay masked, and are never written to a downloaded report. Authorized reveals
+              are individual, rate limited, audited, and never cached.
+            </p>
+            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
+            {protectedValues.map(({ event, value }, index) => {
+              const valueId = String(value.id ?? "");
+              const canReveal = String(value.kind) === "ENCRYPTED";
+              return (
+                <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}>
+                  <div>
+                    <strong>{String(value.keyPath ?? "protected value")}</strong>
+                    <small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>
+                    {revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}
+                  </div>
+                  {canReveal && valueId && revealedValues[valueId] === undefined ? (
+                    <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}>
+                      <Unlock size={15} />
+                      {revealBusy === valueId ? "Authorizing…" : "Reveal"}
+                    </button>
+                  ) : (
+                    <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>
+                  )}
+                </div>
+              );
+            })}
           </details>
         ) : null}
       </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>4 · Critical system-wide findings</small><h2>Risks outside the selected Flow</h2></div><Status>{criticalFindings.length}</Status></div>
-        {criticalFindings.length ? <div className="report-finding-list">{criticalFindings.map((item, index) => <article key={String(item.id ?? index)}><Status>{String(item.priority ?? "HIGH")}</Status><h3>{String(item.title ?? "Critical finding")}</h3><p>{String(item.impact ?? item.rationale ?? "Review the linked evidence.")}</p><strong>{String(item.suggestedAction ?? "Investigate immediately.")}</strong></article>)}</div> : <p>No high-confidence high-severity out-of-Flow failures were recorded.</p>}
-      </section>
-
-      <section className="content-card report-section" id="annotations">
-        <div className="card-heading"><div><small>5 · User annotations</small><h2>Inspect-mode feedback</h2></div><Status>{annotations.length}</Status></div>
-        {annotations.length ? <div className="annotation-list">{annotations.map((annotation, index) => { const author = asRecord(annotation.author); const mentioned = Array.isArray(annotation.mentionedTeammates) ? annotation.mentionedTeammates.map(asRecord) : []; return <article className="annotation-card" key={String(annotation.id ?? index)}><div className="annotation-pin">{String(annotation.pin ?? index + 1)}</div><div><p>{String(annotation.comment ?? "")}</p><small>{String(author.displayName ?? "QA author")} · {formatDate(annotation.timestamp)} · {String(annotation.route ?? "unknown route")} · state {String(annotation.flowState ?? "outside boundary")}</small>{mentioned.length ? <div className="annotation-mentions">Mentioned: {mentioned.map((member) => `@${String(member.displayName ?? "member")}`).join(", ")}</div> : null}</div></article>; })}</div> : <p>No inspect-mode annotations were added during this run.</p>}
-      </section>
-
-      <section className="content-card report-section">
-        <div className="card-heading"><div><small>6 · Evidence appendix</small><h2>Auditable capture record</h2></div><Status>{evidenceEvents.length} events</Status></div>
-        <div className="report-links"><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>Review evidence timeline</Link><Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>View Flow reconciliation</Link></div>
-        {limitations.length ? <div className="report-limitations"><strong>Capture limitations</strong><ul>{limitations.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-        {protectedValues.length ? (
-          <div className="protected-values">
-            <h3>Protected values</h3>
-            <p>Values stay masked. Authorized reveals are individual, rate limited, audited, and never cached.</p>
-            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
-            {protectedValues.map(({ event, value }, index) => { const valueId = String(value.id ?? ""); const canReveal = String(value.kind) === "ENCRYPTED"; return <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}><div><strong>{String(value.keyPath ?? "protected value")}</strong><small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>{revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}</div>{canReveal && valueId && revealedValues[valueId] === undefined ? <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}><Unlock size={15} />{revealBusy === valueId ? "Authorizing…" : "Reveal"}</button> : <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>}</div>; })}
-          </div>
-        ) : null}
-        <details className="report-details"><summary>Evidence index (showing up to 100 of {evidenceEvents.length})</summary><div className="evidence-index">{evidenceEvents.slice(0, 100).map((event, index) => <div key={String(event.id ?? index)}><span>{formatDate(event.timestamp)}</span><strong>{String(event.type ?? "EVENT")}</strong><span>{String(event.route ?? "No route")}</span><Status>{String(event.scope ?? "IN_FLOW")}</Status></div>)}</div></details>
-      </section>
-      {report.instrumentation ? (
-        <section className="content-card mt-4">
-          <div className="card-heading">
-            <div>
-              <small>Instrumentation manifest</small>
-              <h2>{report.instrumentation.adapterId}</h2>
-            </div>
-            <Status>{report.instrumentation.status}</Status>
-          </div>
-          <dl className="detail-list">
-            <div>
-              <dt>Plan</dt>
-              <dd>{report.instrumentation.planId.slice(0, 8)}</dd>
-            </div>
-            <div>
-              <dt>Adapter version</dt>
-              <dd>{report.instrumentation.adapterVersion}</dd>
-            </div>
-            <div>
-              <dt>Manifest version</dt>
-              <dd>{report.instrumentation.manifestVersion}</dd>
-            </div>
-            <div>
-              <dt>Validated</dt>
-              <dd>
-                {report.instrumentation.validatedAt
-                  ? new Date(
-                      report.instrumentation.validatedAt,
-                    ).toLocaleString()
-                  : "Not validated"}
-              </dd>
-            </div>
-          </dl>
-        </section>
-      ) : null}
-      {!sections.inFlowFindings && report.findings.length ? (
-        <FindingsLayout items={report.findings} />
-      ) : !sections.inFlowFindings ? (
-        <EmptyRunSection
-          title="No findings"
-          description="This report did not identify any evidence-backed issues that need your attention."
-        />
-      ) : null}
     </Page>
   );
 }
@@ -11538,35 +14050,12 @@ function GuardedFeatureContent({
 
 export function LoadingState() {
   return (
-    <div
-      className="p-6 space-y-6 w-full animate-pulse"
-      role="status"
-      aria-label="Loading page data"
-    >
-      <div className="space-y-2">
-        <div className="h-7 w-48 bg-neutral-800 rounded-md" />
-        <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-24 bg-neutral-800 rounded" />
-          <div className="h-6 w-16 bg-neutral-800/60 rounded" />
-        </div>
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-28 bg-neutral-800 rounded" />
-          <div className="h-6 w-20 bg-neutral-800/60 rounded" />
-        </div>
-        <div className="h-24 bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-          <div className="h-4 w-20 bg-neutral-800 rounded" />
-          <div className="h-6 w-16 bg-neutral-800/60 rounded" />
-        </div>
-      </div>
-      <div className="h-56 bg-neutral-900 border border-neutral-800 rounded-lg p-6 space-y-4">
-        <div className="h-5 w-40 bg-neutral-800 rounded" />
-        <div className="h-4 w-full bg-neutral-800/40 rounded" />
-        <div className="h-4 w-4/5 bg-neutral-800/40 rounded" />
-        <div className="h-4 w-2/3 bg-neutral-800/40 rounded" />
-      </div>
+    <div className="loading-skeleton" role="status" aria-label="Loading page data">
+      <div className="skeleton-line is-title" style={{ width: "28%" }} />
+      {["92%", "86%", "74%", "88%", "64%", "80%"].map((width, index) => (
+        <div key={index} className="skeleton-line" style={{ width }} />
+      ))}
+      <div className="skeleton-block" />
     </div>
   );
 }

@@ -4,204 +4,46 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import semver from 'semver';
-import { Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
+import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
 import { z } from 'zod';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
+import { FlowPlacementKindSchema } from '@tellann/desktop-contracts';
 import type { FlowInitializationManifest, RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import {
+  CALLABLE_ENTRY_PLACEMENTS,
+  calculateFlowAnchorHash,
+  currentGitRevision,
+  fileHash,
+  hash,
+  INSTRUMENTATION_CONTRACT_VERSION,
+  INSTRUMENTATION_MANIFEST_VERSION,
+  SDK_FALLBACK_INSTALL_SPEC,
+  validateInstrumentationPlan,
+  type AdapterEvidence,
+  type ApprovedInstrumentationTask,
+  type DetectionResult,
+  type FlowPlacementKind,
+  type InstrumentationAdapter,
+  type InstrumentationPlan,
+  type LocalProjectContext,
+  type PatchFileResult,
+  type PatchOperation,
+  type PatchResult,
+  type Risk,
+  type RollbackResult,
+  type StructuredCommand,
+  type ValidationResult,
+  type FrameworkId,
+} from './contracts';
 
-export const INSTRUMENTATION_CONTRACT_VERSION = '1.0';
-export const INSTRUMENTATION_MANIFEST_VERSION = '1.0';
+export * from './contracts';
+import { beginPatch, finalizePatch, hashChecks, restorePatch, rollbackPatch } from './patching';
+export * from './patching';
+import { pythonAdapters } from './python-adapter';
+export * from './python-adapter';
 
-export const RiskSchema = z.enum(['LOW', 'MEDIUM', 'HIGH']);
-export const OperationKindSchema = z.enum(['CREATE_FILE', 'UPDATE_SOURCE', 'UPDATE_PACKAGE']);
-export const FrameworkIdSchema = z.enum(['react-vite', 'nextjs', 'express', 'fastify', 'nestjs']);
-export const PlanStatusSchema = z.enum([
-  'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
-  'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
-]);
 
-export type Risk = z.infer<typeof RiskSchema>;
-export type FrameworkId = z.infer<typeof FrameworkIdSchema>;
 
-export type StructuredCommand = {
-  id: string;
-  executable: string;
-  args: string[];
-  cwd: string;
-  timeoutMs: number;
-  allowedEnvironmentKeys: string[];
-  purpose: string;
-  networkRequired: boolean;
-};
-
-export type LocalProjectContext = {
-  workspaceRoot: string;
-  environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
-  snapshot: RepositorySnapshotSummary;
-  instrumentationPurpose?: 'BOOTSTRAP' | 'FLOW';
-  flowId?: string;
-  flowVersionId?: string;
-  flowInitializationId?: string;
-  flowManifest?: FlowInitializationManifest;
-};
-
-export type DetectionResult = {
-  adapterId: FrameworkId;
-  adapterVersion: string;
-  supported: boolean;
-  confidence: number;
-  frameworkVersion: string | null;
-  supportedVersionRange: string;
-  evidence: string[];
-  reasons: string[];
-};
-
-export type AdapterEvidence = {
-  entryPoints: Array<{ file: string; symbol: string | null; confidence: number }>;
-  existingInstrumentation: Array<{ file: string; marker: string }>;
-  semanticBoundaries: Array<{
-    file: string;
-    symbol: string | null;
-    eventType: string;
-    confidence: number;
-    rationale: string;
-  }>;
-};
-
-export type PatchOperation = {
-  id: string;
-  kind: z.infer<typeof OperationKindSchema>;
-  relativePath: string;
-  symbol: string | null;
-  transformId: string;
-  transformVersion: string;
-  expectedHash: string | null;
-  description: string;
-  eventMappings: Array<{ eventType: string; expectedState: string | null; checkpointId?: string; stateId?: string | null; transitionId?: string | null; terminalKind?: string | null }>;
-  content?: string;
-  importModule?: string;
-  flowInitializationId?: string;
-};
-
-export type InstrumentationPlan = {
-  contractVersion: string;
-  manifestVersion: string;
-  id: string;
-  taskKey: string;
-  adapterId: FrameworkId;
-  adapterVersion: string;
-  frameworkVersion: string | null;
-  supportedVersionRange: string;
-  baseRevision: string | null;
-  repositoryFingerprint: string;
-  approvedFileScopes: string[];
-  packageChanges: Array<{ packageName: string; version: string; kind: 'dependency' | 'devDependency' }>;
-  operations: PatchOperation[];
-  validationCommands: StructuredCommand[];
-  networkRequirements: string[];
-  risk: Risk;
-  riskReasons: string[];
-  evidence: AdapterEvidence;
-  instrumentationPurpose: 'BOOTSTRAP' | 'FLOW';
-  flowId: string | null;
-  flowVersionId: string | null;
-  flowInitializationId?: string | null;
-  flowManifest?: FlowInitializationManifest | null;
-  createdAt: string;
-};
-
-export type ApprovedInstrumentationTask = {
-  plan: InstrumentationPlan;
-  approvedFileScopes: string[];
-  approvedCommandIds: string[];
-  approvalHash: string;
-  checkpointDirectory: string;
-};
-
-export type PatchFileResult = {
-  relativePath: string;
-  beforeHash: string | null;
-  afterHash: string;
-  changed: boolean;
-};
-
-export type PatchResult = {
-  planId: string;
-  checkpointId: string;
-  checkpointDirectory: string;
-  baseRevision: string | null;
-  files: PatchFileResult[];
-  changedFiles: string[];
-  diff: string;
-  diffHash: string;
-  appliedAt: string;
-};
-
-export type ValidationResult = {
-  valid: boolean;
-  checks: Array<{ name: string; passed: boolean; output: string }>;
-};
-
-export type RollbackResult = {
-  rolledBackFiles: string[];
-  conflicts: Array<{ relativePath: string; reason: string }>;
-  verified: boolean;
-};
-
-export interface InstrumentationAdapter {
-  readonly id: FrameworkId;
-  readonly version: string;
-  readonly supportedVersionRange: string;
-  detect(input: LocalProjectContext): DetectionResult;
-  index(input: LocalProjectContext): Promise<AdapterEvidence>;
-  propose(input: LocalProjectContext): Promise<InstrumentationPlan>;
-  apply(input: LocalProjectContext, task: ApprovedInstrumentationTask): Promise<PatchResult>;
-  validate(input: LocalProjectContext, result: PatchResult): Promise<ValidationResult>;
-  rollback(input: LocalProjectContext, result: PatchResult): Promise<RollbackResult>;
-}
-
-const PLAN_SCHEMA = z.object({
-  contractVersion: z.literal(INSTRUMENTATION_CONTRACT_VERSION),
-  manifestVersion: z.literal(INSTRUMENTATION_MANIFEST_VERSION),
-  id: z.string().uuid(),
-  taskKey: z.string().min(32),
-  adapterId: FrameworkIdSchema,
-  adapterVersion: z.string(),
-  frameworkVersion: z.string().nullable(),
-  supportedVersionRange: z.string(),
-  baseRevision: z.string().nullable(),
-  repositoryFingerprint: z.string().min(32),
-  approvedFileScopes: z.array(z.string()),
-  packageChanges: z.array(z.object({ packageName: z.string(), version: z.string(), kind: z.enum(['dependency', 'devDependency']) })),
-  operations: z.array(z.object({
-    id: z.string(), kind: OperationKindSchema, relativePath: z.string(), symbol: z.string().nullable(), transformId: z.string(),
-    transformVersion: z.string(), expectedHash: z.string().nullable(), description: z.string(),
-    eventMappings: z.array(z.object({ eventType: z.string(), expectedState: z.string().nullable(), checkpointId: z.string().optional(), stateId: z.string().nullable().optional(), transitionId: z.string().nullable().optional(), terminalKind: z.string().nullable().optional() })),
-    content: z.string().optional(), importModule: z.string().optional(), flowInitializationId: z.string().uuid().optional(),
-  })),
-  validationCommands: z.array(z.object({
-    id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
-    allowedEnvironmentKeys: z.array(z.string()), purpose: z.string(), networkRequired: z.boolean(),
-  })),
-  networkRequirements: z.array(z.string()),
-  risk: RiskSchema,
-  riskReasons: z.array(z.string()),
-  evidence: z.any(),
-  instrumentationPurpose: z.enum(['BOOTSTRAP', 'FLOW']).default('BOOTSTRAP'),
-  flowId: z.string().uuid().nullable().optional(),
-  flowVersionId: z.string().uuid().nullable().optional(),
-  flowInitializationId: z.string().uuid().nullable().optional(),
-  flowManifest: z.any().nullable().optional(),
-  createdAt: z.string(),
-});
-
-export function validateInstrumentationPlan(value: unknown): InstrumentationPlan {
-  return PLAN_SCHEMA.parse(value) as InstrumentationPlan;
-}
-
-function hash(value: string | Buffer): string {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
 
 function normalizeVersion(value: string | undefined): string | null {
   if (!value) return null;
@@ -238,11 +80,18 @@ function isCommonJsEntry(root: string, relativePath: string): boolean {
 function generatedFileFor(definition: AdapterDefinition, entryFile: string): string {
   const extension = path.extname(entryFile).toLowerCase();
   const typed = ['.ts', '.tsx', '.mts', '.cts'].includes(extension);
-  if (definition.id === 'nextjs') return typed ? 'src/tellann.tsx' : 'src/tellann.js';
-  if (definition.sdkPackage === '@tellann/frontend-sdk') return typed ? 'src/tellann.ts' : 'src/tellann.js';
-  if (extension === '.cjs') return 'src/tellann.cjs';
-  if (extension === '.mjs') return 'src/tellann.mjs';
-  return typed ? 'src/tellann.ts' : 'src/tellann.js';
+  // The definition's own path supplies the directory, because not every
+  // framework keeps application code in `src/`: Remix uses `app/`, and writing
+  // a generated module into a directory the framework does not compile would
+  // produce an import that resolves at type-check time and fails at runtime.
+  const directory = definition.generatedFile.includes('/')
+    ? definition.generatedFile.slice(0, definition.generatedFile.lastIndexOf('/') + 1)
+    : '';
+  if (definition.id === 'nextjs') return `${directory}tellann.${typed ? 'tsx' : 'js'}`;
+  if (definition.sdkPackage === '@tellann/frontend-sdk') return `${directory}tellann.${typed ? 'ts' : 'js'}`;
+  if (extension === '.cjs') return `${directory}tellann.cjs`;
+  if (extension === '.mjs') return `${directory}tellann.mjs`;
+  return `${directory}tellann.${typed ? 'ts' : 'js'}`;
 }
 
 function findSourceFiles(root: string, max = 5_000): string[] {
@@ -303,20 +152,42 @@ function withinPackage(relativeRoot: string, relativePath: string): string {
   return relativeRoot ? path.posix.join(relativeRoot, relativePath) : relativePath;
 }
 
-function fileHash(root: string, relativePath: string): string | null {
-  const target = resolveWithinWorkspace(root, relativePath);
-  return fs.existsSync(target) ? hash(fs.readFileSync(target)) : null;
-}
+// Cached for the process: a plan is rebuilt each time the user revisits the review
+// screen, and the newest published version does not change on that timescale.
+const latestPublishedVersions = new Map<string, string | null>();
 
-function currentGitRevision(root: string): string | null {
+// `npm view` is used rather than a direct registry fetch so the lookup honours the
+// user's registry configuration and credentials, including a private mirror.
+function latestPublishedVersion(packageName: string): string | null {
+  const cached = latestPublishedVersions.get(packageName);
+  if (cached !== undefined) return cached;
+  let resolved: string | null = null;
   try {
-    return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).trim() || null;
+    const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const output = execFileSync(executable, ['view', packageName, 'version'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+    }).trim();
+    // An unpublished package prints nothing and still exits zero.
+    if (semver.valid(output)) resolved = output;
   } catch {
-    return null;
+    // Planning stays usable without a registry; the caller falls back to the tag.
   }
+  latestPublishedVersions.set(packageName, resolved);
+  return resolved;
 }
 
-function commandFor(root: string, packageRoot: string, relativePackageRoot: string, snapshot: RepositorySnapshotSummary, sdkPackage: string): StructuredCommand[] {
+type SdkInstallSpec = { install: string; dependency: string };
+
+function resolveSdkInstallSpec(sdkPackage: string): SdkInstallSpec {
+  const latest = latestPublishedVersion(sdkPackage);
+  // The command pins the exact version it was approved against; package.json keeps
+  // the ordinary caret range so the project can take later patches on its own.
+  return latest
+    ? { install: latest, dependency: `^${latest}` }
+    : { install: SDK_FALLBACK_INSTALL_SPEC, dependency: SDK_FALLBACK_INSTALL_SPEC };
+}
+
+function commandFor(root: string, packageRoot: string, relativePackageRoot: string, snapshot: RepositorySnapshotSummary, sdkPackage: string, installSpec: string): StructuredCommand[] {
   const manager = snapshot.packageManager;
   if (!manager || !['pnpm', 'npm', 'yarn', 'bun'].includes(manager)) return [];
   const executable = process.platform === 'win32' ? `${manager}.cmd` : manager;
@@ -331,18 +202,32 @@ function commandFor(root: string, packageRoot: string, relativePackageRoot: stri
   const commands: StructuredCommand[] = [];
   if (!sdkResolves) {
     const installArgs = manager === 'npm'
-      ? ['install', `${sdkPackage}@^0.1.0`]
-      : ['add', `${sdkPackage}@^0.1.0`];
+      ? ['install', `${sdkPackage}@${installSpec}`]
+      : ['add', `${sdkPackage}@${installSpec}`];
     commands.push({
       id: 'install-sdk', executable, args: installArgs, cwd: relativePackageRoot || '.', timeoutMs: 15 * 60_000,
       allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'],
       purpose: `Install ${sdkPackage} using the detected ${manager} package manager`, networkRequired: true,
     });
   }
+  // A type check answers the question the build is being asked — do the inserted
+  // calls still compile against this project — in a fraction of the time, so it
+  // becomes the default when the project has one.
+  const typecheckScript = ['typecheck', 'type-check', 'tsc', 'check-types']
+    .find((name) => typeof packageJson.scripts?.[name] === 'string');
+  if (typecheckScript) {
+    commands.push({
+      id: 'validate-types', executable, args: ['run', typecheckScript], cwd: relativePackageRoot || '.', timeoutMs: 10 * 60_000,
+      allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'],
+      purpose: 'Type-check the instrumented application', networkRequired: false,
+    });
+  }
   if (typeof packageJson.scripts?.build === 'string') {
     commands.push({
       id: 'validate-build', executable, args: ['run', 'build'], cwd: relativePackageRoot || '.', timeoutMs: 15 * 60_000,
       allowedEnvironmentKeys: ['CI', 'NODE_ENV', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'], purpose: 'Validate the instrumented application build', networkRequired: false,
+      // Kept required when there is nothing cheaper that would catch a break.
+      ...(typecheckScript ? { optional: true } : {}),
     });
   }
   return commands;
@@ -405,11 +290,23 @@ function updatePackageDependency(source: string, section: 'dependencies' | 'devD
   return `${source.slice(0, close).trimEnd()}${insertion}${source.slice(close)}`;
 }
 
+/**
+ * The browser configuration module.
+ *
+ * Configuration is read from whichever prefix the framework's bundler exposes,
+ * because each one exposes only its own: Vite and Remix expose `VITE_`,
+ * SvelteKit and Astro expose `PUBLIC_`, Nuxt exposes `NUXT_PUBLIC_` and
+ * Next.js exposes `NEXT_PUBLIC_`. Reading only `VITE_` meant a correct value in
+ * an Astro or SvelteKit project was simply invisible to the application.
+ */
 function generatedFrontendModule(typed: boolean): string {
   const runDeclaration = typed
     ? `const run = (globalThis as typeof globalThis & { __TELLANN_RUN__?: Record<string, string> }).__TELLANN_RUN__ ?? {};`
     : `const run = globalThis.__TELLANN_RUN__ ?? {};`;
-  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { TELLANN } from '@tellann/frontend-sdk';\n\n${runDeclaration}\nconst configured = import.meta.env ?? {};\n\nTELLANN.initialize({\n  endpoint: run.relayEndpoint ?? configured.VITE_TELLANN_GATEWAY_URL ?? '/tellann-relay',\n  applicationId: run.applicationId ?? configured.VITE_TELLANN_APPLICATION_ID ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? configured.VITE_TELLANN_ENVIRONMENT_ID,\n  apiKey: run.relayToken ?? configured.VITE_TELLANN_INGESTION_KEY,\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid TELLANN.verifyInstallation();\n\nexport { TELLANN };\n/* tellann:generated:end */\n`;
+  const readDeclaration = typed
+    ? `const read = (name: string): string | undefined =>`
+    : `const read = (name) =>`;
+  return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */\nimport { TELLANN } from '@tellann/frontend-sdk';\n\n${runDeclaration}\nconst configured = (typeof import.meta !== 'undefined' && import.meta.env) || {};\nconst processEnv = (typeof process !== 'undefined' && process.env) || {};\n${readDeclaration}\n  ['VITE_', 'PUBLIC_', 'NUXT_PUBLIC_', 'NEXT_PUBLIC_', '']\n    .map((prefix) => configured[prefix + name] ?? processEnv[prefix + name])\n    .find((value) => typeof value === 'string' && value.length > 0);\n\nTELLANN.initialize({\n  endpoint: run.relayEndpoint ?? read('TELLANN_GATEWAY_URL') ?? '/tellann-relay',\n  applicationId: run.applicationId ?? read('TELLANN_APPLICATION_ID') ?? 'configure-in-tellann-desktop',\n  environmentId: run.environmentId ?? read('TELLANN_ENVIRONMENT_ID'),\n  apiKey: run.relayToken ?? read('TELLANN_INGESTION_KEY'),\n  runId: run.runId,\n  sessionId: run.sessionId,\n  traceId: run.traceId,\n  agentVersion: run.agentVersion,\n  instrumentationManifestVersion: '${INSTRUMENTATION_MANIFEST_VERSION}',\n});\nvoid TELLANN.verifyInstallation();\n\nexport { TELLANN };\n/* tellann:generated:end */\n`;
 }
 
 function backendInitialization(): string {
@@ -431,7 +328,9 @@ function generatedBackendModule(adapterId: FrameworkId, commonJs: boolean): stri
   if (commonJs) {
     const names = adapterId === 'express' ? 'TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware'
       : adapterId === 'fastify' ? 'TELLANN, tellannFastifyPlugin'
-        : 'TELLANN';
+        : adapterId === 'koa' ? 'TELLANN, tellannKoaMiddleware'
+          : adapterId === 'hapi' ? 'TELLANN, tellannHapiPlugin'
+            : 'TELLANN';
     return `/* tellann:generated:start manifest=${INSTRUMENTATION_MANIFEST_VERSION} */
 const { ${names} } = require('@tellann/backend-sdk');
 
@@ -445,6 +344,10 @@ module.exports = { ${names} };
     ? `import { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannExpressErrorHandler, tellannExpressMiddleware };`
     : adapterId === 'fastify'
       ? `import { TELLANN, tellannFastifyPlugin } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannFastifyPlugin };`
+      : adapterId === 'koa'
+      ? `import { TELLANN, tellannKoaMiddleware } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannKoaMiddleware };`
+      : adapterId === 'hapi'
+      ? `import { TELLANN, tellannHapiPlugin } from '@tellann/backend-sdk';\n\n${backendInitialization()}\n\nexport { TELLANN, tellannHapiPlugin };`
       : adapterId === 'nestjs'
         ? `import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable, catchError, tap, throwError } from 'rxjs';
@@ -541,7 +444,59 @@ const DEFINITIONS: AdapterDefinition[] = [
   { id: 'express', packageNames: ['express'], versionPackage: 'express', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/\.listen\s*\(/, /express\s*\(/] },
   { id: 'fastify', packageNames: ['fastify'], versionPackage: 'fastify', supportedVersionRange: '>=4 <6', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/fastify\s*\(/i, /\.listen\s*\(/] },
   { id: 'nestjs', packageNames: ['@nestjs/core'], versionPackage: '@nestjs/core', supportedVersionRange: '>=9 <12', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/NestFactory\.create\s*\(/, /bootstrap\s*\(/] },
+
+  // Frameworks whose integration is a single side-effect import at the client
+  // entry point. They are all Vite- or bundler-based, so the generated module's
+  // `import.meta.env` lookup resolves, and the fallbacks cover the one that
+  // does not (Angular) without changing how the module is written.
+  { id: 'sveltekit', packageNames: ['@sveltejs/kit'], versionPackage: '@sveltejs/kit', supportedVersionRange: '>=1 <3', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/hooks\.client\.[jt]s$/, /(^|\/)src\/routes\/\+layout\.[jt]s$/], symbolMatchers: [/export/, /handleError/, /load/] },
+  { id: 'nuxt', packageNames: ['nuxt'], versionPackage: 'nuxt', supportedVersionRange: '>=3 <5', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'plugins/tellann.ts', entryMatchers: [/(^|\/)plugins\/[^/]+\.client\.[jt]s$/, /(^|\/)app\.vue$/], symbolMatchers: [/defineNuxtPlugin\s*\(/, /<script/, /export\s+default/] },
+  { id: 'astro', packageNames: ['astro'], versionPackage: 'astro', supportedVersionRange: '>=3 <6', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/(scripts|lib)\/[^/]+\.[jt]s$/, /(^|\/)src\/client\.[jt]s$/], symbolMatchers: [/export/, /document\./, /window\./] },
+  { id: 'remix', packageNames: ['@remix-run/react'], versionPackage: '@remix-run/react', supportedVersionRange: '>=2 <4', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'app/tellann.ts', entryMatchers: [/(^|\/)app\/entry\.client\.[jt]sx?$/], symbolMatchers: [/hydrateRoot\s*\(/, /startTransition\s*\(/, /RemixBrowser/] },
+  { id: 'angular', packageNames: ['@angular/core'], versionPackage: '@angular/core', supportedVersionRange: '>=15 <21', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/main\.[jt]s$/], symbolMatchers: [/bootstrapApplication\s*\(/, /platformBrowserDynamic\s*\(/, /bootstrapModule\s*\(/] },
+
+  { id: 'koa', packageNames: ['koa'], versionPackage: 'koa', supportedVersionRange: '>=2 <4', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/new\s+Koa\s*\(/, /Koa\s*\(/, /\.listen\s*\(/] },
+  { id: 'hapi', packageNames: ['@hapi/hapi'], versionPackage: '@hapi/hapi', supportedVersionRange: '>=20 <22', sdkPackage: '@tellann/backend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)(src\/)?(index|server|app|main)\.[jt]s$/], symbolMatchers: [/Hapi\.server\s*\(/, /\.server\s*\(/, /\.start\s*\(/] },
 ];
+
+/**
+ * Which detected framework package holds each of a Flow's checkpoint files.
+ *
+ * The caller uses this to split a manifest across adapters before proposing, so
+ * a Flow that spans a web app and an API produces one plan per package rather
+ * than a blanket refusal. Files that fall inside no detected package come back
+ * under `unassigned`, which is what the caller reports to the user.
+ */
+export function assignFlowCheckpoints(
+  workspaceRoot: string,
+  manifest: FlowInitializationManifest | null | undefined,
+  adapterIds: FrameworkId[],
+): { byAdapter: Record<string, string[]>; unassigned: Array<{ checkpointId: string; file: string }> } {
+  const byAdapter: Record<string, string[]> = {};
+  const unassigned: Array<{ checkpointId: string; file: string }> = [];
+  const roots = adapterIds.map((id) => {
+    const definition = DEFINITIONS.find((item) => item.id === id)!;
+    return { id, relativeRoot: frameworkPackage(workspaceRoot, definition)?.relativeRoot ?? null };
+  }).filter((item) => item.relativeRoot !== null);
+  for (const checkpoint of manifest?.checkpoints ?? []) {
+    const file = String((checkpoint.mapping as { file?: string | null })?.file ?? '');
+    if (!file) {
+      unassigned.push({ checkpointId: checkpoint.id, file: '' });
+      continue;
+    }
+    // Deepest package wins: in a monorepo `apps/web` is more specific than the
+    // repository root, and a file under it belongs to the web app.
+    const owner = roots
+      .filter((item) => !item.relativeRoot || file.startsWith(`${item.relativeRoot}/`))
+      .sort((left, right) => (right.relativeRoot?.length ?? 0) - (left.relativeRoot?.length ?? 0))[0];
+    if (!owner) {
+      unassigned.push({ checkpointId: checkpoint.id, file });
+      continue;
+    }
+    (byAdapter[owner.id] ??= []).push(checkpoint.id);
+  }
+  return { byAdapter, unassigned };
+}
 
 function addNamedImport(source: SourceFile, moduleSpecifier: string, names: string[]): void {
   const existing = source.getImportDeclaration((declaration) => declaration.getModuleSpecifierValue() === moduleSpecifier);
@@ -571,21 +526,168 @@ function addCheckpointImport(source: SourceFile, moduleSpecifier: string, common
   else source.insertImportDeclaration(0, { moduleSpecifier, namedImports: [{ name: 'TELLANN', alias: 'TellannTELLANN' }] });
 }
 
+function checkpointStatement(operation: PatchOperation): string {
+  const marker = `tellann:checkpoint:${operation.id}`;
+  const mapping = operation.eventMappings[0];
+  return `/* ${marker} */\nvoid TellannTELLANN.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify(operation.flowInitializationId ?? null)}, source: 'tellann-adapter' });`;
+}
+
+function symbolBody(source: SourceFile, symbol: string) {
+  const functionDeclaration = source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).find((item) => item.getName() === symbol);
+  const methodDeclaration = source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).find((item) => item.getName() === symbol);
+  const variableDeclaration = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === symbol);
+  const initializer = variableDeclaration?.getInitializer();
+  return functionDeclaration?.getBody()
+    ?? methodDeclaration?.getBody()
+    ?? (initializer && [SyntaxKind.ArrowFunction, SyntaxKind.FunctionExpression].includes(initializer.getKind())
+      ? initializer.getFirstChildByKind(SyntaxKind.Block)
+      : undefined);
+}
+
+function symbolPlacementKind(source: SourceFile, symbol: string): 'FUNCTION_ENTRY' | 'METHOD_ENTRY' | 'ARROW_FUNCTION_ENTRY' | 'CALLBACK_ENTRY' | null {
+  if (source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).some((item) => item.getName() === symbol)) return 'FUNCTION_ENTRY';
+  if (source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).some((item) => item.getName() === symbol)) return 'METHOD_ENTRY';
+  const initializer = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === symbol)?.getInitializer();
+  if (initializer?.getKind() === SyntaxKind.ArrowFunction) return 'ARROW_FUNCTION_ENTRY';
+  if (initializer?.getKind() === SyntaxKind.FunctionExpression) return 'CALLBACK_ENTRY';
+  return null;
+}
+
+function functionBlock(node: Node | null | undefined) {
+  if (!node) return null;
+  if (!Node.isFunctionDeclaration(node) && !Node.isFunctionExpression(node) && !Node.isArrowFunction(node)) return null;
+  const body = node.getBody();
+  return body && Node.isBlock(body) ? body : null;
+}
+
+function namedDeclaration(source: SourceFile, symbol: string): Node | null {
+  return source.getFunction(symbol)
+    ?? source.getClass(symbol)
+    ?? source.getVariableDeclaration(symbol)?.getInitializer()
+    ?? null;
+}
+
+function defaultExportedDeclaration(source: SourceFile): Node | null {
+  const assignment = source.getExportAssignment((item) => !item.isExportEquals());
+  if (assignment) {
+    const expression = assignment.getExpression();
+    return Node.isIdentifier(expression) ? namedDeclaration(source, expression.getText()) : expression;
+  }
+  return source.getFunctions().find((item) => item.isDefaultExport())
+    ?? source.getClasses().find((item) => item.isDefaultExport())
+    ?? null;
+}
+
+/**
+ * Resolve the React component a `COMPONENT_MOUNT` placement targets.
+ *
+ * The mapping may carry no symbol. Analysis derives file-scoped routes — a
+ * Next.js `page.tsx`, an App Router `layout.tsx` — from where the file sits
+ * rather than from a named export, so the route entity has a path and no
+ * symbol at all. Falling back to the file's default export is what a developer
+ * reading the same file would do, and it keeps every route state reachable by
+ * automated initialization instead of silently forcing manual placement.
+ */
+function componentMountTarget(source: SourceFile, symbol: string | null): { name: string | null; block: ReturnType<typeof functionBlock> } | null {
+  const declaration = symbol ? namedDeclaration(source, symbol) : defaultExportedDeclaration(source);
+  const block = functionBlock(declaration);
+  if (!block) return null;
+  const name = symbol
+    ?? (declaration && Node.isFunctionDeclaration(declaration) ? declaration.getName() ?? null : null)
+    ?? declaration?.getFirstAncestorByKind(SyntaxKind.VariableDeclaration)?.getName()
+    ?? null;
+  // A mount effect only makes sense inside something that renders. Requiring
+  // either a component-cased name or literal JSX keeps a plain helper function
+  // from being instrumented as though it were a screen.
+  const rendersJsx = block.getDescendants().some((item) =>
+    Node.isJsxElement(item) || Node.isJsxSelfClosingElement(item) || Node.isJsxFragment(item));
+  if (!rendersJsx && !(name && /^[A-Z]/.test(name))) return null;
+  return { name, block };
+}
+
+const NEXT_APP_SEGMENT = /(^|\/)app\/(.*\/)?(page|layout|template|default)\.[cm]?[jt]sx?$/;
+
+/**
+ * Next.js App Router segments render on the server unless the file opts in with
+ * `'use client'`. A mount effect there never runs, so it would be a silently
+ * dead checkpoint — refuse instead, and let the user pick another candidate.
+ */
+function isServerComponentFile(file: string, content: string): boolean {
+  if (!NEXT_APP_SEGMENT.test(file)) return false;
+  return !/^\s*(['"])use client\1/m.test(content);
+}
+
+/** How this file should reach `useEffect`, and the import that has to exist first. */
+function reactEffectAccess(source: SourceFile, commonJs: boolean): { expression: string; add(): void } {
+  if (commonJs) {
+    const statement = "const TellannReact = require('react');";
+    return {
+      expression: 'TellannReact.useEffect',
+      add: () => { if (!source.getFullText().includes(statement)) source.insertStatements(0, statement); },
+    };
+  }
+  const existing = source.getImportDeclaration((declaration) => declaration.getModuleSpecifierValue() === 'react');
+  // `import * as React from 'react'` cannot carry named imports; go through the
+  // namespace rather than rewriting an import the project already relies on.
+  const namespace = existing?.getNamespaceImport()?.getText();
+  if (namespace) return { expression: `${namespace}.useEffect`, add: () => undefined };
+  if (existing?.getNamedImports().some((item) => item.getName() === 'useEffect')) {
+    return { expression: 'useEffect', add: () => undefined };
+  }
+  if (existing) return { expression: 'useEffect', add: () => { existing.addNamedImport('useEffect'); } };
+  return {
+    expression: 'useEffect',
+    add: () => { source.insertImportDeclaration(0, { moduleSpecifier: 'react', namedImports: ['useEffect'] }); },
+  };
+}
+
 function applySemanticCheckpoint(source: SourceFile, operation: PatchOperation, commonJs: boolean): void {
-  if (!operation.symbol || !operation.importModule) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (!operation.importModule) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (!operation.symbol && operation.placementKind !== 'COMPONENT_MOUNT') throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
   const marker = `tellann:checkpoint:${operation.id}`;
   if (source.getFullText().includes(marker)) return;
   addCheckpointImport(source, operation.importModule, commonJs);
-  const functionDeclaration = source.getDescendantsOfKind(SyntaxKind.FunctionDeclaration).find((item) => item.getName() === operation.symbol);
-  const methodDeclaration = source.getDescendantsOfKind(SyntaxKind.MethodDeclaration).find((item) => item.getName() === operation.symbol);
-  const variableDeclaration = source.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((item) => item.getName() === operation.symbol);
-  const body = functionDeclaration?.getBody()
-    ?? methodDeclaration?.getBody()
-    ?? variableDeclaration?.getInitializer()?.getFirstChildByKind(SyntaxKind.Block);
-  if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
-  const mapping = operation.eventMappings[0];
-  (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0,
-    `/* ${marker} */\nvoid TellannTELLANN.trackEvent(${JSON.stringify(mapping?.eventType ?? 'FLOW_STATE_REACHED')}, { checkpointId: ${JSON.stringify(mapping?.checkpointId ?? operation.id)}, stateId: ${JSON.stringify(mapping?.stateId ?? null)}, transitionId: ${JSON.stringify(mapping?.transitionId ?? null)}, terminalKind: ${JSON.stringify(mapping?.terminalKind ?? null)}, flowInitializationId: ${JSON.stringify((operation as any).flowInitializationId ?? null)}, source: 'tellann-adapter' });`);
+  const placementKind = operation.placementKind ?? 'FUNCTION_ENTRY';
+  const statement = checkpointStatement(operation);
+  if (placementKind === 'COMPONENT_MOUNT') {
+    const target = componentMountTarget(source, operation.symbol ?? null);
+    if (!target?.block) throw new Error(`SAFE_COMPONENT_BOUNDARY_NOT_FOUND:${operation.id}`);
+    const effect = reactEffectAccess(source, commonJs);
+    effect.add();
+    // The empty dependency list is what makes this a mount checkpoint, and the
+    // marker comment above already makes a second apply a no-op.
+    target.block.insertStatements(0, `${effect.expression}(() => {\n${statement}\n}, []);`);
+    return;
+  }
+  const symbol = operation.symbol;
+  if (!symbol) throw new Error('INVALID_SEMANTIC_CHECKPOINT_OPERATION');
+  if (CALLABLE_ENTRY_PLACEMENTS.includes(placementKind)) {
+    const body = symbolBody(source, symbol);
+    if (!body || body.getKind() !== SyntaxKind.Block || !('insertStatements' in body)) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${symbol}`);
+    (body as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0, statement);
+    return;
+  }
+  if (!operation.anchorText) throw new Error(`FLOW_CHECKPOINT_ANCHOR_REQUIRED:${operation.id}`);
+  const scope = symbolBody(source, symbol);
+  if (!scope) throw new Error(`SAFE_SEMANTIC_BOUNDARY_NOT_FOUND:${operation.symbol}`);
+  if (placementKind === 'BRANCH_ENTRY') {
+    const branches = scope.getDescendantsOfKind(SyntaxKind.IfStatement).filter((item) => {
+      const header = `if (${item.getExpression().getText()})`;
+      return operation.anchorText === header || item.getText() === operation.anchorText;
+    });
+    if (branches.length !== 1) throw new Error(`SAFE_FLOW_BRANCH_NOT_FOUND:${operation.id}`);
+    const branch = branches[0];
+    const target = operation.branch === 'ELSE' ? branch?.getElseStatement() : branch?.getThenStatement();
+    if (!target || target.getKind() !== SyntaxKind.Block || !('insertStatements' in target)) throw new Error(`SAFE_FLOW_BRANCH_NOT_FOUND:${operation.id}`);
+    (target as unknown as { insertStatements(index: number, text: string): unknown }).insertStatements(0, statement);
+    return;
+  }
+  const anchors = scope.getDescendants().filter((item) => item.getText() === operation.anchorText && Node.isStatement(item));
+  if (anchors.length !== 1) throw new Error(`SAFE_FLOW_STATEMENT_NOT_FOUND:${operation.id}`);
+  const anchor = anchors[0];
+  anchor.replaceWithText(placementKind === 'BEFORE_STATEMENT'
+    ? `${statement}\n${anchor.getText()}`
+    : `${anchor.getText()}\n${statement}`);
 }
 
 function frameworkVariable(source: SourceFile, matcher: RegExp): string | null {
@@ -610,7 +712,31 @@ function insertBeforeListen(source: SourceFile, variableName: string, statementT
   listen.replaceWithText(`${statementText}\n${listen.getText()}`);
 }
 
+/** A bare import of the generated module, which initializes on evaluation. */
+function addSideEffectImport(source: SourceFile, moduleSpecifier: string, commonJs: boolean): void {
+  if (commonJs) {
+    const statement = `require(${JSON.stringify(moduleSpecifier)});`;
+    if (!source.getFullText().includes(statement)) source.insertStatements(0, statement);
+    return;
+  }
+  if (!source.getImportDeclarations().some((declaration) => declaration.getModuleSpecifierValue() === moduleSpecifier)) {
+    source.insertImportDeclaration(0, { moduleSpecifier });
+  }
+}
+
+/**
+ * Frameworks whose integration is exactly one side-effect import at the client
+ * entry point. They render with their own root, so there is no provider to wrap
+ * and no server object to decorate: importing the generated module once, as
+ * early as the bundle evaluates, is the whole integration.
+ */
+const SIDE_EFFECT_ENTRY_ADAPTERS: FrameworkId[] = ['react-vite', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular'];
+
 function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, moduleSpecifier: string, commonJs: boolean): void {
+  if (SIDE_EFFECT_ENTRY_ADAPTERS.includes(definition.id)) {
+    addSideEffectImport(source, moduleSpecifier, commonJs);
+    return;
+  }
   if (definition.id === 'react-vite') {
     if (commonJs) {
       const statement = `require(${JSON.stringify(moduleSpecifier)});`;
@@ -663,7 +789,114 @@ function applyEntryTransform(definition: AdapterDefinition, source: SourceFile, 
     appendAfterVariable(source, application, `${application}.useGlobalInterceptors(new TellannInterceptor());`);
     return;
   }
+  if (definition.id === 'koa') {
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannKoaMiddleware']);
+    else addNamedImport(source, moduleSpecifier, ['tellannKoaMiddleware']);
+    const application = frameworkVariable(source, /new\s+Koa\s*\(/);
+    if (!application) throw new Error('SAFE_KOA_APP_NOT_FOUND');
+    // First in the chain, so the timing it records covers the middleware that
+    // runs after it rather than only the handler at the end.
+    appendAfterVariable(source, application, `${application}.use(tellannKoaMiddleware());`);
+    return;
+  }
+  if (definition.id === 'hapi') {
+    if (commonJs) addCommonJsBindings(source, moduleSpecifier, ['tellannHapiPlugin']);
+    else addNamedImport(source, moduleSpecifier, ['tellannHapiPlugin']);
+    const application = frameworkVariable(source, /\.server\s*\(/);
+    if (!application) throw new Error('SAFE_HAPI_SERVER_NOT_FOUND');
+    appendAfterVariable(source, application, `void ${application}.register(tellannHapiPlugin);`);
+    return;
+  }
   throw new Error(`UNSUPPORTED_ENTRY_TRANSFORM:${definition.id}`);
+}
+
+type FlowCheckpointMappingLike = {
+  status?: string;
+  file?: string | null;
+  symbol?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  placementKind?: string | null;
+  anchor?: string | null;
+  anchorText?: string | null;
+  insertionAnchor?: string | { text?: string } | null;
+  anchorHash?: string | null;
+  branch?: string | null;
+  branchArm?: string | null;
+  confidence?: number;
+};
+
+function mappingAnchorText(mapping: FlowCheckpointMappingLike): string | null {
+  if (typeof mapping.anchor === 'string') return mapping.anchor;
+  if (typeof mapping.anchorText === 'string') return mapping.anchorText;
+  if (typeof mapping.insertionAnchor === 'string') return mapping.insertionAnchor;
+  return mapping.insertionAnchor?.text ?? null;
+}
+
+function mappingIsResolved(mapping: FlowCheckpointMappingLike, manifestVersion: string): boolean {
+  if (manifestVersion === '2.0') return mapping.status === 'RESOLVED';
+  return Boolean(mapping.file && mapping.symbol && (mapping.confidence ?? 0) >= 0.65);
+}
+
+function validateResolvedFlowMapping(root: string, checkpointId: string, mapping: FlowCheckpointMappingLike, manifestVersion: string): {
+  file: string;
+  symbol: string | null;
+  placementKind: FlowPlacementKind;
+  anchorText?: string;
+  anchorHash?: string;
+  startLine?: number;
+  endLine?: number;
+  branch?: 'THEN' | 'ELSE';
+} {
+  if (!mappingIsResolved(mapping, manifestVersion) || !mapping.file) {
+    throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
+  }
+  const placementKind = manifestVersion === '2.0' ? mapping.placementKind : 'FUNCTION_ENTRY';
+  const parsedPlacement = FlowPlacementKindSchema.safeParse(placementKind);
+  if (!parsedPlacement.success) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+  // A component mount is the one placement that can stand on the file alone:
+  // a file-scoped route has no exported symbol to name. Every other placement
+  // still has to say which callable it belongs to.
+  const componentMount = parsedPlacement.data === 'COMPONENT_MOUNT';
+  if (!mapping.symbol && !componentMount) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
+  const target = resolveWithinWorkspace(root, mapping.file);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`STALE_FLOW_CHECKPOINT_FILE:${checkpointId}`);
+  const content = fs.readFileSync(target, 'utf8');
+  const project = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true });
+  const source = project.createSourceFile(mapping.file, content);
+  const body = componentMount ? componentMountTarget(source, mapping.symbol ?? null)?.block : symbolBody(source, mapping.symbol!);
+  if (!body) throw new Error(`STALE_FLOW_CHECKPOINT_SYMBOL:${checkpointId}`);
+  if (manifestVersion !== '2.0') return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data };
+  const anchorText = mappingAnchorText(mapping);
+  if (!anchorText || !mapping.anchorHash || !mapping.startLine || !mapping.endLine || mapping.endLine < mapping.startLine) {
+    throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${checkpointId}`);
+  }
+  if (calculateFlowAnchorHash(mapping.file, mapping.symbol ?? null, parsedPlacement.data, anchorText) !== mapping.anchorHash) throw new Error(`STALE_FLOW_CHECKPOINT_ANCHOR:${checkpointId}`);
+  const mappedLines = content.replaceAll('\r\n', '\n').split('\n').slice(mapping.startLine - 1, mapping.endLine).join('\n');
+  if (!mappedLines.includes(anchorText)) throw new Error(`STALE_FLOW_CHECKPOINT_SOURCE_RANGE:${checkpointId}`);
+  if (componentMount) {
+    if (isServerComponentFile(mapping.file, content)) throw new Error(`UNSUPPORTED_SERVER_COMPONENT_MOUNT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol ?? null, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  }
+  if (CALLABLE_ENTRY_PLACEMENTS.includes(parsedPlacement.data)) {
+    // Every callable-entry placement accepts any callable shape — a route
+    // handler is still a function — so the only thing to reject here is a
+    // symbol that no longer resolves to something with a block body.
+    if (!symbolPlacementKind(source, mapping.symbol!)) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
+  }
+  const scope = body.getDescendants();
+  if (parsedPlacement.data === 'BRANCH_ENTRY') {
+    const matches = body.getDescendantsOfKind(SyntaxKind.IfStatement)
+      .filter((item) => item.getText() === anchorText || `if (${item.getExpression().getText()})` === anchorText);
+    const branch = (mapping.branch ?? mapping.branchArm) === 'ELSE' ? 'ELSE' : 'THEN';
+    const targetBranch = branch === 'ELSE' ? matches[0]?.getElseStatement() : matches[0]?.getThenStatement();
+    if (matches.length !== 1 || !targetBranch || !Node.isBlock(targetBranch)) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+    return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine, branch };
+  }
+  const statements = scope.filter((item) => Node.isStatement(item) && item.getText() === anchorText);
+  if (statements.length !== 1) throw new Error(`UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT:${checkpointId}`);
+  return { file: mapping.file, symbol: mapping.symbol!, placementKind: parsedPlacement.data, anchorText, anchorHash: mapping.anchorHash, startLine: mapping.startLine, endLine: mapping.endLine };
 }
 
 class TypeScriptAdapter implements InstrumentationAdapter {
@@ -774,30 +1007,45 @@ class TypeScriptAdapter implements InstrumentationAdapter {
         importModule: relativeImport(entry.file, generatedFile),
       },
     ];
-    const manifestCheckpoints = input.instrumentationPurpose === 'FLOW' ? input.flowManifest?.checkpoints ?? [] : [];
-    const unresolvedRequired = manifestCheckpoints.filter((checkpoint) => checkpoint.required && (checkpoint.mapping.confidence < 0.65 || !checkpoint.mapping.file || !checkpoint.mapping.symbol));
     if (input.instrumentationPurpose === 'FLOW' && !input.flowManifest) throw new Error('FLOW_INITIALIZATION_MANIFEST_REQUIRED');
-    if (unresolvedRequired.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolvedRequired.map((item) => item.id).join(',')}`);
-    const selectedBoundaries = manifestCheckpoints.length
-      ? manifestCheckpoints.flatMap((checkpoint) => {
-          const boundary = evidence.semanticBoundaries.find((item) => item.file === checkpoint.mapping.file && item.symbol === checkpoint.mapping.symbol);
-          return boundary ? [{ boundary, checkpoint }] : [];
-        })
-      : (input.instrumentationPurpose === 'FLOW' && this.id !== 'nextjs' ? evidence.semanticBoundaries : [])
-          .filter((item) => item.confidence >= 0.75 && item.symbol && (!detectedPackage.relativeRoot || item.file.startsWith(`${detectedPackage.relativeRoot}/`)))
-          .slice(0, 12)
-          .map((boundary) => ({ boundary, checkpoint: null }));
-    for (const { boundary, checkpoint } of selectedBoundaries) {
+    const manifest = input.instrumentationPurpose === 'FLOW' ? input.flowManifest : null;
+    const manifestVersion = String((manifest as unknown as { version?: string } | null)?.version ?? '1.0');
+    const declaredCheckpoints = manifest?.checkpoints ?? [];
+    // Everything the Flow declares still has to be resolved before anything is
+    // written, even the parts another adapter will instrument: an atomic plan
+    // that skipped a checkpoint because someone else *might* cover it would not
+    // be atomic at all.
+    const unresolved = declaredCheckpoints.filter((checkpoint) => !mappingIsResolved(checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion));
+    if (unresolved.length) throw new Error(`FLOW_CHECKPOINT_MAPPING_REVIEW_REQUIRED:${unresolved.map((item) => item.id).join(',')}`);
+    const assigned = input.flowCheckpointIds ? new Set(input.flowCheckpointIds) : null;
+    const manifestCheckpoints = assigned
+      ? declaredCheckpoints.filter((checkpoint) => assigned.has(checkpoint.id))
+      : declaredCheckpoints;
+    for (const checkpoint of manifestCheckpoints) {
+      const mapping = validateResolvedFlowMapping(input.workspaceRoot, checkpoint.id, checkpoint.mapping as FlowCheckpointMappingLike, manifestVersion);
+      if (detectedPackage.relativeRoot && !mapping.file.startsWith(`${detectedPackage.relativeRoot}/`)) {
+        throw new Error(`FLOW_CHECKPOINT_OUTSIDE_FRAMEWORK_PACKAGE:${checkpoint.id}`);
+      }
       operations.push({
-        id: checkpoint?.id ?? `semantic-${hash(`${boundary.file}:${boundary.symbol}`).slice(0, 12)}`,
-        kind: 'UPDATE_SOURCE', relativePath: boundary.file, symbol: boundary.symbol,
-        transformId: 'tellann.semantic.function-entry', transformVersion: this.version,
-        expectedHash: fileHash(input.workspaceRoot, boundary.file),
-        description: checkpoint ? `Add declared Flow checkpoint ${checkpoint.id} to ${boundary.symbol}` : `Add an explicit workflow-entry checkpoint to ${boundary.symbol}`,
-        eventMappings: checkpoint ? [{ eventType: checkpoint.eventType, expectedState: checkpoint.expectedState, checkpointId: checkpoint.id, stateId: checkpoint.stateId, transitionId: checkpoint.transitionId, terminalKind: checkpoint.terminalKind }] : [{ eventType: boundary.eventType, expectedState: boundary.symbol }],
-        importModule: relativeImport(boundary.file, generatedFile),
+        id: checkpoint.id,
+        kind: 'UPDATE_SOURCE', relativePath: mapping.file, symbol: mapping.symbol,
+        transformId: 'tellann.semantic.checkpoint', transformVersion: this.version,
+        expectedHash: fileHash(input.workspaceRoot, mapping.file),
+        description: `Add declared Flow checkpoint ${checkpoint.id} at its resolved ${mapping.placementKind.toLowerCase().replaceAll('_', ' ')} placement`,
+        eventMappings: [{ eventType: checkpoint.eventType, expectedState: checkpoint.expectedState, checkpointId: checkpoint.id, stateId: checkpoint.stateId, transitionId: checkpoint.transitionId, terminalKind: checkpoint.terminalKind }],
+        importModule: relativeImport(mapping.file, generatedFile),
         flowInitializationId: input.flowInitializationId,
+        placementKind: mapping.placementKind,
+        anchorText: mapping.anchorText,
+        anchorHash: mapping.anchorHash,
+        startLine: mapping.startLine,
+        endLine: mapping.endLine,
+        branch: mapping.branch,
       });
+    }
+    const checkpointOperationCount = operations.filter((operation) => operation.eventMappings.some((item) => item.checkpointId)).length;
+    if (input.instrumentationPurpose === 'FLOW' && checkpointOperationCount !== manifestCheckpoints.length) {
+      throw new Error(`FLOW_CHECKPOINT_PLAN_INCOMPLETE:${checkpointOperationCount}/${manifestCheckpoints.length}`);
     }
     const lockfile = packageManagerLockfile(input.workspaceRoot, detectedPackage.root, input.snapshot.packageManager);
     if (lockfile) {
@@ -811,7 +1059,8 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     }
     const canonical = JSON.stringify({ adapter: this.id, version: this.version, revision: input.snapshot.revision, fingerprint: input.snapshot.repositoryFingerprint, operations: operations.map(({ content, ...operation }) => operation) });
     const taskKey = hash(canonical);
-    const validationCommands = commandFor(input.workspaceRoot, detectedPackage.root, detectedPackage.relativeRoot, input.snapshot, this.definition.sdkPackage);
+    const sdkInstallSpec = resolveSdkInstallSpec(this.definition.sdkPackage);
+    const validationCommands = commandFor(input.workspaceRoot, detectedPackage.root, detectedPackage.relativeRoot, input.snapshot, this.definition.sdkPackage, sdkInstallSpec.install);
     return {
       contractVersion: INSTRUMENTATION_CONTRACT_VERSION, manifestVersion: INSTRUMENTATION_MANIFEST_VERSION,
       id: crypto.randomUUID(), taskKey, adapterId: this.id, adapterVersion: this.version,
@@ -823,49 +1072,26 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       frameworkVersion: detection.frameworkVersion, supportedVersionRange: this.supportedVersionRange,
       baseRevision: input.snapshot.revision, repositoryFingerprint: input.snapshot.repositoryFingerprint,
       approvedFileScopes: [...new Set(operations.map((operation) => operation.relativePath))],
-      packageChanges: [{ packageName: this.definition.sdkPackage, version: '^0.1.0', kind: 'dependency' }],
+      packageChanges: [{ packageName: this.definition.sdkPackage, version: sdkInstallSpec.dependency, kind: 'dependency' }],
       operations, validationCommands,
       networkRequirements: validationCommands.some((command) => command.id === 'install-sdk')
         ? ['Package registry access when the SDK is not already installed']
         : [],
-      risk: evidence.existingInstrumentation.length || operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? 'MEDIUM' : 'LOW',
+      risk: evidence.existingInstrumentation.length || operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? 'MEDIUM' : 'LOW',
       riskReasons: [
         ...(evidence.existingInstrumentation.length ? ['Existing instrumentation requires duplicate-registration checks'] : []),
-        ...(operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? ['Semantic workflow-entry checkpoints modify explicitly listed functions'] : []),
-        ...(!evidence.existingInstrumentation.length && !operations.some((operation) => operation.transformId === 'tellann.semantic.function-entry') ? ['Changes are limited to one dependency, one generated module, and one framework integration'] : []),
+        ...(operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Resolved Flow checkpoints modify explicitly mapped source locations'] : []),
+        ...(!evidence.existingInstrumentation.length && !operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Changes are limited to one dependency, one generated module, and one framework integration'] : []),
       ],
       evidence, createdAt: new Date().toISOString(),
     };
   }
 
   async apply(input: LocalProjectContext, task: ApprovedInstrumentationTask): Promise<PatchResult> {
-    if (input.environmentType === 'PRODUCTION') throw new Error('PRODUCTION_OBSERVATION_ONLY');
-    const plan = validateInstrumentationPlan(task.plan);
-    if (plan.adapterId !== this.id) throw new Error('ADAPTER_PLAN_MISMATCH');
-    if (plan.repositoryFingerprint !== input.snapshot.repositoryFingerprint || plan.baseRevision !== input.snapshot.revision) throw new Error('STALE_INSTRUMENTATION_PLAN');
-    if (plan.baseRevision && currentGitRevision(input.workspaceRoot) !== plan.baseRevision) throw new Error('STALE_INSTRUMENTATION_BASE_REVISION');
-    const approved = new Set(task.approvedFileScopes);
-    if (plan.operations.some((operation) => !approved.has(operation.relativePath) || !plan.approvedFileScopes.includes(operation.relativePath))) throw new Error('TASK_SCOPE_EXPANSION_DENIED');
-    const expectedApprovalHash = hash(JSON.stringify({ planId: plan.id, taskKey: plan.taskKey, files: [...approved].sort(), commands: [...task.approvedCommandIds].sort() }));
-    if (task.approvalHash !== expectedApprovalHash) throw new Error('INVALID_TASK_APPROVAL');
-    for (const operation of plan.operations) {
-      if (fileHash(input.workspaceRoot, operation.relativePath) !== operation.expectedHash) throw new Error(`STALE_TARGET_FILE:${operation.relativePath}`);
-    }
-    fs.mkdirSync(task.checkpointDirectory, { recursive: true });
-    const checkpointId = crypto.randomUUID();
-    const checkpointRoot = path.join(task.checkpointDirectory, checkpointId);
-    fs.mkdirSync(checkpointRoot, { recursive: true });
-    const before = new Map<string, string | null>();
-    const after = new Map<string, string>();
-    for (const operation of plan.operations) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, operation.relativePath);
-      const original = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : null;
-      before.set(operation.relativePath, original);
-      const backupTarget = path.join(checkpointRoot, operation.relativePath.replaceAll('/', path.sep));
-      fs.mkdirSync(path.dirname(backupTarget), { recursive: true });
-      if (original !== null) fs.writeFileSync(backupTarget, original);
-      else fs.writeFileSync(`${backupTarget}.tellann-absent`, 'absent');
-    }
+    // Validation, scope enforcement and the pre-write backup are the same for
+    // every adapter, and live in `patching.ts` so there is one copy of them.
+    const session = beginPatch(input, task, this.id);
+    const plan = session.plan;
     try {
     const packageOperation = plan.operations.find((operation) => operation.id === 'package-sdk');
     if (packageOperation) {
@@ -893,50 +1119,22 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       applyEntryTransform(this.definition, source, importOperation.importModule, isCommonJsEntry(input.workspaceRoot, importOperation.relativePath));
       source.saveSync();
     }
-    for (const operation of plan.operations.filter((item) => item.transformId === 'tellann.semantic.function-entry')) {
+    for (const operation of plan.operations.filter((item) => ['tellann.semantic.function-entry', 'tellann.semantic.checkpoint'].includes(item.transformId))) {
       const target = resolveWithinWorkspace(input.workspaceRoot, operation.relativePath);
       const project = new Project({ manipulationSettings: { quoteKind: QuoteKind.Single }, useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true });
       const source = project.addSourceFileAtPath(target);
       applySemanticCheckpoint(source, operation, isCommonJsEntry(input.workspaceRoot, operation.relativePath));
       source.saveSync();
     }
-    const files: PatchFileResult[] = [];
-    const diffParts: string[] = [];
-    for (const relativePath of before.keys()) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, relativePath);
-      const exists = fs.existsSync(target);
-      const content = exists ? fs.readFileSync(target, 'utf8') : '';
-      const original = before.get(relativePath) ?? null;
-      after.set(relativePath, content);
-      const changed = original === null ? exists : original !== content;
-      files.push({ relativePath, beforeHash: original === null ? null : hash(original), afterHash: hash(content), changed });
-      if (changed) diffParts.push(`--- a/${relativePath}\n+++ b/${relativePath}\n@@ Tellann instrumentation @@\n-${original ?? ''}\n+${content}`);
-    }
-    const diff = diffParts.join('\n');
-    const manifest = { planId: plan.id, checkpointId, files, baseRevision: plan.baseRevision, appliedAt: new Date().toISOString() };
-    fs.writeFileSync(path.join(checkpointRoot, 'manifest.json'), JSON.stringify(manifest, null, 2));
-    return { planId: plan.id, checkpointId, checkpointDirectory: task.checkpointDirectory, baseRevision: plan.baseRevision, files, changedFiles: files.filter((file) => file.changed).map((file) => file.relativePath), diff, diffHash: hash(diff), appliedAt: manifest.appliedAt };
+    return finalizePatch(input, task, session);
     } catch (error) {
-      for (const relativePath of before.keys()) {
-        const target = resolveWithinWorkspace(input.workspaceRoot, relativePath);
-        const backup = path.join(checkpointRoot, relativePath.replaceAll('/', path.sep));
-        if (fs.existsSync(`${backup}.tellann-absent`)) fs.rmSync(target, { force: true });
-        else {
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.copyFileSync(backup, target);
-        }
-      }
+      restorePatch(input, session);
       throw error;
     }
   }
 
   async validate(input: LocalProjectContext, result: PatchResult): Promise<ValidationResult> {
-    const checks: ValidationResult['checks'] = [];
-    for (const file of result.files) {
-      const current = fileHash(input.workspaceRoot, file.relativePath);
-      const unchangedAbsent = !file.changed && file.beforeHash === null && current === null;
-      checks.push({ name: `hash:${file.relativePath}`, passed: unchangedAbsent || current === file.afterHash, output: unchangedAbsent || current === file.afterHash ? 'Expected instrumented hash present' : 'File changed after instrumentation' });
-    }
+    const checks: ValidationResult['checks'] = hashChecks(input, result);
     const packageOperation = result.files.find((file) => /(^|\/)package\.json$/.test(file.relativePath));
     const packageJson = packageOperation ? readJson(resolveWithinWorkspace(input.workspaceRoot, packageOperation.relativePath)) : {};
     checks.push({ name: 'sdk-dependency', passed: Boolean(packageJson.dependencies?.[this.definition.sdkPackage] || packageJson.devDependencies?.[this.definition.sdkPackage]), output: this.definition.sdkPackage });
@@ -948,36 +1146,31 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       return (content.match(/tellann:generated:start/g) ?? []).length > 1 ? [relativePath] : [];
     });
     checks.push({ name: 'idempotency-markers', passed: duplicated.length === 0, output: duplicated.length ? `Duplicate markers: ${duplicated.join(', ')}` : 'No duplicate generated markers' });
+    if (input.instrumentationPurpose === 'FLOW' && input.flowManifest) {
+      const sources = findSourceFiles(input.workspaceRoot).map((relativePath) => ({
+        relativePath,
+        content: fs.readFileSync(resolveWithinWorkspace(input.workspaceRoot, relativePath), 'utf8'),
+      }));
+      for (const checkpoint of input.flowManifest.checkpoints) {
+        const marker = `tellann:checkpoint:${checkpoint.id}`;
+        const matches = sources.flatMap((source) => source.content.split(marker).length - 1 > 0
+          ? Array.from({ length: source.content.split(marker).length - 1 }, () => source.relativePath)
+          : []);
+        const initializationPresent = !input.flowInitializationId || sources.some((source) => source.content.includes(marker) && source.content.includes(input.flowInitializationId!));
+        checks.push({
+          name: `flow-checkpoint:${checkpoint.id}`,
+          passed: matches.length === 1 && initializationPresent,
+          output: matches.length === 1 && initializationPresent
+            ? `Exactly one marker present in ${matches[0]}`
+            : `Expected one marker for ${checkpoint.id}; found ${matches.length}${initializationPresent ? '' : '; initialization id mismatch'}`,
+        });
+      }
+    }
     return { valid: checks.every((check) => check.passed), checks };
   }
 
   async rollback(input: LocalProjectContext, result: PatchResult): Promise<RollbackResult> {
-    const checkpointRoot = path.join(result.checkpointDirectory, result.checkpointId);
-    const rolledBackFiles: string[] = [];
-    const conflicts: RollbackResult['conflicts'] = [];
-    for (const file of result.files) {
-      const target = resolveWithinWorkspace(input.workspaceRoot, file.relativePath);
-      const currentHash = fileHash(input.workspaceRoot, file.relativePath);
-      const unchangedAbsent = !file.changed && file.beforeHash === null && currentHash === null;
-      if (!unchangedAbsent && currentHash !== file.afterHash) {
-        conflicts.push({ relativePath: file.relativePath, reason: 'File changed after Tellann instrumentation; rollback would overwrite user work' });
-        continue;
-      }
-      const backup = path.join(checkpointRoot, file.relativePath.replaceAll('/', path.sep));
-      if (fs.existsSync(`${backup}.tellann-absent`)) fs.rmSync(target, { force: true });
-      else {
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.copyFileSync(backup, target);
-      }
-      rolledBackFiles.push(file.relativePath);
-    }
-    const verified = conflicts.length === 0 && result.files.every((file) => {
-      const backup = path.join(checkpointRoot, file.relativePath.replaceAll('/', path.sep));
-      return fs.existsSync(`${backup}.tellann-absent`)
-        ? !fs.existsSync(resolveWithinWorkspace(input.workspaceRoot, file.relativePath))
-        : fileHash(input.workspaceRoot, file.relativePath) === hash(fs.readFileSync(backup));
-    });
-    return { rolledBackFiles, conflicts, verified };
+    return rollbackPatch(input, result);
   }
 }
 
@@ -1008,7 +1201,13 @@ export function refreshPatchResult(input: LocalProjectContext, result: PatchResu
   return next;
 }
 
-export const adapters: InstrumentationAdapter[] = DEFINITIONS.map((definition) => new TypeScriptAdapter(definition));
+// Both adapter families satisfy one contract, so detection, proposal, approval
+// and rollback are the same code path whichever language a project is written
+// in; only the adapter that is selected differs.
+export const adapters: InstrumentationAdapter[] = [
+  ...DEFINITIONS.map((definition) => new TypeScriptAdapter(definition)),
+  ...pythonAdapters,
+];
 export const adapterRegistry = new Map(adapters.map((adapter) => [adapter.id, adapter]));
 
 export function detectAdapters(input: LocalProjectContext): DetectionResult[] {
@@ -1025,4 +1224,15 @@ export function createApprovalHash(plan: InstrumentationPlan, files: string[], c
   return hash(JSON.stringify({ planId: plan.id, taskKey: plan.taskKey, files: [...files].sort(), commands: [...commandIds].sort() }));
 }
 
-export const plannedAdapterOrder = ['react-vite', 'nextjs', 'express', 'fastify', 'nestjs', 'django', 'flask', 'fastapi', 'laravel', 'aspnet-core', 'spring-boot'] as const;
+/**
+ * Preference order when several adapters detect the same workspace.
+ *
+ * Everything up to `starlette` is implemented; the remainder is the roadmap,
+ * kept here so the ordering is decided once rather than re-argued per caller.
+ */
+export const plannedAdapterOrder = [
+  'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
+  'express', 'fastify', 'nestjs', 'koa', 'hapi',
+  'django', 'fastapi', 'flask', 'starlette',
+  'laravel', 'aspnet-core', 'spring-boot',
+] as const;

@@ -22,6 +22,17 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * An aborted fetch, however the runtime chose to represent it.
+ *
+ * `AbortController` surfaces as a `DOMException` named AbortError under undici,
+ * but a plain `Error` with the same name in other hosts, so matching on the
+ * class alone silently misses the timeout path this exists to catch.
+ */
+function isAbortError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError');
+}
+
 function jitter(ms: number): number {
   return ms + Math.random() * ms * 0.3;
 }
@@ -185,6 +196,10 @@ export class JsonHttpProvider implements AIProvider {
     const timeoutMs = input.timeoutMs ?? this.timeoutMs;
     let lastError: unknown;
     let invalidText = '';
+    // A timeout that has already been paid once is worth paying a second time:
+    // the usual cause is a slow first token under load, not a request that can
+    // never finish. Only the caller's own abort is final.
+    let timedOut = 0;
 
     for (const delay of [0, 500, 1500]) {
       if (delay) await sleep(jitter(delay));
@@ -193,7 +208,7 @@ export class JsonHttpProvider implements AIProvider {
       input.signal?.addEventListener('abort', abort, { once: true });
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        invalidText = await this.callStructuredPrompt(input.prompt, controller.signal);
+        invalidText = await this.callStructuredPrompt(input.prompt, controller.signal, input.maxOutputTokens);
         const data = input.schema.parse(extractJson(invalidText));
         recordSuccess(this.name);
         return { data, rawText: invalidText, repaired: false };
@@ -211,6 +226,14 @@ export class JsonHttpProvider implements AIProvider {
           }
         }
         recordFailure(this.name);
+        // The caller gave up, so there is nothing left to retry for.
+        if (input.signal?.aborted) break;
+        if (isAbortError(error)) {
+          lastError = new Error(`TIMEOUT:${this.name} request timed out after ${timeoutMs}ms`);
+          timedOut += 1;
+          if (timedOut > 1) break;
+          continue;
+        }
         if (!(error instanceof FetchError) || !RETRYABLE_STATUS_CODES.has(error.status)) break;
       } finally {
         clearTimeout(timeout);
@@ -220,10 +243,13 @@ export class JsonHttpProvider implements AIProvider {
     throw lastError ?? new Error(`${this.name} structured generation failed`);
   }
 
-  private async callStructuredPrompt(prompt: string, signal: AbortSignal): Promise<string> {
+  private async callStructuredPrompt(prompt: string, signal: AbortSignal, maxOutputTokens?: number): Promise<string> {
+    // Sized by the caller when it knows how much answer it asked for; the
+    // constant remains for callers whose responses are a fixed small shape.
+    const outputLimit = maxOutputTokens && maxOutputTokens > 0 ? Math.ceil(maxOutputTokens) : 4096;
     const providerOptions = this.name === 'gemini'
-      ? { reasoning_effort: 'low', max_completion_tokens: 4096 }
-      : {};
+      ? { reasoning_effort: 'low', max_completion_tokens: outputLimit }
+      : { max_tokens: outputLimit };
     const res = await fetch(this.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },

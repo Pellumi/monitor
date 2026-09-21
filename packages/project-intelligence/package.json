@@ -6,10 +6,11 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/index.test.js dist/codebase/codebase.test.js"
+    "test": "node --test dist/index.test.js dist/codebase/codebase.test.js dist/flow-mapping.test.js"
   },
   "dependencies": {
     "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/python-project": "workspace:*",
     "typescript": "^5.0.0"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createConnectivityRepairTransitions, createFlowDiagrams, validateFlow, type FlowEdgeInput, type FlowNodeInput } from './flow-domain';
+import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow, type FlowEdgeInput, type FlowNodeInput } from './flow-domain';
+import { getDomainTemplate, type DomainTemplate } from '@tellann/rules';
 
 const authFlow: { states: FlowNodeInput[]; transitions: FlowEdgeInput[]; [key: string]: unknown } = {
   id: 'flow-auth',
@@ -71,4 +72,71 @@ test('creates a transition repair that makes every existing state reachable', ()
   const repaired = [...transitions, ...repairs.map((edge, index) => ({ id: `repair-${index}`, fromNodeId: states.find((node) => node.stateName === edge.from)!.id, toNodeId: states.find((node) => node.stateName === edge.to)!.id }))];
   assert.equal(validateFlow(states, repaired).valid, true);
   assert.deepEqual(repairs.map((edge) => [edge.from, edge.to]), [['DETAILS', 'PAYMENT'], ['PAYMENT', 'DONE']]);
+});
+
+// Mirrors what POST /v1/applications/:appId/flows writes when a starting-point
+// template is chosen: seed states become nodes, template transitions become
+// edges between them. If this graph does not validate, the desktop template
+// opens a flow the author cannot publish.
+function seedGraph(template: DomainTemplate) {
+  const states = templateSeedStates(template);
+  const nodes: FlowNodeInput[] = states.map((state) => ({
+    id: `node-${state.name}`,
+    stateName: state.name,
+    behaviorKey: state.name,
+    role: state.role,
+    terminalKind: state.terminalKind,
+  }));
+  const byName = new Map(nodes.map((node) => [node.stateName, node]));
+  const edges: FlowEdgeInput[] = template.transitions.flatMap((transition, index) => {
+    const from = byName.get(transition.from.toUpperCase().trim());
+    const to = byName.get(transition.to.toUpperCase().trim());
+    if (!from || !to) return [];
+    return [{ id: `edge-${index}`, fromNodeId: from.id, toNodeId: to.id, action: transition.action ?? null }];
+  });
+  return { nodes, edges };
+}
+
+test('the desktop starting-point templates seed a publishable graph', () => {
+  for (const key of ['ECOMMERCE', 'LMS']) {
+    const template = getDomainTemplate(key);
+    const { nodes, edges } = seedGraph(template);
+
+    assert.ok(nodes.length > 0, `${key} should seed states`);
+    assert.equal(edges.length, template.transitions.length, `${key} should seed every transition`);
+
+    const validation = validateFlow(nodes, edges);
+    assert.equal(
+      validation.valid,
+      true,
+      `${key} seeded graph should be publishable, got: ${validation.issues.map((issue) => issue.code).join(', ')}`,
+    );
+    // The diagram projections are what the editor and the PDF report render.
+    const diagrams = createFlowDiagrams(nodes, edges);
+    for (const diagram of diagrams) {
+      assert.equal(diagram.semanticNodeIds.length, nodes.length);
+      assert.equal(diagram.semanticEdgeIds.length, edges.length);
+    }
+  }
+});
+
+test('an unannotated template still gets an entry and an exit', () => {
+  const bare: DomainTemplate = {
+    id: 'BARE', name: 'Bare', description: '', workflowType: 'CUSTOM',
+    states: [
+      { name: 'START', category: 'NAVIGATION' },
+      { name: 'MIDDLE', category: 'BUSINESS' },
+      { name: 'DONE', category: 'BUSINESS' },
+    ],
+    transitions: [
+      { from: 'START', to: 'MIDDLE', action: 'GO' },
+      { from: 'MIDDLE', to: 'DONE', action: 'FINISH' },
+    ],
+    edgeCases: [],
+  };
+  const seeded = templateSeedStates(bare);
+  assert.equal(seeded[0].role, 'INITIAL');
+  assert.equal(seeded[2].role, 'TERMINAL');
+  assert.equal(seeded[2].terminalKind, 'SUCCESS');
+  assert.equal(validateFlow(seedGraph(bare).nodes, seedGraph(bare).edges).valid, true);
 });

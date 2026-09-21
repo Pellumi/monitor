@@ -1098,7 +1098,12 @@ app.get('/organizations/:orgId/entitlement', verifyJwt, verifyOrgMembership, asy
   const { orgId } = req.params;
   try {
     const entitlement = await entitlementChecker.getEntitlement(orgId);
-    res.json(entitlement);
+    // Desktop generates report downloads locally, so it needs the formats the
+    // plan entitles rather than only whether the export feature is on at all.
+    res.json({
+      ...entitlement,
+      reportFormats: reportFormatsForTier(entitlement.features[Feature.REPORT_EXPORT]),
+    });
   } catch (err: any) {
     console.error('[Onboarding] Get entitlement error', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
@@ -2281,11 +2286,6 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
         data: { isActive: false }
       });
 
-      const latestGraph = await prisma.behaviorGraph.findFirst({
-        where: { applicationId: appId, environmentId: devEnv.id, graphType: 'DECLARED' },
-        orderBy: { version: 'desc' },
-      });
-
       const graph = await prisma.behaviorGraph.create({
         data: {
           applicationId: appId,
@@ -2295,7 +2295,8 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
           graphType: 'DECLARED',
           sourceType: 'USER_DECLARATION',
           isActive: true,
-          version: (latestGraph?.version ?? 0) + 1,
+          // Each flow keeps its own version line: v1 until a revision is opened.
+          version: 1,
         }
       });
       graphId = graph.id;
@@ -2309,6 +2310,10 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
             behaviorKey: state.name,
             canonicalBehavior: state.name,
             category: state.category,
+            // Carry the template's entry/exit roles through — a seeded graph
+            // without them fails publish validation.
+            role: state.role ?? 'NORMAL',
+            terminalKind: state.role === 'TERMINAL' ? (state.terminalKind ?? 'SUCCESS') : null,
             provenance: 'USER_AUTHORED',
           }
         });
@@ -2448,27 +2453,36 @@ app.get('/applications/:appId/onboarding-progress', async (req: Request, res: Re
   try {
     let progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } });
     if (!progress) return res.status(404).json({ error: 'Onboarding progress not found' });
-    if (!progress.demonstrationCompleted) {
+    if (!progress.demonstrationCompleted || !progress.firstReportGenerated || !progress.analysisGenerated) {
       const completedRun = await prisma.qARun.findFirst({
-        where: { applicationId: appId, status: 'COMPLETED' },
+        where: { applicationId: appId, status: { in: ['COMPLETED', 'COMPLETED_INCOMPLETE'] } },
         select: { id: true, organizationId: true, environmentId: true },
         orderBy: { endedAt: 'desc' },
       });
       if (completedRun) {
-        const updated = await prisma.applicationOnboardingProgress.updateMany({
-          where: { applicationId: appId, demonstrationCompleted: false },
-          data: { demonstrationCompleted: true },
-        });
-        if (updated.count === 1) {
-          await emitActivationEvent(
-            completedRun.organizationId,
-            appId,
-            completedRun.environmentId,
-            'DEMO_COMPLETED',
-            { source: 'QA_RUN_RECONCILIATION', runId: completedRun.id },
-          );
+        const updateData: any = {};
+        if (!progress.demonstrationCompleted) updateData.demonstrationCompleted = true;
+        if (!progress.firstReportGenerated) updateData.firstReportGenerated = true;
+        if (!progress.analysisGenerated) updateData.analysisGenerated = true;
+
+        if (Object.keys(updateData).length > 0) {
+          const updated = await prisma.applicationOnboardingProgress.updateMany({
+            where: { applicationId: appId },
+            data: updateData,
+          });
+          
+          if (updated.count === 1 && updateData.demonstrationCompleted) {
+            await emitActivationEvent(
+              completedRun.organizationId,
+              appId,
+              completedRun.environmentId,
+              'DEMO_COMPLETED',
+              { source: 'QA_RUN_RECONCILIATION', runId: completedRun.id },
+            );
+          }
+          
+          progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } }) ?? progress;
         }
-        progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } }) ?? progress;
       }
     }
     res.json(progress);

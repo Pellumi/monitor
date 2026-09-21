@@ -19,7 +19,21 @@ const anyPrisma = prisma as any;
 const storage = createStorageClient();
 const graph = createGraphStore();
 const workerId = `${os.hostname()}:${process.pid}`;
-const LEASE_MS = 5 * 60_000;
+const ANALYSIS_BUDGET_MS = Number(process.env.CODEBASE_ANALYSIS_BUDGET_MS ?? 10 * 60_000);
+/**
+ * The lease has to outlive a whole attempt. `analyzeCodebase` is synchronous,
+ * so nothing in this process — not a progress write, not the maintenance sweep
+ * — runs while it works, and a lease shorter than the analysis budget lets the
+ * sweep reclaim a job that is still being analysed.
+ */
+const LEASE_MS = ANALYSIS_BUDGET_MS + 5 * 60_000;
+/**
+ * Persisting the result is a handful of large JSON rows, so it needs more than
+ * Prisma's 5s interactive default; `maxWait` covers a pool still draining the
+ * progress writes that queued up behind the analysis.
+ */
+const PERSIST_TIMEOUT_MS = Number(process.env.CODEBASE_ANALYSIS_PERSIST_TIMEOUT_MS ?? 120_000);
+const PERSIST_MAX_WAIT_MS = Number(process.env.CODEBASE_ANALYSIS_PERSIST_MAX_WAIT_MS ?? 15_000);
 const ACTIVE_STATUSES = [
   'INGESTING', 'PARSING', 'LINKING', 'GRAPHING',
   'DISCOVERING_FEATURES', 'ANALYZING_ARCHITECTURE', 'SUMMARIZING',
@@ -127,7 +141,7 @@ async function processOne(): Promise<boolean> {
       queued.codebaseSnapshot.workspaceId,
       queued.codebaseSnapshot.repositoryFingerprint,
       {
-        budgetMs: Number(process.env.CODEBASE_ANALYSIS_BUDGET_MS ?? 10 * 60_000),
+        budgetMs: ANALYSIS_BUDGET_MS,
         onProgress: (status, progress, stageMessage) => {
           if (status === lastStage) return;
           lastStage = status;
@@ -184,49 +198,53 @@ async function processOne(): Promise<boolean> {
       }).catch(() => undefined);
     }
 
+    // The whole analysis is one projection; the slices beside it let a view read
+    // a single collection without rehydrating everything. Serialising them is
+    // CPU-bound and this process is single threaded, so the payloads and their
+    // checksums are prepared before the transaction opens rather than spending
+    // the transaction's own window on work Postgres is not waiting for.
+    const projections = [
+      { kind: 'analysis', payload: analysis as unknown },
+      { kind: 'features', payload: analysis.features as unknown },
+      { kind: 'findings', payload: analysis.findings as unknown },
+      { kind: 'architecture', payload: analysis.architecture as unknown },
+    ].map((projection) => ({
+      kind: projection.kind,
+      payload: projection.payload as object,
+      checksum: crypto.createHash('sha256').update(JSON.stringify(projection.payload ?? null)).digest('hex'),
+    }));
+    const analyzerRuns = Object.entries(analysis.analyzerVersions).map(([analyzer, version]) => ({
+      jobId: queued.id,
+      analyzer,
+      version,
+      status: 'COMPLETED',
+      inputCount: analysis.coverage?.analyzedFiles ?? 0,
+      outputCount: analysis.entities.length,
+    }));
+    const analysisWarnings = analysis.warnings.map((message) => ({
+      jobId: queued.id,
+      code: 'ANALYSIS_WARNING',
+      severity: 'WARNING',
+      message: message.slice(0, 1_000),
+    }));
+
     await prisma.$transaction(async (tx) => {
       const anyTx = tx as any;
-      // The whole analysis is one projection; the slices beside it let a view
-      // read a single collection without rehydrating everything.
-      const projections = [
-        { kind: 'analysis', payload: analysis },
-        { kind: 'features', payload: analysis.features },
-        { kind: 'findings', payload: analysis.findings },
-        { kind: 'architecture', payload: analysis.architecture },
-      ];
       for (const projection of projections) {
         await anyTx.analysisProjection.upsert({
           where: { jobId_kind: { jobId: queued.id, kind: projection.kind } },
-          create: {
-            jobId: queued.id,
-            kind: projection.kind,
-            payload: projection.payload as object,
-            checksum: crypto.createHash('sha256').update(JSON.stringify(projection.payload ?? null)).digest('hex'),
-          },
-          update: {
-            payload: projection.payload as object,
-            checksum: crypto.createHash('sha256').update(JSON.stringify(projection.payload ?? null)).digest('hex'),
-          },
+          create: { jobId: queued.id, ...projection },
+          update: { payload: projection.payload, checksum: projection.checksum },
         });
       }
-      for (const [analyzer, version] of Object.entries(analysis.analyzerVersions)) {
-        await anyTx.analyzerRun.create({
-          data: {
-            jobId: queued.id,
-            analyzer,
-            version,
-            status: 'COMPLETED',
-            inputCount: analysis.coverage?.analyzedFiles ?? 0,
-            outputCount: analysis.entities.length,
-          },
-        });
-      }
-      for (const message of analysis.warnings) {
-        await anyTx.analysisWarning.create({
-          data: { jobId: queued.id, code: 'ANALYSIS_WARNING', severity: 'WARNING', message: message.slice(0, 1_000) },
-        });
-      }
-    });
+      // A retried attempt rewrites its own rows instead of appending a second
+      // set beside the ones a failed attempt left behind. Warnings raised
+      // outside this transaction carry their own codes and are left alone.
+      await anyTx.analyzerRun.deleteMany({ where: { jobId: queued.id } });
+      await anyTx.analysisWarning.deleteMany({ where: { jobId: queued.id, code: 'ANALYSIS_WARNING' } });
+      if (analyzerRuns.length) await anyTx.analyzerRun.createMany({ data: analyzerRuns });
+      if (analysisWarnings.length) await anyTx.analysisWarning.createMany({ data: analysisWarnings });
+    }, { maxWait: PERSIST_MAX_WAIT_MS, timeout: PERSIST_TIMEOUT_MS });
 
     let graphStatus: CodebaseAnalysis['status'] = analysis.status;
     if (graph) {

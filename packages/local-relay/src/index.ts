@@ -140,7 +140,10 @@ export class LocalRunRelay {
     if (!this.options) return;
     response.setHeader('access-control-allow-origin', this.options.allowedOrigin);
     response.setHeader('access-control-allow-methods', 'POST, OPTIONS');
-    response.setHeader('access-control-allow-headers', 'authorization, content-type, x-tellann-run-id, x-tellann-session-id, x-tellann-trace-id');
+    // Every header the frontend SDK sets has to be listed. A missing one fails
+    // the preflight, and because the page then never reaches the relay at all
+    // the run simply waits at the Flow boundary with nothing to show for it.
+    response.setHeader('access-control-allow-headers', 'authorization, content-type, x-tellann-run-id, x-tellann-session-id, x-tellann-trace-id, x-tellann-environment-id');
     response.setHeader('vary', 'Origin');
   }
 

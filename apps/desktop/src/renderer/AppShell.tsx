@@ -1,21 +1,25 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  Activity, BookOpenText, ChevronRight, Folder, LogOut, PanelLeft, PanelLeftClose,
-  PanelLeftOpen, Settings, ShieldCheck,
+  AppWindow, ArrowLeft, ArrowRight, BookOpenText, Cloud, CloudOff, Folder, FolderPlus, LoaderCircle, LogOut,
+  PanelLeft, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, TriangleAlert,
 } from 'lucide-react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { desktopNavigation } from './navigation';
 import { useDesktop } from './desktop-context';
 import { SelectField } from './components/ui/select';
 import { NotificationToaster } from './components/notification-toaster';
 import { UploadConsentModal } from './components/upload-consent-modal';
 import { RepositoryMismatchModal } from './components/repository-mismatch-modal';
+import { CommandPalette, type PaletteItem } from './components/command-palette';
+import { confirmAction, formatEnum, showMenu } from './components/desktop-ui';
+import { ThemedLogo } from './components/themed-logo';
 
 type SidebarMode = 'full' | 'icon' | 'closed';
 
-const DEFAULT_SIDEBAR_WIDTH = 280;
-const MIN_SIDEBAR_WIDTH = 240;
-const MAX_SIDEBAR_WIDTH = 420;
+const DEFAULT_SIDEBAR_WIDTH = 232;
+const MIN_SIDEBAR_WIDTH = 196;
+const MAX_SIDEBAR_WIDTH = 360;
+const ICON_SIDEBAR_WIDTH = 52;
 
 function equivalentProjectRoute(pathname: string, projectId: string) {
   const match = pathname.match(/^\/applications\/[^/]+(\/.*)?$/);
@@ -36,6 +40,7 @@ function storedSidebarWidth() {
 
 export function AppShell() {
   const location = useLocation();
+  const navigationType = useNavigationType();
   // `/applications/new` is the create wizard, not an application id. Reading
   // `new` as one makes the "unknown application" guard below bounce straight
   // to the first existing application, so the wizard never renders.
@@ -44,13 +49,14 @@ export function AppShell() {
   const navigate = useNavigate();
   const {
     applications, workspaces, activeRun, busy, cloudAvailable, error, session, avatarDataUri, signOut,
-    refreshApplications, clearError,
+    refreshApplications, refreshRuns, clearError, attachWorkspace,
   } = useDesktop();
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(storedSidebarMode);
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [signOutOpen, setSignOutOpen] = useState(false);
-  const profileRef = useRef<HTMLDivElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [historyBounds, setHistoryBounds] = useState({ index: 0, max: 0 });
+  const [dropActive, setDropActive] = useState(false);
+  const dragDepth = useRef(0);
   const application = applications.find((item) => item.id === projectId);
   const workspace = projectId ? workspaces[projectId] : undefined;
   const environmentId = projectId ? localStorage.getItem(`tellann:environment:${projectId}`) ?? '' : '';
@@ -60,9 +66,10 @@ export function AppShell() {
   const userEmail = session?.user?.email ?? '';
   const initials = userName.slice(0, 2).toUpperCase();
   const avatarNode = avatarDataUri
-    ? <img className="profile-avatar" src={avatarDataUri} alt={userName} />
-    : <span className="profile-avatar">{initials}</span>;
-  const effectiveSidebarWidth = sidebarMode === 'closed' ? 0 : sidebarMode === 'icon' ? 68 : sidebarWidth;
+    ? <img className="profile-avatar" src={avatarDataUri} alt="" />
+    : <span className="profile-avatar" aria-hidden="true">{initials}</span>;
+  const effectiveSidebarWidth = sidebarMode === 'closed' ? 0 : sidebarMode === 'icon' ? ICON_SIDEBAR_WIDTH : sidebarWidth;
+  const lastProjectId = projectId ?? localStorage.getItem('tellann:last-project') ?? applications[0]?.id;
 
   useEffect(() => {
     if (!projectId || application || !session?.authenticated || !cloudAvailable) return;
@@ -76,6 +83,12 @@ export function AppShell() {
     }
   }, [application, applications, cloudAvailable, location.pathname, navigate, projectId, session?.authenticated]);
 
+  // Back/forward availability, from the router's history index.
+  useEffect(() => {
+    const index = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    setHistoryBounds((current) => ({ index, max: navigationType === 'PUSH' ? index : Math.max(current.max, index) }));
+  }, [location.key, navigationType]);
+
   // Clicking a native OS notification (or a toast's View action) asks the main
   // process to focus this window and hand over the notification's deep link.
   // Desktop and the web dashboard share the `/applications/:id` shape, so the
@@ -87,45 +100,134 @@ export function AppShell() {
     });
   }, [navigate]);
 
+  // Inactive windows dim their chrome, as native Windows apps do.
   useEffect(() => {
-    if (!profileOpen) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (profileRef.current && !profileRef.current.contains(event.target as Node)) setProfileOpen(false);
+    const bridge = window.tellann?.window;
+    if (!bridge) return;
+    const apply = (state: DesktopWindowState) => {
+      document.documentElement.dataset.windowFocused = String(state.focused);
+      document.documentElement.dataset.windowMaximized = String(state.maximized);
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setProfileOpen(false);
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [profileOpen]);
+    void bridge.getState().then(apply).catch(() => undefined);
+    return bridge.onStateChange(apply);
+  }, []);
 
+  // Mouse back/forward buttons.
+  useEffect(() => window.tellann?.window?.onNavigate((direction) => navigate(direction === 'back' ? -1 : 1)), [navigate]);
+
+  const runWindowCommand = useCallback((command: DesktopWindowCommand) => {
+    if (command === 'new-run' && lastProjectId) navigate(`/applications/${lastProjectId}/qa-runs/new`);
+    else navigate('/applications');
+  }, [lastProjectId, navigate]);
+
+  // Jump list tasks.
   useEffect(() => {
-    if (!signOutOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSignOutOpen(false);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [signOutOpen]);
+    const bridge = window.tellann?.window;
+    if (!bridge) return;
+    void bridge.consumePendingCommand().then((command) => { if (command) runWindowCommand(command); }).catch(() => undefined);
+    return bridge.onCommand(runWindowCommand);
+  }, [runWindowCommand]);
 
-  const changeProject = (nextProjectId: string) => {
+  const changeProject = useCallback((nextProjectId: string) => {
     localStorage.setItem('tellann:last-project', nextProjectId);
     navigate(equivalentProjectRoute(location.pathname, nextProjectId));
-  };
+  }, [location.pathname, navigate]);
 
-  const setMode = (mode: SidebarMode) => {
+  const setMode = useCallback((mode: SidebarMode) => {
     setSidebarMode(mode);
     localStorage.setItem('tellann:sidebar-mode', mode);
-    setProfileOpen(false);
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setMode(sidebarMode === 'full' ? 'icon' : 'full');
+  }, [setMode, sidebarMode]);
+
+  const refresh = useCallback(() => {
+    void refreshApplications().catch(() => undefined);
+    if (projectId) void refreshRuns(projectId).catch(() => undefined);
+    window.dispatchEvent(new CustomEvent('tellann:refresh'));
+  }, [projectId, refreshApplications, refreshRuns]);
+
+  const requestSignOut = useCallback(async () => {
+    const confirmed = await confirmAction({
+      title: 'Sign out',
+      message: 'Sign out of Tellann?',
+      detail: [
+        userEmail ? `Signed in as ${userEmail}.` : '',
+        'You will need to sign in again to access your applications. Local workspace folders are not changed.',
+      ].filter(Boolean).join('\n\n'),
+      confirmLabel: 'Sign out',
+      danger: true,
+    });
+    if (confirmed) await signOut();
+  }, [signOut, userEmail]);
+
+  const openProfileMenu = async (event: MouseEvent) => {
+    const choice = await showMenu(event, [
+      { id: 'profile', label: 'Profile settings', accelerator: 'Ctrl+,' },
+      { id: 'docs', label: 'Documentation' },
+      { type: 'separator' },
+      { id: 'sign-out', label: 'Sign out…' },
+    ]);
+    if (choice === 'profile') void window.tellann?.system.openProfile();
+    if (choice === 'docs') void window.tellann?.system.openExternal('https://docs.tellann.co');
+    if (choice === 'sign-out') void requestSignOut();
   };
 
-  const cycleSidebar = () => {
-    setMode(sidebarMode === 'full' ? 'icon' : sidebarMode === 'icon' ? 'closed' : 'full');
+  const openSidebarMenu = async (event: MouseEvent) => {
+    const choice = await showMenu(event, [
+      { id: 'full', label: 'Show labels', enabled: sidebarMode !== 'full' },
+      { id: 'icon', label: 'Icons only', enabled: sidebarMode !== 'icon' },
+      { id: 'closed', label: 'Hide sidebar' },
+    ]);
+    if (choice === 'full' || choice === 'icon' || choice === 'closed') setMode(choice);
   };
+
+  // Keyboard shortcuts. Native menus are hidden, so the window handles them.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (event.altKey && !mod && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault();
+        navigate(event.key === 'ArrowLeft' ? -1 : 1);
+        return;
+      }
+      if (event.key === 'F5' || (mod && key === 'r' && !event.shiftKey)) {
+        event.preventDefault();
+        refresh();
+        return;
+      }
+      if (!mod || event.altKey) return;
+      if (key === 'k' || (key === 'p' && event.shiftKey)) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (key === 'b') {
+        event.preventDefault();
+        toggleSidebar();
+      } else if (key === ',') {
+        event.preventDefault();
+        void window.tellann?.system.openProfile();
+      } else if (key === 'n') {
+        event.preventDefault();
+        navigate(projectId ? `/applications/${projectId}/qa-runs/new` : '/applications/new');
+      } else if (/^[1-9]$/.test(key)) {
+        const item = desktopNavigation[Number(key) - 1];
+        if (!item) return;
+        event.preventDefault();
+        navigate(item.resolveHref(projectId));
+      } else if (key === 'f') {
+        const input = document.querySelector<HTMLInputElement>('[data-search-input]');
+        if (!input) return;
+        event.preventDefault();
+        input.focus();
+        input.select();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigate, projectId, refresh, toggleSidebar]);
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (sidebarMode !== 'full') return;
@@ -149,194 +251,241 @@ export function AppShell() {
     document.addEventListener('pointerup', onUp);
   };
 
-  const confirmSignOut = async () => {
-    setSignOutOpen(false);
-    await signOut();
+  // Dropping a project folder onto the window attaches it to the open application.
+  const draggingFiles = (event: DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
+  const dropHandlers = {
+    onDragEnter: (event: DragEvent) => {
+      if (!draggingFiles(event)) return;
+      dragDepth.current += 1;
+      setDropActive(true);
+    },
+    onDragOver: (event: DragEvent) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = projectId ? 'link' : 'none';
+    },
+    onDragLeave: (event: DragEvent) => {
+      if (!draggingFiles(event)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (!dragDepth.current) setDropActive(false);
+    },
+    onDrop: (event: DragEvent) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      dragDepth.current = 0;
+      setDropActive(false);
+      const entry = event.dataTransfer.items[0]?.webkitGetAsEntry?.();
+      const file = event.dataTransfer.files[0];
+      if (!projectId || !file || !entry?.isDirectory || !window.tellann?.system.getPathForFile) return;
+      const folderPath = window.tellann.system.getPathForFile(file);
+      if (folderPath) void attachWorkspace(projectId, { path: folderPath, name: entry.name }).catch(() => undefined);
+    },
   };
 
-  const sidebarToggleLabel = sidebarMode === 'full'
-    ? 'Use icon-only sidebar'
-    : sidebarMode === 'icon'
-      ? 'Close sidebar'
-      : 'Open full sidebar';
+  const paletteItems = useMemo<PaletteItem[]>(() => [
+    ...desktopNavigation.map((item, index) => ({
+      id: `nav-${item.id}`,
+      group: 'Go to',
+      label: item.label,
+      icon: item.icon,
+      shortcut: `Ctrl+${index + 1}`,
+      run: () => navigate(item.resolveHref(projectId)),
+    })),
+    ...applications.map((item) => ({
+      id: `app-${item.id}`,
+      group: 'Applications',
+      label: item.name,
+      icon: AppWindow,
+      keywords: item.organizationName,
+      run: () => changeProject(item.id),
+    })),
+    { id: 'new-run', group: 'Commands', label: 'New QA run', icon: Play, shortcut: 'Ctrl+N', disabled: !projectId, run: () => navigate(`/applications/${projectId}/qa-runs/new`) },
+    { id: 'new-app', group: 'Commands', label: 'Create application', icon: Plus, run: () => navigate('/applications/new') },
+    { id: 'attach', group: 'Commands', label: 'Attach project folder…', icon: FolderPlus, disabled: !projectId, run: () => { if (projectId) void attachWorkspace(projectId).catch(() => undefined); } },
+    { id: 'refresh', group: 'Commands', label: 'Refresh', icon: RefreshCw, shortcut: 'F5', run: refresh },
+    { id: 'sidebar', group: 'Commands', label: 'Toggle sidebar', icon: PanelLeft, shortcut: 'Ctrl+B', run: toggleSidebar },
+    { id: 'profile', group: 'Commands', label: 'Profile settings', icon: Settings, shortcut: 'Ctrl+,', run: () => void window.tellann?.system.openProfile() },
+    { id: 'docs', group: 'Commands', label: 'Documentation', icon: BookOpenText, run: () => void window.tellann?.system.openExternal('https://docs.tellann.co') },
+    { id: 'sign-out', group: 'Commands', label: 'Sign out…', icon: LogOut, run: () => void requestSignOut() },
+  ], [applications, attachWorkspace, changeProject, navigate, projectId, refresh, requestSignOut, toggleSidebar]);
+
+  const runStatusLabel = activeRun ? `QA run ${formatEnum(activeRun.status).toLowerCase()}` : 'Ready';
 
   return (
     <div
       className="app-shell routed-shell"
       data-sidebar-mode={sidebarMode}
       style={{ '--sidebar-width': `${effectiveSidebarWidth}px` } as CSSProperties}
+      {...dropHandlers}
     >
-      <header className="topbar">
-        <button className="sidebar-toggle" type="button" onClick={cycleSidebar} title={sidebarToggleLabel} aria-label={sidebarToggleLabel}>
-          {sidebarMode === 'full' ? <PanelLeftClose size={17} /> : sidebarMode === 'icon' ? <PanelLeftOpen size={17} /> : <PanelLeft size={17} />}
-        </button>
-        <Link className="brand" to="/applications">Tellann</Link>
-        <SelectField
-          ariaLabel="Active application"
-          value={application?.id ?? ''}
-          onValueChange={changeProject}
-          options={applications.map((item) => ({ value: item.id, label: `${item.organizationName} / ${item.name}` }))}
-          placeholder="Select application"
-          className="topbar-select project-select"
-        />
-        {application && application.environments.length > 1 ? (
+      <header className="titlebar">
+        <div className="titlebar-leading">
+          <ThemedLogo className="titlebar-icon" />
+          <button className="titlebar-button" type="button" onClick={() => navigate(-1)} disabled={historyBounds.index <= 0} title="Back (Alt+Left)" aria-label="Back">
+            <ArrowLeft size={16} />
+          </button>
+          <button className="titlebar-button" type="button" onClick={() => navigate(1)} disabled={historyBounds.index >= historyBounds.max} title="Forward (Alt+Right)" aria-label="Forward">
+            <ArrowRight size={16} />
+          </button>
+          <button className="titlebar-button" type="button" onClick={toggleSidebar} onContextMenu={(event) => void openSidebarMenu(event)} title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-pressed={sidebarMode === 'full'}>
+            <PanelLeft size={16} />
+          </button>
+        </div>
+        <div className="titlebar-context">
+          <span className="titlebar-app-name">Tellann</span>
+          <span className="titlebar-separator" aria-hidden="true">/</span>
           <SelectField
-            ariaLabel="Active environment"
-            value={environment?.id ?? ''}
-            onValueChange={(value) => {
-              if (!projectId) return;
-              localStorage.setItem(`tellann:environment:${projectId}`, value);
-              navigate(location.pathname, { replace: true });
-            }}
-            options={application.environments.map((item) => ({ value: item.id, label: `${item.name} (${item.type})` }))}
-            placeholder="Select environment"
-            className="topbar-select environment-select"
+            ariaLabel="Active application"
+            value={application?.id ?? ''}
+            onValueChange={changeProject}
+            options={applications.map((item) => ({ value: item.id, label: `${item.organizationName} / ${item.name}` }))}
+            placeholder="Select application"
+            className="titlebar-select project-select"
           />
-        ) : null}
-        <span className="environment">{environment?.type ?? 'NO APPLICATION'}</span>
-        <div className="topbar-spacer" />
+          {application && application.environments.length > 1 ? (
+            <SelectField
+              ariaLabel="Active environment"
+              value={environment?.id ?? ''}
+              onValueChange={(value) => {
+                if (!projectId) return;
+                localStorage.setItem(`tellann:environment:${projectId}`, value);
+                navigate(location.pathname, { replace: true });
+              }}
+              options={application.environments.map((item) => ({ value: item.id, label: `${item.name} (${formatEnum(item.type)})` }))}
+              placeholder="Select environment"
+              className="titlebar-select environment-select"
+            />
+          ) : null}
+          {environment ? (
+            <span className="environment-chip" data-environment={environment.type.toLowerCase()}>{formatEnum(environment.type)}</span>
+          ) : null}
+        </div>
+        <button className="titlebar-search" type="button" onClick={() => setPaletteOpen(true)} title="Search (Ctrl+K)">
+          <Search size={14} />
+          <span>Search Tellann</span>
+          <kbd>Ctrl+K</kbd>
+        </button>
+        <div className="titlebar-drag" />
       </header>
 
       {sidebarMode !== 'closed' ? (
-        <aside className="sidebar" aria-label="Desktop sidebar">
+        <aside className="sidebar" aria-label="Sidebar" onContextMenu={(event) => {
+          if ((event.target as HTMLElement).closest('input, textarea')) return;
+          void openSidebarMenu(event);
+        }}>
           <nav aria-label="Primary navigation">
-            {desktopNavigation.map(({ id, label, icon: Icon, resolveHref, matches }) => (
+            {desktopNavigation.map(({ id, label, icon: Icon, resolveHref, matches }, index) => (
               <NavLink
                 key={id}
                 to={resolveHref(projectId)}
-                title={sidebarMode === 'icon' ? label : undefined}
+                title={`${label} (Ctrl+${index + 1})`}
                 aria-label={label}
                 className={matches(location.pathname, projectId) ? 'nav-active' : undefined}
+                draggable={false}
               >
-                <Icon size={18} />
+                <Icon size={16} />
                 <span>{label}</span>
               </NavLink>
             ))}
           </nav>
-          <div className="sidebar-statuses">
-            <Link className="sidebar-status" title={sidebarMode === 'icon' ? `Workspace: ${workspace ? 'Analyzed' : 'Not analyzed'}` : undefined} to={projectId ? `/applications/${projectId}/workspace` : '/applications'}>
-              <Folder className="sidebar-status-icon" size={18} />
-              <span>Workspace</span>
-              <strong>{workspace ? 'Analyzed' : 'Not analyzed'}</strong>
-              <small>{workspace
-                ? `${workspace.snapshot.frameworks[0]?.framework ?? 'Web'} · ${workspace.snapshot.branch ?? 'no branch'}`
-                : 'Open workspace setup'}</small>
-            </Link>
-            <Link
-              className="sidebar-status"
-              title={sidebarMode === 'icon' ? `Run status: ${activeRun?.status ?? 'Ready'}` : undefined}
-              to={projectId
-                ? activeRun
-                  ? `/applications/${projectId}/qa-runs/${activeRun.runId}/live`
-                  : `/applications/${projectId}/qa-runs`
-                : '/applications?next=qa-runs'}
-            >
-              <Activity className="sidebar-status-icon" size={18} />
-              <span>Run status</span>
-              <strong>{activeRun?.status ?? 'Ready'}</strong>
-              <small>{activeRun ? activeRun.runId.slice(0, 8) : 'No active run'}</small>
-            </Link>
-          </div>
-
-          <div className="sidebar-profile" ref={profileRef}>
-            {profileOpen ? (
-              <div className="profile-popover" role="menu" aria-label="Profile menu">
-                <button className="profile-summary" type="button" onClick={() => { setProfileOpen(false); void window.tellann?.system.openProfile(); }}>
-                  {avatarNode}
-                  <span className="profile-identity"><strong>{userName}</strong><small>{userEmail}</small></span>
-                  <ChevronRight size={14} />
-                </button>
-                <div className="profile-menu-items">
-                  <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); void window.tellann?.system.openProfile(); }}><Settings size={16} /><span>Profile settings</span></button>
-                  <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); void window.tellann?.system.openExternal('https://docs.tellann.co'); }}><BookOpenText size={16} /><span>Documentation</span></button>
-                  <button className="profile-signout" type="button" role="menuitem" onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}><LogOut size={16} /><span>Sign out</span></button>
-                </div>
-              </div>
-            ) : null}
+          <div className="sidebar-profile">
             <button
               className="profile-trigger"
               type="button"
               aria-haspopup="menu"
-              aria-expanded={profileOpen}
-              title={sidebarMode === 'icon' ? userName : undefined}
-              onClick={() => setProfileOpen((current) => !current)}
+              title={userEmail ? `${userName} (${userEmail})` : userName}
+              onClick={(event) => void openProfileMenu(event)}
+              onContextMenu={(event) => void openProfileMenu(event)}
             >
               {avatarNode}
-              <span className="profile-trigger-name">{userName}</span>
+              <span className="profile-trigger-name">
+                <strong>{userName}</strong>
+                {userEmail ? <small>{userEmail}</small> : null}
+              </span>
             </button>
           </div>
 
-          {sidebarMode === 'full' ? <div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={beginResize} /> : null}
+          {sidebarMode === 'full' ? <div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={beginResize} onDoubleClick={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); localStorage.setItem('tellann:sidebar-width', String(DEFAULT_SIDEBAR_WIDTH)); }} /> : null}
         </aside>
       ) : null}
 
       <main className="route-workspace">
         {environment?.type === 'PRODUCTION' ? (
-          <div className="policy-banner" role="status">
+          <div className="policy-banner infobar" data-tone="warning" role="status">
             <ShieldCheck size={16} />
-            Production is observation-only. Launch, instrumentation, automated interaction, and form submission are blocked.
+            <span><strong>Production is observation-only.</strong> Launch, instrumentation, automated interaction and form submission are blocked.</span>
           </div>
         ) : null}
         {error ? (
-          <div className="global-error" role="alert">
+          <div className="global-error infobar" data-tone="danger" role="alert">
+            <TriangleAlert size={16} />
             <span>{error}</span>
             <div className="error-actions">
-              {!cloudAvailable ? <button onClick={() => void refreshApplications().catch(() => undefined)}>Retry</button> : null}
-              <button onClick={clearError}>Dismiss</button>
+              {!cloudAvailable ? <button type="button" onClick={() => void refreshApplications().catch(() => undefined)}>Retry</button> : null}
+              <button type="button" onClick={clearError}>Dismiss</button>
             </div>
           </div>
         ) : null}
         <Outlet />
+        {dropActive ? (
+          <div className="drop-overlay" aria-hidden="true">
+            <FolderPlus size={28} />
+            <strong>{application ? `Attach folder to ${application.name}` : 'Open an application first'}</strong>
+            <span>{application ? 'Drop a project folder to attach it as this application’s workspace.' : 'Folders attach to the application that is open.'}</span>
+          </div>
+        ) : null}
       </main>
 
       <NotificationToaster />
       <UploadConsentModal />
       <RepositoryMismatchModal />
+      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
 
+      {/* Workspace and run state live here only; the sidebar stays navigation. */}
       <footer className="global-statusbar" aria-live="polite">
-        <div><Activity size={16} /><span>{activeRun ? `Run ${activeRun.status.toLowerCase()}` : 'Ready for a guided run'}</span></div>
-        <div>{busy ? 'Working…' : cloudAvailable ? 'Cloud connected' : 'Cloud offline'}</div>
-        <div><Folder size={16} /><span>{workspace?.name ?? 'No local folder attached'}</span></div>
-      </footer>
-
-      {signOutOpen ? (
-        <div className="desktop-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignOutOpen(false); }}>
-          <div className="desktop-modal" role="dialog" aria-modal="true" aria-labelledby="signout-title">
-            <div className="flex items-center justify-between mb-5">
-              <span className="text-white text-[20px] font-extrabold tracking-tight">TELLANN</span>
-              <span className="border border-[#444748] text-[#8e9192] px-2 py-1 text-[11px] font-mono tracking-[0.08em] uppercase">
-                AUTH // SIGN OUT
-              </span>
-            </div>
-            <h2 id="signout-title">Sign out of Tellann?</h2>
-            <p className="mb-4">Are you sure you want to sign out? You will need to sign in again to access your workspace.</p>
-            <table role="presentation" className="w-full border-collapse mb-6 bg-black border border-[#262626]">
-              <tbody>
-                <tr>
-                  <td className="p-2.5 border-b border-[#262626] text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase">USER ACCOUNT</td>
-                  <td className="p-2.5 border-b border-[#262626] text-white text-right font-mono text-[13px]">{userName}</td>
-                </tr>
-                {userEmail ? (
-                  <tr>
-                    <td className={`p-2.5 ${workspace?.name ? 'border-b border-[#262626]' : ''} text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase`}>ACCOUNT EMAIL</td>
-                    <td className={`p-2.5 ${workspace?.name ? 'border-b border-[#262626]' : ''} text-white text-right font-mono text-[13px]`}>{userEmail}</td>
-                  </tr>
-                ) : null}
-                {workspace?.name ? (
-                  <tr>
-                    <td className="p-2.5 text-[#8e9192] font-mono text-[11px] tracking-[0.08em] uppercase">ACTIVE WORKSPACE</td>
-                    <td className="p-2.5 text-white text-right font-mono text-[13px]">{workspace.name}</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-            <div className="desktop-modal-actions">
-              <button type="button" onClick={() => setSignOutOpen(false)} disabled={busy}>Cancel</button>
-              <button className="confirm" type="button" onClick={() => void confirmSignOut()} disabled={busy}>{busy ? 'Signing out…' : 'Confirm sign out'}</button>
-            </div>
-          </div>
+        <NavLink
+          className="statusbar-item"
+          data-active={activeRun ? 'true' : undefined}
+          to={projectId
+            ? activeRun
+              ? `/applications/${projectId}/qa-runs/${activeRun.runId}/live`
+              : `/applications/${projectId}/qa-runs`
+            : '/applications?next=qa-runs'}
+          title={activeRun ? `Open run ${activeRun.runId.slice(0, 8)}` : 'No active QA run (Ctrl+N starts one)'}
+          draggable={false}
+        >
+          <span className="statusbar-dot" aria-hidden="true" />
+          <span>{runStatusLabel}</span>
+        </NavLink>
+        <div className="statusbar-spacer" />
+        {busy ? <div className="statusbar-item"><LoaderCircle className="spin" size={12} /><span>Working…</span></div> : null}
+        <div className="statusbar-item" title={cloudAvailable ? 'Connected to Tellann Cloud' : 'Tellann Cloud is unreachable'}>
+          {cloudAvailable ? <Cloud size={12} /> : <CloudOff size={12} />}
+          <span>{cloudAvailable ? 'Connected' : 'Offline'}</span>
         </div>
-      ) : null}
+        {workspace ? (
+          <NavLink
+            className="statusbar-item"
+            to={`/applications/${projectId}/workspace`}
+            title={workspace.path}
+            draggable={false}
+          >
+            <Folder size={12} />
+            <span>{workspace.snapshot.branch ? `${workspace.name} · ${workspace.snapshot.branch}` : workspace.name}</span>
+          </NavLink>
+        ) : (
+          <button
+            className="statusbar-item"
+            type="button"
+            disabled={!projectId || busy}
+            onClick={() => { if (projectId) void attachWorkspace(projectId).catch(() => undefined); }}
+            title={projectId ? 'Attach a project folder, or drop one onto the window' : 'Open an application to attach a folder'}
+          >
+            <FolderPlus size={12} />
+            <span>Attach folder</span>
+          </button>
+        )}
+      </footer>
     </div>
   );
 }

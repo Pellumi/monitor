@@ -6,11 +6,12 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/index.test.js"
+    "test": "node --test dist/index.test.js dist/python-adapter.test.js"
   },
   "dependencies": {
     "@tellann/agent-policy": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/python-project": "workspace:*",
     "semver": "^7.7.2",
     "ts-morph": "^27.0.0",
     "zod": "^3.25.76"

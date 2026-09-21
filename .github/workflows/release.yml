@@ -33,7 +33,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Read from .nvmrc so CI and every developer's version manager agree
+          # on one number. Bump the file, not this workflow.
+          node-version-file: .nvmrc
           cache: pnpm
           registry-url: https://registry.npmjs.org
           # writes ~/.npmrc with:
@@ -63,3 +65,78 @@ jobs:
           # Uncomment to attach npm provenance (needs id-token: write, npm >= 9.5,
           # and a public repo or npm's private-repo provenance enabled):
           # NPM_CONFIG_PROVENANCE: "true"
+
+  publish-python:
+    name: Publish the Python SDK to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    # Trusted Publishing exchanges this job's OIDC identity for a short-lived
+    # PyPI token, so there is no API token to store, leak or rotate. PyPI ties
+    # the trust to (repository, workflow file, environment), which is why the
+    # environment name below has to match the publisher configured on PyPI.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tellann
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Decide whether this version needs publishing
+        id: decide
+        # The version is whatever the merged "Version Packages" PR left in
+        # pyproject.toml. Asking PyPI directly, rather than reading changesets'
+        # output, keeps this job idempotent: every other push to main finds the
+        # version already there and stops.
+        run: |
+          version="$(python - <<'PY'
+          import re, pathlib
+          source = pathlib.Path("packages/python-sdk/pyproject.toml").read_text(encoding="utf-8")
+          section = re.search(r"^\[project\][^\[]*?^version\s*=\s*\"([^\"]+)\"", source, re.M | re.S)
+          print(section.group(1))
+          PY
+          )"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          published="$(python - "$version" <<'PY'
+          import json, sys, urllib.error, urllib.request
+          wanted = sys.argv[1]
+          try:
+              with urllib.request.urlopen("https://pypi.org/pypi/tellann/json", timeout=30) as response:
+                  releases = json.load(response).get("releases", {})
+          except urllib.error.HTTPError as error:
+              # 404 means the project does not exist yet, so nothing is published.
+              if error.code != 404:
+                  raise
+              releases = {}
+          print("true" if wanted in releases else "false")
+          PY
+          )"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          if [ "$published" = "true" ]; then
+            echo "tellann $version is already on PyPI; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Publishing tellann $version to PyPI." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run the Python SDK tests
+        if: steps.decide.outputs.published == 'false'
+        working-directory: packages/python-sdk
+        run: python -m unittest discover -s tests
+
+      - name: Build the distribution
+        if: steps.decide.outputs.published == 'false'
+        run: |
+          python -m pip install --upgrade build
+          python -m build packages/python-sdk
+
+      - name: Publish to PyPI
+        if: steps.decide.outputs.published == 'false'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/python-sdk/dist

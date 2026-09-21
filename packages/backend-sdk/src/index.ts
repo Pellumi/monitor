@@ -10,6 +10,8 @@ export { CaptureErrorOptions } from './core/captureError';
 export { TrackStateOptions } from './core/trackState';
 export * from './integrations/express';
 export * from './integrations/fastify';
+export * from './integrations/koa';
+export * from './integrations/hapi';
 
 /**
  * Backward compatible helper to track an API call using the initialized TELLANN singleton.

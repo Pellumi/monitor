@@ -16,6 +16,7 @@ import type {
   DesktopSession,
   QARunSummary,
   QualityReport,
+  ReportExportFormat,
   RepositorySnapshotSummary,
   CodebaseAnalysis,
   StartGuidedRunInput,
@@ -172,13 +173,26 @@ declare global {
       intent: {
         listDeclaredFlows(applicationId: string): Promise<DeclaredFlowSummary[]>;
         getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
-        createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string): Promise<DeclaredFlowSummary>;
+        createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
         addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
         updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
         deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
         addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
         completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        /** Permanently deletes the flow and everything recorded against it. */
+        deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
+        updateDeclaredTransition(applicationId: string, flowId: string, transitionId: string, action: string): Promise<Record<string, unknown>>;
+        deleteDeclaredTransition(applicationId: string, flowId: string, transitionId: string): Promise<Record<string, unknown>>;
+        updateDeclaredFlow(
+          applicationId: string,
+          flowId: string,
+          input: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string },
+        ): Promise<Record<string, unknown>>;
+        getFlowDraftHistory(applicationId: string, flowId: string): Promise<FlowDraftHistory>;
+        restoreFlowDraft(applicationId: string, flowId: string, snapshotId: string): Promise<Record<string, unknown>>;
+        dismissFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
+        resolveAiFlowDraft(applicationId: string, flowId: string, decision: 'accept' | 'decline'): Promise<Record<string, unknown>>;
         generateFlowSuggestions(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowSuggestionsResponse>;
         getFlowSuggestions(applicationId: string, flowId: string): Promise<FlowSuggestionsResponse>;
         acceptFlowSuggestion(applicationId: string, flowId: string, suggestionId: string): Promise<Record<string, unknown>>;
@@ -189,7 +203,12 @@ declare global {
         getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
         initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
         getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;
         analyzeFlowInitialization(initializationId: string): Promise<Record<string, any>>;
+        retryFlowMappingResolution(initializationId: string): Promise<Record<string, any>>;
+        confirmFlowMapping(initializationId: string, checkpointId: string, candidateId: string, placementKind?: string, anchorText?: string): Promise<Record<string, any>>;
+        confirmFlowMappings(initializationId: string, confirmations: Array<{ checkpointId: string; candidateId: string; placementKind?: string; anchorText?: string }>): Promise<Record<string, any>>;
+        resetFlowMappingConsent(applicationId: string): Promise<Record<string, any>>;
         setFlowInitializationMode(initializationId: string, mode: 'AUTOMATED' | 'MANUAL'): Promise<Record<string, any>>;
         updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
         startFlowVerification(initializationId: string): Promise<Record<string, any>>;
@@ -230,6 +249,11 @@ declare global {
         get(runId: string): Promise<Record<string, unknown>>;
         getReplay(runId: string): Promise<Record<string, unknown>>;
         getReport(runId: string): Promise<QualityReport>;
+        saveReportDownload(
+          runId: string,
+          format: ReportExportFormat,
+        ): Promise<{ cancelled: boolean; filePath?: string; filename?: string; format?: ReportExportFormat }>;
+        getArtifactDownloadUrl(runId: string, artifactId: string): Promise<{ url: string; expiresInSeconds?: number }>;
         start(input: StartGuidedRunInput): Promise<GuidedRunState>;
         pause(): Promise<GuidedRunState>;
         resume(): Promise<GuidedRunState>;
@@ -238,6 +262,10 @@ declare global {
         revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
         searchMentionableMembers(runId: string, query: string): Promise<QAMentionableMember[]>;
         onLifecycleEvent(callback: (event: RunLifecycleEvent) => void): () => void;
+        /** Pushed whenever the active run's state changes, replacing polling. */
+        onStateChanged(callback: (state: GuidedRunState) => void): () => void;
+        /** Raises the managed browser window above the desktop app. */
+        focusBrowser(): Promise<GuidedRunState>;
         end(): Promise<GuidedRunState>;
         getActive(): Promise<GuidedRunState | null>;
       };
@@ -287,9 +315,67 @@ declare global {
         openExternal(url: string): Promise<void>;
         openPath(path: string): Promise<string>;
         openProfile(): Promise<void>;
+        /** Absolute path of a file or folder dropped onto the window. */
+        getPathForFile(file: File): string;
+      };
+      window: {
+        getState(): Promise<DesktopWindowState>;
+        onStateChange(callback: (state: DesktopWindowState) => void): () => void;
+        onNavigate(callback: (direction: 'back' | 'forward') => void): () => void;
+        onCommand(callback: (command: DesktopWindowCommand) => void): () => void;
+        consumePendingCommand(): Promise<DesktopWindowCommand | null>;
+        setMode(mode: 'auth' | 'main'): Promise<DesktopWindowState>;
+        /** Shows a native menu at the cursor and resolves with the chosen item id. */
+        showContextMenu(items: DesktopContextMenuItem[]): Promise<string | null>;
+        /** Native message box; resolves true when the confirm button is chosen. */
+        confirm(input: {
+          title: string;
+          message: string;
+          detail?: string;
+          confirmLabel?: string;
+          cancelLabel?: string;
+          danger?: boolean;
+        }): Promise<boolean>;
       };
     };
   }
+
+  type DesktopWindowState = {
+    focused: boolean;
+    maximized: boolean;
+    fullScreen: boolean;
+    mode: 'auth' | 'main';
+  };
+
+  type DesktopWindowCommand = 'new-run' | 'applications';
+
+  type DesktopContextMenuItem =
+    | { type: 'separator' }
+    | {
+        id: string;
+        label: string;
+        enabled?: boolean;
+        accelerator?: string;
+        type?: 'normal' | 'checkbox';
+        checked?: boolean;
+        submenu?: DesktopContextMenuItem[];
+      };
+
+  /** Rollback points within a flow's current version (d1, d2, …). */
+  type FlowDraftHistory = {
+    version: number;
+    draftSeq: number;
+    current: { stateCount: number; transitionCount: number };
+    snapshots: Array<{
+      id: string;
+      draftSeq: number;
+      label?: string | null;
+      stateCount: number;
+      transitionCount: number;
+      createdAt: string;
+      isCurrent: boolean;
+    }>;
+  };
 }
 
 export {};

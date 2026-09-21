@@ -88,3 +88,28 @@ test('relay replays a persisted queue once and clears it after collector recover
   await second.stop();
   await new Promise<void>((resolve) => collector.close(() => resolve()));
 });
+
+test('preflight allows every header the frontend SDK sends', async () => {
+  const relay = new LocalRunRelay();
+  const started = await relay.start({
+    collectorBaseUrl: 'http://127.0.0.1:1', runCredential: 'scoped-cloud-token',
+    allowedOrigin: 'http://localhost:5173',
+    correlation: { runId: 'run', sessionId: 'session', traceId: 'trace', organizationId: 'org', applicationId: 'app', environmentId: 'env' },
+  });
+  const preflight = await fetch(`${started.endpoint}/v1/events/batch`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost:5173',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'authorization, content-type, x-tellann-environment-id, x-tellann-run-id, x-tellann-session-id, x-tellann-trace-id',
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+  const allowed = (preflight.headers.get('access-control-allow-headers') ?? '')
+    .split(',').map((header) => header.trim().toLowerCase());
+  for (const header of ['authorization', 'content-type', 'x-tellann-environment-id', 'x-tellann-run-id', 'x-tellann-session-id', 'x-tellann-trace-id']) {
+    assert.ok(allowed.includes(header), `preflight must allow ${header}`);
+  }
+  await relay.stop();
+});

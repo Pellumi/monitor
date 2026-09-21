@@ -1,3 +1,5 @@
+import type { DomainTemplate } from '@tellann/rules';
+
 export type FlowNodeInput = {
   id: string;
   stateName: string;
@@ -246,4 +248,40 @@ export function createFlowDiagrams(nodes: FlowNodeInput[], edges: FlowEdgeInput[
     projection('ACTIVITY', activityLines.join('\n')),
     projection('STATE_MACHINE', stateLines.join('\n')),
   ];
+}
+
+export type TemplateSeedState = {
+  name: string;
+  category: string;
+  role: 'NORMAL' | 'INITIAL' | 'TERMINAL';
+  terminalKind: 'SUCCESS' | 'FAILURE' | 'CANCELLATION' | 'ALTERNATE' | null;
+};
+
+/**
+ * Resolve the states of a domain template to the role/terminalKind shape the
+ * Flow model stores. Templates that do not annotate roles fall back to graph
+ * shape: the first state nothing points at is the entry, every leaf is an exit.
+ * Without this a seeded Flow would fail validateFlow at publish time.
+ */
+export function templateSeedStates(template: DomainTemplate): TemplateSeedState[] {
+  const hasIncoming = new Set(template.transitions.map((transition) => transition.to));
+  const hasOutgoing = new Set(template.transitions.map((transition) => transition.from));
+  const annotated = template.states.some((state) => state.role);
+  let initialTaken = template.states.some((state) => state.role === 'INITIAL');
+  return template.states.map((state) => {
+    let role: TemplateSeedState['role'] = state.role ?? 'NORMAL';
+    let terminalKind: TemplateSeedState['terminalKind'] = state.terminalKind ?? null;
+    if (!annotated) {
+      if (!initialTaken && !hasIncoming.has(state.name)) {
+        role = 'INITIAL';
+        initialTaken = true;
+      } else if (!hasOutgoing.has(state.name)) {
+        role = 'TERMINAL';
+        terminalKind = 'SUCCESS';
+      }
+    }
+    if (role === 'TERMINAL' && !terminalKind) terminalKind = 'SUCCESS';
+    if (role !== 'TERMINAL') terminalKind = null;
+    return { name: state.name.toUpperCase().trim(), category: state.category, role, terminalKind };
+  });
 }

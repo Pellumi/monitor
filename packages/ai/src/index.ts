@@ -16,6 +16,7 @@ export * from './costs';
 export * from './flow-suggestions';
 export * from './document-flow';
 export * from './codebase-explanations';
+export * from './flow-mapping';
 
 // ─────────────────────────────────────────────────────────────
 // Types
