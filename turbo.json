@@ -61,7 +61,14 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "inputs": ["src/**/*.tsx", "src/**/*.ts", "test/**/*.ts", "test/**/*.tsx"],
+      "inputs": [
+        "src/**/*.tsx",
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "test/**/*.tsx",
+        "src/**/*.py",
+        "tests/**/*.py"
+      ],
       "outputs": ["coverage/**"]
     },
     "test:e2e": {

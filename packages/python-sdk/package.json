@@ -1,0 +1,9 @@
+{
+  "name": "@tellann/python-sdk",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Workspace entry for the Tellann Python SDK. The package itself is published to PyPI as `tellann`; this manifest exists so changesets versions it alongside the npm SDKs and turbo runs its tests.",
+  "scripts": {
+    "test": "python -m unittest discover -s tests"
+  }
+}
