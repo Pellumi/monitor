@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { createApprovalHash, detectAdapters, getAdapter, type LocalProjectContext } from './index';
 
 const NEWLINE = '\n';
@@ -44,6 +45,35 @@ function approvedTask(plan: Awaited<ReturnType<ReturnType<typeof getAdapter>['pr
     approvalHash: createApprovalHash(plan, plan.approvedFileScopes, []),
     checkpointDirectory: fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-checkpoint-')),
   };
+}
+
+/** The interpreter to run the generated module with, or null when there is none. */
+function pythonInterpreter(): string | null {
+  for (const candidate of process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python']) {
+    const probe = spawnSync(candidate, ['-c', 'pass'], { encoding: 'utf8' });
+    if (!probe.error && probe.status === 0) return candidate;
+  }
+  return null;
+}
+
+function runPython(
+  interpreter: string,
+  cwd: string,
+  script: string,
+  environment: Record<string, string>,
+): string {
+  // A clean slate: an inherited TELLANN_* variable from the developer's own
+  // shell would decide the outcome of the very thing under test.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('TELLANN_')),
+  ) as Record<string, string>;
+  const result = spawnSync(interpreter, [script], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...inherited, ...environment, PYTHONDONTWRITEBYTECODE: '1' },
+  });
+  assert.equal(result.status, 0, `python exited ${result.status}: ${result.stderr}`);
+  return result.stdout.trim();
 }
 
 function read(context: LocalProjectContext, relative: string): string {
@@ -327,6 +357,110 @@ test('a Flow checkpoint is inserted after the docstring and refuses placements i
     } as unknown as LocalProjectContext['flowManifest'],
   };
   await assert.rejects(adapter.propose(unsupported), /UNSUPPORTED_FLOW_CHECKPOINT_PLACEMENT/);
+
+  fs.rmSync(context.workspaceRoot, { recursive: true, force: true });
+});
+
+test('the generated module reads Tellann settings from the environment file beside it', async () => {
+  // Vite and Next load `.env.local` for the JavaScript adapters. Python has no
+  // equivalent, so a server the developer starts by hand saw none of the
+  // credentials Tellann had just written, and the SDK came up against a
+  // placeholder application id instead of disabling itself.
+  const context = pythonFixture(DJANGO_FIXTURE);
+  const adapter = getAdapter('django');
+  const plan = await adapter.propose(context);
+  await adapter.apply(context, approvedTask(plan));
+
+  const generated = read(context, 'tellann_instrumentation.py');
+  assert.match(generated, /ENVIRONMENT_FILES = \("\.env\.local", "\.env"\)/);
+  assert.match(generated, /_load_environment_files\(\)/);
+  // Only Tellann's own keys are loaded; this is not a dotenv implementation for
+  // the whole application.
+  assert.match(generated, /ENVIRONMENT_PREFIX = "TELLANN_"/);
+  assert.match(generated, /if not key\.startswith\(ENVIRONMENT_PREFIX\) or key in os\.environ:/);
+  // An id that is not the real one looks like a working install while every
+  // event lands against the wrong application.
+  assert.doesNotMatch(generated, /configure-in-tellann-desktop/);
+  assert.match(generated, /APPLICATION_ID = os\.environ\.get\("TELLANN_APPLICATION_ID"\)/);
+  assert.match(generated, /if not APPLICATION_ID:/);
+
+  fs.rmSync(context.workspaceRoot, { recursive: true, force: true });
+});
+
+test('the generated module loads .env.local, prefers the real environment, and disables itself unconfigured', async (t) => {
+  const python = pythonInterpreter();
+  if (!python) return t.skip('no Python interpreter on PATH');
+
+  const context = pythonFixture(DJANGO_FIXTURE);
+  const adapter = getAdapter('django');
+  await adapter.apply(context, approvedTask(await adapter.propose(context)));
+
+  // A stub package stands in for the installed SDK: the module under test is
+  // the generated one, not the wheel.
+  const stub = path.join(context.workspaceRoot, 'tellann');
+  fs.mkdirSync(stub, { recursive: true });
+  fs.writeFileSync(path.join(stub, '__init__.py'), [
+    'class _Stub:',
+    '    def __init__(self):',
+    '        self.config = None',
+    '    def is_initialized(self):',
+    '        return self.config is not None',
+    '    def initialize(self, **kwargs):',
+    '        self.config = kwargs',
+    '    def verify_installation(self):',
+    '        pass',
+    '',
+    'TELLANN = _Stub()',
+    '',
+  ].join(NEWLINE));
+
+  fs.writeFileSync(path.join(context.workspaceRoot, '.env.local'), [
+    '# written by Tellann',
+    'TELLANN_GATEWAY_URL=https://gateway.example.com',
+    'TELLANN_APPLICATION_ID=app-from-file',
+    'TELLANN_ENVIRONMENT_ID="env-from-file"',
+    "TELLANN_INGESTION_KEY='key-from-file'",
+    'DJANGO_SETTINGS_MODULE=should-not-be-loaded',
+    '',
+  ].join(NEWLINE));
+
+  const probe = [
+    'import json, os, sys',
+    'sys.path.insert(0, os.getcwd())',
+    'import tellann_instrumentation as generated',
+    'from tellann import TELLANN',
+    'print(json.dumps({',
+    '    "config": TELLANN.config,',
+    '    "django": os.environ.get("DJANGO_SETTINGS_MODULE"),',
+    '}))',
+    '',
+  ].join(NEWLINE);
+  fs.writeFileSync(path.join(context.workspaceRoot, 'probe.py'), probe);
+
+  const fromFile = JSON.parse(runPython(python, context.workspaceRoot, 'probe.py', {}));
+  assert.equal(fromFile.config.application_id, 'app-from-file');
+  assert.equal(fromFile.config.endpoint, 'https://gateway.example.com');
+  assert.equal(fromFile.config.environment_id, 'env-from-file', 'double quotes are stripped');
+  assert.equal(fromFile.config.api_key, 'key-from-file', 'single quotes are stripped');
+  assert.equal(fromFile.django, null, 'a non-Tellann key in the file is not loaded');
+
+  // A real environment variable - what Tellann injects when it launches the
+  // app itself, and what a deployment sets - always wins over the file.
+  const fromEnvironment = JSON.parse(runPython(python, context.workspaceRoot, 'probe.py', {
+    TELLANN_APPLICATION_ID: 'app-from-environment',
+    TELLANN_RUN_ID: 'run-7',
+    TELLANN_SESSION_ID: 'session-7',
+    TELLANN_TRACE_ID: 'trace-7',
+  }));
+  assert.equal(fromEnvironment.config.application_id, 'app-from-environment');
+  assert.equal(fromEnvironment.config.run_id, 'run-7');
+  assert.equal(fromEnvironment.config.session_id, 'session-7');
+  assert.equal(fromEnvironment.config.trace_id, 'trace-7');
+
+  // With neither, the SDK stays off rather than reporting to a placeholder.
+  fs.rmSync(path.join(context.workspaceRoot, '.env.local'));
+  const unconfigured = JSON.parse(runPython(python, context.workspaceRoot, 'probe.py', {}));
+  assert.equal(unconfigured.config, null);
 
   fs.rmSync(context.workspaceRoot, { recursive: true, force: true });
 });

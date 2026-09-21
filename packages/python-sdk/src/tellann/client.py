@@ -20,7 +20,11 @@ from .events import EVENT_TYPES, SOURCE, TellannEvent
 from .transport import EventTransport
 
 #: Environment variables read when `initialize` is called without arguments.
-#: The names match what the desktop instrumenter writes into `.env`.
+#: The names match what the desktop instrumenter writes into `.env.local`.
+#: Nothing here loads that file - Python has no bundler to do it - so the
+#: generated `tellann_instrumentation` module reads it into `os.environ` before
+#: calling `initialize`, and a process started by a deployment supplies the
+#: variables itself.
 ENV_ENDPOINT = "TELLANN_GATEWAY_URL"
 ENV_API_KEY = "TELLANN_INGESTION_KEY"
 ENV_APPLICATION_ID = "TELLANN_APPLICATION_ID"

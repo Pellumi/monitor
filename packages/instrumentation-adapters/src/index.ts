@@ -39,7 +39,7 @@ import {
 export * from './contracts';
 import { beginPatch, finalizePatch, hashChecks, restorePatch, rollbackPatch } from './patching';
 export * from './patching';
-import { pythonAdapters } from './python-adapter';
+import { pythonAdapterRoot, pythonAdapters } from './python-adapter';
 export * from './python-adapter';
 
 
@@ -475,7 +475,12 @@ export function assignFlowCheckpoints(
   const byAdapter: Record<string, string[]> = {};
   const unassigned: Array<{ checkpointId: string; file: string }> = [];
   const roots = adapterIds.map((id) => {
-    const definition = DEFINITIONS.find((item) => item.id === id)!;
+    // A Python adapter has no `package.json` definition to resolve, so asking
+    // `frameworkPackage` for one used to throw inside its own try/catch and
+    // yield `null` - which dropped the adapter here and left every checkpoint
+    // in a Django or FastAPI project reported as outside the detected packages.
+    const definition = DEFINITIONS.find((item) => item.id === id);
+    if (!definition) return { id, relativeRoot: pythonAdapterRoot(workspaceRoot, id) };
     return { id, relativeRoot: frameworkPackage(workspaceRoot, definition)?.relativeRoot ?? null };
   }).filter((item) => item.relativeRoot !== null);
   for (const checkpoint of manifest?.checkpoints ?? []) {
