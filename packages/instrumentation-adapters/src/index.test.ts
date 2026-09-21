@@ -595,6 +595,67 @@ test('a Flow that spans packages is split across adapters instead of refused', (
   assert.deepEqual(partial.unassigned, [{ checkpointId: 'transition:submit', file: 'services/api/src/login.ts' }]);
 });
 
+const PY_NL = '\n';
+
+test('a Flow that spans a React app and a Django API is split across both', () => {
+  // The Python adapters are resolved from a Python manifest rather than from a
+  // package.json dependency list. Resolving them the JavaScript way produced no
+  // root at all, which reported every checkpoint in the API as outside the
+  // detected packages and refused the whole plan.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-polyglot-'));
+  fs.mkdirSync(path.join(root, 'apps/web/app/checkout'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'services/billing/billing'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root', private: true }));
+  fs.writeFileSync(path.join(root, 'apps/web/package.json'), JSON.stringify({ name: 'web', dependencies: { next: '^15.0.0' } }));
+  fs.writeFileSync(path.join(root, 'apps/web/app/checkout/page.tsx'), ["'use client';", 'export default function Page() { return <main />; }', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'services/billing/requirements.txt'), ['Django>=4.2,<6', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'services/billing/manage.py'), ['import os', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'services/billing/billing/__init__.py'), '');
+  fs.writeFileSync(path.join(root, 'services/billing/billing/settings.py'), ['MIDDLEWARE = []', 'ROOT_URLCONF = "billing.urls"', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'services/billing/billing/views.py'), ['def checkout(request):', '    return None', ''].join(PY_NL));
+
+  const manifest = {
+    checkpoints: [
+      { id: 'state:checkout', mapping: { file: 'apps/web/app/checkout/page.tsx' } },
+      { id: 'transition:charge', mapping: { file: 'services/billing/billing/views.py' } },
+    ],
+  } as never;
+
+  const split = assignFlowCheckpoints(root, manifest, ['nextjs', 'django']);
+  assert.deepEqual(split.byAdapter.nextjs, ['state:checkout']);
+  assert.deepEqual(split.byAdapter.django, ['transition:charge']);
+  assert.deepEqual(split.unassigned, []);
+});
+
+test('a Flow in a Python project at the repository root is assigned to its adapter', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-django-root-'));
+  fs.mkdirSync(path.join(root, 'billing'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'requirements.txt'), ['Django>=4.2,<6', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'manage.py'), ['import os', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'billing/__init__.py'), '');
+  fs.writeFileSync(path.join(root, 'billing/settings.py'), ['MIDDLEWARE = []', 'ROOT_URLCONF = "billing.urls"', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'billing/views.py'), ['def checkout(request):', '    return None', ''].join(PY_NL));
+
+  const manifest = { checkpoints: [{ id: 'state:checkout', mapping: { file: 'billing/views.py' } }] } as never;
+  const split = assignFlowCheckpoints(root, manifest, ['django']);
+  assert.deepEqual(split.byAdapter.django, ['state:checkout']);
+  assert.deepEqual(split.unassigned, []);
+});
+
+test('a checkpoint is still reported unassigned when the Python framework is absent', () => {
+  // The fix must not turn "no Django here" into a silent assignment: a plan
+  // that claims to cover a checkpoint it cannot reach is worse than a refusal.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-no-django-'));
+  fs.mkdirSync(path.join(root, 'billing'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'requirements.txt'), ['requests==2.32.3', ''].join(PY_NL));
+  fs.writeFileSync(path.join(root, 'billing/views.py'), ['def checkout(request):', '    return None', ''].join(PY_NL));
+
+  const manifest = { checkpoints: [{ id: 'state:checkout', mapping: { file: 'billing/views.py' } }] } as never;
+  const split = assignFlowCheckpoints(root, manifest, ['django']);
+  assert.deepEqual(split.byAdapter, {});
+  assert.deepEqual(split.unassigned, [{ checkpointId: 'state:checkout', file: 'billing/views.py' }]);
+});
+
 test('an adapter given its share proposes only that share', async () => {
   const content = `import express from 'express';
 const app = express();

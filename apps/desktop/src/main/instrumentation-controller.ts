@@ -14,6 +14,7 @@ import {
   createApprovalHash,
   detectAdapters,
   getAdapter,
+  isPythonAdapterId,
   refreshPatchResult,
   validateInstrumentationPlan,
   type ApprovedInstrumentationTask,
@@ -31,7 +32,11 @@ import {
   type InstrumentationCheckpoint,
 } from "./git-checkpoint";
 import type { LocalApplicationLauncher } from "./application-launcher";
-import { findInstalledPackage } from "./sdk-installation";
+import {
+  findInstalledPackage,
+  findInstalledPythonDistribution,
+  pythonEnvironments,
+} from "./sdk-installation";
 
 const execFileAsync = promisify(execFile);
 
@@ -288,9 +293,27 @@ async function runCommand(
   }
 }
 
+/**
+ * Whether the SDK the plan declares is actually present in the project.
+ *
+ * The answer is looked for where the plan's own runtime installs things: a
+ * JavaScript package lands in `node_modules`, a Python distribution in a
+ * virtual environment's `site-packages`. Probing `node_modules` for a pip
+ * distribution never finds it, which used to fail this check - and with it the
+ * whole validation, and with that the telemetry verification that follows it -
+ * for every correctly instrumented Django, Flask, FastAPI and Starlette
+ * project.
+ *
+ * A Python environment can also live somewhere this process cannot see: a
+ * Conda prefix, a `pyenv` shim, a system interpreter. When the distribution is
+ * not on disk anywhere inspectable, the installer's own exit code is the better
+ * evidence, so it is used rather than reporting an install that succeeded as
+ * missing.
+ */
 function installedSdkCheck(
   plan: InstrumentationPlan,
   root: string,
+  commandResults: CommandResult[] = [],
 ): ValidationResult["checks"][number] {
   const packageName = plan.packageChanges[0]?.packageName;
   if (!packageName)
@@ -305,7 +328,34 @@ function installedSdkCheck(
   const packageManifest = packageOperation
     ? resolveWithinWorkspace(root, packageOperation.relativePath)
     : path.join(root, "package.json");
-  const installed = findInstalledPackage(path.dirname(packageManifest), packageName);
+  const packageDirectory = path.dirname(packageManifest);
+
+  if (isPythonAdapterId(plan.adapterId)) {
+    const distribution = findInstalledPythonDistribution(packageDirectory, packageName);
+    if (distribution)
+      return {
+        name: "sdk-installed",
+        passed: true,
+        output: `${packageName}${distribution.version ? ` ${distribution.version}` : ""} is installed in ${safeOutput(distribution.environment, root)}`,
+      };
+    const install = commandResults.find((result) => result.id === "install-sdk");
+    if (install?.passed)
+      return {
+        name: "sdk-installed",
+        passed: true,
+        output: `${packageName} was installed by the approved install command. No virtual environment was found in the project, so the interpreter it went into could not be inspected directly.`,
+      };
+    const environments = pythonEnvironments(packageDirectory);
+    return {
+      name: "sdk-installed",
+      passed: false,
+      output: environments.length
+        ? `${packageName} is declared in ${packageOperation?.relativePath ?? "the project manifest"} but is not installed in ${safeOutput(environments[0], root)}. Install it into that environment, then re-run local checks.`
+        : `${packageName} is declared in ${packageOperation?.relativePath ?? "the project manifest"} but the install did not run and no virtual environment was found to check. Install it with your project's package manager, then re-run local checks.`,
+    };
+  }
+
+  const installed = findInstalledPackage(packageDirectory, packageName);
   return installed
     ? {
         name: "sdk-installed",
@@ -807,7 +857,7 @@ export class InstrumentationController {
         context,
         patch,
       );
-      validation.checks.push(installedSdkCheck(plan, workspace.root));
+      validation.checks.push(installedSdkCheck(plan, workspace.root, commandResults));
       for (const command of commandResults)
         validation.checks.push(validationCheckForCommand(command));
       validation.valid = validation.checks.every((check) => check.passed);
@@ -947,7 +997,15 @@ export class InstrumentationController {
       this.context(workspace, approval.environmentType),
       patch,
     );
-    validation.checks.push(installedSdkCheck(plan, workspace.root));
+    // `install-sdk` is not re-run here, so the result it recorded when it did
+    // run is what tells the check whether the SDK ever arrived.
+    const recordedInstall =
+      readLocalState<CommandResult>(`instrumentation-install:${planId}`)
+      ?? stored.commandResults?.find((result) => result.id === "install-sdk")
+      ?? null;
+    validation.checks.push(
+      installedSdkCheck(plan, workspace.root, recordedInstall ? [recordedInstall] : []),
+    );
     const commandResults: CommandResult[] = [];
     for (const command of plan.validationCommands.filter(
       (item) =>
