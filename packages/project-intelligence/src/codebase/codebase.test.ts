@@ -376,13 +376,14 @@ test('answers blast radius from incoming dependencies', () => {
 test('counts coverage in files and names unsupported languages', () => {
   const { analysis } = analyze();
   const coverage = analysis.coverage!;
-  assert.ok(coverage.unsupportedLanguageFiles.Python >= 1);
+  // Python is read end to end now, so it is coverage rather than a gap.
+  assert.equal(coverage.unsupportedLanguageFiles.Python, undefined);
   assert.ok(coverage.unsupportedLanguageFiles.Go >= 1);
   assert.ok(coverage.analyzedFiles > 0);
   // Two unsupported files beside many analysed ones must not read as 91%.
   assert.ok(coverage.analyzableFiles >= coverage.analyzedFiles - 1);
   assert.ok(analysis.summary.coveragePercent > 50 && analysis.summary.coveragePercent <= 100);
-  assert.ok(analysis.warnings.some((warning) => /Python/.test(warning)));
+  assert.ok(analysis.warnings.some((warning) => /Go/.test(warning)));
   assert.ok(analysis.findings.some((finding) => finding.kind === 'UNSUPPORTED_LANGUAGE'));
 });
 
@@ -548,13 +549,167 @@ test('marks an analysis partial only when real application logic went unread', (
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gap-')));
   write(root, 'package.json', JSON.stringify({ name: 'mixed' }));
   write(root, 'src/index.ts', 'export const value = 1;');
-  write(root, 'worker/main.py', 'def run():\n    return 1\n');
+  write(root, 'worker/main.go', 'package main\n\nfunc main() {}\n');
 
   const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
 
   assert.equal(analysis.status, 'PARTIAL');
-  assert.ok(analysis.warnings.some((warning) => /Python/.test(warning)));
-  assert.equal(analysis.coverage!.unsupportedLanguageFiles.Python, 1);
+  assert.ok(analysis.warnings.some((warning) => /Go/.test(warning)));
+  assert.equal(analysis.coverage!.unsupportedLanguageFiles.Go, 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a Django service contributes endpoints, models and package boundaries', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-django-')));
+  write(root, 'api/requirements.txt', 'Django>=4.2,<6' + '\n' + 'djangorestframework==3.15.1' + '\n' + 'requests==2.32.3' + '\n');
+  write(root, 'api/manage.py', 'import os' + '\n');
+  write(root, 'api/billing/__init__.py', '');
+  write(root, 'api/billing/models.py', [
+    'from django.db import models',
+    '',
+    'class Invoice(models.Model):',
+    '    total = models.IntegerField()',
+  ].join('\n'));
+  write(root, 'api/billing/views.py', [
+    'import requests',
+    'from .models import Invoice',
+    '',
+    'def invoice_detail(request, pk):',
+    '    invoice = Invoice.objects.get(pk=pk)',
+    "    requests.post('https://api.stripe.com/v1/charges', json={})",
+    '    return invoice',
+  ].join('\n'));
+  write(root, 'api/billing/urls.py', [
+    'from django.urls import path',
+    'from . import views',
+    '',
+    'urlpatterns = [',
+    "    path('invoices/<int:pk>/', views.invoice_detail),",
+    ']',
+  ].join('\n'));
+
+  const { analysis } = analyzeCodebase(root, WORKSPACE, FINGERPRINT);
+
+  assert.equal(analysis.status, 'COMPLETED');
+
+  const endpoint = analysis.entities.find((entity) => entity.type === 'endpoint');
+  assert.ok(endpoint, 'the Django URLconf produces an endpoint');
+  assert.equal(endpoint.name, 'ALL /invoices/{param}');
+
+  const model = analysis.entities.find((entity) => entity.type === 'database_model' && entity.name === 'Invoice');
+  assert.ok(model, 'the Django model is in the graph');
+  assert.equal(model.metadata.orm, 'django');
+
+  const external = analysis.entities.find((entity) => entity.type === 'external_service');
+  assert.equal(external?.name, 'api.stripe.com');
+
+  // The view reads the model it imported, through a resolved import binding.
+  const view = analysis.entities.find((entity) => entity.type === 'function' && entity.name === 'invoice_detail');
+  assert.ok(view);
+  assert.ok(analysis.relationships.some((edge) => edge.source === view.id && edge.type === 'READS'));
+
+  // The Python project is its own package boundary, not part of the root.
+  const boundary = analysis.entities.find((entity) => entity.path === 'api' && ['application', 'service', 'package'].includes(entity.type));
+  assert.ok(boundary, 'the Python project is a package boundary');
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a Django class-based view and a browser fetch resolve to one endpoint node', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-django-cbv-')));
+  write(root, 'package.json', JSON.stringify({ name: 'shop', private: true }));
+  write(root, 'web/package.json', JSON.stringify({ name: 'web', main: 'src/api.ts' }));
+  write(root, 'web/src/api.ts', [
+    'export async function loadInvoices() {',
+    "  const response = await fetch('/api/v1/invoices');",
+    '  return response.json();',
+    '}',
+  ].join('\n'));
+  write(root, 'api/requirements.txt', 'Django>=4.2,<6' + '\n');
+  write(root, 'api/manage.py', 'import os' + '\n');
+  write(root, 'api/billing/__init__.py', '');
+  write(root, 'api/billing/views.py', [
+    'from django.views import View',
+    '',
+    'class InvoiceView(View):',
+    '    def get(self, request):',
+    '        return None',
+    '',
+    '    def post(self, request):',
+    '        return None',
+  ].join('\n'));
+  write(root, 'api/billing/urls.py', [
+    'from django.urls import path',
+    'from . import views',
+    '',
+    'urlpatterns = [',
+    "    path('api/v1/invoices', views.InvoiceView.as_view()),",
+    ']',
+  ].join('\n'));
+
+  const { analysis } = analyzeCodebase(root, WORKSPACE, FINGERPRINT);
+  const endpoints = analysis.entities.filter((entity) => entity.type === 'endpoint');
+
+  // The URLconf declares no method, so the view's own methods supply them; an
+  // `ALL` endpoint would never match the browser's `GET`.
+  assert.deepEqual(
+    endpoints.map((entity) => entity.name).sort(),
+    ['GET /api/v1/invoices', 'POST /api/v1/invoices'],
+  );
+
+  const get = endpoints.find((entity) => entity.name === 'GET /api/v1/invoices')!;
+  const edges = analysis.relationships.filter((edge) => edge.source === get.id || edge.target === get.id);
+  assert.ok(edges.some((edge) => edge.type === 'CALLS'), 'the browser call reaches it');
+  assert.ok(edges.some((edge) => edge.type === 'ROUTES_TO'), 'the Django view serves it');
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a FastAPI route and a browser fetch resolve to one endpoint node', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-polyglot-')));
+  write(root, 'package.json', JSON.stringify({ name: 'polyglot', private: true }));
+  write(root, 'web/package.json', JSON.stringify({ name: 'web', main: 'src/index.ts' }));
+  write(root, 'web/src/index.ts', [
+    'export async function loadUsers() {',
+    "  const response = await fetch('/api/v1/users');",
+    '  return response.json();',
+    '}',
+  ].join('\n'));
+  write(root, 'api/pyproject.toml', '[project]' + '\n' + 'name = "api"' + '\n' + 'dependencies = ["fastapi>=0.110"]' + '\n');
+  write(root, 'api/main.py', [
+    'from fastapi import APIRouter, FastAPI',
+    '',
+    'app = FastAPI()',
+    'router = APIRouter(prefix="/api/v1")',
+    '',
+    '@router.get("/users")',
+    'async def list_users():',
+    '    return []',
+  ].join('\n'));
+
+  const { analysis } = analyzeCodebase(root, WORKSPACE, FINGERPRINT);
+
+  const endpoints = analysis.entities.filter((entity) => entity.type === 'endpoint' && entity.name === 'GET /api/v1/users');
+  assert.equal(endpoints.length, 1, 'the browser call and the FastAPI route share one endpoint identity');
+
+  const incoming = analysis.relationships.filter((edge) => edge.target === endpoints[0].id || edge.source === endpoints[0].id);
+  assert.ok(incoming.some((edge) => edge.type === 'ROUTES_TO'), 'the FastAPI handler serves it');
+  assert.ok(incoming.some((edge) => edge.type === 'CALLS'), 'the browser code calls it');
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a Python worker beside a TypeScript app is read rather than reported as a gap', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-py-gap-')));
+  write(root, 'package.json', JSON.stringify({ name: 'mixed' }));
+  write(root, 'src/index.ts', 'export const value = 1;');
+  write(root, 'worker/main.py', 'def run():\n    return 1\n');
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+
+  assert.equal(analysis.status, 'COMPLETED');
+  assert.equal(analysis.coverage!.unsupportedLanguageFiles.Python, undefined);
+  assert.ok(analysis.entities.some((entity) => entity.type === 'function' && entity.name === 'run'));
   fs.rmSync(root, { recursive: true, force: true });
 });
 

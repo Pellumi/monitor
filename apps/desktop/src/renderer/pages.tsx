@@ -117,6 +117,20 @@ import {
   nonProductionEnvironmentId,
 } from "./flow-initialization";
 
+/**
+ * Adapters that instrument the browser half of an application. Used to
+ * preselect a target and to label the detection list.
+ */
+const FRONTEND_ADAPTER_IDS = [
+  "react-vite",
+  "nextjs",
+  "sveltekit",
+  "nuxt",
+  "astro",
+  "remix",
+  "angular",
+];
+
 function ActionTooltip({
   content,
   children,
@@ -8560,8 +8574,12 @@ export function InstrumentationPage() {
     });
     setDetections(result.detections);
     const supported = result.detections.filter((item) => item.supported);
+    // A frontend adapter is preselected when there is one, because the browser
+    // half is where a user's first session comes from. The list is the same one
+    // the instrumenters use, so a newly supported framework is preselected here
+    // without a second place to remember to update.
     const frontend = supported.find((item) =>
-      ["react-vite", "nextjs"].includes(item.adapterId),
+      FRONTEND_ADAPTER_IDS.includes(item.adapterId),
     );
     setSelectedAdapters(
       frontend
@@ -8793,9 +8811,20 @@ export function InstrumentationPage() {
   const adapterLabels: Record<string, string> = {
     "react-vite": "React (Vite)",
     nextjs: "Next.js",
+    sveltekit: "SvelteKit",
+    nuxt: "Nuxt",
+    astro: "Astro",
+    remix: "Remix",
+    angular: "Angular",
     express: "Express",
     fastify: "Fastify",
     nestjs: "NestJS",
+    koa: "Koa",
+    hapi: "hapi",
+    django: "Django",
+    flask: "Flask",
+    fastapi: "FastAPI",
+    starlette: "Starlette",
   };
   const adapterLabel = (adapterId: unknown) =>
     adapterLabels[String(adapterId)] ?? String(adapterId);
@@ -11539,8 +11568,9 @@ export function NewRunPage() {
             <span>
               <strong>Approve this package script for this run</strong>
               <small>
-                Tellann executes only the selected package.json script without a
-                shell and stops only the process tree it started.
+                Tellann executes only the selected launch command — a
+                package.json script, or your framework's own development server
+                — without a shell, and stops only the process tree it started.
               </small>
             </span>
           </label>

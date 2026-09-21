@@ -3,6 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { RepositorySnapshotSummary } from '@tellann/desktop-contracts';
+import {
+  detectPythonFrameworks,
+  discoverPythonProjects,
+  extractPythonRoutes,
+  parsePythonModule,
+  findPythonEntryPoints,
+  primaryEntryPoint,
+  type PythonFrameworkEvidence,
+  type PythonProject,
+} from '@tellann/python-project';
 export * from './codebase';
 export * from './flow-mapping';
 
@@ -37,7 +47,13 @@ function detectedApplicationUrls(
   const defaultPort = frameworkNames.has('Vite') ? '5173'
     : frameworkNames.has('Next.js') || frameworkNames.has('React') || frameworkNames.has('Express') || frameworkNames.has('Fastify') || frameworkNames.has('NestJS')
       ? '3000'
-      : undefined;
+      // Each Python framework's own documented development port, so the
+      // suggestion matches what `manage.py runserver` or `flask run` prints.
+      : frameworkNames.has('Django') || frameworkNames.has('FastAPI') || frameworkNames.has('Starlette')
+        ? '8000'
+        : frameworkNames.has('Flask')
+          ? '5000'
+          : undefined;
   const port = explicitPort ?? configPort ?? defaultPort;
   if (!port) return [];
   const preferredRoute = ['/login', '/signin', '/sign-in'].find((candidate) => routes.has(candidate));
@@ -49,6 +65,96 @@ function detectedApplicationUrls(
     confidence: explicitPort || configPort ? 0.98 : 0.82,
     source,
   }];
+}
+
+/**
+ * Dotted module path a Python entry-point file is imported as.
+ *
+ * `app/main.py` is `app.main`, and `shop/__init__.py` is `shop`, which is what
+ * `uvicorn` and `flask --app` expect. A leading `src/` is dropped because it is
+ * a layout convention, not an importable package.
+ */
+function pythonModulePath(file: string): string {
+  const segments = file.replace(/\.py$/i, '').split('/');
+  if (segments[segments.length - 1] === '__init__') segments.pop();
+  if (segments[0] === 'src') segments.shift();
+  return segments.join('.');
+}
+
+/**
+ * How to start each detected Python project in development.
+ *
+ * Only the framework's own documented development command is offered, with no
+ * shell and no arguments taken from the repository, so approving a launch
+ * approves a known command shape rather than whatever a manifest happened to
+ * contain. The desktop launcher re-validates the same shapes before spawning.
+ */
+function pythonLaunchCommands(
+  resolvedRoot: string,
+  projects: PythonProject[],
+  frameworks: PythonFrameworkEvidence[],
+): NonNullable<RepositorySnapshotSummary['launchCommands']> {
+  const commands: NonNullable<RepositorySnapshotSummary['launchCommands']> = [];
+  const executable = process.platform === 'win32' ? 'python.exe' : 'python3';
+  const detected = new Set(frameworks.map((item) => item.id));
+
+  for (const project of projects.slice(0, 5)) {
+    const directory = path.join(resolvedRoot, ...(project.root === '.' ? [] : project.root.split('/')));
+    const cwd = project.root;
+
+    if (fs.existsSync(path.join(directory, 'manage.py'))) {
+      commands.push({
+        id: `python-django:${cwd}`,
+        label: 'python manage.py runserver',
+        executable,
+        args: ['manage.py', 'runserver'],
+        cwd,
+        scriptName: 'runserver',
+        runtime: 'python',
+      });
+      continue;
+    }
+
+    if (!detected.has('fastapi') && !detected.has('flask') && !detected.has('starlette')) continue;
+
+    let entryPoints;
+    try {
+      entryPoints = findPythonEntryPoints(directory);
+    } catch {
+      continue;
+    }
+
+    const asgi = primaryEntryPoint(entryPoints, ['fastapi-app', 'starlette-app']);
+    if (asgi?.symbol) {
+      const target = `${pythonModulePath(asgi.file)}:${asgi.symbol}`;
+      commands.push({
+        id: `python-uvicorn:${cwd}`,
+        label: `python -m uvicorn ${target} --reload`,
+        executable,
+        args: ['-m', 'uvicorn', target, '--reload'],
+        cwd,
+        scriptName: 'uvicorn',
+        runtime: 'python',
+      });
+      continue;
+    }
+
+    const flask = primaryEntryPoint(entryPoints, ['flask-app', 'flask-factory']);
+    if (flask) {
+      const target = pythonModulePath(flask.file);
+      commands.push({
+        id: `python-flask:${cwd}`,
+        label: `python -m flask --app ${target} run`,
+        executable,
+        args: ['-m', 'flask', '--app', target, 'run'],
+        cwd,
+        scriptName: 'flask',
+        runtime: 'python',
+      });
+    }
+  }
+
+  return commands;
 }
 
 type ScanOptions = {
@@ -266,6 +372,33 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   addFramework('Express', 'express', ['package.json dependency: express']);
   addFramework('Fastify', 'fastify', ['package.json dependency: fastify']);
   addFramework('NestJS', '@nestjs/core', ['package.json dependency: @nestjs/core']);
+  addFramework('Remix', '@remix-run/react', ['package.json dependency: @remix-run/react']);
+  addFramework('SvelteKit', '@sveltejs/kit', ['package.json dependency: @sveltejs/kit']);
+  addFramework('Nuxt', 'nuxt', ['package.json dependency: nuxt']);
+  addFramework('Astro', 'astro', ['package.json dependency: astro']);
+  addFramework('Angular', '@angular/core', ['package.json dependency: @angular/core']);
+  addFramework('Koa', 'koa', ['package.json dependency: koa']);
+  addFramework('Hapi', '@hapi/hapi', ['package.json dependency: @hapi/hapi']);
+
+  // Python projects declare themselves in a different manifest, and often in
+  // several at once, so the whole tree is asked rather than one file read.
+  const pythonProjects = discoverPythonProjects(resolvedRoot, { maxDepth: 3 });
+  const pythonFrameworks: PythonFrameworkEvidence[] = [];
+  for (const project of pythonProjects) {
+    const directory = path.join(resolvedRoot, ...(project.root === '.' ? [] : project.root.split('/')));
+    for (const detected of detectPythonFrameworks(project, directory)) {
+      if (pythonFrameworks.some((item) => item.id === detected.id)) continue;
+      pythonFrameworks.push(detected);
+      frameworks.push({
+        framework: detected.label,
+        version: detected.version ?? detected.specifier ?? 'unknown',
+        confidence: detected.confidence,
+        evidence: project.root === '.'
+          ? detected.evidence
+          : detected.evidence.map((item) => `${project.root}: ${item}`),
+      });
+    }
+  }
 
   const routes = new Set<string>();
   const endpoints = new Set<string>();
@@ -279,6 +412,19 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
     if (!SOURCE_EXTENSIONS.has(extension)) continue;
     languages.add(extension);
     const content = fs.readFileSync(path.join(resolvedRoot, relative), 'utf8');
+    if (extension === '.py') {
+      // The JavaScript regexes find nothing in Python - a decorated route has
+      // no `app.get(` on the same line as its handler - so the module is read
+      // structurally instead of scanned for a shape it never has.
+      try {
+        for (const route of extractPythonRoutes(parsePythonModule(content, relative))) {
+          if (route.kind === 'django-view-method') continue;
+          if (route.route.startsWith('/')) routes.add(route.route);
+          endpoints.add(route.route);
+        }
+      } catch { /* an unreadable module contributes no routes, like any other */ }
+      continue;
+    }
     for (const match of content.matchAll(ROUTE_PATTERN)) {
       if (match[1].startsWith('/')) routes.add(match[1]);
     }
@@ -287,27 +433,37 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
 
   const manifestHashes = manifestHashesOf(resolvedRoot);
 
-  const packageManager =
+  const nodePackageManager =
     fs.existsSync(path.join(resolvedRoot, 'pnpm-lock.yaml')) ? 'pnpm' :
     fs.existsSync(path.join(resolvedRoot, 'yarn.lock')) ? 'yarn' :
     fs.existsSync(path.join(resolvedRoot, 'bun.lockb')) ? 'bun' :
     fs.existsSync(path.join(resolvedRoot, 'package-lock.json')) ? 'npm' :
-    fs.existsSync(path.join(resolvedRoot, 'pyproject.toml')) ? 'python' : null;
+    packageJson ? 'npm' : null;
+  // A repository can hold both ecosystems. The reported manager is the one that
+  // installs the application being connected, so a Node manager wins when there
+  // is one and the Python project's own manager is named otherwise - `pip`,
+  // `poetry` or `uv`, never the useless catch-all `python`.
+  const rootPythonProject = pythonProjects.find((project) => project.root === '.') ?? pythonProjects[0] ?? null;
+  const packageManager = nodePackageManager ?? rootPythonProject?.manager ?? null;
   const packageScripts = packageJson?.scripts && typeof packageJson.scripts === 'object'
     ? packageJson.scripts as Record<string, unknown>
     : {};
-  const launchCommands = packageManager && ['pnpm', 'npm', 'yarn', 'bun'].includes(packageManager)
-    ? ['dev', 'start', 'serve', 'preview']
-      .filter((scriptName) => typeof packageScripts[scriptName] === 'string')
-      .map((scriptName) => ({
-        id: `package-script:${scriptName}`,
-        label: `${packageManager} run ${scriptName}`,
-        executable: process.platform === 'win32' ? `${packageManager}.cmd` : packageManager,
-        args: ['run', scriptName],
-        cwd: '.',
-        scriptName,
-      }))
-    : [];
+  const launchCommands = [
+    ...(nodePackageManager
+      ? ['dev', 'start', 'serve', 'preview']
+        .filter((scriptName) => typeof packageScripts[scriptName] === 'string')
+        .map((scriptName) => ({
+          id: `package-script:${scriptName}`,
+          label: `${nodePackageManager} run ${scriptName}`,
+          executable: process.platform === 'win32' ? `${nodePackageManager}.cmd` : nodePackageManager,
+          args: ['run', scriptName],
+          cwd: '.',
+          scriptName,
+          runtime: 'node' as const,
+        }))
+      : []),
+    ...pythonLaunchCommands(resolvedRoot, pythonProjects, pythonFrameworks),
+  ];
   const suggestedApplicationUrls = detectedApplicationUrls(resolvedRoot, packageScripts, frameworks, routes);
   const revision = git(resolvedRoot, ['rev-parse', 'HEAD']);
   const branch = git(resolvedRoot, ['branch', '--show-current']);

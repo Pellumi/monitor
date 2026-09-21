@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -2103,7 +2103,7 @@ function parseInstrumentationContext(input: unknown) {
     // Present when the user is proposing for several frameworks at once, so a
     // Flow whose checkpoints span those packages can be split between them.
     selectedAdapterIds: Array.isArray(value.selectedAdapterIds)
-      ? value.selectedAdapterIds.filter((item): item is string => typeof item === 'string') as Array<'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs'>
+      ? value.selectedAdapterIds.filter((item): item is InstrumentationFrameworkId => typeof item === 'string' && (INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(item))
       : undefined,
   };
 }
@@ -3345,8 +3345,8 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const context = parseInstrumentationContext(input);
     const adapterId = (input as { adapterId?: unknown }).adapterId;
-    if (!['react-vite', 'nextjs', 'express', 'fastify', 'nestjs'].includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
-    return instrumentation.propose({ ...context, adapterId: adapterId as 'react-vite' | 'nextjs' | 'express' | 'fastify' | 'nestjs' });
+    if (!(INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
+    return instrumentation.propose({ ...context, adapterId: adapterId as InstrumentationFrameworkId });
   });
   ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

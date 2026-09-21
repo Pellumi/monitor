@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tellann/desktop-contracts": "workspace:*",
+    "@tellann/python-project": "workspace:*",
     "typescript": "^5.0.0"
   },
   "devDependencies": {

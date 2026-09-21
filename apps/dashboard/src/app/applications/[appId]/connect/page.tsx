@@ -9,7 +9,7 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { Button } from "@/components/ui/button";
 
 type Target = {
-  id: "frontend" | "backend";
+  id: "frontend" | "backend" | "python";
   kind: "FRONTEND" | "BACKEND";
   label: string;
   packageName: string;
@@ -88,20 +88,39 @@ type FrameworkId =
   | "react-vite"
   | "react-cra"
   | "sveltekit"
+  | "nuxt"
+  | "astro"
+  | "remix"
+  | "angular"
   | "vanilla"
   | "node"
   | "nextjs-server"
-  | "deno";
+  | "deno"
+  | "django"
+  | "fastapi"
+  | "flask"
+  | "starlette"
+  | "python-other";
 
 type SnippetContext = { packageName: string; endpoint: string; applicationId: string; environmentId: string };
 
 type FrameworkOption = {
   id: FrameworkId;
   label: string;
-  kind: "FRONTEND" | "BACKEND";
+  /** Which target's package and install commands this framework uses. */
+  targetId: Target["id"];
+  /** The section it appears under. Python is its own section because its
+   *  package, its package managers and its snippets are all different, even
+   *  though every Python framework here runs on the server. */
+  group: "FRONTEND" | "BACKEND" | "PYTHON";
   envVars: { url: string; key: string } | null;
+  /** Overrides the default npm-family package managers. */
+  packageManagers?: string[];
   build: (ctx: SnippetContext) => string;
 };
+
+const PACKAGE_MANAGERS = ["pnpm", "npm", "yarn", "bun"];
+const PYTHON_PACKAGE_MANAGERS = ["pip", "poetry", "uv", "pipenv"];
 
 function frontendSnippet(opts: {
   ctx: SnippetContext;
@@ -127,11 +146,35 @@ function frontendSnippet(opts: {
   return lines.join("\n");
 }
 
+function pythonSnippet(opts: {
+  ctx: SnippetContext;
+  comment: string;
+  extraImport?: string;
+  trailer?: string[];
+}): string {
+  const lines = ["import os", "", "from tellann import TELLANN"];
+  if (opts.extraImport) lines.push(opts.extraImport);
+  lines.push(
+    "",
+    opts.comment,
+    "TELLANN.initialize(",
+    `    endpoint=os.environ.get("TELLANN_GATEWAY_URL", "${opts.ctx.endpoint}"),`,
+    '    api_key=os.environ.get("TELLANN_INGESTION_KEY"),',
+    `    application_id="${opts.ctx.applicationId}",`,
+    `    environment_id="${opts.ctx.environmentId}",`,
+    ")",
+    "TELLANN.verify_installation()",
+    ...(opts.trailer ?? []),
+  );
+  return lines.join("\n");
+}
+
 const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "nextjs",
     label: "Next.js",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "NEXT_PUBLIC_TELLANN_GATEWAY_URL", key: "NEXT_PUBLIC_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -144,7 +187,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "react-vite",
     label: "Vite (React / Vue / Svelte)",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "VITE_TELLANN_GATEWAY_URL", key: "VITE_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -157,7 +201,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "react-cra",
     label: "Create React App",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "REACT_APP_TELLANN_GATEWAY_URL", key: "REACT_APP_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -170,7 +215,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "sveltekit",
     label: "SvelteKit",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: { url: "PUBLIC_TELLANN_GATEWAY_URL", key: "PUBLIC_TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       frontendSnippet({
@@ -182,9 +228,76 @@ const FRAMEWORKS: FrameworkOption[] = [
       }),
   },
   {
+    id: "nuxt",
+    label: "Nuxt",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "NUXT_PUBLIC_TELLANN_GATEWAY_URL", key: "NUXT_PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      [
+        `import { TELLANN } from '${ctx.packageName}';`,
+        "",
+        "// plugins/tellann.client.ts — runs once, on the client only",
+        "export default defineNuxtPlugin(() => {",
+        "    const config = useRuntimeConfig();",
+        "    TELLANN.initialize({",
+        `        endpoint: config.public.tellannGatewayUrl || '${ctx.endpoint}',`,
+        "        apiKey: config.public.tellannIngestionKey,",
+        `        applicationId: '${ctx.applicationId}',`,
+        `        environmentId: '${ctx.environmentId}'`,
+        "    });",
+        "    void TELLANN.verifyInstallation();",
+        "});",
+      ].join("\n"),
+  },
+  {
+    id: "astro",
+    label: "Astro",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "PUBLIC_TELLANN_GATEWAY_URL", key: "PUBLIC_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Import from a client script in your base layout: <script>import '../lib/tellann';</script>",
+        urlExpr: `import.meta.env.PUBLIC_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "import.meta.env.PUBLIC_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "remix",
+    label: "Remix / React Router",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: { url: "VITE_TELLANN_GATEWAY_URL", key: "VITE_TELLANN_INGESTION_KEY" },
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        comment: "// Initialize from app/entry.client.tsx, before hydrateRoot",
+        urlExpr: `import.meta.env.VITE_TELLANN_GATEWAY_URL || '${ctx.endpoint}'`,
+        keyExpr: "import.meta.env.VITE_TELLANN_INGESTION_KEY",
+      }),
+  },
+  {
+    id: "angular",
+    label: "Angular",
+    targetId: "frontend",
+    group: "FRONTEND",
+    envVars: null,
+    build: (ctx) =>
+      frontendSnippet({
+        ctx,
+        extraImport: "import { environment } from './environments/environment';",
+        comment: "// Initialize from src/main.ts, before bootstrapApplication",
+        urlExpr: `environment.tellannGatewayUrl || '${ctx.endpoint}'`,
+        keyExpr: "environment.tellannIngestionKey",
+      }),
+  },
+  {
     id: "vanilla",
     label: "Vanilla / other",
-    kind: "FRONTEND",
+    targetId: "frontend",
+    group: "FRONTEND",
     envVars: null,
     build: (ctx) =>
       frontendSnippet({
@@ -196,8 +309,9 @@ const FRAMEWORKS: FrameworkOption[] = [
   },
   {
     id: "node",
-    label: "Node.js (Express / Fastify / Nest)",
-    kind: "BACKEND",
+    label: "Node.js (Express / Fastify / Nest / Koa / hapi)",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -217,7 +331,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "nextjs-server",
     label: "Next.js (server)",
-    kind: "BACKEND",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -238,7 +353,8 @@ const FRAMEWORKS: FrameworkOption[] = [
   {
     id: "deno",
     label: "Deno",
-    kind: "BACKEND",
+    targetId: "backend",
+    group: "BACKEND",
     envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
     build: (ctx) =>
       [
@@ -255,18 +371,109 @@ const FRAMEWORKS: FrameworkOption[] = [
         "await TELLANN.verifyInstallation();",
       ].join("\n"),
   },
+  {
+    id: "django",
+    label: "Django",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# settings.py — initialize once, then register the middleware",
+        trailer: [
+          "",
+          "MIDDLEWARE = [",
+          '    "tellann.integrations.django_middleware.TellannMiddleware",',
+          "    # ... your existing middleware",
+          "]",
+        ],
+      }),
+  },
+  {
+    id: "fastapi",
+    label: "FastAPI",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize before the app handles its first request",
+        extraImport: "from tellann import instrument_fastapi",
+        trailer: ["", "app = FastAPI()", "instrument_fastapi(app)"],
+      }),
+  },
+  {
+    id: "flask",
+    label: "Flask",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Works for a module-level app and inside an application factory",
+        extraImport: "from tellann import instrument_flask",
+        trailer: ["", "app = Flask(__name__)", "instrument_flask(app)"],
+      }),
+  },
+  {
+    id: "starlette",
+    label: "Starlette",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize before the app handles its first request",
+        extraImport: "from tellann import instrument_starlette",
+        trailer: ["", "app = Starlette(routes=routes)", "instrument_starlette(app)"],
+      }),
+  },
+  {
+    id: "python-other",
+    label: "Other Python",
+    targetId: "python",
+    group: "PYTHON",
+    envVars: { url: "TELLANN_GATEWAY_URL", key: "TELLANN_INGESTION_KEY" },
+    packageManagers: PYTHON_PACKAGE_MANAGERS,
+    build: (ctx) =>
+      pythonSnippet({
+        ctx,
+        comment: "# Initialize as early as your process starts, then report what matters",
+        trailer: [
+          "",
+          '# TELLANN.track_api("POST", "/invoices/{pk}", 201, duration_ms=12.5)',
+          '# TELLANN.capture_error(error)',
+        ],
+      }),
+  },
 ];
 
-const FRAMEWORK_GROUPS: Array<{ kind: FrameworkOption["kind"]; label: string }> = [
-  { kind: "FRONTEND", label: "Frontend / browser" },
-  { kind: "BACKEND", label: "Backend / server" },
+const FRAMEWORK_GROUPS: Array<{ group: FrameworkOption["group"]; label: string }> = [
+  { group: "FRONTEND", label: "Frontend / browser" },
+  { group: "BACKEND", label: "Backend / server" },
+  { group: "PYTHON", label: "Python" },
 ];
 
-const PACKAGE_MANAGERS = ["pnpm", "npm", "yarn", "bun"];
 
-/** Plain Node and Deno read `.env`; the framework dev servers also load `.env.local`. */
-function envFileFor(framework: FrameworkId): string {
-  return framework === "node" || framework === "deno" ? ".env" : ".env.local";
+/**
+ * Where the environment variables go.
+ *
+ * Plain Node and Deno read `.env`, the JavaScript framework dev servers also
+ * load `.env.local`, and Python has no `.env.local` convention at all — every
+ * loader in that ecosystem, from `python-dotenv` to Django's own tooling,
+ * reads `.env`.
+ */
+function envFileFor(framework: FrameworkOption): string {
+  if (framework.group === "PYTHON") return ".env";
+  return framework.id === "node" || framework.id === "deno" ? ".env" : ".env.local";
 }
 
 function GatewaySettings({ descriptor, fallbackEndpoint, onSaved }: { descriptor: Descriptor; fallbackEndpoint: string; onSaved: () => void }) {
@@ -400,7 +607,19 @@ export default function ConnectApplicationPage() {
   };
 
   const activeFramework = FRAMEWORKS.find((item) => item.id === framework) ?? null;
-  const target = setup.data?.targets.find((item) => item.kind === activeFramework?.kind);
+  // Matched by target id, because two targets now share the BACKEND kind: the
+  // Node one and the Python one install different packages with different
+  // package managers. Falling back to the kind keeps this working against an
+  // onboarding service that has not shipped the Python target yet.
+  const target = activeFramework
+    ? setup.data?.targets.find((item) => item.id === activeFramework.targetId)
+      ?? setup.data?.targets.find((item) => item.kind === (activeFramework.group === "FRONTEND" ? "FRONTEND" : "BACKEND"))
+    : undefined;
+  const managers = activeFramework?.packageManagers ?? PACKAGE_MANAGERS;
+  // Switching from a JavaScript framework to a Python one leaves `manager` set
+  // to something like `pnpm`, which has no install command on the Python
+  // target; the first supported manager is shown instead of an empty box.
+  const activeManager = managers.includes(manager) ? manager : managers[0];
   const resolvedEndpoint = setup.data ? resolveGatewayEndpoint(setup.data) : "";
   const snippet =
     target && setup.data && activeFramework
@@ -418,7 +637,7 @@ export default function ConnectApplicationPage() {
       ? ""
       : activeFramework.id === "deno"
         ? `deno add npm:${target.packageName}`
-        : target.installCommands[manager] ?? "";
+        : target.installCommands[activeManager] ?? "";
   const keyValue =
     rawKey ??
     (createKey.isPending
@@ -630,10 +849,10 @@ export default function ConnectApplicationPage() {
           <StepHeading step={1} title="What's your app built with?" />
           <div className="space-y-4 pl-9">
             {FRAMEWORK_GROUPS.map((group) => (
-              <div key={group.kind}>
+              <div key={group.group}>
                 <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-[#8e9192]">{group.label}</p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {FRAMEWORKS.filter((item) => item.kind === group.kind).map((item) => (
+                  {FRAMEWORKS.filter((item) => item.group === group.group).map((item) => (
                     <button
                       key={item.id}
                       onClick={() => chooseFramework(item.id)}
@@ -660,13 +879,13 @@ export default function ConnectApplicationPage() {
               <div className="space-y-3 pl-9">
                 {activeFramework.id === "deno" ? null : (
                   <div className="flex flex-wrap gap-2">
-                    {PACKAGE_MANAGERS.map((item) => (
+                    {managers.map((item) => (
                       <button
                         key={item}
                         onClick={() => setManager(item)}
-                        aria-pressed={manager === item}
+                        aria-pressed={activeManager === item}
                         className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
-                          manager === item
+                          activeManager === item
                             ? "bg-neutral-200 font-semibold text-neutral-900"
                             : "border border-[#262626] bg-[#0f0f0f] text-[#8e9192] hover:border-[#444748] hover:text-neutral-200"
                         }`}
@@ -688,7 +907,7 @@ export default function ConnectApplicationPage() {
             <div className="space-y-4">
               <StepHeading
                 step={3}
-                title={activeFramework.envVars ? `Add these to ${envFileFor(activeFramework.id)}` : "Your setup key"}
+                title={activeFramework.envVars ? `Add these to ${envFileFor(activeFramework)}` : "Your setup key"}
                 description={
                   activeFramework.envVars
                     ? "Keep this file out of version control."
@@ -698,7 +917,7 @@ export default function ConnectApplicationPage() {
               <div className="space-y-3 pl-9">
                 {activeFramework.envVars ? (
                   <CodeBox
-                    title={envFileFor(activeFramework.id)}
+                    title={envFileFor(activeFramework)}
                     value={envBlock}
                     copied={copied === "env"}
                     onCopy={() => void copy("env", envBlock)}

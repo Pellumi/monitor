@@ -618,6 +618,9 @@ importers:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
+      '@tellann/python-project':
+        specifier: workspace:*
+        version: link:../python-project
       semver:
         specifier: ^7.7.2
         version: 7.8.4
@@ -652,6 +655,9 @@ importers:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
+      '@tellann/python-project':
+        specifier: workspace:*
+        version: link:../python-project
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -659,6 +665,15 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.43
+
+  packages/python-project:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
 
   packages/rules:
     dependencies:

@@ -22,6 +22,61 @@ test('discovers launchable package scripts without executing repository code', (
   assert.equal(fs.existsSync(path.join(root, 'executed.txt')), false);
 });
 
+test('detects a Django project and offers its own launch command', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-django-scan-'));
+  fs.writeFileSync(path.join(root, 'requirements.txt'), 'Django>=4.2,<6\n');
+  fs.writeFileSync(path.join(root, 'manage.py'), 'import os\n');
+  fs.mkdirSync(path.join(root, 'billing'));
+  fs.writeFileSync(path.join(root, 'billing', 'urls.py'), [
+    'from django.urls import path',
+    'from . import views',
+    'urlpatterns = [',
+    "    path('invoices/<int:pk>/', views.detail),",
+    ']',
+  ].join('\n'));
+
+  const snapshot = scanWorkspace(root, { workspaceId: '00000000-0000-4000-8000-000000000010' });
+
+  const django = snapshot.frameworks.find((item) => item.framework === 'Django');
+  assert.ok(django, 'Django is detected from requirements.txt');
+  assert.equal(django.version, '4.2');
+
+  const launch = snapshot.launchCommands?.find((command) => command.runtime === 'python');
+  assert.ok(launch, 'a Python launch command is offered');
+  assert.deepEqual(launch.args, ['manage.py', 'runserver']);
+  assert.equal(launch.cwd, '.');
+
+  assert.equal(snapshot.packageManager, 'pip');
+  assert.ok(snapshot.routes.includes('/invoices/{pk}/'), 'the URLconf route is read structurally');
+  assert.equal(snapshot.suggestedApplicationUrls?.[0]?.url, 'http://localhost:8000');
+});
+
+test('detects FastAPI and targets its ASGI application', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-fastapi-scan-'));
+  fs.writeFileSync(path.join(root, 'pyproject.toml'), [
+    '[project]',
+    'name = "api"',
+    'dependencies = ["fastapi>=0.110"]',
+  ].join('\n'));
+  fs.mkdirSync(path.join(root, 'app'));
+  fs.writeFileSync(path.join(root, 'app', 'main.py'), [
+    'from fastapi import FastAPI',
+    '',
+    'app = FastAPI()',
+    '',
+    '@app.get("/health")',
+    'def health():',
+    '    return "ok"',
+  ].join('\n'));
+
+  const snapshot = scanWorkspace(root, { workspaceId: '00000000-0000-4000-8000-000000000011' });
+
+  assert.ok(snapshot.frameworks.some((item) => item.framework === 'FastAPI'));
+  const launch = snapshot.launchCommands?.find((command) => command.runtime === 'python');
+  assert.deepEqual(launch?.args, ['-m', 'uvicorn', 'app.main:app', '--reload']);
+  assert.ok(snapshot.routes.includes('/health'));
+});
+
 test('prefers an explicit launch port and detected login route', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-url-scan-'));
   fs.mkdirSync(path.join(root, 'src'));

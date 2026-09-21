@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { LocalApplicationLauncher, type LocalLaunchCommand } from './application-launcher';
+import { launchApprovalHash, LocalApplicationLauncher, type LocalLaunchCommand } from './application-launcher';
 
 const correlation = {
   endpoint: 'http://127.0.0.1:43210',
@@ -53,4 +53,88 @@ test('rejects package scripts outside the scanner allowlist', async () => {
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { destroy: 'node destroy.js' } }));
   const launcher = new LocalApplicationLauncher();
   await assert.rejects(launcher.start(command('destroy'), root, correlation), /UNAPPROVED_APPLICATION_LAUNCH_COMMAND/);
+});
+
+function pythonCommand(overrides: Partial<LocalLaunchCommand> = {}): LocalLaunchCommand {
+  return {
+    id: 'python-django:.',
+    label: 'python manage.py runserver',
+    executable: process.platform === 'win32' ? 'python.exe' : 'python3',
+    args: ['manage.py', 'runserver'],
+    cwd: '.',
+    scriptName: 'runserver',
+    runtime: 'python',
+    ...overrides,
+  };
+}
+
+test('accepts each approved Python launch shape', () => {
+  const approved: LocalLaunchCommand[] = [
+    pythonCommand(),
+    pythonCommand({ scriptName: 'uvicorn', args: ['-m', 'uvicorn', 'app.main:app', '--reload'] }),
+    pythonCommand({ scriptName: 'flask', args: ['-m', 'flask', '--app', 'shop', 'run'] }),
+  ];
+  for (const command of approved) {
+    // The hash is computed without spawning, which is enough to prove the
+    // command is accepted by the same validation the launcher applies.
+    assert.equal(launchApprovalHash(command, process.cwd()).length, 64);
+  }
+});
+
+test('refuses a Python command that is not one of the approved shapes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-launch-'));
+  fs.writeFileSync(path.join(root, 'manage.py'), 'import os\n');
+  const launcher = new LocalApplicationLauncher();
+
+  const rejected: Array<[string, LocalLaunchCommand]> = [
+    ['an arbitrary module', pythonCommand({ scriptName: 'uvicorn', args: ['-m', 'http.server'] })],
+    ['an interpreter flag', pythonCommand({ args: ['-c', 'import os; os.system("echo hi")'] })],
+    ['a shell injection in the module target', pythonCommand({
+      scriptName: 'uvicorn',
+      args: ['-m', 'uvicorn', 'app.main:app; rm -rf /', '--reload'],
+    })],
+    ['a different interpreter', pythonCommand({ executable: 'node' })],
+    ['a script name that does not match its arguments', pythonCommand({
+      scriptName: 'flask',
+      args: ['manage.py', 'runserver'],
+    })],
+  ];
+
+  for (const [reason, command] of rejected) {
+    await assert.rejects(
+      launcher.start(command, root, correlation),
+      /UNAPPROVED_APPLICATION_LAUNCH_COMMAND/,
+      reason,
+    );
+  }
+});
+
+test('a Python launch may run in a project subdirectory, but not outside the workspace', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-scope-'));
+  fs.mkdirSync(path.join(root, 'backend'));
+  const launcher = new LocalApplicationLauncher();
+
+  // `manage.py` lives in the subdirectory, so the staleness check passes only
+  // when the command's own cwd is used to look for it.
+  fs.writeFileSync(path.join(root, 'backend', 'manage.py'), 'import os\n');
+  await assert.rejects(
+    launcher.start(pythonCommand({ cwd: '../outside' }), root, correlation),
+    /WORKSPACE|ESCAPE|outside/i,
+  );
+  await assert.rejects(
+    launcher.start(pythonCommand({ cwd: '.' }), root, correlation),
+    /APPLICATION_LAUNCH_SCRIPT_STALE/,
+    'the repository root has no manage.py, so the launch is refused as stale',
+  );
+});
+
+test('a Node launch is still confined to the repository root', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-node-scope-'));
+  fs.mkdirSync(path.join(root, 'web'));
+  fs.writeFileSync(path.join(root, 'web', 'package.json'), JSON.stringify({ scripts: { dev: 'node x.js' } }));
+  const launcher = new LocalApplicationLauncher();
+  await assert.rejects(
+    launcher.start({ ...command(), cwd: 'web' }, root, correlation),
+    /APPLICATION_LAUNCH_SCOPE_INVALID/,
+  );
 });
