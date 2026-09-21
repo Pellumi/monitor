@@ -812,7 +812,9 @@ export function CodebaseAnalysisPanel({
     );
   }
 
-  if (!analysis) {
+  // A cancelled run never produced a graph, so the pending record it leaves
+  // behind is a stub: showing it as a result would claim an empty repository.
+  if (!analysis || (status === "CANCELLED" && !analysis.graphVersion)) {
     return (
       <AnalysisStateCard
         title={status === "CANCELLED" ? "Analysis cancelled" : "No results yet"}
