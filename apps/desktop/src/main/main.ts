@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -17,6 +17,7 @@ import {
   hierarchyChildren,
   projectAnalysis,
   redactSecrets,
+  resolveAnnotationSource,
   scanWorkspace,
   workingTreeIdentity,
   type previewSanitizedSourceArchive,
@@ -52,6 +53,7 @@ import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
 import { packagedBrowserExecutable } from './browser-executable';
+import { cancelCodebaseAnalysisRun } from './codebase-analysis-cancellation';
 import {
   attachWindowChrome,
   handleSecondInstanceArgv,
@@ -597,12 +599,40 @@ const observer = new BrowserObserver({
   onObservation: async () => undefined,
   onEvidenceEvent: async (event) => enqueueEvidence(event),
   searchMentionableMembers: (runId, query) => cloud.mentionableMembers(runId, query),
-  onAnnotation: (runId, annotation) => cloud.saveAnnotation(runId, annotation),
+  onAnnotation: (runId, annotation, applicationId) => {
+    return cloud.saveAnnotation(runId, attachAnnotationSource(applicationId, annotation));
+  },
   // Pushing the state is what lets the run page stop asking for a full copy of
   // it several times a second, which on a busy page meant serialising hundreds
   // of evidence rows across the IPC boundary for no new information.
   onStateChanged: (state) => sendRunState(state),
 });
+
+function attachAnnotationSource<T extends CreateQARunAnnotation>(applicationId: string | undefined, annotation: T): T {
+  const unavailable = (
+    status: 'NOT_CONNECTED' | 'ANALYSIS_UNAVAILABLE' | 'NO_MATCH',
+    analysisId: string | null = null,
+  ) => ({
+    status, path: null, startLine: null, endLine: null, symbol: null,
+    confidence: null, strategy: null, analysisId,
+  } as const);
+  let sourceMapping: NonNullable<CreateQARunAnnotation['elementFingerprint']['sourceMapping']>;
+  if (!applicationId || !selectedWorkspaces.has(applicationId)) {
+    sourceMapping = unavailable('NOT_CONNECTED');
+  } else {
+    const analysis = readAnalysisState(applicationId)?.analysis ?? null;
+    if (!analysis || !['COMPLETED', 'PARTIAL'].includes(analysis.status)) {
+      sourceMapping = unavailable('ANALYSIS_UNAVAILABLE', analysis?.id ?? null);
+    } else {
+      sourceMapping = resolveAnnotationSource(analysis, annotation)
+        ?? unavailable('NO_MATCH', analysis.id);
+    }
+  }
+  return {
+    ...annotation,
+    elementFingerprint: { ...annotation.elementFingerprint, sourceMapping },
+  };
+}
 
 /**
  * Evidence still waiting to reach the cloud. A run that looks healthy while its
@@ -1907,6 +1937,8 @@ function markAnalysisCancelled(applicationId: string): void {
   if (!state) return;
   writeAnalysisState(applicationId, {
     ...state,
+    // Stop polling a cancelled cloud job. A later rescan registers a fresh job.
+    cloudJobId: null,
     uploadProgress: null,
     analysis: state.analysis
       ? {
@@ -3037,29 +3069,22 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const state = readAnalysisState(applicationId);
-    // Before a job exists there is nothing for the API to cancel, and no local
-    // worker either: the run being stopped is the archive build or the upload.
     const upload = snapshotUploads.get(applicationId);
-    if (upload) {
-      upload.cancelled = true;
-      upload.abort?.();
-      markAnalysisCancelled(applicationId);
-      return { cancelled: true };
-    }
-    if (state?.mode === 'cloud' && state.cloudJobId) {
-      await cloud.cancelCloudCodebaseAnalysis(applicationId, state.cloudJobId).catch(() => undefined);
-      return { cancelled: true };
-    }
     const worker = codebaseWorkers.get(applicationId);
-    if (!worker) return { cancelled: false };
-    await worker.terminate();
-    codebaseWorkers.delete(applicationId);
-    patchLocalAnalysis(applicationId, {
-      status: 'CANCELLED',
-      stageMessage: 'Analysis cancelled',
-      completedAt: new Date().toISOString(),
+    return cancelCodebaseAnalysisRun({
+      state: state ? {
+        mode: state.mode,
+        cloudJobId: state.cloudJobId,
+        status: state.analysis?.status ?? null,
+      } : null,
+      upload,
+      stopLocalWorker: worker ? async () => {
+        await worker.terminate();
+        codebaseWorkers.delete(applicationId);
+      } : undefined,
+      cancelCloudJob: (jobId) => cloud.cancelCloudCodebaseAnalysis(applicationId, jobId),
+      markCancelled: () => markAnalysisCancelled(applicationId),
     });
-    return { cancelled: true };
   });
   ipcMain.handle(IPC.rescanCodebase, async (event, applicationId: unknown) => {
     assertTrustedSender(event);

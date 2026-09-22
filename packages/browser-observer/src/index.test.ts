@@ -186,6 +186,15 @@ test('the inspect overlay waits for the document root before mounting', () => {
   assert.match(source, /host\.isConnected/);
 });
 
+test('a successful annotation save closes as saved instead of running the cancel path', () => {
+  const source = installQaRecorder.toString();
+  const saveHandler = source.slice(source.indexOf("saveButton.addEventListener"), source.indexOf("Object.defineProperty(globalThis, '__tellannQaSetPhase'"));
+  assert.match(saveHandler, /await invoke\(config\.annotations, payload\)/);
+  assert.match(saveHandler, /Annotation saved/);
+  assert.doesNotMatch(saveHandler, /cancelInspect\(\)/);
+  assert.match(saveHandler, /Annotation could not be saved\. Try again\./);
+});
+
 test('successful network requests are represented in the live panel', () => {
   const live = liveEvidenceForNetworkRequest({
     method: 'GET',

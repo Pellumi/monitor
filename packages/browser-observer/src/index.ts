@@ -675,7 +675,7 @@ export class BrowserObserver {
     onUnexpectedTermination?: (state: GuidedRunState) => Promise<void> | void;
     onObservation?: (runId: string, observation: BrowserObservation) => Promise<void> | void;
     onEvidenceEvent?: (event: QAEvidenceEvent) => Promise<void> | void;
-    onAnnotation?: (runId: string, annotation: LocalAnnotationInput) => Promise<unknown> | unknown;
+    onAnnotation?: (runId: string, annotation: LocalAnnotationInput, applicationId: string) => Promise<unknown> | unknown;
     searchMentionableMembers?: (runId: string, query: string) => Promise<QAMentionableMember[]>;
     /**
      * Called, coalesced, whenever the run state changes. This is what lets the
@@ -953,7 +953,7 @@ export class BrowserObserver {
         const saved = await this.options.onAnnotation?.(runId, {
           ...annotation,
           screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-        });
+        }, state.applicationId);
         state.annotationCount += 1;
         this.addLive(state, {
           kind: 'INTERACTION',
@@ -966,6 +966,10 @@ export class BrowserObserver {
             detail('Screenshot', fs.existsSync(screenshotPath) ? path.basename(screenshotPath) : 'Not captured'),
           ]),
         });
+        // Saving completes the one-shot Inspect interaction. Switch the whole
+        // run back to Navigate after the page binding returns so the modal
+        // cannot immediately reopen while the desktop still says Inspect.
+        setTimeout(() => void this.setInteractionMode('NAVIGATE').catch(() => undefined), 0);
         return saved;
       } catch (error) {
         this.addLive(state, {

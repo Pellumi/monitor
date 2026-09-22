@@ -123,6 +123,16 @@ export const QAElementFingerprintSchema = z.object({
   cssPath: z.string().max(2_000),
   frameUrl: z.string().max(2_000),
   domFingerprint: z.string().max(200),
+  sourceMapping: z.object({
+    status: z.enum(['MATCHED', 'NO_MATCH', 'NOT_CONNECTED', 'ANALYSIS_UNAVAILABLE']),
+    path: z.string().max(2_000).nullable(),
+    startLine: z.number().int().positive().nullable(),
+    endLine: z.number().int().positive().nullable(),
+    symbol: z.string().max(500).nullable(),
+    confidence: z.number().min(0).max(1).nullable(),
+    strategy: z.enum(['ELEMENT', 'ROUTE']).nullable(),
+    analysisId: z.string().max(200).nullable(),
+  }).nullable().default(null),
 });
 
 export const CreateQARunAnnotationSchema = z.object({

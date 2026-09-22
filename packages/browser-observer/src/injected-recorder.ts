@@ -573,7 +573,22 @@ export function installQaRecorder(config: {
   mountHost();
   if (!host.isConnected) document.addEventListener('DOMContentLoaded', mountHost, { once: true });
   const shadow = host.attachShadow({ mode: 'closed' });
-  shadow.innerHTML = `<style>:host{all:initial}.outline{position:fixed;pointer-events:none;border:2px solid #22c55e;background:#22c55e18;z-index:2147483646}.panel{position:fixed;right:20px;top:20px;width:340px;z-index:2147483647;background:#0b0f14;color:#f8fafc;border:1px solid #334155;border-radius:12px;padding:16px;font:14px/1.4 system-ui;box-shadow:0 18px 60px #000a}.panel h2{font-size:16px;margin:0 0 4px}.panel p{color:#94a3b8;margin:0 0 10px}.panel textarea,.panel input{box-sizing:border-box;width:100%;background:#111827;color:white;border:1px solid #475569;border-radius:7px;padding:9px;margin:6px 0}.panel button{border:1px solid #475569;background:#1e293b;color:white;border-radius:7px;padding:8px 11px;margin:6px 6px 0 0;cursor:pointer}.panel button.primary{background:#16a34a;border-color:#22c55e}.panel :focus-visible{outline:3px solid #facc15;outline-offset:2px}.chips{display:flex;gap:5px;flex-wrap:wrap}.chip{font-size:12px;background:#334155;padding:4px 7px;border-radius:999px}.results{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}.results button{font-size:12px;padding:4px 7px;margin:0}.shield{position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:transparent}.live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style><div class="shield" hidden></div><div class="outline" hidden></div><div class="panel" hidden role="dialog" aria-modal="true" aria-labelledby="tellann-title"><h2 id="tellann-title">Annotate selected element</h2><p class="preview"></p><textarea maxlength="2000" rows="5" aria-label="Annotation comment" placeholder="Describe the change or issue"></textarea><input aria-label="Search organization members" placeholder="Mention a teammate"><div class="chips"></div><div class="results" role="listbox" aria-label="Member search results"></div><div><button class="primary">Save annotation</button><button class="reselect">Reselect</button><button class="cancel">Cancel</button></div></div><div class="live" aria-live="polite"></div>`;
+  // The overlay lives in a page the desktop app only hosts, so it cannot load
+  // theme.css. The tokens below mirror it one for one (including the light
+  // scheme and the Windows accent default) so Inspect mode reads as part of
+  // the desktop shell rather than as part of the application under test.
+  shadow.innerHTML = `<style>
+    :host{all:initial;color-scheme:dark;--font-ui:"Segoe UI Variable Text","Segoe UI Variable","Segoe UI",system-ui,sans-serif;--font-display:"Segoe UI Variable Display","Segoe UI Variable","Segoe UI",system-ui,sans-serif;--font-mono:"Cascadia Mono","Cascadia Code",Consolas,"Courier New",monospace;--accent:#4cc2ff;--on-accent:#000;--surface-0:#1b1b1b;--surface-1:#262626;--surface-2:#2e2e2e;--text-strong:#fff;--text:#d6d6d6;--text-muted:#a3a3a3;--text-subtle:#7c7c7c;--border-subtle:#2a2a2a;--border:#353535;--border-strong:#4c4c4c;--overlay-rgb:255 255 255;--shadow-k:1;--control-height:30px;--radius:4px;--radius-lg:8px;--ease:cubic-bezier(.2,0,0,1)}
+    @media(prefers-color-scheme:light){:host{color-scheme:light;--accent:#0067c0;--on-accent:#fff;--surface-0:#fbfbfb;--surface-1:#fff;--surface-2:#f0f0f0;--text-strong:#1a1a1a;--text:#303030;--text-muted:#5c5c5c;--text-subtle:#878787;--border-subtle:#ededed;--border:#e0e0e0;--border-strong:#c4c4c4;--overlay-rgb:0 0 0;--shadow-k:.3}}
+    .outline{position:fixed;pointer-events:none;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:2px;z-index:2147483646}.shield{position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:transparent}.shield.modal-open{cursor:default;background:rgb(0 0 0/calc(.1 + .4*var(--shadow-k)))}
+    .panel,.panel *{box-sizing:border-box}.panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;z-index:2147483647;padding:20px 24px 0;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1);color:var(--text);font:13px/1.45 var(--font-ui);box-shadow:0 32px 64px rgb(0 0 0/calc(.45*var(--shadow-k)));animation:dialog-in .14s var(--ease)}@keyframes dialog-in{from{opacity:0;transform:translate(-50%,-50%) scale(.98)}}
+    .eyebrow{margin:0 0 6px;color:var(--text-muted);font:600 11px var(--font-ui);letter-spacing:.04em;text-transform:uppercase}.panel h2{margin:0;color:var(--text-strong);font:600 16px/1.3 var(--font-display);letter-spacing:0}.preview{margin:12px 0 18px;padding:8px 10px;border:1px solid var(--border-subtle);border-left:2px solid var(--accent);border-radius:var(--radius);background:var(--surface-0);color:var(--text-muted);font:11.5px/1.5 var(--font-mono);overflow-wrap:anywhere}
+    .field{margin-bottom:16px}label{display:block;margin:0 0 6px;color:var(--text);font:12px/1.4 var(--font-ui)}.optional{color:var(--text-subtle)}.panel textarea,.panel input{display:block;width:100%;min-height:var(--control-height);padding:7px 10px;border:1px solid var(--border);border-bottom-color:var(--border-strong);border-radius:var(--radius);background:var(--surface-0);color:var(--text-strong);font:12px/1.5 var(--font-ui);outline:none}.panel textarea{min-height:96px;resize:vertical}.panel input{height:var(--control-height);padding:0 10px}.panel ::placeholder{color:var(--text-subtle)}.panel textarea:focus,.panel input:focus{border-bottom-color:var(--accent);box-shadow:inset 0 -1px 0 var(--accent)}.hint{margin:6px 0 0;color:var(--text-subtle);font:11px/1.45 var(--font-ui)}
+    .actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:20px -24px 0;padding:16px 24px;border-top:1px solid var(--border-subtle);border-radius:0 0 var(--radius-lg) var(--radius-lg);background:var(--surface-0)}.panel button{display:inline-flex;align-items:center;justify-content:center;min-width:96px;min-height:var(--control-height);padding:0 12px;border:1px solid var(--border);border-bottom-color:var(--border-strong);border-radius:var(--radius);background:var(--surface-1);color:var(--text-strong);font:500 12px/1.2 var(--font-ui);white-space:nowrap;cursor:default;transition:background-color .08s var(--ease),border-color .08s var(--ease),color .08s var(--ease)}.panel button:hover:not(:disabled){background:var(--surface-2)}.panel button:active:not(:disabled){background:var(--surface-1);color:var(--text-muted)}.panel button.primary{border-color:transparent;background:var(--accent);color:var(--on-accent)}.panel button.primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 88%,var(--text-strong))}.panel button.primary:active:not(:disabled){background:color-mix(in srgb,var(--accent) 82%,var(--surface-0))}.panel button:disabled{opacity:.5;cursor:wait}.panel :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+    .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{padding:2px 8px;border-radius:var(--radius);background:rgb(var(--overlay-rgb)/.07);color:var(--text-muted);font:11px var(--font-ui)}.results{display:flex;flex-direction:column;gap:2px;margin-top:6px;padding:4px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1);box-shadow:0 8px 24px rgb(0 0 0/calc(.32*var(--shadow-k)))}.chips:empty,.results:empty{display:none}.results button{justify-content:flex-start;min-width:0;min-height:26px;padding:0 10px;border:0;border-radius:var(--radius);background:transparent;color:var(--text);font:12px var(--font-ui)}.results button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.07)}.live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+    @media(max-width:560px){.panel{padding:16px 16px 0}.actions{flex-wrap:wrap;margin:16px -16px 0;padding:12px 16px}.panel button{flex:1}.panel button.primary{flex-basis:100%;order:-1}}
+    @media(prefers-reduced-motion:reduce){.panel{animation:none}.panel button{transition:none}}
+  </style><div class="shield" hidden></div><div class="outline" hidden></div><div class="panel" hidden role="dialog" aria-modal="true" aria-labelledby="tellann-title"><p class="eyebrow">Inspect mode</p><h2 id="tellann-title">Annotate selected element</h2><p class="preview"></p><div class="field"><label for="tellann-comment">Note</label><textarea id="tellann-comment" maxlength="2000" rows="5" aria-label="Annotation comment" placeholder="Describe the change or issue"></textarea><p class="hint">When a codebase is connected, Tellann will add the closest verified filename and line range.</p></div><div class="field"><label for="tellann-member">Mention a teammate <span class="optional">Optional</span></label><input id="tellann-member" aria-label="Search organization members" placeholder="Search by name"><div class="chips"></div><div class="results" role="listbox" aria-label="Member search results"></div></div><div class="actions"><button class="reselect">Reselect</button><button class="cancel">Cancel</button><button class="primary">Save annotation</button></div></div><div class="live" aria-live="polite"></div>`;
   const shield = shadow.querySelector('.shield') as HTMLElement;
   const outline = shadow.querySelector('.outline') as HTMLElement;
   const panel = shadow.querySelector('.panel') as HTMLElement;
@@ -583,7 +598,10 @@ export function installQaRecorder(config: {
   const chips = shadow.querySelector('.chips')!;
   const results = shadow.querySelector('.results') as HTMLElement;
   const live = shadow.querySelector('.live') as HTMLElement;
+  const saveButton = shadow.querySelector('.primary') as HTMLButtonElement;
+  const modalButtons = Array.from(panel.querySelectorAll('button')) as HTMLButtonElement[];
   let selected: Element | null = null;
+  let saving = false;
   let mentions: Array<{ id: string; displayName: string }> = [];
   const position = (element: Element | null) => {
     if (!element) { outline.hidden = true; return; }
@@ -598,6 +616,7 @@ export function installQaRecorder(config: {
   // shield in the stacking order, so it remains fully interactive.
   const showShield = () => {
     shield.hidden = mode !== 'INSPECT';
+    shield.classList.toggle('modal-open', !panel.hidden);
   };
   const cancelInspect = () => {
     panel.hidden = true;
@@ -748,7 +767,8 @@ export function installQaRecorder(config: {
     showShield();
     live.textContent = 'Choose another element';
   });
-  shadow.querySelector('.primary')!.addEventListener('click', async () => {
+  saveButton.addEventListener('click', async () => {
+    if (saving) return;
     if (!selected || !textarea.value.trim()) {
       live.textContent = 'Enter a comment before saving';
       textarea.focus();
@@ -772,10 +792,32 @@ export function installQaRecorder(config: {
       screenshotArtifactId: null,
       mentionedUserIds: mentions.map((item) => item.id),
     };
+    saving = true;
+    modalButtons.forEach((button) => { button.disabled = true; });
+    saveButton.textContent = 'Saving…';
     live.textContent = 'Saving annotation';
-    await invoke(config.annotations, payload);
-    live.textContent = 'Annotation saved';
-    cancelInspect();
+    try {
+      await invoke(config.annotations, payload);
+      panel.hidden = true;
+      outline.hidden = true;
+      selected = null;
+      mentions = [];
+      chips.textContent = '';
+      results.textContent = '';
+      textarea.value = '';
+      search.value = '';
+      live.textContent = 'Annotation saved';
+      showShield();
+      if (restoreFocusTo instanceof HTMLElement && restoreFocusTo.isConnected) restoreFocusTo.focus();
+      restoreFocusTo = null;
+    } catch {
+      live.textContent = 'Annotation could not be saved. Try again.';
+      textarea.focus();
+    } finally {
+      saving = false;
+      modalButtons.forEach((button) => { button.disabled = false; });
+      saveButton.textContent = 'Save annotation';
+    }
   });
   Object.defineProperty(globalThis, '__tellannQaSetPhase', {
     value: (next: typeof phase, stateKey?: string | null) => {

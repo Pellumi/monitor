@@ -13,8 +13,10 @@ import {
   type PythonFrameworkEvidence,
   type PythonProject,
 } from '@tellann/python-project';
+import { extendGitIgnoreContext, isGitIgnored, type GitIgnoreContext } from './gitignore';
 export * from './codebase';
 export * from './flow-mapping';
+export * from './annotation-source';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',
@@ -323,7 +325,8 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   const maxFiles = options.maxFiles ?? 20_000;
   const maxFileBytes = options.maxFileBytes ?? 512_000;
 
-  const visit = (directory: string) => {
+  const visit = (directory: string, inheritedIgnore: GitIgnoreContext = []) => {
+    const ignoreContext = extendGitIgnoreContext(resolvedRoot, directory, inheritedIgnore);
     if (files.length >= maxFiles) return;
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (files.length >= maxFiles) break;
@@ -332,15 +335,19 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
         continue;
       }
       const absolute = path.join(directory, entry.name);
+      const relative = path.relative(resolvedRoot, absolute).replaceAll('\\', '/');
+      if (isGitIgnored(relative, entry.isDirectory(), ignoreContext)) {
+        excludedFiles += 1;
+        continue;
+      }
       if (entry.isSymbolicLink()) {
         excludedFiles += 1;
         continue;
       }
       if (entry.isDirectory()) {
-        visit(absolute);
+        visit(absolute, ignoreContext);
         continue;
       }
-      const relative = path.relative(resolvedRoot, absolute).replaceAll('\\', '/');
       if (SECRET_FILE.test(relative)) {
         suspectedSecrets += 1;
         excludedFiles += 1;

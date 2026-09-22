@@ -521,6 +521,30 @@ test('excludes Python virtual environments from the analysis graph and source ar
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('excludes gitignored generated assets from inventory, analysis, and source archives', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gitignore-')));
+  write(root, '.gitignore', 'staticfiles/\n*.generated.js\n');
+  write(root, 'requirements.txt', 'Django>=5\n');
+  write(root, 'manage.py', 'import os\n');
+  write(root, 'app/views.py', 'def application_view():\n    return "ok"\n');
+  write(root, 'staticfiles/swagger-ui.js', 'function generated_vendor_bundle() {}\n');
+  write(root, 'app/client.generated.js', 'function generated_client() {}\n');
+
+  const inventory = buildInventory(root);
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const archive = buildSanitizedSourceArchive(root);
+  const decoded = zlib.gunzipSync(archive.buffer).toString('utf8');
+
+  assert.deepEqual(inventory.pythonAnalyzable, ['app/views.py', 'manage.py']);
+  assert.equal(inventory.files.some((file) => file.path.startsWith('staticfiles/')), false);
+  assert.equal(inventory.files.some((file) => file.path.endsWith('.generated.js')), false);
+  assert.equal(analysis.coverage?.languageBytes.JavaScript, undefined);
+  assert.equal(decoded.includes('generated_vendor_bundle'), false);
+  assert.equal(decoded.includes('generated_client'), false);
+  assert.ok(inventory.exclusions.gitignore >= 2);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('previews archive size and exclusions before consent is given', () => {
   const { root } = analyze();
   const preview = previewSanitizedSourceArchive(root);

@@ -20,10 +20,23 @@ export function resolveQARunEnvironment(
   );
 }
 
-export function normalizeQARunMode(value?: string | null): QARunMode {
+export function normalizeQARunMode(
+  value?: string | null,
+  environmentType?: string | null,
+): QARunMode {
+  if (environmentType?.toUpperCase() === "PRODUCTION") return "OBSERVATION_ONLY";
   const normalized = value?.toUpperCase().replaceAll("-", "_");
-  if (normalized === "ASSISTED" || normalized === "GUIDED") return normalized;
-  return "OBSERVATION_ONLY";
+  if (
+    normalized === "ASSISTED" ||
+    normalized === "GUIDED" ||
+    normalized === "OBSERVATION_ONLY"
+  ) {
+    return normalized;
+  }
+  // A generic "start QA run" handoff must remain interactive. Observation
+  // Only is an explicit read-safe choice (and mandatory for production), not
+  // the fallback for a missing mode.
+  return "ASSISTED";
 }
 
 export function buildQARunDesktopDeepLink(input: {

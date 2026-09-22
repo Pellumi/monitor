@@ -11452,7 +11452,7 @@ export function NewRunPage() {
               options={[
                 { value: "GUIDED", label: "Guided" },
                 { value: "ASSISTED", label: "Assisted (recommended)" },
-                { value: "OBSERVATION_ONLY", label: "Observation only" },
+                { value: "OBSERVATION_ONLY", label: "Observation only (read-only)" },
               ]}
             />
           </label>
@@ -11499,9 +11499,9 @@ export function NewRunPage() {
               ]}
             />
             <small>
-              Guided mode requires a ready Flow. Assisted and Observation Only
-              begin capturing immediately and can be reconciled or promoted to
-              a Flow after the run.
+              Guided mode requires a ready Flow. Assisted mode is interactive
+              and starts capturing immediately. Observation Only is read-only;
+              either kind of run can be reconciled or promoted to a Flow later.
             </small>
             {selectedFlow && selectedFlowReadiness && !selectedFlowReadiness.ready ? (
               <span className="inline-actions">
@@ -11660,7 +11660,7 @@ export function NewRunPage() {
           <Play size={16} />
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start without a Flow"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start read-only observation"}
         </button>
       </section>
       <QaRunStartErrorModal
@@ -13495,6 +13495,10 @@ export function RunDetailPage() {
                 const annotation = asRecord(raw);
                 const author = asRecord(annotation.author);
                 const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
+                const sourceMapping = asRecord(asRecord(annotation.elementFingerprint).sourceMapping);
+                const sourcePath = sourceMapping.status === "MATCHED" ? String(sourceMapping.path ?? "") : "";
+                const sourceStart = Number(sourceMapping.startLine ?? 0);
+                const sourceEnd = Number(sourceMapping.endLine ?? sourceStart);
                 return (
                   <article className="annotation-card" key={String(annotation.id ?? index)}>
                     <div className="annotation-pin">{index + 1}</div>
@@ -13502,6 +13506,12 @@ export function RunDetailPage() {
                       <strong>{String(author.displayName ?? "Tellann member")}</strong>
                       <small>{formatDate(annotation.createdAt)} · {String(annotation.normalizedRoute ?? "/")}</small>
                       <p>{String(annotation.comment ?? "")}</p>
+                      {sourcePath ? (
+                        <div className="annotation-source" title={String(sourceMapping.symbol ?? sourcePath)}>
+                          <span>Source</span>
+                          <code>{sourcePath}{sourceStart > 0 ? `:${sourceStart}${sourceEnd > sourceStart ? `–${sourceEnd}` : ""}` : ""}</code>
+                        </div>
+                      ) : null}
                       {mentions.length ? <div className="annotation-mentions">Mentioned: {mentions.map((item) => `@${String(asRecord(item).displayNameSnapshot ?? "member")}`).join(", ")}</div> : null}
                     </div>
                   </article>

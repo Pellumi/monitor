@@ -34,7 +34,6 @@ function NewQARunContent() {
   const requestedEnvironmentId =
     searchParams.get("environmentId") ?? searchParams.get("envId");
   const requestedTargetUrl = searchParams.get("targetUrl");
-  const mode = normalizeQARunMode(searchParams.get("mode"));
   const {
     appId,
     selectedOrgId,
@@ -54,6 +53,10 @@ function NewQARunContent() {
   const selectedEnvironment = resolveQARunEnvironment(
     environments.data,
     requestedEnvironmentId,
+  );
+  const mode = normalizeQARunMode(
+    searchParams.get("mode"),
+    selectedEnvironment?.type,
   );
   const targetUrl = requestedTargetUrl || selectedEnvironment?.baseUrl || undefined;
   const desktopDeepLink = buildQARunDesktopDeepLink({

@@ -96,6 +96,28 @@ test('does not scan a checked-in Python virtual environment as application sourc
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('uses root and nested gitignore rules when identifying project languages and routes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gitignore-scan-'));
+  fs.writeFileSync(path.join(root, '.gitignore'), 'staticfiles/\n*.generated.js\n');
+  fs.writeFileSync(path.join(root, 'requirements.txt'), 'Django>=5\n');
+  fs.writeFileSync(path.join(root, 'manage.py'), 'import os\n');
+  fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'app', '.gitignore'), 'generated/\n');
+  fs.writeFileSync(path.join(root, 'app', 'views.py'), 'def health():\n    return "ok"\n');
+  fs.mkdirSync(path.join(root, 'staticfiles'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'staticfiles', 'vendor.js'), `app.get('/vendor-route')\n`);
+  fs.mkdirSync(path.join(root, 'app', 'generated'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'app', 'generated', 'fake.js'), `app.get('/generated-route')\n`);
+
+  const snapshot = scanWorkspace(root, { workspaceId: '00000000-0000-4000-8000-000000000013' });
+
+  assert.deepEqual(snapshot.languages, ['.py']);
+  assert.equal(snapshot.routes.includes('/vendor-route'), false);
+  assert.equal(snapshot.routes.includes('/generated-route'), false);
+  assert.ok(snapshot.redactionSummary.excludedFiles >= 2);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('prefers an explicit launch port and detected login route', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-url-scan-'));
   fs.mkdirSync(path.join(root, 'src'));

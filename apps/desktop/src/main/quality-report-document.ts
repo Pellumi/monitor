@@ -237,6 +237,13 @@ function renderAnnotations(data: ReadReport): string {
   const rows = data.annotations
     .map((annotation) => {
       const author = asRecord(annotation.author);
+      const source = asRecord(asRecord(annotation.element).sourceMapping);
+      const sourcePath = source.status === "MATCHED" ? text(source.path, "") : "";
+      const startLine = Number(source.startLine ?? 0);
+      const endLine = Number(source.endLine ?? startLine);
+      const sourceLabel = sourcePath
+        ? `${sourcePath}${startLine > 0 ? `:${startLine}${endLine > startLine ? `-${endLine}` : ""}` : ""}`
+        : "";
       const mentioned = records(annotation.mentionedTeammates)
         .map((member) => `@${text(member.displayName, "member")}`)
         .join(", ");
@@ -246,7 +253,7 @@ function renderAnnotations(data: ReadReport): string {
         `${text(author.displayName, "QA author")} · ${dateText(annotation.timestamp)} · ${text(
           annotation.route,
           "unknown route",
-        )} · state ${text(annotation.flowState, "outside boundary")}${mentioned ? ` · mentioned ${mentioned}` : ""}`,
+        )} · state ${text(annotation.flowState, "outside boundary")}${sourceLabel ? ` · source ${sourceLabel}` : ""}${mentioned ? ` · mentioned ${mentioned}` : ""}`,
       )}</small></td></tr>`;
     })
     .join("");

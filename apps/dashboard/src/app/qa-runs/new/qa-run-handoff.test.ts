@@ -3,9 +3,20 @@ import test from "node:test";
 
 import {
   buildQARunDesktopDeepLink,
+  normalizeQARunMode,
   resolveQARunEnvironment,
   sanitizeQARunTargetUrl,
 } from "./qa-run-handoff";
+
+test("generic and invalid handoffs default to interactive assisted mode", () => {
+  assert.equal(normalizeQARunMode(), "ASSISTED");
+  assert.equal(normalizeQARunMode("unknown"), "ASSISTED");
+});
+
+test("explicit read-only mode is preserved and production always enforces it", () => {
+  assert.equal(normalizeQARunMode("OBSERVATION_ONLY", "STAGING"), "OBSERVATION_ONLY");
+  assert.equal(normalizeQARunMode("ASSISTED", "PRODUCTION"), "OBSERVATION_ONLY");
+});
 
 test("desktop handoff preserves the complete QA run context", () => {
   assert.equal(
