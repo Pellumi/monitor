@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolveWithinWorkspace } from "@tellann/agent-policy";
+import { resolvePythonInterpreter, type ResolvedInterpreter } from "./python-environment";
 
 export type LocalLaunchCommand = {
   id: string;
@@ -99,14 +100,19 @@ function safeOutput(value: string): string {
 
 async function resolveExecutable(
   command: LocalLaunchCommand,
-): Promise<{ executable: string; args: string[] }> {
+  cwd: string,
+): Promise<{ executable: string; args: string[]; interpreter: ResolvedInterpreter | null }> {
   if (command.runtime === "python") {
     if (!isApprovedPythonCommand(command)) {
       throw new Error("UNAPPROVED_APPLICATION_LAUNCH_COMMAND");
     }
-    // Spawned by name so the interpreter on PATH is used, which is the one an
-    // activated virtual environment puts there.
-    return { executable: command.executable, args: command.args };
+    // The project's own interpreter, not whatever is on PATH. PATH here is the
+    // desktop application's, inherited from however it was started, where no
+    // virtual environment has been activated - so spawning by name ran Django
+    // on the system interpreter and failed with "No module named 'django'"
+    // while the project's environment sat in `.venv` beside the code.
+    const interpreter = resolvePythonInterpreter(cwd, command.executable);
+    return { executable: interpreter.executable, args: command.args, interpreter };
   }
   const manager = command.executable.replace(/\.(cmd|exe)$/i, "");
   if (
@@ -119,7 +125,7 @@ async function resolveExecutable(
     throw new Error("UNAPPROVED_APPLICATION_LAUNCH_COMMAND");
   }
   if (process.platform !== "win32" || manager === "bun")
-    return { executable: command.executable, args: command.args };
+    return { executable: command.executable, args: command.args, interpreter: null };
   const whereOutput = await new Promise<string>((resolve, reject) =>
     execFile(
       "where.exe",
@@ -146,7 +152,7 @@ async function resolveExecutable(
     const cli = path.join(path.dirname(launcher), ...cliParts);
     const nodeExecutable = path.join(path.dirname(launcher), "node.exe");
     if (fs.existsSync(cli) && fs.existsSync(nodeExecutable))
-      return { executable: nodeExecutable, args: [cli, ...command.args] };
+      return { executable: nodeExecutable, args: [cli, ...command.args], interpreter: null };
   }
   throw new Error(`SAFE_${manager.toUpperCase()}_EXECUTABLE_NOT_FOUND`);
 }
@@ -190,6 +196,26 @@ function assertLaunchTargetPresent(command: LocalLaunchCommand, cwd: string): vo
   }
 }
 
+/**
+ * Why a Python launch failed, when the output says a module is missing.
+ *
+ * A traceback ending in "No module named 'django'" is neither a Tellann failure
+ * nor a Django one: it means the interpreter that ran is not the one the
+ * project's dependencies are installed into. Naming the interpreter turns a
+ * wall of stack frames into something the member can act on.
+ */
+function launchDiagnosis(
+  interpreter: ResolvedInterpreter | null,
+  output: string,
+): string | null {
+  if (!interpreter) return null;
+  const missing = /No module named '([^']+)'/.exec(output)?.[1];
+  if (!missing) return null;
+  return interpreter.fromEnvironment
+    ? `${missing} is not installed in the project environment at ${interpreter.environmentRoot}. Install the project's dependencies into it, then try again.`
+    : `No virtual environment was found for this project, so ${interpreter.executable} from PATH was used and it does not have ${missing} installed. Create the project's environment (a .venv beside the code is what Tellann looks for first), install its dependencies, then try again.`;
+}
+
 export function launchApprovalHash(
   command: LocalLaunchCommand,
   workspaceRoot: string,
@@ -226,7 +252,7 @@ export class LocalApplicationLauncher {
     if (this.active) throw new Error("LOCAL_APPLICATION_ALREADY_RUNNING");
     const cwd = assertLaunchScope(command, workspaceRoot);
     assertLaunchTargetPresent(command, cwd);
-    const resolved = await resolveExecutable(command);
+    const resolved = await resolveExecutable(command, cwd);
     this.output = "";
     const child = spawn(resolved.executable, resolved.args, {
       cwd,
@@ -264,8 +290,11 @@ export class LocalApplicationLauncher {
     });
     if (earlyExit !== null) {
       this.child = null;
+      const diagnosis = launchDiagnosis(resolved.interpreter, this.output);
       throw new Error(
-        `LOCAL_APPLICATION_LAUNCH_FAILED:${earlyExit}:${this.sanitizedOutput}`,
+        `LOCAL_APPLICATION_LAUNCH_FAILED:${earlyExit}:${diagnosis ? `${diagnosis}
+
+` : ""}${this.sanitizedOutput}`,
       );
     }
     if (!child.pid) throw new Error("LOCAL_APPLICATION_PID_MISSING");
@@ -283,7 +312,7 @@ export class LocalApplicationLauncher {
     if (this.active) throw new Error("LOCAL_APPLICATION_ALREADY_RUNNING");
     const cwd = assertLaunchScope(command, workspaceRoot);
     assertLaunchTargetPresent(command, cwd);
-    const resolved = await resolveExecutable(command);
+    const resolved = await resolveExecutable(command, cwd);
     this.output = "";
     const child = spawn(resolved.executable, resolved.args, {
       cwd,
@@ -325,8 +354,11 @@ export class LocalApplicationLauncher {
     });
     if (earlyExit !== null) {
       this.child = null;
+      const diagnosis = launchDiagnosis(resolved.interpreter, this.output);
       throw new Error(
-        `LOCAL_APPLICATION_LAUNCH_FAILED:${earlyExit}:${this.sanitizedOutput}`,
+        `LOCAL_APPLICATION_LAUNCH_FAILED:${earlyExit}:${diagnosis ? `${diagnosis}
+
+` : ""}${this.sanitizedOutput}`,
       );
     }
     if (!child.pid) throw new Error("LOCAL_APPLICATION_PID_MISSING");

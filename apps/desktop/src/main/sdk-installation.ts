@@ -1,5 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDirectory, pythonEnvironments, readDirectory } from './python-environment';
+
+// Discovering where a project's interpreter and its packages live belongs with
+// the rest of the Python environment handling; this module only answers whether
+// a distribution is installed in one.
+export { pythonEnvironments } from './python-environment';
 
 export type InstalledPackage = { directory: string; version: string | null };
 
@@ -34,21 +40,6 @@ export function findInstalledPackage(fromDirectory: string, packageName: string)
   }
 }
 
-export type InstalledDistribution = {
-  /** The `.dist-info` or `.egg-info` directory that proves the install. */
-  directory: string;
-  version: string | null;
-  /** The environment the distribution was found in, for the check's output. */
-  environment: string;
-};
-
-/**
- * Directory names that hold a virtual environment, in the order people create
- * them. `.venv` first because it is what `python -m venv` is documented with
- * and what every modern tool (uv, poetry's in-project mode, PDM) defaults to.
- */
-const VIRTUALENV_DIRECTORIES = ['.venv', 'venv', '.env', 'env'];
-
 /**
  * PEP 503 normalization, which is what a `.dist-info` directory name is built
  * from: runs of `-`, `_` and `.` collapse to a single separator, and case is
@@ -58,66 +49,13 @@ function normalizeDistribution(name: string): string {
   return name.replace(/[-_.]+/g, '-').toLowerCase();
 }
 
-/** Every `site-packages` directory under one virtual environment root. */
-function sitePackagesWithin(environmentRoot: string): string[] {
-  const found: string[] = [];
-  // Windows puts them at `Lib/site-packages`; POSIX at `lib/pythonX.Y/site-packages`.
-  const windows = path.join(environmentRoot, 'Lib', 'site-packages');
-  if (isDirectory(windows)) found.push(windows);
-  const lib = path.join(environmentRoot, 'lib');
-  if (isDirectory(lib)) {
-    for (const entry of readDirectory(lib)) {
-      const nested = path.join(lib, entry, 'site-packages');
-      if (isDirectory(nested)) found.push(nested);
-    }
-  }
-  return found;
-}
-
-function isDirectory(target: string): boolean {
-  try {
-    return fs.statSync(target).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function readDirectory(target: string): string[] {
-  try {
-    return fs.readdirSync(target);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The interpreter environments a project's dependencies could have been
- * installed into, nearest first.
- *
- * `VIRTUAL_ENV` is checked because the member may have activated an environment
- * that lives outside the repository, which is what Conda and a shared
- * `~/.virtualenvs` both look like.
- */
-export function pythonEnvironments(fromDirectory: string): string[] {
-  const found: string[] = [];
-  const add = (directory: string) => {
-    if (directory && !found.includes(directory)) found.push(directory);
-  };
-  let current = path.resolve(fromDirectory);
-  for (;;) {
-    for (const name of VIRTUALENV_DIRECTORIES) {
-      for (const sitePackages of sitePackagesWithin(path.join(current, name))) add(sitePackages);
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  for (const variable of ['VIRTUAL_ENV', 'CONDA_PREFIX']) {
-    const value = process.env[variable];
-    if (value) for (const sitePackages of sitePackagesWithin(value)) add(sitePackages);
-  }
-  return found;
-}
+export type InstalledDistribution = {
+  /** The `.dist-info` or `.egg-info` directory that proves the install. */
+  directory: string;
+  version: string | null;
+  /** The environment the distribution was found in, for the check's output. */
+  environment: string;
+};
 
 /**
  * Finds a pip-installed distribution the way the packaging tools record one:

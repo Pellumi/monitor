@@ -38,8 +38,12 @@ import type { LocalApplicationLauncher } from "./application-launcher";
 import {
   findInstalledPackage,
   findInstalledPythonDistribution,
-  pythonEnvironments,
 } from "./sdk-installation";
+import {
+  isPythonInterpreterName,
+  pythonEnvironments,
+  resolvePythonInterpreter,
+} from "./python-environment";
 
 const execFileAsync = promisify(execFile);
 
@@ -199,10 +203,21 @@ function validationCheckForCommand(
   };
 }
 
-function resolveCommand(command: StructuredCommand): {
+function resolveCommand(command: StructuredCommand, cwd: string): {
   executable: string;
   args: string[];
 } {
+  // `python -m pip install tellann` has to install into the interpreter the
+  // project actually runs on. Resolved by name it would install into whichever
+  // Python is on the desktop application's PATH - a different interpreter from
+  // the project's virtual environment, so the SDK would land somewhere the
+  // application never imports from and `compileall` would check the wrong one.
+  if (isPythonInterpreterName(command.executable)) {
+    return {
+      executable: resolvePythonInterpreter(cwd, command.executable).executable,
+      args: command.args,
+    };
+  }
   const manager = command.executable.replace(/\.cmd$/i, "");
   if (
     process.platform !== "win32" ||
@@ -244,7 +259,7 @@ async function runCommand(
 ): Promise<CommandResult> {
   validateStructuredCommand(command, workspaceRoot);
   const cwd = resolveWithinWorkspace(workspaceRoot, command.cwd);
-  const resolved = resolveCommand(command);
+  const resolved = resolveCommand(command, cwd);
   const env: Record<string, string> = Object.fromEntries(
     command.allowedEnvironmentKeys.flatMap((key) => {
       const value = process.env[key];
