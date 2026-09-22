@@ -9,6 +9,7 @@ import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tellann/email';
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
+import { summarizeBackendEvidence } from './qa-backend-report';
 
 const AiImprovementSchema = z.object({
   suggestions: z.array(z.object({
@@ -385,6 +386,10 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // Report what was actually captured rather than inferring it from whether a
   // patch set happened to be attached.
   const hasClientStateEvidence = run.evidenceEvents.some((event) => event.eventType === 'QA_CLIENT_STATE_MUTATION');
+  // Re-derived from the persisted evidence rather than carried over from the
+  // desktop's live totals: the run state is trimmed as a run grows, and a
+  // report has to be reproducible from what was actually stored.
+  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
   const viewportHistory = run.evidenceEvents
     .filter((event) => event.eventType === 'QA_VIEWPORT_CHANGED')
     .map((event) => {
@@ -444,6 +449,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     summary: { sessionCount: run.observedSessions.length, observedStateCount: observedStateKeys.size, observedTransitionCount: observedTransitionKeys.size, artifactCount: run.artifacts.length, findingCount: run.findings.length, criticalOrHighFindings: run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length },
     sections: {
       flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
+      backendSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       inFlowFindings: { recommendedNextActions: improvements.slice(0, 10), findings: improvements, missingStates, missingTransitions, unexpectedStates },
       criticalSystemWideFindings: criticalOutOfFlow,
@@ -460,6 +466,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
             : ['Framework-state evidence was unavailable: no validated state instrumentation reported Redux, Context, or useState mutations during this run. Browser-level QA is unaffected.']),
           ...(run.environment.type === 'PRODUCTION' ? ['Production capture was metadata-only; values and payload bodies were not retained.'] : []),
           ...(appendixTruncated > 0 ? [`The evidence appendix lists the first ${APPENDIX_EVENT_LIMIT} of ${run.evidenceEvents.length} events; the remainder stay queryable through the evidence endpoints.`] : []),
+          ...(backendSummary?.limitations ?? []),
         ],
       },
     },

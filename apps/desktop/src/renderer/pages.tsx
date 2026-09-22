@@ -65,8 +65,10 @@ import {
   BACKEND_EVIDENCE_TABS,
   BackendEndpointTable,
   BackendModelTable,
+  BackendReportCard,
   BackendRunFacts,
   BackendWaitingPanel,
+  hasBackendSection,
   hasBackendTrack,
   isBackendOnlyRun,
   type BackendEvidenceTabValue,
@@ -14724,6 +14726,12 @@ export function ReportDetailPage() {
     return counts;
   }, {});
   const eventTotal = Number(appendix.eventTotal ?? evidenceEvents.length);
+  const backendSummary = asRecord(sections.backendSummary);
+  const reportCaptureTracks = Array.isArray(runSummary.captureTracks)
+    ? runSummary.captureTracks.map((track) => String(track))
+    : [];
+  const backendOnlyReport =
+    hasBackendSection(sections) && reportCaptureTracks.length > 0 && !reportCaptureTracks.includes("FRONTEND");
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -14746,26 +14754,42 @@ export function ReportDetailPage() {
       actions={<Status>{report.status}</Status>}
     >
       <div className="metric-grid">
-        <Metric
-          label="Expected coverage"
-          value={
-            report.coverage.expected == null
-              ? "Observational"
-              : `${report.coverage.expected.toFixed(1)}%`
-          }
-        />
-        <Metric
-          label="Observed states"
-          value={report.summary.observedStateCount}
-        />
-        <Metric
-          label="Transitions"
-          value={report.summary.observedTransitionCount}
-        />
-        <Metric
-          label="High priority"
-          value={report.summary.criticalOrHighFindings}
-        />
+        {backendOnlyReport ? (
+          // Coverage, states and transitions are a browser journey's measures.
+          // A run that never opened one is read by its traffic instead.
+          <>
+            <Metric label="Requests handled" value={Number(backendSummary.requests ?? 0)} />
+            <Metric label="Failed responses" value={Number(backendSummary.errors ?? 0)} />
+            <Metric
+              label="p95 response"
+              value={backendSummary.p95Ms == null ? "—" : `${Math.round(Number(backendSummary.p95Ms))} ms`}
+            />
+            <Metric label="High priority" value={report.summary.criticalOrHighFindings} />
+          </>
+        ) : (
+          <>
+            <Metric
+              label="Expected coverage"
+              value={
+                report.coverage.expected == null
+                  ? "Observational"
+                  : `${report.coverage.expected.toFixed(1)}%`
+              }
+            />
+            <Metric
+              label="Observed states"
+              value={report.summary.observedStateCount}
+            />
+            <Metric
+              label="Transitions"
+              value={report.summary.observedTransitionCount}
+            />
+            <Metric
+              label="High priority"
+              value={report.summary.criticalOrHighFindings}
+            />
+          </>
+        )}
       </div>
 
       <section className="content-card report-section">
@@ -14792,6 +14816,8 @@ export function ReportDetailPage() {
           </div>
         ) : null}
       </section>
+
+      <BackendReportCard sections={sections} />
 
       <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
 

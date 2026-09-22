@@ -317,3 +317,226 @@ export function BackendWaitingPanel({ targetUrl }: { targetUrl: string }) {
     </section>
   );
 }
+
+
+// ── the report's backend section ────────────────────────────────────────────
+//
+// The report page reads a stored payload rather than live run state, so these
+// take the section as it was written: loosely typed, tolerant of a payload
+// from an older schema, and never assuming a field is present.
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function rows(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(record) : [];
+}
+
+function numberOf(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function textList(value: unknown, fallback = "—"): string {
+  const items = Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+  return items.length ? items.join(", ") : fallback;
+}
+
+/** `2xx 14 · 5xx 1`, in ascending class order. */
+function statusClasses(value: unknown): string {
+  const entries = Object.entries(record(value)).sort(([left], [right]) => left.localeCompare(right));
+  return entries.length ? entries.map(([name, count]) => `${name} ${Number(count)}`).join(" · ") : "—";
+}
+
+/** True when this report has a backend section worth rendering. */
+export function hasBackendSection(sections: Record<string, unknown>): boolean {
+  return Object.keys(record(sections.backendSummary)).length > 0;
+}
+
+/**
+ * The backend rollup on the report page: the numbers, the endpoints behind
+ * them, and what those endpoints changed. Everything else about a finding
+ * stays in the downloadable report, as it does for the rest of this page.
+ */
+export function BackendReportCard({ sections }: { sections: Record<string, unknown> }) {
+  const summary = record(sections.backendSummary);
+  if (!Object.keys(summary).length) return null;
+  const endpoints = rows(summary.endpoints);
+  const models = rows(summary.models);
+  const errorGroups = rows(summary.serverErrorGroups);
+  const requests = numberOf(summary.requests) ?? 0;
+  const limitations = Array.isArray(summary.limitations)
+    ? summary.limitations.map((item) => String(item))
+    : [];
+
+  return (
+    <section className="content-card report-section">
+      <div className="card-heading">
+        <div>
+          <small>Backend</small>
+          <h2>What the server handled</h2>
+        </div>
+        <span className="status-pill" data-tone="neutral">
+          <span aria-hidden="true" />
+          {`${requests} request${requests === 1 ? "" : "s"}`}
+        </span>
+      </div>
+      <p>
+        Durations are server-side handler time as the SDK measured it, so they
+        exclude the network and the client.
+      </p>
+      <dl className="detail-list report-detail-grid">
+        <div>
+          <dt>Failed responses</dt>
+          <dd>
+            {numberOf(summary.errors) ?? 0}
+            {summary.errorRate == null ? "" : ` · ${Number(summary.errorRate).toFixed(1)}% of requests`}
+          </dd>
+        </div>
+        <div>
+          <dt>Breakdown</dt>
+          <dd>
+            {`${numberOf(summary.serverErrors) ?? 0} server · ${numberOf(summary.clientErrors) ?? 0} client · ${numberOf(summary.unhandledErrors) ?? 0} unhandled`}
+          </dd>
+        </div>
+        <div>
+          <dt>Response time</dt>
+          <dd>
+            {`${formatMilliseconds(numberOf(summary.p50Ms))} median · ${formatMilliseconds(numberOf(summary.p95Ms))} p95 · ${formatMilliseconds(numberOf(summary.slowestMs))} slowest`}
+          </dd>
+        </div>
+        <div>
+          <dt>Transferred</dt>
+          <dd>
+            {`${formatBytes(numberOf(summary.requestBytes) ?? 0)} in · ${formatBytes(numberOf(summary.responseBytes) ?? 0)} out`}
+          </dd>
+        </div>
+        <div>
+          <dt>Data operations</dt>
+          <dd>{`${numberOf(summary.dataOperations) ?? 0} across ${models.length} model${models.length === 1 ? "" : "s"}`}</dd>
+        </div>
+        <div>
+          <dt>Payloads retained</dt>
+          <dd>{`${numberOf(summary.payloadsCaptured) ?? 0} of ${requests} requests`}</dd>
+        </div>
+      </dl>
+
+      {endpoints.length ? (
+        <section className="run-endpoints">
+          <header>
+            <h2>Endpoints</h2>
+            <span>{endpoints.length}</span>
+          </header>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Route</th>
+                <th scope="col">Calls</th>
+                <th scope="col">Status</th>
+                <th scope="col">Avg</th>
+                <th scope="col">p95</th>
+                <th scope="col">Models</th>
+              </tr>
+            </thead>
+            <tbody>
+              {endpoints.slice(0, 50).map((endpoint, index) => {
+                const method = String(endpoint.method ?? "GET");
+                return (
+                  <tr
+                    key={String(endpoint.key ?? index)}
+                    data-failing={numberOf(endpoint.errors) ? "true" : undefined}
+                  >
+                    <th scope="row">
+                      <span className="run-endpoint-method" data-method={method.toLowerCase()}>
+                        {method}
+                      </span>
+                      <code>{String(endpoint.route ?? "/")}</code>
+                    </th>
+                    <td>{numberOf(endpoint.requests) ?? 0}</td>
+                    <td>{statusClasses(endpoint.statusClasses)}</td>
+                    <td>{formatMilliseconds(numberOf(endpoint.averageMs))}</td>
+                    <td>{formatMilliseconds(numberOf(endpoint.p95Ms))}</td>
+                    <td>{textList(endpoint.models)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {models.length ? (
+        <section className="run-models">
+          <header>
+            <h2>Models affected</h2>
+            <span>{models.length}</span>
+          </header>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Reads</th>
+                <th scope="col">Writes</th>
+                <th scope="col">Records</th>
+                <th scope="col">Operations</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.slice(0, 50).map((model, index) => (
+                <tr key={String(model.model ?? index)}>
+                  <th scope="row"><code>{String(model.model ?? "—")}</code></th>
+                  <td>{numberOf(model.reads) || "—"}</td>
+                  <td>{numberOf(model.writes) || "—"}</td>
+                  <td>{numberOf(model.records) ?? "—"}</td>
+                  <td>{textList(model.operations)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {errorGroups.length ? (
+        <section className="run-models">
+          <header>
+            <h2>Unhandled server errors</h2>
+            <span>{errorGroups.length}</span>
+          </header>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Type</th>
+                <th scope="col">Where</th>
+                <th scope="col">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {errorGroups.slice(0, 50).map((group, index) => (
+                <tr key={`${String(group.name ?? "error")}-${index}`}>
+                  <th scope="row">{String(group.name ?? "Error")}</th>
+                  <td>
+                    <code>{String(group.route ?? "No route recorded")}</code>
+                    <br />
+                    {String(group.message ?? "")}
+                  </td>
+                  <td>{numberOf(group.occurrences) ?? 1}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {limitations.length ? (
+        <ul className="report-limitations">
+          {limitations.map((limitation) => (
+            <li key={limitation}>{limitation}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}

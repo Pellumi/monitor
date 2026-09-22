@@ -8029,3 +8029,20 @@ button:disabled {
   font: 10px/1.7 var(--font-mono);
   user-select: text;
 }
+
+/* What a report section could not see, listed under it rather than buried in
+   the downloadable document. */
+.report-limitations {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font: 10px/1.7 var(--font-mono);
+}
+.report-limitations li {
+  margin-bottom: 4px;
+}
+/* Inside a report card the tables carry their own frame already. */
+.report-section .run-endpoints,
+.report-section .run-models {
+  margin-top: 16px;
+}
