@@ -6701,7 +6701,71 @@ button:disabled {
 }
 .setup-history .table-head,
 .setup-history .table-row {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns:
+    minmax(0, 1.5fr) minmax(0, 0.8fr) minmax(0, 1fr)
+    minmax(0, auto);
+}
+.setup-history .table-head > span:last-child,
+.setup-history-row-actions {
+  justify-self: end;
+}
+.setup-history-row-actions {
+  display: flex;
+  gap: 6px;
+}
+.setup-history-row-actions .button {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.setup-history-title {
+  display: block;
+  color: var(--strong);
+  font-weight: 600;
+}
+.setup-history-title:hover {
+  text-decoration: underline;
+}
+/* Filters: one row on a wide window, wrapping to as many as it needs. */
+.setup-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.setup-history-field {
+  display: grid;
+  gap: 4px;
+  min-width: 132px;
+}
+.setup-history-search {
+  flex: 1 1 200px;
+}
+.setup-history-field > span {
+  color: var(--muted);
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.setup-history-field input,
+.setup-history-field select {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  color: var(--text);
+  font-size: 12px;
+}
+.setup-history-field input:focus-visible,
+.setup-history-field select:focus-visible {
+  outline: 1px solid var(--strong);
+}
+.setup-history-filter-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.setup-history-filter-actions .button {
+  padding: 5px 9px;
+  font-size: 11px;
 }
 
 /* Applying a setup task: live steps and the changes being made. */

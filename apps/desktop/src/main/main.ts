@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -3410,11 +3410,31 @@ function registerIpc(): void {
     if (!(INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
     return instrumentation.propose({ ...context, adapterId: adapterId as InstrumentationFrameworkId });
   });
-  ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown, filters: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return instrumentation.list(applicationId);
+    const parsed = InstrumentationPlanFiltersSchema.safeParse(filters ?? {});
+    if (!parsed.success) throw new Error('INVALID_INSTRUMENTATION_FILTERS');
+    return instrumentation.list(applicationId, parsed.data);
   });
+  ipcMain.handle(IPC.renameInstrumentationPlan, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown; title?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+    if (value.title !== null && typeof value.title !== 'string') throw new Error('INVALID_INSTRUMENTATION_TITLE');
+    return instrumentation.rename(value.applicationId, value.planId, value.title);
+  });
+  for (const [channel, action] of [
+    [IPC.archiveInstrumentationPlan, 'archive'],
+    [IPC.restoreInstrumentationPlan, 'restore'],
+  ] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertTrustedSender(event);
+      const value = input as { applicationId?: unknown; planId?: unknown };
+      if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+      return instrumentation[action](value.applicationId, value.planId);
+    });
+  }
   ipcMain.handle(IPC.getInstrumentationPlan, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; planId?: unknown };

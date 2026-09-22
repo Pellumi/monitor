@@ -72,19 +72,11 @@ async function request(baseUrl: string, userId: string, pathname: string, init: 
   });
 }
 
-async function cleanup(value: Seed) {
-  await prisma.activationEvent.deleteMany({ where: { organizationId: { in: [value.organization.id, value.foreignOrganization.id] } } });
-  await prisma.projectWorkspace.deleteMany({ where: { id: value.workspace.id } });
-  await prisma.deviceSession.deleteMany({ where: { id: value.device.id } });
-  await prisma.environment.deleteMany({ where: { applicationId: { in: [value.application.id, value.foreignApplication.id] } } });
-  await prisma.application.deleteMany({ where: { id: { in: [value.application.id, value.foreignApplication.id] } } });
-  await prisma.organizationMembership.deleteMany({ where: { organizationId: { in: [value.organization.id, value.foreignOrganization.id] } } });
-  await prisma.organization.deleteMany({ where: { id: { in: [value.organization.id, value.foreignOrganization.id] } } });
-  await prisma.user.deleteMany({ where: { id: { in: [value.user.id, value.foreignUser.id] } } });
-}
-
-test('instrumentation lifecycle enforces tenancy, production policy, approval scope, one-time capability, replay, and device revocation', async () => {
-  const data = await seed();
+/**
+ * Serve the instrumentation router against the seeded organisation, standing in
+ * for the gateway's authentication and ownership middleware.
+ */
+async function serve(data: Seed) {
   const app = express();
   app.use(express.json());
   const verifyJwt = (req: Request & { user?: { id: string; email: string } }, res: Response, next: NextFunction) => {
@@ -99,14 +91,31 @@ test('instrumentation lifecycle enforces tenancy, production policy, approval sc
     if (!allowed) return res.status(403).json({ error: 'FORBIDDEN' });
     next();
   };
-  let entitled = true;
-  const entitlementChecker = { canAccess: async () => entitled } as unknown as EntitlementChecker;
+  const state = { entitled: true };
+  const entitlementChecker = { canAccess: async () => state.entitled } as unknown as EntitlementChecker;
   app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret }));
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const baseUrl = `http://127.0.0.1:${address.port}`;
+  return { server, state, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function cleanup(value: Seed) {
+  await prisma.auditLog.deleteMany({ where: { organizationId: { in: [value.organization.id, value.foreignOrganization.id] } } });
+  await prisma.activationEvent.deleteMany({ where: { organizationId: { in: [value.organization.id, value.foreignOrganization.id] } } });
+  await prisma.projectWorkspace.deleteMany({ where: { id: value.workspace.id } });
+  await prisma.deviceSession.deleteMany({ where: { id: value.device.id } });
+  await prisma.environment.deleteMany({ where: { applicationId: { in: [value.application.id, value.foreignApplication.id] } } });
+  await prisma.application.deleteMany({ where: { id: { in: [value.application.id, value.foreignApplication.id] } } });
+  await prisma.organizationMembership.deleteMany({ where: { organizationId: { in: [value.organization.id, value.foreignOrganization.id] } } });
+  await prisma.organization.deleteMany({ where: { id: { in: [value.organization.id, value.foreignOrganization.id] } } });
+  await prisma.user.deleteMany({ where: { id: { in: [value.user.id, value.foreignUser.id] } } });
+}
+
+test('instrumentation lifecycle enforces tenancy, production policy, approval scope, one-time capability, replay, and device revocation', async () => {
+  const data = await seed();
+  const { server, state, baseUrl } = await serve(data);
 
   try {
     const proposedPlan = plan(data);
@@ -115,10 +124,10 @@ test('instrumentation lifecycle enforces tenancy, production policy, approval sc
     });
     assert.equal(create.status, 201, await create.text());
 
-    entitled = false;
+    state.entitled = false;
     const deniedByPlan = await request(baseUrl, data.user.id, `/v1/applications/${data.application.id}/instrumentation/plans`);
     assert.equal(deniedByPlan.status, 403);
-    entitled = true;
+    state.entitled = true;
 
     const maliciousPlan = plan(data);
     maliciousPlan.validationCommands[0].executable = 'powershell.exe';
@@ -192,6 +201,111 @@ test('instrumentation lifecycle enforces tenancy, production policy, approval sc
     assert.equal(revoked.status, 401);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await cleanup(data);
+    await prisma.$disconnect();
+  }
+});
+
+test('setup tasks carry a derived title, filter by title, status, framework and date, and rename, archive and restore into the audit log', async () => {
+  const data = await seed();
+  const { server, baseUrl } = await serve(data);
+  const plansPath = `/v1/applications/${data.application.id}/instrumentation/plans`;
+  const flow = await prisma.behaviorGraph.create({ data: {
+    applicationId: data.application.id, name: `Checkout ${data.suffix}`, lifecycleStatus: 'PUBLISHED',
+  } });
+  const version = await prisma.behaviorGraphVersion.create({ data: {
+    graphId: flow.id, version: 1, snapshot: { states: [], transitions: [] },
+  } });
+
+  try {
+    const bootstrap = plan(data);
+    const created = await request(baseUrl, data.user.id, plansPath, {
+      method: 'POST', body: JSON.stringify({ workspaceId: data.workspace.id, repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id, deviceSessionId: data.device.id, plan: bootstrap }),
+    });
+    assert.equal(created.status, 201, await created.text());
+
+    const flowPlan = { ...plan(data), instrumentationPurpose: 'FLOW', flowId: flow.id, flowVersionId: version.id };
+    const createdFlow = await request(baseUrl, data.user.id, plansPath, {
+      method: 'POST', body: JSON.stringify({ workspaceId: data.workspace.id, repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id, deviceSessionId: data.device.id, plan: flowPlan }),
+    });
+    assert.equal(createdFlow.status, 201, await createdFlow.text());
+
+    // A task is named for what it does: connecting Tellann, or the Flow it sets up.
+    const listed = await (await request(baseUrl, data.user.id, plansPath)).json() as Array<{ id: string; title: string }>;
+    assert.equal(listed.find((item) => item.id === bootstrap.id)?.title, 'Initialisation');
+    assert.equal(listed.find((item) => item.id === flowPlan.id)?.title, `Checkout ${data.suffix}`);
+
+    // Searching reaches those derived titles, not only stored ones.
+    const byFlowName = await (await request(baseUrl, data.user.id, `${plansPath}?q=checkout`)).json() as Array<{ id: string }>;
+    assert.deepEqual(byFlowName.map((item) => item.id), [flowPlan.id]);
+    const byInitialisation = await (await request(baseUrl, data.user.id, `${plansPath}?q=initial`)).json() as Array<{ id: string }>;
+    assert.deepEqual(byInitialisation.map((item) => item.id), [bootstrap.id]);
+
+    const byStatus = await (await request(baseUrl, data.user.id, `${plansPath}?status=PROPOSED`)).json() as unknown[];
+    assert.equal(byStatus.length, 2);
+    assert.equal((await (await request(baseUrl, data.user.id, `${plansPath}?status=COMPLETED`)).json() as unknown[]).length, 0);
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}?status=NOT_A_STATUS`)).status, 400);
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}?adapterId=nope`)).status, 400);
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}?from=yesterday`)).status, 400);
+
+    const byFramework = await (await request(baseUrl, data.user.id, `${plansPath}?adapterId=react-vite`)).json() as unknown[];
+    assert.equal(byFramework.length, 2);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const inRange = await (await request(baseUrl, data.user.id, `${plansPath}?from=${today}&to=${today}`)).json() as unknown[];
+    assert.equal(inRange.length, 2, 'a date-only range covers the whole day it names');
+    const beforeRange = await (await request(baseUrl, data.user.id, `${plansPath}?to=2000-01-01`)).json() as unknown[];
+    assert.equal(beforeRange.length, 0);
+
+    // Renaming replaces the derived title and is searchable by the new one.
+    const renamed = await request(baseUrl, data.user.id, `${plansPath}/${bootstrap.id}`, { method: 'PATCH', body: JSON.stringify({ title: '  Connect the storefront  ' }) });
+    assert.equal(renamed.status, 200, await renamed.text());
+    const byNewTitle = await (await request(baseUrl, data.user.id, `${plansPath}?q=storefront`)).json() as Array<{ id: string; title: string }>;
+    assert.deepEqual(byNewTitle.map((item) => item.id), [bootstrap.id]);
+    assert.equal(byNewTitle[0].title, 'Connect the storefront');
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}/${bootstrap.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'x'.repeat(121) }) })).status, 400);
+
+    // Clearing the title restores the derived one rather than leaving it blank.
+    const cleared = await request(baseUrl, data.user.id, `${plansPath}/${bootstrap.id}`, { method: 'PATCH', body: JSON.stringify({ title: '' }) });
+    assert.equal((await cleared.json() as { title: string }).title, 'Initialisation');
+
+    // Archiving takes a task out of the working list without losing it.
+    const archived = await request(baseUrl, data.user.id, `${plansPath}/${flowPlan.id}/archive`, { method: 'POST' });
+    assert.equal(archived.status, 200, await archived.text());
+    assert.ok((await archived.json() as { archivedAt: string | null }).archivedAt);
+    const active = await (await request(baseUrl, data.user.id, plansPath)).json() as Array<{ id: string }>;
+    assert.deepEqual(active.map((item) => item.id), [bootstrap.id]);
+    const archiveView = await (await request(baseUrl, data.user.id, `${plansPath}?archived=true`)).json() as Array<{ id: string }>;
+    assert.deepEqual(archiveView.map((item) => item.id), [flowPlan.id]);
+    const both = await (await request(baseUrl, data.user.id, `${plansPath}?archived=all`)).json() as unknown[];
+    assert.equal(both.length, 2);
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}?archived=maybe`)).status, 400);
+
+    // A task being applied right now cannot be filed away out from under it.
+    await prisma.instrumentationPlan.update({ where: { id: bootstrap.id }, data: { status: 'APPLYING' } });
+    assert.equal((await request(baseUrl, data.user.id, `${plansPath}/${bootstrap.id}/archive`, { method: 'POST' })).status, 409);
+    await prisma.instrumentationPlan.update({ where: { id: bootstrap.id }, data: { status: 'PROPOSED' } });
+
+    const restored = await request(baseUrl, data.user.id, `${plansPath}/${flowPlan.id}/restore`, { method: 'POST' });
+    assert.equal(restored.status, 200);
+    assert.equal((await restored.json() as { archivedAt: string | null }).archivedAt, null);
+    assert.equal((await (await request(baseUrl, data.user.id, plansPath)).json() as unknown[]).length, 2);
+
+    // Another organisation's member cannot reach any of it.
+    assert.equal((await request(baseUrl, data.foreignUser.id, `${plansPath}/${bootstrap.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'theirs' }) })).status, 403);
+    assert.equal((await request(baseUrl, data.foreignUser.id, `${plansPath}/${flowPlan.id}/archive`, { method: 'POST' })).status, 403);
+
+    // Every one of those acts is in the organisation's audit history.
+    const audits = await prisma.auditLog.findMany({ where: { organizationId: data.organization.id }, orderBy: { createdAt: 'asc' } });
+    assert.deepEqual(audits.map((entry) => entry.action), ['INSTRUMENTATION_RENAMED', 'INSTRUMENTATION_RENAMED', 'INSTRUMENTATION_ARCHIVED', 'INSTRUMENTATION_RESTORED']);
+    assert.equal(audits.every((entry) => entry.userId === data.user.id), true);
+    assert.equal((audits[0].metadata as { title: string }).title, 'Connect the storefront');
+    assert.equal((audits[2].metadata as { planId: string }).planId, flowPlan.id);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await prisma.instrumentationPlan.deleteMany({ where: { workspaceId: data.workspace.id } });
+    await prisma.behaviorGraphVersion.deleteMany({ where: { graphId: flow.id } });
+    await prisma.behaviorGraph.deleteMany({ where: { id: flow.id } });
     await cleanup(data);
     await prisma.$disconnect();
   }

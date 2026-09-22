@@ -144,6 +144,9 @@ const IPC = {
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
   getInstrumentationPlan: 'tellann:instrumentation:plans:get',
+  renameInstrumentationPlan: 'tellann:instrumentation:plans:rename',
+  archiveInstrumentationPlan: 'tellann:instrumentation:plans:archive',
+  restoreInstrumentationPlan: 'tellann:instrumentation:plans:restore',
   approveInstrumentation: 'tellann:instrumentation:approve',
   rejectInstrumentation: 'tellann:instrumentation:reject',
   applyInstrumentation: 'tellann:instrumentation:apply',
@@ -346,7 +349,13 @@ contextBridge.exposeInMainWorld('tellann', {
   instrumentation: {
     detect: (input: unknown) => ipcRenderer.invoke(IPC.detectInstrumentation, input),
     propose: (input: unknown) => ipcRenderer.invoke(IPC.proposeInstrumentation, input),
-    list: (applicationId: string) => ipcRenderer.invoke(IPC.listInstrumentationPlans, applicationId),
+    list: (applicationId: string, filters?: unknown) => ipcRenderer.invoke(IPC.listInstrumentationPlans, applicationId, filters),
+    rename: (applicationId: string, planId: string, title: string | null) =>
+      ipcRenderer.invoke(IPC.renameInstrumentationPlan, { applicationId, planId, title }),
+    archive: (applicationId: string, planId: string) =>
+      ipcRenderer.invoke(IPC.archiveInstrumentationPlan, { applicationId, planId }),
+    restore: (applicationId: string, planId: string) =>
+      ipcRenderer.invoke(IPC.restoreInstrumentationPlan, { applicationId, planId }),
     get: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.getInstrumentationPlan, { applicationId, planId }),
     getLocalResult: (applicationId: string, planId: string) => ipcRenderer.invoke(IPC.getLocalInstrumentationResult, { applicationId, planId }),
     generateReport: (applicationId: string, planId: string, applicationName: string, environmentName: string) => ipcRenderer.invoke(IPC.generateInstrumentationReport, { applicationId, planId, applicationName, environmentName }),

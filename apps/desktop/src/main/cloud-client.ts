@@ -24,6 +24,7 @@ import type {
   IntentDraft,
   InstrumentationDetection,
   InstrumentationPlan,
+  InstrumentationPlanFilters,
   InstrumentationApplyResult,
   InstrumentationValidationResult,
   QAEvidenceEvent,
@@ -1696,9 +1697,52 @@ export class DesktopCloudClient {
     );
   }
 
-  async instrumentationPlans(applicationId: string): Promise<Json[]> {
+  async instrumentationPlans(
+    applicationId: string,
+    filters: InstrumentationPlanFilters = {},
+  ): Promise<Json[]> {
+    const query = new URLSearchParams();
+    if (filters.q) query.set("q", filters.q);
+    if (filters.status) query.set("status", filters.status);
+    if (filters.adapterId) query.set("adapterId", filters.adapterId);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.archived) query.set("archived", filters.archived);
+    const serialized = query.toString();
+    const suffix = serialized ? `?${serialized}` : "";
     return this.request(
-      `/v1/applications/${applicationId}/instrumentation/plans`,
+      `/v1/applications/${applicationId}/instrumentation/plans${suffix}`,
+    );
+  }
+
+  async renameInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+    title: string | null,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}`,
+      { method: "PATCH", body: JSON.stringify({ title }) },
+    );
+  }
+
+  async archiveInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/archive`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async restoreInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/restore`,
+      { method: "POST", body: JSON.stringify({}) },
     );
   }
 

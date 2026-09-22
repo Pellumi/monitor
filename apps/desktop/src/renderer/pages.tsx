@@ -11,6 +11,8 @@ import {
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowRight,
   BarChart3,
   BookOpenText,
@@ -8192,6 +8194,92 @@ function useOffQaBranchConfirmation(projectId: string | undefined) {
   return { confirmBranch, modal };
 }
 
+/**
+ * How a detected framework is written for a person. Adapter ids are how the
+ * instrumentation adapters identify themselves; they are not a name.
+ */
+const ADAPTER_LABELS: Record<string, string> = {
+  "react-vite": "React (Vite)",
+  nextjs: "Next.js",
+  sveltekit: "SvelteKit",
+  nuxt: "Nuxt",
+  astro: "Astro",
+  remix: "Remix",
+  angular: "Angular",
+  express: "Express",
+  fastify: "Fastify",
+  nestjs: "NestJS",
+  koa: "Koa",
+  hapi: "hapi",
+  django: "Django",
+  flask: "Flask",
+  fastapi: "FastAPI",
+  starlette: "Starlette",
+};
+
+function adapterLabel(adapterId: unknown) {
+  return ADAPTER_LABELS[String(adapterId)] ?? String(adapterId);
+}
+
+function taskStatusLabel(status: unknown) {
+  return String(status).toLowerCase().replaceAll("_", " ");
+}
+
+/** Every status a setup task can be filtered by, in lifecycle order. */
+const INSTRUMENTATION_STATUSES = [
+  "PROPOSED",
+  "APPROVED",
+  "APPLYING",
+  "APPLIED",
+  "VALIDATING",
+  "COMPLETED",
+  "VALIDATION_FAILED",
+  "STALE",
+  "REJECTED",
+  "FAILED",
+  "ROLLED_BACK",
+] as const;
+
+/**
+ * What a setup task is called.
+ *
+ * The cloud derives this — an initialisation task, or the name of the Flow a
+ * task sets up — and stores an operator's own wording when they rename one.
+ * The fallback here only covers a record fetched before that field existed.
+ */
+function taskTitle(record: Record<string, any>) {
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  if (title) return title;
+  const purpose = String(
+    record.purpose ?? (record.planJson as any)?.instrumentationPurpose ?? "BOOTSTRAP",
+  );
+  return purpose === "FLOW" ? "Flow setup" : "Initialisation";
+}
+
+/**
+ * Which tasks belong on this page.
+ *
+ * Without a Flow in the URL the page is about connecting Tellann, so only the
+ * bootstrap tasks are relevant. With one, the page is about that Flow version —
+ * and, until the SDK handshake lands, the bootstrap task that has to happen
+ * first.
+ */
+function planInScope(
+  record: Record<string, any>,
+  scope: { flowId?: string; flowVersionId?: string; tellannConnected: boolean },
+) {
+  const purpose = String(
+    record.purpose ?? (record.planJson as any)?.instrumentationPurpose ?? "BOOTSTRAP",
+  );
+  if (!scope.flowId) return purpose === "BOOTSTRAP";
+  if (purpose !== "FLOW") return !scope.tellannConnected;
+  return (
+    String(record.flowId ?? (record.planJson as any)?.flowId ?? "") === scope.flowId &&
+    String(record.flowVersionId ?? (record.planJson as any)?.flowVersionId ?? "") ===
+      scope.flowVersionId
+  );
+}
+
 export function InstrumentationPage() {
   const {
     projectId,
@@ -8641,35 +8729,8 @@ export function InstrumentationPage() {
       setCreatingProposal(false);
     }
   };
-  const visiblePlans = flowId
-    ? plans.filter((record) => {
-        const purpose = String(
-          record.purpose ??
-            (record.planJson as any)?.instrumentationPurpose ??
-            "BOOTSTRAP",
-        );
-        // Until the SDK handshake lands, the only actionable task is the
-        // BOOTSTRAP proposal that connects Tellann to this project; after that
-        // only tasks scoped to this Flow version are relevant.
-        if (purpose !== "FLOW") return !tellannConnected;
-        return (
-          String(record.flowId ?? (record.planJson as any)?.flowId ?? "") ===
-            flowId &&
-          String(
-            record.flowVersionId ??
-              (record.planJson as any)?.flowVersionId ??
-              "",
-          ) === flowVersionId
-        );
-      })
-    : plans.filter(
-        (record) =>
-          String(
-            record.purpose ??
-              (record.planJson as any)?.instrumentationPurpose ??
-              "BOOTSTRAP",
-          ) === "BOOTSTRAP",
-      );
+  const historyScope = { flowId, flowVersionId, tellannConnected };
+  const visiblePlans = plans.filter((record) => planInScope(record, historyScope));
   const proposedPlans = visiblePlans.filter(
     (plan) => String(plan.status) === "PROPOSED",
   );
@@ -8814,28 +8875,6 @@ export function InstrumentationPage() {
   const activeTask = visiblePlans.find((record) =>
     inProgressStatuses.has(String(record.status)),
   );
-  const adapterLabels: Record<string, string> = {
-    "react-vite": "React (Vite)",
-    nextjs: "Next.js",
-    sveltekit: "SvelteKit",
-    nuxt: "Nuxt",
-    astro: "Astro",
-    remix: "Remix",
-    angular: "Angular",
-    express: "Express",
-    fastify: "Fastify",
-    nestjs: "NestJS",
-    koa: "Koa",
-    hapi: "hapi",
-    django: "Django",
-    flask: "Flask",
-    fastapi: "FastAPI",
-    starlette: "Starlette",
-  };
-  const adapterLabel = (adapterId: unknown) =>
-    adapterLabels[String(adapterId)] ?? String(adapterId);
-  const taskStatusLabel = (status: unknown) =>
-    String(status).toLowerCase().replaceAll("_", " ");
   const taskHref = (record: Record<string, any>) =>
     `/applications/${projectId}/instrumentation/plans/${record.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`;
   const supportedDetections = detections.filter((item) => item.supported);
@@ -9550,43 +9589,14 @@ export function InstrumentationPage() {
       ) : null}
 
       {/* ── History, out of the way ─────────────────────────────────────── */}
-      {visiblePlans.length ? (
-        <details className="content-card setup-history mt-4">
-          <summary>
-            Setup history · {visiblePlans.length} task
-            {visiblePlans.length === 1 ? "" : "s"}
-          </summary>
-          <div className="data-table mt-3">
-            <div className="table-head">
-              <span>Framework</span>
-              <span>Status</span>
-              <span>Created</span>
-            </div>
-            {visiblePlans.map((plan) => (
-              <Link
-                className="table-row"
-                key={String(plan.id)}
-                to={taskHref(plan)}
-              >
-                <span>
-                  <strong>{adapterLabel(plan.adapterId)}</strong>
-                  <small>
-                    {String(plan.frameworkVersion ?? "unknown version")}
-                  </small>
-                </span>
-                <span>
-                  <Status>{taskStatusLabel(plan.status)}</Status>
-                </span>
-                <span>
-                  {plan.createdAt
-                    ? new Date(String(plan.createdAt)).toLocaleString()
-                    : "—"}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </details>
-      ) : null}
+      <SetupHistoryPanel
+        applicationId={projectId}
+        flowId={flowId}
+        flowVersionId={flowVersionId}
+        tellannConnected={tellannConnected}
+        taskHref={taskHref}
+        onChanged={() => void refreshPlans()}
+      />
 
       <EntitlementModal
         isOpen={entitlementModalOpen}
@@ -9595,6 +9605,446 @@ export function InstrumentationPage() {
         onClose={() => setEntitlementModalOpen(false)}
       />
     </Page>
+  );
+}
+
+type SetupHistoryFilters = {
+  q: string;
+  status: string;
+  adapterId: string;
+  from: string;
+  to: string;
+  archived: "false" | "true";
+};
+
+const EMPTY_SETUP_HISTORY_FILTERS: SetupHistoryFilters = {
+  q: "",
+  status: "",
+  adapterId: "",
+  from: "",
+  to: "",
+  archived: "false",
+};
+
+/**
+ * Every setup task this application has, searchable and filed.
+ *
+ * The list is fetched with its filters rather than filtered on screen: the
+ * cloud holds the full history, and a title search has to reach the derived
+ * names — an initialisation task, or the Flow a task sets up — which only the
+ * cloud can resolve. The page's own working list stays separate and unfiltered,
+ * so narrowing the history never changes which task the page is acting on.
+ */
+function SetupHistoryPanel({
+  applicationId,
+  flowId,
+  flowVersionId,
+  tellannConnected,
+  taskHref,
+  onChanged,
+}: {
+  applicationId: string;
+  flowId?: string;
+  flowVersionId?: string;
+  tellannConnected: boolean;
+  taskHref(record: Record<string, any>): string;
+  onChanged(): void;
+}) {
+  const {
+    listInstrumentationPlans,
+    renameInstrumentationPlan,
+    archiveInstrumentationPlan,
+    restoreInstrumentationPlan,
+  } = useProject();
+  const [filters, setFilters] = useState<SetupHistoryFilters>(
+    EMPTY_SETUP_HISTORY_FILTERS,
+  );
+  const [rows, setRows] = useState<Record<string, any>[]>([]);
+  const [frameworks, setFrameworks] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Record<string, any> | null>(
+    null,
+  );
+  const [archiveTarget, setArchiveTarget] = useState<Record<
+    string,
+    any
+  > | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const archivedView = filters.archived === "true";
+
+  const load = useCallback(async () => {
+    if (!applicationId) return;
+    try {
+      const records = await listInstrumentationPlans(applicationId, {
+        ...(filters.q ? { q: filters.q } : {}),
+        ...(filters.status ? { status: filters.status as never } : {}),
+        ...(filters.adapterId ? { adapterId: filters.adapterId as never } : {}),
+        ...(filters.from ? { from: filters.from } : {}),
+        ...(filters.to ? { to: filters.to } : {}),
+        archived: filters.archived,
+      });
+      const scoped = (records as Record<string, any>[]).filter((record) =>
+        planInScope(record, { flowId, flowVersionId, tellannConnected }),
+      );
+      setRows(scoped);
+      // Keep the framework options stable while the list is being narrowed: a
+      // dropdown that collapses to whatever survived the current filter cannot
+      // be used to change that filter.
+      setFrameworks((current) =>
+        [
+          ...new Set([
+            ...current,
+            ...scoped.map((record) => String(record.adapterId)),
+          ]),
+        ].sort(),
+      );
+      setError(null);
+    } catch (cause) {
+      setError(normalizeDesktopError(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    applicationId,
+    filters,
+    flowId,
+    flowVersionId,
+    listInstrumentationPlans,
+    tellannConnected,
+  ]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), filters.q ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [load, filters.q]);
+
+  const update = (patch: Partial<SetupHistoryFilters>) =>
+    setFilters((current) => ({ ...current, ...patch }));
+
+  const filtered = Boolean(
+    filters.q || filters.status || filters.adapterId || filters.from || filters.to,
+  );
+
+  const act = async (
+    record: Record<string, any>,
+    action: () => Promise<unknown>,
+  ) => {
+    setPendingId(String(record.id));
+    setError(null);
+    try {
+      await action();
+      await load();
+      onChanged();
+    } catch (cause) {
+      setError(normalizeDesktopError(cause));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <>
+      <RenameTaskModal
+        record={renameTarget}
+        busy={pendingId === String(renameTarget?.id ?? "")}
+        onCancel={() => setRenameTarget(null)}
+        onSave={(title) => {
+          const target = renameTarget!;
+          setRenameTarget(null);
+          void act(target, () =>
+            renameInstrumentationPlan(applicationId, String(target.id), title),
+          );
+        }}
+      />
+      <ConfirmModal
+        isOpen={Boolean(archiveTarget)}
+        title={`Archive "${archiveTarget ? taskTitle(archiveTarget) : ""}"?`}
+        description="Tellann keeps this task and everything recorded against it, but takes it out of the setup list and out of the manifests you can start a QA run against. You can restore it from Archived at any time."
+        confirmLabel="Archive task"
+        cancelLabel="Keep it"
+        variant="primary"
+        busy={pendingId === String(archiveTarget?.id ?? "")}
+        onConfirm={() => {
+          const target = archiveTarget!;
+          setArchiveTarget(null);
+          void act(target, () =>
+            archiveInstrumentationPlan(applicationId, String(target.id)),
+          );
+        }}
+        onCancel={() => setArchiveTarget(null)}
+      />
+      <details className="content-card setup-history mt-4">
+        <summary>
+          {archivedView ? "Archived setup tasks" : "Setup history"}
+          {loading
+            ? ""
+            : ` · ${rows.length} task${rows.length === 1 ? "" : "s"}`}
+        </summary>
+
+        <div className="setup-history-filters mt-3">
+          <label className="setup-history-field setup-history-search">
+            <span>Title</span>
+            <input
+              type="search"
+              value={filters.q}
+              placeholder="Search by title"
+              onChange={(event) => update({ q: event.target.value })}
+            />
+          </label>
+          <label className="setup-history-field">
+            <span>Status</span>
+            <select
+              value={filters.status}
+              onChange={(event) => update({ status: event.target.value })}
+            >
+              <option value="">Any status</option>
+              {INSTRUMENTATION_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {formatEnum(status)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="setup-history-field">
+            <span>Framework</span>
+            <select
+              value={filters.adapterId}
+              onChange={(event) => update({ adapterId: event.target.value })}
+            >
+              <option value="">Any framework</option>
+              {frameworks.map((adapterId) => (
+                <option key={adapterId} value={adapterId}>
+                  {adapterLabel(adapterId)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="setup-history-field">
+            <span>Created from</span>
+            <input
+              type="date"
+              value={filters.from}
+              max={filters.to || undefined}
+              onChange={(event) => update({ from: event.target.value })}
+            />
+          </label>
+          <label className="setup-history-field">
+            <span>Created to</span>
+            <input
+              type="date"
+              value={filters.to}
+              min={filters.from || undefined}
+              onChange={(event) => update({ to: event.target.value })}
+            />
+          </label>
+          <div className="setup-history-filter-actions">
+            <button
+              type="button"
+              className={`button${archivedView ? " primary" : ""}`}
+              onClick={() =>
+                update({ archived: archivedView ? "false" : "true" })
+              }
+            >
+              <Archive size={14} />
+              {archivedView ? "Viewing archived" : "Archived"}
+            </button>
+            {filtered ? (
+              <button
+                type="button"
+                className="button"
+                onClick={() =>
+                  setFilters({
+                    ...EMPTY_SETUP_HISTORY_FILTERS,
+                    archived: filters.archived,
+                  })
+                }
+              >
+                <X size={14} />
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {error ? (
+          <div className="context-banner mt-3" role="alert">
+            <AlertTriangle size={15} />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        {rows.length ? (
+          <div className="data-table mt-3">
+            <div className="table-head">
+              <span>Title</span>
+              <span>Status</span>
+              <span>Created</span>
+              <span>Actions</span>
+            </div>
+            {rows.map((plan) => {
+              const busy = pendingId === String(plan.id);
+              return (
+                <div className="table-row" key={String(plan.id)}>
+                  <span>
+                    <Link className="setup-history-title" to={taskHref(plan)}>
+                      {taskTitle(plan)}
+                    </Link>
+                    <small>
+                      {adapterLabel(plan.adapterId)} ·{" "}
+                      {String(plan.frameworkVersion ?? "unknown version")}
+                    </small>
+                  </span>
+                  <span>
+                    <Status>{taskStatusLabel(plan.status)}</Status>
+                  </span>
+                  <span>
+                    {plan.createdAt
+                      ? new Date(String(plan.createdAt)).toLocaleString()
+                      : "—"}
+                  </span>
+                  <span className="setup-history-row-actions">
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy}
+                      onClick={() => setRenameTarget(plan)}
+                    >
+                      <Pencil size={14} />
+                      Rename
+                    </button>
+                    {plan.archivedAt ? (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(plan, () =>
+                            restoreInstrumentationPlan(
+                              applicationId,
+                              String(plan.id),
+                            ),
+                          )
+                        }
+                      >
+                        <ArchiveRestore size={14} />
+                        {busy ? "Restoring…" : "Restore"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={busy}
+                        onClick={() => setArchiveTarget(plan)}
+                      >
+                        <Archive size={14} />
+                        Archive
+                      </button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="muted mt-3">
+            {loading
+              ? "Loading setup tasks…"
+              : filtered
+                ? "No setup tasks match these filters."
+                : archivedView
+                  ? "Nothing is archived."
+                  : "No setup tasks yet."}
+          </p>
+        )}
+      </details>
+    </>
+  );
+}
+
+/**
+ * Rename a setup task. Submitting an empty name restores the derived one —
+ * clearing the field is how an operator undoes their own wording.
+ */
+function RenameTaskModal({
+  record,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  record: Record<string, any> | null;
+  busy: boolean;
+  onCancel(): void;
+  onSave(title: string | null): void;
+}) {
+  const [value, setValue] = useState("");
+  const recordId = record ? String(record.id) : "";
+  useEffect(() => {
+    if (record) setValue(taskTitle(record));
+    // Re-seed only when a different task is opened, so typing is not undone by
+    // a re-render of the list behind the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordId]);
+  useEffect(() => {
+    if (!record) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onCancel, record]);
+  if (!record) return null;
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-task-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy) onSave(value.trim() ? value.trim() : null);
+        }}
+      >
+        <h2 id="rename-task-title">Rename this setup task</h2>
+        <p>
+          This is what the task is called everywhere in Tellann. Leave it empty
+          to go back to its default name.
+        </p>
+        <label className="dialog-field">
+          <span>Title</span>
+          <input
+            autoFocus
+            maxLength={120}
+            value={value}
+            disabled={busy}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </label>
+        <div className="desktop-modal-actions">
+          <button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? "Saving…" : "Save title"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -10234,8 +10684,8 @@ export function InstrumentationDetailPage() {
 
   return (
     <Page
-      title={`Instrumentation · ${plan.adapterId}`}
-      description="Review scope, commands, evidence, local diff, validation, and rollback status."
+      title={taskTitle(record)}
+      description={`${adapterLabel(plan.adapterId)} · Review scope, commands, evidence, local diff, validation, and rollback status.`}
       actions={
         <Status>
           {validationSucceeded ? "COMPLETED" : String(record.status)}
@@ -11319,14 +11769,16 @@ export function NewRunPage() {
   }, [environmentId, getDeclaredFlows, projectId, requestedFlowId]);
   useEffect(() => {
     if (!projectId) return;
-    void listInstrumentationPlans(projectId)
+    // `archived: false` is the default, and it is what keeps a task the operator
+    // filed away out of the manifests a run can be started against.
+    void listInstrumentationPlans(projectId, { archived: "false" })
       .then((plans) => {
         const manifests = plans.flatMap((plan: any) =>
           ((plan.patchSets ?? []) as any[])
             .filter((patch) => patch.status === "VALIDATED")
             .map((patch) => ({
               id: String(patch.id),
-              label: `${String(plan.adapterId)} · ${new Date(String(patch.validatedAt ?? patch.createdAt)).toLocaleString()}`,
+              label: `${taskTitle(plan)} · ${new Date(String(patch.validatedAt ?? patch.createdAt)).toLocaleString()}`,
             })),
         );
         setInstrumentationManifests(manifests);

@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { Prisma, type PrismaClient } from '@tellann/db';
+import { AuditAction, Prisma, type PrismaClient } from '@tellann/db';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import { INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
 import { flowInitializationResetOnRejection } from './instrumentation-flow-reset';
+import { INITIALISATION_TITLE, normalizeInstrumentationTitle, resolveInstrumentationTitle } from './instrumentation-titles';
 
 type InstrumentationRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: InstrumentationRequest, res: Response, next: NextFunction) => unknown;
@@ -27,6 +28,9 @@ const PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'V
 // fresh plan rather than handed back.
 const RESUMABLE_PLAN_STATUSES = new Set(['PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'VALIDATION_FAILED', 'COMPLETED']);
 const ADAPTERS = new Set<string>(INSTRUMENTATION_FRAMEWORK_IDS);
+// A task that is mid-flight on someone's machine cannot be filed away: archiving
+// it would hide the only place its progress and its rollback are reachable from.
+const ARCHIVE_BLOCKING_STATUSES = new Set(['APPLYING', 'VALIDATING']);
 const SDK_PACKAGES = new Set(['@tellann/frontend-sdk', '@tellann/backend-sdk']);
 const PACKAGE_MANAGERS = new Set(['pnpm', 'pnpm.cmd', 'npm', 'npm.cmd', 'yarn', 'yarn.cmd', 'bun', 'bun.exe']);
 const COMMAND_ENVIRONMENT_KEYS = new Set(['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
@@ -99,6 +103,70 @@ export function createInstrumentationRouter(input: {
 
   function audit(organizationId: string, applicationId: string, userId: string, eventName: string, metadata: Record<string, unknown>) {
     return prisma.activationEvent.create({ data: { organizationId, applicationId, eventName, metadata: { ...metadata, userId } } });
+  }
+
+  /**
+   * Record an operator action in the organisation's audit history.
+   *
+   * Activation events above measure onboarding; they are not what Settings →
+   * Audit Logs reads. Renaming, archiving and restoring are deliberate acts on
+   * a governed record, so they are written where an administrator reviewing the
+   * organisation will actually find them.
+   */
+  function auditLog(
+    req: InstrumentationRequest,
+    organizationId: string,
+    action: AuditAction,
+    metadata: Record<string, unknown>,
+  ) {
+    return prisma.auditLog.create({
+      data: {
+        userId: req.user!.id,
+        organizationId,
+        action,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get('user-agent') ?? null,
+        metadata: metadata as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /**
+   * Attach each task's display name.
+   *
+   * A Flow task is named after its Flow, so the names are looked up in one
+   * query for the whole page rather than per row; a task the operator renamed
+   * already carries its own title and needs no lookup at all.
+   */
+  async function withTitles<T extends { title?: string | null; purpose?: string | null; flowId?: string | null }>(plans: T[]) {
+    const flowIds = [...new Set(plans.filter((plan) => !plan.title?.trim() && plan.flowId).map((plan) => plan.flowId as string))];
+    const flows = flowIds.length
+      ? await prisma.behaviorGraph.findMany({ where: { id: { in: flowIds } }, select: { id: true, name: true } })
+      : [];
+    const names = new Map(flows.map((flow) => [flow.id, flow.name]));
+    return plans.map((plan) => ({ ...plan, title: resolveInstrumentationTitle(plan, plan.flowId ? names.get(plan.flowId) : null) }));
+  }
+
+  /**
+   * Search tasks by the title the operator sees, not only the one stored.
+   *
+   * Most tasks have no stored title — theirs is derived from what the task does
+   * — so a plain `title contains` would find almost nothing. The derived names
+   * are folded into the query instead: "init" matches every initialisation
+   * task, and a Flow's name matches the tasks that set that Flow up.
+   */
+  async function titleSearch(applicationId: string, query: string): Promise<Prisma.InstrumentationPlanWhereInput> {
+    const conditions: Prisma.InstrumentationPlanWhereInput[] = [{ title: { contains: query, mode: 'insensitive' } }];
+    if (INITIALISATION_TITLE.toLowerCase().includes(query.toLowerCase())) {
+      conditions.push({ title: null, purpose: 'BOOTSTRAP' });
+    }
+    const flows = await prisma.behaviorGraph.findMany({
+      where: { applicationId, name: { contains: query, mode: 'insensitive' } },
+      select: { id: true },
+      take: 200,
+    });
+    if (flows.length) conditions.push({ title: null, flowId: { in: flows.map((flow) => flow.id) } });
+    return { OR: conditions };
   }
 
   async function capabilityFor(
@@ -217,19 +285,110 @@ export function createInstrumentationRouter(input: {
     res.status(201).json(record);
   });
 
+  /**
+   * List setup tasks, filtered the way the operator asked for them.
+   *
+   * `archived` decides which shelf is being read: the working list by default,
+   * the archive with `true`, and both with `all`. Everything else narrows that
+   * shelf — by title, status, framework, or the window the task was created in.
+   */
   router.get('/v1/applications/:appId/instrumentation/plans', async (req: InstrumentationRequest, res: Response) => {
     const app = await context(req, res);
     if (!app) return;
+    const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+    const status = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : '';
+    const adapterId = typeof req.query.adapterId === 'string' ? req.query.adapterId.trim() : '';
+    const archived = typeof req.query.archived === 'string' ? req.query.archived.trim().toLowerCase() : 'false';
+    if (status && !PLAN_STATUSES.has(status)) return res.status(400).json({ error: 'INVALID_INSTRUMENTATION_STATUS' });
+    if (adapterId && !ADAPTERS.has(adapterId)) return res.status(400).json({ error: 'INVALID_INSTRUMENTATION_ADAPTER' });
+    if (!['true', 'false', 'all'].includes(archived)) return res.status(400).json({ error: 'INVALID_ARCHIVED_FILTER' });
+    // A date-only `to` means "up to the end of that day", which is what someone
+    // picking a range in a date field means by it.
+    const from = typeof req.query.from === 'string' && req.query.from.trim() ? new Date(req.query.from.trim()) : null;
+    const rawTo = typeof req.query.to === 'string' ? req.query.to.trim() : '';
+    const to = rawTo ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(rawTo) ? `${rawTo}T23:59:59.999Z` : rawTo) : null;
+    if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+      return res.status(400).json({ error: 'INVALID_INSTRUMENTATION_DATE_RANGE' });
+    }
+    const where: Prisma.InstrumentationPlanWhereInput = {
+      workspace: { applicationId: app.id, organizationId: app.organizationId },
+      ...(archived === 'all' ? {} : archived === 'true' ? { archivedAt: { not: null } } : { archivedAt: null }),
+      ...(status ? { status: status as never } : {}),
+      ...(adapterId ? { adapterId } : {}),
+      ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+      ...(query ? await titleSearch(app.id, query) : {}),
+    };
     const plans = await prisma.instrumentationPlan.findMany({
-      where: { workspace: { applicationId: app.id, organizationId: app.organizationId } },
+      where,
       include: { patchSets: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { createdAt: 'desc' }, take: 100,
     });
-    res.json(plans);
+    res.json(await withTitles(plans));
   });
 
   router.get('/v1/applications/:appId/instrumentation/plans/:planId', async (req: InstrumentationRequest, res: Response) => {
     const plan = await planFor(req, res);
-    if (plan) res.json(plan);
+    if (plan) res.json((await withTitles([plan]))[0]);
+  });
+
+  /** Rename a setup task. An empty title restores the derived one. */
+  router.patch('/v1/applications/:appId/instrumentation/plans/:planId', async (req: InstrumentationRequest, res: Response) => {
+    const plan = await planFor(req, res);
+    if (!plan) return;
+    const title = normalizeInstrumentationTitle(req.body?.title);
+    if (title === undefined) return res.status(400).json({ error: 'INVALID_INSTRUMENTATION_TITLE' });
+    const previous = (await withTitles([plan]))[0].title;
+    const updated = await prisma.instrumentationPlan.update({ where: { id: plan.id }, data: { title } });
+    const [serialized] = await withTitles([{ ...updated, patchSets: plan.patchSets }]);
+    if (serialized.title !== previous) {
+      await auditLog(req, plan.workspace.organizationId, AuditAction.INSTRUMENTATION_RENAMED, {
+        planId: plan.id, applicationId: plan.workspace.applicationId, adapterId: plan.adapterId,
+        purpose: plan.purpose, previousTitle: previous, title: serialized.title, derived: title === null,
+      });
+      await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_RENAMED', { planId: plan.id, title: serialized.title });
+    }
+    res.json(serialized);
+  });
+
+  /**
+   * Archive a setup task: it keeps its history and can be restored, but it
+   * leaves every working list — including the manifests a QA run can be started
+   * against, which is the point of filing one away.
+   */
+  router.post('/v1/applications/:appId/instrumentation/plans/:planId/archive', async (req: InstrumentationRequest, res: Response) => {
+    const plan = await planFor(req, res);
+    if (!plan) return;
+    if (ARCHIVE_BLOCKING_STATUSES.has(plan.status)) return res.status(409).json({ error: 'PLAN_IN_PROGRESS' });
+    if (plan.archivedAt) return res.json((await withTitles([plan]))[0]);
+    const updated = await prisma.instrumentationPlan.update({
+      where: { id: plan.id },
+      data: { archivedAt: new Date(), archivedByUserId: req.user!.id },
+    });
+    const [serialized] = await withTitles([{ ...updated, patchSets: plan.patchSets }]);
+    await auditLog(req, plan.workspace.organizationId, AuditAction.INSTRUMENTATION_ARCHIVED, {
+      planId: plan.id, applicationId: plan.workspace.applicationId, adapterId: plan.adapterId,
+      purpose: plan.purpose, status: plan.status, title: serialized.title,
+    });
+    await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_ARCHIVED', { planId: plan.id, title: serialized.title });
+    res.json(serialized);
+  });
+
+  /** Restore an archived setup task to the working list. */
+  router.post('/v1/applications/:appId/instrumentation/plans/:planId/restore', async (req: InstrumentationRequest, res: Response) => {
+    const plan = await planFor(req, res);
+    if (!plan) return;
+    if (!plan.archivedAt) return res.json((await withTitles([plan]))[0]);
+    const updated = await prisma.instrumentationPlan.update({
+      where: { id: plan.id },
+      data: { archivedAt: null, archivedByUserId: null },
+    });
+    const [serialized] = await withTitles([{ ...updated, patchSets: plan.patchSets }]);
+    await auditLog(req, plan.workspace.organizationId, AuditAction.INSTRUMENTATION_RESTORED, {
+      planId: plan.id, applicationId: plan.workspace.applicationId, adapterId: plan.adapterId,
+      purpose: plan.purpose, status: plan.status, title: serialized.title,
+      archivedAt: plan.archivedAt.toISOString(),
+    });
+    await audit(plan.workspace.organizationId, plan.workspace.applicationId, req.user!.id, 'INSTRUMENTATION_RESTORED', { planId: plan.id, title: serialized.title });
+    res.json(serialized);
   });
 
   router.post('/v1/applications/:appId/instrumentation/plans/:planId/approve', async (req: InstrumentationRequest, res: Response) => {

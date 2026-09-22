@@ -1176,6 +1176,23 @@ export const InstrumentationPlanStatusSchema = z.enum([
   'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
   'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
 ]);
+/**
+ * How a setup-task list is narrowed before it is fetched.
+ *
+ * `q` matches the title the operator sees, derived titles included; `archived`
+ * chooses the working list (`false`, the default), the archive (`true`), or
+ * both (`all`).
+ */
+export const InstrumentationPlanFiltersSchema = z.object({
+  q: z.string().max(200).optional(),
+  status: InstrumentationPlanStatusSchema.optional(),
+  adapterId: InstrumentationFrameworkIdSchema.optional(),
+  /** Inclusive ISO date (YYYY-MM-DD) or datetime for the created-at range. */
+  from: z.string().min(1).optional(),
+  to: z.string().min(1).optional(),
+  archived: z.enum(['true', 'false', 'all']).optional(),
+});
+export type InstrumentationPlanFilters = z.infer<typeof InstrumentationPlanFiltersSchema>;
 export const StructuredInstrumentationCommandSchema = z.object({
   id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(),
   timeoutMs: z.number().int().min(1_000).max(30 * 60_000), allowedEnvironmentKeys: z.array(z.string()),
@@ -1397,6 +1414,11 @@ export const IPC = {
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
   getInstrumentationPlan: 'tellann:instrumentation:plans:get',
+  /** renderer → main: rename a setup task (null title restores the derived one). */
+  renameInstrumentationPlan: 'tellann:instrumentation:plans:rename',
+  /** renderer → main: file a setup task away / bring it back. */
+  archiveInstrumentationPlan: 'tellann:instrumentation:plans:archive',
+  restoreInstrumentationPlan: 'tellann:instrumentation:plans:restore',
   approveInstrumentation: 'tellann:instrumentation:approve',
   rejectInstrumentation: 'tellann:instrumentation:reject',
   applyInstrumentation: 'tellann:instrumentation:apply',

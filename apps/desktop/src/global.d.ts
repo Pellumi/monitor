@@ -27,6 +27,7 @@ import type {
   IntentDraftJob,
   IntentDraftJobCreated,
   InstrumentationDetection,
+  InstrumentationPlanFilters,
   InstrumentationValidationResult,
   QAInteractionMode,
   QAMentionableMember,
@@ -276,8 +277,12 @@ declare global {
           detections: InstrumentationDetection[];
         }>;
         propose(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
-        list(applicationId: string): Promise<Record<string, unknown>[]>;
+        list(applicationId: string, filters?: InstrumentationPlanFilters): Promise<Record<string, unknown>[]>;
         get(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+        /** Rename a setup task. A null title restores the derived one. */
+        rename(applicationId: string, planId: string, title: string | null): Promise<Record<string, unknown>>;
+        archive(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+        restore(applicationId: string, planId: string): Promise<Record<string, unknown>>;
         getLocalResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
         generateReport(applicationId: string, planId: string, applicationName: string, environmentName: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string; sourceAdded?: boolean; sourceStatus?: string; sourceError?: string }>;
         approve(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;

@@ -33,6 +33,7 @@ import type {
   IntentDraftJob,
   IntentDraftJobCreated,
   InstrumentationDetection,
+  InstrumentationPlanFilters,
   InstrumentationValidationResult,
   QAInteractionMode,
 } from '@tellann/desktop-contracts';
@@ -190,7 +191,11 @@ type DesktopContextValue = {
   correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
   detectInstrumentation(input: InstrumentationEnvironmentInput): Promise<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>;
   proposeInstrumentation(input: InstrumentationEnvironmentInput & { adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
-  listInstrumentationPlans(applicationId: string): Promise<Record<string, unknown>[]>;
+  listInstrumentationPlans(applicationId: string, filters?: InstrumentationPlanFilters): Promise<Record<string, unknown>[]>;
+  /** Rename a setup task. A null title restores the derived one. */
+  renameInstrumentationPlan(applicationId: string, planId: string, title: string | null): Promise<Record<string, unknown>>;
+  archiveInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+  restoreInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   getInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   getLocalInstrumentationResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
   approveInstrumentation(input: InstrumentationEnvironmentInput & { planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
@@ -719,7 +724,10 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     correctIntentDraft: (applicationId, draftId, correction) => perform(() => bridge().intent.correctDraft(applicationId, draftId, correction)),
     detectInstrumentation: (input) => perform(() => bridge().instrumentation.detect(input)),
     proposeInstrumentation: (input) => perform(() => bridge().instrumentation.propose(input)),
-    listInstrumentationPlans: (applicationId) => bridge().instrumentation.list(applicationId),
+    listInstrumentationPlans: (applicationId, filters) => bridge().instrumentation.list(applicationId, filters),
+    renameInstrumentationPlan: (applicationId, planId, title) => perform(() => bridge().instrumentation.rename(applicationId, planId, title)),
+    archiveInstrumentationPlan: (applicationId, planId) => perform(() => bridge().instrumentation.archive(applicationId, planId)),
+    restoreInstrumentationPlan: (applicationId, planId) => perform(() => bridge().instrumentation.restore(applicationId, planId)),
     getInstrumentationPlan: (applicationId, planId) => bridge().instrumentation.get(applicationId, planId),
     getLocalInstrumentationResult: (applicationId, planId) => bridge().instrumentation.getLocalResult(applicationId, planId),
     approveInstrumentation: (input) => perform(() => bridge().instrumentation.approve(input)),

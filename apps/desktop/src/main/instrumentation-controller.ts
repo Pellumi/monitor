@@ -8,7 +8,10 @@ import {
   resolveWithinWorkspace,
   validateStructuredCommand,
 } from "@tellann/agent-policy";
-import type { RepositorySnapshotSummary } from "@tellann/desktop-contracts";
+import type {
+  InstrumentationPlanFilters,
+  RepositorySnapshotSummary,
+} from "@tellann/desktop-contracts";
 import {
   assignFlowCheckpoints,
   createApprovalHash,
@@ -567,9 +570,28 @@ export class InstrumentationController {
     });
   }
 
-  list(applicationId: string) {
+  list(applicationId: string, filters: InstrumentationPlanFilters = {}) {
     assertUuid(applicationId, "application_id");
-    return this.cloud.instrumentationPlans(applicationId);
+    return this.cloud.instrumentationPlans(applicationId, filters);
+  }
+
+  /** Rename a setup task. A null title restores the derived one. */
+  async rename(applicationId: string, planId: string, title: string | null) {
+    assertUuid(applicationId, "application_id");
+    assertUuid(planId, "plan_id");
+    return this.cloud.renameInstrumentationPlan(applicationId, planId, title);
+  }
+
+  async archive(applicationId: string, planId: string) {
+    assertUuid(applicationId, "application_id");
+    assertUuid(planId, "plan_id");
+    return this.cloud.archiveInstrumentationPlan(applicationId, planId);
+  }
+
+  async restore(applicationId: string, planId: string) {
+    assertUuid(applicationId, "application_id");
+    assertUuid(planId, "plan_id");
+    return this.cloud.restoreInstrumentationPlan(applicationId, planId);
   }
 
   get(applicationId: string, planId: string) {

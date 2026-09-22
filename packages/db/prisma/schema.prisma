@@ -2448,6 +2448,10 @@ model InstrumentationPlan {
   createdByUserId       String
   environmentId         String?
   purpose               InstrumentationPurpose    @default(BOOTSTRAP)
+  // What the operator calls this task. Null means the title is derived: an
+  // initialisation task is "Initialisation", a Flow task is named after its
+  // Flow. Renaming stores the operator's own wording here.
+  title                 String?
   flowId                String?
   flowVersionId         String?
   deviceSessionId       String?
@@ -2478,6 +2482,10 @@ model InstrumentationPlan {
   approvedAt            DateTime?
   expiresAt             DateTime?
   completedAt           DateTime?
+  // Archived tasks stay readable and restorable but are kept out of every
+  // working list — including the patch sets offered when a QA run is started.
+  archivedAt            DateTime?
+  archivedByUserId      String?
   createdAt             DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
 
@@ -2488,6 +2496,7 @@ model InstrumentationPlan {
   @@index([workspaceId, status])
   @@index([environmentId, status])
   @@index([flowId, flowVersionId, status])
+  @@index([workspaceId, archivedAt])
 }
 
 model InstrumentationCapability {
@@ -2896,6 +2905,9 @@ enum AuditAction {
   INSTRUMENTATION_VALIDATED
   INSTRUMENTATION_ROLLED_BACK
   INSTRUMENTATION_FAILED
+  INSTRUMENTATION_RENAMED
+  INSTRUMENTATION_ARCHIVED
+  INSTRUMENTATION_RESTORED
 
   // ─── API Keys ─────────────────────────────────────
   API_KEY_CREATED
