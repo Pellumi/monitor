@@ -18,7 +18,8 @@ export * from './flow-mapping';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',
-  'vendor', '.venv', 'venv', '__pycache__', 'target', 'bin', 'obj',
+  'vendor', '.venv', 'venv', 'env', '__pycache__', '.tox', '.nox', '.mypy_cache',
+  '.pytest_cache', '.ruff_cache', 'site-packages', 'target', 'bin', 'obj',
 ]);
 const DOC_EXTENSIONS = new Set(['.md', '.txt', '.pdf', '.docx', '.html', '.htm', '.yaml', '.yml', '.json']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.php', '.cs', '.java']);
