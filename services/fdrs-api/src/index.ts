@@ -943,7 +943,10 @@ app.get('/v1/applications/:appId/flows', async (req: Request, res: Response) => 
     include: {
       versions: { orderBy: { version: 'desc' }, take: 1 },
       projectBindings: {
-        orderBy: { updatedAt: 'desc' }, take: 1,
+        // Readiness is environment-specific. Returning only the latest binding
+        // made a Flow appear ready after the user switched environments even
+        // though the matching initialization belonged somewhere else.
+        orderBy: { updatedAt: 'desc' },
         include: {
           initializations: { orderBy: { updatedAt: 'desc' }, take: 1 },
           scans: { orderBy: { createdAt: 'desc' }, take: 1 },

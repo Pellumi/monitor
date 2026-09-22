@@ -148,6 +148,7 @@ function whenLocalAnalysisSettles(applicationId: string): Promise<{ ok: boolean;
   });
 }
 let pendingSetupHandoffToken: string | null = null;
+let pendingQARunDeepLink: string | null = null;
 let activeOrganizationId: string | null = null;
 const execFileAsync = promisify(execFile);
 const instrumentation = new InstrumentationController(
@@ -177,20 +178,55 @@ const instrumentation = new InstrumentationController(
   },
 );
 
-function captureSetupDeepLink(values: string[]): void {
+function captureTellannDeepLink(values: string[]): void {
   const candidate = values.find((value) => value.startsWith('tellann://'));
   if (!candidate) return;
   try {
     const url = new URL(candidate);
-    if (url.hostname !== 'connect') return;
-    const token = url.searchParams.get('handoff');
-    if (token && token.length >= 32) pendingSetupHandoffToken = token;
+    if (url.hostname === 'connect') {
+      const token = url.searchParams.get('handoff');
+      if (token && token.length >= 32) pendingSetupHandoffToken = token;
+      return;
+    }
+    if (url.hostname !== 'qa-runs' || url.pathname !== '/new') return;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const applicationId = url.searchParams.get('applicationId') ?? url.searchParams.get('appId');
+    if (!applicationId || !uuid.test(applicationId)) return;
+    const params = new URLSearchParams();
+    for (const key of ['environmentId', 'flowId', 'workflowId']) {
+      const value = url.searchParams.get(key);
+      if (value && uuid.test(value)) params.set(key, value);
+    }
+    const mode = url.searchParams.get('mode');
+    if (mode && ['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY'].includes(mode)) params.set('mode', mode);
+    const target = url.searchParams.get('targetUrl');
+    if (target) {
+      try {
+        const parsedTarget = new URL(target);
+        if (['http:', 'https:'].includes(parsedTarget.protocol) && !parsedTarget.username && !parsedTarget.password) {
+          const names = [...new Set(parsedTarget.searchParams.keys())].sort();
+          parsedTarget.search = names.length ? `?${names.map((name) => `${encodeURIComponent(name)}=`).join('&')}` : '';
+          parsedTarget.hash = '';
+          params.set('targetUrl', parsedTarget.toString().slice(0, 2048));
+        }
+      } catch {
+        // Ignore an invalid target; the run form will fall back to the environment URL.
+      }
+    }
+    if (!params.has('flowId') && params.has('workflowId')) params.set('flowId', params.get('workflowId')!);
+    pendingQARunDeepLink = `/applications/${applicationId}/qa-runs/new${params.size ? `?${params.toString()}` : ''}`;
   } catch {
     // Ignore malformed external protocol input.
   }
 }
 
-captureSetupDeepLink(process.argv);
+function deliverPendingQARunDeepLink(): void {
+  if (!pendingQARunDeepLink || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  mainWindow.webContents.send(IPC.notificationOpen, { deepLink: pendingQARunDeepLink });
+  pendingQARunDeepLink = null;
+}
+
+captureTellannDeepLink(process.argv);
 const evidenceQueues = new Map<string, QAEvidenceEvent[]>();
 const evidenceFlushes = new Map<string, Promise<void>>();
 /**
@@ -2073,11 +2109,12 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
-    captureSetupDeepLink(argv);
+    captureTellannDeepLink(argv);
     handleSecondInstanceArgv(argv);
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+    deliverPendingQARunDeepLink();
   });
 }
 
@@ -3545,17 +3582,19 @@ function registerIpc(): void {
         agentVersion: app.getVersion(),
       }, path.join(app.getPath('userData'), 'qa-runs'));
       startRunMaintenance(runId);
-      emitRunLifecycle(state, { cloudStatus: 'WAITING_FOR_INITIAL' });
+      emitRunLifecycle(state, { cloudStatus: parsed.mode === 'GUIDED' ? 'WAITING_FOR_INITIAL' : 'RECORDING' });
       // Resolved after the browser is up so a slow graph read never delays the
       // run itself; the page shows a generic plan until this lands.
-      void resolveRunFlowPlan({
-        applicationId: parsed.applicationId,
-        flowId: parsed.flowId,
-        expectedGraphVersionId: parsed.expectedGraphVersionId,
-      }).then((plan) => {
-        if (observer.getState()?.runId !== runId) return;
-        sendRunState(observer.setFlowPlan(plan));
-      }).catch(() => undefined);
+      if (parsed.flowId && parsed.expectedGraphVersionId) {
+        void resolveRunFlowPlan({
+          applicationId: parsed.applicationId,
+          flowId: parsed.flowId,
+          expectedGraphVersionId: parsed.expectedGraphVersionId,
+        }).then((plan) => {
+          if (observer.getState()?.runId !== runId) return;
+          sendRunState(observer.setFlowPlan(plan));
+        }).catch(() => undefined);
+      }
       return decorateRunState(state);
     } catch (error) {
       stopRunMaintenance();
@@ -3657,6 +3696,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerWindowIpc(assertTrustedSender);
   onEndRunRequested(() => void completeActiveRun('MANUAL_STOP_BEFORE_TERMINAL'));
   await createWindow();
+  deliverPendingQARunDeepLink();
   // Re-arm notifications if a session is already stored, and again whenever the
   // window regains focus (the access token may have been refreshed since).
   void syncNotificationOrganization();
@@ -3671,7 +3711,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  captureSetupDeepLink([url]);
+  captureTellannDeepLink([url]);
+  deliverPendingQARunDeepLink();
 });
 
 app.on('window-all-closed', () => {

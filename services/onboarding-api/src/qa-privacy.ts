@@ -162,6 +162,23 @@ export function sanitizeQaUrl(raw: unknown): string | null {
   if (typeof raw !== 'string' || !raw) return null;
   try {
     const url = new URL(raw);
+    const safeRouteSegments = new Set([
+      'admin', 'app', 'account', 'accounts', 'auth', 'callback', 'dashboard', 'home', 'login', 'logout',
+      'orders', 'order', 'products', 'product', 'projects', 'project', 'reports', 'report', 'settings',
+      'users', 'user', 'customers', 'customer', 'teams', 'team', 'workspaces', 'workspace', 'new', 'edit',
+      'search', 'profile', 'billing', 'checkout', 'cart', 'notifications', 'help', 'support', 'flows', 'qa-runs',
+    ]);
+    let visibleIndex = 0;
+    url.pathname = url.pathname.split('/').map((part) => {
+      if (!part) return part;
+      const decoded = (() => { try { return decodeURIComponent(part); } catch { return part; } })();
+      const identifierLike = decoded.includes('@') || /^\+?[\d ().-]{7,}$/.test(decoded)
+        || /^[0-9a-f-]{16,}$/i.test(decoded) || /^\d+$/.test(decoded)
+        || decoded.length > 40 || /(?:token|secret|reset|invite|verify)[_-]/i.test(decoded);
+      const safe = !identifierLike && (visibleIndex === 0 || safeRouteSegments.has(decoded.toLowerCase()));
+      visibleIndex += 1;
+      return safe ? part : 'DETAIL';
+    }).join('/');
     const names = [...new Set([...url.searchParams.keys()])].sort();
     url.search = names.length ? `?${names.map((name) => `${encodeURIComponent(name)}=`).join('&')}` : '';
     url.hash = '';

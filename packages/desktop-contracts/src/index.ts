@@ -1202,24 +1202,24 @@ export const InstrumentationValidationResultSchema = z.object({
   valid: z.boolean(), checks: z.array(z.object({ name: z.string(), passed: z.boolean(), output: z.string() })),
 });
 
-export const StartGuidedRunInputSchema = z.object({
+const StartRunFlowContextSchema = z.object({
   runId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
   traceId: z.string().uuid().optional(),
   applicationId: z.string().uuid(),
   environmentId: z.string().uuid(),
   workspaceId: z.string().uuid().nullable(),
-  flowId: z.string().uuid(),
-  flowBindingId: z.string().uuid(),
-  flowInitializationId: z.string().uuid(),
-  flowScanId: z.string().uuid(),
+  flowId: z.string().uuid().optional(),
+  flowBindingId: z.string().uuid().optional(),
+  flowInitializationId: z.string().uuid().optional(),
+  flowScanId: z.string().uuid().optional(),
   flowDriftId: z.string().uuid().nullable().optional(),
-  expectedGraphVersionId: z.string().uuid(),
+  expectedGraphVersionId: z.string().uuid().optional(),
   captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).min(1).default(['FRONTEND']),
   timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   patchSetId: z.string().uuid().nullable().optional(),
   environmentType: EnvironmentTypeSchema,
-  mode: z.enum(['GUIDED', 'OBSERVATION_ONLY']).default('GUIDED'),
+  mode: z.enum(['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY']).default('GUIDED'),
   targetUrl: z.string().url(),
   productionObservationApproved: z.boolean().optional(),
   launchCommandId: z.string().optional(),
@@ -1228,6 +1228,48 @@ export const StartGuidedRunInputSchema = z.object({
   relayToken: z.string().min(32).optional(),
   agentVersion: z.string().optional(),
 });
+
+const GUIDED_FLOW_CONTEXT_FIELDS = [
+  'flowId', 'flowBindingId', 'flowInitializationId', 'flowScanId', 'expectedGraphVersionId',
+] as const;
+
+/**
+ * Guided captures reconcile against a fully initialized Flow. Assisted captures may carry
+ * candidate Flow context but begin capturing immediately. Observation-only captures are
+ * deliberately session-scoped; legacy callers may send Flow fields, which are stripped.
+ */
+export const StartGuidedRunInputSchema = StartRunFlowContextSchema
+  .superRefine((input, context) => {
+    if (input.mode === 'GUIDED') {
+      for (const field of GUIDED_FLOW_CONTEXT_FIELDS) {
+        if (!input[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for guided runs` });
+      }
+      return;
+    }
+    if (input.mode === 'ASSISTED') {
+      const hasCandidate = Boolean(input.flowId && input.expectedGraphVersionId);
+      const lifecycleValues = [input.flowBindingId, input.flowInitializationId, input.flowScanId];
+      const hasAnyLifecycle = lifecycleValues.some(Boolean) || Boolean(input.flowDriftId);
+      const hasFullLifecycle = lifecycleValues.every(Boolean);
+      const valid = (!hasCandidate && !hasAnyLifecycle && !input.flowId && !input.expectedGraphVersionId)
+        || (hasCandidate && !hasAnyLifecycle)
+        || (hasCandidate && hasFullLifecycle);
+      if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, path: ['flowId'], message: 'Assisted Flow context must be absent, a Flow/version candidate, or a complete initialized context' });
+    }
+  })
+  .transform((input): Omit<z.infer<typeof StartRunFlowContextSchema>, 'expectedGraphVersionId'> & { expectedGraphVersionId: string | null } => {
+    if (input.mode !== 'OBSERVATION_ONLY') return { ...input, expectedGraphVersionId: input.expectedGraphVersionId ?? null };
+    const {
+      flowId: _flowId,
+      flowBindingId: _flowBindingId,
+      flowInitializationId: _flowInitializationId,
+      flowScanId: _flowScanId,
+      flowDriftId: _flowDriftId,
+      expectedGraphVersionId: _expectedGraphVersionId,
+      ...sessionInput
+    } = input;
+    return { ...sessionInput, expectedGraphVersionId: null };
+  });
 
 export const IPC = {
   getVersion: 'tellann:version',
