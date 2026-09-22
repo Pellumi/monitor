@@ -1900,17 +1900,19 @@ export class DesktopCloudClient {
         }),
       },
     );
-    await this.request(
-      `/applications/${completed.applicationId}/reconciliation/run`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          environmentId: completed.environmentId,
-          expectedGraphId: completed.expectedGraphVersionId,
-          runId: state.runId,
-        }),
-      },
-    ).catch(() => undefined);
+    if (completed.expectedGraphVersionId) {
+      await this.request(
+        `/applications/${completed.applicationId}/reconciliation/run`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            environmentId: completed.environmentId,
+            expectedGraphId: completed.expectedGraphVersionId,
+            runId: state.runId,
+          }),
+        },
+      ).catch(() => undefined);
+    }
     return completed;
   }
 

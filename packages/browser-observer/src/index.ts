@@ -133,8 +133,9 @@ export type GuidedRunState = {
   traceId: string;
   applicationId: string;
   environmentId: string;
+  environmentType: StartGuidedRunInput['environmentType'];
   expectedGraphVersionId: string | null;
-  mode: 'GUIDED' | 'OBSERVATION_ONLY';
+  mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY';
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
   phase: 'PRE_BOUNDARY' | 'IN_FLOW' | 'FINALIZING' | 'COMPLETE';
   interactionMode: QAInteractionMode;
@@ -172,6 +173,34 @@ export type GuidedRunState = {
 };
 
 export type LocalAnnotationInput = CreateQARunAnnotation & { screenshotPath: string | null };
+
+export function initialCapturePhase(mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY', expectedGraphVersionId?: string | null): 'PRE_BOUNDARY' | 'IN_FLOW' {
+  return mode === 'GUIDED' && Boolean(expectedGraphVersionId) ? 'PRE_BOUNDARY' : 'IN_FLOW';
+}
+
+/** Installed before application code so observation-only runs cannot mutate via clicks, forms, or socket-backed handlers. */
+export function installReadOnlyInteractionGuard(): void {
+  const block = (event: Event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  for (const type of [
+    'click', 'dblclick', 'auxclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup',
+    'touchstart', 'touchend', 'keydown', 'keyup', 'beforeinput', 'input', 'change', 'submit',
+  ]) {
+    globalThis.addEventListener(type, block, { capture: true });
+  }
+}
+
+/** Prevents application code from emitting socket mutations during production observation. */
+export function installReadOnlySocketGuard(): void {
+  if (typeof globalThis.WebSocket === 'undefined') return;
+  Object.defineProperty(globalThis.WebSocket.prototype, 'send', {
+    configurable: false,
+    writable: false,
+    value() { throw new DOMException('WebSocket sends are blocked during production observation', 'SecurityError'); },
+  });
+}
 
 type RequestRecord = {
   startedAt: number;
@@ -220,6 +249,10 @@ type BridgePayload = {
 const PRE_BOUNDARY_TYPES = new Set<QAEvidenceEvent['eventType']>([
   'QA_ROUTE_CHANGED', 'QA_VIEWPORT_CHANGED', 'QA_REQUEST', 'QA_CONSOLE',
   'QA_RUNTIME_ERROR', 'QA_PAGE_CRASH', 'QA_PAGE_PERFORMANCE', 'QA_FLOW_EVENT', 'QA_CAPTURE_DEGRADED',
+  'QA_CONTROL_CLICKED', 'QA_FORM_SUBMIT_INTENT',
+]);
+const PRE_BOUNDARY_INTERACTION_TYPES = new Set<QAEvidenceEvent['eventType']>([
+  'QA_CONTROL_CLICKED', 'QA_FORM_SUBMIT_INTENT',
 ]);
 const SAFE_REQUEST_HEADERS = new Set([
   'accept', 'content-type', 'content-length', 'origin', 'referer', 'user-agent', 'x-requested-with',
@@ -275,14 +308,67 @@ export function isIdentifierKeyPath(keyPath: string): boolean {
 function uuid(): string { return crypto.randomUUID(); }
 function checksum(file: string): string { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
 
+function identifierLikePathSegment(part: string): boolean {
+  const decoded = (() => { try { return decodeURIComponent(part); } catch { return part; } })();
+  return decoded.includes('@') || /^\+?[\d ().-]{7,}$/.test(decoded)
+    || /^[0-9a-f-]{16,}$/i.test(decoded) || /^\d+$/.test(decoded)
+    || decoded.length > 40 || /(?:token|secret|reset|invite|verify)[_-]/i.test(decoded);
+}
+
+const SAFE_ROUTE_SEGMENTS = new Set([
+  'admin', 'app', 'account', 'accounts', 'auth', 'callback', 'dashboard', 'home', 'login', 'logout',
+  'orders', 'order', 'products', 'product', 'projects', 'project', 'reports', 'report', 'settings',
+  'users', 'user', 'customers', 'customer', 'teams', 'team', 'workspaces', 'workspace', 'new', 'edit',
+  'search', 'profile', 'billing', 'checkout', 'cart', 'notifications', 'help', 'support', 'flows', 'qa-runs',
+]);
+
+function privacySafePathname(pathname: string): string {
+  let visibleIndex = 0;
+  return pathname.split('/').map((part) => {
+    if (!part) return part;
+    const decoded = (() => { try { return decodeURIComponent(part); } catch { return part; } })();
+    const normalized = decoded.toLowerCase();
+    const safe = !identifierLikePathSegment(part) && (visibleIndex === 0 || SAFE_ROUTE_SEGMENTS.has(normalized));
+    visibleIndex += 1;
+    return safe ? part : 'DETAIL';
+  }).join('/');
+}
+
 export function sanitizeCapturedUrl(raw: string): string {
   try {
     const url = new URL(raw);
+    url.pathname = privacySafePathname(url.pathname);
     const names = [...new Set([...url.searchParams.keys()])].sort();
     url.search = names.length ? `?${names.map((name) => `${encodeURIComponent(name)}=`).join('&')}` : '';
     url.hash = '';
     return url.toString();
   } catch { return raw.split(/[?#]/, 1)[0].slice(0, 2_000); }
+}
+
+export function scopeEvidenceForCapturePhase(
+  phase: 'PRE_BOUNDARY' | 'IN_FLOW',
+  type: QAEvidenceEvent['eventType'],
+  metadata: Record<string, unknown>,
+  protectedValues: QAPendingProtectedValue[],
+): { metadata: Record<string, unknown>; protectedValues: QAPendingProtectedValue[] } {
+  if (phase !== 'PRE_BOUNDARY' || !PRE_BOUNDARY_INTERACTION_TYPES.has(type)) {
+    return { metadata, protectedValues };
+  }
+  // Login and setup interactions are useful boundary evidence, but their
+  // labels, targets and field values can contain credentials or identifiers.
+  return {
+    metadata: { interactionType: type === 'QA_FORM_SUBMIT_INTENT' ? 'FORM_SUBMIT' : 'CONTROL_CLICK' },
+    protectedValues: [],
+  };
+}
+
+export function sanitizeBridgeMetadata(type: string | undefined, metadata: Record<string, unknown> = {}): Record<string, unknown> {
+  if (type !== 'route') return metadata;
+  return {
+    ...metadata,
+    url: metadata.url ? sanitizeCapturedUrl(String(metadata.url)) : null,
+    title: null,
+  };
 }
 
 function safeMessage(raw: string): string {
@@ -569,8 +655,11 @@ export function deriveBrowserState(urlValue: string, titleValue = ''): {
   category: 'NAVIGATION' | 'UI';
 } {
   const url = new URL(urlValue);
-  const pathParts = url.pathname.split('/').filter(Boolean)
-    .map((part) => (/^[0-9a-f-]{16,}$/i.test(part) || /^\d+$/.test(part) ? 'DETAIL' : part));
+  const pathParts = privacySafePathname(url.pathname).split('/').filter(Boolean)
+    .map((part) => {
+      const decoded = (() => { try { return decodeURIComponent(part); } catch { return part; } })();
+      return identifierLikePathSegment(part) ? 'DETAIL' : decoded;
+    });
   const route = pathParts.length ? pathParts.join('_') : 'HOME';
   void titleValue;
   return { stateName: route.replace(/[^a-z0-9]+/gi, '_').toUpperCase().slice(0, 100), category: 'NAVIGATION' };
@@ -647,6 +736,12 @@ export class BrowserObserver {
     if (state.phase === 'PRE_BOUNDARY' && !PRE_BOUNDARY_TYPES.has(type)) return null;
     const pageUrl = input.pageUrl ?? (controller.page?.isClosed() ? null : sanitizeCapturedUrl(controller.page.url()));
     const eventId = input.eventId || uuid();
+    const scopedEvidence = scopeEvidenceForCapturePhase(
+      state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+      type,
+      metadata,
+      input.protectedValues ?? [],
+    );
     const event: QAEvidenceEvent = {
       schemaVersion: '2.0',
       eventId,
@@ -667,8 +762,8 @@ export class BrowserObserver {
       viewport: controller.page?.isClosed() ? null : controller.page.viewportSize(),
       interactionGroupId: input.interactionGroupId ?? null,
       causedByEventId: input.causedByEventId ?? null,
-      metadata,
-      protectedValues: input.protectedValues ?? [],
+      metadata: scopedEvidence.metadata,
+      protectedValues: scopedEvidence.protectedValues,
     };
     state.evidenceCounts[type] = (state.evidenceCounts[type] ?? 0) + 1;
     this.notifyStateChanged();
@@ -712,7 +807,8 @@ export class BrowserObserver {
         valueLength: payload.value?.length ?? Number(payload.metadata?.valueLength ?? 0),
       });
     }
-    const eventId = this.emit(controller, type, payload.metadata ?? {}, {
+    const safeMetadata = sanitizeBridgeMetadata(payload.type, payload.metadata);
+    const eventId = this.emit(controller, type, safeMetadata, {
       eventId: payload.eventId,
       pageUrl: payload.type === 'route' && payload.metadata?.url
         ? sanitizeCapturedUrl(String(payload.metadata.url)) : undefined,
@@ -720,7 +816,7 @@ export class BrowserObserver {
       interactionGroupId: payload.interactionGroupId ?? null,
       causedByEventId: payload.causedByEventId ?? null,
     });
-    const liveEvidence = eventId ? liveEvidenceForBridgePayload(payload) : null;
+    const liveEvidence = eventId ? liveEvidenceForBridgePayload({ ...payload, metadata: safeMetadata }) : null;
     if (liveEvidence) {
       this.addLive(controller.state, { ...liveEvidence, groupId: payload.interactionGroupId ?? null });
     }
@@ -764,11 +860,19 @@ export class BrowserObserver {
       colorScheme: 'light',
       recordVideo: undefined,
     });
+    if (observationOnly) await context.addInitScript(installReadOnlyInteractionGuard);
+    if (input.environmentType === 'PRODUCTION') await context.addInitScript(installReadOnlySocketGuard);
+    if (input.environmentType === 'PRODUCTION') {
+      await context.routeWebSocket('**/*', (socket) => socket.close());
+    }
     const state: GuidedRunState = {
       runId, sessionId, traceId, applicationId: input.applicationId, environmentId: input.environmentId,
-      expectedGraphVersionId: input.expectedGraphVersionId,
-      mode: observationOnly ? 'OBSERVATION_ONLY' : 'GUIDED',
-      status: 'RUNNING', phase: 'PRE_BOUNDARY', interactionMode: 'NAVIGATE', currentFlowStateKey: null,
+      environmentType: input.environmentType,
+      expectedGraphVersionId: input.expectedGraphVersionId ?? null,
+      mode: observationOnly ? 'OBSERVATION_ONLY' : input.mode === 'ASSISTED' ? 'ASSISTED' : 'GUIDED',
+      // Session-scoped runs have no declared initial boundary to wait for.
+      // Capture is active as soon as the user explicitly starts the run.
+      status: 'RUNNING', phase: initialCapturePhase(input.mode, input.expectedGraphVersionId), interactionMode: 'NAVIGATE', currentFlowStateKey: null,
       evidenceCounts: {}, targetUrl: input.targetUrl, evidence: [], observations: [], observedTransitions: [],
       windowResolution: null,
       evidenceTrimmed: 0,
@@ -839,6 +943,7 @@ export class BrowserObserver {
       this.options.searchMentionableMembers?.(runId, String(query).slice(0, 100)) ?? []);
     await context.exposeBinding(annotationName, async (_source, annotation: CreateQARunAnnotation) => {
       if (!controller.page || controller.page.isClosed()) throw new Error('QA_BROWSER_CLOSED');
+      if (state.environmentType === 'PRODUCTION') throw new Error('PRODUCTION_VISUAL_ARTIFACT_BLOCKED');
       const screenshotPath = path.join(artifactDirectory, `inspect-${Date.now()}.png`);
       await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(true)).catch(() => undefined);
       const mask = controller.page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
@@ -911,7 +1016,7 @@ export class BrowserObserver {
       const safeUrl = sanitizeCapturedUrl(url);
       if (previous?.stateName === derived.stateName && previous.url === safeUrl) return;
       const observation: BrowserObservation = {
-        eventId: uuid(), ...derived, url: safeUrl, title: safeMessage(title), timestamp: new Date().toISOString(),
+        eventId: uuid(), ...derived, url: safeUrl, title: '', timestamp: new Date().toISOString(),
       };
       state.observations.push(observation);
       void this.options.onObservation?.(runId, observation);
@@ -1368,6 +1473,7 @@ export class BrowserObserver {
    */
   private async captureStateArtifacts(controller: RunController): Promise<void> {
     const { state, page } = controller;
+    if (state.environmentType === 'PRODUCTION') return;
     if (controller.stopping || controller.paused || controller.snapshotInFlight) return;
     if (state.phase !== 'IN_FLOW') return;
     if (!page || page.isClosed()) return;
@@ -1632,7 +1738,7 @@ export class BrowserObserver {
     const screenshot = path.join(state.artifactDirectory, 'final-sanitized.png');
     const accessibility = path.join(state.artifactDirectory, 'accessibility.txt');
     const manifest = path.join(state.artifactDirectory, 'manifest.json');
-    if (page && !page.isClosed()) {
+    if (state.environmentType !== 'PRODUCTION' && page && !page.isClosed()) {
       const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
       await page.screenshot({ path: screenshot, fullPage: true, mask: [mask], maskColor: '#111827' }).catch(() => undefined);
       const aria = await page.locator('body').ariaSnapshot().catch(() => 'Accessibility snapshot unavailable');
@@ -1652,7 +1758,7 @@ export class BrowserObserver {
     const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles].filter((file) => fs.existsSync(file));
     fs.writeFileSync(manifest, JSON.stringify({
       runId: state.runId, sessionId: state.sessionId, traceId: state.traceId,
-      applicationId: state.applicationId, environmentId: state.environmentId,
+      applicationId: state.applicationId, environmentId: state.environmentId, environmentType: state.environmentType,
       expectedGraphVersionId: state.expectedGraphVersionId, mode: state.mode,
       status: state.status, phase: state.phase, targetUrl: sanitizeCapturedUrl(state.targetUrl),
       windowResolution: state.windowResolution ?? null,

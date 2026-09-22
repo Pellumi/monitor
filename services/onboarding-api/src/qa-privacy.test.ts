@@ -206,13 +206,15 @@ test('metadata is redacted recursively and reports its protected values', () => 
 test('url sanitization keeps parameter names and drops everything sensitive', () => {
   assert.equal(
     sanitizeQaUrl('https://app.example.com/orders/42?token=abc&q=shoes#section'),
-    'https://app.example.com/orders/42?q=&token=',
+    'https://app.example.com/orders/DETAIL?q=&token=',
   );
   assert.equal(
     sanitizeQaUrl('https://user:hunter2@app.example.com/x'),
     'https://app.example.com/x',
     'credentials embedded in a URL must never be retained',
   );
+  assert.equal(sanitizeQaUrl('https://app.example.com/reset/abc123'), 'https://app.example.com/reset/DETAIL');
+  assert.equal(sanitizeQaUrl('https://app.example.com/users/customer-slug'), 'https://app.example.com/users/DETAIL');
   assert.equal(sanitizeQaUrl('not a url'), null);
   assert.equal(sanitizeQaUrl(undefined), null);
 });

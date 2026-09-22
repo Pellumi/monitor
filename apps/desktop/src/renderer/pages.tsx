@@ -25,6 +25,7 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitCompareArrows,
   Globe2,
   GraduationCap,
   Hourglass,
@@ -103,14 +104,18 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
   formatEnum,
+  confirmAction,
   showMenu,
   statusTone,
   useSelectableList,
 } from "./components/desktop-ui";
+import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import {
+  flowBindingForEnvironment,
   flowInitializationHref,
+  flowRunReadiness,
   isFlowInitializable,
   isFlowReadyToRun,
   nextFlowToInitialize,
@@ -804,7 +809,7 @@ export function ApplicationOverviewPage() {
     );
 
   const latestRun = runs[projectId]?.[0];
-  const flowReady = flows === null ? null : flows.some(isFlowReadyToRun);
+  const flowReady = flows === null ? null : flows.some((flow) => isFlowReadyToRun(flow));
   const flowToInitialize = nextFlowToInitialize(flows ?? []);
   // Without a published Flow to point at there is nothing to initialize yet, so
   // the step falls back to Intent, where one gets declared and published first.
@@ -2862,6 +2867,7 @@ function ManualIntentBuilder({
     updateDeclaredState,
     deleteDeclaredState,
     addDeclaredTransition,
+    getDeclaredFlows,
     completeDeclaredFlow,
     reopenDeclaredFlow,
     deleteDeclaredFlow,
@@ -9819,7 +9825,7 @@ export function InstrumentationDetailPage() {
     DeclaredFlowSummary[] | null
   >(null);
   const hasInitializedFlow =
-    declaredFlows === null ? null : declaredFlows.some(isFlowReadyToRun);
+    declaredFlows === null ? null : declaredFlows.some((flow) => isFlowReadyToRun(flow));
   const plan = record?.planJson as InstrumentationPlan | undefined;
   const environment = application?.environments.find(
     (item) => item.id === record?.environmentId,
@@ -11235,8 +11241,13 @@ export function NewRunPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedFlowId = searchParams.get("flowId") ?? "";
+  const requestedEnvironmentId = searchParams.get("environmentId") ?? "";
+  const requestedMode = searchParams.get("mode");
+  const requestedTargetUrl = searchParams.get("targetUrl") ?? "";
   const [environmentId, setEnvironmentId] = useState(
-    application?.environments[0]?.id ?? "",
+    application?.environments.some((item) => item.id === requestedEnvironmentId)
+      ? requestedEnvironmentId
+      : application?.environments[0]?.id ?? "",
   );
   const environment = application?.environments.find(
     (item) => item.id === environmentId,
@@ -11246,12 +11257,16 @@ export function NewRunPage() {
       ? workspace?.snapshot.suggestedApplicationUrls?.[0]
       : undefined;
   const [targetUrl, setTargetUrl] = useState(
-    detectedApplicationUrl?.url ??
-      environment?.baseUrl ??
+    requestedTargetUrl || detectedApplicationUrl?.url ||
+      environment?.baseUrl ||
       "http://localhost:3000",
   );
-  const [mode, setMode] = useState<"GUIDED" | "OBSERVATION_ONLY">(
-    environment?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "GUIDED",
+  const [mode, setMode] = useState<"GUIDED" | "ASSISTED" | "OBSERVATION_ONLY">(
+    environment?.type === "PRODUCTION"
+      ? "OBSERVATION_ONLY"
+      : requestedMode === "GUIDED" || requestedMode === "ASSISTED" || requestedMode === "OBSERVATION_ONLY"
+        ? requestedMode
+        : "ASSISTED",
   );
   const [productionObservationApproved, setProductionObservationApproved] =
     useState(false);
@@ -11280,30 +11295,28 @@ export function NewRunPage() {
         ? workspace?.snapshot.suggestedApplicationUrls?.[0]?.url
         : undefined;
     setTargetUrl(
-      detected ?? nextEnvironment?.baseUrl ?? "http://localhost:3000",
+      requestedTargetUrl || detected || nextEnvironment?.baseUrl || "http://localhost:3000",
     );
   }, [
     application?.environments,
     environmentId,
+    requestedTargetUrl,
     workspace?.snapshot.suggestedApplicationUrls,
   ]);
   useEffect(() => {
     if (!projectId) return;
     void getDeclaredFlows(projectId).then((items) => {
-      // A Flow that cannot start a run is filtered out rather than surfaced as
-      // a selectable option that later fails.
-      const ready = items.filter(isFlowReadyToRun);
-      setFlows(ready);
+      setFlows(items);
       // Arriving straight from initializing a Flow, that Flow is the one the user
       // means to run — preselect it rather than whichever sorts first.
       const requested = requestedFlowId
-        ? ready.find((item) => item.id === requestedFlowId)
+        ? items.find((item) => item.id === requestedFlowId)
         : undefined;
-      const preferred = requested ?? ready[0];
-      setExpectedGraphVersionId(preferred?.versions?.[0]?.id ?? "");
+      const preferred = requested ?? items.find((item) => isFlowReadyToRun(item, environmentId));
+      setExpectedGraphVersionId(preferred?.publishedVersionId ?? preferred?.versions?.[0]?.id ?? "");
       setSelectedFlowId(preferred?.id ?? "");
     });
-  }, [getDeclaredFlows, projectId, requestedFlowId]);
+  }, [environmentId, getDeclaredFlows, projectId, requestedFlowId]);
   useEffect(() => {
     if (!projectId) return;
     void listInstrumentationPlans(projectId)
@@ -11329,22 +11342,25 @@ export function NewRunPage() {
         description="Select another application."
       />
     );
+  const selectedFlow = flows.find((flow) => flow.id === selectedFlowId);
+  const selectedFlowReadiness = selectedFlow
+    ? flowRunReadiness(selectedFlow, environmentId)
+    : null;
   const begin = async () => {
     setRunStartFailure(null);
     try {
-      const selectedFlow = flows.find(
-        (flow) => flow.id === selectedFlowId,
-      ) as any;
-      const binding = selectedFlow?.projectBindings?.[0];
+      const binding = flowBindingForEnvironment(selectedFlow, environmentId) as any;
       const initialization = binding?.initializations?.[0];
       const scan = binding?.scans?.[0];
-      if (
+      const flowRequired = mode === "GUIDED";
+      const attachFlow = Boolean(selectedFlow && isFlowReadyToRun(selectedFlow, environmentId));
+      if (flowRequired && (
         !selectedFlow ||
         !binding ||
         binding.status !== "ACTIVE" ||
         initialization?.status !== "COMPLETED" ||
-        !scan
-      ) {
+        scan?.status !== "COMPLETED"
+      )) {
         throw new Error(
           "Initialize this published Flow in the selected application and environment before starting a QA run.",
         );
@@ -11353,12 +11369,12 @@ export function NewRunPage() {
         applicationId: projectId,
         environmentId,
         workspaceId: workspace?.id ?? null,
-        flowId: selectedFlow.id,
-        flowBindingId: binding.id,
-        flowInitializationId: initialization.id,
-        flowScanId: scan.id,
-        flowDriftId: binding.latestDriftId ?? null,
-        expectedGraphVersionId,
+        flowId: attachFlow ? selectedFlow!.id : undefined,
+        flowBindingId: attachFlow ? binding.id : undefined,
+        flowInitializationId: attachFlow ? initialization.id : undefined,
+        flowScanId: attachFlow ? scan.id : undefined,
+        flowDriftId: attachFlow ? binding.latestDriftId ?? null : null,
+        expectedGraphVersionId: attachFlow ? expectedGraphVersionId : null,
         captureTracks:
           captureMode === "COMBINED"
             ? ["FRONTEND", "BACKEND"]
@@ -11389,7 +11405,7 @@ export function NewRunPage() {
   return (
     <Page
       title="New QA run"
-      description="Choose an initialized Flow and capture frontend, backend, or correlated evidence within its initial and terminal boundaries."
+      description="Start capturing immediately, or attach an initialized Flow for strict guided coverage and reconciliation."
     >
       <section className="wizard-card">
         <div className="form-grid">
@@ -11408,7 +11424,7 @@ export function NewRunPage() {
                     : undefined;
                 setTargetUrl(detected ?? next?.baseUrl ?? targetUrl);
                 setMode(
-                  next?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "GUIDED",
+                  next?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "ASSISTED",
                 );
                 setLaunchCommandId("");
                 setLaunchApproved(false);
@@ -11435,6 +11451,7 @@ export function NewRunPage() {
               }}
               options={[
                 { value: "GUIDED", label: "Guided" },
+                { value: "ASSISTED", label: "Assisted (recommended)" },
                 { value: "OBSERVATION_ONLY", label: "Observation only" },
               ]}
             />
@@ -11456,24 +11473,25 @@ export function NewRunPage() {
             ) : null}
           </label>
           <label className="full">
-            Flow source of truth
+            Expected Flow {mode === "GUIDED" ? "(required)" : "(optional)"}
             <SelectField
               value={selectedFlowId}
               onValueChange={(flowId) => {
                 setSelectedFlowId(flowId);
                 setExpectedGraphVersionId(
-                  flows.find((flow) => flow.id === flowId)?.versions?.[0]?.id ??
+                  flows.find((flow) => flow.id === flowId)?.publishedVersionId ??
+                    flows.find((flow) => flow.id === flowId)?.versions?.[0]?.id ??
                     "",
                 );
               }}
               options={[
-                { value: "", label: "Select an initialized published Flow" },
+                { value: "", label: mode === "GUIDED" ? "Select a Flow" : "Start without a Flow" },
                 ...flows.flatMap((flow) =>
                   flow.versions?.[0]
                     ? [
                         {
                           value: flow.id,
-                          label: `${flow.name} / version ${flow.versions[0].version}`,
+                          label: `${flow.name} / version ${flow.versions[0].version} · ${flowRunReadiness(flow, environmentId).message}`,
                         },
                       ]
                     : [],
@@ -11481,11 +11499,23 @@ export function NewRunPage() {
               ]}
             />
             <small>
-              Only Flows that are published and have a completed initialization
-              in this application are listed. If a Flow you created is missing,
-              either publish it from the declare view or initialize it for this
-              application first.
+              Guided mode requires a ready Flow. Assisted and Observation Only
+              begin capturing immediately and can be reconciled or promoted to
+              a Flow after the run.
             </small>
+            {selectedFlow && selectedFlowReadiness && !selectedFlowReadiness.ready ? (
+              <span className="inline-actions">
+                <Link
+                  className="text-link"
+                  to={flowInitializationHref(projectId, selectedFlow, environment?.type === "PRODUCTION" ? nonProductionEnvironmentId(application) : environmentId) ?? `/applications/${projectId}/intent`}
+                >
+                  {selectedFlow.publishedVersionId ? "Resolve Flow readiness" : "Open and publish this Flow"}
+                </Link>
+                {mode === "GUIDED" && environment?.type !== "PRODUCTION" ? (
+                  <button className="text-link" type="button" onClick={() => setMode("ASSISTED")}>Continue in Assisted now</button>
+                ) : null}
+              </span>
+            ) : null}
           </label>
           <label className="full">
             Capture tracks
@@ -11590,8 +11620,9 @@ export function NewRunPage() {
         {environment?.type === "PRODUCTION" ? (
           <>
             <div className="context-banner">
-              Production is observation-only. Tellann blocks process launch, SDK
-              injection, and non-read HTTP requests.
+              Production is observation-only. Tellann blocks page interaction,
+              process launch, SDK injection, and non-read HTTP requests so
+              click or WebSocket handlers cannot mutate the target.
             </div>
             <label className="check-row">
               <input
@@ -11617,8 +11648,7 @@ export function NewRunPage() {
             busy ||
             !targetUrl ||
             !environmentId ||
-            !selectedFlowId ||
-            !expectedGraphVersionId ||
+            Boolean(mode === "GUIDED" && (!selectedFlow || !expectedGraphVersionId || !selectedFlowReadiness?.ready)) ||
             Boolean(launchCommandId && !launchApproved) ||
             Boolean(
               environment?.type === "PRODUCTION" &&
@@ -11630,7 +11660,7 @@ export function NewRunPage() {
           <Play size={16} />
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : "Start guided run"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start without a Flow"}
         </button>
       </section>
       <QaRunStartErrorModal
@@ -11742,10 +11772,12 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
   }
   if (!plan) {
     return {
-      title: run.expectedGraphVersionId ? "Loading the expected Flow" : "Observational run",
+      title: run.expectedGraphVersionId ? "Loading the expected Flow" : run.mode === "ASSISTED" ? "Assisted exploration" : "Observational run",
       detail: run.expectedGraphVersionId
         ? "Everything is being captured. The expected states will appear once the accepted graph loads."
-        : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
+        : run.mode === "ASSISTED"
+          ? "Everything is being captured now. Tellann can turn the observed journey into a reviewable Flow after the run."
+          : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
     };
   }
   const label = (key: string | null) =>
@@ -11776,6 +11808,7 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
 
 export function LiveRunPage() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const {
     activeRun: run,
     pauseRun,
@@ -11783,6 +11816,13 @@ export function LiveRunPage() {
     setRunInteractionMode,
     focusRunBrowser,
     endRun,
+    getDeclaredFlows,
+    getDeclaredFlow,
+    reopenDeclaredFlow,
+    generateFlowSuggestions,
+    createDeclaredFlow,
+    addDeclaredState,
+    addDeclaredTransition,
     busy,
   } = useDesktop();
   const [tab, setTab] = useState<EvidenceTabValue>("FLOW");
@@ -11791,6 +11831,8 @@ export function LiveRunPage() {
   const [follow, setFollow] = useState(true);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
+  const [draftingFlow, setDraftingFlow] = useState(false);
+  const [flowCandidates, setFlowCandidates] = useState<Array<{ id: string; name: string; score: number; lifecycleStatus?: string }>>([]);
   const [now, setNow] = useState(() => Date.now());
   const listRef = useRef<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState<number>(() => {
@@ -11913,6 +11955,94 @@ export function LiveRunPage() {
       setControlError(normalizeDesktopError(cause));
     }
   }, []);
+
+  const createFlowDraftFromRun = useCallback(async () => {
+    if (!projectId || !run || draftingFlow) return;
+    setDraftingFlow(true);
+    setControlError(null);
+    try {
+      const stateNames = observedDraftStateNames(run.observations);
+      const approved = await confirmAction({
+        title: 'Create a reviewable Flow draft?',
+        message: `Tellann will create ${stateNames.length} draft states from this run.`,
+        detail: `${stateNames.join(' → ')}\n\nIdentifiers are redacted. Nothing is published until you review and publish the draft.`,
+        confirmLabel: 'Create draft',
+      });
+      if (!approved) return;
+      const draft = await createDeclaredFlow(
+        projectId,
+        `Observed ${new URL(run.targetUrl).hostname} journey`,
+        'USER_JOURNEY',
+        `Reviewable draft generated from assisted QA run ${run.runId}.`,
+        'Observed browser journey; verify state names, boundaries, and transitions before publishing.',
+      );
+      const states: string[] = [];
+      for (let index = 0; index < stateNames.length; index += 1) {
+        const created = await addDeclaredState(
+          projectId,
+          draft.id,
+          stateNames[index],
+          'UI',
+          index === 0 ? 'INITIAL' : index === stateNames.length - 1 ? 'TERMINAL' : 'NORMAL',
+          index === stateNames.length - 1 ? 'SUCCESS' : null,
+        );
+        const id = typeof created.id === 'string' ? created.id : null;
+        if (id) states.push(id);
+      }
+      for (let index = 1; index < states.length; index += 1) {
+        await addDeclaredTransition(projectId, draft.id, states[index - 1], states[index], 'Observed navigation');
+      }
+      navigate(`/applications/${projectId}/intent/flows/${draft.id}?sourceRunId=${encodeURIComponent(run.runId)}`);
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    } finally {
+      setDraftingFlow(false);
+    }
+  }, [addDeclaredState, addDeclaredTransition, createDeclaredFlow, draftingFlow, navigate, projectId, run]);
+
+  useEffect(() => {
+    if (!projectId || !run || run.status !== 'COMPLETED' || run.mode !== 'ASSISTED') return;
+    let cancelled = false;
+    void getDeclaredFlows(projectId).then(async (summaries) => {
+      const details = await Promise.all(summaries.slice(0, 12).map((flow) => getDeclaredFlow(projectId, flow.id).catch(() => null)));
+      if (cancelled) return;
+      const lifecycle = new Map(summaries.map((flow) => [flow.id, flow.lifecycleStatus]));
+      setFlowCandidates(rankObservedFlowCandidates(run.observations, details.filter((flow): flow is NonNullable<typeof flow> => Boolean(flow)))
+        .slice(0, 3)
+        .map((candidate) => {
+          const lifecycleStatus = lifecycle.get(candidate.id);
+          return {
+            ...candidate,
+            lifecycleStatus: typeof lifecycleStatus === 'string' ? lifecycleStatus : undefined,
+          };
+        }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [getDeclaredFlow, getDeclaredFlows, projectId, run]);
+
+  const prepareFlowAmendments = useCallback(async (candidate: { id: string; name: string; lifecycleStatus?: string }) => {
+    if (!projectId || !run) return;
+    const approved = await confirmAction({
+      title: `Prepare amendments for ${candidate.name}?`,
+      message: 'Tellann will create reviewable suggestions from this observed journey.',
+      detail: 'A published Flow is reopened as a draft first. No suggestion is applied or published automatically.',
+      confirmLabel: 'Prepare suggestions',
+    });
+    if (!approved) return;
+    setDraftingFlow(true);
+    try {
+      if (candidate.lifecycleStatus !== 'DRAFT') await reopenDeclaredFlow(projectId, candidate.id);
+      await generateFlowSuggestions(projectId, candidate.id, {
+        trigger: 'FLOW_REVIEW_REQUESTED',
+        userDefinedGoals: observedDraftStateNames(run.observations).map((name) => `Reconcile observed state: ${name}`),
+      });
+      navigate(`/applications/${projectId}/intent/flows/${candidate.id}?sourceRunId=${encodeURIComponent(run.runId)}&review=1`);
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    } finally {
+      setDraftingFlow(false);
+    }
+  }, [generateFlowSuggestions, navigate, projectId, reopenDeclaredFlow, run]);
 
   if (!projectId) return <ApplicationRequired />;
   if (!run)
@@ -12217,9 +12347,11 @@ export function LiveRunPage() {
             </article>
             <article>
               <small>Interaction mode</small>
-              <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+              <strong>{run.mode === "OBSERVATION_ONLY" ? "Read only" : run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
               <span>
-                {run.interactionMode === "INSPECT"
+                {run.mode === "OBSERVATION_ONLY"
+                  ? "Application interaction is blocked; routes, requests, errors, performance, and passive evidence are still recorded."
+                  : run.interactionMode === "INSPECT"
                   ? "Click any element in the browser window to leave a comment."
                   : "Controls in the application behave normally."}
               </span>
@@ -12430,16 +12562,16 @@ export function LiveRunPage() {
           <code>{run.runId.slice(0, 8)}</code>
           <span className="run-mode-status" role="status" aria-live="polite">
             {controlError
-              ? controlError
-              : run.phase === "IN_FLOW"
-                ? "Recording the Flow in full"
+                ? controlError
+                : run.phase === "IN_FLOW"
+                ? run.mode === "GUIDED" ? "Recording the Flow in full" : "Recording the session in full"
                 : "Metadata only until the Flow starts"}
           </span>
         </div>
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
             <>
-              <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
+              {run.mode !== "OBSERVATION_ONLY" ? <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
                 <button
                   className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "NAVIGATE"}
@@ -12456,7 +12588,7 @@ export function LiveRunPage() {
                 >
                   Inspect
                 </button>
-              </div>
+              </div> : null}
               <button
                 className="button"
                 disabled={busy}
@@ -12489,6 +12621,25 @@ export function LiveRunPage() {
                 </button>
               )}
             </>
+          ) : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED" && !run.expectedGraphVersionId ? (
+            <button className="button primary" disabled={busy || draftingFlow} onClick={() => void createFlowDraftFromRun()}>
+              <Workflow size={16} />
+              {draftingFlow ? "Creating draft…" : "Create reviewable Flow draft"}
+            </button>
+          ) : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED"
+            ? flowCandidates.map((candidate) => (
+                <button key={candidate.id} className="button" disabled={busy || draftingFlow} onClick={() => void prepareFlowAmendments(candidate)}>
+                  <GitCompareArrows size={16} />
+                  Amend {candidate.name} ({Math.round(candidate.score * 100)}% match)
+                </button>
+              ))
+            : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED" && run.expectedGraphVersionId ? (
+            <Link className="button primary" to={`/applications/${projectId}/qa-runs/new?flowId=${encodeURIComponent(run.flowPlan?.flowId ?? '')}&environmentId=${encodeURIComponent(run.environmentId)}&mode=GUIDED`}>
+              <Play size={16} /> Run Guided
+            </Link>
           ) : null}
         </div>
         <div>

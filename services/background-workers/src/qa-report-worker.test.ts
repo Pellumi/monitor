@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { anchorAiSuggestion, isInFlow, normalize, resolveFindingScope } from './qa-report-worker';
+import { anchorAiSuggestion, deriveFlowAnalysis, isInFlow, normalize, resolveFindingScope } from './qa-report-worker';
 
 const KNOWN = {
   evidenceIds: new Set(['evidence-1', 'evidence-2']),
@@ -86,4 +86,28 @@ test('normalize produces the comparison form used across the report', () => {
   assert.equal(normalize('Sign In'), 'sign_in');
   assert.equal(normalize('  Order-Confirmed! '), 'order_confirmed');
   assert.equal(normalize(null), '');
+});
+
+test('a session-scoped run has no reconciliation or declared coverage gaps', () => {
+  const analysis = deriveFlowAnalysis(false, [{ key: 'declared', name: 'Declared', role: 'TERMINAL' }], [{ from: 'a', to: 'b', action: 'go' }], []);
+  assert.deepEqual(analysis, {
+    missingStates: [],
+    missingTransitions: [],
+    unexpectedStates: [],
+    expectedCoverage: null,
+    reconciledFlows: 0,
+  });
+});
+
+test('a Flow-scoped run preserves declared reconciliation semantics', () => {
+  const analysis = deriveFlowAnalysis(
+    true,
+    [{ key: 'start', name: 'Start', role: 'INITIAL' }, { key: 'done', name: 'Done', role: 'TERMINAL' }],
+    [{ from: 'start', to: 'done', action: 'finish' }],
+    [{ eventType: 'FLOW_STATE', stateKey: 'start', metadata: null }],
+  );
+  assert.equal(analysis.expectedCoverage, 50);
+  assert.equal(analysis.reconciledFlows, 1);
+  assert.deepEqual(analysis.missingStates.map((state) => state.key), ['done']);
+  assert.deepEqual(analysis.missingTransitions.map((transition) => `${transition.from}>${transition.to}`), ['start>done']);
 });

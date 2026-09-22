@@ -5,6 +5,9 @@ import {
   deriveBrowserState,
   isIdentifierKeyPath,
   isObservationOnlyRequestAllowed,
+  initialCapturePhase,
+  installReadOnlyInteractionGuard,
+  installReadOnlySocketGuard,
   isRetryableTargetConnectionError,
   isSecretKeyPath,
   liveEvidenceForBridgePayload,
@@ -13,6 +16,8 @@ import {
   normalizeFlowKey,
   redactAriaSnapshot,
   sanitizeCapturedUrl,
+  sanitizeBridgeMetadata,
+  scopeEvidenceForCapturePhase,
 } from './index';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
 
@@ -29,6 +34,47 @@ test('derives stable browser states without leaking record identifiers', () => {
 test('production observation permits only read HTTP methods', () => {
   for (const method of ['GET', 'HEAD', 'OPTIONS']) assert.equal(isObservationOnlyRequestAllowed(method), true, method);
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(isObservationOnlyRequestAllowed(method), false, method);
+});
+
+test('only strict guided runs wait for a declared initial boundary', () => {
+  assert.equal(initialCapturePhase('GUIDED', 'version-1'), 'PRE_BOUNDARY');
+  assert.equal(initialCapturePhase('ASSISTED', 'version-1'), 'IN_FLOW');
+  assert.equal(initialCapturePhase('ASSISTED', null), 'IN_FLOW');
+  assert.equal(initialCapturePhase('OBSERVATION_ONLY', null), 'IN_FLOW');
+});
+
+test('pre-boundary interaction evidence records intent without auth labels or values', () => {
+  const protectedValues = [{ keyPath: 'field.password', kind: 'SECRET' as const, valueLength: 10 }];
+  assert.deepEqual(
+    scopeEvidenceForCapturePhase(
+      'PRE_BOUNDARY',
+      'QA_FORM_SUBMIT_INTENT',
+      { action: 'https://identity.example/login?token=secret', label: 'Sign in as person@example.com' },
+      protectedValues,
+    ),
+    { metadata: { interactionType: 'FORM_SUBMIT' }, protectedValues: [] },
+  );
+  assert.deepEqual(
+    scopeEvidenceForCapturePhase('IN_FLOW', 'QA_FORM_SUBMIT_INTENT', { label: 'Save order' }, protectedValues),
+    { metadata: { label: 'Save order' }, protectedValues },
+  );
+});
+
+test('the observation-only interaction guard is self-contained and blocks mutation gestures', () => {
+  const source = installReadOnlyInteractionGuard.toString();
+  for (const event of ['click', 'submit', 'keydown', 'beforeinput']) assert.match(source, new RegExp(event));
+  assert.match(source, /stopImmediatePropagation/);
+});
+
+test('the production socket guard replaces WebSocket send before page code runs', () => {
+  const source = installReadOnlySocketGuard.toString();
+  assert.match(source, /WebSocket\.prototype/);
+  assert.match(source, /SecurityError/);
+});
+
+test('browser state derivation removes identifier-shaped route segments and never uses titles', () => {
+  assert.equal(deriveBrowserState('https://example.test/users/person%40example.com', 'Person Name').stateName, 'USERS_DETAIL');
+  assert.equal(deriveBrowserState('https://example.test/reset/reset_token-secret-value', 'Reset for Person').stateName, 'RESET_DETAIL');
 });
 
 test('retries connection refusal while a launched application becomes ready', async () => {
@@ -105,6 +151,18 @@ test('captured urls drop fragments and parameter values but keep parameter names
   assert.equal(
     sanitizeCapturedUrl('https://app.test/orders?token=abc&q=shoes#pii'),
     'https://app.test/orders?q=&token=',
+  );
+});
+
+test('captured urls redact identifier-bearing and unrecognized nested path segments', () => {
+  assert.equal(sanitizeCapturedUrl('https://example.test/reset/abc123?token=secret'), 'https://example.test/reset/DETAIL?token=');
+  assert.equal(sanitizeCapturedUrl('https://example.test/users/customer-slug'), 'https://example.test/users/DETAIL');
+});
+
+test('route bridge metadata cannot retain raw paths or page titles', () => {
+  assert.deepEqual(
+    sanitizeBridgeMetadata('route', { url: 'https://example.test/users/customer-slug?token=secret', title: 'Customer Name' }),
+    { url: 'https://example.test/users/DETAIL?token=', title: null },
   );
 });
 

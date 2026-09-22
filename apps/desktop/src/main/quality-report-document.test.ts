@@ -125,3 +125,35 @@ test('the file name identifies the application, Flow and run without a path', ()
   assert.equal(base, 'Tellann-Acad-AI-Onboarding-Flow-quality-report-11111111-2026-01-05');
   assert.ok(!/[\\/:*?"<>|]/.test(base));
 });
+
+test('a session-scoped report makes no Flow reconciliation or expected coverage claims', () => {
+  const session = input({
+    scopeKind: 'SESSION',
+    flow: null,
+    coverage: { expected: null, reconciledFlows: 0 },
+    sections: {
+      ...(input().report as any).sections,
+      flowSummary: null,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{ id: 'runtime', priority: 'HIGH', title: 'Request returned 500' }],
+        missingStates: [],
+        missingTransitions: [],
+        unexpectedStates: [],
+      },
+      criticalSystemWideFindings: [],
+    },
+  });
+  const html = qualityReportHtml(session);
+  assert.ok(html.includes('Observational QA report'));
+  assert.ok(html.includes('Session findings'));
+  assert.ok(!html.includes('What the Flow declared'));
+  assert.ok(!html.includes('Declared coverage gaps'));
+  assert.ok(!html.includes('Expected coverage'));
+  assert.ok(!html.includes('Risks outside the selected Flow'));
+
+  const csv = qualityReportCsv(session);
+  assert.ok(!csv.includes('"Coverage","Expected coverage"'));
+  assert.ok(!csv.includes('"Coverage gap"'));
+  assert.ok(!csv.includes('"Report","Flow"'));
+});

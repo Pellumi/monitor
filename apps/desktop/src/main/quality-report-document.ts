@@ -85,6 +85,10 @@ function readReport(report: Record<string, unknown>) {
   const runSummary = asRecord(sections.runSummary);
   const viewportHistory = records(runSummary.viewportHistory);
   return {
+    // Payloads before session-scoped QA existed were all Flow reports and did
+    // not carry scopeKind. Preserve that legacy interpretation; new flowless
+    // reports identify themselves explicitly as SESSION.
+    hasFlow: report.scopeKind !== "SESSION",
     application: asRecord(report.application),
     environment: asRecord(report.environment),
     summary: asRecord(report.summary),
@@ -117,7 +121,7 @@ function readReport(report: Record<string, unknown>) {
 type ReadReport = ReturnType<typeof readReport>;
 
 function flowTitle(data: ReadReport): string {
-  return text(data.flowSummary.name ?? data.flow.name, "Selected Flow");
+  return data.hasFlow ? text(data.flowSummary.name ?? data.flow.name, "Selected Flow") : "Observational QA";
 }
 
 function windowResolution(data: ReadReport): string {
@@ -296,7 +300,7 @@ function renderAppendix(data: ReadReport): string {
 export function qualityReportHtml(input: QualityReportDocumentInput): string {
   const { report } = input;
   const data = readReport(report);
-  const title = `${flowTitle(data)} quality report`;
+  const title = data.hasFlow ? `${flowTitle(data)} quality report` : "Observational QA report";
   const counts: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
   for (const finding of data.findings) {
     const priority = text(finding.priority, "MEDIUM").toUpperCase();
@@ -306,7 +310,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
   const snapshotRows = factRows([
     ["APPLICATION", text(data.application.name)],
     ["ENVIRONMENT", `${text(data.environment.name)} · ${text(data.environment.type)}`],
-    ["FLOW", `${flowTitle(data)} · version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`],
+    ...(data.hasFlow ? [["FLOW", `${flowTitle(data)} · version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`] as [string, string]] : []),
     ["RUN", text(report.runId)],
     ["REPORT", text(report.id)],
     ["RUN OUTCOME", text(data.runSummary.boundaryOutcome ?? report.status)],
@@ -383,14 +387,14 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
   </style></head><body><div class="watermark">${TELLANN_LOGO_SVG}</div><main><section class="sheet">
     <div class="brand"><div class="logo">TELLANN</div><span class="badge">Quality // QA run report</span></div>
     <h1>${escapeHtml(title)}</h1>
-    <p class="muted">Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them.</p>
+    <p class="muted">${data.hasFlow ? "Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them." : "Everything this observational session established: what the run captured, every evidence-backed finding, annotations, artifacts, and the auditable capture record behind them."}</p>
     <div class="summary"><div class="metric">${data.findings.length} finding${
       data.findings.length === 1 ? "" : "s"
-    } in this Flow</div><p>${escapeHtml(
-      `${counts.CRITICAL} critical · ${counts.HIGH} high · ${counts.MEDIUM} medium · ${counts.LOW} low · ${counts.INFO} info · ${data.criticalFindings.length} critical outside the Flow`,
+    }${data.hasFlow ? " in this Flow" : " in this session"}</div><p>${escapeHtml(
+      `${counts.CRITICAL} critical · ${counts.HIGH} high · ${counts.MEDIUM} medium · ${counts.LOW} low · ${counts.INFO} info${data.hasFlow ? ` · ${data.criticalFindings.length} critical outside the Flow` : ""}`,
     )}</p></div>
     <div class="metrics">
-      <div><span>Expected coverage</span><strong>${escapeHtml(expectedCoverage)}</strong></div>
+      ${data.hasFlow ? `<div><span>Expected coverage</span><strong>${escapeHtml(expectedCoverage)}</strong></div>` : ""}
       <div><span>Observed states</span><strong>${escapeHtml(text(data.summary.observedStateCount, "0"))}</strong></div>
       <div><span>Transitions</span><strong>${escapeHtml(text(data.summary.observedTransitionCount, "0"))}</strong></div>
       <div><span>High priority</span><strong>${escapeHtml(text(data.summary.criticalOrHighFindings, "0"))}</strong></div>
@@ -402,7 +406,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     }
     <table class="facts">${snapshotRows}</table>
 
-    <section class="major"><div class="section-label">Section // Flow</div><h2>What the Flow declared</h2>
+    ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Flow</div><h2>What the Flow declared</h2>
       <p>${escapeHtml(text(data.flowSummary.purpose ?? data.flow.purpose, "No purpose was declared for this Flow."))}</p>
       <table class="facts">${factRows([
         ["SCOPE", text(data.flowSummary.scope ?? data.flow.scopeStatement, "Not declared")],
@@ -418,7 +422,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ["PROVENANCE", text(data.flowSummary.provenance, "Not recorded")],
         ["COVERAGE", coverageText(data)],
       ])}</table>
-    </section>
+    </section>` : ""}
 
     <section class="major"><div class="section-label">Section // Run</div><h2>How the run was captured</h2>
       <table class="facts">${factRows([
@@ -465,11 +469,11 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
       }
     </section>
 
-    <section class="major"><div class="section-label">Section // Findings index</div><h2>Every finding in this Flow</h2>
+    <section class="major"><div class="section-label">Section // Findings index</div><h2>${data.hasFlow ? "Every finding in this Flow" : "Session findings"}</h2>
       ${
         indexRows
           ? `<p>Ordered by priority, as the analysis ranked them. Each one is written out in full after this index.</p><table class="index">${indexRows}</table>`
-          : "<p>The deterministic analysis found no in-Flow finding for this run.</p>"
+          : `<p>The deterministic analysis found no ${data.hasFlow ? "in-Flow" : "session"} finding for this run.</p>`
       }
       ${
         data.recommendations.length
@@ -496,9 +500,9 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
 
     ${data.findings.map((finding, index) => renderFinding(finding, index)).join("")}
 
-    ${renderGaps(data)}
+    ${data.hasFlow ? renderGaps(data) : ""}
 
-    <section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
+    ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
       ${
         data.criticalFindings.length
           ? `<p>High-severity failures captured while the run was in progress but outside the declared boundary. They did not affect the coverage figure, and they are still real.</p>${data.criticalFindings
@@ -516,7 +520,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
               .join("")}`
           : "<p>No high-confidence, high-severity out-of-Flow failure was recorded during this run.</p>"
       }
-    </section>
+    </section>` : ""}
 
     ${renderAnnotations(data)}
     ${renderAppendix(data)}
@@ -546,14 +550,14 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
   let csv = csvRow(["Section", "Item", "Priority/Value", "Detail"]);
   csv += csvRow(["Report", "Application", text(data.application.name), text(report.runId)]);
   csv += csvRow(["Report", "Environment", text(data.environment.name), text(data.environment.type)]);
-  csv += csvRow([
+  if (data.hasFlow) csv += csvRow([
     "Report",
     "Flow",
     flowTitle(data),
     `version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`,
   ]);
   csv += csvRow(["Report", "Generated", dateText(report.generatedAt), `document ${dateText(input.generatedAt)}`]);
-  csv += csvRow(["Coverage", "Expected coverage", coverageText(data), ""]);
+  if (data.hasFlow) csv += csvRow(["Coverage", "Expected coverage", coverageText(data), ""]);
   csv += csvRow(["Coverage", "Observed states", text(data.summary.observedStateCount, "0"), ""]);
   csv += csvRow(["Coverage", "Observed transitions", text(data.summary.observedTransitionCount, "0"), ""]);
   csv += csvRow([
@@ -586,7 +590,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       )}, confidence ${confidencePercent(finding.confidence)})`,
     ]);
   }
-  for (const state of data.missingStates) {
+  for (const state of data.hasFlow ? data.missingStates : []) {
     csv += csvRow([
       "Coverage gap",
       `Declared state not observed: ${text(state.name ?? state.key, "state")}`,
@@ -594,7 +598,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       text(state.key, ""),
     ]);
   }
-  for (const transition of data.missingTransitions) {
+  for (const transition of data.hasFlow ? data.missingTransitions : []) {
     csv += csvRow([
       "Coverage gap",
       `Declared transition not observed: ${text(transition.from, "?")} -> ${text(transition.to, "?")}`,
@@ -602,10 +606,10 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       text(transition.action, ""),
     ]);
   }
-  for (const state of data.unexpectedStates) {
+  for (const state of data.hasFlow ? data.unexpectedStates : []) {
     csv += csvRow(["Coverage gap", `Observed state not declared: ${state}`, "", ""]);
   }
-  for (const finding of data.criticalFindings) {
+  for (const finding of data.hasFlow ? data.criticalFindings : []) {
     csv += csvRow([
       "Outside Flow",
       text(finding.title, "Critical finding"),
