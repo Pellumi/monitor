@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction, ErrorRequestHandler, RequestHandler } from 'express';
 import { TELLANN } from '../../core/TELLANN';
-import { runInRequestContext } from '../../core/requestContext';
+import { runInRequestContext, summarizeDataAccess, type TellannRequestContext } from '../../core/requestContext';
 
 declare global {
   namespace Express {
@@ -98,7 +98,22 @@ export function tellannExpressMiddleware(): RequestHandler {
     let responseBody: unknown;
     captureResponseBody(res, (body) => { responseBody = body; });
 
+    // Held explicitly rather than read back from async storage at report time.
+    // `finish` is emitted by the socket, and a listener does not inherit the
+    // context it was registered in, so relying on the store here would lose
+    // the models on exactly the streamed responses that take longest.
+    const context: TellannRequestContext = {
+      ...correlation,
+      method: req.method,
+      // The template is not known until a route matches, so the context
+      // starts with the concrete path and is corrected once one does.
+      route: req.originalUrl?.split('?')[0] ?? req.path,
+      dataAccess: [],
+    };
+
     res.on('finish', () => {
+      context.route = expressRouteTemplate(req) ?? context.route;
+      const models = summarizeDataAccess(context.dataAccess);
       TELLANN.trackApi({
         endpoint: req.originalUrl?.split('?')[0] ?? req.path,
         route: expressRouteTemplate(req),
@@ -110,6 +125,7 @@ export function tellannExpressMiddleware(): RequestHandler {
         runId: correlation.runId,
         traceId: correlation.traceId,
         framework: 'express',
+        models,
         query: req.query as Record<string, unknown>,
         // `req.body` is whatever the body parser produced. With no parser
         // registered it is undefined, and the request is reported without one.
@@ -118,19 +134,10 @@ export function tellannExpressMiddleware(): RequestHandler {
         requestHeaders: req.headers as Record<string, unknown>,
         responseHeaders: res.getHeaders() as Record<string, unknown>,
       });
+      void TELLANN.flushDataAccess(context);
     });
 
-    runInRequestContext(
-      {
-        ...correlation,
-        method: req.method,
-        // The template is not known until a route matches, so the context
-        // starts with the concrete path and the event uses the template.
-        route: req.originalUrl?.split('?')[0] ?? req.path,
-        dataAccess: [],
-      },
-      () => next(),
-    );
+    runInRequestContext(context, () => next());
   };
 }
 

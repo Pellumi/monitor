@@ -22,6 +22,8 @@ import {
   durationPercentile,
   emptyBackendSummary,
   liveEvidenceForBackendRequest,
+  classifyBackendLatency,
+  liveEvidenceForBackendLatency,
   BrowserObserver,
 } from './index';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
@@ -425,3 +427,113 @@ async function mkdtemp() {
   const path = await import('node:path');
   return fs.mkdtemp(path.join(os.tmpdir(), 'tellann-observer-'));
 }
+
+
+test('an ordinary request is not reported as a latency outlier', () => {
+  assert.equal(classifyBackendLatency({ durationMs: 40, baseline: [] }), null);
+  assert.equal(classifyBackendLatency({ durationMs: 120, baseline: [100, 110, 90, 105, 95] }), null);
+});
+
+test('a request is an outlier on its own scale, or on any scale', () => {
+  // Several times the endpoint's own median, even though it is fast in absolute terms.
+  const relative = classifyBackendLatency({ durationMs: 300, baseline: [20, 22, 18, 25, 21] });
+  assert.equal(relative?.reason, 'BASELINE');
+  assert.equal(relative?.baselineMs, 21);
+  assert.equal(relative?.multiple, 14.3);
+
+  // Slow enough to matter with no baseline to compare against.
+  const absolute = classifyBackendLatency({ durationMs: 1_500, baseline: [] });
+  assert.equal(absolute?.reason, 'ABSOLUTE');
+  assert.equal(absolute?.baselineMs, null);
+
+  // A baseline needs enough samples before it is worth comparing against.
+  assert.equal(classifyBackendLatency({ durationMs: 300, baseline: [20, 22] }), null);
+});
+
+test('a latency row names the route, the time and what it touched', () => {
+  const row = liveEvidenceForBackendLatency({
+    method: 'GET', route: '/reports/:id', durationMs: 6_200, statusCode: 200,
+    reason: 'BASELINE', baselineMs: 40, multiple: 155, models: ['Report', 'User'],
+  });
+  assert.equal(row.kind, 'PERFORMANCE');
+  assert.equal(row.level, 'ERROR', 'a request this slow is an error, not a warning');
+  assert.match(row.message, /155× its usual/);
+  assert.deepEqual(row.details?.find((detail) => detail.label === 'Models'), {
+    label: 'Models', value: 'Report, User',
+  });
+});
+
+test('a backend run fills its Performance pane from slow requests', async () => {
+  const observer = new BrowserObserver({});
+  await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    const call = async (durationMs: number, requestId: string) =>
+      observer.recordBackendRequestEvent({
+        eventId: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        metadata: { requestId, method: 'GET', route: '/reports', statusCode: 200, durationMs },
+      });
+
+    // A fast baseline, then one request several times slower than it.
+    for (let index = 0; index < 6; index += 1) await call(20, `fast-${index}`);
+    assert.equal(observer.getState()?.liveCounts.PERFORMANCE, 0, 'steady traffic is not an outlier');
+
+    await call(400, 'slow-1');
+    const state = observer.getState();
+    assert.equal(state?.liveCounts.PERFORMANCE, 1);
+    const row = state?.evidence.find((item) => item.kind === 'PERFORMANCE');
+    assert.match(row?.message ?? '', /\/reports took 400 ms/);
+
+    // Egregiously slow is a finding as well as a row, and only once per route.
+    await call(9_000, 'slow-2');
+    await call(9_500, 'slow-3');
+    const slowFindings = (observer.getState()?.findings ?? [])
+      .filter((finding) => finding.category === 'BACKEND_SLOW_RESPONSE');
+    assert.equal(slowFindings.length, 1);
+    assert.match(slowFindings[0].title, /took 9\.0 s/);
+  } finally {
+    await observer.end();
+  }
+});
+
+test('collapsed data operations are counted by what they stand for', async () => {
+  const observer = new BrowserObserver({});
+  await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    await observer.recordBackendDataAccessEvent({
+      eventId: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      // One event standing for 40 selects the SDK collapsed.
+      metadata: { model: 'Order', operation: 'select', mutation: false, count: 40 },
+    });
+    const state = observer.getState();
+    assert.equal(state?.backend?.dataOperations, 40);
+    assert.equal(state?.backend?.models[0].reads, 40);
+    assert.match(
+      state?.evidence.find((item) => item.kind === 'DATA')?.message ?? '',
+      /Order\.select ×40/,
+    );
+  } finally {
+    await observer.end();
+  }
+});

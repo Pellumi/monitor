@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import { TELLANN } from '../../core/TELLANN';
 import { extractCorrelationContext } from '../express';
-import { enterRequestContext } from '../../core/requestContext';
+import { enterRequestContext, summarizeDataAccess, type TellannRequestContext } from '../../core/requestContext';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -28,12 +28,15 @@ const tellannFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
   // Add preHandler to extract session metadata
   fastify.addHook('onRequest', async (request: FastifyRequest) => {
     request.tellann = extractCorrelationContext(request.headers);
-    enterRequestContext({
-      ...request.tellann,
-      method: request.method,
-      route: request.routeOptions?.url ?? request.url.split('?')[0],
-      dataAccess: [],
-    });
+    // Kept on the request as well as in async storage: the `onResponse` hook
+    // runs after the response is out, where the store is no longer reliable.
+    (request as FastifyRequest & { tellannContext?: TellannRequestContext }).tellannContext =
+      enterRequestContext({
+        ...request.tellann,
+        method: request.method,
+        route: request.routeOptions?.url ?? request.url.split('?')[0],
+        dataAccess: [],
+      });
   });
 
   // The payload is only available on `onSend`, and it is the serialized body
@@ -51,6 +54,7 @@ const tellannFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
       const sessionId = request.tellann?.sessionId;
       const requestId = request.headers['x-request-id'] as string | undefined;
       const rawBody = (request as FastifyRequest & { tellannResponseBody?: unknown }).tellannResponseBody;
+      const context = (request as FastifyRequest & { tellannContext?: TellannRequestContext }).tellannContext;
 
       await TELLANN.trackApi({
         endpoint: request.url.split('?')[0],
@@ -63,6 +67,7 @@ const tellannFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
         runId: request.tellann?.runId,
         traceId: request.tellann?.traceId,
         framework: 'fastify',
+        models: summarizeDataAccess(context?.dataAccess ?? []),
         query: request.query as Record<string, unknown>,
         requestBody: request.body,
         responseBody: typeof rawBody === 'string'
@@ -71,6 +76,7 @@ const tellannFastifyPluginImpl: FastifyPluginAsync = async (fastify) => {
         requestHeaders: request.headers as Record<string, unknown>,
         responseHeaders: reply.getHeaders() as Record<string, unknown>,
       });
+      await TELLANN.flushDataAccess(context);
     }
   );
 

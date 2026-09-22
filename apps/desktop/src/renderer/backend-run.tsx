@@ -40,6 +40,28 @@ export const BACKEND_EVIDENCE_TABS: Array<{
   { value: "FINDINGS", label: "Findings", icon: AlertTriangle, kinds: [] },
 ];
 
+/**
+ * What fills each pane, said where the pane is empty.
+ *
+ * An empty pane with a generic message is indistinguishable from a broken one.
+ * For the backend track two of these panes stay empty unless something is
+ * wired up, so the message says what and how rather than leaving the operator
+ * to guess whether their server is quiet or their SDK is not reporting.
+ */
+export const BACKEND_EMPTY_EVIDENCE: Record<BackendEvidenceTabValue, string> = {
+  REQUESTS:
+    "Requests appear here as your server handles them. If this stays empty while you are calling the API, the backend SDK is not reporting into this run.",
+  SERVER:
+    "Unhandled server errors appear here. An empty pane is the good outcome: nothing was raised outside a response.",
+  DATA:
+    "Reads and writes appear here once the SDK can see your data layer. Django and SQLAlchemy are wired up automatically by the SDK's middleware. For Prisma, extend your client once: prisma.$extends(tellannPrismaExtension()). Anything else can report directly with TELLANN.trackDataAccess({ model, operation }).",
+  FLOW:
+    "Flow events appear here when your application reports a declared state. A run without a Flow attached never fills this pane.",
+  PERFORMANCE:
+    "Requests that took notably longer than usual appear here — over a second, or several times the endpoint's own median. An empty pane means nothing stood out.",
+  FINDINGS: "No findings have been raised in this run.",
+};
+
 /** Whether this run opens a browser at all. */
 export function isBackendOnlyRun(run: Pick<GuidedRunState, "captureTracks">): boolean {
   const tracks = run.captureTracks ?? ["FRONTEND"];

@@ -62,6 +62,7 @@ import {
 } from "lucide-react";
 import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
 import {
+  BACKEND_EMPTY_EVIDENCE,
   BACKEND_EVIDENCE_TABS,
   BackendEndpointTable,
   BackendModelTable,
@@ -13237,7 +13238,8 @@ export function LiveRunPage() {
                   {query || errorsOnly
                     ? "No rows match this filter."
                     : backendOnly
-                      ? "Evidence will appear here as your server handles requests."
+                      ? BACKEND_EMPTY_EVIDENCE[activeTab.value as BackendEvidenceTabValue]
+                        ?? "Evidence will appear here as your server handles requests."
                       : "Evidence will appear here as you use the application."}
                 </div>
               )}

@@ -86,7 +86,13 @@ def record_data_access(
 
 
 def summarize_data_access(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One entry per model and operation, with the record counts summed."""
+    """One entry per model and operation, with records summed and reads counted.
+
+    Collapsing matters: a request that reads one model in a loop produces
+    thousands of entries, and reporting each one would flood the run with rows
+    that all say the same thing. The count keeps the volume visible without the
+    noise.
+    """
     totals: Dict[str, Dict[str, Any]] = {}
     for entry in entries:
         key = f"{entry.get('model')}:{entry.get('operation')}"
@@ -96,8 +102,11 @@ def summarize_data_access(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 "model": entry.get("model"),
                 "operation": entry.get("operation"),
                 "records": entry.get("records"),
+                "count": 1,
+                "mutation": bool(entry.get("mutation")),
             }
             continue
+        existing["count"] += 1
         if entry.get("records") is not None:
             existing["records"] = (existing.get("records") or 0) + entry["records"]
     return list(totals.values())[:50]

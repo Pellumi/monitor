@@ -12,6 +12,7 @@ from typing import Any
 
 from ..capture import parse_body
 from ..client import TELLANN
+from .data_hooks import install_data_hooks
 from ..request_context import (
     current_request_context,
     enter_request_context,
@@ -41,6 +42,7 @@ def instrument_flask(app: Any) -> Any:
 
     if not TELLANN.is_initialized():
         TELLANN.initialize()
+    install_data_hooks()
 
     @app.before_request
     def _tellann_before_request() -> None:  # pragma: no cover - exercised via Flask
@@ -85,6 +87,10 @@ def instrument_flask(app: Any) -> Any:
                 request_headers=dict(request.headers or {}),
                 response_headers=dict(response.headers or {}),
             )
+        except Exception:
+            pass
+        try:
+            TELLANN.flush_data_access(current_request_context())
         except Exception:
             pass
         return response

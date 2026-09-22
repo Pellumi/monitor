@@ -1,6 +1,6 @@
 import { TELLANN } from '../../core/TELLANN';
 import { extractCorrelationContext } from '../express';
-import { runInRequestContext } from '../../core/requestContext';
+import { runInRequestContext, summarizeDataAccess, type TellannRequestContext } from '../../core/requestContext';
 
 /**
  * Koa integration.
@@ -41,13 +41,14 @@ export function tellannKoaMiddleware(): TellannKoaMiddleware {
     const correlation = extractCorrelationContext(context.request?.headers ?? {});
     context.state.tellann = correlation;
 
+    const tellannContext: TellannRequestContext = {
+      ...correlation,
+      method: context.method,
+      route: context._matchedRoute ?? context.path,
+      dataAccess: [],
+    };
     await runInRequestContext(
-      {
-        ...correlation,
-        method: context.method,
-        route: context._matchedRoute ?? context.path,
-        dataAccess: [],
-      },
+      tellannContext,
       async () => {
         try {
           await next();
@@ -75,12 +76,14 @@ export function tellannKoaMiddleware(): TellannKoaMiddleware {
             runId: correlation.runId,
             traceId: correlation.traceId,
             framework: 'koa',
+            models: summarizeDataAccess(tellannContext.dataAccess),
             query: context.query,
             requestBody: context.request?.body,
             responseBody: context.body,
             requestHeaders: context.request?.headers,
             responseHeaders: context.response?.headers,
           });
+          await TELLANN.flushDataAccess(tellannContext);
         }
       },
     );

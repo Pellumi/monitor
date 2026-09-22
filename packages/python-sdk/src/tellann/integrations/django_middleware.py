@@ -9,10 +9,12 @@ up in telemetry.
 from __future__ import annotations
 
 import time
+from contextlib import ExitStack
 from typing import Any, Callable
 
 from ..capture import parse_body
 from ..client import TELLANN
+from .data_hooks import install_data_hooks
 from ..request_context import (
     current_request_context,
     enter_request_context,
@@ -90,17 +92,26 @@ class TellannMiddleware:
 
     def __init__(self, get_response: Callable[[Any], Any]) -> None:
         self.get_response = get_response
+        # Model telemetry is attached here rather than from `instrument_django`,
+        # because a Django project instrumented by the desktop only ever gets
+        # this middleware added to settings - nothing calls that helper. By the
+        # time middleware is constructed the app registry is loaded, which is
+        # exactly what connecting model signals requires.
+        install_data_hooks(django=True)
 
     def __call__(self, request: Any) -> Any:
         started = time.monotonic()
         correlation = _correlation_of(request)
-        token = enter_request_context(new_request_context(
+        context = new_request_context(
             method=getattr(request, "method", "GET"),
             route=getattr(request, "path", None),
             **correlation,
-        ))
+        )
+        token = enter_request_context(context)
         try:
-            response = self.get_response(request)
+            with ExitStack() as stack:
+                self._watch_reads(stack)
+                response = self.get_response(request)
             try:
                 context = current_request_context() or {}
                 # Read after the view has run: `resolver_match` is only set
@@ -123,9 +134,28 @@ class TellannMiddleware:
                 )
             except Exception:  # pragma: no cover - telemetry never breaks a response
                 pass
+            try:
+                # One row per table, after the response: a view that queries in
+                # a loop reports what it touched, not every time it touched it.
+                TELLANN.flush_data_access(context)
+            except Exception:  # pragma: no cover
+                pass
             return response
         finally:
             exit_request_context(token)
+
+    @staticmethod
+    def _watch_reads(stack: ExitStack) -> None:
+        """Record the tables this request reads, on every open connection."""
+        try:
+            from django.db import connections
+
+            from .django_orm import read_wrapper
+
+            for alias in connections:
+                stack.enter_context(connections[alias].execute_wrapper(read_wrapper))
+        except Exception:  # pragma: no cover - reads are a bonus, never required
+            pass
 
     def process_exception(self, request: Any, exception: BaseException) -> None:
         """Report an unhandled view exception, then let Django handle it."""
@@ -143,11 +173,4 @@ def instrument_django() -> None:
     """Initialize from the environment. Called by the generated settings hook."""
     if not TELLANN.is_initialized():
         TELLANN.initialize()
-    # Model telemetry is opt-in at import time rather than at configuration
-    # time, because it needs Django's app registry to be ready.
-    try:
-        from .django_orm import instrument_django_orm
-
-        instrument_django_orm()
-    except Exception:  # pragma: no cover - ORM telemetry is never required
-        pass
+    install_data_hooks(django=True)

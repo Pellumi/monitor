@@ -1,6 +1,6 @@
 import { TELLANN } from '../../core/TELLANN';
 import { extractCorrelationContext } from '../express';
-import { enterRequestContext } from '../../core/requestContext';
+import { enterRequestContext, summarizeDataAccess, type TellannRequestContext } from '../../core/requestContext';
 
 /**
  * hapi integration, written as a hapi plugin.
@@ -52,8 +52,9 @@ export const tellannHapiPlugin = {
         startedAt: Date.now(),
       };
       // hapi extensions do not wrap the handler, so the context is bound to
-      // this execution rather than to a callback.
-      enterRequestContext({
+      // this execution rather than to a callback, and kept on the request for
+      // the response extension to read back.
+      request.app.tellannContext = enterRequestContext({
         ...extractCorrelationContext(request.headers ?? {}),
         method: request.method?.toUpperCase?.() ?? 'GET',
         route: request.route?.path ?? request.path,
@@ -65,6 +66,7 @@ export const tellannHapiPlugin = {
     server.ext('onPreResponse', (request, h) => {
       const correlation = request.app.tellann ?? {};
       const startedAt = typeof correlation.startedAt === 'number' ? correlation.startedAt : Date.now();
+      const context = request.app.tellannContext as TellannRequestContext | undefined;
 
       void TELLANN.trackApi({
         endpoint: request.path,
@@ -77,6 +79,7 @@ export const tellannHapiPlugin = {
         runId: correlation.runId,
         traceId: correlation.traceId,
         framework: 'hapi',
+        models: summarizeDataAccess(context?.dataAccess ?? []),
         query: request.query,
         requestBody: request.payload,
         // A Boom error's `source` is the error payload hapi will serialize.
@@ -84,6 +87,7 @@ export const tellannHapiPlugin = {
         requestHeaders: request.headers,
         responseHeaders: request.response?.headers,
       });
+      void TELLANN.flushDataAccess(context);
 
       if (request.response?.isBoom) {
         void TELLANN.captureError({

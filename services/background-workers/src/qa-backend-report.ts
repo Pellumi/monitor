@@ -222,7 +222,11 @@ export function summarizeBackendEvidence(
     }
 
     if (event.eventType === 'QA_BACKEND_DATA_ACCESS') {
-      dataOperations += 1;
+      // The SDK collapses a request's operations before sending them, so one
+      // event can stand for many; counting events would under-report a view
+      // that queries in a loop.
+      const count = Math.max(1, Math.round(asNumber(metadata.count) ?? 1));
+      dataOperations += count;
       const model = asText(metadata.model, 120);
       if (!model) continue;
       const operation = asText(metadata.operation, 60) ?? 'unknown';
@@ -238,8 +242,8 @@ export function summarizeBackendEvidence(
         if (models.size >= MODEL_LIMIT) continue;
         models.set(model, entry);
       }
-      if (metadata.mutation === true) entry.writes += 1;
-      else entry.reads += 1;
+      if (metadata.mutation === true) entry.writes += count;
+      else entry.reads += count;
       if (records !== null) entry.records = (entry.records ?? 0) + records;
       entry.lastAt = at ?? entry.lastAt;
       pushUnique(entry.operations, operation, 12);

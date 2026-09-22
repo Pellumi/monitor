@@ -68,19 +68,31 @@ export function recordDataAccess(access: TellannDataAccess): TellannRequestConte
 
 /**
  * The models a request touched, collapsed to one entry per model and
- * operation, with the record counts summed.
+ * operation, with the record counts summed and the operations counted.
+ *
+ * Collapsing matters: a request that reads one model in a loop produces
+ * thousands of entries, and reporting each one would flood the run with rows
+ * that all say the same thing. The count keeps the volume visible without the
+ * noise.
  */
 export function summarizeDataAccess(
   entries: TellannDataAccess[],
-): Array<{ model: string; operation: string; records: number | null }> {
-  const totals = new Map<string, { model: string; operation: string; records: number | null }>();
+): Array<{ model: string; operation: string; records: number | null; count: number; mutation: boolean }> {
+  const totals = new Map<string, { model: string; operation: string; records: number | null; count: number; mutation: boolean }>();
   for (const entry of entries) {
     const key = `${entry.model}:${entry.operation}`;
     const existing = totals.get(key);
     if (!existing) {
-      totals.set(key, { model: entry.model, operation: entry.operation, records: entry.records ?? null });
+      totals.set(key, {
+        model: entry.model,
+        operation: entry.operation,
+        records: entry.records ?? null,
+        count: 1,
+        mutation: Boolean(entry.mutation),
+      });
       continue;
     }
+    existing.count += 1;
     if (entry.records != null) existing.records = (existing.records ?? 0) + entry.records;
   }
   return [...totals.values()].slice(0, 50);

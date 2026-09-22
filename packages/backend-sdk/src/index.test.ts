@@ -239,41 +239,56 @@ test('backend capture carries the payload without carrying the credentials', asy
   await t.test('models touched while a request is in flight are attached to it', async () => {
     TELLANN.initialize({ endpoint: 'http://collector-backend', applicationId: 'app-c1' });
     fetchCalls = [];
-    await runInRequestContext(
-      { method: 'POST', route: '/api/orders/:id', dataAccess: [] },
-      async () => {
-        await trackDataAccess({ model: 'Order', operation: 'update', records: 1 });
-        await trackDataAccess({ model: 'Order', operation: 'update', records: 2 });
-        await trackDataAccess({ model: 'Payment', operation: 'findMany', records: 3 });
-        await trackApi({
-          endpoint: '/api/orders/8213',
-          route: '/api/orders/:id',
-          method: 'POST',
-          statusCode: 200,
-          durationMs: 40,
-        });
-      },
-    );
-
-    const dataEvents = fetchCalls.filter((call) => call.body.eventType === 'BUSINESS_EVENT');
-    assert.strictEqual(dataEvents.length, 3);
-    assert.strictEqual(dataEvents[0].body.metadata.businessEventType, 'QA_BACKEND_DATA_ACCESS');
-    assert.strictEqual(dataEvents[0].body.metadata.mutation, true);
-    assert.strictEqual(dataEvents[0].body.metadata.route, '/api/orders/:id');
-    assert.strictEqual(dataEvents[2].body.metadata.mutation, false);
+    const context = { method: 'POST', route: '/api/orders/:id', dataAccess: [] };
+    await runInRequestContext(context, async () => {
+      await trackDataAccess({ model: 'Order', operation: 'update', records: 1 });
+      await trackDataAccess({ model: 'Order', operation: 'update', records: 2 });
+      await trackDataAccess({ model: 'Payment', operation: 'findMany', records: 3 });
+      // Nothing is sent while the request is running: a handler that queries
+      // in a loop would otherwise produce a request's worth of events.
+      assert.strictEqual(fetchCalls.length, 0);
+      await trackApi({
+        endpoint: '/api/orders/8213',
+        route: '/api/orders/:id',
+        method: 'POST',
+        statusCode: 200,
+        durationMs: 40,
+      });
+    });
 
     const request = fetchCalls.find((call) => call.body.eventType === 'API_REQUEST');
     // One entry per model and operation, with the record counts summed.
     assert.deepStrictEqual(request?.body.metadata.models, [
-      { model: 'Order', operation: 'update', records: 3 },
-      { model: 'Payment', operation: 'findMany', records: 3 },
+      { model: 'Order', operation: 'update', records: 3, count: 2, mutation: true },
+      { model: 'Payment', operation: 'findMany', records: 3, count: 1, mutation: false },
     ]);
+
+    // The integration flushes once the response is done: one row per model and
+    // operation, each carrying how many operations it stands for.
+    await TELLANN.flushDataAccess(context);
+    const dataEvents = fetchCalls.filter((call) => call.body.eventType === 'BUSINESS_EVENT');
+    assert.strictEqual(dataEvents.length, 2);
+    assert.strictEqual(dataEvents[0].body.metadata.businessEventType, 'QA_BACKEND_DATA_ACCESS');
+    assert.strictEqual(dataEvents[0].body.metadata.model, 'Order');
+    assert.strictEqual(dataEvents[0].body.metadata.count, 2);
+    assert.strictEqual(dataEvents[0].body.metadata.records, 3);
+    assert.strictEqual(dataEvents[0].body.metadata.mutation, true);
+    assert.strictEqual(dataEvents[0].body.metadata.route, '/api/orders/:id');
+    assert.strictEqual(dataEvents[1].body.metadata.mutation, false);
+
+    // Flushing twice must not double-report.
+    fetchCalls = [];
+    await TELLANN.flushDataAccess(context);
+    assert.strictEqual(fetchCalls.length, 0);
   });
 
-  await t.test('data access outside a request is still reported, without a route', async () => {
+  await t.test('data access outside a request is reported immediately, without a route', async () => {
     fetchCalls = [];
+    // No request to attach to and nothing to flush it later, so it is sent now.
     await trackDataAccess({ model: 'Invoice', operation: 'delete', records: 4 });
+    assert.strictEqual(fetchCalls.length, 1);
     assert.strictEqual(fetchCalls[0].body.metadata.route, null);
     assert.strictEqual(fetchCalls[0].body.metadata.mutation, true);
+    assert.strictEqual(fetchCalls[0].body.metadata.count, 1);
   });
 });

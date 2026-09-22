@@ -1,7 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { TellannEvent } from '../event-types';
 import type { TellannBackendConfig } from './TELLANN';
-import { currentRequestContext, recordDataAccess } from './requestContext';
+import {
+  currentRequestContext,
+  recordDataAccess,
+  summarizeDataAccess,
+  type TellannRequestContext,
+} from './requestContext';
 
 export interface TrackDataAccessOptions {
   /** The model, table or collection the operation ran against. */
@@ -27,24 +32,72 @@ export function isMutationOperation(operation: string): boolean {
 /**
  * Reports one persistence operation.
  *
- * Two things happen with it. It is attached to the in-flight request, so the
- * request's own event can say which models it touched; and it is sent on its
- * own, so a run still records work that happened outside any request - a
- * migration, a background job, a queue consumer.
+ * Inside a request it is recorded and nothing is sent: the request's own
+ * middleware flushes one event per model and operation when the response is
+ * done, so a handler that reads a model in a loop produces one row rather than
+ * a thousand. Outside a request - a migration, a queue consumer, a management
+ * command - there is nothing to flush it later, so it is sent immediately.
  */
 export async function trackDataAccessEvent(
   config: TellannBackendConfig,
   options: TrackDataAccessOptions,
 ): Promise<void> {
   const mutation = options.mutation ?? isMutationOperation(options.operation);
-  const context = recordDataAccess({
+  const recorded = recordDataAccess({
     model: options.model,
     operation: options.operation,
     records: options.records ?? null,
     durationMs: options.durationMs ?? null,
     mutation,
-  }) ?? currentRequestContext();
+  });
+  if (recorded) return;
+  await sendDataAccessEvent(config, {
+    model: options.model,
+    operation: options.operation,
+    records: options.records ?? null,
+    durationMs: options.durationMs ?? null,
+    mutation,
+    count: 1,
+  }, currentRequestContext(), options);
+}
 
+/**
+ * Sends one event per model and operation the request touched.
+ *
+ * Called by the framework integrations once the response is done. Safe to call
+ * twice: the context is emptied as it is flushed.
+ */
+export async function flushRequestDataAccess(
+  config: TellannBackendConfig,
+  context: TellannRequestContext | undefined,
+): Promise<void> {
+  if (!context?.dataAccess.length) return;
+  const summary = summarizeDataAccess(context.dataAccess);
+  context.dataAccess = [];
+  await Promise.all(summary.map((entry) => sendDataAccessEvent(config, {
+    model: entry.model,
+    operation: entry.operation,
+    records: entry.records,
+    durationMs: null,
+    mutation: entry.mutation,
+    count: entry.count,
+  }, context, {})));
+}
+
+async function sendDataAccessEvent(
+  config: TellannBackendConfig,
+  access: {
+    model: string;
+    operation: string;
+    records: number | null;
+    durationMs: number | null;
+    mutation: boolean;
+    count: number;
+  },
+  context: TellannRequestContext | undefined,
+  options: Partial<TrackDataAccessOptions>,
+): Promise<void> {
+  const { model, operation, records, durationMs, mutation } = access;
   const event: TellannEvent = {
     eventId: uuidv4(),
     sessionId: options.sessionId ?? context?.sessionId ?? config.sessionId ?? uuidv4(),
@@ -63,11 +116,13 @@ export async function trackDataAccessEvent(
       // The desktop routes on this discriminator, the same way it routes
       // client-state evidence from the frontend adapters.
       businessEventType: 'QA_BACKEND_DATA_ACCESS',
-      model: String(options.model).slice(0, 120),
-      operation: String(options.operation).slice(0, 60),
-      records: options.records ?? null,
-      durationMs: options.durationMs ?? null,
+      model: String(model).slice(0, 120),
+      operation: String(operation).slice(0, 60),
+      records,
+      durationMs,
       mutation,
+      // How many individual operations this row stands for.
+      count: access.count,
       route: context?.route ?? null,
       method: context?.method ?? null,
     },

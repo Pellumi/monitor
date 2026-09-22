@@ -420,42 +420,74 @@ class BackendCaptureTest(unittest.TestCase):
 
         opener = RecordingOpener()
         client = configured(opener)
-        token = enter_request_context(new_request_context(
-            method="POST", route="/api/orders/<int:pk>"
-        ))
+        context = new_request_context(method="POST", route="/api/orders/<int:pk>")
+        token = enter_request_context(context)
         try:
             client.track_data_access("Order", "update", records=1)
             client.track_data_access("Order", "update", records=2)
             client.track_data_access("Payment", "select", records=3)
+            client.flush(timeout=3)
+            # Nothing is sent while the request is running: a view that queries
+            # in a loop would otherwise produce a request's worth of events.
+            self.assertEqual(opener.bodies(), [])
             client.track_api("POST", "/api/orders/<int:pk>", 200, 40)
+            client.flush_data_access(context)
         finally:
             exit_request_context(token)
         client.flush(timeout=3)
 
         bodies = opener.bodies()
-        data_events = [body for body in bodies if body["eventType"] == "BUSINESS_EVENT"]
-        self.assertEqual(len(data_events), 3)
-        self.assertEqual(data_events[0]["metadata"]["businessEventType"], "QA_BACKEND_DATA_ACCESS")
-        self.assertTrue(data_events[0]["metadata"]["mutation"])
-        self.assertEqual(data_events[0]["metadata"]["route"], "/api/orders/<int:pk>")
-        self.assertFalse(data_events[2]["metadata"]["mutation"])
-
         request = next(body for body in bodies if body["eventType"] == "API_REQUEST")
         # One entry per model and operation, with the record counts summed.
         self.assertEqual(request["metadata"]["models"], [
-            {"model": "Order", "operation": "update", "records": 3},
-            {"model": "Payment", "operation": "select", "records": 3},
+            {"model": "Order", "operation": "update", "records": 3, "count": 2, "mutation": True},
+            {"model": "Payment", "operation": "select", "records": 3, "count": 1, "mutation": False},
         ])
+
+        data_events = [body for body in bodies if body["eventType"] == "BUSINESS_EVENT"]
+        self.assertEqual(len(data_events), 2)
+        self.assertEqual(data_events[0]["metadata"]["businessEventType"], "QA_BACKEND_DATA_ACCESS")
+        self.assertEqual(data_events[0]["metadata"]["model"], "Order")
+        self.assertEqual(data_events[0]["metadata"]["count"], 2)
+        self.assertEqual(data_events[0]["metadata"]["records"], 3)
+        self.assertTrue(data_events[0]["metadata"]["mutation"])
+        self.assertEqual(data_events[0]["metadata"]["route"], "/api/orders/<int:pk>")
+        self.assertFalse(data_events[1]["metadata"]["mutation"])
+        client.teardown()
+
+    def test_flushing_twice_does_not_double_report(self) -> None:
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        context = new_request_context(method="GET", route="/api/orders")
+        token = enter_request_context(context)
+        try:
+            client.track_data_access("Order", "select")
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            self.assertEqual(len(opener.bodies()), 1)
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            self.assertEqual(len(opener.bodies()), 1)
+        finally:
+            exit_request_context(token)
         client.teardown()
 
     def test_data_access_outside_a_request_is_reported_without_a_route(self) -> None:
         opener = RecordingOpener()
         client = configured(opener)
+        # No request to attach to and nothing to flush it later, so it is sent now.
         client.track_data_access("Invoice", "delete", records=4)
         client.flush(timeout=3)
         metadata = opener.bodies()[0]["metadata"]
         self.assertIsNone(metadata["route"])
         self.assertTrue(metadata["mutation"])
+        self.assertEqual(metadata["count"], 1)
         client.teardown()
 
     def test_an_oversized_payload_is_described_rather_than_truncated(self) -> None:
@@ -465,6 +497,88 @@ class BackendCaptureTest(unittest.TestCase):
         clipped = sanitize_payload({"rows": [{"value": "x" * 100} for _ in range(20)]}, capture)
         self.assertTrue(clipped["truncated"])
         self.assertEqual(clipped["keys"], ["rows"])
+
+
+class DjangoReadHookTest(unittest.TestCase):
+    """Reads are taken from the shape of a statement and nothing else."""
+
+    def test_a_select_reports_the_table_it_reads(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        self.assertEqual(
+            table_read_by('SELECT "orders_order"."id" FROM "orders_order" WHERE "orders_order"."id" = %s'),
+            "orders_order",
+        )
+        self.assertEqual(table_read_by("select a.id from `orders` a"), "orders")
+
+    def test_nothing_but_the_table_name_is_taken_from_a_statement(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        # A literal in the statement must never come back out of it.
+        table = table_read_by(
+            "SELECT id FROM customers WHERE email = 'person@example.com' AND token = 'abc123'"
+        )
+        self.assertEqual(table, "customers")
+        self.assertNotIn("person@example.com", table or "")
+        self.assertNotIn("abc123", table or "")
+
+    def test_writes_and_bookkeeping_are_left_to_the_signals(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        # Writes come from model signals, which name the model rather than the
+        # table, so the statement wrapper stays out of their way.
+        for statement in (
+            'INSERT INTO "orders_order" (id) VALUES (1)',
+            'UPDATE "orders_order" SET total = 1',
+            'DELETE FROM "orders_order"',
+            "BEGIN",
+            "COMMIT",
+            "SAVEPOINT s1",
+        ):
+            self.assertIsNone(table_read_by(statement), statement)
+
+        # Django's own tables are not the application's models.
+        self.assertIsNone(table_read_by("SELECT * FROM django_session"))
+        self.assertIsNone(table_read_by("SELECT 1"))
+        self.assertIsNone(table_read_by(""))
+
+    def test_a_read_is_recorded_against_the_request_and_never_sent_on_its_own(self) -> None:
+        from tellann.integrations.django_orm import read_wrapper
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        context = new_request_context(method="GET", route="/orders")
+        token = enter_request_context(context)
+        try:
+            executed = []
+
+            def execute(sql, params, many, ctx):
+                executed.append(sql)
+                return "rows"
+
+            for _ in range(40):
+                result = read_wrapper(execute, 'SELECT id FROM "orders_order"', None, False, {})
+                self.assertEqual(result, "rows", "the wrapper returns what the query returned")
+
+            self.assertEqual(len(executed), 40, "every statement still ran")
+            client.flush(timeout=3)
+            self.assertEqual(opener.bodies(), [], "reads are recorded, not sent one by one")
+
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            bodies = opener.bodies()
+            self.assertEqual(len(bodies), 1, "forty reads of one table are one row")
+            self.assertEqual(bodies[0]["metadata"]["model"], "orders_order")
+            self.assertEqual(bodies[0]["metadata"]["count"], 40)
+            self.assertFalse(bodies[0]["metadata"]["mutation"])
+        finally:
+            exit_request_context(token)
+        client.teardown()
 
 
 if __name__ == "__main__":

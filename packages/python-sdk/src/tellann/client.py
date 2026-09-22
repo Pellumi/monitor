@@ -247,23 +247,73 @@ class TellannBackend:
     ) -> None:
         """Report one persistence operation.
 
-        Two things happen with it: it is attached to the in-flight request, so
-        that request's own event can say which models it touched, and it is
-        sent on its own, so a run still records work that happened outside any
-        request - a migration, a management command, a queue consumer.
+        Inside a request it is recorded and nothing is sent: the framework
+        middleware flushes one event per model and operation once the response
+        is done, so a handler that reads a model in a loop produces one row
+        rather than a thousand. Outside a request - a migration, a management
+        command, a queue consumer - there is nothing to flush it later, so it
+        is sent immediately.
         """
         resolved_mutation = (
             mutation
             if mutation is not None
             else bool(MUTATION_PATTERN.search(str(operation)))
         )
-        context = record_data_access(
+        recorded = record_data_access(
             str(model),
             str(operation),
             records=records,
             duration_ms=duration_ms,
             mutation=resolved_mutation,
-        ) or current_request_context()
+        )
+        if recorded is not None:
+            return
+        self._send_data_access(
+            model=model,
+            operation=operation,
+            records=records,
+            duration_ms=duration_ms,
+            mutation=resolved_mutation,
+            count=1,
+            context=current_request_context(),
+            session_id=session_id,
+        )
+
+    def flush_data_access(self, context: Optional[Dict[str, Any]] = None) -> None:
+        """Send what a finished request touched, one event per model and operation.
+
+        The framework integrations call this; applications rarely need to. Safe
+        to call twice: the context is emptied as it is flushed.
+        """
+        resolved = context if context is not None else current_request_context()
+        entries = (resolved or {}).get("data_access") or []
+        if not entries:
+            return
+        summary = summarize_data_access(entries)
+        resolved["data_access"] = []
+        for entry in summary:
+            self._send_data_access(
+                model=entry["model"],
+                operation=entry["operation"],
+                records=entry.get("records"),
+                duration_ms=None,
+                mutation=bool(entry.get("mutation")),
+                count=int(entry.get("count", 1)),
+                context=resolved,
+            )
+
+    def _send_data_access(
+        self,
+        *,
+        model: Any,
+        operation: Any,
+        records: Optional[int],
+        duration_ms: Optional[float],
+        mutation: bool,
+        count: int,
+        context: Optional[Dict[str, Any]],
+        session_id: Optional[str] = None,
+    ) -> None:
         self.track_event(
             "BUSINESS_EVENT",
             {
@@ -274,7 +324,9 @@ class TellannBackend:
                 "operation": str(operation)[:60],
                 "records": records,
                 "durationMs": round(float(duration_ms), 3) if duration_ms is not None else None,
-                "mutation": resolved_mutation,
+                "mutation": mutation,
+                # How many individual operations this row stands for.
+                "count": count,
                 "route": (context or {}).get("route"),
                 "method": (context or {}).get("method"),
             },

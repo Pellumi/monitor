@@ -1,7 +1,8 @@
 import { trackApiEvent, TrackApiOptions } from './trackApi';
 import { captureErrorEvent, CaptureErrorOptions } from './captureError';
 import { trackStateEvent, TrackStateOptions } from './trackState';
-import { trackDataAccessEvent, TrackDataAccessOptions } from './trackDataAccess';
+import { flushRequestDataAccess, trackDataAccessEvent, TrackDataAccessOptions } from './trackDataAccess';
+import type { TellannRequestContext } from './requestContext';
 import { BackendWorkflowTracker } from './workflowTracker';
 import type { TellannCaptureConfig } from './capture';
 import { v4 as uuidv4 } from 'uuid';
@@ -65,6 +66,15 @@ export class TELLANNBackend {
   async trackDataAccess(options: TrackDataAccessOptions): Promise<void> {
     if (!this.config) return;
     await trackDataAccessEvent(this.config, options);
+  }
+
+  /**
+   * Sends what a finished request touched, one event per model and operation.
+   * The framework integrations call this; applications rarely need to.
+   */
+  async flushDataAccess(context: TellannRequestContext | undefined): Promise<void> {
+    if (!this.config) return;
+    await flushRequestDataAccess(this.config, context);
   }
 
   async trackEvent(

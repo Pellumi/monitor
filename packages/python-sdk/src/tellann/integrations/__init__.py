@@ -8,6 +8,7 @@ FastAPI service has no Django to import.
 from __future__ import annotations
 
 __all__ = [
+    "install_data_hooks",
     "instrument_django",
     "instrument_django_orm",
     "instrument_fastapi",
@@ -18,6 +19,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    if name == "install_data_hooks":
+        from .data_hooks import install_data_hooks
+
+        return install_data_hooks
     if name == "instrument_django":
         from .django_middleware import instrument_django
 

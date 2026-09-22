@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, MutableMapping
 
 from ..capture import parse_body
 from ..client import TELLANN
+from .data_hooks import install_data_hooks
 from ..request_context import (
     current_request_context,
     enter_request_context,
@@ -148,6 +149,10 @@ class TellannASGIMiddleware:
                 )
             except Exception:  # pragma: no cover
                 pass
+            try:
+                TELLANN.flush_data_access(context)
+            except Exception:  # pragma: no cover
+                pass
             exit_request_context(token)
 
 
@@ -161,6 +166,7 @@ def instrument_fastapi(app: Any) -> Any:
         return app
     if not TELLANN.is_initialized():
         TELLANN.initialize()
+    install_data_hooks()
     app.add_middleware(TellannASGIMiddleware)
     app._tellann_instrumented = True
     return app

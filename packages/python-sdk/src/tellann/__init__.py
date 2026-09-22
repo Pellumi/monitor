@@ -46,6 +46,7 @@ __all__ = [
     "current_request_context",
     "enter_request_context",
     "exit_request_context",
+    "flush_data_access",
     "instrument_django",
     "instrument_django_orm",
     "instrument_fastapi",
@@ -78,6 +79,10 @@ def track_state(*args, **kwargs) -> None:
 
 def track_data_access(*args, **kwargs) -> None:
     TELLANN.track_data_access(*args, **kwargs)
+
+
+def flush_data_access(*args, **kwargs) -> None:
+    TELLANN.flush_data_access(*args, **kwargs)
 
 
 def capture_error(*args, **kwargs) -> None:

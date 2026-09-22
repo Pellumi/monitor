@@ -362,6 +362,8 @@ type RunController = {
   backendAllDurations: number[];
   /** Backend request ids already counted, so a retried delivery is not double-counted. */
   backendSeenRequests: Set<string>;
+  /** Performance rows already spent on each endpoint. */
+  backendSlowRows: Map<string, number>;
 };
 
 type BridgePayload = {
@@ -390,6 +392,22 @@ const PRE_BOUNDARY_INTERACTION_TYPES = new Set<QAEvidenceEvent['eventType']>([
 const SAFE_REQUEST_HEADERS = new Set([
   'accept', 'content-type', 'content-length', 'origin', 'referer', 'user-agent', 'x-requested-with',
 ]);
+/**
+ * When a backend request is worth a performance row of its own.
+ *
+ * Two rules, because "slow" means different things for different endpoints. An
+ * absolute floor catches anything a user would notice waiting for; a multiple
+ * of the endpoint's own established median catches a route that is normally
+ * fast and suddenly is not, which an absolute floor never would.
+ */
+const SLOW_BACKEND_REQUEST_MS = 1_000;
+const SLOW_BACKEND_BASELINE_MULTIPLE = 3;
+/** Samples before an endpoint's median is worth comparing against. */
+const BACKEND_BASELINE_MIN_SAMPLES = 5;
+/** Rows one endpoint may contribute, so a uniformly slow route cannot flood. */
+const MAX_SLOW_ROWS_PER_ENDPOINT = 10;
+/** A request this slow is reported as a finding, not only as a row. */
+const CRITICALLY_SLOW_BACKEND_REQUEST_MS = 5_000;
 /** Rows kept in the live panel. Older rows are counted in `evidenceTrimmed`. */
 const MAX_LIVE_EVIDENCE = 500;
 /** Per-state screenshot/aria/axe captures kept for one run. */
@@ -763,6 +781,63 @@ export function backendRouteTemplate(route: unknown, requestPath: unknown): stri
   return `/${collapsed}`.slice(0, 300);
 }
 
+/**
+ * Whether a request is slow enough to report on its own, and why.
+ *
+ * Returns null for an ordinary request: the Requests pane already lists every
+ * one of them, and repeating them under Performance would say nothing.
+ */
+export function classifyBackendLatency(input: {
+  durationMs: number;
+  /** Durations already seen for this endpoint, excluding this one. */
+  baseline: number[];
+}): { reason: 'ABSOLUTE' | 'BASELINE'; baselineMs: number | null; multiple: number | null } | null {
+  const median = input.baseline.length >= BACKEND_BASELINE_MIN_SAMPLES
+    ? durationPercentile(input.baseline, 50)
+    : null;
+  if (median !== null && median > 0 && input.durationMs >= median * SLOW_BACKEND_BASELINE_MULTIPLE) {
+    return {
+      reason: 'BASELINE',
+      baselineMs: median,
+      multiple: Math.round((input.durationMs / median) * 10) / 10,
+    };
+  }
+  if (input.durationMs >= SLOW_BACKEND_REQUEST_MS) {
+    return { reason: 'ABSOLUTE', baselineMs: median, multiple: null };
+  }
+  return null;
+}
+
+/** How a slow backend request reads in the Performance pane. */
+export function liveEvidenceForBackendLatency(input: {
+  method: string;
+  route: string;
+  durationMs: number;
+  statusCode: number | null;
+  reason: 'ABSOLUTE' | 'BASELINE';
+  baselineMs: number | null;
+  multiple: number | null;
+  handler?: string | null;
+  models?: string[];
+}): Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> {
+  const slow = input.durationMs >= CRITICALLY_SLOW_BACKEND_REQUEST_MS;
+  return {
+    kind: 'PERFORMANCE',
+    level: slow ? 'ERROR' : 'WARN',
+    message: input.reason === 'BASELINE' && input.multiple
+      ? `${input.method} ${input.route} took ${input.durationMs} ms — ${input.multiple}× its usual`
+      : `${input.method} ${input.route} took ${input.durationMs} ms`,
+    details: compactDetails([
+      detail('Server time', `${input.durationMs} ms`),
+      detail('Usual for this route', input.baselineMs == null ? null : `${Math.round(input.baselineMs)} ms median`),
+      detail('Status', input.statusCode),
+      detail('Handler', input.handler ?? null),
+      // What a slow request touched is the first thing anyone asks next.
+      detail('Models', input.models?.length ? input.models.join(', ') : null),
+    ]),
+  };
+}
+
 /** How a captured backend request reads in the live panel. */
 export function liveEvidenceForBackendRequest(input: {
   method: string;
@@ -1111,6 +1186,7 @@ export class BrowserObserver {
       interactionEpoch: 0, lastCaptureSignature: null,
       findingArtifacts: [], capturedFindingKeys: new Set(),
       backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
+      backendSlowRows: new Map(),
     };
     this.active = controller;
     if (!browserTrack) {
@@ -1751,6 +1827,10 @@ export class BrowserObserver {
       protectedValues,
     });
     if (!emitted) return;
+    const endpointKey = `${method} ${route}`;
+    // Read before this request joins the window, so it is never compared
+    // against itself.
+    const baseline = [...(controller.backendDurations.get(endpointKey) ?? [])];
     this.applyBackendRequestToSummary(controller, {
       method, route, status, durationMs, requestBytes, responseBytes,
       models: models.map((entry) => entry.model),
@@ -1761,6 +1841,13 @@ export class BrowserObserver {
       models: models.map((entry) => entry.model),
       requestBytes, responseBytes,
     }));
+    if (durationMs !== null) {
+      this.reportBackendLatency(controller, {
+        endpointKey, method, route, durationMs, status, handler,
+        models: models.map((entry) => entry.model),
+        baseline,
+      });
+    }
     if (status !== null && status >= 400) {
       const severity = status >= 500 ? 'HIGH' : 'MEDIUM';
       const dedupeKey = `backend:${method}:${route}:${status}`;
@@ -1854,14 +1941,18 @@ export class BrowserObserver {
     const records = Number.isFinite(Number(metadata.records)) ? Number(metadata.records) : null;
     const mutation = Boolean(metadata.mutation ?? /create|update|delete|upsert|insert|write|save|remove/i.test(operation));
     const route = metadata.route || metadata.path ? backendRouteTemplate(metadata.route, metadata.path) : null;
+    // The SDK collapses a request's operations before sending them, so one row
+    // can stand for many. Counting rows instead of operations would report a
+    // view that queries in a loop as a single read.
+    const count = Math.max(1, Math.round(Number(metadata.count) || 1));
     const emitted = this.emit(controller, 'QA_BACKEND_DATA_ACCESS', {
-      model, operation, records, mutation, route,
+      model, operation, records, mutation, route, count,
       durationMs: Number.isFinite(Number(metadata.durationMs)) ? Number(metadata.durationMs) : null,
       method: metadata.method ? String(metadata.method).toUpperCase().slice(0, 12) : null,
     }, { eventId: typeof event.eventId === 'string' ? event.eventId : undefined, pageUrl: null });
     if (!emitted) return;
     const summary = state.backend ?? (state.backend = emptyBackendSummary());
-    summary.dataOperations += 1;
+    summary.dataOperations += count;
     const timestamp = typeof event.timestamp === 'string' ? event.timestamp : new Date().toISOString();
     const existing = summary.models.find((entry) => entry.model === model);
     const endpointKey = route && metadata.method ? `${String(metadata.method).toUpperCase()} ${route}` : route;
@@ -1869,19 +1960,74 @@ export class BrowserObserver {
       model, reads: 0, writes: 0, operations: [] as string[], endpoints: [] as string[], lastAt: timestamp,
     };
     if (!existing) summary.models.push(target);
-    if (mutation) target.writes += 1; else target.reads += 1;
+    if (mutation) target.writes += count; else target.reads += count;
     target.lastAt = timestamp;
     target.operations = [operation, ...target.operations.filter((entry) => entry !== operation)].slice(0, 12);
     if (endpointKey && !target.endpoints.includes(endpointKey)) target.endpoints = [...target.endpoints, endpointKey].slice(0, 20);
     summary.models.sort((left, right) => (right.reads + right.writes) - (left.reads + left.writes));
     this.addLive(state, {
       kind: 'DATA', level: 'INFO',
-      message: `${model}.${operation}${records == null ? '' : ` - ${records} record${records === 1 ? '' : 's'}`}`,
+      message: `${model}.${operation}${count > 1 ? ` ×${count}` : ''}${records == null ? '' : ` - ${records} record${records === 1 ? '' : 's'}`}`,
       details: compactDetails([
         detail('Kind', mutation ? 'Write' : 'Read'),
+        detail('Operations', count > 1 ? `${count} collapsed into this row` : null),
         detail('Route', route),
         detail('Duration', metadata.durationMs == null ? null : `${metadata.durationMs} ms`),
       ]),
+    });
+  }
+
+  /**
+   * Reports a request that took notably longer than it should have.
+   *
+   * A backend run has no page to measure, so this is what its Performance pane
+   * is made of: the requests that stood out, with the endpoint's own baseline
+   * beside them so the number means something.
+   */
+  private reportBackendLatency(controller: RunController, input: {
+    endpointKey: string;
+    method: string;
+    route: string;
+    durationMs: number;
+    status: number | null;
+    handler: string | null;
+    models: string[];
+    baseline: number[];
+  }): void {
+    const verdict = classifyBackendLatency({ durationMs: input.durationMs, baseline: input.baseline });
+    if (!verdict) return;
+    const spent = controller.backendSlowRows.get(input.endpointKey) ?? 0;
+    if (spent >= MAX_SLOW_ROWS_PER_ENDPOINT) return;
+    controller.backendSlowRows.set(input.endpointKey, spent + 1);
+    const { state } = controller;
+    this.addLive(state, liveEvidenceForBackendLatency({
+      method: input.method,
+      route: input.route,
+      durationMs: input.durationMs,
+      statusCode: input.status,
+      reason: verdict.reason,
+      baselineMs: verdict.baselineMs,
+      multiple: verdict.multiple,
+      handler: input.handler,
+      models: input.models,
+    }));
+    if (input.durationMs < CRITICALLY_SLOW_BACKEND_REQUEST_MS) return;
+    const dedupeKey = `backend-slow:${input.endpointKey}`;
+    if (state.findings.some((existing) => existing.dedupeKey === dedupeKey)) return;
+    state.findings.push({
+      id: uuid(), runId: state.runId, category: 'BACKEND_SLOW_RESPONSE', severity: 'MEDIUM',
+      confidence: 0.9,
+      title: `${input.method} ${input.route} took ${(input.durationMs / 1_000).toFixed(1)} s`,
+      description: verdict.baselineMs
+        ? `Server-side handling took ${input.durationMs} ms against a median of ${Math.round(verdict.baselineMs)} ms for this route.`
+        : `Server-side handling took ${input.durationMs} ms.`,
+      url: null, viewport: null, evidenceArtifactIds: [], evidenceChecksums: [],
+      reproductionSteps: [`Call ${input.method} ${input.route}`, 'Compare the handler timing against the models it touched'],
+      recommendation: input.models.length
+        ? `Check the work behind this route: it touched ${input.models.join(', ')}.`
+        : 'Check the work behind this route, and wire the SDK data hooks so the run can show which models it touched.',
+      scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+      dedupeKey, generatorSource: 'BROWSER',
     });
   }
 
