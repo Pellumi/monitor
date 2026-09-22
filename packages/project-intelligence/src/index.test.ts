@@ -77,6 +77,25 @@ test('detects FastAPI and targets its ASGI application', () => {
   assert.ok(snapshot.routes.includes('/health'));
 });
 
+test('does not scan a checked-in Python virtual environment as application source', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-env-scan-'));
+  fs.writeFileSync(path.join(root, 'requirements.txt'), 'Django>=5\n');
+  fs.mkdirSync(path.join(root, 'env', 'Lib', 'site-packages'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'env', 'pyvenv.cfg'), 'home = C:\\Python\n');
+  fs.writeFileSync(
+    path.join(root, 'env', 'Lib', 'site-packages', 'dependency.py'),
+    `app.get('/dependency-route')\n`,
+  );
+
+  const snapshot = scanWorkspace(root, { workspaceId: '00000000-0000-4000-8000-000000000012' });
+
+  assert.equal(snapshot.routes.includes('/dependency-route'), false);
+  assert.equal(snapshot.endpoints.includes('/dependency-route'), false);
+  assert.equal(snapshot.languages.includes('.py'), false);
+  assert.ok(snapshot.redactionSummary.excludedFiles >= 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('prefers an explicit launch port and detected login route', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-url-scan-'));
   fs.mkdirSync(path.join(root, 'src'));

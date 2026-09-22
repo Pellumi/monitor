@@ -7,7 +7,7 @@ import test from 'node:test';
 import type { CodebaseAnalysis, CodeEntity } from '@tellann/desktop-contracts';
 import {
   analyzeCodebase, answerFromAnalysis, blastRadius, blastRadiusInAnalysis,
-  buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
+  buildInventory, buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
   hierarchyChildren, previewSanitizedSourceArchive, projectAnalysis, redactSecrets,
 } from './index';
 
@@ -498,6 +498,27 @@ test('never ships credential files, and reports what it excluded', () => {
   assert.ok(archive.redactedFiles >= 1);
   assert.ok(archive.fileCount > 0);
   assert.equal(archive.truncated, false);
+});
+
+test('excludes Python virtual environments from the analysis graph and source archive', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-env-')));
+  write(root, 'requirements.txt', 'Django>=5\n');
+  write(root, 'manage.py', 'import os\n');
+  write(root, 'app/views.py', 'def application_view():\n    return "ok"\n');
+  write(root, 'env/pyvenv.cfg', 'home = C:\\Python\n');
+  write(root, 'env/Lib/site-packages/dependency.py', 'def dependency_symbol():\n    return "not app code"\n');
+
+  const inventory = buildInventory(root);
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const archive = buildSanitizedSourceArchive(root);
+  const decoded = zlib.gunzipSync(archive.buffer).toString('utf8');
+
+  assert.ok(inventory.pythonAnalyzable.includes('app/views.py'));
+  assert.equal(inventory.pythonAnalyzable.some((file) => file.startsWith('env/')), false);
+  assert.equal(analysis.entities.some((entity) => entity.path?.startsWith('env/')), false);
+  assert.equal(decoded.includes('dependency_symbol'), false);
+  assert.ok(inventory.exclusions['ignored-directory'] >= 1);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('previews archive size and exclusions before consent is given', () => {

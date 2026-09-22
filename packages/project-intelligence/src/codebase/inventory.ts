@@ -5,7 +5,8 @@ import { digest, slash } from './core';
 
 export const IGNORED_DIRECTORIES = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'out', 'coverage', '.turbo',
-  '.cache', 'vendor', '.venv', 'venv', '__pycache__', 'target', 'obj', '.svelte-kit',
+  '.cache', 'vendor', '.venv', 'venv', 'env', '__pycache__', '.tox', '.nox',
+  '.mypy_cache', '.pytest_cache', '.ruff_cache', 'site-packages', 'target', 'obj', '.svelte-kit',
   '.nuxt', '.output', '.parcel-cache', '.yarn', '.pnpm-store', '.gradle', '.idea', '.vscode', '.claude', '.husky', '.changeset', 'storybook-static',
 ]);
 
