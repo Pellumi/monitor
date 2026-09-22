@@ -96,6 +96,31 @@ export type RunStateArtifact = {
   screenshotFile: string | null;
   accessibilityFile: string | null;
   accessibilityViolations: number | null;
+  /** 1-based order of capture, so a report can read the run as a sequence. */
+  sequence: number;
+  /** Why this moment was captured, carried through to the report card. */
+  captureReason: RunCaptureReason;
+};
+
+export type RunCaptureReason =
+  | 'STATE_SETTLED'
+  | 'RUN_FINAL'
+  | 'INSPECT_ANNOTATION'
+  | 'FINDING';
+
+/**
+ * What a stored artifact depicts. Uploaded alongside the bytes so the report
+ * can label a capture with the state and route it came from rather than
+ * falling back to "Capture 3".
+ */
+export type ArtifactCaptureContext = {
+  stateKey: string | null;
+  route: string | null;
+  title: string | null;
+  sequence: number | null;
+  captureReason: RunCaptureReason;
+  accessibilityViolations: number | null;
+  capturedAt: string | null;
 };
 
 export type BrowserWindowResolution = {
@@ -229,10 +254,26 @@ type RunController = {
   /** Requests this observer aborted itself under observation-only policy. */
   blockedByPolicy: WeakSet<Request>;
   recentCause: { eventId: string; interactionGroupId: string | null; at: number } | null;
-  /** `flowStateKey|route` pairs already snapshotted, so a settle does not refire. */
+  /** `flowStateKey|route|epoch` triples already snapshotted, so a settle does not refire. */
   capturedStateKeys: Set<string>;
   /** Serialises state snapshots so two settles cannot screenshot at once. */
   snapshotInFlight: boolean;
+  /**
+   * Bumped by every interaction that can change what is on screen. Part of the
+   * snapshot dedupe key so a multi-step flow that never changes route is
+   * captured step by step instead of collapsing to a single screenshot.
+   */
+  interactionEpoch: number;
+  /**
+   * Structure hash of the last captured snapshot. A settle that produces an
+   * identical page — a click that did nothing — is skipped rather than spending
+   * a screenshot on it.
+   */
+  lastCaptureSignature: string | null;
+  /** Screenshots taken at the moment a finding was raised. */
+  findingArtifacts: Array<{ file: string; context: ArtifactCaptureContext }>;
+  /** Finding dedupe keys already given a screenshot. */
+  capturedFindingKeys: Set<string>;
 };
 
 type BridgePayload = {
@@ -261,6 +302,8 @@ const SAFE_REQUEST_HEADERS = new Set([
 const MAX_LIVE_EVIDENCE = 500;
 /** Per-state screenshot/aria/axe captures kept for one run. */
 const MAX_STATE_ARTIFACTS = 60;
+/** Separate from the state ceiling so a noisy page cannot crowd out flow evidence. */
+const MAX_FINDING_ARTIFACTS = 20;
 /** Coalescing window for state pushes to the renderer. */
 const STATE_PUSH_INTERVAL_MS = 250;
 const LIVE_EVIDENCE_KINDS: LiveEvidenceKind[] = [
@@ -307,6 +350,17 @@ export function isIdentifierKeyPath(keyPath: string): boolean {
 
 function uuid(): string { return crypto.randomUUID(); }
 function checksum(file: string): string { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
+
+/**
+ * A capture that failed part-way can still leave the destination file behind —
+ * Playwright creates it before writing the image, and an empty aria snapshot
+ * redacts down to an empty string. Existence alone is therefore not enough to
+ * call an artifact captured: the upload endpoint rejects a zero-byte body, and
+ * one rejection aborts the whole run completion.
+ */
+function hasContent(file: string): boolean {
+  try { return fs.statSync(file).size > 0; } catch { return false; }
+}
 
 function identifierLikePathSegment(part: string): boolean {
   const decoded = (() => { try { return decodeURIComponent(part); } catch { return part; } })();
@@ -517,6 +571,10 @@ export function liveEvidenceForBridgePayload(
     };
   }
   if (type === 'performance') {
+    // Interactions settle too, so the observer can screenshot a modal or an
+    // inline error. Those settles exist to drive capture, not to be read: a
+    // live row per click would bury the events the reviewer is watching for.
+    if (metadata.trigger === 'interaction') return null;
     return {
       kind: 'PERFORMANCE', level: 'INFO',
       message: `Performance snapshot for ${metadata.route ?? 'current route'}`,
@@ -823,6 +881,11 @@ export class BrowserObserver {
     if (eventId && ['click', 'submit_intent', 'submit', 'route'].includes(String(payload.type))) {
       controller.recentCause = { eventId, interactionGroupId: payload.interactionGroupId ?? null, at: Date.now() };
     }
+    // Opens a new snapshot window. Whether anything actually changed is decided
+    // at capture time by comparing page structure, not assumed here.
+    if (['click', 'submit', 'route'].includes(String(payload.type))) {
+      controller.interactionEpoch += 1;
+    }
     // A route that has finished settling is the point where the page is worth
     // a screenshot: the data has landed and the layout has stopped moving.
     if (payload.type === 'performance' && payload.metadata?.visuallyStableMs != null) {
@@ -887,6 +950,8 @@ export class BrowserObserver {
       observationTimer: null as unknown as ReturnType<typeof setInterval>, stopping: false, paused: false,
       sequence: 0, applicationOrigin, requests: new Map(), blockedByPolicy: new WeakSet(), recentCause: null,
       capturedStateKeys: new Set(), snapshotInFlight: false,
+      interactionEpoch: 0, lastCaptureSignature: null,
+      findingArtifacts: [], capturedFindingKeys: new Set(),
     };
     this.active = controller;
     const correlationHeaders = {
@@ -1054,15 +1119,18 @@ export class BrowserObserver {
         }, { pageUrl: originUrl ? sanitizeCapturedUrl(originUrl) : undefined });
       }
       if (level === 'ERROR') {
-        state.findings.push({
+        const finding: BrowserFinding = {
           id: uuid(), runId, category: 'BROWSER_CONSOLE_ERROR', severity: 'MEDIUM', confidence: 0.95,
           title: 'Browser console error', description: text, url: originUrl,
           viewport: origin && !origin.isClosed() ? origin.viewportSize() : null,
-          evidenceArtifactIds: [], reproductionSteps: ['Open the captured route', 'Repeat the linked interaction'],
+          evidenceArtifactIds: [], evidenceChecksums: [],
+          reproductionSteps: ['Open the captured route', 'Repeat the linked interaction'],
           recommendation: 'Resolve the client runtime error and rerun the affected Flow state.',
           scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
           dedupeKey: `console:${crypto.createHash('sha1').update(text).digest('hex')}`, generatorSource: 'BROWSER',
-        });
+        };
+        state.findings.push(finding);
+        void this.captureFindingEvidence(controller, finding).catch(() => undefined);
       }
     });
     context.on('request', (request) => {
@@ -1148,16 +1216,19 @@ export class BrowserObserver {
       if (!blockedByPolicy && (failed || (status !== null && status >= 400))) {
         const severity = failed || (status ?? 0) >= 500 ? 'HIGH' : 'MEDIUM';
         const description = `${record.method} ${record.url} — ${failed ? request.failure()?.errorText ?? 'failed' : status}`;
-        state.findings.push({
+        const finding: BrowserFinding = {
           id: uuid(), runId, category: failed ? 'NETWORK_REQUEST_FAILED' : 'HTTP_ERROR_RESPONSE', severity,
           confidence: 0.98, title: failed ? 'Network request failed' : `Request returned ${status}`,
-          description, url: originPage?.url() || null, viewport: originPage?.viewportSize() ?? null, evidenceArtifactIds: [],
+          description, url: originPage?.url() || null, viewport: originPage?.viewportSize() ?? null,
+          evidenceArtifactIds: [], evidenceChecksums: [],
           reproductionSteps: ['Open the captured route', 'Repeat the linked interaction'],
           recommendation: 'Check service availability, request construction, authorization, and server handling.',
           scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
           dedupeKey: `request:${record.method}:${normalizedRoute(record.url)}:${status ?? 'failed'}`,
           generatorSource: 'BROWSER',
-        });
+        };
+        state.findings.push(finding);
+        void this.captureFindingEvidence(controller, finding).catch(() => undefined);
       }
     };
     context.on('requestfinished', (request) => void finishRequest(request, false));
@@ -1470,10 +1541,67 @@ export class BrowserObserver {
   }
 
   /**
+   * Screenshots the page at the moment a finding was raised. A console error or
+   * a failed request can happen at any point, with no settle and no route
+   * change, so without this the most report-relevant instant of the run is the
+   * one with no picture of it.
+   *
+   * The capture's checksum goes onto the finding as `evidenceChecksums`, which
+   * the server resolves into a evidence link once the artifact has an id.
+   */
+  private async captureFindingEvidence(
+    controller: RunController,
+    finding: BrowserFinding,
+  ): Promise<void> {
+    const { state, page } = controller;
+    if (state.environmentType === 'PRODUCTION') return;
+    if (controller.stopping || controller.snapshotInFlight) return;
+    if (!page || page.isClosed()) return;
+    if (controller.findingArtifacts.length >= MAX_FINDING_ARTIFACTS) return;
+    // One picture per distinct problem: a console error in a render loop must
+    // not fill the run with identical screenshots.
+    const key = finding.dedupeKey ?? finding.id;
+    if (controller.capturedFindingKeys.has(key)) return;
+    controller.capturedFindingKeys.add(key);
+    controller.snapshotInFlight = true;
+    try {
+      const file = path.join(
+        state.artifactDirectory,
+        `finding-${String(controller.findingArtifacts.length + 1).padStart(3, '0')}-${Date.now()}.png`,
+      );
+      const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
+      await page.screenshot({ path: file, fullPage: true, mask: [mask], maskColor: '#111827' })
+        .catch(() => undefined);
+      if (!hasContent(file)) return;
+      const pageUrl = sanitizeCapturedUrl(page.url());
+      controller.findingArtifacts.push({
+        file,
+        context: {
+          stateKey: state.currentFlowStateKey,
+          route: normalizedRoute(pageUrl) ?? pageUrl,
+          title: finding.title,
+          sequence: null,
+          captureReason: 'FINDING',
+          accessibilityViolations: null,
+          capturedAt: new Date().toISOString(),
+        },
+      });
+      finding.evidenceChecksums = [...(finding.evidenceChecksums ?? []), checksum(file)];
+    } catch {
+      // Evidence is best-effort; a failed capture must never break the run.
+    } finally {
+      controller.snapshotInFlight = false;
+    }
+  }
+
+  /**
    * Captures the evidence a report needs for one settled state: a masked
    * screenshot, a redacted aria snapshot, and an accessibility scan. Gated on
-   * IN_FLOW so the pre-boundary floor (metadata only) still holds, and
-   * deduplicated per flow state and route so a re-render does not refire it.
+   * IN_FLOW so the pre-boundary floor (metadata only) still holds.
+   *
+   * Deduplicated on flow state, route and interaction epoch, so a wizard that
+   * never changes route is captured step by step — then on page structure, so
+   * an interaction that changed nothing does not spend a screenshot.
    */
   private async captureStateArtifacts(controller: RunController): Promise<void> {
     const { state, page } = controller;
@@ -1484,29 +1612,41 @@ export class BrowserObserver {
     if (state.stateArtifacts.length >= MAX_STATE_ARTIFACTS) return;
     const pageUrl = sanitizeCapturedUrl(page.url());
     const route = normalizedRoute(pageUrl) ?? pageUrl;
-    const dedupeKey = `${state.currentFlowStateKey ?? ''}|${route}`;
+    const dedupeKey = `${state.currentFlowStateKey ?? ''}|${route}|${controller.interactionEpoch}`;
     if (controller.capturedStateKeys.has(dedupeKey)) return;
     controller.capturedStateKeys.add(dedupeKey);
     controller.snapshotInFlight = true;
     try {
+      // The aria snapshot comes first: it doubles as the change test, and a
+      // screenshot is far more expensive to take and to store.
+      const aria = await page.locator('body').ariaSnapshot().catch(() => null);
+      const redactedAria = aria === null ? '' : redactAriaSnapshot(aria).trim();
+      const signature = crypto.createHash('sha1').update(`${route}\n${redactedAria}`).digest('hex');
+      if (signature === controller.lastCaptureSignature) return;
+      controller.lastCaptureSignature = signature;
       const base = `state-${String(state.stateArtifacts.length + 1).padStart(3, '0')}-${Date.now()}`;
       const screenshotPath = path.join(state.artifactDirectory, `${base}.png`);
       const ariaPath = path.join(state.artifactDirectory, `${base}.aria.txt`);
       const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
       await page.screenshot({ path: screenshotPath, fullPage: true, mask: [mask], maskColor: '#111827' })
         .catch(() => undefined);
-      const aria = await page.locator('body').ariaSnapshot().catch(() => null);
-      if (aria !== null) fs.writeFileSync(ariaPath, redactAriaSnapshot(aria), 'utf8');
-      const violations = await this.runAccessibilityScan(controller, route);
+      if (redactedAria) fs.writeFileSync(ariaPath, redactedAria, 'utf8');
+      const violations = await this.runAccessibilityScan(
+        controller,
+        route,
+        hasContent(screenshotPath) ? checksum(screenshotPath) : null,
+      );
       const title = await page.title().catch(() => '');
       const artifact: RunStateArtifact = {
         stateKey: state.currentFlowStateKey,
         route,
         title: safeMessage(title),
         timestamp: new Date().toISOString(),
-        screenshotFile: fs.existsSync(screenshotPath) ? path.basename(screenshotPath) : null,
-        accessibilityFile: fs.existsSync(ariaPath) ? path.basename(ariaPath) : null,
+        screenshotFile: hasContent(screenshotPath) ? path.basename(screenshotPath) : null,
+        accessibilityFile: hasContent(ariaPath) ? path.basename(ariaPath) : null,
         accessibilityViolations: violations === null ? null : violations.length,
+        sequence: state.stateArtifacts.length + 1,
+        captureReason: 'STATE_SETTLED',
       };
       state.stateArtifacts.push(artifact);
       this.emit(controller, 'QA_STATE_SNAPSHOT', {
@@ -1542,6 +1682,12 @@ export class BrowserObserver {
   private async runAccessibilityScan(
     controller: RunController,
     route: string,
+    /**
+     * Checksum of the state screenshot this scan runs against. An accessibility
+     * violation already has a picture of the page it was found on, so it links
+     * to that rather than triggering a second capture of the same view.
+     */
+    evidenceChecksum?: string | null,
   ): Promise<Array<{ id: string; impact: string | null; help: string; nodes: number }> | null> {
     const { page, state } = controller;
     try {
@@ -1590,6 +1736,7 @@ export class BrowserObserver {
           url: sanitizeCapturedUrl(page.url()),
           viewport: page.viewportSize(),
           evidenceArtifactIds: [],
+          evidenceChecksums: evidenceChecksum ? [evidenceChecksum] : [],
           reproductionSteps: ['Open the captured route', 'Inspect the reported elements'],
           recommendation: 'Resolve the accessibility rule failure and rerun the affected Flow state.',
           scope: 'IN_FLOW',
@@ -1745,10 +1892,13 @@ export class BrowserObserver {
     if (state.environmentType !== 'PRODUCTION' && page && !page.isClosed()) {
       const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
       await page.screenshot({ path: screenshot, fullPage: true, mask: [mask], maskColor: '#111827' }).catch(() => undefined);
-      const aria = await page.locator('body').ariaSnapshot().catch(() => 'Accessibility snapshot unavailable');
+      const aria = await page.locator('body').ariaSnapshot().catch(() => '');
       // Shares the redaction rule with every per-state snapshot rather than
-      // restating it, so the two can never drift apart.
-      fs.writeFileSync(accessibility, redactAriaSnapshot(aria), 'utf8');
+      // restating it, so the two can never drift apart. A page that yields
+      // nothing still gets a readable placeholder — never an empty file, which
+      // the artifact endpoint refuses.
+      const redactedAria = redactAriaSnapshot(aria).trim();
+      fs.writeFileSync(accessibility, redactedAria || 'Accessibility snapshot unavailable', 'utf8');
     }
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
@@ -1759,7 +1909,48 @@ export class BrowserObserver {
       artifact.screenshotFile ? path.join(state.artifactDirectory, artifact.screenshotFile) : null,
       artifact.accessibilityFile ? path.join(state.artifactDirectory, artifact.accessibilityFile) : null,
     ]).filter((file): file is string => Boolean(file));
-    const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles].filter((file) => fs.existsSync(file));
+    const findingArtifactFiles = controller.findingArtifacts.map((artifact) => artifact.file);
+    const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles, ...findingArtifactFiles]
+      .filter(hasContent);
+    // What each file depicts, keyed by basename. Uploaded with the bytes so a
+    // report card can name the state and route instead of a bare filename.
+    const finalRoute = sanitizeCapturedUrl(state.targetUrl);
+    const captureContext = new Map<string, ArtifactCaptureContext>([
+      [path.basename(screenshot), {
+        stateKey: state.currentFlowStateKey ?? null,
+        route: normalizedRoute(finalRoute) ?? finalRoute,
+        title: 'Final state',
+        sequence: state.stateArtifacts.length + 1,
+        captureReason: 'RUN_FINAL',
+        accessibilityViolations: null,
+        capturedAt: state.endedAt ?? new Date().toISOString(),
+      }],
+      [path.basename(accessibility), {
+        stateKey: state.currentFlowStateKey ?? null,
+        route: normalizedRoute(finalRoute) ?? finalRoute,
+        title: 'Final accessibility snapshot',
+        sequence: state.stateArtifacts.length + 1,
+        captureReason: 'RUN_FINAL',
+        accessibilityViolations: null,
+        capturedAt: state.endedAt ?? new Date().toISOString(),
+      }],
+    ]);
+    for (const artifact of state.stateArtifacts) {
+      const context: ArtifactCaptureContext = {
+        stateKey: artifact.stateKey,
+        route: artifact.route,
+        title: artifact.title || artifact.route,
+        sequence: artifact.sequence,
+        captureReason: artifact.captureReason,
+        accessibilityViolations: artifact.accessibilityViolations,
+        capturedAt: artifact.timestamp,
+      };
+      if (artifact.screenshotFile) captureContext.set(artifact.screenshotFile, context);
+      if (artifact.accessibilityFile) captureContext.set(artifact.accessibilityFile, context);
+    }
+    for (const artifact of controller.findingArtifacts) {
+      captureContext.set(path.basename(artifact.file), artifact.context);
+    }
     fs.writeFileSync(manifest, JSON.stringify({
       runId: state.runId, sessionId: state.sessionId, traceId: state.traceId,
       applicationId: state.applicationId, environmentId: state.environmentId, environmentType: state.environmentType,
@@ -1774,6 +1965,7 @@ export class BrowserObserver {
       startedAt: state.startedAt, endedAt: state.endedAt,
       artifacts: artifactFiles.map((file) => ({
         name: path.basename(file), bytes: fs.statSync(file).size, checksum: checksum(file),
+        context: captureContext.get(path.basename(file)) ?? null,
       })),
     }, null, 2));
     const result = JSON.parse(JSON.stringify(state)) as GuidedRunState;

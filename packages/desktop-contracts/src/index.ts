@@ -642,6 +642,12 @@ export const BrowserFindingSchema = z.object({
   url: z.string().url().nullable(),
   viewport: z.object({ width: z.number().int(), height: z.number().int() }).nullable(),
   evidenceArtifactIds: z.array(z.string().uuid()),
+  /**
+   * Checksums of artifacts captured for this finding. The desktop client knows
+   * a capture's checksum long before the server has assigned it an id, so the
+   * evidence link is made by checksum at upload time and resolved server-side.
+   */
+  evidenceChecksums: z.array(z.string()).default([]),
   reproductionSteps: z.array(z.string()),
   recommendation: z.string().nullable(),
   scope: QAEvidenceScopeSchema.nullable().optional(),

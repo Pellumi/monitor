@@ -32,7 +32,7 @@ export const CONFIDENCE = {
 export const ANALYZER_VERSIONS = {
   inventory: '2.0.0',
   typescriptSemantic: '2.0.0',
-  frameworkAdapters: '2.0.0',
+  frameworkAdapters: '2.1.0',
   documentation: '2.0.0',
   featureDiscovery: '2.0.0',
   architecture: '2.0.0',

@@ -174,7 +174,7 @@ export function installQaRecorder(config: {
    * meaningful DOM mutation. Both report explicit timeout flags rather than
    * fabricating a value.
    */
-  const scheduleSettled = () => {
+  const scheduleSettled = (trigger: 'route' | 'interaction' = 'route') => {
     routeStart = performance.now();
     routeLabel = location.pathname;
     const run = ++settleRun;
@@ -221,6 +221,7 @@ export function installQaRecorder(config: {
         type: 'performance',
         metadata: {
           route: label,
+          trigger,
           dataReadyMs: Math.round(dataReadyMs),
           visuallyStableMs: visuallyStableMs === undefined ? null : Math.round(visuallyStableMs),
           dataReadyTimedOut,
@@ -274,6 +275,11 @@ export function installQaRecorder(config: {
     const groupId = uid();
     latestInteraction = { eventId, groupId };
     send({ type: 'click', eventId, interactionGroupId: groupId, metadata: describeElement(control) });
+    // Most state changes in an app never touch the URL — a modal opens, a tab
+    // switches, validation appears. Running the same settle detector a route
+    // change uses means those moments produce a `performance` event too, which
+    // is what the observer screenshots on.
+    scheduleSettled('interaction');
   }, true);
   document.addEventListener('submit', (event) => {
     const form = event.target as HTMLFormElement;
@@ -289,6 +295,9 @@ export function installQaRecorder(config: {
       type: 'submit', eventId: uid(), interactionGroupId: groupId, causedByEventId: eventId,
       metadata: { formId: form.id || null, formName: form.name || null, valid: form.checkValidity() },
     }));
+    // A submit that stays on the page still changes it — a success banner, an
+    // inline error, a cleared form. Settle and let the observer capture it.
+    scheduleSettled('interaction');
   }, true);
   const captureField = (event: Event) => {
     if (phase !== 'IN_FLOW' || config.production) return;

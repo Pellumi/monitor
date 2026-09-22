@@ -254,7 +254,7 @@ function EmptyState({
 function Status({ children }: { children: ReactNode }) {
   const text = typeof children === "string" ? children : null;
   return (
-    <span className="status-pill" data-tone={text ? statusTone(text) : "neutral"}>
+    <span className="status-pill pt-0.75!" data-tone={text ? statusTone(text) : "neutral"}>
       <span aria-hidden="true" />
       {text ? formatEnum(text) : children}
     </span>
@@ -12829,6 +12829,14 @@ function ArtifactLayout({
   );
 }
 
+/** Reads to a reviewer as the reason the capture exists, not as an enum. */
+const CAPTURE_REASON_LABELS: Record<string, string> = {
+  STATE_SETTLED: "Page settled after a route change",
+  RUN_FINAL: "Final state when the run ended",
+  INSPECT_ANNOTATION: "Attached to a reviewer comment",
+  FINDING: "The page when a problem was detected",
+};
+
 function ArtifactGrid({
   items,
   showStorage,
@@ -12880,12 +12888,43 @@ function ArtifactGrid({
                 </Status>
               </div>
               <h3>
+                {typeof metadata.sequence === "number"
+                  ? `${metadata.sequence}. `
+                  : ""}
                 {displayValue(
                   metadata.title ?? metadata.name,
                   `Capture ${index + 1}`,
                 )}
               </h3>
               <dl className="data-list">
+                {metadata.route ? (
+                  <div>
+                    <dt>Route</dt>
+                    <dd className="truncate-value">
+                      {displayValue(metadata.route)}
+                    </dd>
+                  </div>
+                ) : null}
+                {metadata.stateKey ? (
+                  <div>
+                    <dt>Flow state</dt>
+                    <dd className="truncate-value">
+                      {displayValue(metadata.stateKey)}
+                    </dd>
+                  </div>
+                ) : null}
+                {metadata.captureReason ? (
+                  <div>
+                    <dt>Why</dt>
+                    <dd>{CAPTURE_REASON_LABELS[String(metadata.captureReason)] ?? displayValue(metadata.captureReason)}</dd>
+                  </div>
+                ) : null}
+                {typeof metadata.accessibilityViolations === "number" ? (
+                  <div>
+                    <dt>A11y violations</dt>
+                    <dd>{metadata.accessibilityViolations}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Captured</dt>
                   <dd>{formatDate(item.capturedAt ?? item.createdAt)}</dd>
@@ -13496,23 +13535,29 @@ export function RunDetailPage() {
                 const author = asRecord(annotation.author);
                 const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
                 const sourceMapping = asRecord(asRecord(annotation.elementFingerprint).sourceMapping);
-                const sourcePath = sourceMapping.status === "MATCHED" ? String(sourceMapping.path ?? "") : "";
+                const isMatched = sourceMapping.status === "MATCHED";
+                const sourcePath = String(sourceMapping.path ?? "");
                 const sourceStart = Number(sourceMapping.startLine ?? 0);
                 const sourceEnd = Number(sourceMapping.endLine ?? sourceStart);
                 return (
                   <article className="annotation-card" key={String(annotation.id ?? index)}>
                     <div className="annotation-pin">{index + 1}</div>
                     <div>
-                      <strong>{String(author.displayName ?? "Tellann member")}</strong>
-                      <small>{formatDate(annotation.createdAt)} · {String(annotation.normalizedRoute ?? "/")}</small>
-                      <p>{String(annotation.comment ?? "")}</p>
-                      {sourcePath ? (
-                        <div className="annotation-source" title={String(sourceMapping.symbol ?? sourcePath)}>
-                          <span>Source</span>
-                          <code>{sourcePath}{sourceStart > 0 ? `:${sourceStart}${sourceEnd > sourceStart ? `–${sourceEnd}` : ""}` : ""}</code>
+                      {author.displayName ? <strong>{String(author.displayName)}</strong> : null}
+                      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.875rem" }}>
+                        {isMatched && sourcePath ? <li><strong>File Name:</strong> {sourcePath}</li> : null}
+                        {isMatched && sourceStart > 0 ? <li><strong>Line Number:</strong> {sourceStart}{sourceEnd > sourceStart ? `–${sourceEnd}` : ""}</li> : null}
+                        <li><strong>Route Path Name:</strong> {String(annotation.normalizedRoute ?? "/")}</li>
+                        {annotation.comment ? <li><strong>Comment:</strong> {String(annotation.comment)}</li> : null}
+                        <li><strong>Time Stamp:</strong> {formatDate(annotation.createdAt)}</li>
+                      </ul>
+                      {mentions.length ? (
+                        <div className="annotation-mentions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                          {mentions.map((item, i) => (
+                            <Status key={i}><span>@{String(asRecord(item).displayNameSnapshot ?? "member")}</span></Status>
+                          ))}
                         </div>
                       ) : null}
-                      {mentions.length ? <div className="annotation-mentions">Mentioned: {mentions.map((item) => `@${String(asRecord(item).displayNameSnapshot ?? "member")}`).join(", ")}</div> : null}
                     </div>
                   </article>
                 );

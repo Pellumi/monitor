@@ -161,6 +161,46 @@ function safeArtifact(artifact: { bytes: bigint } & Record<string, unknown>) {
   return { ...artifact, bytes: artifact.bytes.toString() };
 }
 
+/** Header values arrive URI-encoded so page titles survive the ASCII-only hop. */
+function decodeHeader(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  try { return decodeURIComponent(value).slice(0, 500); } catch { return value.slice(0, 500); }
+}
+
+const CAPTURE_REASONS = new Set(['STATE_SETTLED', 'RUN_FINAL', 'INSPECT_ANNOTATION', 'FINDING']);
+
+/** An unparseable capture timestamp falls back to now rather than an Invalid Date. */
+function capturedAt(value: unknown): Date {
+  if (typeof value !== 'string' || !value) return new Date();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+/**
+ * Capture context is client-supplied, so every field is clamped and coerced
+ * here before it reaches the database or a report card.
+ */
+function parseCaptureContext(value: unknown): Record<string, unknown> | null {
+  const decoded = decodeHeader(value);
+  if (!decoded) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(decoded); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const raw = parsed as Record<string, unknown>;
+  const text = (key: string, max: number) =>
+    typeof raw[key] === 'string' && raw[key] ? String(raw[key]).slice(0, max) : null;
+  const count = (key: string) =>
+    typeof raw[key] === 'number' && Number.isFinite(raw[key]) ? Number(raw[key]) : null;
+  return {
+    stateKey: text('stateKey', 200),
+    route: text('route', 1_000),
+    title: text('title', 300),
+    sequence: count('sequence'),
+    captureReason: CAPTURE_REASONS.has(String(raw.captureReason)) ? String(raw.captureReason) : null,
+    accessibilityViolations: count('accessibilityViolations'),
+  };
+}
+
 type RepositoryBindingRow = {
   applicationId: string;
   repositoryOriginHash: string | null;
@@ -1368,6 +1408,11 @@ export function createDesktopRouter(input: {
       ) {
         return res.status(403).json({ error: 'FEATURE_NOT_ENTITLED', feature: Feature.BROWSER_TRACE_CAPTURE });
       }
+      // What the capture depicts — state, route, page title, why it was taken.
+      // Without it a report can only label an artifact by its position in the
+      // list, which is why these headers are persisted rather than dropped.
+      const artifactName = decodeHeader(req.headers['x-tellann-artifact-name']);
+      const captureContext = parseCaptureContext(req.headers['x-tellann-capture-context']);
       const privacy = String(
         req.headers['x-tellann-privacy-classification'] ?? PrivacyClassification.INTERNAL,
       ) as PrivacyClassification;
@@ -1418,16 +1463,25 @@ export function createDesktopRouter(input: {
               objectKey,
               bytes: BigInt(req.body.length),
               checksum,
-              capturedAt: req.headers['x-tellann-captured-at']
-                ? new Date(String(req.headers['x-tellann-captured-at'])) : new Date(),
-              metadata: { approved: true, storageAdapter: uploaded.adapter },
+              capturedAt: capturedAt(req.headers['x-tellann-captured-at']),
+              metadata: {
+                approved: true,
+                storageAdapter: uploaded.adapter,
+                name: artifactName,
+                ...(captureContext ?? {}),
+              },
             },
             update: {
               artifactType,
               privacyClassification: privacy,
               objectKey,
               bytes: BigInt(req.body.length),
-              metadata: { approved: true, storageAdapter: uploaded.adapter },
+              metadata: {
+                approved: true,
+                storageAdapter: uploaded.adapter,
+                name: artifactName,
+                ...(captureContext ?? {}),
+              },
             },
           });
           await tx.storageLedgerEntry.upsert({

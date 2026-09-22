@@ -267,10 +267,54 @@ test('records a UI action and the handler it triggers', () => {
   const action = analysis.entities.find((entity) => entity.type === 'ui_action');
   assert.ok(action, 'an onClick handler should produce a ui_action');
   assert.match(action!.name, /Buy now/);
+  assert.deepEqual(action!.metadata.labels, ['Buy now']);
   assert.ok(
     analysis.relationships.some((edge) => edge.type === 'ROUTES_TO' && edge.source === action!.id),
     'the action should route to the handler it names',
   );
+});
+
+/**
+ * A control's accessible name is rarely a direct text child. Every shape here
+ * used to collapse to the bare tag name, which left the annotation matcher
+ * with no text to work from at all.
+ */
+test('reads a control label from wherever the markup actually puts it', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-labels-')));
+  write(root, 'package.json', JSON.stringify({
+    name: 'labels', private: true, dependencies: { next: '^15.0.0', react: '^19.0.0' },
+  }));
+  write(root, 'app/panel/page.tsx', [
+    "import { Button } from '../../button';",
+    'declare function t(key: string): string;',
+    'export default function Panel() {',
+    '  const save = () => undefined;',
+    '  return (',
+    '    <main>',
+    '      <button onClick={save}><span>Publish changes</span></button>',
+    '      <button aria-label="Close dialog" onClick={save}>x</button>',
+    '      <input placeholder="Email address" onChange={save} />',
+    "      <button onClick={save}>{t('actions.archive')}</button>",
+    '      <Button data-testid="export-report" id="export" onClick={save}>Export</Button>',
+    '    </main>',
+    '  );',
+    '}',
+  ].join('\n'));
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const actions = analysis.entities.filter((entity) => entity.type === 'ui_action');
+  const labelled = (needle: string) => actions.find((action) => action.name.startsWith(needle));
+
+  assert.ok(labelled('Publish changes'), 'text nested in a <span> is still the label');
+  assert.ok(labelled('Close dialog'), 'an aria-label names an icon-only control');
+  assert.ok(labelled('Email address'), 'a placeholder names a field with no children');
+  assert.ok(labelled('actions.archive'), 'a translation key carries the words it renders');
+
+  const exported = labelled('Export');
+  assert.ok(exported, 'a component element is labelled by its text');
+  assert.equal(exported!.metadata.testId, 'export-report');
+  assert.equal(exported!.metadata.domId, 'export');
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('separates database reads from writes and prefers the declared schema', () => {

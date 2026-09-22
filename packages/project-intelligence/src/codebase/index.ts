@@ -27,7 +27,7 @@ export { analyzePythonSources, pythonModuleName } from './python';
 export { blastRadius };
 
 /** Bumped whenever a change would make cached fragments wrong. */
-export const CODEBASE_ANALYZER_VERSION = '2.0.0';
+export const CODEBASE_ANALYZER_VERSION = '2.1.0';
 
 export type AnalysisProgress = (
   status: CodebaseAnalysis['status'],
