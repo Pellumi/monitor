@@ -161,6 +161,25 @@ function safeArtifact(artifact: { bytes: bigint } & Record<string, unknown>) {
   return { ...artifact, bytes: artifact.bytes.toString() };
 }
 
+/**
+ * A finding reaches the client with its evidence's artifacts attached, and an
+ * artifact's size is a BigInt.
+ *
+ * Converting it is not cosmetic: `JSON.stringify` throws on a BigInt rather
+ * than skipping it, so one unconverted value does not mangle a field - it fails
+ * the response, and in an async handler that rejection takes the process with
+ * it. Every route returning findings goes through here so there is one place to
+ * get it right rather than one per route.
+ */
+function safeFinding<
+  Finding extends { evidence: Array<{ artifact: { bytes: bigint } & Record<string, unknown> }> },
+>(finding: Finding) {
+  return {
+    ...finding,
+    evidence: finding.evidence.map((link) => ({ ...link, artifact: safeArtifact(link.artifact) })),
+  };
+}
+
 /** Header values arrive URI-encoded so page titles survive the ASCII-only hop. */
 function decodeHeader(value: unknown): string | null {
   if (typeof value !== 'string' || !value) return null;
@@ -900,10 +919,7 @@ export function createDesktopRouter(input: {
       evidenceCounts: Object.fromEntries(groupedEvidence.map((item) => [item.eventType, item._count._all])),
       annotationCount: run.annotations.length,
       artifacts: run.artifacts.map(safeArtifact),
-      findings: run.findings.map((finding) => ({
-        ...finding,
-        evidence: finding.evidence.map((link) => ({ ...link, artifact: safeArtifact(link.artifact) })),
-      })),
+      findings: run.findings.map(safeFinding),
     });
   });
 
@@ -1855,7 +1871,7 @@ export function createDesktopRouter(input: {
       runId: run.id,
       sessions,
       artifacts: run.artifacts.map(safeArtifact),
-      findings: run.findings,
+      findings: run.findings.map(safeFinding),
     });
   });
 

@@ -21,9 +21,23 @@ const MIN_SIDEBAR_WIDTH = 196;
 const MAX_SIDEBAR_WIDTH = 360;
 const ICON_SIDEBAR_WIDTH = 52;
 
+// The sections that exist identically under every application. Anything deeper
+// than one of these is a record id owned by the application currently in the
+// route (a run, a report, a flow, an instrumentation plan).
+const PROJECT_SECTIONS = new Set([
+  'workspace', 'sources', 'environments', 'activity',
+  'intent', 'instrumentation', 'qa-runs', 'reports',
+]);
+
+// Switching applications keeps the section the user is in, but drops the
+// record id below it: those ids are resolved by id alone, so carrying one over
+// re-renders the previous application's record and the switch looks like it
+// did nothing at all.
 function equivalentProjectRoute(pathname: string, projectId: string) {
-  const match = pathname.match(/^\/applications\/[^/]+(\/.*)?$/);
-  return match ? `/applications/${projectId}${match[1] ?? ''}` : `/applications/${projectId}`;
+  const section = pathname.match(/^\/applications\/[^/]+\/([^/]+)/)?.[1];
+  return section && PROJECT_SECTIONS.has(section)
+    ? `/applications/${projectId}/${section}`
+    : `/applications/${projectId}`;
 }
 
 function storedSidebarMode(): SidebarMode {
