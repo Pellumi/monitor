@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
+import { bigIntJsonReplacer, useBigIntJson } from '@tellann/shared';
 
 /**
  * A BigInt reaching `res.json` used to end the process rather than the request.
@@ -13,9 +14,8 @@ import type { AddressInfo } from 'node:net';
  * that caused it.
  */
 
-/** The same replacer the API installs, exercised the same way Express uses it. */
-const jsonReplacer = (_key: string, value: unknown) =>
-  typeof value === 'bigint' ? value.toString() : value;
+/** The replacer the API actually installs, not a copy of it. */
+const jsonReplacer = bigIntJsonReplacer;
 
 /** A finding with its evidence's artifact, which is what `/qa-runs/:runId/replay` returns. */
 const replayPayload = () => ({
@@ -36,7 +36,7 @@ test('the payload is exactly what plain JSON.stringify refuses', () => {
 
 test('the replacer sends a BigInt as the string the hand-written converters emit', async () => {
   const app = express();
-  app.set('json replacer', jsonReplacer);
+  useBigIntJson(app);
   app.get('/replay', async (_request, response) => { response.json(replayPayload()); });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));

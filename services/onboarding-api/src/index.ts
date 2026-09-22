@@ -3,7 +3,7 @@ initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
 import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, NotificationSeverity, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
-import { Feature, Services, isReportFormatEntitled, reportFormatsForTier } from '@tellann/shared';
+import { Feature, Services, isReportFormatEntitled, reportFormatsForTier, useBigIntJson } from '@tellann/shared';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   NotificationEmailService,
@@ -304,15 +304,9 @@ const notificationOrchestrator = new NotificationOrchestrator({
     notificationHub.emit('notification.created', { organizationId, recipientUserIds });
   },
 });
-// A BigInt column - an artifact's size, a snapshot's byte total - makes
-// `JSON.stringify` throw rather than skip the field, and inside an async
-// handler that rejection ends the process: one unconverted value took the whole
-// API down and every desktop agent with it. Routes still convert deliberately
-// where the wire shape matters; this is the floor under them, not a substitute.
-// A string is what the hand-written converters already emit, so the shape is
-// the same either way.
-app.set('json replacer', (_key: string, value: unknown) =>
-  typeof value === 'bigint' ? value.toString() : value);
+// Artifact sizes and snapshot byte totals are BigInt columns; without this one
+// of them reaching `res.json` ends the process rather than the request.
+useBigIntJson(app);
 // 30 MB ceiling — document-flow generation posts the raw file as base64 JSON.
 app.use(express.json({ limit: '30mb' }));
 app.use(createDesktopRouter({

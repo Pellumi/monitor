@@ -7,6 +7,7 @@ import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   Feature,
   Services,
+  useBigIntJson,
   isReportFormatEntitled,
   reportFormatsForTier,
   resolveDefaultReportFormat,
@@ -52,6 +53,9 @@ async function uploadMeteredReport(applicationId: string, key: string, buffer: B
   return output;
 }
 const emailService = new NotificationEmailService(prisma);
+// A storage ledger entry and an artifact size are BigInt columns; without this
+// one of them reaching `res.json` ends the process rather than the request.
+useBigIntJson(app);
 app.use(express.json());
 
 // Enable CORS for dashboard queries

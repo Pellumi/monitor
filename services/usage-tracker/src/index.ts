@@ -3,7 +3,7 @@ initTracing('usage-tracker');
 
 import express, { NextFunction, Request, Response } from 'express';
 import { MemberRole, PrismaClient, UsageMetric } from '@tellann/db';
-import { Services } from '@tellann/shared';
+import { Services, useBigIntJson } from '@tellann/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import jwt from 'jsonwebtoken';
 
@@ -11,6 +11,9 @@ const app = express();
 const prisma = new PrismaClient();
 const emailService = new NotificationEmailService(prisma);
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
+// Storage totals are summed from BigInt columns; without this one reaching
+// `res.json` ends the process rather than the request.
+useBigIntJson(app);
 app.use(express.json());
 
 interface AuthenticatedRequest extends Request {
