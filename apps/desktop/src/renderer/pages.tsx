@@ -62,6 +62,16 @@ import {
 } from "lucide-react";
 import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
 import {
+  BACKEND_EVIDENCE_TABS,
+  BackendEndpointTable,
+  BackendModelTable,
+  BackendRunFacts,
+  BackendWaitingPanel,
+  hasBackendTrack,
+  isBackendOnlyRun,
+  type BackendEvidenceTabValue,
+} from "./backend-run";
+import {
   Link,
   Navigate,
   useLocation,
@@ -12099,6 +12109,13 @@ export function NewRunPage() {
                 { value: "COMBINED", label: "Combined frontend + backend" },
               ]}
             />
+            <span className="field-hint">
+              {captureMode === "BACKEND"
+                ? "No browser is opened. Tellann records the requests your server handles — route, status, timing, payloads and the models each one touched — while you drive the API from your own client, your tests or curl. It needs the backend SDK initialized in the process you are exercising."
+                : captureMode === "COMBINED"
+                  ? "Opens the managed browser and records your server's own requests alongside it, so a journey through the UI and the work it caused behind it appear in one run."
+                  : "Opens the managed browser and records what happens on screen: routes, clicks, forms, requests the page makes, performance and screenshots."}
+            </span>
           </label>
           <label className="full">
             <span className="field-label-with-tooltip">
@@ -12189,6 +12206,13 @@ export function NewRunPage() {
             </p>
           </div>
         </div> */}
+        {captureMode === "BACKEND" ? (
+          <div className="context-banner">
+            No browser is opened for a backend run. The URL above is recorded as
+            this run's capture target and scopes the local relay; nothing is
+            opened or requested for you.
+          </div>
+        ) : null}
         {environment?.type === "PRODUCTION" ? (
           <>
             <div className="context-banner">
@@ -12342,6 +12366,13 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
       detail: "Nothing is being recorded. Resume when you are ready to carry on.",
     };
   }
+  if (isBackendOnlyRun(run) && !plan) {
+    return {
+      title: "Backend capture",
+      detail:
+        "No browser is opened for this run. Exercise the API the way you normally would — your own client, your tests, curl — and every request your server handles is recorded with its payload, timing and the models it touched.",
+    };
+  }
   if (!plan) {
     return {
       title: run.expectedGraphVersionId ? "Loading the expected Flow" : run.mode === "ASSISTED" ? "Assisted exploration" : "Observational run",
@@ -12387,6 +12418,7 @@ export function LiveRunPage() {
     resumeRun,
     setRunInteractionMode,
     focusRunBrowser,
+    reopenRunBrowser,
     endRun,
     getDeclaredFlows,
     getDeclaredFlow,
@@ -12397,7 +12429,7 @@ export function LiveRunPage() {
     addDeclaredTransition,
     busy,
   } = useDesktop();
-  const [tab, setTab] = useState<EvidenceTabValue>("FLOW");
+  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [follow, setFollow] = useState(true);
@@ -12488,7 +12520,24 @@ export function LiveRunPage() {
     }
   }, []);
 
-  const activeTab = EVIDENCE_TABS.find((entry) => entry.value === tab) ?? EVIDENCE_TABS[0];
+  // Which evidence panes exist depends on what the run captures. A backend
+  // run has no browser console and no interactions to list; it has requests,
+  // server errors and data operations.
+  const backendOnly = run ? isBackendOnlyRun(run) : false;
+  const evidenceTabs: Array<{
+    value: EvidenceTabValue | BackendEvidenceTabValue;
+    label: string;
+    icon: typeof Activity;
+    kinds: Array<LiveEvidence["kind"]>;
+  }> = backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS;
+  const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
+
+  // A tab from the other track's set would leave the panel empty with no way
+  // back, so switching tracks lands on that track's first pane.
+  useEffect(() => {
+    if (evidenceTabs.some((entry) => entry.value === tab)) return;
+    setTab(backendOnly ? "REQUESTS" : "FLOW");
+  }, [backendOnly, tab]);
   const visible = useMemo(() => {
     if (!run || activeTab.value === "FINDINGS") return [];
     const needle = query.trim().toLowerCase();
@@ -12657,10 +12706,16 @@ export function LiveRunPage() {
     plan?.states.find((state) => state.key === plan.initialStateKey)?.name ??
     plan?.initialStateKey ??
     null;
-  const tabCount = (entry: (typeof EVIDENCE_TABS)[number]) =>
+  const tabCount = (entry: { value: string; kinds: Array<LiveEvidence["kind"]> }) =>
     entry.value === "FINDINGS"
       ? findings.length
       : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+  const backendTrack = hasBackendTrack(run);
+  const backend = run.backend ?? null;
+  // `NONE` is a backend run, which never had a window; `CLOSED` is one the
+  // operator closed, which can be put back without restarting the run.
+  const browserStatus = run.browserStatus ?? "ACTIVE";
+  const runIsLive = run.status === "RUNNING" || run.status === "PAUSED";
 
   return (
     <div
@@ -12712,15 +12767,28 @@ export function LiveRunPage() {
         </div>
         <div className="run-toolbar-actions">
           <Status>{run.status}</Status>
-          <button
-            className="button"
-            type="button"
-            disabled={busy || run.status === "COMPLETED" || run.status === "FAILED"}
-            onClick={() => void runControl(focusRunBrowser)}
-          >
-            <ExternalLink size={15} />
-            Show browser
-          </button>
+          {browserStatus === "NONE" ? null : browserStatus === "CLOSED" ? (
+            <button
+              className="button primary"
+              type="button"
+              disabled={busy || !runIsLive}
+              title="Open a new window on this run. Capture never stopped."
+              onClick={() => void runControl(reopenRunBrowser)}
+            >
+              <RefreshCw size={15} />
+              Reopen browser
+            </button>
+          ) : (
+            <button
+              className="button"
+              type="button"
+              disabled={busy || !runIsLive}
+              onClick={() => void runControl(focusRunBrowser)}
+            >
+              <ExternalLink size={15} />
+              Show browser
+            </button>
+          )}
         </div>
       </header>
 
@@ -12810,15 +12878,29 @@ export function LiveRunPage() {
 
       <section className="live-browser">
         <div className="browser-toolbar">
-          <Globe2 size={16} />
-          <strong>Managed Chromium</strong>
+          {backendOnly ? <Network size={16} /> : <Globe2 size={16} />}
+          <strong>{backendOnly ? "Backend capture" : "Managed Chromium"}</strong>
           <span className="browser-toolbar-route">
-            {currentObservation?.url || run.targetUrl}
+            {backendOnly ? run.targetUrl : currentObservation?.url || run.targetUrl}
           </span>
           <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
         <div className="run-workspace">
-          {preBoundary ? (
+          {browserStatus === "CLOSED" && runIsLive ? (
+            <div className="run-rejection" role="status">
+              <TriangleAlert size={15} />
+              <div>
+                <strong>The managed browser window is closed</strong>
+                <p>
+                  Nothing was lost. The run is still recording, and everything
+                  captured so far is intact — reopen the window to carry on in
+                  the same session, or end the run to generate its report.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {preBoundary && !backendOnly ? (
             <section className="run-waiting">
               <header>
                 <Hourglass size={18} />
@@ -12888,7 +12970,25 @@ export function LiveRunPage() {
             </section>
           ) : null}
 
-          {preBoundary ? null : (
+          {backendOnly ? (
+            <>
+              <BackendRunFacts
+                summary={backend}
+                targetUrl={run.targetUrl}
+                connected={Boolean(backend?.requests)}
+              />
+              {backend?.requests ? (
+                <>
+                  <BackendEndpointTable endpoints={backend.endpoints} />
+                  <BackendModelTable models={backend.models} />
+                </>
+              ) : (
+                <BackendWaitingPanel targetUrl={run.targetUrl} />
+              )}
+            </>
+          ) : null}
+
+          {preBoundary || backendOnly ? null : (
           <div className="run-facts">
             <article>
               <small>Current route</small>
@@ -12930,6 +13030,13 @@ export function LiveRunPage() {
             </article>
           </div>
           )}
+
+          {!backendOnly && backendTrack && backend?.requests ? (
+            <>
+              <BackendEndpointTable endpoints={backend.endpoints} />
+              <BackendModelTable models={backend.models} />
+            </>
+          ) : null}
 
           {preBoundary && !findings.length ? null : (
           <section className="run-findings">
@@ -12984,13 +13091,19 @@ export function LiveRunPage() {
             <div>
               <strong>
                 {run.phase === "IN_FLOW"
-                  ? "Recording this Flow in full"
+                  ? backendOnly
+                    ? "Recording every request in full"
+                    : "Recording this Flow in full"
                   : "Recording metadata only, for now"}
               </strong>
               <span>
                 {run.phase === "IN_FLOW"
-                  ? "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
-                  : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
+                  ? backendOnly
+                    ? "Routes, handlers, status codes, server-side timing, request and response payloads, query parameters, safe headers and the models each request touched are all being kept. Passwords, tokens, cookies and payment values are never captured; identifiers are pseudonymized and ordinary payload values are encrypted at rest."
+                    : "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
+                  : backendOnly
+                    ? "Routes, status codes, timing and the models each request touched are kept. Request and response payloads stay off until your application reports the Flow's first state."
+                    : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
               </span>
             </div>
           </div>
@@ -13048,7 +13161,7 @@ export function LiveRunPage() {
           </div>
         </div>
         <div className="evidence-tabs" role="tablist">
-          {EVIDENCE_TABS.map((entry) => {
+          {evidenceTabs.map((entry) => {
             const Icon = entry.icon;
             return (
               <button
@@ -13121,7 +13234,9 @@ export function LiveRunPage() {
                 <div className="evidence-empty">
                   {query || errorsOnly
                     ? "No rows match this filter."
-                    : "Evidence will appear here as you use the application."}
+                    : backendOnly
+                      ? "Evidence will appear here as your server handles requests."
+                      : "Evidence will appear here as you use the application."}
                 </div>
               )}
             </>
@@ -13135,19 +13250,23 @@ export function LiveRunPage() {
           <span className="run-mode-status" role="status" aria-live="polite">
             {controlError
                 ? controlError
+                : browserStatus === "CLOSED" && runIsLive
+                ? "Browser window closed — capture is still running"
                 : run.phase === "IN_FLOW"
-                ? run.mode === "GUIDED" ? "Recording the Flow in full" : "Recording the session in full"
+                ? backendOnly
+                  ? "Recording every request in full"
+                  : run.mode === "GUIDED" ? "Recording the Flow in full" : "Recording the session in full"
                 : "Metadata only until the Flow starts"}
           </span>
         </div>
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
             <>
-              {run.mode !== "OBSERVATION_ONLY" ? <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
+              {run.mode !== "OBSERVATION_ONLY" && !backendOnly ? <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
                 <button
                   className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "NAVIGATE"}
-                  disabled={busy || run.status === "PAUSED"}
+                  disabled={busy || run.status === "PAUSED" || browserStatus !== "ACTIVE"}
                   onClick={() => void runControl(() => setRunInteractionMode("NAVIGATE"))}
                 >
                   Navigate
@@ -13155,7 +13274,7 @@ export function LiveRunPage() {
                 <button
                   className={run.interactionMode === "INSPECT" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "INSPECT"}
-                  disabled={busy || run.status === "PAUSED"}
+                  disabled={busy || run.status === "PAUSED" || browserStatus !== "ACTIVE"}
                   onClick={() => void runControl(() => setRunInteractionMode("INSPECT"))}
                 >
                   Inspect

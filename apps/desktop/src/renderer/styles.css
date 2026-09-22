@@ -4700,6 +4700,8 @@ button:disabled {
 .run-coverage,
 .run-findings,
 .run-timeline,
+.run-endpoints,
+.run-models,
 .run-waiting {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -7885,4 +7887,145 @@ button:disabled {
   .run-processing-card,
   .protected-value-row { align-items: flex-start; flex-direction: column; }
   .report-title-list li { align-items: flex-start; flex-direction: column; gap: 5px; }
+}
+
+/* ── backend run workspace ────────────────────────────────────────────────
+   A backend run has no route, viewport or interaction mode to report, so the
+   shared facts grid carries request totals instead, and the workspace gains
+   two tables: what was called, and what it changed. */
+.run-fact-wide {
+  grid-column: 1 / -1;
+}
+.run-facts article[data-tone="warning"] strong {
+  color: var(--caution);
+}
+.run-endpoints > header,
+.run-models > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.run-endpoints h2,
+.run-models h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+.run-endpoints > header span,
+.run-models > header span {
+  color: var(--text-muted);
+  font: 11px/1 var(--font-mono);
+}
+.run-endpoints table,
+.run-models table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+.run-endpoints th,
+.run-endpoints td,
+.run-models th,
+.run-models td {
+  padding: 7px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font: 10px/1.5 var(--font-mono);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.run-endpoints thead th,
+.run-models thead th {
+  color: var(--text-subtle);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.run-endpoints tbody th,
+.run-models tbody th {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.run-endpoints tbody tr:last-child th,
+.run-endpoints tbody tr:last-child td,
+.run-models tbody tr:last-child th,
+.run-models tbody tr:last-child td {
+  border-bottom: 0;
+}
+.run-endpoints tbody tr[data-failing="true"] th {
+  color: var(--danger);
+}
+/* The method sits with the route rather than in a column of its own: read
+   together they are one identifier, and apart they are two lookups. */
+.run-endpoint-method {
+  display: inline-block;
+  min-width: 42px;
+  margin-right: 8px;
+  color: var(--text-subtle);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+.run-endpoint-method[data-method="post"],
+.run-endpoint-method[data-method="put"],
+.run-endpoint-method[data-method="patch"] {
+  color: var(--caution);
+}
+.run-endpoint-method[data-method="delete"] {
+  color: var(--danger);
+}
+
+/* A line of explanation under a form control, for choices whose consequence is
+   not obvious from the label alone. */
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font: 10px/1.6 var(--font-mono);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The environment a server started outside Tellann needs in order to report
+   into the open run. Shown only while the run has nothing to display, because
+   that is the only time it answers a question the operator is actually asking. */
+.run-connect {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2, var(--surface-1));
+}
+.run-connect-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.run-connect-heading strong {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+.run-connect p {
+  margin: 6px 0 10px;
+  color: var(--text-muted);
+  font: 10px/1.6 var(--font-mono);
+}
+.run-connect pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font: 10px/1.7 var(--font-mono);
+  user-select: text;
 }

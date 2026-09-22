@@ -10,13 +10,25 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import threading
 import time
 import traceback
 import uuid
 from typing import Any, Dict, Iterator, Optional
 
+from .capture import (
+    payload_bytes,
+    resolve_capture_config,
+    sanitize_headers,
+    sanitize_payload,
+)
 from .events import EVENT_TYPES, SOURCE, TellannEvent
+from .request_context import (
+    current_request_context,
+    record_data_access,
+    summarize_data_access,
+)
 from .transport import EventTransport
 
 #: Environment variables read when `initialize` is called without arguments.
@@ -29,6 +41,11 @@ ENV_ENDPOINT = "TELLANN_GATEWAY_URL"
 ENV_API_KEY = "TELLANN_INGESTION_KEY"
 ENV_APPLICATION_ID = "TELLANN_APPLICATION_ID"
 ENV_ENVIRONMENT_ID = "TELLANN_ENVIRONMENT_ID"
+
+#: Operation names that change data. Used when a caller does not say.
+MUTATION_PATTERN = re.compile(
+    r"create|update|delete|upsert|insert|write|save|remove|drop|truncate", re.IGNORECASE
+)
 
 
 class TellannBackend:
@@ -55,6 +72,7 @@ class TellannBackend:
         trace_id: Optional[str] = None,
         agent_version: Optional[str] = None,
         instrumentation_manifest_version: Optional[str] = None,
+        capture: Optional[Dict[str, Any]] = None,
         transport: Optional[EventTransport] = None,
     ) -> "TellannBackend":
         """Configure the SDK.
@@ -82,6 +100,11 @@ class TellannBackend:
             "trace_id": trace_id or os.environ.get("TELLANN_TRACE_ID"),
             "agent_version": agent_version,
             "instrumentation_manifest_version": instrumentation_manifest_version,
+            # What a captured request may carry. Bodies and headers are on by
+            # default so a QA run can show what was actually sent;
+            # credential-shaped fields are dropped regardless, before anything
+            # leaves this process.
+            "capture": resolve_capture_config(capture),
         }
         self._transport = transport or EventTransport(
             self._config["endpoint"], api_key or os.environ.get(ENV_API_KEY)
@@ -155,15 +178,108 @@ class TellannBackend:
         duration_ms: Optional[float] = None,
         *,
         session_id: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        query: Optional[Dict[str, Any]] = None,
+        request_body: Any = None,
+        response_body: Any = None,
+        request_headers: Optional[Dict[str, Any]] = None,
+        response_headers: Optional[Dict[str, Any]] = None,
+        handler: Optional[str] = None,
+        framework: Optional[str] = None,
+        request_id: Optional[str] = None,
+        models: Optional[list] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        payload: Dict[str, Any] = {"method": str(method).upper(), "route": route}
+        """Report one handled request.
+
+        `route` is the template the framework matched (`/invoices/<int:pk>`)
+        and `endpoint` the concrete path. Keeping both is what lets a run group
+        a thousand calls under one row while still showing what was called.
+        """
+        capture = (self._config or {}).get("capture") or resolve_capture_config(None)
+        context = current_request_context()
+        payload: Dict[str, Any] = {
+            "method": str(method).upper(),
+            "route": route,
+            "endpoint": endpoint or route,
+            "requestId": request_id or str(uuid.uuid4()),
+            "handler": handler,
+            "framework": framework,
+            "requestBytes": payload_bytes(request_body),
+            "responseBytes": payload_bytes(response_body),
+            "models": models if models is not None else summarize_data_access(
+                (context or {}).get("data_access", [])
+            ),
+        }
         if status_code is not None:
             payload["statusCode"] = int(status_code)
         if duration_ms is not None:
             payload["durationMs"] = round(float(duration_ms), 3)
+        sanitized_query = sanitize_payload(query, capture)
+        if sanitized_query is not None:
+            payload["query"] = sanitized_query
+        if capture.get("request_body", True):
+            sanitized_request = sanitize_payload(request_body, capture)
+            if sanitized_request is not None:
+                payload["requestBody"] = sanitized_request
+        if capture.get("response_body", True):
+            sanitized_response = sanitize_payload(response_body, capture)
+            if sanitized_response is not None:
+                payload["responseBody"] = sanitized_response
+        safe_request_headers = sanitize_headers(request_headers, capture)
+        if safe_request_headers:
+            payload["requestHeaders"] = safe_request_headers
+        safe_response_headers = sanitize_headers(response_headers, capture)
+        if safe_response_headers:
+            payload["responseHeaders"] = safe_response_headers
         payload.update(metadata or {})
-        self.track_event("API_REQUEST", payload, session_id)
+        self.track_event("API_REQUEST", payload, session_id or (context or {}).get("session_id"))
+
+    def track_data_access(
+        self,
+        model: str,
+        operation: str,
+        *,
+        records: Optional[int] = None,
+        duration_ms: Optional[float] = None,
+        mutation: Optional[bool] = None,
+        session_id: Optional[str] = None,
+    ) -> None:
+        """Report one persistence operation.
+
+        Two things happen with it: it is attached to the in-flight request, so
+        that request's own event can say which models it touched, and it is
+        sent on its own, so a run still records work that happened outside any
+        request - a migration, a management command, a queue consumer.
+        """
+        resolved_mutation = (
+            mutation
+            if mutation is not None
+            else bool(MUTATION_PATTERN.search(str(operation)))
+        )
+        context = record_data_access(
+            str(model),
+            str(operation),
+            records=records,
+            duration_ms=duration_ms,
+            mutation=resolved_mutation,
+        ) or current_request_context()
+        self.track_event(
+            "BUSINESS_EVENT",
+            {
+                # The desktop routes on this discriminator, the same way it
+                # routes client-state evidence from the frontend adapters.
+                "businessEventType": "QA_BACKEND_DATA_ACCESS",
+                "model": str(model)[:120],
+                "operation": str(operation)[:60],
+                "records": records,
+                "durationMs": round(float(duration_ms), 3) if duration_ms is not None else None,
+                "mutation": resolved_mutation,
+                "route": (context or {}).get("route"),
+                "method": (context or {}).get("method"),
+            },
+            session_id or (context or {}).get("session_id"),
+        )
 
     def capture_error(
         self,

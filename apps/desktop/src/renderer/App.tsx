@@ -244,15 +244,20 @@ function RunLifecycleResolver() {
   }, [navigate]);
   if (!notice) return null;
   const terminal = notice.completionReason === 'TERMINAL_STATE_REACHED';
+  // A backend run never opened a browser, so saying Chromium closed would be
+  // describing something that did not happen.
+  const closed = notice.captureTracks && !notice.captureTracks.includes('FRONTEND')
+    ? 'Capture stopped'
+    : 'Chromium was closed';
   return (
     <div className="run-lifecycle-toast" role="status" aria-live="polite">
       <strong>{terminal ? 'Terminal state reached' : 'QA run ended'}</strong>
       <span>
         {terminal
-          ? 'Chromium was closed and your QA report is being prepared.'
+          ? `${closed} and your QA report is being prepared.`
           : notice.completionReason === 'MANUAL_STOP_BEFORE_INITIAL'
-            ? 'Chromium was closed. The initial Flow boundary was not reached, so the report will be incomplete.'
-            : 'Chromium was closed before a terminal state. The available in-Flow evidence is being prepared.'}
+            ? `${closed}. The initial Flow boundary was not reached, so the report will be incomplete.`
+            : `${closed} before a terminal state. The available in-Flow evidence is being prepared.`}
       </span>
       {notice.safeError ? <small>{notice.safeError}</small> : null}
     </div>

@@ -214,6 +214,7 @@ type DesktopContextValue = {
   setRunInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
   /** Raises the managed browser window above the desktop app. */
   focusRunBrowser(): Promise<GuidedRunState>;
+  reopenRunBrowser(): Promise<GuidedRunState>;
   retryRunSynchronization(runId: string): Promise<Record<string, unknown>>;
   revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
   endRun(): Promise<GuidedRunState>;
@@ -615,6 +616,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return next;
   }, []);
 
+  // Same reporting rule as focus: the run page owns this failure, inline.
+  const reopenRunBrowser = useCallback(async () => {
+    const next = await bridge().runs.reopenBrowser();
+    setActiveRun(next);
+    return next;
+  }, []);
+
   const retryRunSynchronization = useCallback((runId: string) =>
     perform(() => bridge().runs.retrySynchronization(runId)), [perform]);
 
@@ -740,13 +748,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     resumeRun,
     setRunInteractionMode,
     focusRunBrowser,
+    reopenRunBrowser,
     retryRunSynchronization,
     revealProtectedValue,
     endRun,
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, reopenRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);
@@ -779,6 +788,15 @@ export function normalizeDesktopError(cause: unknown): string {
   }
   if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
     return 'That sign-in request is no longer active. Cancel it and try again.';
+  }
+  if (/RUN_HAS_NO_BROWSER/.test(raw)) {
+    return 'This run captures your backend only, so there is no browser window to show. Drive the API from your own client and every request your server handles is recorded here.';
+  }
+  if (/QA_BROWSER_DISCONNECTED/.test(raw)) {
+    return 'The managed browser process is gone, so a window cannot be reopened for this run. End the run to keep everything captured so far, then start a new one.';
+  }
+  if (/QA_BROWSER_CLOSED/.test(raw)) {
+    return 'The managed browser window is closed. Reopen it from the run toolbar to carry on in the same session.';
   }
   if (/QA_BRANCH_CONFIRMATION_REQUIRED/.test(raw)) {
     return 'This workspace is not on the QA review branch, and applying there was not confirmed. Try again and Tellann will ask before writing to the current branch.';

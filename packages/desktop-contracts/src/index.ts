@@ -74,6 +74,12 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_STATE_SNAPSHOT',
   'QA_FLOW_EVENT',
   'QA_CAPTURE_DEGRADED',
+  // Backend track. Reported by the backend SDK through the local relay rather
+  // than observed in the managed browser, so they carry a server route and a
+  // handler rather than a page URL and a viewport.
+  'QA_BACKEND_REQUEST',
+  'QA_BACKEND_ERROR',
+  'QA_BACKEND_DATA_ACCESS',
 ]);
 
 export const QAPendingProtectedValueSchema = z.object({
@@ -160,6 +166,11 @@ export const RunLifecycleEventSchema = z.object({
   evidenceCounts: z.record(z.number().int().nonnegative()),
   reportStatus: QAReportStatusSchema.nullable(),
   safeError: z.string().nullable(),
+  /**
+   * What the run captured. The end-of-run notice reads differently for a run
+   * that never opened a browser, and the renderer has no other way to know.
+   */
+  captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).optional(),
   timestamp: z.string().datetime(),
 });
 
@@ -1426,6 +1437,19 @@ export const IPC = {
   getRunState: 'tellann:run:state',
   /** renderer -> main: raise the managed browser window above the desktop app. */
   focusRunBrowser: 'tellann:run:browser:focus',
+  /**
+   * renderer -> main: put a page back after the operator closed the managed
+   * window. The run keeps going while the window is gone, so this resumes it
+   * in place rather than starting anything new.
+   */
+  reopenRunBrowser: 'tellann:run:browser:reopen',
+  /**
+   * renderer -> main: the loopback endpoint and credential a server the
+   * operator starts themselves needs in order to report into this run. Kept
+   * out of the run state deliberately: run state is persisted and uploaded,
+   * and a run credential belongs in neither.
+   */
+  getRunRelayConnection: 'tellann:run:relay:connection',
   /** main -> renderer: the active run's state changed. Replaces polling. */
   runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',

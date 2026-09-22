@@ -267,6 +267,16 @@ declare global {
         onStateChanged(callback: (state: GuidedRunState) => void): () => void;
         /** Raises the managed browser window above the desktop app. */
         focusBrowser(): Promise<GuidedRunState>;
+        reopenBrowser(): Promise<GuidedRunState>;
+        relayConnection(): Promise<{
+          endpoint: string;
+          relayToken: string;
+          runId: string;
+          sessionId: string;
+          traceId: string;
+          applicationId: string;
+          environmentId: string;
+        } | null>;
         end(): Promise<GuidedRunState>;
         getActive(): Promise<GuidedRunState | null>;
       };

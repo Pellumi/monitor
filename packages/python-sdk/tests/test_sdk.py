@@ -346,5 +346,126 @@ class DjangoMiddlewareTest(unittest.TestCase):
         client.teardown()
 
 
+class BackendCaptureTest(unittest.TestCase):
+    """What a backend QA run records about one handled request."""
+
+    def test_a_request_carries_its_payload_without_its_credentials(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_api(
+            "post",
+            "/api/orders/<int:pk>",
+            201,
+            91.4,
+            endpoint="/api/orders/8213",
+            handler="orders.views.update",
+            framework="django",
+            query={"include": "items", "api_key": "live_abc123"},
+            request_body={"note": "rush", "password": "hunter2"},
+            response_body={"id": 8213, "status": "created"},
+            request_headers={"content-type": "application/json", "cookie": "sid=1"},
+            response_headers={"content-type": "application/json", "set-cookie": "sid=2"},
+        )
+        client.flush(timeout=3)
+
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertEqual(metadata["route"], "/api/orders/<int:pk>")
+        self.assertEqual(metadata["endpoint"], "/api/orders/8213")
+        self.assertEqual(metadata["method"], "POST")
+        self.assertEqual(metadata["handler"], "orders.views.update")
+        self.assertEqual(metadata["responseBody"]["status"], "created")
+        self.assertGreater(metadata["requestBytes"], 0)
+        self.assertGreater(metadata["responseBytes"], 0)
+
+        # Credentials never leave the process, wherever they appear.
+        self.assertEqual(metadata["requestBody"]["password"], "[REDACTED]")
+        self.assertEqual(metadata["query"]["api_key"], "[REDACTED]")
+        self.assertEqual(metadata["requestBody"]["note"], "rush")
+        self.assertNotIn("cookie", metadata["requestHeaders"])
+        self.assertNotIn("set-cookie", metadata["responseHeaders"])
+        self.assertEqual(metadata["requestHeaders"]["content-type"], "application/json")
+        client.teardown()
+
+    def test_capture_can_be_narrowed_without_losing_the_request(self) -> None:
+        opener = RecordingOpener()
+        client = TellannBackend()
+        client.initialize(
+            endpoint="https://gateway.example.com/",
+            application_id="app-1",
+            capture={"request_body": False, "response_body": False, "headers": False},
+            transport=EventTransport("https://gateway.example.com", None, opener=opener),
+        )
+        client.track_api(
+            "GET", "/api/orders", 200, 12,
+            request_body={"note": "rush"},
+            response_body=[{"id": 1}],
+            request_headers={"content-type": "application/json"},
+        )
+        client.flush(timeout=3)
+
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertNotIn("requestBody", metadata)
+        self.assertNotIn("responseBody", metadata)
+        self.assertNotIn("requestHeaders", metadata)
+        # Sizes survive, so throughput is still reportable.
+        self.assertGreater(metadata["requestBytes"], 0)
+        client.teardown()
+
+    def test_models_touched_while_a_request_is_in_flight_are_attached_to_it(self) -> None:
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        token = enter_request_context(new_request_context(
+            method="POST", route="/api/orders/<int:pk>"
+        ))
+        try:
+            client.track_data_access("Order", "update", records=1)
+            client.track_data_access("Order", "update", records=2)
+            client.track_data_access("Payment", "select", records=3)
+            client.track_api("POST", "/api/orders/<int:pk>", 200, 40)
+        finally:
+            exit_request_context(token)
+        client.flush(timeout=3)
+
+        bodies = opener.bodies()
+        data_events = [body for body in bodies if body["eventType"] == "BUSINESS_EVENT"]
+        self.assertEqual(len(data_events), 3)
+        self.assertEqual(data_events[0]["metadata"]["businessEventType"], "QA_BACKEND_DATA_ACCESS")
+        self.assertTrue(data_events[0]["metadata"]["mutation"])
+        self.assertEqual(data_events[0]["metadata"]["route"], "/api/orders/<int:pk>")
+        self.assertFalse(data_events[2]["metadata"]["mutation"])
+
+        request = next(body for body in bodies if body["eventType"] == "API_REQUEST")
+        # One entry per model and operation, with the record counts summed.
+        self.assertEqual(request["metadata"]["models"], [
+            {"model": "Order", "operation": "update", "records": 3},
+            {"model": "Payment", "operation": "select", "records": 3},
+        ])
+        client.teardown()
+
+    def test_data_access_outside_a_request_is_reported_without_a_route(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_data_access("Invoice", "delete", records=4)
+        client.flush(timeout=3)
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertIsNone(metadata["route"])
+        self.assertTrue(metadata["mutation"])
+        client.teardown()
+
+    def test_an_oversized_payload_is_described_rather_than_truncated(self) -> None:
+        from tellann.capture import resolve_capture_config, sanitize_payload
+
+        capture = resolve_capture_config({"max_body_bytes": 256})
+        clipped = sanitize_payload({"rows": [{"value": "x" * 100} for _ in range(20)]}, capture)
+        self.assertTrue(clipped["truncated"])
+        self.assertEqual(clipped["keys"], ["rows"])
+
+
 if __name__ == "__main__":
     unittest.main()

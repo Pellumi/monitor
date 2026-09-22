@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import test from 'node:test';
-import { TELLANN, trackApi, captureError, trackState } from './index';
+import { TELLANN, trackApi, captureError, trackState, trackDataAccess, runInRequestContext } from './index';
 import { extractSessionId } from './integrations/express';
 import { TellannEventSchema } from '@tellann/shared';
 
@@ -140,4 +140,140 @@ test('TELLANN Backend SDK Tests', async (t) => {
   });
 
   TELLANN.teardown();
+});
+
+
+test('backend capture carries the payload without carrying the credentials', async (t) => {
+  TELLANN.initialize({
+    endpoint: 'http://collector-backend',
+    tenantId: 'tenant-c1',
+    applicationId: 'app-c1',
+  });
+
+  await t.test('a request carries its route, payloads, headers and sizes', async () => {
+    fetchCalls = [];
+    await trackApi({
+      endpoint: '/api/orders/8213',
+      route: '/api/orders/:id',
+      method: 'post',
+      statusCode: 201,
+      durationMs: 91,
+      handler: 'OrdersController.create',
+      framework: 'express',
+      query: { include: 'items', apiKey: 'live_abc123' },
+      requestBody: { note: 'rush', password: 'hunter2', customer: { email: 'a@b.test' } },
+      responseBody: { id: 8213, status: 'created' },
+      requestHeaders: { 'content-type': 'application/json', authorization: 'Bearer abc', cookie: 'sid=1' },
+      responseHeaders: { 'content-type': 'application/json', 'set-cookie': 'sid=2' },
+    });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.route, '/api/orders/:id');
+    assert.strictEqual(metadata.endpoint, '/api/orders/8213');
+    assert.strictEqual(metadata.method, 'POST');
+    assert.strictEqual(metadata.handler, 'OrdersController.create');
+    assert.strictEqual(metadata.responseBody.status, 'created');
+    assert.ok(metadata.requestBytes > 0 && metadata.responseBytes > 0);
+
+    // Credentials never leave the process, wherever they appear.
+    assert.strictEqual(metadata.requestBody.password, '[REDACTED]');
+    assert.strictEqual(metadata.query.apiKey, '[REDACTED]');
+    assert.strictEqual(metadata.requestBody.note, 'rush');
+    assert.strictEqual(metadata.requestHeaders.authorization, undefined);
+    assert.strictEqual(metadata.requestHeaders.cookie, undefined);
+    assert.strictEqual(metadata.responseHeaders['set-cookie'], undefined);
+    assert.strictEqual(metadata.requestHeaders['content-type'], 'application/json');
+  });
+
+  await t.test('capture can be narrowed without losing the request', async () => {
+    TELLANN.initialize({
+      endpoint: 'http://collector-backend',
+      applicationId: 'app-c1',
+      capture: { requestBody: false, responseBody: false, headers: false },
+    });
+    fetchCalls = [];
+    await trackApi({
+      endpoint: '/api/orders',
+      method: 'GET',
+      statusCode: 200,
+      durationMs: 12,
+      requestBody: { note: 'rush' },
+      responseBody: [{ id: 1 }],
+      requestHeaders: { 'content-type': 'application/json' },
+    });
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.requestBody, undefined);
+    assert.strictEqual(metadata.responseBody, undefined);
+    assert.strictEqual(metadata.requestHeaders, undefined);
+    // Sizes survive, so throughput is still reportable.
+    assert.ok(metadata.requestBytes > 0);
+  });
+
+  await t.test('an oversized payload sheds the body rather than the request', async () => {
+    TELLANN.initialize({
+      endpoint: 'http://collector-backend',
+      applicationId: 'app-c1',
+      capture: { maxBodyBytes: 256 * 1024 },
+    });
+    fetchCalls = [];
+    // Many ordinary fields rather than one huge one: each survives the
+    // per-string clip, and together they push the event past the collector's
+    // 32 KB ceiling.
+    await trackApi({
+      endpoint: '/api/import',
+      method: 'POST',
+      statusCode: 202,
+      durationMs: 300,
+      requestBody: Object.fromEntries(
+        Array.from({ length: 20 }, (_, index) => [`field${index}`, 'x'.repeat(3_000)]),
+      ),
+    });
+    assert.strictEqual(fetchCalls.length, 1);
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.requestBody, undefined);
+    assert.strictEqual(metadata.payloadsOmitted, 'EVENT_SIZE_LIMIT');
+    assert.strictEqual(metadata.endpoint, '/api/import');
+  });
+
+  await t.test('models touched while a request is in flight are attached to it', async () => {
+    TELLANN.initialize({ endpoint: 'http://collector-backend', applicationId: 'app-c1' });
+    fetchCalls = [];
+    await runInRequestContext(
+      { method: 'POST', route: '/api/orders/:id', dataAccess: [] },
+      async () => {
+        await trackDataAccess({ model: 'Order', operation: 'update', records: 1 });
+        await trackDataAccess({ model: 'Order', operation: 'update', records: 2 });
+        await trackDataAccess({ model: 'Payment', operation: 'findMany', records: 3 });
+        await trackApi({
+          endpoint: '/api/orders/8213',
+          route: '/api/orders/:id',
+          method: 'POST',
+          statusCode: 200,
+          durationMs: 40,
+        });
+      },
+    );
+
+    const dataEvents = fetchCalls.filter((call) => call.body.eventType === 'BUSINESS_EVENT');
+    assert.strictEqual(dataEvents.length, 3);
+    assert.strictEqual(dataEvents[0].body.metadata.businessEventType, 'QA_BACKEND_DATA_ACCESS');
+    assert.strictEqual(dataEvents[0].body.metadata.mutation, true);
+    assert.strictEqual(dataEvents[0].body.metadata.route, '/api/orders/:id');
+    assert.strictEqual(dataEvents[2].body.metadata.mutation, false);
+
+    const request = fetchCalls.find((call) => call.body.eventType === 'API_REQUEST');
+    // One entry per model and operation, with the record counts summed.
+    assert.deepStrictEqual(request?.body.metadata.models, [
+      { model: 'Order', operation: 'update', records: 3 },
+      { model: 'Payment', operation: 'findMany', records: 3 },
+    ]);
+  });
+
+  await t.test('data access outside a request is still reported, without a route', async () => {
+    fetchCalls = [];
+    await trackDataAccess({ model: 'Invoice', operation: 'delete', records: 4 });
+    assert.strictEqual(fetchCalls[0].body.metadata.route, null);
+    assert.strictEqual(fetchCalls[0].body.metadata.mutation, true);
+  });
 });

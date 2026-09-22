@@ -18,8 +18,14 @@ import {
   sanitizeCapturedUrl,
   sanitizeBridgeMetadata,
   scopeEvidenceForCapturePhase,
+  backendRouteTemplate,
+  durationPercentile,
+  emptyBackendSummary,
+  liveEvidenceForBackendRequest,
+  BrowserObserver,
 } from './index';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
+import type { QAEvidenceEvent } from '@tellann/desktop-contracts';
 
 test('uses the host window viewport for headed QA runs', () => {
   assert.equal(browserContextViewport(false), null);
@@ -291,3 +297,131 @@ test('performance rows report the navigation breakdown and real INP, not just pa
   assert.ok(labels.some((entry) => entry.startsWith('Longest task=120 ms in script:')), labels.join(' | '));
   assert.ok(labels.includes('Failed resources=2'), labels.join(' | '));
 });
+
+
+test('backend requests group under the route template the framework matched', () => {
+  assert.equal(backendRouteTemplate('/orders/:id', '/orders/8213'), '/orders/:id');
+  // No template: identifier-looking segments collapse so one route does not
+  // read as thousands.
+  assert.equal(backendRouteTemplate(null, '/orders/8213/items'), '/orders/:id/items');
+  assert.equal(backendRouteTemplate(undefined, '/health?verbose=1'), '/health');
+  assert.equal(backendRouteTemplate('', ''), '/');
+});
+
+test('duration percentiles are nearest-rank over the captured window', () => {
+  assert.equal(durationPercentile([], 95), null);
+  assert.equal(durationPercentile([10], 95), 10);
+  assert.equal(durationPercentile([10, 20, 30, 40], 50), 20);
+  assert.equal(durationPercentile([10, 20, 30, 40], 100), 40);
+});
+
+test('a backend request row reads by route, status and what it touched', () => {
+  const row = liveEvidenceForBackendRequest({
+    method: 'POST', route: '/orders/:id', status: 500, durationMs: 412,
+    handler: 'orders.update', models: ['Order', 'Payment'],
+    requestBytes: 120, responseBytes: 48,
+  });
+  assert.equal(row.kind, 'REQUEST');
+  assert.equal(row.level, 'ERROR');
+  assert.equal(row.message, 'POST /orders/:id — 500');
+  assert.deepEqual(row.details?.find((detail) => detail.label === 'Models'), {
+    label: 'Models', value: 'Order, Payment',
+  });
+  assert.equal(liveEvidenceForBackendRequest({
+    method: 'GET', route: '/orders', status: 404, durationMs: 4,
+  }).level, 'WARN');
+  assert.equal(liveEvidenceForBackendRequest({
+    method: 'GET', route: '/orders', status: 200, durationMs: 4,
+  }).level, 'INFO');
+});
+
+test('an empty backend summary reports nothing rather than zeroed percentiles', () => {
+  const summary = emptyBackendSummary();
+  assert.equal(summary.requests, 0);
+  assert.equal(summary.p95Ms, null);
+  assert.deepEqual(summary.endpoints, []);
+});
+
+test('a backend-only run captures without opening a browser', async () => {
+  const events: QAEvidenceEvent[] = [];
+  const observer = new BrowserObserver({ onEvidenceEvent: (event) => { events.push(event); } });
+  const state = await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    assert.deepEqual(state.captureTracks, ['BACKEND']);
+    // No window was opened, so there is none to show, focus or inspect.
+    assert.equal(state.browserStatus, 'NONE');
+    assert.equal(state.windowResolution, null);
+    await assert.rejects(() => observer.focusBrowser(), /RUN_HAS_NO_BROWSER/);
+    await assert.rejects(() => observer.setInteractionMode('INSPECT'), /RUN_HAS_NO_BROWSER/);
+
+    await observer.recordBackendRequestEvent({
+      eventId: '33333333-3333-4333-8333-333333333333',
+      timestamp: new Date().toISOString(),
+      metadata: {
+        requestId: 'request-1', method: 'post', endpoint: '/orders/8213',
+        route: '/orders/:id', statusCode: 500, durationMs: 120,
+        requestBody: { note: 'ship fast', password: 'hunter2' },
+        models: [{ model: 'Order', operation: 'update', records: 1 }],
+      },
+    });
+
+    const current = observer.getState();
+    assert.equal(current?.backend?.requests, 1);
+    assert.equal(current?.backend?.serverErrors, 1);
+    assert.equal(current?.backend?.endpoints[0].route, '/orders/:id');
+    assert.deepEqual(current?.backend?.endpoints[0].models, ['Order']);
+    // A 5xx from the application's own server is a finding, the same way a
+    // failed browser request is.
+    assert.equal(current?.findings[0]?.category, 'BACKEND_SERVER_ERROR');
+    assert.equal(current?.evidence.some((row) => row.kind === 'REQUEST'), true);
+
+    const captured = events.find((event) => event.eventType === 'QA_BACKEND_REQUEST');
+    assert.ok(captured, 'a backend request is written to the evidence spool');
+    assert.equal(captured.pageUrl, null);
+    assert.equal(captured.viewport, null);
+    // The password never leaves as a value; the ordinary field is carried as a
+    // protected value for the ingestion pipeline to encrypt.
+    const body = captured.metadata.requestBody as Record<string, unknown>;
+    assert.equal(body.password, '[NOT CAPTURED]');
+    const secret = captured.protectedValues.find((value) => value.keyPath.endsWith('password'));
+    assert.equal(secret?.kind, 'SECRET');
+    assert.equal(secret?.value, undefined);
+
+    // A replayed delivery of the same request must not double the totals.
+    await observer.recordBackendRequestEvent({
+      eventId: '44444444-4444-4444-8444-444444444444',
+      timestamp: new Date().toISOString(),
+      metadata: { requestId: 'request-1', method: 'POST', route: '/orders/:id', statusCode: 500, durationMs: 120 },
+    });
+    assert.equal(observer.getState()?.backend?.requests, 1);
+
+    await observer.recordBackendDataAccessEvent({
+      eventId: '55555555-5555-4555-8555-555555555555',
+      timestamp: new Date().toISOString(),
+      metadata: { model: 'Order', operation: 'update', records: 2, route: '/orders/:id', method: 'POST' },
+    });
+    const withData = observer.getState();
+    assert.equal(withData?.backend?.dataOperations, 1);
+    assert.equal(withData?.backend?.models[0].model, 'Order');
+    assert.equal(withData?.backend?.models[0].writes, 1);
+  } finally {
+    await observer.end();
+  }
+});
+
+async function mkdtemp() {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  return fs.mkdtemp(path.join(os.tmpdir(), 'tellann-observer-'));
+}

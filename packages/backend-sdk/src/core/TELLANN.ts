@@ -1,7 +1,9 @@
 import { trackApiEvent, TrackApiOptions } from './trackApi';
 import { captureErrorEvent, CaptureErrorOptions } from './captureError';
 import { trackStateEvent, TrackStateOptions } from './trackState';
+import { trackDataAccessEvent, TrackDataAccessOptions } from './trackDataAccess';
 import { BackendWorkflowTracker } from './workflowTracker';
+import type { TellannCaptureConfig } from './capture';
 import { v4 as uuidv4 } from 'uuid';
 import type { EventType, TellannEvent } from '../event-types';
 
@@ -16,6 +18,12 @@ export interface TellannBackendConfig {
   traceId?: string;
   agentVersion?: string;
   instrumentationManifestVersion?: string;
+  /**
+   * What a captured request may carry. Bodies and headers are on by default so
+   * a QA run can show what was actually sent; credential-shaped fields are
+   * dropped here regardless, before anything leaves this process.
+   */
+  capture?: TellannCaptureConfig;
 }
 
 export class TELLANNBackend {
@@ -48,6 +56,15 @@ export class TELLANNBackend {
   async trackState(options: TrackStateOptions): Promise<void> {
     if (!this.config) return;
     await trackStateEvent(this.config, options);
+  }
+
+  /**
+   * Reports one persistence operation, and attaches it to the request that is
+   * in flight so that request can say which models it touched.
+   */
+  async trackDataAccess(options: TrackDataAccessOptions): Promise<void> {
+    if (!this.config) return;
+    await trackDataAccessEvent(this.config, options);
   }
 
   async trackEvent(

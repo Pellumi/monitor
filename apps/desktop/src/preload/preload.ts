@@ -139,6 +139,8 @@ const IPC = {
   endGuidedRun: 'tellann:run:end',
   getRunState: 'tellann:run:state',
   focusRunBrowser: 'tellann:run:browser:focus',
+  reopenRunBrowser: 'tellann:run:browser:reopen',
+  getRunRelayConnection: 'tellann:run:relay:connection',
   runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
@@ -343,6 +345,8 @@ contextBridge.exposeInMainWorld('tellann', {
       return () => ipcRenderer.removeListener(IPC.runStateChanged, subscription);
     },
     focusBrowser: () => ipcRenderer.invoke(IPC.focusRunBrowser),
+    reopenBrowser: () => ipcRenderer.invoke(IPC.reopenRunBrowser),
+    relayConnection: () => ipcRenderer.invoke(IPC.getRunRelayConnection),
     end: () => ipcRenderer.invoke(IPC.endGuidedRun),
     getActive: () => ipcRenderer.invoke(IPC.getRunState),
   },

@@ -11,7 +11,14 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
+from ..capture import parse_body
 from ..client import TELLANN
+from ..request_context import (
+    current_request_context,
+    enter_request_context,
+    exit_request_context,
+    new_request_context,
+)
 
 
 def _route_of(request: Any) -> str:
@@ -24,6 +31,60 @@ def _route_of(request: Any) -> str:
     return path or "/"
 
 
+def _handler_of(request: Any) -> str | None:
+    """The view that served the request, as `module.name`."""
+    match = getattr(request, "resolver_match", None)
+    if match is None:
+        return None
+    view = getattr(match, "func", None)
+    name = getattr(view, "__qualname__", None) or getattr(view, "__name__", None)
+    module = getattr(view, "__module__", None)
+    if not name:
+        return getattr(match, "view_name", None)
+    return f"{module}.{name}" if module else name
+
+
+def _correlation_of(request: Any) -> dict:
+    """Run and session identity, as the desktop's relay stamps it on requests."""
+    headers = getattr(request, "headers", None) or {}
+    get = headers.get if hasattr(headers, "get") else (lambda key, default=None: default)
+    return {
+        "session_id": get("x-tellann-session-id") or get("X-Tellann-Session-Id"),
+        "run_id": get("x-tellann-run-id") or get("X-Tellann-Run-Id"),
+        "trace_id": get("x-tellann-trace-id") or get("X-Tellann-Trace-Id"),
+    }
+
+
+def _request_body(request: Any) -> Any:
+    """The parsed request body, or nothing.
+
+    `request.body` raises once the stream has been consumed - a file upload, a
+    streaming parser - and reading it again would break the view. Anything that
+    raises is reported as absent rather than as an error.
+    """
+    try:
+        content_type = getattr(request, "content_type", "") or ""
+        if "multipart/form-data" in content_type:
+            return {"multipart": True, "fields": list(getattr(request, "POST", {}).keys())}
+        raw = getattr(request, "body", None)
+    except Exception:
+        return None
+    return parse_body(raw, content_type)
+
+
+def _response_body(response: Any) -> Any:
+    """The response body, for ordinary buffered responses only."""
+    if getattr(response, "streaming", False):
+        return None
+    try:
+        content_type = str(response.get("Content-Type", "") if hasattr(response, "get") else "")
+        if "json" not in content_type and "text" not in content_type:
+            return None
+        return parse_body(getattr(response, "content", None), content_type)
+    except Exception:
+        return None
+
+
 class TellannMiddleware:
     """Request telemetry for Django's synchronous middleware chain."""
 
@@ -32,17 +93,39 @@ class TellannMiddleware:
 
     def __call__(self, request: Any) -> Any:
         started = time.monotonic()
-        response = self.get_response(request)
+        correlation = _correlation_of(request)
+        token = enter_request_context(new_request_context(
+            method=getattr(request, "method", "GET"),
+            route=getattr(request, "path", None),
+            **correlation,
+        ))
         try:
-            TELLANN.track_api(
-                getattr(request, "method", "GET"),
-                _route_of(request),
-                getattr(response, "status_code", None),
-                (time.monotonic() - started) * 1000,
-            )
-        except Exception:  # pragma: no cover - telemetry never breaks a response
-            pass
-        return response
+            response = self.get_response(request)
+            try:
+                context = current_request_context() or {}
+                # Read after the view has run: `resolver_match` is only set
+                # once Django has routed, so before the call there is nothing.
+                route = _route_of(request)
+                context["route"] = route
+                TELLANN.track_api(
+                    getattr(request, "method", "GET"),
+                    route,
+                    getattr(response, "status_code", None),
+                    (time.monotonic() - started) * 1000,
+                    endpoint=getattr(request, "path", None),
+                    framework="django",
+                    handler=_handler_of(request),
+                    query=dict(getattr(request, "GET", {}) or {}),
+                    request_body=_request_body(request),
+                    response_body=_response_body(response),
+                    request_headers=dict(getattr(request, "headers", {}) or {}),
+                    response_headers=dict(getattr(response, "headers", {}) or {}),
+                )
+            except Exception:  # pragma: no cover - telemetry never breaks a response
+                pass
+            return response
+        finally:
+            exit_request_context(token)
 
     def process_exception(self, request: Any, exception: BaseException) -> None:
         """Report an unhandled view exception, then let Django handle it."""
@@ -60,3 +143,11 @@ def instrument_django() -> None:
     """Initialize from the environment. Called by the generated settings hook."""
     if not TELLANN.is_initialized():
         TELLANN.initialize()
+    # Model telemetry is opt-in at import time rather than at configuration
+    # time, because it needs Django's app registry to be ready.
+    try:
+        from .django_orm import instrument_django_orm
+
+        instrument_django_orm()
+    except Exception:  # pragma: no cover - ORM telemetry is never required
+        pass

@@ -15,7 +15,11 @@ import type {
 import { installQaRecorder } from './injected-recorder';
 
 export type LiveEvidenceKind =
-  'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW';
+  'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW'
+  // Backend track. `REQUEST` is a request the application's own server
+  // handled, which is a different thing from `NETWORK` — a request the managed
+  // browser made — and the two are never mixed in one pane.
+  | 'REQUEST' | 'SERVER' | 'DATA';
 
 export type LiveEvidence = {
   id: string;
@@ -152,6 +156,65 @@ export type BrowserObservedTransition = {
   timestamp: string;
 };
 
+/**
+ * One server route the run has exercised, keyed by method and route template.
+ *
+ * Aggregated in the desktop rather than recomputed from the evidence spool on
+ * every push: a busy backend produces thousands of request events, and the run
+ * page only ever shows the table, never the individual rows behind it.
+ */
+export type BackendEndpointStat = {
+  key: string;
+  method: string;
+  /** Route template where the framework exposes one, else the sanitized path. */
+  route: string;
+  requests: number;
+  errors: number;
+  /** Server-side handler duration, in milliseconds. */
+  totalDurationMs: number;
+  slowestMs: number;
+  p95Ms: number;
+  lastStatus: number | null;
+  lastAt: string;
+  /** Data models this endpoint touched, by name. */
+  models: string[];
+};
+
+/** One persistence model the run has seen written or read. */
+export type BackendModelStat = {
+  model: string;
+  reads: number;
+  writes: number;
+  /** Operation names as the ORM reported them, most recent first. */
+  operations: string[];
+  /** Endpoint keys that touched this model. */
+  endpoints: string[];
+  lastAt: string;
+};
+
+/** Everything the backend track knows about the run so far. */
+export type BackendRunSummary = {
+  requests: number;
+  errors: number;
+  /** 4xx alone, so a validation-heavy API is not read as a broken one. */
+  clientErrors: number;
+  serverErrors: number;
+  unhandledErrors: number;
+  dataOperations: number;
+  totalDurationMs: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  slowestMs: number | null;
+  requestBytes: number;
+  responseBytes: number;
+  lastRequestAt: string | null;
+  endpoints: BackendEndpointStat[];
+  models: BackendModelStat[];
+};
+
+/** Whether the managed browser is available to be shown, and why not. */
+export type BrowserAvailability = 'ACTIVE' | 'CLOSED' | 'NONE';
+
 export type GuidedRunState = {
   runId: string;
   sessionId: string;
@@ -164,6 +227,16 @@ export type GuidedRunState = {
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
   phase: 'PRE_BOUNDARY' | 'IN_FLOW' | 'FINALIZING' | 'COMPLETE';
   interactionMode: QAInteractionMode;
+  /** What this run captures. A run without FRONTEND never opens a browser. */
+  captureTracks: Array<'FRONTEND' | 'BACKEND'>;
+  /**
+   * `NONE` for a backend-only run, `CLOSED` once the operator closes the
+   * managed window. `CLOSED` is recoverable: the browser process is still up
+   * and `reopenBrowser` puts a page back on the same context.
+   */
+  browserStatus: BrowserAvailability;
+  /** Present only while the backend track is on. */
+  backend: BackendRunSummary | null;
   currentFlowStateKey: string | null;
   evidenceCounts: Record<string, number>;
   targetUrl: string;
@@ -242,10 +315,19 @@ type RequestRecord = {
 
 type RunController = {
   state: GuidedRunState;
-  browser: Browser;
-  context: BrowserContext;
-  page: Page;
-  observationTimer: ReturnType<typeof setInterval>;
+  /** Null for a backend-only run, which never launches a browser at all. */
+  browser: Browser | null;
+  context: BrowserContext | null;
+  page: Page | null;
+  /**
+   * Puts the listeners, bindings and capture state onto a page. Held on the
+   * controller so `reopenBrowser` can wire a replacement page exactly the way
+   * `start` wired the first one.
+   */
+  attachPage: ((page: Page) => void) | null;
+  /** Re-derives the observed route from whichever page is current. */
+  refreshObservation: (() => Promise<void>) | null;
+  observationTimer: ReturnType<typeof setInterval> | null;
   stopping: boolean;
   paused: boolean;
   sequence: number;
@@ -274,6 +356,12 @@ type RunController = {
   findingArtifacts: Array<{ file: string; context: ArtifactCaptureContext }>;
   /** Finding dedupe keys already given a screenshot. */
   capturedFindingKeys: Set<string>;
+  /** Per-endpoint durations, for percentiles the running totals cannot give. */
+  backendDurations: Map<string, number[]>;
+  /** Every backend duration, for the run-wide percentiles. */
+  backendAllDurations: number[];
+  /** Backend request ids already counted, so a retried delivery is not double-counted. */
+  backendSeenRequests: Set<string>;
 };
 
 type BridgePayload = {
@@ -291,6 +379,10 @@ const PRE_BOUNDARY_TYPES = new Set<QAEvidenceEvent['eventType']>([
   'QA_ROUTE_CHANGED', 'QA_VIEWPORT_CHANGED', 'QA_REQUEST', 'QA_CONSOLE',
   'QA_RUNTIME_ERROR', 'QA_PAGE_CRASH', 'QA_PAGE_PERFORMANCE', 'QA_FLOW_EVENT', 'QA_CAPTURE_DEGRADED',
   'QA_CONTROL_CLICKED', 'QA_FORM_SUBMIT_INTENT',
+  // Backend evidence before the boundary is metadata only: the recorder gates
+  // payload capture on IN_FLOW itself, so what reaches here is route, status,
+  // timing and the models touched - the same shape the browser track keeps.
+  'QA_BACKEND_REQUEST', 'QA_BACKEND_ERROR', 'QA_BACKEND_DATA_ACCESS',
 ]);
 const PRE_BOUNDARY_INTERACTION_TYPES = new Set<QAEvidenceEvent['eventType']>([
   'QA_CONTROL_CLICKED', 'QA_FORM_SUBMIT_INTENT',
@@ -308,6 +400,7 @@ const MAX_FINDING_ARTIFACTS = 20;
 const STATE_PUSH_INTERVAL_MS = 250;
 const LIVE_EVIDENCE_KINDS: LiveEvidenceKind[] = [
   'CONSOLE', 'NETWORK', 'PAGE', 'ACCESSIBILITY', 'INTERACTION', 'STORAGE', 'PERFORMANCE', 'FLOW',
+  'REQUEST', 'SERVER', 'DATA',
 ];
 /**
  * Token-based, mirroring the server classifier in `qa-privacy`. Raw substring
@@ -633,6 +726,69 @@ export function liveEvidenceForNetworkRequest(input: {
   };
 }
 
+export function emptyBackendSummary(): BackendRunSummary {
+  return {
+    requests: 0, errors: 0, clientErrors: 0, serverErrors: 0, unhandledErrors: 0,
+    dataOperations: 0, totalDurationMs: 0, p50Ms: null, p95Ms: null, slowestMs: null,
+    requestBytes: 0, responseBytes: 0, lastRequestAt: null, endpoints: [], models: [],
+  };
+}
+
+/** Nearest-rank percentile over durations kept for one endpoint or the run. */
+export function durationPercentile(values: number[], percentile: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const rank = Math.ceil((percentile / 100) * sorted.length);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
+}
+
+/**
+ * The route a backend request is grouped under.
+ *
+ * The framework's own template (`/orders/:id`) is always preferred: it is what
+ * the developer wrote, and it groups correctly without guessing. Only when the
+ * integration could not supply one does this fall back to the request path
+ * with identifier-looking segments collapsed, which is the same rule the
+ * browser track uses for page routes.
+ */
+export function backendRouteTemplate(route: unknown, requestPath: unknown): string {
+  const template = typeof route === 'string' ? route.trim() : '';
+  if (template && template !== '/' ) return template.slice(0, 300);
+  const raw = typeof requestPath === 'string' ? requestPath.trim() : '';
+  if (!raw) return template || '/';
+  const [pathname] = raw.split('?');
+  const collapsed = pathname.split('/').filter(Boolean)
+    .map((segment) => (identifierLikePathSegment(segment) ? ':id' : segment))
+    .join('/');
+  return `/${collapsed}`.slice(0, 300);
+}
+
+/** How a captured backend request reads in the live panel. */
+export function liveEvidenceForBackendRequest(input: {
+  method: string;
+  route: string;
+  status: number | null;
+  durationMs: number | null;
+  handler?: string | null;
+  models?: string[];
+  requestBytes?: number | null;
+  responseBytes?: number | null;
+}): Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> {
+  const status = input.status ?? 0;
+  const level: LiveEvidence['level'] = status >= 500 || status === 0 ? 'ERROR' : status >= 400 ? 'WARN' : 'INFO';
+  return {
+    kind: 'REQUEST', level,
+    message: `${input.method} ${input.route} — ${input.status ?? 'no response'}`,
+    details: compactDetails([
+      detail('Duration', input.durationMs == null ? null : `${input.durationMs} ms`),
+      detail('Handler', input.handler ?? null),
+      detail('Models', input.models?.length ? input.models.join(', ') : null),
+      detail('Request', input.requestBytes == null ? null : `${input.requestBytes} bytes`),
+      detail('Response', input.responseBytes == null ? null : `${input.responseBytes} bytes`),
+    ]),
+  };
+}
+
 function protectStructuredPayload(value: unknown, rootPath = 'payload'): {
   metadata: unknown;
   protectedValues: QAPendingProtectedValue[];
@@ -792,7 +948,11 @@ export class BrowserObserver {
     const { state } = controller;
     if (controller.paused || state.phase === 'FINALIZING' || state.phase === 'COMPLETE') return null;
     if (state.phase === 'PRE_BOUNDARY' && !PRE_BOUNDARY_TYPES.has(type)) return null;
-    const pageUrl = input.pageUrl ?? (controller.page?.isClosed() ? null : sanitizeCapturedUrl(controller.page.url()));
+    // Backend evidence passes an explicit null: it has no page, and a run
+    // without a browser has none to fall back to either.
+    const pageUrl = input.pageUrl !== undefined
+      ? input.pageUrl
+      : controller.page && !controller.page.isClosed() ? sanitizeCapturedUrl(controller.page.url()) : null;
     const eventId = input.eventId || uuid();
     const scopedEvidence = scopeEvidenceForCapturePhase(
       state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
@@ -817,7 +977,7 @@ export class BrowserObserver {
       pageUrl,
       normalizedRoute: pageUrl ? normalizedRoute(pageUrl) : null,
       acceptedFlowStateKey: state.currentFlowStateKey,
-      viewport: controller.page?.isClosed() ? null : controller.page.viewportSize(),
+      viewport: controller.page && !controller.page.isClosed() ? controller.page.viewportSize() : null,
       interactionGroupId: input.interactionGroupId ?? null,
       causedByEventId: input.causedByEventId ?? null,
       metadata: scopedEvidence.metadata,
@@ -912,22 +1072,16 @@ export class BrowserObserver {
     const artifactDirectory = path.join(artifactRoot, runId);
     fs.mkdirSync(artifactDirectory, { recursive: true });
     const headless = this.options.headless ?? false;
-    const browser = await chromium.launch({
-      headless,
-      ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
-    });
+    const captureTracks: Array<'FRONTEND' | 'BACKEND'> = input.captureTracks?.length
+      ? Array.from(new Set(input.captureTracks))
+      : ['FRONTEND'];
+    // A run that captures only the backend has nothing to drive a browser
+    // with: every event it will ever see arrives from the application's own
+    // server through the relay. Launching Chromium anyway used to leave an
+    // empty window over the target URL, and made the run page describe a
+    // viewport and a route that had nothing to do with what was captured.
+    const browserTrack = captureTracks.includes('FRONTEND');
     const applicationOrigin = new URL(input.targetUrl).origin;
-    const context = await browser.newContext({
-      viewport: browserContextViewport(headless),
-      locale: 'en-US',
-      colorScheme: 'light',
-      recordVideo: undefined,
-    });
-    if (observationOnly) await context.addInitScript(installReadOnlyInteractionGuard);
-    if (input.environmentType === 'PRODUCTION') await context.addInitScript(installReadOnlySocketGuard);
-    if (input.environmentType === 'PRODUCTION') {
-      await context.routeWebSocket('**/*', (socket) => socket.close());
-    }
     const state: GuidedRunState = {
       runId, sessionId, traceId, applicationId: input.applicationId, environmentId: input.environmentId,
       environmentType: input.environmentType,
@@ -935,7 +1089,11 @@ export class BrowserObserver {
       mode: observationOnly ? 'OBSERVATION_ONLY' : input.mode === 'ASSISTED' ? 'ASSISTED' : 'GUIDED',
       // Session-scoped runs have no declared initial boundary to wait for.
       // Capture is active as soon as the user explicitly starts the run.
-      status: 'RUNNING', phase: initialCapturePhase(input.mode, input.expectedGraphVersionId), interactionMode: 'NAVIGATE', currentFlowStateKey: null,
+      status: 'RUNNING', phase: initialCapturePhase(input.mode, input.expectedGraphVersionId), interactionMode: 'NAVIGATE',
+      captureTracks,
+      browserStatus: browserTrack ? 'ACTIVE' : 'NONE',
+      backend: captureTracks.includes('BACKEND') ? emptyBackendSummary() : null,
+      currentFlowStateKey: null,
       evidenceCounts: {}, targetUrl: input.targetUrl, evidence: [], observations: [], observedTransitions: [],
       windowResolution: null,
       evidenceTrimmed: 0,
@@ -946,14 +1104,48 @@ export class BrowserObserver {
       findings: [], artifactDirectory, startedAt: new Date().toISOString(), endedAt: null,
     };
     const controller: RunController = {
-      state, browser, context, page: null as unknown as Page,
-      observationTimer: null as unknown as ReturnType<typeof setInterval>, stopping: false, paused: false,
+      state, browser: null, context: null, page: null, attachPage: null, refreshObservation: null,
+      observationTimer: null, stopping: false, paused: false,
       sequence: 0, applicationOrigin, requests: new Map(), blockedByPolicy: new WeakSet(), recentCause: null,
       capturedStateKeys: new Set(), snapshotInFlight: false,
       interactionEpoch: 0, lastCaptureSignature: null,
       findingArtifacts: [], capturedFindingKeys: new Set(),
+      backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
     };
     this.active = controller;
+    if (!browserTrack) {
+      this.addLive(state, {
+        kind: 'SERVER', level: 'INFO',
+        message: `Backend capture started for ${sanitizeCapturedUrl(input.targetUrl)}. Requests reported by your application appear here as they are handled.`,
+      });
+      return this.snapshot();
+    }
+    let browser: Browser;
+    let context: BrowserContext;
+    try {
+      browser = await chromium.launch({
+        headless,
+        ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
+      });
+      context = await browser.newContext({
+        viewport: browserContextViewport(headless),
+        locale: 'en-US',
+        colorScheme: 'light',
+        recordVideo: undefined,
+      });
+    } catch (error) {
+      // Nothing was captured and nothing was opened, so leave no active run
+      // behind for the caller's failure path to trip over.
+      this.active = null;
+      throw error;
+    }
+    controller.browser = browser;
+    controller.context = context;
+    if (observationOnly) await context.addInitScript(installReadOnlyInteractionGuard);
+    if (input.environmentType === 'PRODUCTION') await context.addInitScript(installReadOnlySocketGuard);
+    if (input.environmentType === 'PRODUCTION') {
+      await context.routeWebSocket('**/*', (socket) => socket.close());
+    }
     const correlationHeaders = {
       'x-tellann-run-id': runId,
       'x-tellann-session-id': sessionId,
@@ -1076,10 +1268,13 @@ export class BrowserObserver {
     };
 
     const captureObservation = async () => {
-      if (page.isClosed()) return;
-      const url = page.url();
+      // Reads whichever page is current rather than the one this run opened
+      // with, so observation survives a popup or a reopened window.
+      const target = controller.page;
+      if (!target || target.isClosed()) return;
+      const url = target.url();
       if (!/^https?:\/\//.test(url)) return;
-      const title = await page.title().catch(() => '');
+      const title = await target.title().catch(() => '');
       const derived = deriveBrowserState(url, title);
       const previous = state.observations[state.observations.length - 1];
       const safeUrl = sanitizeCapturedUrl(url);
@@ -1283,6 +1478,23 @@ export class BrowserObserver {
         void this.syncFrameState(controller, frame);
       });
       target.on('domcontentloaded', () => void captureWindowResolution(target));
+      // Closing the managed window is a normal thing to do by accident, and it
+      // does not end the run: the browser process is still up, the context
+      // still holds the recorder's init scripts and bindings, and the backend
+      // track (if any) keeps reporting. The run page offers to put a page back.
+      target.on('close', () => {
+        if (!this.active || controller.stopping) return;
+        if (target !== controller.page) return;
+        const survivor = context.pages().find((open) => open !== target && !open.isClosed()) ?? null;
+        controller.page = survivor;
+        if (survivor) return;
+        state.browserStatus = 'CLOSED';
+        this.addLive(state, {
+          kind: 'PAGE', level: 'WARN',
+          message: 'The managed browser window was closed. Capture is still running — reopen it to carry on in the same session.',
+        });
+        this.notifyStateChanged();
+      });
       target.on('crash', () => {
         if (!this.active || controller.stopping) return;
         this.emit(controller, 'QA_PAGE_CRASH', { reason: 'Managed browser page crashed' });
@@ -1292,6 +1504,8 @@ export class BrowserObserver {
         void this.handleUnexpectedTermination();
       });
     };
+    controller.attachPage = attachPageListeners;
+    controller.refreshObservation = captureObservation;
     attachPageListeners(page);
     context.on('page', (opened) => {
       if (opened === page) return;
@@ -1382,7 +1596,7 @@ export class BrowserObserver {
     fn: (argument: any) => boolean | void,
     argument: unknown,
   ): Promise<number> {
-    if (!this.active) return 0;
+    if (!this.active?.context) return 0;
     const frames = this.active.context.pages()
       .filter((page) => !page.isClosed())
       .flatMap((page) => page.frames());
@@ -1461,6 +1675,276 @@ export class BrowserObserver {
   }
 
   /**
+   * Records one request the application's own server handled.
+   *
+   * This is the backend counterpart of the browser's `QA_REQUEST`: it arrives
+   * from the backend SDK through the local relay rather than from the driver,
+   * so it carries the route template the framework matched, the handler that
+   * ran, the models the request touched and the server-side duration - none of
+   * which the browser can see, and all of which are the point of a backend run.
+   *
+   * Bodies, query strings and headers go through the same protection the
+   * browser track uses: every leaf is classified, secrets are dropped before
+   * they leave this process, identifiers are pseudonymized and ordinary values
+   * are encrypted at rest by the ingestion pipeline.
+   */
+  async recordBackendRequestEvent(event: Record<string, unknown>): Promise<void> {
+    if (!this.active) return;
+    const controller = this.active;
+    const { state } = controller;
+    const metadata = event.metadata && typeof event.metadata === 'object'
+      ? event.metadata as Record<string, unknown> : {};
+    // The SDK retries a failed delivery, and the relay replays its own spool,
+    // so the same request can legitimately arrive twice. Counting it twice
+    // would quietly corrupt every number on the page.
+    const requestKey = String(metadata.requestId ?? event.eventId ?? uuid());
+    if (controller.backendSeenRequests.has(requestKey)) return;
+    controller.backendSeenRequests.add(requestKey);
+    const method = String(metadata.method ?? 'GET').toUpperCase().slice(0, 12);
+    const route = backendRouteTemplate(metadata.route, metadata.endpoint ?? metadata.path);
+    const status = Number.isFinite(Number(metadata.statusCode)) ? Number(metadata.statusCode) : null;
+    const durationMs = Number.isFinite(Number(metadata.durationMs)) ? Number(metadata.durationMs) : null;
+    const observationOnly = state.mode === 'OBSERVATION_ONLY';
+    const inFlow = state.phase === 'IN_FLOW' && !observationOnly;
+    const protectedValues: QAPendingProtectedValue[] = [];
+    const protect = (value: unknown, root: string): unknown => {
+      if (value === undefined || value === null) return undefined;
+      const captured = protectStructuredPayload(value, root);
+      protectedValues.push(...captured.protectedValues);
+      return captured.metadata;
+    };
+    // Payloads are only retained once the run is inside the declared Flow, the
+    // same rule the browser track follows. Before that, shape and size only.
+    const query = protect(metadata.query, 'query');
+    const requestBody = inFlow ? protect(metadata.requestBody, 'requestBody') : undefined;
+    const responseBody = inFlow ? protect(metadata.responseBody, 'responseBody') : undefined;
+    const models = Array.isArray(metadata.models)
+      ? (metadata.models as unknown[]).slice(0, 50).map((entry) => {
+          const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+          return {
+            model: String(record.model ?? entry ?? '').slice(0, 120),
+            operation: record.operation ? String(record.operation).slice(0, 60) : null,
+            records: Number.isFinite(Number(record.records)) ? Number(record.records) : null,
+          };
+        }).filter((entry) => entry.model)
+      : [];
+    const requestBytes = Number.isFinite(Number(metadata.requestBytes)) ? Number(metadata.requestBytes) : null;
+    const responseBytes = Number.isFinite(Number(metadata.responseBytes)) ? Number(metadata.responseBytes) : null;
+    const handler = metadata.handler ? String(metadata.handler).slice(0, 200) : null;
+    const emitted = this.emit(controller, 'QA_BACKEND_REQUEST', {
+      method, route,
+      path: metadata.endpoint ? sanitizeCapturedUrl(String(metadata.endpoint)) : null,
+      statusCode: status, durationMs, handler,
+      framework: metadata.framework ? String(metadata.framework).slice(0, 60) : null,
+      requestBytes, responseBytes,
+      requestHeaders: metadata.requestHeaders ?? null,
+      responseHeaders: metadata.responseHeaders ?? null,
+      models,
+      ...(query === undefined ? {} : { query }),
+      ...(requestBody === undefined ? {} : { requestBody }),
+      ...(responseBody === undefined ? {} : { responseBody }),
+    }, {
+      eventId: typeof event.eventId === 'string' ? event.eventId : undefined,
+      // A backend request has no page, and inventing one would put a browser
+      // route on evidence the browser never saw.
+      pageUrl: null,
+      protectedValues,
+    });
+    if (!emitted) return;
+    this.applyBackendRequestToSummary(controller, {
+      method, route, status, durationMs, requestBytes, responseBytes,
+      models: models.map((entry) => entry.model),
+      timestamp: typeof event.timestamp === 'string' ? event.timestamp : new Date().toISOString(),
+    });
+    this.addLive(state, liveEvidenceForBackendRequest({
+      method, route, status, durationMs, handler,
+      models: models.map((entry) => entry.model),
+      requestBytes, responseBytes,
+    }));
+    if (status !== null && status >= 400) {
+      const severity = status >= 500 ? 'HIGH' : 'MEDIUM';
+      const dedupeKey = `backend:${method}:${route}:${status}`;
+      const finding: BrowserFinding = {
+        id: uuid(), runId: state.runId,
+        category: status >= 500 ? 'BACKEND_SERVER_ERROR' : 'BACKEND_CLIENT_ERROR',
+        severity, confidence: 0.98,
+        title: `${method} ${route} returned ${status}`,
+        description: `The application's own server answered ${method} ${route} with ${status}${durationMs == null ? '' : ` after ${durationMs} ms`}.`,
+        url: null, viewport: null, evidenceArtifactIds: [], evidenceChecksums: [],
+        reproductionSteps: [`Call ${method} ${route}`, 'Compare the captured request payload with what the handler expects'],
+        recommendation: status >= 500
+          ? 'Check the handler, its dependencies and the error it raised. The captured payload and the models it touched are attached to this run.'
+          : 'Check request validation, authorization and the contract this route publishes.',
+        scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+        dedupeKey, generatorSource: 'BROWSER',
+      };
+      if (!state.findings.some((existing) => existing.dedupeKey === dedupeKey)) state.findings.push(finding);
+    }
+  }
+
+  /** Records an unhandled error the application's server reported. */
+  async recordBackendErrorEvent(event: Record<string, unknown>): Promise<void> {
+    if (!this.active) return;
+    const controller = this.active;
+    const { state } = controller;
+    const metadata = event.metadata && typeof event.metadata === 'object'
+      ? event.metadata as Record<string, unknown> : {};
+    const message = safeMessage(String(metadata.message ?? metadata.error ?? 'Server error'));
+    // An older SDK reported the route inside its free-form `context` bag
+    // rather than beside the error, so both shapes are read.
+    const context = metadata.context && typeof metadata.context === 'object'
+      ? metadata.context as Record<string, unknown> : {};
+    const routeSource = metadata.route ?? context.route;
+    const pathSource = metadata.path ?? context.path;
+    const route = routeSource || pathSource
+      ? backendRouteTemplate(routeSource, pathSource)
+      : null;
+    const emitted = this.emit(controller, 'QA_BACKEND_ERROR', {
+      message,
+      name: metadata.name ? String(metadata.name).slice(0, 200) : null,
+      // A stack names files and lines, never values, and it is the one thing
+      // that makes a server error actionable from the run page.
+      stack: metadata.stack ? safeMessage(String(metadata.stack)).slice(0, 4_000) : null,
+      route,
+      method: (metadata.method ?? context.method)
+        ? String(metadata.method ?? context.method).toUpperCase().slice(0, 12) : null,
+      statusCode: Number.isFinite(Number(metadata.statusCode)) ? Number(metadata.statusCode) : null,
+      severity: metadata.severity ? String(metadata.severity).slice(0, 40) : 'error',
+    }, { eventId: typeof event.eventId === 'string' ? event.eventId : undefined, pageUrl: null });
+    if (!emitted) return;
+    if (state.backend) state.backend.unhandledErrors += 1;
+    this.addLive(state, {
+      kind: 'SERVER', level: 'ERROR',
+      message: route ? `${route} - ${message}` : message,
+      details: compactDetails([
+        detail('Type', metadata.name),
+        detail('Route', route),
+        detail('Status', metadata.statusCode),
+      ]),
+    });
+    const dedupeKey = `backend-error:${route ?? 'unrouted'}:${String(metadata.name ?? 'Error')}`;
+    if (!state.findings.some((existing) => existing.dedupeKey === dedupeKey)) {
+      state.findings.push({
+        id: uuid(), runId: state.runId, category: 'BACKEND_UNHANDLED_ERROR', severity: 'HIGH',
+        confidence: 0.95, title: `Unhandled server error${route ? ` on ${route}` : ''}`,
+        description: message, url: null, viewport: null,
+        evidenceArtifactIds: [], evidenceChecksums: [],
+        reproductionSteps: route ? [`Call ${route}`] : ['Repeat the captured request sequence'],
+        recommendation: 'Handle the error in the route, or fix the condition that raises it.',
+        scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+        dedupeKey, generatorSource: 'BROWSER',
+      });
+    }
+  }
+
+  /**
+   * Records one persistence operation - which model, which operation, how many
+   * records - so the run can answer what a request actually changed rather
+   * than only what it answered with.
+   */
+  async recordBackendDataAccessEvent(event: Record<string, unknown>): Promise<void> {
+    if (!this.active) return;
+    const controller = this.active;
+    const { state } = controller;
+    const metadata = event.metadata && typeof event.metadata === 'object'
+      ? event.metadata as Record<string, unknown> : {};
+    const model = String(metadata.model ?? '').slice(0, 120);
+    if (!model) return;
+    const operation = String(metadata.operation ?? 'unknown').slice(0, 60);
+    const records = Number.isFinite(Number(metadata.records)) ? Number(metadata.records) : null;
+    const mutation = Boolean(metadata.mutation ?? /create|update|delete|upsert|insert|write|save|remove/i.test(operation));
+    const route = metadata.route || metadata.path ? backendRouteTemplate(metadata.route, metadata.path) : null;
+    const emitted = this.emit(controller, 'QA_BACKEND_DATA_ACCESS', {
+      model, operation, records, mutation, route,
+      durationMs: Number.isFinite(Number(metadata.durationMs)) ? Number(metadata.durationMs) : null,
+      method: metadata.method ? String(metadata.method).toUpperCase().slice(0, 12) : null,
+    }, { eventId: typeof event.eventId === 'string' ? event.eventId : undefined, pageUrl: null });
+    if (!emitted) return;
+    const summary = state.backend ?? (state.backend = emptyBackendSummary());
+    summary.dataOperations += 1;
+    const timestamp = typeof event.timestamp === 'string' ? event.timestamp : new Date().toISOString();
+    const existing = summary.models.find((entry) => entry.model === model);
+    const endpointKey = route && metadata.method ? `${String(metadata.method).toUpperCase()} ${route}` : route;
+    const target = existing ?? {
+      model, reads: 0, writes: 0, operations: [] as string[], endpoints: [] as string[], lastAt: timestamp,
+    };
+    if (!existing) summary.models.push(target);
+    if (mutation) target.writes += 1; else target.reads += 1;
+    target.lastAt = timestamp;
+    target.operations = [operation, ...target.operations.filter((entry) => entry !== operation)].slice(0, 12);
+    if (endpointKey && !target.endpoints.includes(endpointKey)) target.endpoints = [...target.endpoints, endpointKey].slice(0, 20);
+    summary.models.sort((left, right) => (right.reads + right.writes) - (left.reads + left.writes));
+    this.addLive(state, {
+      kind: 'DATA', level: 'INFO',
+      message: `${model}.${operation}${records == null ? '' : ` - ${records} record${records === 1 ? '' : 's'}`}`,
+      details: compactDetails([
+        detail('Kind', mutation ? 'Write' : 'Read'),
+        detail('Route', route),
+        detail('Duration', metadata.durationMs == null ? null : `${metadata.durationMs} ms`),
+      ]),
+    });
+  }
+
+  /** Folds one captured request into the run's rolling backend totals. */
+  private applyBackendRequestToSummary(controller: RunController, input: {
+    method: string;
+    route: string;
+    status: number | null;
+    durationMs: number | null;
+    requestBytes: number | null;
+    responseBytes: number | null;
+    models: string[];
+    timestamp: string;
+  }): void {
+    const { state } = controller;
+    const summary = state.backend ?? (state.backend = emptyBackendSummary());
+    summary.requests += 1;
+    summary.lastRequestAt = input.timestamp;
+    if (input.status !== null && input.status >= 500) { summary.serverErrors += 1; summary.errors += 1; }
+    else if (input.status !== null && input.status >= 400) { summary.clientErrors += 1; summary.errors += 1; }
+    summary.requestBytes += input.requestBytes ?? 0;
+    summary.responseBytes += input.responseBytes ?? 0;
+    const key = `${input.method} ${input.route}`;
+    if (input.durationMs !== null) {
+      summary.totalDurationMs += input.durationMs;
+      controller.backendAllDurations.push(input.durationMs);
+      // Percentiles need the samples, but a long run must not grow without
+      // bound, so the window is the most recent 5,000 requests.
+      if (controller.backendAllDurations.length > 5_000) controller.backendAllDurations.shift();
+      const perEndpoint = controller.backendDurations.get(key) ?? [];
+      perEndpoint.push(input.durationMs);
+      if (perEndpoint.length > 1_000) perEndpoint.shift();
+      controller.backendDurations.set(key, perEndpoint);
+      summary.p50Ms = durationPercentile(controller.backendAllDurations, 50);
+      summary.p95Ms = durationPercentile(controller.backendAllDurations, 95);
+      summary.slowestMs = Math.max(summary.slowestMs ?? 0, input.durationMs);
+    }
+    const existing = summary.endpoints.find((entry) => entry.key === key);
+    const endpoint = existing ?? {
+      key, method: input.method, route: input.route, requests: 0, errors: 0,
+      totalDurationMs: 0, slowestMs: 0, p95Ms: 0, lastStatus: null as number | null,
+      lastAt: input.timestamp, models: [] as string[],
+    };
+    if (!existing) summary.endpoints.push(endpoint);
+    endpoint.requests += 1;
+    endpoint.lastStatus = input.status;
+    endpoint.lastAt = input.timestamp;
+    if (input.status !== null && input.status >= 400) endpoint.errors += 1;
+    if (input.durationMs !== null) {
+      endpoint.totalDurationMs += input.durationMs;
+      endpoint.slowestMs = Math.max(endpoint.slowestMs, input.durationMs);
+      endpoint.p95Ms = durationPercentile(controller.backendDurations.get(key) ?? [], 95) ?? endpoint.slowestMs;
+    }
+    for (const model of input.models) {
+      if (!endpoint.models.includes(model)) endpoint.models = [...endpoint.models, model].slice(0, 20);
+    }
+    // Busiest first: on a run with hundreds of routes the table is read from
+    // the top and the tail never matters.
+    summary.endpoints.sort((left, right) => right.requests - left.requests);
+    if (summary.endpoints.length > 200) summary.endpoints.length = 200;
+  }
+
+  /**
    * Records the accepted graph this run is being reconciled against. The main
    * process resolves it once, at start, so the desktop can show the states the
    * user is actually expected to visit instead of a generic checklist.
@@ -1487,12 +1971,52 @@ export class BrowserObserver {
     return this.snapshot();
   }
 
-  /** Raises the managed browser window above the desktop app. */
+  /**
+   * Raises the managed browser window above the desktop app, putting a page
+   * back first if the operator closed the last one. Closing the window is not
+   * an error the run has to be restarted for: the browser process, the
+   * context, its init scripts and its bindings all survive, so a new page
+   * carries the same recorder and the same session.
+   */
   async focusBrowser(): Promise<GuidedRunState> {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    if (this.active.state.browserStatus === 'NONE') throw new Error('RUN_HAS_NO_BROWSER');
     const { page } = this.active;
-    if (!page || page.isClosed()) throw new Error('QA_BROWSER_CLOSED');
+    if (!page || page.isClosed()) return this.reopenBrowser();
     await page.bringToFront();
+    return this.snapshot();
+  }
+
+  /**
+   * Opens a replacement page on the run's existing context and returns the
+   * browser to where the run last was.
+   */
+  async reopenBrowser(): Promise<GuidedRunState> {
+    if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    const controller = this.active;
+    const { state, context } = controller;
+    if (state.browserStatus === 'NONE' || !context) throw new Error('RUN_HAS_NO_BROWSER');
+    if (controller.stopping || state.status === 'COMPLETED' || state.status === 'FAILED') {
+      throw new Error('RUN_IS_TERMINAL');
+    }
+    if (controller.browser && !controller.browser.isConnected()) throw new Error('QA_BROWSER_DISCONNECTED');
+    const existing = context.pages().find((open) => !open.isClosed()) ?? null;
+    const page = existing ?? await context.newPage();
+    controller.page = page;
+    if (!existing) controller.attachPage?.(page);
+    // Back to where the run was, not to the run's starting URL: a journey
+    // several steps in should not be thrown away because a window was closed.
+    const target = state.observations[state.observations.length - 1]?.url || state.targetUrl;
+    if (!existing) {
+      await navigateToRunTarget(page, target, 0).catch(() => undefined);
+    }
+    await page.bringToFront().catch(() => undefined);
+    state.browserStatus = 'ACTIVE';
+    this.addLive(state, {
+      kind: 'PAGE', level: 'INFO',
+      message: `Managed browser reopened at ${sanitizeCapturedUrl(target)}. The run continued while it was closed.`,
+    });
+    await controller.refreshObservation?.().catch(() => undefined);
     return this.snapshot();
   }
 
@@ -1690,6 +2214,7 @@ export class BrowserObserver {
     evidenceChecksum?: string | null,
   ): Promise<Array<{ id: string; impact: string | null; help: string; nodes: number }> | null> {
     const { page, state } = controller;
+    if (!page || page.isClosed()) return null;
     try {
       const axeSourcePath = require.resolve('axe-core/axe.min.js');
       const axeSource = fs.readFileSync(axeSourcePath, 'utf8');
@@ -1819,6 +2344,13 @@ export class BrowserObserver {
 
   async setInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState> {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
+    // Inspect is a browser gesture: it puts an overlay on the page and saves a
+    // comment against the element the operator clicks. A backend run has no
+    // page, so the mode does not exist rather than silently doing nothing.
+    if (this.active.state.browserStatus === 'NONE') throw new Error('RUN_HAS_NO_BROWSER');
+    if (mode === 'INSPECT' && (!this.active.page || this.active.page.isClosed())) {
+      throw new Error('QA_BROWSER_CLOSED');
+    }
     const acknowledged = await this.broadcastToFrames(
       (next: QAInteractionMode) => (globalThis as any).__tellannQaSetMode?.(next) === true,
       mode,
@@ -1842,7 +2374,7 @@ export class BrowserObserver {
         ? 'Inspect mode active. Select an element in the managed browser to add a comment.'
         : 'Navigate mode active. Browser controls will perform their normal actions.',
     });
-    if (mode === 'INSPECT') await this.active.page.bringToFront().catch(() => undefined);
+    if (mode === 'INSPECT') await this.active.page?.bringToFront().catch(() => undefined);
     return this.snapshot();
   }
 
@@ -1885,7 +2417,7 @@ export class BrowserObserver {
     if (controller.stopping) return this.snapshot();
     controller.stopping = true;
     state.phase = 'FINALIZING';
-    clearInterval(observationTimer);
+    if (observationTimer) clearInterval(observationTimer);
     const screenshot = path.join(state.artifactDirectory, 'final-sanitized.png');
     const accessibility = path.join(state.artifactDirectory, 'accessibility.txt');
     const manifest = path.join(state.artifactDirectory, 'manifest.json');
@@ -1900,8 +2432,9 @@ export class BrowserObserver {
       const redactedAria = redactAriaSnapshot(aria).trim();
       fs.writeFileSync(accessibility, redactedAria || 'Accessibility snapshot unavailable', 'utf8');
     }
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    await context?.close().catch(() => undefined);
+    await browser?.close().catch(() => undefined);
+    if (state.browserStatus === 'ACTIVE') state.browserStatus = 'CLOSED';
     state.phase = 'COMPLETE';
     // Per-state captures ride along with the final pair so the report can show
     // each step of the Flow rather than only where the run happened to stop.
@@ -1955,6 +2488,7 @@ export class BrowserObserver {
       runId: state.runId, sessionId: state.sessionId, traceId: state.traceId,
       applicationId: state.applicationId, environmentId: state.environmentId, environmentType: state.environmentType,
       expectedGraphVersionId: state.expectedGraphVersionId, mode: state.mode,
+      captureTracks: state.captureTracks, backend: state.backend,
       status: state.status, phase: state.phase, targetUrl: sanitizeCapturedUrl(state.targetUrl),
       windowResolution: state.windowResolution ?? null,
       evidenceCounts: state.evidenceCounts, observations: state.observations,

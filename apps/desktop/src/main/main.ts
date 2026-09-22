@@ -369,6 +369,7 @@ function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEven
     evidenceCounts: state.evidenceCounts,
     reportStatus: null,
     safeError: null,
+    captureTracks: state.captureTracks,
     timestamp: new Date().toISOString(),
     ...input,
   } satisfies RunLifecycleEvent);
@@ -541,6 +542,18 @@ async function resumeInterruptedRunSynchronization(): Promise<void> {
   }
 }
 
+/** Errors the backend SDK reports, whichever name its integration used. */
+const BACKEND_ERROR_EVENT_TYPES = new Set(['SERVER_ERROR', 'ERROR_EVENT', 'ERROR_OCCURRED', 'UNHANDLED_EXCEPTION']);
+
+/**
+ * Where a process the operator starts themselves reports into the active run.
+ *
+ * Held here rather than on the run state because the run state is written to
+ * the recovery journal and uploaded on completion, and a run credential must
+ * be in neither. It lives exactly as long as the relay does.
+ */
+let activeRelayConnection: { runId: string; endpoint: string; relayToken: string } | null = null;
+
 async function handleRelayedEvents(events: Array<Record<string, unknown>>): Promise<void> {
   const supported = new Set(['FLOW_INITIAL_STATE', 'FLOW_STATE_REACHED', 'FLOW_TRANSITION', 'FLOW_TERMINAL_STATE']);
   for (const event of events) {
@@ -553,6 +566,23 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
     if (eventType === 'BUSINESS_EVENT' && businessEventType === 'QA_CLIENT_STATE_MUTATION') {
       await observer.recordClientStateEvent(event);
       continue;
+    }
+    // The backend track. These used to be forwarded to the cloud and dropped
+    // here, which is why a backend run showed the two requests the managed
+    // browser made and nothing the application's own server handled.
+    if (active.captureTracks?.includes('BACKEND') && String(event.source ?? '') !== 'frontend-sdk') {
+      if (eventType === 'API_REQUEST') {
+        await observer.recordBackendRequestEvent(event);
+        continue;
+      }
+      if (eventType === 'BUSINESS_EVENT' && businessEventType === 'QA_BACKEND_DATA_ACCESS') {
+        await observer.recordBackendDataAccessEvent(event);
+        continue;
+      }
+      if (BACKEND_ERROR_EVENT_TYPES.has(eventType)) {
+        await observer.recordBackendErrorEvent(event);
+        continue;
+      }
     }
     if (!supported.has(eventType)) continue;
     const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {};
@@ -594,6 +624,7 @@ const observer = new BrowserObserver({
     await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
     await applicationLauncher.stop().catch(() => undefined);
     await relay.stop().catch(() => undefined);
+    activeRelayConnection = null;
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
   onObservation: async () => undefined,
@@ -735,12 +766,15 @@ async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'M
     if (resolvedReason === 'TERMINAL_STATE_REACHED' && ElectronNotification.isSupported()) {
       new ElectronNotification({
         title: 'Terminal state reached',
-        body: 'Chromium was closed and your QA report is being prepared.',
+        body: state.captureTracks?.includes('FRONTEND') === false
+          ? 'Capture stopped and your QA report is being prepared.'
+          : 'Chromium was closed and your QA report is being prepared.',
       }).show();
     }
     await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length, completionReason: resolvedReason });
     await applicationLauncher.stop();
     await relay.stop();
+    activeRelayConnection = null;
     await flushEvidence(state.runId, true);
     await cloud.completeRun({ ...state, completionReason: resolvedReason });
     deleteLocalState(`qa-run-recovery:${state.runId}`);
@@ -3600,6 +3634,9 @@ function registerIpc(): void {
         onQueueChanged: (queue) => writeLocalState(queueKey, queue),
         onEvents: handleRelayedEvents,
       });
+      activeRelayConnection = {
+        runId, endpoint: relaySession.endpoint, relayToken: relaySession.relayToken,
+      };
       await relay.emit('QA_RUN_STARTED', { mode: parsed.mode });
       if (parsed.launchCommandId) {
         if (!parsed.launchApproved) throw new Error('APPLICATION_LAUNCH_APPROVAL_REQUIRED');
@@ -3646,6 +3683,7 @@ function registerIpc(): void {
       await applicationLauncher.stop().catch(() => undefined);
       await relay.emit('QA_RUN_FAILED', { reason: 'browser_start_failed' }).catch(() => undefined);
       await relay.stop().catch(() => undefined);
+      activeRelayConnection = null;
       await cloud.failRun(runId, error instanceof Error ? error.message : 'Managed browser failed to start').catch(() => undefined);
       throw error;
     }
@@ -3730,6 +3768,24 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return decorateRunState(await observer.focusBrowser());
   });
+  ipcMain.handle(IPC.reopenRunBrowser, async (event) => {
+    assertTrustedSender(event);
+    return decorateRunState(await observer.reopenBrowser());
+  });
+  ipcMain.handle(IPC.getRunRelayConnection, (event) => {
+    assertTrustedSender(event);
+    const state = observer.getState();
+    if (!state || !activeRelayConnection || activeRelayConnection.runId !== state.runId) return null;
+    return {
+      endpoint: activeRelayConnection.endpoint,
+      relayToken: activeRelayConnection.relayToken,
+      runId: state.runId,
+      sessionId: state.sessionId,
+      traceId: state.traceId,
+      applicationId: state.applicationId,
+      environmentId: state.environmentId,
+    };
+  });
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
@@ -3769,7 +3825,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   quittingAfterRunCleanup = true;
   void observer.abort('Desktop application closed during a guided run')
-    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); return state; })
+    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); activeRelayConnection = null; return state; })
     .then((state) => cloud.failRun(state.runId, 'Desktop application closed during a guided run'))
     .catch(() => undefined)
     .finally(() => app.quit());
