@@ -92,7 +92,8 @@ function pythonCommandAllowed(command: InstrumentationPlan['validationCommands']
     && args[0] === '-m' && args[1] === 'compileall' && args[2] === '-q' && args[3] === '.';
 }
 
-function validatePlanPolicy(plan: InstrumentationPlan): string | null {
+/** Exported for the policy tests, which need no database to run. */
+export function validatePlanPolicy(plan: InstrumentationPlan): string | null {
   if (!ADAPTERS.has(plan.adapterId)) return 'UNSUPPORTED_INSTRUMENTATION_ADAPTER';
   if (!plan.approvedFileScopes.length || plan.approvedFileScopes.some((file) => !boundedRelativePath(file))) return 'INVALID_INSTRUMENTATION_FILE_SCOPE';
   if (plan.operations.some((operation) => !plan.approvedFileScopes.includes(operation.relativePath) || !boundedRelativePath(operation.relativePath))) return 'INSTRUMENTATION_OPERATION_OUTSIDE_SCOPE';
