@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test dist/contact-routes.test.js dist/docs-feedback-routes.test.js dist/notification-routes.test.js dist/instrumentation-routes.test.js dist/instrumentation-titles.test.js dist/instrumentation-flow-reset.test.js dist/sdk-setup-routes.test.js dist/desktop-routes.test.js dist/codebase-routes.test.js dist/environment-policy.test.js dist/flow-initialization-analysis.test.js dist/flow-mapping-guards.test.js dist/flow-mapping-pipeline.test.js dist/flow-lifecycle-routes.test.js dist/qa-privacy.test.js",
+    "test": "tsc && node --test dist/contact-routes.test.js dist/docs-feedback-routes.test.js dist/notification-routes.test.js dist/instrumentation-routes.test.js dist/instrumentation-titles.test.js dist/instrumentation-flow-reset.test.js dist/sdk-setup-routes.test.js dist/desktop-routes.test.js dist/codebase-routes.test.js dist/environment-policy.test.js dist/flow-initialization-analysis.test.js dist/flow-mapping-guards.test.js dist/flow-mapping-pipeline.test.js dist/flow-lifecycle-routes.test.js dist/organization-audit-log-query.test.js dist/qa-privacy.test.js",
     "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js"
   },

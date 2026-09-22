@@ -48,6 +48,7 @@ import {
   Plus,
   Pencil,
   RefreshCw,
+  Search,
   SearchCode,
   ShieldCheck,
   ShoppingCart,
@@ -237,14 +238,17 @@ function EmptyState({
   title,
   description,
   action,
+  className = "",
 }: {
   icon: ReactNode;
   title: string;
   description: string;
   action?: ReactNode;
+  /** `is-inline` tightens the spacing for an empty state inside a card. */
+  className?: string;
 }) {
   return (
-    <section className="page-empty">
+    <section className={`page-empty ${className}`.trimEnd()}>
       {icon}
       <h2>{title}</h2>
       <p className="mb-4 w-full">{description}</p>
@@ -9661,7 +9665,11 @@ function SetupHistoryPanel({
   );
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [frameworks, setFrameworks] = useState<string[]>([]);
+  // `loading` covers the first fetch, when there is nothing on screen yet and a
+  // skeleton is the honest thing to show. `refreshing` covers every fetch after
+  // it, where the rows already there stay readable while they are re-narrowed.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Record<string, any> | null>(
     null,
@@ -9704,6 +9712,7 @@ function SetupHistoryPanel({
       setError(normalizeDesktopError(cause));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [
     applicationId,
@@ -9715,6 +9724,7 @@ function SetupHistoryPanel({
   ]);
 
   useEffect(() => {
+    setRefreshing(true);
     const timer = window.setTimeout(() => void load(), filters.q ? 250 : 0);
     return () => window.clearTimeout(timer);
   }, [load, filters.q]);
@@ -9725,6 +9735,12 @@ function SetupHistoryPanel({
   const filtered = Boolean(
     filters.q || filters.status || filters.adapterId || filters.from || filters.to,
   );
+  // Clearing narrows nothing away, but it never moves the operator between the
+  // active list and the archive — that is a different shelf, not a filter.
+  const clearedFilters: SetupHistoryFilters = {
+    ...EMPTY_SETUP_HISTORY_FILTERS,
+    archived: filters.archived,
+  };
 
   const act = async (
     record: Record<string, any>,
@@ -9785,41 +9801,48 @@ function SetupHistoryPanel({
         <div className="setup-history-filters mt-3">
           <label className="setup-history-field setup-history-search">
             <span>Title</span>
-            <input
-              type="search"
-              value={filters.q}
-              placeholder="Search by title"
-              onChange={(event) => update({ q: event.target.value })}
-            />
+            <span className="setup-history-search-input">
+              <Search size={13} aria-hidden="true" />
+              <input
+                type="search"
+                value={filters.q}
+                placeholder="Search by title"
+                onChange={(event) => update({ q: event.target.value })}
+              />
+            </span>
           </label>
-          <label className="setup-history-field">
+          <div className="setup-history-field">
             <span>Status</span>
-            <select
+            <SelectField
+              ariaLabel="Filter by status"
               value={filters.status}
-              onChange={(event) => update({ status: event.target.value })}
-            >
-              <option value="">Any status</option>
-              {INSTRUMENTATION_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {formatEnum(status)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="setup-history-field">
+              onValueChange={(value) => update({ status: value })}
+              options={[
+                { value: "", label: "Any status" },
+                ...INSTRUMENTATION_STATUSES.map((status) => ({
+                  value: status,
+                  label: formatEnum(status),
+                })),
+              ]}
+              placeholder="Any status"
+            />
+          </div>
+          <div className="setup-history-field">
             <span>Framework</span>
-            <select
+            <SelectField
+              ariaLabel="Filter by framework"
               value={filters.adapterId}
-              onChange={(event) => update({ adapterId: event.target.value })}
-            >
-              <option value="">Any framework</option>
-              {frameworks.map((adapterId) => (
-                <option key={adapterId} value={adapterId}>
-                  {adapterLabel(adapterId)}
-                </option>
-              ))}
-            </select>
-          </label>
+              onValueChange={(value) => update({ adapterId: value })}
+              options={[
+                { value: "", label: "Any framework" },
+                ...frameworks.map((adapterId) => ({
+                  value: adapterId,
+                  label: adapterLabel(adapterId),
+                })),
+              ]}
+              placeholder="Any framework"
+            />
+          </div>
           <label className="setup-history-field">
             <span>Created from</span>
             <input
@@ -9839,31 +9862,31 @@ function SetupHistoryPanel({
             />
           </label>
           <div className="setup-history-filter-actions">
-            <button
-              type="button"
-              className={`button${archivedView ? " primary" : ""}`}
-              onClick={() =>
-                update({ archived: archivedView ? "false" : "true" })
-              }
-            >
-              <Archive size={14} />
-              {archivedView ? "Viewing archived" : "Archived"}
-            </button>
             {filtered ? (
               <button
                 type="button"
                 className="button"
-                onClick={() =>
-                  setFilters({
-                    ...EMPTY_SETUP_HISTORY_FILTERS,
-                    archived: filters.archived,
-                  })
-                }
+                onClick={() => setFilters(clearedFilters)}
               >
                 <X size={14} />
                 Clear filters
               </button>
             ) : null}
+            <button
+              type="button"
+              className="button"
+              aria-pressed={archivedView}
+              onClick={() =>
+                update({ archived: archivedView ? "false" : "true" })
+              }
+            >
+              {archivedView ? (
+                <ArchiveRestore size={14} />
+              ) : (
+                <Archive size={14} />
+              )}
+              {archivedView ? "Back to active" : "Archived"}
+            </button>
           </div>
         </div>
 
@@ -9874,8 +9897,14 @@ function SetupHistoryPanel({
           </div>
         ) : null}
 
-        {rows.length ? (
-          <div className="data-table mt-3">
+        {loading ? (
+          <SetupHistorySkeleton />
+        ) : rows.length ? (
+          <div
+            className="data-table mt-3"
+            aria-busy={refreshing}
+            data-refreshing={refreshing ? "true" : undefined}
+          >
             <div className="table-head">
               <span>Title</span>
               <span>Status</span>
@@ -9946,19 +9975,92 @@ function SetupHistoryPanel({
               );
             })}
           </div>
+        ) : filtered ? (
+          <EmptyState
+            className="is-inline"
+            icon={<Filter />}
+            title="No task matches these filters"
+            description={`Nothing in ${archivedView ? "the archive" : "this project's setup history"} matches what you asked for. Widen the date range, or clear the filters to see everything.`}
+            action={
+              <button
+                type="button"
+                className="button"
+                onClick={() => setFilters(clearedFilters)}
+              >
+                <X size={14} />
+                Clear filters
+              </button>
+            }
+          />
+        ) : archivedView ? (
+          <EmptyState
+            className="is-inline"
+            icon={<Archive />}
+            title="Nothing is archived"
+            description="Archiving a setup task keeps it and everything recorded against it, while taking it out of the setup list and out of the manifests a QA run can start against."
+            action={
+              <button
+                type="button"
+                className="button"
+                onClick={() => update({ archived: "false" })}
+              >
+                <ArchiveRestore size={14} />
+                Back to active
+              </button>
+            }
+          />
         ) : (
-          <p className="muted mt-3">
-            {loading
-              ? "Loading setup tasks…"
-              : filtered
-                ? "No setup tasks match these filters."
-                : archivedView
-                  ? "Nothing is archived."
-                  : "No setup tasks yet."}
-          </p>
+          <EmptyState
+            className="is-inline"
+            // icon={<SearchCode />}
+            title="No setup tasks yet"
+            description="Tellann records a task each time it connects itself to this project or prepares a Flow for checking. Detect a framework to create the first one."
+          />
         )}
       </details>
     </>
+  );
+}
+
+/**
+ * The shape of the table that is coming, while the first page is fetched.
+ *
+ * It mirrors the real table — same shell, same four columns, same row height —
+ * so the card settles into its final layout instead of jumping when the rows
+ * arrive.
+ */
+function SetupHistorySkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div
+      className="data-table setup-history-skeleton mt-3"
+      role="status"
+      aria-label="Loading setup tasks"
+    >
+      <div className="table-head" aria-hidden="true">
+        <span>Title</span>
+        <span>Status</span>
+        <span>Created</span>
+        <span>Actions</span>
+      </div>
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="table-row" key={index} aria-hidden="true">
+          <span>
+            <i className="setup-history-bar" data-bar="title" />
+            <i className="setup-history-bar" data-bar="subtitle" />
+          </span>
+          <span>
+            <i className="setup-history-bar" data-bar="status" />
+          </span>
+          <span>
+            <i className="setup-history-bar" data-bar="date" />
+          </span>
+          <span className="setup-history-row-actions">
+            <i className="setup-history-bar" data-bar="action" />
+            <i className="setup-history-bar" data-bar="action" />
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -11730,6 +11832,13 @@ export function NewRunPage() {
     Array<{ id: string; label: string }>
   >([]);
   const [patchSetId, setPatchSetId] = useState("");
+  // Every callback on the desktop context is rebuilt whenever its shared state
+  // changes — `busy` flips the moment Start is pressed — so the effects below
+  // re-run mid-submit. They may re-read the lists, but they must never move a
+  // selection the operator made: choosing a browser-only run is a real choice,
+  // and `""` is what it looks like.
+  const patchSetChosen = useRef(false);
+  const flowChosen = useRef(false);
   const launchCommands = workspace?.snapshot.launchCommands ?? [];
   const [launchCommandId, setLaunchCommandId] = useState("");
   const [launchApproved, setLaunchApproved] = useState(false);
@@ -11762,6 +11871,7 @@ export function NewRunPage() {
       const requested = requestedFlowId
         ? items.find((item) => item.id === requestedFlowId)
         : undefined;
+      if (flowChosen.current) return;
       const preferred = requested ?? items.find((item) => isFlowReadyToRun(item, environmentId));
       setExpectedGraphVersionId(preferred?.publishedVersionId ?? preferred?.versions?.[0]?.id ?? "");
       setSelectedFlowId(preferred?.id ?? "");
@@ -11782,7 +11892,7 @@ export function NewRunPage() {
             })),
         );
         setInstrumentationManifests(manifests);
-        setPatchSetId((current) => current || manifests[0]?.id || "");
+        if (!patchSetChosen.current) setPatchSetId(manifests[0]?.id ?? "");
       })
       .catch(() => undefined);
   }, [listInstrumentationPlans, projectId]);
@@ -11826,7 +11936,10 @@ export function NewRunPage() {
         flowInitializationId: attachFlow ? initialization.id : undefined,
         flowScanId: attachFlow ? scan.id : undefined,
         flowDriftId: attachFlow ? binding.latestDriftId ?? null : null,
-        expectedGraphVersionId: attachFlow ? expectedGraphVersionId : null,
+        // `""` is this form's "nothing selected" value, but the contract wants a
+        // uuid or null — sending the empty string fails as a malformed uuid
+        // instead of as the missing Flow context it actually is.
+        expectedGraphVersionId: (attachFlow && expectedGraphVersionId) || null,
         captureTracks:
           captureMode === "COMBINED"
             ? ["FRONTEND", "BACKEND"]
@@ -11881,6 +11994,9 @@ export function NewRunPage() {
                 setLaunchCommandId("");
                 setLaunchApproved(false);
                 setProductionObservationApproved(false);
+                // Which Flows are ready depends on the environment, so let the
+                // preferred one be picked again for the new one.
+                flowChosen.current = false;
               }}
               options={application.environments.map((item) => ({
                 value: item.id,
@@ -11929,6 +12045,7 @@ export function NewRunPage() {
             <SelectField
               value={selectedFlowId}
               onValueChange={(flowId) => {
+                flowChosen.current = true;
                 setSelectedFlowId(flowId);
                 setExpectedGraphVersionId(
                   flows.find((flow) => flow.id === flowId)?.publishedVersionId ??
@@ -12004,7 +12121,10 @@ export function NewRunPage() {
             </span>
             <SelectField
               value={patchSetId}
-              onValueChange={setPatchSetId}
+              onValueChange={(value) => {
+                patchSetChosen.current = true;
+                setPatchSetId(value);
+              }}
               options={[
                 {
                   value: "",

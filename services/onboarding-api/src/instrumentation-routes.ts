@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { AuditAction, Prisma, type PrismaClient } from '@tellann/db';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
-import { INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanSchema, InstrumentationValidationResultSchema, type InstrumentationPlan } from '@tellann/desktop-contracts';
+import { INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanSchema, InstrumentationValidationResultSchema, PYTHON_INSTRUMENTATION_FRAMEWORK_IDS, type InstrumentationPlan } from '@tellann/desktop-contracts';
 import { flowInitializationResetOnRejection } from './instrumentation-flow-reset';
 import { INITIALISATION_TITLE, normalizeInstrumentationTitle, resolveInstrumentationTitle } from './instrumentation-titles';
 
@@ -31,9 +31,26 @@ const ADAPTERS = new Set<string>(INSTRUMENTATION_FRAMEWORK_IDS);
 // A task that is mid-flight on someone's machine cannot be filed away: archiving
 // it would hide the only place its progress and its rollback are reachable from.
 const ARCHIVE_BLOCKING_STATUSES = new Set(['APPLYING', 'VALIDATING']);
+const PYTHON_ADAPTERS = new Set<string>(PYTHON_INSTRUMENTATION_FRAMEWORK_IDS);
+
+// What a plan is allowed to install and run, per runtime. A plan arrives from a
+// desktop agent, so this is the server's own check on it rather than a repeat of
+// one: the agent could be any version, and an approved plan authorizes a command
+// to run on a member's machine.
 const SDK_PACKAGES = new Set(['@tellann/frontend-sdk', '@tellann/backend-sdk']);
 const PACKAGE_MANAGERS = new Set(['pnpm', 'pnpm.cmd', 'npm', 'npm.cmd', 'yarn', 'yarn.cmd', 'bun', 'bun.exe']);
 const COMMAND_ENVIRONMENT_KEYS = new Set(['CI', 'NODE_ENV', 'NPM_CONFIG_REGISTRY', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PNPM_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
+
+/** The one distribution the Python adapter installs, published to PyPI. */
+const PYTHON_SDK_PACKAGES = new Set(['tellann']);
+// `python` runs the install as `python -m pip`, which is pip's own documented
+// invocation and the only one that is certain to target the interpreter the
+// project uses. The rest are the managers a Python project declares itself with.
+const PYTHON_PACKAGE_MANAGERS = new Set(['python', 'python3', 'poetry', 'uv', 'pdm', 'pipenv']);
+const PYTHON_COMMAND_ENVIRONMENT_KEYS = new Set(['CI', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOME', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'PYTHONPATH', 'PYTHONHOME', 'PIP_INDEX_URL', 'POETRY_HOME', 'UV_CACHE_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
+// `tellann` followed by a PEP 440 specifier, and nothing else - no URL, no path,
+// no second requirement, no index or config flag smuggled in as the argument.
+const PYTHON_SDK_REQUIREMENT = /^tellann(?:[=<>!~][=<>]?[\w.*+!-]+)(?:,[=<>!~][=<>]?[\w.*+!-]+)*$/;
 
 function hash(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -49,17 +66,55 @@ function boundedRelativePath(value: string): boolean {
     && !normalized.split('/').some((part) => part === '..' || part === '');
 }
 
+/**
+ * Whether one command a Python plan wants to run is one the adapter can emit.
+ *
+ * The shapes are exhaustive on purpose. `pip install` accepts a local path, a
+ * URL and a second requirement as ordinary arguments, so allowing the verb and
+ * trusting the rest would approve a great deal more than installing the SDK.
+ */
+function pythonCommandAllowed(command: InstrumentationPlan['validationCommands'][number]): boolean {
+  const { args } = command;
+  if (command.id === 'install-sdk') {
+    // `python -m pip install <requirement>`, for pip and for Conda.
+    if (args.length === 4) {
+      return args[0] === '-m' && args[1] === 'pip' && args[2] === 'install'
+        && PYTHON_SDK_REQUIREMENT.test(args[3] ?? '');
+    }
+    // `poetry add`, `uv add`, `pdm add`, `pipenv install`.
+    return args.length === 2 && ['add', 'install'].includes(args[0] ?? '')
+      && PYTHON_SDK_REQUIREMENT.test(args[1] ?? '');
+  }
+  // Byte-compiles the tree to prove instrumentation did not break the syntax.
+  // It imports nothing, so it never executes the project's own code.
+  return command.id === 'compile-check'
+    && args.length === 4
+    && args[0] === '-m' && args[1] === 'compileall' && args[2] === '-q' && args[3] === '.';
+}
+
 function validatePlanPolicy(plan: InstrumentationPlan): string | null {
   if (!ADAPTERS.has(plan.adapterId)) return 'UNSUPPORTED_INSTRUMENTATION_ADAPTER';
   if (!plan.approvedFileScopes.length || plan.approvedFileScopes.some((file) => !boundedRelativePath(file))) return 'INVALID_INSTRUMENTATION_FILE_SCOPE';
   if (plan.operations.some((operation) => !plan.approvedFileScopes.includes(operation.relativePath) || !boundedRelativePath(operation.relativePath))) return 'INSTRUMENTATION_OPERATION_OUTSIDE_SCOPE';
-  if (plan.packageChanges.some((change) => !SDK_PACKAGES.has(change.packageName))) return 'UNAPPROVED_INSTRUMENTATION_PACKAGE';
+
+  // A Python plan installs a PyPI distribution with a Python package manager and
+  // needs the interpreter's own environment variables. Judging it against the
+  // npm allowlist rejected every correctly formed Django, Flask, FastAPI and
+  // Starlette plan as an unapproved package.
+  const python = PYTHON_ADAPTERS.has(plan.adapterId);
+  const packages = python ? PYTHON_SDK_PACKAGES : SDK_PACKAGES;
+  const managers = python ? PYTHON_PACKAGE_MANAGERS : PACKAGE_MANAGERS;
+  const environmentKeys = python ? PYTHON_COMMAND_ENVIRONMENT_KEYS : COMMAND_ENVIRONMENT_KEYS;
+
+  if (plan.packageChanges.some((change) => !packages.has(change.packageName))) return 'UNAPPROVED_INSTRUMENTATION_PACKAGE';
   for (const command of plan.validationCommands) {
-    if (!PACKAGE_MANAGERS.has(command.executable) || (command.cwd !== '.' && !boundedRelativePath(command.cwd))) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
-    if (command.allowedEnvironmentKeys.some((key) => !COMMAND_ENVIRONMENT_KEYS.has(key))) return 'UNAPPROVED_INSTRUMENTATION_ENVIRONMENT';
-    const allowed = command.id === 'install-sdk'
-      ? ['add', 'install'].includes(command.args[0] ?? '') && command.args.length === 2 && /^@tellann\/(frontend|backend)-sdk@/.test(command.args[1] ?? '')
-      : command.id === 'validate-build' && command.args.length === 2 && command.args[0] === 'run' && command.args[1] === 'build';
+    if (!managers.has(command.executable) || (command.cwd !== '.' && !boundedRelativePath(command.cwd))) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
+    if (command.allowedEnvironmentKeys.some((key) => !environmentKeys.has(key))) return 'UNAPPROVED_INSTRUMENTATION_ENVIRONMENT';
+    const allowed = python
+      ? pythonCommandAllowed(command)
+      : command.id === 'install-sdk'
+        ? ['add', 'install'].includes(command.args[0] ?? '') && command.args.length === 2 && /^@tellann\/(frontend|backend)-sdk@/.test(command.args[1] ?? '')
+        : command.id === 'validate-build' && command.args.length === 2 && command.args[0] === 'run' && command.args[1] === 'build';
     if (!allowed) return 'UNAPPROVED_INSTRUMENTATION_COMMAND';
   }
   return null;

@@ -50,6 +50,15 @@ test('QA run contract requires initialized Flow context only for guided mode', (
   assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'ASSISTED' }).success, true);
   assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'OBSERVATION_ONLY' }).success, true);
 
+  // What the desktop actually sends for a run started without a Flow: the
+  // absent context is explicit nulls, not missing keys.
+  const flowless = StartGuidedRunInputSchema.parse({
+    ...runBase, mode: 'ASSISTED' as const,
+    flowId: undefined, flowBindingId: undefined, flowInitializationId: undefined,
+    flowScanId: undefined, flowDriftId: null, expectedGraphVersionId: null, patchSetId: null,
+  });
+  assert.equal(flowless.expectedGraphVersionId, null);
+
   const guided = StartGuidedRunInputSchema.parse({
     ...runBase,
     flowId: id('3'), flowBindingId: id('4'), flowInitializationId: id('5'),

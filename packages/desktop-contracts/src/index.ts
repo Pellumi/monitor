@@ -190,12 +190,26 @@ export const DesktopPermissionSchema = z.object({
  * which meant adding a framework silently rejected its own plans everywhere the
  * list had not been updated.
  */
-export const INSTRUMENTATION_FRAMEWORK_IDS = [
-  // JavaScript and TypeScript
+export const JAVASCRIPT_INSTRUMENTATION_FRAMEWORK_IDS = [
   'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
   'express', 'fastify', 'nestjs', 'koa', 'hapi',
-  // Python
+] as const;
+
+/**
+ * The frameworks instrumented through the Python adapter.
+ *
+ * Kept apart from the JavaScript ids because the two runtimes are approved
+ * differently: a different SDK distribution, a different set of package
+ * managers, a different environment allowlist. Anything deciding policy by
+ * runtime reads this list rather than restating it.
+ */
+export const PYTHON_INSTRUMENTATION_FRAMEWORK_IDS = [
   'django', 'flask', 'fastapi', 'starlette',
+] as const;
+
+export const INSTRUMENTATION_FRAMEWORK_IDS = [
+  ...JAVASCRIPT_INSTRUMENTATION_FRAMEWORK_IDS,
+  ...PYTHON_INSTRUMENTATION_FRAMEWORK_IDS,
 ] as const;
 
 export const InstrumentationFrameworkIdSchema = z.enum(INSTRUMENTATION_FRAMEWORK_IDS);
@@ -1247,7 +1261,11 @@ const StartRunFlowContextSchema = z.object({
   flowInitializationId: z.string().uuid().optional(),
   flowScanId: z.string().uuid().optional(),
   flowDriftId: z.string().uuid().nullable().optional(),
-  expectedGraphVersionId: z.string().uuid().optional(),
+  // Nullable, not merely optional: a run started without a Flow sends an
+  // explicit null here, which is also what this schema's own transform
+  // normalizes an absent version to. Accepting only `undefined` rejected
+  // every Flow-less run at the IPC boundary.
+  expectedGraphVersionId: z.string().uuid().nullable().optional(),
   captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).min(1).default(['FRONTEND']),
   timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   patchSetId: z.string().uuid().nullable().optional(),
