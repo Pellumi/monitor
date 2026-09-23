@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tellann"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tellann SDK for Python: behaviour telemetry for Django, Flask, FastAPI and Starlette applications."
 readme = "README.md"
 requires-python = ">=3.9"

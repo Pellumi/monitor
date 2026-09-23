@@ -1,5 +1,11 @@
 # @tellann/backend-sdk
 
+## 0.3.0
+
+### Minor Changes
+
+- 8780bcc: update
+
 ## 0.2.0
 
 ### Minor Changes

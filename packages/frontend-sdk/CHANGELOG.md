@@ -1,5 +1,11 @@
 # @tellann/frontend-sdk
 
+## 0.4.0
+
+### Minor Changes
+
+- 8780bcc: update
+
 ## 0.3.0
 
 ### Minor Changes

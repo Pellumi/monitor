@@ -1,6 +1,6 @@
 {
   "name": "@tellann/frontend-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Tellann browser telemetry and QA-run correlation SDK",
   "license": "UNLICENSED",
