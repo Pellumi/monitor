@@ -1093,16 +1093,29 @@ export function createDesktopRouter(input: {
     }
     if (!rawEvents.length || rawEvents.length > 500) return res.status(400).json({ error: 'EVIDENCE_BATCH_INVALID' });
     const parsed = (rawEvents as unknown[]).map((event) => QAEvidenceEventSchema.safeParse(event));
-    const firstInvalid = parsed.find((result) => !result.success);
-    if (firstInvalid && !firstInvalid.success) {
-      return res.status(400).json({ error: 'EVIDENCE_EVENT_INVALID', details: firstInvalid.error.flatten() });
+    // One malformed event used to fail the entire batch — up to 99 good ones
+    // discarded along with it, repeating forever on every retry since the
+    // caller has no way to drop just the bad one. Invalid events are skipped
+    // and counted instead, so a recorder bug in one event type never blocks
+    // every other event a run captured.
+    const invalid = parsed.filter((result): result is Extract<(typeof parsed)[number], { success: false }> => !result.success);
+    if (invalid.length) {
+      console.error(
+        `[QA evidence] ${invalid.length}/${parsed.length} event(s) in run ${run.id}'s batch failed validation`,
+        invalid.slice(0, 3).map((result) => result.error.flatten()),
+      );
     }
     const events = parsed.map((result) => result.success ? result.data : null).filter(Boolean) as Array<ReturnType<typeof QAEvidenceEventSchema.parse>>;
-    if (events.some((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId)) {
+    const mismatched = events.filter((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId);
+    if (mismatched.length === events.length && events.length > 0) {
+      // Every event in the batch belongs elsewhere: a caller error, not a few
+      // bad rows among good ones, so this still fails the request outright.
       return res.status(403).json({ error: 'EVIDENCE_CONTEXT_MISMATCH' });
     }
+    const contextMismatchIds = new Set(mismatched.map((event) => event.eventId));
+    let acceptable = events.filter((event) => !contextMismatchIds.has(event.eventId));
     const production = run.environment.type === EnvironmentType.PRODUCTION;
-    if (production && events.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
+    if (production && acceptable.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
       return res.status(422).json({ error: 'PRODUCTION_PROTECTED_VALUES_REJECTED', captureDegraded: true });
     }
     // Fail closed rather than persisting under a derived fallback key that the
@@ -1112,18 +1125,24 @@ export function createDesktopRouter(input: {
     } catch {
       return res.status(503).json({ error: 'QA_EVIDENCE_ENCRYPTION_NOT_CONFIGURED' });
     }
-    const oversized = events.find((event) => Buffer.byteLength(JSON.stringify(event)) > 32 * 1024);
-    if (oversized) {
-      await prisma.browserFinding.upsert({
-        where: { runId_dedupeKey: { runId: run.id, dedupeKey: `capture-degraded:event-size:${oversized.eventId}` } },
-        create: {
-          runId: run.id, category: 'CAPTURE_DEGRADED', severity: 'MEDIUM', confidence: 1,
-          title: 'Evidence event exceeded the capture limit', description: 'One evidence event exceeded 32 KB and was rejected explicitly.',
-          reproductionSteps: [], recommendation: 'Reduce captured structured values and repeat the affected step.', scope: oversized.scope,
-          dedupeKey: `capture-degraded:event-size:${oversized.eventId}`, generatorSource: 'RULES',
-        }, update: {},
-      });
-      return res.status(413).json({ error: 'EVIDENCE_EVENT_TOO_LARGE', eventId: oversized.eventId, captureDegraded: true });
+    // An oversized event is dropped on its own too, the same way an invalid
+    // one is — the rest of the batch already reported findings correctly and
+    // should not wait on this one being fixed to reach the report.
+    const oversized = acceptable.filter((event) => Buffer.byteLength(JSON.stringify(event)) > 32 * 1024);
+    if (oversized.length) {
+      const oversizedIds = new Set(oversized.map((event) => event.eventId));
+      acceptable = acceptable.filter((event) => !oversizedIds.has(event.eventId));
+      for (const event of oversized.slice(0, 5)) {
+        await prisma.browserFinding.upsert({
+          where: { runId_dedupeKey: { runId: run.id, dedupeKey: `capture-degraded:event-size:${event.eventId}` } },
+          create: {
+            runId: run.id, category: 'CAPTURE_DEGRADED', severity: 'MEDIUM', confidence: 1,
+            title: 'Evidence event exceeded the capture limit', description: 'One evidence event exceeded 32 KB and was rejected explicitly.',
+            reproductionSteps: [], recommendation: 'Reduce captured structured values and repeat the affected step.', scope: event.scope,
+            dedupeKey: `capture-degraded:event-size:${event.eventId}`, generatorSource: 'RULES',
+          }, update: {},
+        });
+      }
     }
     let inserted = 0;
     let duplicates = 0;
@@ -1133,7 +1152,7 @@ export function createDesktopRouter(input: {
     // concurrent retry of the same batch into a P2002 that surfaced as a 500.
     // A unique-violation here simply means the event already landed, which is
     // exactly what an idempotent re-upload should report.
-    for (const event of events) {
+    for (const event of acceptable) {
       const sanitized = sanitizeQaMetadata(event.metadata, { production });
       const eventMetadata = event.eventType === 'QA_ROUTE_CHANGED'
         ? {
@@ -1202,7 +1221,7 @@ export function createDesktopRouter(input: {
         throw error;
       }
     }
-    return res.status(202).json({ accepted: inserted, duplicates, rejected: 0 });
+    return res.status(202).json({ accepted: inserted, duplicates, rejected: invalid.length + mismatched.length + oversized.length });
   });
 
   /**
@@ -1292,16 +1311,25 @@ export function createDesktopRouter(input: {
       // own upload path uses.
       const parsed = (rawEvents as Array<Record<string, unknown>>)
         .map((event) => QAEvidenceEventSchema.safeParse({ ...event, runId: event.runId ?? run.id }));
-      const firstInvalid = parsed.find((result) => !result.success);
-      if (firstInvalid && !firstInvalid.success) {
-        return res.status(400).json({ error: 'EVIDENCE_EVENT_INVALID', details: firstInvalid.error.flatten() });
+      // Same reasoning as the desktop's own upload path: one malformed event
+      // must not sink the rest of the batch, since there is no way for the
+      // SDK to retry just the bad one.
+      const invalid = parsed.filter((result): result is Extract<(typeof parsed)[number], { success: false }> => !result.success);
+      if (invalid.length) {
+        console.error(
+          `[QA evidence] ${invalid.length}/${parsed.length} event(s) in run ${run.id}'s ingestion-key batch failed validation`,
+          invalid.slice(0, 3).map((result) => result.error.flatten()),
+        );
       }
       const events = parsed.map((result) => (result.success ? result.data : null)).filter(Boolean) as Array<ReturnType<typeof QAEvidenceEventSchema.parse>>;
-      if (events.some((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId)) {
+      const mismatched = events.filter((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId);
+      if (mismatched.length === events.length && events.length > 0) {
         return res.status(403).json({ error: 'EVIDENCE_CONTEXT_MISMATCH' });
       }
+      const contextMismatchIds = new Set(mismatched.map((event) => event.eventId));
+      const acceptable = events.filter((event) => !contextMismatchIds.has(event.eventId));
       const production = run.environment.type === EnvironmentType.PRODUCTION;
-      if (production && events.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
+      if (production && acceptable.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
         return res.status(422).json({ error: 'PRODUCTION_PROTECTED_VALUES_REJECTED', captureDegraded: true });
       }
       try {
@@ -1312,7 +1340,7 @@ export function createDesktopRouter(input: {
       let inserted = 0;
       let duplicates = 0;
       const broadcastable: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }> = [];
-      for (const event of events) {
+      for (const event of acceptable) {
         const sanitized = sanitizeQaMetadata(event.metadata, { production });
         const supplied = event.protectedValues
           .map((value) => reclassifyQaProtectedValue({
@@ -1359,7 +1387,7 @@ export function createDesktopRouter(input: {
         }
       }
       void notifyApiGatewayQaRunEvidence(run.id, broadcastable);
-      return res.status(202).json({ accepted: inserted, duplicates, rejected: 0, runId: run.id });
+      return res.status(202).json({ accepted: inserted, duplicates, rejected: invalid.length + mismatched.length, runId: run.id });
     },
   );
 

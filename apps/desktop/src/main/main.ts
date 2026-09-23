@@ -3951,9 +3951,19 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return { gatewayEndpoint: cloudApiUrl(), key: await cloud.createIngestionKey(environmentId, label) };
   });
-  ipcMain.handle(IPC.getEvidenceEvent, (event, runId: string, eventId: string) => {
+  ipcMain.handle(IPC.getEvidenceEvent, async (event, runId: string, eventId: string) => {
     assertTrustedSender(event);
-    return cloud.evidenceEvent(runId, eventId);
+    try {
+      return await cloud.evidenceEvent(runId, eventId);
+    } catch (error) {
+      // The desktop uploads evidence in a queue flushed every couple of
+      // seconds (see `flushEvidence`), so a row clicked moments after it
+      // appears can legitimately not be durable yet. That is a 404, not a
+      // failure — the renderer already has friendlier copy for exactly this
+      // case, gated on the call resolving to null rather than rejecting.
+      if ((error as { status?: number } | undefined)?.status === 404) return null;
+      throw error;
+    }
   });
   ipcMain.handle(IPC.checkSdkVersions, (event, applicationId: string) => {
     assertTrustedSender(event);
