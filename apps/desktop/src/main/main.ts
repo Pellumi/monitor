@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, session, shell } from 'electron';
 import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
@@ -32,6 +32,7 @@ import {
   type RunFlowPlanTransition,
 } from '@tellann/browser-observer';
 import { DesktopCloudClient, cloudApiUrl } from './cloud-client';
+import { loadDesktopSession } from './secure-store';
 import { checkSdkVersions } from './sdk-version-check';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
@@ -555,6 +556,114 @@ const BACKEND_ERROR_EVENT_TYPES = new Set(['SERVER_ERROR', 'ERROR_EVENT', 'ERROR
  */
 let activeRelayConnection: { runId: string; endpoint: string; relayToken: string } | null = null;
 
+/**
+ * Live push for backend evidence a standing-ingestion-key server sent
+ * straight to onboarding-api rather than through the local relay above — the
+ * only path a server the desktop did not start can reach. Without this the
+ * evidence still lands correctly against the run (onboarding-api resolves it
+ * server-side), it just never reaches this process until the run ends and
+ * the report reads it back. Scoped to one run at a time, same as the relay.
+ */
+let qaRunEventsAbort: AbortController | null = null;
+
+function stopQaRunEventsStream(): void {
+  qaRunEventsAbort?.abort();
+  qaRunEventsAbort = null;
+}
+
+function startQaRunEventsStream(runId: string): void {
+  stopQaRunEventsStream();
+  const controller = new AbortController();
+  qaRunEventsAbort = controller;
+  void runQaRunEventsStream(runId, controller.signal);
+}
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+}
+
+/**
+ * Consumes api-gateway's SSE stream for one run's backend evidence, backing
+ * off the same way the boundary poll does when the connection cannot be
+ * established or drops (a desktop signed out, a blip in the gateway) rather
+ * than hammering it in a tight loop.
+ */
+async function runQaRunEventsStream(runId: string, signal: AbortSignal): Promise<void> {
+  const MIN_BACKOFF_MS = 1_000;
+  const MAX_BACKOFF_MS = 15_000;
+  let backoffMs = MIN_BACKOFF_MS;
+  while (!signal.aborted) {
+    const session = loadDesktopSession();
+    if (!session) {
+      await delay(backoffMs, signal);
+      continue;
+    }
+    try {
+      const response = await net.fetch(`${cloudApiUrl()}/v1/qa-runs/${runId}/events`, {
+        headers: { authorization: `Bearer ${session.accessToken}`, accept: 'text/event-stream' },
+        credentials: 'omit',
+        signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`QA_RUN_EVENTS_STREAM_${response.status}`);
+      backoffMs = MIN_BACKOFF_MS;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary: number;
+        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'));
+          if (!dataLine) continue;
+          try {
+            const message = JSON.parse(dataLine.slice(5).trim()) as {
+              type?: string;
+              events?: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>;
+            };
+            if (message.type === 'EVENTS' && Array.isArray(message.events)) {
+              await handleQaRunEvidencePush(runId, message.events);
+            }
+          } catch {
+            // A keepalive comment or a malformed frame — nothing to act on.
+          }
+        }
+      }
+    } catch {
+      // Network drop or an unauthenticated/expired session; retry below.
+    }
+    if (signal.aborted) return;
+    await delay(backoffMs, signal);
+    backoffMs = Math.min(MAX_BACKOFF_MS, Math.round(backoffMs * 1.5));
+  }
+}
+
+/**
+ * Routes pushed backend evidence to the same observer methods the local
+ * relay's `API_REQUEST`/`QA_BACKEND_DATA_ACCESS`/error events use, so the
+ * Live evidence panel, its counts and its findings fill in identically
+ * regardless of which path the evidence took to get here.
+ */
+async function handleQaRunEvidencePush(
+  runId: string,
+  events: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>,
+): Promise<void> {
+  const active = observer.getState();
+  if (!active || active.runId !== runId || !active.captureTracks?.includes('BACKEND')) return;
+  for (const event of events) {
+    const record = { eventId: event.eventId, metadata: event.metadata, timestamp: event.timestamp };
+    if (event.eventType === 'QA_BACKEND_REQUEST') await observer.recordBackendRequestEvent(record);
+    else if (event.eventType === 'QA_BACKEND_DATA_ACCESS') await observer.recordBackendDataAccessEvent(record);
+    else if (event.eventType === 'QA_BACKEND_ERROR') await observer.recordBackendErrorEvent(record);
+  }
+}
+
 async function handleRelayedEvents(events: Array<Record<string, unknown>>): Promise<void> {
   const supported = new Set(['FLOW_INITIAL_STATE', 'FLOW_STATE_REACHED', 'FLOW_TRANSITION', 'FLOW_TERMINAL_STATE']);
   for (const event of events) {
@@ -626,6 +735,7 @@ const observer = new BrowserObserver({
     await applicationLauncher.stop().catch(() => undefined);
     await relay.stop().catch(() => undefined);
     activeRelayConnection = null;
+    stopQaRunEventsStream();
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
   onObservation: async () => undefined,
@@ -776,6 +886,7 @@ async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'M
     await applicationLauncher.stop();
     await relay.stop();
     activeRelayConnection = null;
+    stopQaRunEventsStream();
     await flushEvidence(state.runId, true);
     await cloud.completeRun({ ...state, completionReason: resolvedReason });
     deleteLocalState(`qa-run-recovery:${state.runId}`);
@@ -2254,8 +2365,35 @@ async function createWindow(): Promise<void> {
   attachWindowChrome(mainWindow);
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const query = rendererQuery();
-  if (devUrl) await mainWindow.loadURL(`${devUrl}?${new URLSearchParams(query).toString()}`);
-  else await mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
+  if (devUrl) {
+    await loadRendererUrlWithRetry(
+      mainWindow,
+      `${devUrl}?${new URLSearchParams(query).toString()}`,
+    );
+  } else {
+    await mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
+  }
+}
+
+async function loadRendererUrlWithRetry(window: BrowserWindow, url: string): Promise<void> {
+  try {
+    await window.loadURL(url);
+  } catch (error) {
+    if (app.isPackaged || window.isDestroyed() || !isTransientRendererLoadFailure(error)) {
+      throw error;
+    }
+    console.warn(
+      'Desktop renderer initial load failed; retrying once',
+      error instanceof Error ? error.message : error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (!window.isDestroyed()) await window.loadURL(url);
+  }
+}
+
+function isTransientRendererLoadFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('ERR_FAILED') || error.message.includes('ERR_ABORTED');
 }
 
 function registerIpc(): void {
@@ -3654,6 +3792,7 @@ function registerIpc(): void {
       activeRelayConnection = {
         runId, endpoint: relaySession.endpoint, relayToken: relaySession.relayToken,
       };
+      if (parsed.captureTracks?.includes('BACKEND')) startQaRunEventsStream(runId);
       await relay.emit('QA_RUN_STARTED', { mode: parsed.mode });
       if (parsed.launchCommandId) {
         if (!parsed.launchApproved) throw new Error('APPLICATION_LAUNCH_APPROVAL_REQUIRED');
@@ -3701,6 +3840,7 @@ function registerIpc(): void {
       await relay.emit('QA_RUN_FAILED', { reason: 'browser_start_failed' }).catch(() => undefined);
       await relay.stop().catch(() => undefined);
       activeRelayConnection = null;
+      stopQaRunEventsStream();
       await cloud.failRun(runId, error instanceof Error ? error.message : 'Managed browser failed to start').catch(() => undefined);
       throw error;
     }
@@ -3861,7 +4001,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   quittingAfterRunCleanup = true;
   void observer.abort('Desktop application closed during a guided run')
-    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); activeRelayConnection = null; return state; })
+    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); activeRelayConnection = null; stopQaRunEventsStream(); return state; })
     .then((state) => cloud.failRun(state.runId, 'Desktop application closed during a guided run'))
     .catch(() => undefined)
     .finally(() => app.quit());

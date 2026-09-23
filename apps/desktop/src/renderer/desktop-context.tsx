@@ -882,6 +882,9 @@ export function normalizeDesktopError(cause: unknown): string {
   if (/INVALID_TASK_APPROVAL|TASK_SCOPE_EXPANSION_DENIED|APPROVED_SCOPE_OUTSIDE_PLAN/.test(raw)) {
     return 'This setup task’s approved scope no longer matches what Tellann can verify. Create a fresh task from the Instrumentation page and approve every listed file again before applying.';
   }
+  if (/QA_RUN_IN_PROGRESS/.test(raw)) {
+    return 'This QA run is currently in progress. Please wait for it to finish or pause it before making changes.';
+  }
   return raw
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')
     .replace(/^Error:\s*/i, '');

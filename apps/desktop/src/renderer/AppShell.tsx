@@ -82,7 +82,9 @@ export function AppShell() {
   const avatarNode = avatarDataUri
     ? <img className="profile-avatar" src={avatarDataUri} alt="" />
     : <span className="profile-avatar" aria-hidden="true">{initials}</span>;
-  const effectiveSidebarWidth = sidebarMode === 'closed' ? 0 : sidebarMode === 'icon' ? ICON_SIDEBAR_WIDTH : sidebarWidth;
+  const isLiveRunPage = Boolean(location.pathname.match(/^\/applications\/[^/]+\/qa-runs\/[^/]+\/live\/?$/));
+  const activeSidebarMode = isLiveRunPage ? 'closed' : sidebarMode;
+  const effectiveSidebarWidth = activeSidebarMode === 'closed' ? 0 : activeSidebarMode === 'icon' ? ICON_SIDEBAR_WIDTH : sidebarWidth;
   const lastProjectId = projectId ?? localStorage.getItem('tellann:last-project') ?? applications[0]?.id;
 
   useEffect(() => {
@@ -219,7 +221,9 @@ export function AppShell() {
         setPaletteOpen((open) => !open);
       } else if (key === 'b') {
         event.preventDefault();
-        toggleSidebar();
+        if (!isLiveRunPage) {
+          toggleSidebar();
+        }
       } else if (key === ',') {
         event.preventDefault();
         void window.tellann?.system.openProfile();
@@ -241,10 +245,10 @@ export function AppShell() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [navigate, projectId, refresh, toggleSidebar]);
+  }, [navigate, projectId, refresh, toggleSidebar, isLiveRunPage]);
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (sidebarMode !== 'full') return;
+    if (activeSidebarMode !== 'full') return;
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = sidebarWidth;
@@ -317,18 +321,18 @@ export function AppShell() {
     { id: 'new-app', group: 'Commands', label: 'Create application', icon: Plus, run: () => navigate('/applications/new') },
     { id: 'attach', group: 'Commands', label: 'Attach project folder…', icon: FolderPlus, disabled: !projectId, run: () => { if (projectId) void attachWorkspace(projectId).catch(() => undefined); } },
     { id: 'refresh', group: 'Commands', label: 'Refresh', icon: RefreshCw, shortcut: 'F5', run: refresh },
-    { id: 'sidebar', group: 'Commands', label: 'Toggle sidebar', icon: PanelLeft, shortcut: 'Ctrl+B', run: toggleSidebar },
+    { id: 'sidebar', group: 'Commands', label: 'Toggle sidebar', icon: PanelLeft, shortcut: 'Ctrl+B', disabled: isLiveRunPage, run: toggleSidebar },
     { id: 'profile', group: 'Commands', label: 'Profile settings', icon: Settings, shortcut: 'Ctrl+,', run: () => void window.tellann?.system.openProfile() },
     { id: 'docs', group: 'Commands', label: 'Documentation', icon: BookOpenText, run: () => void window.tellann?.system.openExternal('https://docs.tellann.co') },
     { id: 'sign-out', group: 'Commands', label: 'Sign out…', icon: LogOut, run: () => void requestSignOut() },
-  ], [applications, attachWorkspace, changeProject, navigate, projectId, refresh, requestSignOut, toggleSidebar]);
+  ], [applications, attachWorkspace, changeProject, navigate, projectId, refresh, requestSignOut, toggleSidebar, isLiveRunPage]);
 
   const runStatusLabel = activeRun ? `QA run ${formatEnum(activeRun.status).toLowerCase()}` : 'Ready';
 
   return (
     <div
       className="app-shell routed-shell"
-      data-sidebar-mode={sidebarMode}
+      data-sidebar-mode={activeSidebarMode}
       style={{ '--sidebar-width': `${effectiveSidebarWidth}px` } as CSSProperties}
       {...dropHandlers}
     >
@@ -341,7 +345,7 @@ export function AppShell() {
           <button className="titlebar-button" type="button" onClick={() => navigate(1)} disabled={historyBounds.index >= historyBounds.max} title="Forward (Alt+Right)" aria-label="Forward">
             <ArrowRight size={16} />
           </button>
-          <button className="titlebar-button" type="button" onClick={toggleSidebar} onContextMenu={(event) => void openSidebarMenu(event)} title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-pressed={sidebarMode === 'full'}>
+          <button className="titlebar-button" type="button" disabled={isLiveRunPage} onClick={toggleSidebar} onContextMenu={(event) => void openSidebarMenu(event)} title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-pressed={activeSidebarMode === 'full'}>
             <PanelLeft size={16} />
           </button>
         </div>
@@ -382,7 +386,7 @@ export function AppShell() {
         <div className="titlebar-drag" />
       </header>
 
-      {sidebarMode !== 'closed' ? (
+      {activeSidebarMode !== 'closed' ? (
         <aside className="sidebar" aria-label="Sidebar" onContextMenu={(event) => {
           if ((event.target as HTMLElement).closest('input, textarea')) return;
           void openSidebarMenu(event);
@@ -419,7 +423,7 @@ export function AppShell() {
             </button>
           </div>
 
-          {sidebarMode === 'full' ? <div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={beginResize} onDoubleClick={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); localStorage.setItem('tellann:sidebar-width', String(DEFAULT_SIDEBAR_WIDTH)); }} /> : null}
+          {activeSidebarMode === 'full' ? <div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={beginResize} onDoubleClick={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); localStorage.setItem('tellann:sidebar-width', String(DEFAULT_SIDEBAR_WIDTH)); }} /> : null}
         </aside>
       ) : null}
 

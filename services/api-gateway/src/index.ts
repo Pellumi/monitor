@@ -68,7 +68,7 @@ function bearerIdentity(request: FastifyRequest): { client?: string; key?: strin
 }
 
 // Routes that bypass API key authentication
-const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/docs/feedback', '/internal/app-events', '/v1/desktop/app-events', '/v1/app-events'];
+const PUBLIC_PREFIXES = ['/health', '/auth', '/contact', '/docs/feedback', '/internal/app-events', '/v1/desktop/app-events', '/v1/app-events', '/internal/qa-run-events'];
 
 // Routes that bypass rate limiting. See the allowList note on the plugin below.
 const RATE_LIMIT_EXEMPT_PATHS = new Set(['/auth/refresh', '/auth/desktop/refresh']);
@@ -414,6 +414,77 @@ async function main() {
           deliveredCount++;
         } catch {
           sseClients.delete(client);
+        }
+      }
+    }
+
+    return { success: true, broadcastCount: deliveredCount };
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // QA run evidence (SSE) — live push for a server started outside the
+  // desktop app. That server carries only a standing ingestion key, posts
+  // its backend evidence straight to onboarding-api, and never touches the
+  // desktop's own per-run local relay. Without this stream that evidence
+  // reaches the database correctly but the desktop never hears about it
+  // until the run ends and the report reads it back. This channel is
+  // desktop-authenticated (not a public prefix); the broadcast trigger below
+  // is server-to-server, like /internal/app-events/broadcast.
+  // ─────────────────────────────────────────────────────────────
+
+  interface QARunEvidenceSSEClient { id: string; runId: string; res: any; }
+  const qaRunEvidenceClients = new Set<QARunEvidenceSSEClient>();
+
+  fastify.get('/v1/qa-runs/:runId/events', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    const clientId = crypto.randomUUID();
+    const client: QARunEvidenceSSEClient = { id: clientId, runId, res: reply.raw };
+    qaRunEvidenceClients.add(client);
+    reply.raw.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientId })}\n\n`);
+
+    // A connection the desktop never explicitly closes (a killed process, a
+    // dropped network) would otherwise sit in the set forever; a heartbeat
+    // both keeps the connection alive through idle proxies and lets a write
+    // failure prune it promptly instead of waiting on TCP timeouts.
+    const heartbeat = setInterval(() => {
+      try {
+        reply.raw.write(': ping\n\n');
+      } catch {
+        clearInterval(heartbeat);
+        qaRunEvidenceClients.delete(client);
+      }
+    }, 25_000);
+
+    request.raw.on('close', () => {
+      clearInterval(heartbeat);
+      qaRunEvidenceClients.delete(client);
+    });
+
+    return reply.hijack();
+  });
+
+  fastify.post('/internal/qa-run-events/broadcast', async (request) => {
+    const body = request.body as {
+      runId: string;
+      events: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>;
+    };
+    const payloadStr = JSON.stringify({ type: 'EVENTS', events: body.events });
+    let deliveredCount = 0;
+
+    for (const client of qaRunEvidenceClients) {
+      if (client.runId === body.runId) {
+        try {
+          client.res.write(`data: ${payloadStr}\n\n`);
+          deliveredCount++;
+        } catch {
+          qaRunEvidenceClients.delete(client);
         }
       }
     }

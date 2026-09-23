@@ -1235,6 +1235,32 @@ export function createDesktopRouter(input: {
   }
 
   /**
+   * Pushes newly-persisted backend evidence to the desktop app for the run it
+   * landed on. This is the only place a standing-ingestion-key server's
+   * requests reach the desktop live — that server never talks to the
+   * per-run local relay the desktop starts, so without this its evidence
+   * would sit in the database, invisible, until the run ends and the report
+   * reads it back. Fire-and-forget: a desktop with no run open, or no
+   * connection at all, still gets its evidence — this only makes it live.
+   */
+  async function notifyApiGatewayQaRunEvidence(
+    runId: string,
+    events: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>,
+  ): Promise<void> {
+    if (!events.length) return;
+    try {
+      const gatewayUrl = process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000';
+      await fetch(`${gatewayUrl}/internal/qa-run-events/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, events }),
+      });
+    } catch (err) {
+      console.error('[Onboarding] Failed to notify API Gateway of QA run evidence', err);
+    }
+  }
+
+  /**
    * Backend evidence from a server the desktop did not start and cannot mint
    * a per-run credential for — a deployment, a CI job, a teammate's machine.
    * The SDK carries only its standing ingestion key; which run an event
@@ -1285,6 +1311,7 @@ export function createDesktopRouter(input: {
       }
       let inserted = 0;
       let duplicates = 0;
+      const broadcastable: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }> = [];
       for (const event of events) {
         const sanitized = sanitizeQaMetadata(event.metadata, { production });
         const supplied = event.protectedValues
@@ -1316,6 +1343,13 @@ export function createDesktopRouter(input: {
             },
           });
           inserted += 1;
+          // Broadcast what was actually persisted — the sanitized metadata,
+          // never the raw event — so live evidence can never show a desktop
+          // operator a value the encryption-at-rest path just stripped out.
+          broadcastable.push({
+            eventId: event.eventId, eventType: event.eventType,
+            metadata: sanitized.metadata, timestamp: event.timestamp,
+          });
         } catch (error) {
           if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
             duplicates += 1;
@@ -1324,6 +1358,7 @@ export function createDesktopRouter(input: {
           throw error;
         }
       }
+      void notifyApiGatewayQaRunEvidence(run.id, broadcastable);
       return res.status(202).json({ accepted: inserted, duplicates, rejected: 0, runId: run.id });
     },
   );

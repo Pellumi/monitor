@@ -8042,6 +8042,32 @@ function CopyableCodeBlock({
   );
 }
 
+/**
+ * Frontend JavaScript frameworks the instrumentation adapters detect.
+ *
+ * Kept local to the renderer rather than imported from
+ * @tellann/desktop-contracts: that package compiles to CommonJS, and the
+ * renderer loads modules as native ESM in dev, so a runtime (non-type-only)
+ * import of its exports fails to resolve at the browser. These id lists are
+ * small and stable enough to duplicate here.
+ */
+const JS_FRONTEND_FRAMEWORK_IDS = [
+  "react-vite",
+  "nextjs",
+  "sveltekit",
+  "nuxt",
+  "astro",
+  "remix",
+  "angular",
+] as const;
+
+const PYTHON_FRAMEWORK_IDS = [
+  "django",
+  "flask",
+  "fastapi",
+  "starlette",
+] as const;
+
 function formatSdkSetupTarget(
   target: any,
   workspace: any,
@@ -8072,6 +8098,13 @@ function formatSdkSetupTarget(
   const isVite = hasFramework("vite");
   const isReactVite = isReact && isVite;
 
+  const isPython =
+    target.id === "python" ||
+    (!isFrontend && PYTHON_FRAMEWORK_IDS.some((id) => hasFramework(id)));
+  const pythonFrameworkId = isPython
+    ? PYTHON_FRAMEWORK_IDS.find((id) => hasFramework(id))
+    : undefined;
+
   const rawWorkspacePath = workspace?.path ?? workspace?.root ?? "";
   const workspaceName =
     workspace?.name ??
@@ -8079,27 +8112,39 @@ function formatSdkSetupTarget(
 
   const packageName =
     target.packageName ??
-    (isFrontend ? "@tellann/frontend-sdk" : "@tellann/backend-sdk");
+    (isFrontend ? "@tellann/frontend-sdk" : isPython ? "tellann" : "@tellann/backend-sdk");
 
+  const jsPackageManagers = ["npm", "pnpm", "yarn", "bun"];
+  const pythonPackageManagers = ["pip", "poetry", "uv", "pipenv"];
   const detectedPackageManager = String(
-    workspace?.snapshot?.packageManager ?? "npm",
+    workspace?.snapshot?.packageManager ?? (isPython ? "pip" : "npm"),
   ).toLowerCase();
-  const packageManager = ["npm", "pnpm", "yarn", "bun"].includes(
-    detectedPackageManager,
-  )
-    ? detectedPackageManager
-    : "npm";
+  const packageManager = isPython
+    ? pythonPackageManagers.includes(detectedPackageManager)
+      ? detectedPackageManager
+      : "pip"
+    : jsPackageManagers.includes(detectedPackageManager)
+      ? detectedPackageManager
+      : "npm";
   const installCommand =
     target.installCommands?.[packageManager] ??
-    target.installCommands?.npm ??
-    `${packageManager} ${packageManager === "npm" ? "install" : "add"} ${packageName}`;
+    target.installCommands?.[isPython ? "pip" : "npm"] ??
+    (isPython
+      ? `pip install ${packageName}`
+      : `${packageManager} ${packageManager === "npm" ? "install" : "add"} ${packageName}`);
 
-  let stackLabel = isFrontend ? "Browser Application" : "Node.js Server";
+  let stackLabel = isFrontend
+    ? "Browser Application"
+    : isPython
+      ? "Python Server"
+      : "Node.js Server";
   if (isFrontend) {
     if (isNextJs) stackLabel = "Next.js (App / Pages Router)";
     else if (isReactVite) stackLabel = "React + Vite";
     else if (isReact) stackLabel = "React";
     else if (isVite) stackLabel = "Vite";
+  } else if (isPython && pythonFrameworkId) {
+    stackLabel = adapterLabel(pythonFrameworkId);
   }
 
   const endpointStr = gatewayEndpoint ?? "http://localhost:3000";
@@ -8143,6 +8188,44 @@ TELLANN.initialize({
 });
 
 void TELLANN.verifyInstallation();`;
+    }
+  } else if (isPython) {
+    const pythonInit = `import os
+
+from tellann import TELLANN${pythonFrameworkId && pythonFrameworkId !== "django" ? `\nfrom tellann import instrument_${pythonFrameworkId}` : ""}
+
+TELLANN.initialize(
+    endpoint=os.environ.get("TELLANN_GATEWAY_URL", "${endpointStr}"),
+    api_key=os.environ.get("TELLANN_INGESTION_KEY"),
+    application_id="${applicationId}",
+    environment_id="${environmentId}",
+)
+TELLANN.verify_installation()`;
+    if (pythonFrameworkId === "django") {
+      snippet = `${pythonInit}
+
+# settings.py — then register the middleware
+MIDDLEWARE = [
+    "tellann.integrations.django_middleware.TellannMiddleware",
+    # ... your existing middleware
+]`;
+    } else if (pythonFrameworkId === "fastapi") {
+      snippet = `${pythonInit}
+
+app = FastAPI()
+instrument_fastapi(app)`;
+    } else if (pythonFrameworkId === "flask") {
+      snippet = `${pythonInit}
+
+app = Flask(__name__)
+instrument_flask(app)`;
+    } else if (pythonFrameworkId === "starlette") {
+      snippet = `${pythonInit}
+
+app = Starlette(routes=routes)
+instrument_starlette(app)`;
+    } else if (!snippet) {
+      snippet = pythonInit;
     }
   }
 
@@ -8358,6 +8441,7 @@ export function InstrumentationPage() {
     null,
   );
   const [manualTargetId, setManualTargetId] = useState("frontend");
+  const manualTargetTouched = useRef(false);
   const [manualRawKey, setManualRawKey] = useState<string | null>(null);
   const [creatingProposal, setCreatingProposal] = useState(false);
   const [proposalMessage, setProposalMessage] = useState<string | null>(null);
@@ -8638,6 +8722,29 @@ export function InstrumentationPage() {
     // Depend on the connected flag, not the readiness object: every fetch
     // returns a new object, which would re-run this effect back-to-back.
   }, [environmentId, projectId, setupConnected]);
+
+  // Default the manual setup tab to whatever's actually in this project. A
+  // Python-only project (no JS frontend detected) should open on the Python
+  // target instead of always defaulting to the frontend tab. Only applies
+  // before the member has clicked a tab themselves.
+  useEffect(() => {
+    if (manualTargetTouched.current) return;
+    const targets = (manualSetup?.targets as any[]) ?? [];
+    if (!targets.length) return;
+    const detectedAdapterIds = detections.map((d) =>
+      String(d.adapterId ?? "").toLowerCase(),
+    );
+    const hasJsFrontend = JS_FRONTEND_FRAMEWORK_IDS.some((id) =>
+      detectedAdapterIds.includes(id),
+    );
+    const hasPython = PYTHON_FRAMEWORK_IDS.some((id) =>
+      detectedAdapterIds.includes(id),
+    );
+    const preferredId = hasPython && !hasJsFrontend ? "python" : "frontend";
+    if (targets.some((target) => target.id === preferredId)) {
+      setManualTargetId(preferredId);
+    }
+  }, [manualSetup, detections]);
 
   // The manual setup panel renders near the top of the page, above the mode
   // cards that can open it, so bring it into view when it opens.
@@ -9508,11 +9615,17 @@ export function InstrumentationPage() {
               <button
                 key={String(target.id)}
                 className={`button ${manualTargetId === target.id ? "primary" : ""}`}
-                onClick={() => setManualTargetId(String(target.id))}
+                onClick={() => {
+                  manualTargetTouched.current = true;
+                  setManualTargetId(String(target.id));
+                }}
               >
-                {target.kind === "FRONTEND"
-                  ? "Frontend / browser"
-                  : "Backend / Node.js"}
+                {target.label ??
+                  (target.id === "python"
+                    ? "Python server"
+                    : target.kind === "FRONTEND"
+                      ? "Frontend / browser"
+                      : "Backend / Node.js")}
               </button>
             ))}
           </div>

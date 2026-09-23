@@ -3259,7 +3259,7 @@ img.profile-avatar {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 24px;
+  /* padding: 24px; */
   width: min(520px, 100%);
 }
 .confirm-modal-topbar {
