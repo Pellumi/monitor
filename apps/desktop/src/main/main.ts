@@ -31,7 +31,8 @@ import {
   type RunFlowPlanState,
   type RunFlowPlanTransition,
 } from '@tellann/browser-observer';
-import { DesktopCloudClient } from './cloud-client';
+import { DesktopCloudClient, cloudApiUrl } from './cloud-client';
+import { checkSdkVersions } from './sdk-version-check';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
 import { closeLocalStore, deleteLocalState, listLocalStateKeys, readLocalState, writeLocalState } from './local-store';
@@ -2395,10 +2396,26 @@ function registerIpc(): void {
     if (typeof id !== 'string') throw new Error('INVALID_ID');
     return notificationClient.open(id);
   });
-  ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown, filters?: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return cloud.runs(applicationId);
+    return cloud.runs(applicationId, (filters ?? {}) as Record<string, string>);
+  });
+  ipcMain.handle(IPC.renameRun, (event, runId: string, title: string) => {
+    assertTrustedSender(event);
+    return cloud.renameRun(runId, title);
+  });
+  ipcMain.handle(IPC.archiveRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.archiveRun(runId);
+  });
+  ipcMain.handle(IPC.restoreRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.restoreRun(runId);
+  });
+  ipcMain.handle(IPC.deleteRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.deleteRun(runId);
   });
   ipcMain.handle(IPC.getRun, async (event, runId: unknown) => {
     assertTrustedSender(event);
@@ -3785,6 +3802,25 @@ function registerIpc(): void {
       applicationId: state.applicationId,
       environmentId: state.environmentId,
     };
+  });
+  ipcMain.handle(IPC.listIngestionKeys, async (event, environmentId: string) => {
+    assertTrustedSender(event);
+    return { gatewayEndpoint: cloudApiUrl(), keys: await cloud.listIngestionKeys(environmentId) };
+  });
+  ipcMain.handle(IPC.createIngestionKey, async (event, environmentId: string, label?: string) => {
+    assertTrustedSender(event);
+    return { gatewayEndpoint: cloudApiUrl(), key: await cloud.createIngestionKey(environmentId, label) };
+  });
+  ipcMain.handle(IPC.getEvidenceEvent, (event, runId: string, eventId: string) => {
+    assertTrustedSender(event);
+    return cloud.evidenceEvent(runId, eventId);
+  });
+  ipcMain.handle(IPC.checkSdkVersions, (event, applicationId: string) => {
+    assertTrustedSender(event);
+    const workspace = selectedWorkspaces.get(applicationId);
+    // No local workspace attached yet — nothing on disk to check.
+    if (!workspace) return [];
+    return checkSdkVersions(workspace.root);
   });
 }
 

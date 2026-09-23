@@ -2581,6 +2581,10 @@ model QARun {
   mode                   QARunMode
   captureTracks          QACaptureTrack[]      @default([FRONTEND])
   status                 QARunStatus           @default(CREATED)
+  /// The operator's own name for this run. Unset means the UI derives one — from its environment and start time — the same way an untitled instrumentation task does.
+  title                  String?
+  archivedAt             DateTime?
+  archivedByUserId       String?
   initialStateKey        String?
   terminalStateKeys      String[]              @default([])
   lastObservedStateKey   String?
@@ -2613,6 +2617,7 @@ model QARun {
   @@index([deviceSessionId])
   @@index([flowId, expectedGraphVersionId, createdAt])
   @@index([flowBindingId, status])
+  @@index([applicationId, archivedAt])
 }
 
 model QARunEvidenceEvent {
@@ -2936,6 +2941,12 @@ enum AuditAction {
   REPORT_GENERATED
   REPORT_EXPORTED
   QA_EVIDENCE_REVEALED
+
+  // ─── QA Runs ──────────────────────────────────────
+  QARUN_RENAMED
+  QARUN_ARCHIVED
+  QARUN_RESTORED
+  QARUN_DELETED
 
   // ─── Feature Flags ────────────────────────────────
   ORG_FEATURE_FLAG_CHANGED

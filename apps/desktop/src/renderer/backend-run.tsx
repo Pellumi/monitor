@@ -245,26 +245,27 @@ export function BackendModelTable({ models }: { models: BackendModelStat[] }) {
   );
 }
 
-type RelayConnection = {
-  endpoint: string;
-  relayToken: string;
-  runId: string;
-  sessionId: string;
-  traceId: string;
-  applicationId: string;
-  environmentId: string;
+type IngestionKeySummary = {
+  id: string;
+  keyPrefix: string;
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
 };
 
-/** The environment a server the operator starts themselves needs to report in. */
-function connectionEnvironment(connection: RelayConnection): string {
+/** The standing environment a server started outside Tellann needs, set once. */
+function environmentBlock(input: {
+  gatewayEndpoint: string;
+  ingestionKey: string;
+  applicationId: string;
+  environmentId: string;
+}): string {
   return [
-    `TELLANN_RELAY_ENDPOINT=${connection.endpoint}`,
-    `TELLANN_RUN_CREDENTIAL=${connection.relayToken}`,
-    `TELLANN_RUN_ID=${connection.runId}`,
-    `TELLANN_SESSION_ID=${connection.sessionId}`,
-    `TELLANN_TRACE_ID=${connection.traceId}`,
-    `TELLANN_APPLICATION_ID=${connection.applicationId}`,
-    `TELLANN_ENVIRONMENT_ID=${connection.environmentId}`,
+    `TELLANN_GATEWAY_URL=${input.gatewayEndpoint}`,
+    `TELLANN_INGESTION_KEY=${input.ingestionKey}`,
+    `TELLANN_APPLICATION_ID=${input.applicationId}`,
+    `TELLANN_ENVIRONMENT_ID=${input.environmentId}`,
   ].join("\n");
 }
 
@@ -272,22 +273,63 @@ function connectionEnvironment(connection: RelayConnection): string {
  * What the run is waiting for when nothing has arrived yet.
  *
  * A backend run that shows zeros is nearly always a wiring problem, not a
- * quiet application, so the empty state says what to check — and hands over
- * the exact environment a server started outside Tellann needs, which is the
- * one thing an operator cannot work out for themselves.
+ * quiet application, so the empty state says what to check. What it hands
+ * over to fix that is this environment's standing ingestion key rather than
+ * a credential scoped to this one run: a server the desktop did not start —
+ * most of all one that is actually deployed somewhere, not running on this
+ * machine — is configured with it once and never has to change it before the
+ * next run. Which run a request lands on is resolved from whichever run is
+ * currently recording against this environment, not from anything the
+ * server's own configuration carries.
  */
-export function BackendWaitingPanel({ targetUrl }: { targetUrl: string }) {
-  const [connection, setConnection] = useState<RelayConnection | null>(null);
+export function BackendWaitingPanel({
+  targetUrl,
+  applicationId,
+  environmentId,
+}: {
+  targetUrl: string;
+  applicationId: string;
+  environmentId: string;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [gatewayEndpoint, setGatewayEndpoint] = useState<string | null>(null);
+  const [keys, setKeys] = useState<IngestionKeySummary[]>([]);
+  const [createdKey, setCreatedKey] = useState<{ rawKey: string; keyPrefix: string } | null>(null);
+  const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void window.tellann?.runs
-      ?.relayConnection?.()
-      .then((value) => { if (!cancelled) setConnection(value); })
-      .catch(() => undefined);
+      ?.listIngestionKeys?.(environmentId)
+      .then((result) => {
+        if (cancelled) return;
+        setGatewayEndpoint(result.gatewayEndpoint);
+        setKeys(result.keys);
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [environmentId]);
+
+  const copy = (text: string) => {
+    void window.tellann?.system?.copyText?.(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2_000);
+  };
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const result = await window.tellann?.runs?.createIngestionKey?.(environmentId);
+      if (!result) return;
+      setGatewayEndpoint(result.gatewayEndpoint);
+      setCreatedKey({ rawKey: result.key.rawKey, keyPrefix: result.key.keyPrefix });
+      setKeys((existing) => [{ ...result.key, lastUsedAt: null }, ...existing]);
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <section className="run-waiting">
@@ -307,35 +349,82 @@ export function BackendWaitingPanel({ targetUrl }: { targetUrl: string }) {
           <dt>What to check</dt>
           <dd>
             The backend SDK is initialized where your server starts, its
-            middleware is registered, and the process can reach this run.
+            middleware is registered, and it is configured with this
+            environment's ingestion key.
           </dd>
         </div>
       </dl>
-      {connection ? (
+      {loading ? null : createdKey && gatewayEndpoint ? (
         <div className="run-connect">
           <div className="run-connect-heading">
-            <strong>Started your server yourself?</strong>
+            <strong>New ingestion key created</strong>
             <button
               type="button"
               className="button"
-              onClick={() => {
-                void window.tellann?.system?.copyText?.(connectionEnvironment(connection));
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 2_000);
-              }}
+              onClick={() => copy(environmentBlock({
+                gatewayEndpoint, ingestionKey: createdKey.rawKey, applicationId, environmentId,
+              }))}
             >
               <Copy size={14} />
               {copied ? "Copied" : "Copy environment"}
             </button>
           </div>
           <p>
-            A process Tellann launches is given this automatically. A process
-            you start yourself needs it in its environment before the SDK can
-            report into this run — it is valid only while the run is open.
+            Shown once — set this in your server's environment and it needs no
+            further changes. A process Tellann launches itself already has
+            this automatically.
           </p>
-          <pre>{connectionEnvironment(connection)}</pre>
+          <pre>{environmentBlock({
+            gatewayEndpoint, ingestionKey: createdKey.rawKey, applicationId, environmentId,
+          })}</pre>
         </div>
-      ) : null}
+      ) : keys.length && gatewayEndpoint ? (
+        <div className="run-connect">
+          <div className="run-connect-heading">
+            <strong>Started your server yourself?</strong>
+          </div>
+          <p>
+            This environment already has a standing ingestion key
+            (<code>{keys[0].keyPrefix}…</code>, {keys[0].label || "unlabeled"}).
+            If your server's <code>TELLANN_INGESTION_KEY</code> is already set
+            to it, its requests are picked up automatically — nothing to
+            reconfigure for this run. A key's value is only ever shown once,
+            at creation, so it cannot be recovered here if it was lost.
+          </p>
+          <dl>
+            <div>
+              <dt>TELLANN_GATEWAY_URL</dt>
+              <dd className="mono">{gatewayEndpoint}</dd>
+            </div>
+            <div>
+              <dt>TELLANN_APPLICATION_ID</dt>
+              <dd className="mono">{applicationId}</dd>
+            </div>
+            <div>
+              <dt>TELLANN_ENVIRONMENT_ID</dt>
+              <dd className="mono">{environmentId}</dd>
+            </div>
+          </dl>
+          <button type="button" className="button" onClick={() => void handleCreate()} disabled={creating}>
+            <Copy size={14} />
+            {creating ? "Creating…" : "Create another key"}
+          </button>
+        </div>
+      ) : (
+        <div className="run-connect">
+          <div className="run-connect-heading">
+            <strong>Started your server yourself?</strong>
+            <button type="button" className="button" onClick={() => void handleCreate()} disabled={creating}>
+              {creating ? "Creating…" : "Create ingestion key"}
+            </button>
+          </div>
+          <p>
+            This environment has no standing ingestion key yet. Create one and
+            it works for this run and every future one — a deployed server
+            never needs a fresh credential before it can be exercised again.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

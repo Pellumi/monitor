@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { TellannEvent } from '../event-types';
 import { TellannBackendConfig } from './TELLANN';
 import { currentRequestContext } from './requestContext';
+import { postQaEvidence } from './qaEvidence';
 
 export interface CaptureErrorOptions {
   error: Error | unknown;
@@ -89,4 +90,11 @@ export async function captureErrorEvent(
   } catch {
     // Silently swallow
   }
+
+  await postQaEvidence(config, {
+    eventType: 'QA_BACKEND_ERROR',
+    metadata: event.metadata as Record<string, unknown>,
+    traceId: event.traceId,
+    runId: event.runId,
+  });
 }

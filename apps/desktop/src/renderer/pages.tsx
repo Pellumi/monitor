@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -11539,13 +11540,17 @@ export function InstrumentationDetailPage() {
 function useRuns(projectId?: string) {
   const { runs, refreshRuns } = useDesktop();
   const [loading, setLoading] = useState(true);
+  const refresh = useCallback(
+    () => (projectId ? refreshRuns(projectId) : Promise.resolve([])),
+    [projectId, refreshRuns],
+  );
   useEffect(() => {
     if (!projectId) return;
     void refreshRuns(projectId)
       .catch(() => undefined)
       .finally(() => setLoading(false));
   }, [projectId, refreshRuns]);
-  return { items: projectId ? (runs[projectId] ?? []) : [], loading };
+  return { items: projectId ? (runs[projectId] ?? []) : [], loading, refresh };
 }
 
 function reportHrefFor(projectId: string, run: QARunSummary) {
@@ -11560,22 +11565,64 @@ function formatRunTime(value: string | null | undefined, fallback: string) {
 
 export function RunsPage() {
   const { projectId, application } = useProject();
-  const { items, loading } = useRuns(projectId);
+  const { items, loading, refresh } = useRuns(projectId);
+  const { searchRuns, renameRun, archiveRun, restoreRun, deleteRun } = useDesktop();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const visible = useMemo(() => {
+  const [archivedView, setArchivedView] = useState<"false" | "true" | "all">("false");
+  const [searchResults, setSearchResults] = useState<QARunSummary[] | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [renameTarget, setRenameTarget] = useState<QARunSummary | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<QARunSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<QARunSummary | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // An instant, client-side pass over the already-cached default list while
+  // the debounced, server-backed search (which alone knows about archived
+  // runs, status and date range) is in flight.
+  const clientFiltered = useMemo(() => {
     const terms = query.trim().toLowerCase();
-    if (!terms) return items;
-    return items.filter((run) =>
-      `${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
+    const base = archivedView === "false" ? items.filter((run) => !run.archivedAt) : items;
+    if (!terms) return base;
+    return base.filter((run) =>
+      `${run.title ?? ""} ${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
         .toLowerCase()
         .includes(terms),
     );
-  }, [items, query]);
+  }, [items, query, archivedView]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    setSearchResults(null);
+    const timer = window.setTimeout(() => {
+      void searchRuns(projectId, { q: query.trim() || undefined, archived: archivedView })
+        .then(setSearchResults)
+        .catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [projectId, query, archivedView, searchRuns, refreshToken]);
+
+  const visible = searchResults ?? clientFiltered;
   const openRun = useCallback(
     (run: QARunSummary) => navigate(`/applications/${projectId}/qa-runs/${run.id}`),
     [navigate, projectId],
   );
+
+  const act = async (run: QARunSummary, action: () => Promise<unknown>) => {
+    setPendingId(run.id);
+    setActionError(null);
+    try {
+      await action();
+      setRefreshToken((token) => token + 1);
+      void refresh();
+    } catch (cause) {
+      setActionError(normalizeDesktopError(cause));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const list = useSelectableList({
     items: visible,
     getKey: runKey,
@@ -11586,10 +11633,20 @@ export function RunsPage() {
         { id: "open", label: "Open run", accelerator: "Enter" },
         { id: "report", label: "View report", enabled: Boolean(report) },
         { type: "separator" },
+        { id: "rename", label: "Rename…" },
+        run.archivedAt
+          ? { id: "restore", label: "Restore" }
+          : { id: "archive", label: "Archive" },
+        { id: "delete", label: "Delete…" },
+        { type: "separator" },
         { id: "copy", label: "Copy run ID" },
       ]).then((choice) => {
         if (choice === "open") openRun(run);
         if (choice === "report" && report) navigate(report);
+        if (choice === "rename") setRenameTarget(run);
+        if (choice === "archive") setArchiveTarget(run);
+        if (choice === "restore") void act(run, () => restoreRun(run.id));
+        if (choice === "delete") setDeleteTarget(run);
         if (choice === "copy") void window.tellann?.system.copyText(run.id);
       });
     },
@@ -11610,15 +11667,29 @@ export function RunsPage() {
       description="Guided browser execution, captured evidence, reconciliation, and report processing."
       layout={!loading ? "fill" : "scroll"}
       toolbar={
-        items.length ? (
-          <input
-            className="toolbar-search"
-            data-search-input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter runs (Ctrl+F)"
-            aria-label="Filter runs"
-          />
+        items.length || searchResults?.length ? (
+          <>
+            <input
+              className="toolbar-search"
+              data-search-input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search by title, id, environment or status (Ctrl+F)"
+              aria-label="Search runs"
+            />
+            <div className="segmented-control" role="group" aria-label="Show">
+              {(["false", "true", "all"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={archivedView === value ? "selected" : undefined}
+                  onClick={() => setArchivedView(value)}
+                >
+                  {value === "false" ? "Active" : value === "true" ? "Archived" : "All"}
+                </button>
+              ))}
+            </div>
+          </>
         ) : null
       }
       actions={
@@ -11632,6 +11703,11 @@ export function RunsPage() {
         </Link>
       }
     >
+      {actionError ? (
+        <div className="inline-error" role="alert">
+          {actionError}
+        </div>
+      ) : null}
       {loading ? (
         <LoadingState />
       ) : items.length ? (
@@ -11640,7 +11716,7 @@ export function RunsPage() {
             <div
               className="list-view"
               aria-label="QA runs"
-              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
+              style={{ "--list-columns": "minmax(160px, 1.4fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
               {...list.listProps}
             >
               <div className="list-head" role="presentation">
@@ -11651,14 +11727,14 @@ export function RunsPage() {
                 <span>Started</span>
               </div>
               {visible.map((run) => (
-                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                <div className="list-row" key={run.id} data-archived={run.archivedAt ? "true" : undefined} {...list.rowProps(run)}>
                   <span className="list-cell-primary">
-                    <strong className="mono">{run.id.slice(0, 8)}</strong>
-                    <small>{formatEnum(run.mode)}</small>
+                    <strong>{run.title ?? run.id.slice(0, 8)}</strong>
+                    <small className="mono">{run.id.slice(0, 8)} · {formatEnum(run.mode)}</small>
                   </span>
                   <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
                   <span>
-                    <Status>{run.status}</Status>
+                    <Status>{run.archivedAt ? "ARCHIVED" : run.status}</Status>
                   </span>
                   <span>
                     {run.artifactCount} artifacts · {run.findingCount} findings
@@ -11676,7 +11752,7 @@ export function RunsPage() {
               <div className="detail-content">
                 <div className="detail-header">
                   <small>QA run</small>
-                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
+                  <h2>{selected.title ?? selected.id.slice(0, 8)}</h2>
                 </div>
                 <div className="detail-actions">
                   <button className="button primary" type="button" onClick={() => openRun(selected)}>
@@ -11688,11 +11764,48 @@ export function RunsPage() {
                       View report
                     </Link>
                   ) : null}
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={pendingId === selected.id}
+                    onClick={() => setRenameTarget(selected)}
+                  >
+                    Rename
+                  </button>
+                  {selected.archivedAt ? (
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={pendingId === selected.id}
+                      onClick={() => void act(selected, () => restoreRun(selected.id))}
+                    >
+                      <ArchiveRestore size={15} />
+                      Restore
+                    </button>
+                  ) : (
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={pendingId === selected.id}
+                      onClick={() => setArchiveTarget(selected)}
+                    >
+                      <Archive size={15} />
+                      Archive
+                    </button>
+                  )}
+                  <button
+                    className="button danger"
+                    type="button"
+                    disabled={pendingId === selected.id}
+                    onClick={() => setDeleteTarget(selected)}
+                  >
+                    Delete
+                  </button>
                 </div>
                 <dl className="property-list">
                   <div>
                     <dt>Status</dt>
-                    <dd><Status>{selected.status}</Status></dd>
+                    <dd><Status>{selected.archivedAt ? "ARCHIVED" : selected.status}</Status></dd>
                   </div>
                   <div>
                     <dt>Mode</dt>
@@ -11744,7 +11857,121 @@ export function RunsPage() {
           }
         />
       )}
+      <RenameRunModal
+        run={renameTarget}
+        busy={pendingId === renameTarget?.id}
+        onCancel={() => setRenameTarget(null)}
+        onSave={(title) => {
+          const target = renameTarget!;
+          setRenameTarget(null);
+          void act(target, () => renameRun(target.id, title ?? ""));
+        }}
+      />
+      <ConfirmModal
+        isOpen={Boolean(archiveTarget)}
+        title={`Archive "${archiveTarget?.title ?? archiveTarget?.id.slice(0, 8) ?? ""}"?`}
+        description="Tellann keeps this run's evidence and report, but takes it out of the working list. You can restore it from Archived at any time."
+        confirmLabel="Archive run"
+        cancelLabel="Keep it"
+        variant="primary"
+        busy={pendingId === archiveTarget?.id}
+        onConfirm={() => {
+          const target = archiveTarget!;
+          setArchiveTarget(null);
+          void act(target, () => archiveRun(target.id));
+        }}
+        onCancel={() => setArchiveTarget(null)}
+      />
+      <ConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        title={`Delete "${deleteTarget?.title ?? deleteTarget?.id.slice(0, 8) ?? ""}"?`}
+        description="This permanently deletes the run along with its report, evidence and artifacts. This cannot be undone."
+        confirmLabel="Delete permanently"
+        cancelLabel="Cancel"
+        variant="danger"
+        busy={pendingId === deleteTarget?.id}
+        onConfirm={() => {
+          const target = deleteTarget!;
+          setDeleteTarget(null);
+          void act(target, () => deleteRun(target.id));
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </Page>
+  );
+}
+
+function RenameRunModal({
+  run,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  run: QARunSummary | null;
+  busy: boolean;
+  onCancel(): void;
+  onSave(title: string | null): void;
+}) {
+  const [value, setValue] = useState("");
+  const runId = run?.id ?? "";
+  useEffect(() => {
+    if (run) setValue(run.title ?? "");
+    // Re-seed only when a different run is opened, so typing is not undone by
+    // a re-render of the list behind the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
+  useEffect(() => {
+    if (!run) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onCancel, run]);
+  if (!run) return null;
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-run-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy) onSave(value.trim() ? value.trim() : null);
+        }}
+      >
+        <h2 id="rename-run-title">Rename this run</h2>
+        <p>This is what the run is called everywhere in Tellann. Leave it empty to go back to its default name.</p>
+        <label className="dialog-field">
+          <span>Title</span>
+          <input
+            autoFocus
+            maxLength={200}
+            value={value}
+            disabled={busy}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </label>
+        <div className="desktop-modal-actions">
+          <button type="button" className="button" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? "Saving…" : "Save title"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -12363,13 +12590,14 @@ function planStateStatuses(run: GuidedRunState): Map<string, PlanStateStatus> {
 /** The one sentence telling the user what to do right now. */
 function runInstruction(run: GuidedRunState): { title: string; detail: string } {
   const plan = run.flowPlan;
+  const backendOnly = isBackendOnlyRun(run);
   if (run.status === "PAUSED") {
     return {
       title: "Run paused",
       detail: "Nothing is being recorded. Resume when you are ready to carry on.",
     };
   }
-  if (isBackendOnlyRun(run) && !plan) {
+  if (backendOnly && !plan) {
     return {
       title: "Backend capture",
       detail:
@@ -12389,11 +12617,17 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
   const label = (key: string | null) =>
     plan.states.find((state) => state.key === key)?.name ?? key ?? "the next state";
   if (run.phase === "PRE_BOUNDARY") {
-    return {
-      title: `Open ${label(plan.initialStateKey)} in the browser`,
-      detail:
-        "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
-    };
+    return backendOnly
+      ? {
+          title: `Reach ${label(plan.initialStateKey)}`,
+          detail:
+            "Call the API the way you normally would until your application reports this state. Detailed recording starts the moment it does.",
+        }
+      : {
+          title: `Open ${label(plan.initialStateKey)} in the browser`,
+          detail:
+            "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
+        };
   }
   if (run.coverage?.terminalReached) {
     return {
@@ -12407,7 +12641,9 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
   return {
     title: next.length ? `Continue to ${next.slice(0, 2).join(" or ")}` : "Carry on through the Flow",
     detail: next.length
-      ? "Drive the application the way a user would. Every step is being recorded against the Flow."
+      ? backendOnly
+        ? "Call the API the way you normally would. Every request is being recorded against the Flow."
+        : "Drive the application the way a user would. Every step is being recorded against the Flow."
       : "This state has no declared next step. Move on to whichever state you expect to reach.",
   };
 }
@@ -12423,6 +12659,7 @@ export function LiveRunPage() {
     focusRunBrowser,
     reopenRunBrowser,
     endRun,
+    checkSdkVersions,
     getDeclaredFlows,
     getDeclaredFlow,
     reopenDeclaredFlow,
@@ -12436,6 +12673,9 @@ export function LiveRunPage() {
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [follow, setFollow] = useState(true);
+  const [detailItem, setDetailItem] = useState<LiveEvidence | null>(null);
+  const [outdatedSdks, setOutdatedSdks] = useState<Array<{ ecosystem: "npm" | "pypi"; package: string; installed: string; latest: string | null }>>([]);
+  const [sdkBannerDismissed, setSdkBannerDismissed] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
   const [draftingFlow, setDraftingFlow] = useState(false);
@@ -12461,6 +12701,22 @@ export function LiveRunPage() {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [run?.status]);
+
+  // Checked once per run start rather than continuously: an outdated SDK
+  // still reports evidence correctly, so this only ever informs.
+  useEffect(() => {
+    if (!projectId || !run?.runId) return;
+    let cancelled = false;
+    setSdkBannerDismissed(false);
+    void checkSdkVersions(projectId)
+      .then((statuses) => {
+        if (!cancelled) setOutdatedSdks(statuses.filter((status) => status.outdated));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, run?.runId, checkSdkVersions]);
 
   /**
    * Keeps both panels inside the window. A width saved on a wide monitor used
@@ -12527,20 +12783,26 @@ export function LiveRunPage() {
   // run has no browser console and no interactions to list; it has requests,
   // server errors and data operations.
   const backendOnly = run ? isBackendOnlyRun(run) : false;
+  // A run with no Flow attached can never report a FLOW event, so the tab
+  // would only ever be empty — left out rather than shown dead.
   const evidenceTabs: Array<{
     value: EvidenceTabValue | BackendEvidenceTabValue;
     label: string;
     icon: typeof Activity;
     kinds: Array<LiveEvidence["kind"]>;
-  }> = backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS;
+  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS).filter(
+    (entry) => entry.value !== "FLOW" || Boolean(run?.flowPlan),
+  );
   const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
 
-  // A tab from the other track's set would leave the panel empty with no way
-  // back, so switching tracks lands on that track's first pane.
+  // A tab from the other track's set — or FLOW when this run has no Flow
+  // attached and it was filtered out above — would leave the panel empty
+  // with no way back, so switching tracks lands on that track's first pane.
   useEffect(() => {
     if (evidenceTabs.some((entry) => entry.value === tab)) return;
-    setTab(backendOnly ? "REQUESTS" : "FLOW");
-  }, [backendOnly, tab]);
+    const fallback = evidenceTabs[0]?.value ?? (backendOnly ? "REQUESTS" : "CONSOLE");
+    if (fallback !== tab) setTab(fallback);
+  }, [backendOnly, tab, evidenceTabs]);
   const visible = useMemo(() => {
     if (!run || activeTab.value === "FINDINGS") return [];
     const needle = query.trim().toLowerCase();
@@ -12795,6 +13057,30 @@ export function LiveRunPage() {
         </div>
       </header>
 
+      {outdatedSdks.length && !sdkBannerDismissed ? (
+        <div className="run-sdk-banner" role="status">
+          <TriangleAlert size={15} />
+          <div className="run-sdk-banner-body">
+            {outdatedSdks.map((sdk) => (
+              <span key={sdk.package}>
+                <strong>{sdk.package}</strong> is on <code>{sdk.installed}</code>
+                {sdk.latest ? (
+                  <>
+                    {" "}— <code>{sdk.latest}</code> is available.{" "}
+                  </>
+                ) : (
+                  " — a newer version is available. "
+                )}
+              </span>
+            ))}
+            This run still works either way; update when convenient.
+          </div>
+          <button type="button" className="button" onClick={() => setSdkBannerDismissed(true)}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
       <section className="live-flow">
         <div
           className="flow-resize-handle"
@@ -12832,50 +13118,82 @@ export function LiveRunPage() {
           </div>
         ) : null}
 
-        <div className="flow-plan-heading">
-          <h2>Expected states</h2>
-          {coverage ? (
-            <span>
-              {coverage.visitedStateKeys.length} / {coverage.expectedStates}
-            </span>
-          ) : null}
-        </div>
-
-        {plan && plan.states.length ? (
-          <ol className="flow-plan">
-            {plan.states.map((state, index) => {
-              const status = statuses.get(state.key) ?? "pending";
-              return (
-                <li key={state.key} className="flow-plan-state" data-status={status}>
-                  <span className="flow-plan-marker">
-                    {status === "done" ? <Check size={13} /> : index + 1}
-                  </span>
-                  <div>
-                    <strong>{state.name}</strong>
-                    <small>
-                      {status === "current"
-                        ? "You are here"
-                        : status === "done"
-                          ? "Visited"
-                          : status === "next"
-                            ? "Expected next"
-                            : state.role === "TERMINAL"
-                              ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
-                              : state.role === "INITIAL"
-                                ? "Starting point"
-                                : "Not reached yet"}
-                    </small>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+        {backendOnly && !plan ? (
+          // No Flow to reconcile against, and no browser/viewport to describe
+          // either — the space "Expected states" would otherwise leave empty
+          // goes to the numbers that actually tell the operator how this run
+          // is going.
+          <div className="flow-backend-summary">
+            <h2>This run</h2>
+            <dl className="property-list">
+              <div>
+                <dt>Elapsed</dt>
+                <dd>{formatDuration(elapsedMs)}</dd>
+              </div>
+              <div>
+                <dt>Requests received</dt>
+                <dd>{backend?.requests ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Failed responses</dt>
+                <dd>{backend?.errors ?? 0}</dd>
+              </div>
+              <div>
+                <dt>SDK connection</dt>
+                <dd>
+                  <Status>{backend?.requests ? "Receiving requests" : "Waiting for the first request"}</Status>
+                </dd>
+              </div>
+            </dl>
+          </div>
         ) : (
-          <p className="flow-plan-empty">
-            {run.expectedGraphVersionId
-              ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
-              : "This run is observational. Nothing is being compared against a declared Flow."}
-          </p>
+          <>
+            <div className="flow-plan-heading">
+              <h2>Expected states</h2>
+              {coverage ? (
+                <span>
+                  {coverage.visitedStateKeys.length} / {coverage.expectedStates}
+                </span>
+              ) : null}
+            </div>
+
+            {plan && plan.states.length ? (
+              <ol className="flow-plan">
+                {plan.states.map((state, index) => {
+                  const status = statuses.get(state.key) ?? "pending";
+                  return (
+                    <li key={state.key} className="flow-plan-state" data-status={status}>
+                      <span className="flow-plan-marker">
+                        {status === "done" ? <Check size={13} /> : index + 1}
+                      </span>
+                      <div>
+                        <strong>{state.name}</strong>
+                        <small>
+                          {status === "current"
+                            ? "You are here"
+                            : status === "done"
+                              ? "Visited"
+                              : status === "next"
+                                ? "Expected next"
+                                : state.role === "TERMINAL"
+                                  ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
+                                  : state.role === "INITIAL"
+                                    ? "Starting point"
+                                    : "Not reached yet"}
+                        </small>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="flow-plan-empty">
+                {run.expectedGraphVersionId
+                  ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
+                  : "This run is observational. Nothing is being compared against a declared Flow."}
+              </p>
+            )}
+          </>
         )}
       </section>
 
@@ -12986,7 +13304,11 @@ export function LiveRunPage() {
                   <BackendModelTable models={backend.models} />
                 </>
               ) : (
-                <BackendWaitingPanel targetUrl={run.targetUrl} />
+                <BackendWaitingPanel
+                  targetUrl={run.targetUrl}
+                  applicationId={run.applicationId}
+                  environmentId={run.environmentId}
+                />
               )}
             </>
           ) : null}
@@ -13231,6 +13553,7 @@ export function LiveRunPage() {
                     continuesGroup={
                       Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
                     }
+                    onOpenDetail={setDetailItem}
                   />
                 ))
               ) : (
@@ -13345,18 +13668,32 @@ export function LiveRunPage() {
               : `${run.evidence.length} rows shown · ${run.evidenceTrimmed} trimmed`}
         </div>
       </footer>
+      {detailItem ? (
+        <EvidenceDetailModal runId={run.runId} item={detailItem} onClose={() => setDetailItem(null)} />
+      ) : null}
     </div>
   );
 }
 
-function EvidenceRow({
+/**
+ * Memoized so a state push that changes one row (or adds a new one) does not
+ * re-render every other row already on screen — up to `EVIDENCE_WINDOW` of
+ * these mount at once, and a live run can push a new snapshot 4x/sec.
+ */
+/** Kinds backed by a full evidence event worth opening a detail view for. */
+const DETAILABLE_EVIDENCE_KINDS = new Set<LiveEvidence["kind"]>(["REQUEST", "SERVER", "DATA"]);
+
+const EvidenceRow = memo(function EvidenceRow({
   item,
   continuesGroup,
+  onOpenDetail,
 }: {
   item: LiveEvidence;
   continuesGroup?: boolean;
+  onOpenDetail?: (item: LiveEvidence) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const detailable = Boolean(onOpenDetail) && DETAILABLE_EVIDENCE_KINDS.has(item.kind);
 
   useEffect(() => {
     if (!menu) return;
@@ -13379,6 +13716,20 @@ function EvidenceRow({
       className={`evidence-row evidence-${item.level.toLowerCase()}`}
       data-group-continues={continuesGroup ? "true" : undefined}
       data-unrecorded={item.recorded === false ? "true" : undefined}
+      data-detailable={detailable ? "true" : undefined}
+      role={detailable ? "button" : undefined}
+      tabIndex={detailable ? 0 : undefined}
+      onClick={detailable ? () => onOpenDetail!(item) : undefined}
+      onKeyDown={
+        detailable
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenDetail!(item);
+              }
+            }
+          : undefined
+      }
       onContextMenu={(event) => {
         event.preventDefault();
         setMenu({ x: event.clientX, y: event.clientY });
@@ -13403,7 +13754,12 @@ function EvidenceRow({
         ) : null}
       </div>
       {menu ? (
-        <div className="evidence-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+        <div
+          className="evidence-menu"
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+        >
           <button type="button" role="menuitem" onClick={() => copy(item.message)}>
             <Copy size={13} />
             Copy message
@@ -13430,6 +13786,150 @@ function EvidenceRow({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+});
+
+/**
+ * A request, server error or data-access row's full evidence — the payload,
+ * headers and query the live row's summary line and `details` list never
+ * carry, fetched on demand rather than shipped to every row up front.
+ */
+function EvidenceDetailModal({
+  runId,
+  item,
+  onClose,
+}: {
+  runId: string;
+  item: LiveEvidence;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<Awaited<ReturnType<NonNullable<NonNullable<typeof window.tellann>["runs"]["getEvidenceEvent"]>>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [revealing, setRevealing] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void window.tellann?.runs
+      ?.getEvidenceEvent?.(runId, item.id)
+      .then((result) => {
+        if (!result) {
+          setError("This request hasn't finished uploading yet. Try again in a moment.");
+          return;
+        }
+        setDetail(result);
+      })
+      .catch(() => setError("Couldn't load this request's detail."))
+      .finally(() => setLoading(false));
+  }, [runId, item.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const reveal = async (valueId: string) => {
+    setRevealing(valueId);
+    try {
+      const result = await window.tellann?.runs?.revealProtectedValue?.(runId, valueId);
+      if (result) setRevealed((existing) => ({ ...existing, [valueId]: result.value }));
+    } finally {
+      setRevealing(null);
+    }
+  };
+
+  const metadata = (detail?.metadata ?? {}) as Record<string, unknown>;
+  const fields: Array<[string, unknown]> = (
+    [
+      ["Query", metadata.query],
+      ["Request headers", metadata.requestHeaders],
+      ["Request body", metadata.requestBody],
+      ["Response headers", metadata.responseHeaders],
+      ["Response body", metadata.responseBody],
+      ["Stack", metadata.stack],
+    ] as Array<[string, unknown]>
+  ).filter(([, value]) => value !== undefined && value !== null);
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="desktop-modal evidence-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="evidence-detail-title"
+      >
+        <button type="button" className="desktop-modal-close" aria-label="Close" onClick={onClose}>
+          <X size={16} />
+        </button>
+        <h2 id="evidence-detail-title">{item.message}</h2>
+        {item.details?.length ? (
+          <dl className="property-list">
+            {item.details.map((entry) => (
+              <div key={entry.label}>
+                <dt>{entry.label}</dt>
+                <dd>{entry.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {loading ? (
+          <p className="evidence-detail-status">Loading…</p>
+        ) : error ? (
+          <div className="evidence-detail-status">
+            <p>{error}</p>
+            <button type="button" className="button" onClick={load}>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <>
+            {fields.length ? (
+              fields.map(([label, value]) => (
+                <section key={label} className="evidence-detail-field">
+                  <h3>{label}</h3>
+                  <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
+                </section>
+              ))
+            ) : (
+              <p className="evidence-detail-status">
+                Nothing beyond the summary above was captured for this event.
+              </p>
+            )}
+            {detail?.protectedValues?.length ? (
+              <section className="evidence-detail-field">
+                <h3>Protected values</h3>
+                <ul className="evidence-protected-list">
+                  {detail.protectedValues.map((value) => (
+                    <li key={value.id}>
+                      <code>{value.keyPath}</code>
+                      {revealed[value.id] ? (
+                        <span className="mono">{revealed[value.id]}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={revealing === value.id}
+                          onClick={() => void reveal(value.id)}
+                        >
+                          {revealing === value.id ? "Revealing…" : `Reveal (${value.kind.toLowerCase()})`}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -13680,8 +14180,8 @@ function FindingsLayout({ items }: { items: unknown[] }) {
   if (!items.length)
     return (
       <EmptyRunSection
-        title="No findings"
-        description="No issues were recorded for this run."
+        title="Nothing to review"
+        description="Everything this run exercised completed without a finding — functionality worked as expected."
       />
     );
   return (
@@ -14068,8 +14568,22 @@ export function RunDetailPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const captureTracks = Array.isArray(run?.captureTracks) && run.captureTracks.length
+    ? (run.captureTracks as string[])
+    : ["FRONTEND"];
+  const backendOnly = captureTracks.includes("BACKEND") && !captureTracks.includes("FRONTEND");
+  const hasFlow = Boolean(run?.flowId);
+  // Annotations, Replay and Graph are all pinned to a DOM element, a browser
+  // session or a visited page — none of which a backend-only run ever has.
+  // Reconciliation compares against a declared Flow, so it is left out too
+  // when this run never had one to reconcile against.
+  const runTabs = RUN_TABS.filter((tab) => {
+    if (backendOnly && (tab.value === "annotations" || tab.value === "replay" || tab.value === "graph")) return false;
+    if (tab.value === "reconciliation" && !hasFlow) return false;
+    return true;
+  });
   const requestedTab = searchParams.get("tab") ?? "evidence";
-  const activeTab = RUN_TABS.some((tab) => tab.value === requestedTab)
+  const activeTab = runTabs.some((tab) => tab.value === requestedTab)
     ? requestedTab
     : "evidence";
   useEffect(() => {
@@ -14152,6 +14666,9 @@ export function RunDetailPage() {
     (sum, value) => sum + Number(value || 0),
     0,
   );
+  const requestsHandled = Number(evidenceCounts.QA_BACKEND_REQUEST ?? 0);
+  const failedResponses = Number(evidenceCounts.QA_BACKEND_ERROR ?? 0);
+  const dataOperations = Number(evidenceCounts.QA_BACKEND_DATA_ACCESS ?? 0);
   const reportStatus = String(run.reportStatus ?? (run.reportId ? "READY" : "PENDING"));
   const processingLabels: Record<string, string> = {
     PENDING: "Uploading evidence",
@@ -14164,13 +14681,27 @@ export function RunDetailPage() {
   return (
     <Page
       title={`QA run ${runId.slice(0, 8)}`}
-      description="Run metadata, evidence, findings, reconciliation, and report status."
+      description={
+        backendOnly
+          ? "Requests handled, server errors, data operations and report status."
+          : "Run metadata, evidence, findings, reconciliation, and report status."
+      }
       actions={<Status>{status}</Status>}
     >
       <div className="metric-grid">
-        <Metric label="Evidence events" value={evidenceTotal} />
-        <Metric label="Findings" value={findings.length} />
-        <Metric label="Annotations" value={annotations.length} />
+        {backendOnly ? (
+          <>
+            <Metric label="Requests handled" value={requestsHandled} />
+            <Metric label="Failed responses" value={failedResponses} />
+            <Metric label="Data operations" value={dataOperations} />
+          </>
+        ) : (
+          <>
+            <Metric label="Evidence events" value={evidenceTotal} />
+            <Metric label="Findings" value={findings.length} />
+            <Metric label="Annotations" value={annotations.length} />
+          </>
+        )}
         <Metric
           label="Report"
           value={
@@ -14201,7 +14732,7 @@ export function RunDetailPage() {
         }
       >
         <TabsList aria-label="QA run details">
-          {RUN_TABS.map((tab) => (
+          {runTabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label}
               <span>
@@ -14209,15 +14740,32 @@ export function RunDetailPage() {
                   ? findings.length
                   : tab.value === "annotations"
                     ? annotations.length
-                  : tab.value === "artifacts" || tab.value === "evidence"
+                  : (tab.value === "artifacts" || tab.value === "evidence") && !backendOnly
                     ? artifacts.length
-                    : ""}
+                    : tab.value === "evidence" && backendOnly
+                      ? requestsHandled
+                      : ""}
               </span>
             </TabsTrigger>
           ))}
         </TabsList>
         <TabsContent value="evidence">
-          <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
+          {backendOnly ? (
+            requestsHandled || failedResponses || dataOperations ? (
+              <div className="metric-grid mt-4">
+                <Metric label="Requests handled" value={requestsHandled} />
+                <Metric label="Failed responses" value={failedResponses} />
+                <Metric label="Data operations" value={dataOperations} />
+              </div>
+            ) : (
+              <EmptyRunSection
+                title="No requests captured"
+                description="Requests your server handled during this run appear here once they are synchronized."
+              />
+            )
+          ) : (
+            <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
+          )}
         </TabsContent>
         <TabsContent value="findings">
           <FindingsLayout items={findings} />
@@ -14734,6 +15282,7 @@ export function ReportDetailPage() {
     : [];
   const backendOnlyReport =
     hasBackendSection(sections) && reportCaptureTracks.length > 0 && !reportCaptureTracks.includes("FRONTEND");
+  const hasFlow = Boolean(flowSummary.name || report.flow);
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -14755,6 +15304,7 @@ export function ReportDetailPage() {
       description={`${report.application.name} · ${report.environment.name} · generated ${new Date(report.generatedAt).toLocaleString()}`}
       actions={<Status>{report.status}</Status>}
     >
+      {report.summaryText ? <p className="report-summary-text">{report.summaryText}</p> : null}
       <div className="metric-grid">
         {backendOnlyReport ? (
           // Coverage, states and transitions are a browser journey's measures.
@@ -14797,19 +15347,27 @@ export function ReportDetailPage() {
       <section className="content-card report-section">
         <div className="card-heading">
           <div>
-            <small>Flow and run</small>
-            <h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2>
+            <small>{hasFlow ? "Flow and run" : "Run"}</small>
+            <h2>{hasFlow ? String(flowSummary.name ?? report.flow?.name ?? "Selected Flow") : "Backend capture"}</h2>
           </div>
-          <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status>
+          {hasFlow ? <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status> : null}
         </div>
-        <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
+        {hasFlow ? (
+          <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
+        ) : (
+          <p>No Flow was declared for this run — nothing here was reconciled against an expected structure.</p>
+        )}
         <dl className="detail-list report-detail-grid">
           <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
           <div><dt>Environment</dt><dd>{report.environment.name} · {report.environment.type}</dd></div>
           <div><dt>Outcome</dt><dd>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</dd></div>
           <div><dt>Duration</dt><dd>{formatReportDuration(runSummary.durationMs)}</dd></div>
-          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
-          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
+          {hasFlow ? (
+            <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
+          ) : null}
+          {backendOnlyReport ? null : (
+            <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
+          )}
         </dl>
         {runSummary.captureDegraded ? (
           <div className="report-warning" role="alert">
@@ -14840,9 +15398,13 @@ export function ReportDetailPage() {
                 {priority.toLowerCase()}
               </span>
             ))}
-          <span><strong>{missingStateCount}</strong>states not reached</span>
-          <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
-          <span><strong>{annotations.length}</strong>annotations</span>
+          {hasFlow ? (
+            <>
+              <span><strong>{missingStateCount}</strong>states not reached</span>
+              <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
+            </>
+          ) : null}
+          {backendOnlyReport ? null : <span><strong>{annotations.length}</strong>annotations</span>}
           <span><strong>{eventTotal}</strong>evidence events</span>
         </div>
         {detailedFindings.length || criticalFindings.length ? (
@@ -14856,8 +15418,12 @@ export function ReportDetailPage() {
           </>
         ) : (
           <EmptyRunSection
-            title="No findings"
-            description="This run produced no evidence-backed issue that needs your attention."
+            title="Nothing to review"
+            description={
+              backendOnlyReport
+                ? "Every request this run captured completed without a finding — functionality worked as expected."
+                : "This run produced no evidence-backed issue that needs your attention."
+            }
           />
         )}
       </section>
@@ -14874,9 +15440,11 @@ export function ReportDetailPage() {
           <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
             Review evidence timeline
           </Link>
-          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
-            View Flow reconciliation
-          </Link>
+          {hasFlow ? (
+            <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
+              View Flow reconciliation
+            </Link>
+          ) : null}
           <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}`}>
             Open QA run
           </Link>

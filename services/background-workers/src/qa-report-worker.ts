@@ -408,10 +408,26 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
         orientation: metadata.orientation == null ? null : String(metadata.orientation),
       };
     });
+  // One plain-English sentence, ahead of everything structured below it.
+  // A person skimming the JSON — or an AI agent handed this report to act
+  // on — reads this first rather than reconstructing it from raw counts and
+  // arrays; keeping it a single field is what makes that reliable.
+  const totalFindings = run.findings.length;
+  const criticalOrHighCount = run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length;
+  const backendOnlyRun = run.captureTracks.includes('BACKEND') && !run.captureTracks.includes('FRONTEND');
+  const findingsClause = totalFindings === 0
+    ? 'No findings were raised — everything this run exercised completed as expected.'
+    : `${totalFindings} finding${totalFindings === 1 ? '' : 's'} raised (${criticalOrHighCount} critical or high priority).`;
+  const summaryText = backendOnlyRun && backendSummary
+    ? `Backend run: ${backendSummary.requests} request${backendSummary.requests === 1 ? '' : 's'} handled, ${backendSummary.errors} failed${backendSummary.p95Ms == null ? '' : `, p95 ${Math.round(backendSummary.p95Ms)}ms`}. ${findingsClause}`
+    : hasDeclaredFlow
+      ? `Flow run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} visited, ${observedTransitionKeys.size} transition${observedTransitionKeys.size === 1 ? '' : 's'}${flowAnalysis.expectedCoverage == null ? '' : `, ${flowAnalysis.expectedCoverage.toFixed(1)}% expected coverage`}. ${findingsClause}`
+      : `Observational run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} observed. ${findingsClause}`;
   const payload = {
     id: report.id,
     runId: run.id,
     schemaVersion: '2.0',
+    summaryText,
     status: run.status,
     reportStatus: 'READY',
     generatedAt: new Date().toISOString(),

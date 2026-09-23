@@ -292,3 +292,78 @@ test('backend capture carries the payload without carrying the credentials', asy
     assert.strictEqual(fetchCalls[0].body.metadata.count, 1);
   });
 });
+
+test('a process configured with a standing ingestion key also relays QA evidence', async (t) => {
+  // Unlike a per-run relay credential, this key never rotates — it is what a
+  // deployed server is configured with once, so its traffic keeps landing in
+  // whichever QA run is resolved server-side, run after run.
+
+  await t.test('a request is relayed to the QA evidence route, run id left for the server', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    const evidenceCall = fetchCalls.find((call) => call.url.includes('/qa-evidence/batch'));
+    assert.ok(evidenceCall, 'expected a QA evidence relay call');
+    assert.strictEqual(evidenceCall!.url, 'https://gateway.example.com/environments/env-e1/qa-evidence/batch');
+    const [event] = evidenceCall!.body.events;
+    assert.strictEqual(event.eventType, 'QA_BACKEND_REQUEST');
+    assert.strictEqual(event.applicationId, 'app-e1');
+    assert.strictEqual(event.environmentId, 'env-e1');
+    assert.strictEqual(event.metadata.method, 'GET');
+    assert.strictEqual('runId' in event, false);
+    TELLANN.teardown();
+  });
+
+  await t.test('a server error is relayed as QA_BACKEND_ERROR evidence', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await captureError({ error: new Error('boom') });
+
+    const [event] = fetchCalls.find((call) => call.url.includes('/qa-evidence/batch'))!.body.events;
+    assert.strictEqual(event.eventType, 'QA_BACKEND_ERROR');
+    assert.strictEqual(event.metadata.message, 'boom');
+    TELLANN.teardown();
+  });
+
+  await t.test('a process pointed at the desktop\'s own local relay is not relayed twice', async () => {
+    // The local relay only ever binds to loopback (`LocalRunRelay.start`);
+    // its own handling of `/v1/events` already turns this into evidence.
+    TELLANN.initialize({
+      endpoint: 'http://127.0.0.1:54832',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'run-credential-token',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.ok(!fetchCalls[0].url.includes('/qa-evidence/batch'));
+    TELLANN.teardown();
+  });
+
+  await t.test('no environment id configured means nothing to resolve a run against', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.ok(!fetchCalls[0].url.includes('/qa-evidence/batch'));
+    TELLANN.teardown();
+  });
+});

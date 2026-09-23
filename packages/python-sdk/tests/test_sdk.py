@@ -45,7 +45,31 @@ class RecordingOpener:
         return _Response()
 
     def bodies(self) -> List[Dict[str, Any]]:
-        return [json.loads(request.data.decode("utf-8")) for request in self.requests]
+        """Bodies posted to the main event endpoint.
+
+        Excludes the QA-evidence relay requests a request/error event can
+        also produce (see `evidence_bodies`) so every existing assertion
+        about "the event this call sent" keeps meaning exactly that, rather
+        than also picking up its QA-evidence side effect.
+        """
+        return [
+            json.loads(request.data.decode("utf-8"))
+            for request in self.requests
+            if request.full_url.endswith("/v1/events")
+        ]
+
+    def evidence_bodies(self) -> List[Dict[str, Any]]:
+        """Events posted to the QA-evidence relay endpoint, if any.
+
+        Flattened out of the `{"events": [...]}` batch envelope so a test can
+        assert on one event the way it does for `bodies()`.
+        """
+        return [
+            event
+            for request in self.requests
+            if "/qa-evidence/batch" in request.full_url
+            for event in json.loads(request.data.decode("utf-8"))["events"]
+        ]
 
 
 def configured(opener: RecordingOpener) -> TellannBackend:
@@ -106,6 +130,70 @@ class EventEnvelopeTest(unittest.TestCase):
         client.verify_installation()
         client.flush(timeout=3)
         self.assertEqual(opener.bodies()[0]["eventType"], "TELLANN_INITIALIZED")
+        client.teardown()
+
+
+class QaEvidenceRelayTest(unittest.TestCase):
+    """A process configured with a standing ingestion key — the case a
+    deployed server is in, since it is never restarted just to hand the SDK a
+    fresh per-run credential — also relays its backend evidence so a QA run
+    picks it up without the server ever learning which run is in progress."""
+
+    def test_a_request_is_relayed_as_qa_backend_request_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_api("post", "/invoices/{pk}", 201, 12.5, request_id="req-1")
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_REQUEST")
+        self.assertEqual(evidence["applicationId"], "app-1")
+        self.assertEqual(evidence["environmentId"], "env-1")
+        self.assertEqual(evidence["metadata"]["method"], "POST")
+        self.assertEqual(evidence["metadata"]["statusCode"], 201)
+        self.assertNotIn("runId", evidence)  # left for the server to resolve
+        client.teardown()
+
+    def test_a_server_error_is_relayed_as_qa_backend_error_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.capture_error(ValueError("boom"))
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_ERROR")
+        self.assertEqual(evidence["metadata"]["message"], "boom")
+        client.teardown()
+
+    def test_data_access_is_relayed_as_qa_backend_data_access_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_data_access("Invoice", "update")
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_DATA_ACCESS")
+        self.assertEqual(evidence["metadata"]["model"], "Invoice")
+        client.teardown()
+
+    def test_a_process_pointed_at_the_desktops_local_relay_is_not_relayed_twice(self) -> None:
+        # The local relay only ever binds to loopback (`LocalRunRelay.start`);
+        # its own `/v1/events` handling already turns this into evidence, so a
+        # second post here would double it.
+        opener = RecordingOpener()
+        client = TellannBackend()
+        client.initialize(
+            endpoint="http://127.0.0.1:54832",
+            application_id="app-1",
+            environment_id="env-1",
+            api_key="run-credential",
+            session_id="session-1",
+            transport=EventTransport("http://127.0.0.1:54832", "run-credential", opener=opener),
+        )
+        client.track_api("get", "/invoices", 200, 4.0)
+        client.flush(timeout=3)
+
+        self.assertEqual(opener.evidence_bodies(), [])
         client.teardown()
 
 

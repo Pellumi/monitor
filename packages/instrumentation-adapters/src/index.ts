@@ -41,6 +41,7 @@ import { beginPatch, finalizePatch, hashChecks, restorePatch, rollbackPatch } fr
 export * from './patching';
 import { pythonAdapterRoot, pythonAdapters } from './python-adapter';
 export * from './python-adapter';
+export * from './sdk-versions';
 
 
 
@@ -158,7 +159,7 @@ const latestPublishedVersions = new Map<string, string | null>();
 
 // `npm view` is used rather than a direct registry fetch so the lookup honours the
 // user's registry configuration and credentials, including a private mirror.
-function latestPublishedVersion(packageName: string): string | null {
+export function latestPublishedVersion(packageName: string): string | null {
   const cached = latestPublishedVersions.get(packageName);
   if (cached !== undefined) return cached;
   let resolved: string | null = null;

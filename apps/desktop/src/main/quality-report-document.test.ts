@@ -228,6 +228,21 @@ test('a frontend-only report has no backend chapter at all', () => {
   assert.ok(!html.includes('Section // Backend'));
 });
 
+test('a backend-only run carries no window resolution, instrumentation or framework-state rows', () => {
+  const backendOnly = backendInput();
+  (backendOnly.report as any).sections.runSummary.captureTracks = ['BACKEND'];
+  const html = qualityReportHtml(backendOnly);
+  assert.ok(!html.includes('WINDOW RESOLUTION'));
+  assert.ok(!html.includes('FRAMEWORK STATE EVIDENCE'));
+  assert.ok(!html.includes('Browser-level evidence only'));
+  const csv = qualityReportCsv(backendOnly);
+  assert.ok(!csv.includes('Window resolution'));
+  // A run that captured both tracks still gets the browser-shaped rows.
+  const mixed = backendInput();
+  (mixed.report as any).sections.runSummary.captureTracks = ['FRONTEND', 'BACKEND'];
+  assert.ok(qualityReportHtml(mixed).includes('WINDOW RESOLUTION'));
+});
+
 test('the CSV carries the backend rollup, one row per endpoint and model', () => {
   const rows = qualityReportCsv(backendInput()).trim().split('\n');
   const sections = new Set(rows.map((row) => row.split(',')[0]));

@@ -104,6 +104,13 @@ function readReport(report: Record<string, unknown>) {
     // renderer knows to leave the chapter out rather than print zeroes.
     backend,
     hasBackend: Object.keys(backend).length > 0,
+    // A run that never opened a browser has no viewport, no framework-state
+    // evidence and nothing "window resolution" could ever mean — those rows
+    // are left out of the document rather than printed as "Not recorded".
+    backendOnly: (() => {
+      const tracks = asArray(runSummary.captureTracks).map((item) => String(item));
+      return tracks.includes("BACKEND") && !tracks.includes("FRONTEND");
+    })(),
     backendEndpoints: records(backend.endpoints),
     backendModels: records(backend.models),
     backendErrorGroups: records(backend.serverErrorGroups),
@@ -622,14 +629,22 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ["CAPTURE TRACKS", joined(data.runSummary.captureTracks ?? report.captureTracks, "Not recorded")],
         ["DURATION", durationText(data.runSummary.durationMs)],
         ["BOUNDARY OUTCOME", text(data.runSummary.boundaryOutcome ?? report.status)],
-        [
-          "INSTRUMENTATION",
-          data.runSummary.instrumentationAvailable
-            ? "Validated instrumentation attached"
-            : "Browser-level evidence only",
-        ],
-        ["FRAMEWORK STATE EVIDENCE", data.runSummary.frameworkStateEvidenceCaptured ? "Captured" : "Not captured"],
-        ["WINDOW RESOLUTION", windowResolution(data)],
+        // A backend-only run opened no browser, so there is no viewport,
+        // client instrumentation or framework-state evidence to report —
+        // printing "Not recorded" for all three would just be browser-shaped
+        // noise on a run that was never going to fill them in.
+        ...(data.backendOnly
+          ? []
+          : ([
+              [
+                "INSTRUMENTATION",
+                data.runSummary.instrumentationAvailable
+                  ? "Validated instrumentation attached"
+                  : "Browser-level evidence only",
+              ],
+              ["FRAMEWORK STATE EVIDENCE", data.runSummary.frameworkStateEvidenceCaptured ? "Captured" : "Not captured"],
+              ["WINDOW RESOLUTION", windowResolution(data)],
+            ] as Array<[string, string]>)),
         ["REPOSITORY REVISION", text(data.runSummary.repositoryRevision ?? data.repository.revision, "Not attached")],
         [
           "WORKING TREE",
@@ -759,7 +774,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
     durationText(data.runSummary.durationMs),
     joined(data.runSummary.captureTracks, ""),
   ]);
-  csv += csvRow(["Run", "Window resolution", windowResolution(data), ""]);
+  if (!data.backendOnly) csv += csvRow(["Run", "Window resolution", windowResolution(data), ""]);
   for (const [type, count] of Object.entries(data.eventCounts)) {
     csv += csvRow(["Evidence", eventLabel(type), String(Number(count)), ""]);
   }

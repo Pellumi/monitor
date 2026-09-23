@@ -722,6 +722,9 @@ export const QARunSummarySchema = QARunSchema.extend({
   artifactCount: z.number().int().nonnegative().default(0),
   findingCount: z.number().int().nonnegative().default(0),
   reportId: z.string().nullable().optional(),
+  /** The operator's own name, or the derived one when they never set it. */
+  title: z.string().optional(),
+  archivedAt: z.string().datetime().nullable().optional(),
 });
 
 export const QualityReportSchema = z.object({
@@ -729,6 +732,8 @@ export const QualityReportSchema = z.object({
   runId: z.string().uuid(),
   status: RunStatusSchema,
   generatedAt: z.string().datetime(),
+  /** One plain-English sentence summarizing the run, ahead of every structured field. */
+  summaryText: z.string().optional(),
   application: z.object({ id: z.string().uuid(), name: z.string() }),
   environment: z.object({
     id: z.string().uuid(),
@@ -1355,6 +1360,10 @@ export const IPC = {
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
   saveRunReportDownload: 'tellann:cloud:runs:report:download',
+  renameRun: 'tellann:cloud:runs:rename',
+  archiveRun: 'tellann:cloud:runs:archive',
+  restoreRun: 'tellann:cloud:runs:restore',
+  deleteRun: 'tellann:cloud:runs:delete',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -1450,6 +1459,13 @@ export const IPC = {
    * and a run credential belongs in neither.
    */
   getRunRelayConnection: 'tellann:run:relay:connection',
+  /** The environment's standing ingestion keys — the credential a deployed
+   * server is configured with once, rather than per run. */
+  listIngestionKeys: 'tellann:run:ingestion-keys:list',
+  createIngestionKey: 'tellann:run:ingestion-keys:create',
+  /** One evidence event's full payload, for a row's detail view. */
+  getEvidenceEvent: 'tellann:run:evidence-events:get',
+  checkSdkVersions: 'tellann:run:sdk-versions:check',
   /** main -> renderer: the active run's state changed. Replaces polling. */
   runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',

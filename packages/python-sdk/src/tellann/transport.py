@@ -18,11 +18,22 @@ import logging
 import queue
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .events import MAX_EVENT_BYTES
+
+#: `eventType` values worth relaying as QA run evidence, and what each one
+#: becomes on that side of the fence. Anything else (page views, workflow
+#: markers, Flow checkpoints) already has its own path into a run and does not
+#: need a second one here.
+_QA_EVIDENCE_EVENT_TYPES = {
+    "API_REQUEST": "QA_BACKEND_REQUEST",
+    "SERVER_ERROR": "QA_BACKEND_ERROR",
+}
 
 logger = logging.getLogger("tellann")
 
@@ -63,6 +74,12 @@ class EventTransport:
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
         self._closed = False
+        #: One evidence session for this transport's lifetime, grouped the
+        #: same way the desktop's own recorder groups a run's events. Only
+        #: touched from the single worker thread in `_run`, so it needs no
+        #: lock of its own.
+        self._evidence_session_id = str(uuid.uuid4())
+        self._evidence_sequence = 0
 
     def _ensure_worker(self) -> None:
         # Started lazily, and never in a module import: a thread spawned at
@@ -115,6 +132,71 @@ class EventTransport:
         except (urllib.error.URLError, OSError, ValueError) as error:
             self.stats.failed += 1
             logger.debug("Tellann event delivery failed: %s", error)
+
+        self._deliver_qa_evidence(payload)
+
+    def _is_local_relay(self) -> bool:
+        # The desktop app's local relay only ever binds to loopback, so an
+        # endpoint pointed anywhere else is the standing, environment-scoped
+        # gateway a deployed server is configured with once and never has to
+        # change per run.
+        try:
+            return urllib.parse.urlsplit(self.endpoint).hostname == "127.0.0.1"
+        except ValueError:
+            return False
+
+    def _deliver_qa_evidence(self, payload: Dict[str, Any]) -> None:
+        """A no-op unless this transport carries a standing ingestion key.
+
+        A process pointed at the desktop's own local relay (`TELLANN_RUN_ID`
+        credential, loopback endpoint) already has its backend evidence
+        picked up from the `/v1/events` post above; this only matters for a
+        process configured with the persistent, environment-scoped ingestion
+        key instead — a deployment that is never restarted just to hand it a
+        fresh per-run credential. Which run the event lands on is resolved
+        server-side, against whichever run is currently recording for this
+        environment.
+        """
+        environment_id = payload.get("environmentId")
+        if not self.api_key or not environment_id or self._is_local_relay():
+            return
+        qa_event_type = _QA_EVIDENCE_EVENT_TYPES.get(str(payload.get("eventType")))
+        if qa_event_type is None:
+            metadata = payload.get("metadata") or {}
+            if metadata.get("businessEventType") != "QA_BACKEND_DATA_ACCESS":
+                return
+            qa_event_type = "QA_BACKEND_DATA_ACCESS"
+        self._evidence_sequence += 1
+        event: Dict[str, Any] = {
+            "schemaVersion": "2.0",
+            "eventId": str(uuid.uuid4()),
+            "sessionId": self._evidence_session_id,
+            "traceId": payload.get("traceId"),
+            "applicationId": payload.get("applicationId"),
+            "environmentId": environment_id,
+            "localSequence": self._evidence_sequence,
+            "timestamp": payload.get("timestamp"),
+            "eventType": qa_event_type,
+            "source": "BACKEND_SDK",
+            "scope": "PRE_BOUNDARY",
+            "metadata": payload.get("metadata") or {},
+            "protectedValues": [],
+        }
+        if payload.get("runId"):
+            event["runId"] = payload["runId"]
+        body = json.dumps({"events": [event]}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.endpoint}/environments/{environment_id}/qa-evidence/batch",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            method="POST",
+        )
+        try:
+            opener = self._opener or urllib.request.urlopen
+            with opener(request, timeout=self.timeout):
+                pass
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            logger.debug("Tellann QA evidence delivery failed: %s", error)
 
     def send(self, payload: Dict[str, Any]) -> None:
         """Queue an event. Never blocks, never raises."""

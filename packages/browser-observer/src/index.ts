@@ -250,8 +250,14 @@ export type GuidedRunState = {
   /** Newest live row's timestamp, which is what stall detection reads. */
   lastEvidenceAt: string | null;
   observations: BrowserObservation[];
+  /** Observations dropped off the head once `observations` hits its ceiling. */
+  observationsTrimmed: number;
   observedTransitions: BrowserObservedTransition[];
+  /** Transitions dropped off the head once `observedTransitions` hits its ceiling. */
+  transitionsTrimmed: number;
   findings: BrowserFinding[];
+  /** Findings dropped off the head once `findings` hits its ceiling. */
+  findingsTrimmed: number;
   /** The accepted graph this run reconciles against, resolved when the run starts. */
   flowPlan: RunFlowPlan | null;
   /** Recomputed from `flowStateHistory` every time the server accepts a flow event. */
@@ -356,6 +362,8 @@ type RunController = {
   findingArtifacts: Array<{ file: string; context: ArtifactCaptureContext }>;
   /** Finding dedupe keys already given a screenshot. */
   capturedFindingKeys: Set<string>;
+  /** Finding dedupe keys already raised this run, checked in O(1) instead of scanning `state.findings`. */
+  findingDedupeKeys: Set<string>;
   /** Per-endpoint durations, for percentiles the running totals cannot give. */
   backendDurations: Map<string, number[]>;
   /** Every backend duration, for the run-wide percentiles. */
@@ -410,6 +418,17 @@ const MAX_SLOW_ROWS_PER_ENDPOINT = 10;
 const CRITICALLY_SLOW_BACKEND_REQUEST_MS = 5_000;
 /** Rows kept in the live panel. Older rows are counted in `evidenceTrimmed`. */
 const MAX_LIVE_EVIDENCE = 500;
+/**
+ * Ceilings for the other unbounded-by-default arrays in `GuidedRunState`.
+ *
+ * `snapshot()` deep-clones the whole state on every push interval, so an
+ * array with no ceiling makes that clone (and every renderer re-render it
+ * feeds) grow with run duration instead of staying flat. Trimmed items are
+ * counted, never silently dropped without a trace.
+ */
+const MAX_OBSERVATIONS = 500;
+const MAX_OBSERVED_TRANSITIONS = 500;
+const MAX_FINDINGS = 200;
 /** Per-state screenshot/aria/axe captures kept for one run. */
 const MAX_STATE_ARTIFACTS = 60;
 /** Separate from the state ceiling so a noisy page cannot crowd out flow evidence. */
@@ -987,14 +1006,17 @@ export class BrowserObserver {
     this.statePushTimer.unref?.();
   }
 
-  private addLive(state: GuidedRunState, evidence: Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> & { recorded?: boolean }) {
+  private addLive(
+    state: GuidedRunState,
+    evidence: Omit<LiveEvidence, 'id' | 'timestamp' | 'recorded'> & { recorded?: boolean; id?: string },
+  ) {
     // A paused run still hears from the browser, but `emit` drops everything on
     // the floor, so the row has to carry that it was never written to evidence.
     const recorded = evidence.recorded ?? !(this.active?.paused ?? false);
     const row: LiveEvidence = {
-      id: uuid(),
-      timestamp: new Date().toISOString(),
       ...evidence,
+      id: evidence.id ?? uuid(),
+      timestamp: new Date().toISOString(),
       recorded,
     };
     state.evidence.push(row);
@@ -1006,6 +1028,47 @@ export class BrowserObserver {
       state.evidenceTrimmed += excess;
     }
     this.notifyStateChanged();
+  }
+
+  private pushObservation(state: GuidedRunState, observation: BrowserObservation): void {
+    state.observations.push(observation);
+    if (state.observations.length > MAX_OBSERVATIONS) {
+      const excess = state.observations.length - MAX_OBSERVATIONS;
+      state.observations.splice(0, excess);
+      state.observationsTrimmed += excess;
+    }
+  }
+
+  private pushObservedTransition(state: GuidedRunState, transition: BrowserObservedTransition): void {
+    state.observedTransitions.push(transition);
+    if (state.observedTransitions.length > MAX_OBSERVED_TRANSITIONS) {
+      const excess = state.observedTransitions.length - MAX_OBSERVED_TRANSITIONS;
+      state.observedTransitions.splice(0, excess);
+      state.transitionsTrimmed += excess;
+    }
+  }
+
+  /**
+   * Adds a finding unless its dedupe key has already been raised this run.
+   *
+   * The dedupe set lives on the controller so the check is O(1) regardless of
+   * how many findings the run has accumulated, rather than scanning
+   * `state.findings` on every request or console error — the previous
+   * approach at the request/error volume a long run produces.
+   */
+  private pushFinding(controller: RunController, finding: BrowserFinding): boolean {
+    const { state } = controller;
+    if (finding.dedupeKey) {
+      if (controller.findingDedupeKeys.has(finding.dedupeKey)) return false;
+      controller.findingDedupeKeys.add(finding.dedupeKey);
+    }
+    state.findings.push(finding);
+    if (state.findings.length > MAX_FINDINGS) {
+      const excess = state.findings.length - MAX_FINDINGS;
+      state.findings.splice(0, excess);
+      state.findingsTrimmed += excess;
+    }
+    return true;
   }
 
   private emit(
@@ -1172,6 +1235,9 @@ export class BrowserObserver {
       evidenceCounts: {}, targetUrl: input.targetUrl, evidence: [], observations: [], observedTransitions: [],
       windowResolution: null,
       evidenceTrimmed: 0,
+      observationsTrimmed: 0,
+      transitionsTrimmed: 0,
+      findingsTrimmed: 0,
       liveCounts: Object.fromEntries(LIVE_EVIDENCE_KINDS.map((kind) => [kind, 0])) as Record<LiveEvidenceKind, number>,
       lastEvidenceAt: null,
       flowPlan: null, coverage: null, flowStateHistory: [], boundaryRejection: null,
@@ -1184,7 +1250,7 @@ export class BrowserObserver {
       sequence: 0, applicationOrigin, requests: new Map(), blockedByPolicy: new WeakSet(), recentCause: null,
       capturedStateKeys: new Set(), snapshotInFlight: false,
       interactionEpoch: 0, lastCaptureSignature: null,
-      findingArtifacts: [], capturedFindingKeys: new Set(),
+      findingArtifacts: [], capturedFindingKeys: new Set(), findingDedupeKeys: new Set(),
       backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
       backendSlowRows: new Map(),
     };
@@ -1358,10 +1424,10 @@ export class BrowserObserver {
       const observation: BrowserObservation = {
         eventId: uuid(), ...derived, url: safeUrl, title: '', timestamp: new Date().toISOString(),
       };
-      state.observations.push(observation);
+      this.pushObservation(state, observation);
       void this.options.onObservation?.(runId, observation);
       if (previous) {
-        state.observedTransitions.push({
+        this.pushObservedTransition(state, {
           fromEventId: previous.eventId, toEventId: observation.eventId,
           fromState: previous.stateName, toState: observation.stateName,
           action: previous.url === observation.url ? 'UI_CHANGE' : 'NAVIGATE', timestamp: observation.timestamp,
@@ -1400,8 +1466,9 @@ export class BrowserObserver {
           scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
           dedupeKey: `console:${crypto.createHash('sha1').update(text).digest('hex')}`, generatorSource: 'BROWSER',
         };
-        state.findings.push(finding);
-        void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        if (this.pushFinding(controller, finding)) {
+          void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        }
       }
     });
     context.on('request', (request) => {
@@ -1498,8 +1565,9 @@ export class BrowserObserver {
           dedupeKey: `request:${record.method}:${normalizedRoute(record.url)}:${status ?? 'failed'}`,
           generatorSource: 'BROWSER',
         };
-        state.findings.push(finding);
-        void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        if (this.pushFinding(controller, finding)) {
+          void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        }
       }
     };
     context.on('requestfinished', (request) => void finishRequest(request, false));
@@ -1836,11 +1904,17 @@ export class BrowserObserver {
       models: models.map((entry) => entry.model),
       timestamp: typeof event.timestamp === 'string' ? event.timestamp : new Date().toISOString(),
     });
-    this.addLive(state, liveEvidenceForBackendRequest({
-      method, route, status, durationMs, handler,
-      models: models.map((entry) => entry.model),
-      requestBytes, responseBytes,
-    }));
+    this.addLive(state, {
+      ...liveEvidenceForBackendRequest({
+        method, route, status, durationMs, handler,
+        models: models.map((entry) => entry.model),
+        requestBytes, responseBytes,
+      }),
+      // Ties the live row to the full evidence event — payload, headers,
+      // query — so a click on it can fetch that instead of only ever showing
+      // the summary line and its details list.
+      id: emitted,
+    });
     if (durationMs !== null) {
       this.reportBackendLatency(controller, {
         endpointKey, method, route, durationMs, status, handler,
@@ -1865,7 +1939,7 @@ export class BrowserObserver {
         scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
         dedupeKey, generatorSource: 'BROWSER',
       };
-      if (!state.findings.some((existing) => existing.dedupeKey === dedupeKey)) state.findings.push(finding);
+      this.pushFinding(controller, finding);
     }
   }
 
@@ -1908,20 +1982,19 @@ export class BrowserObserver {
         detail('Route', route),
         detail('Status', metadata.statusCode),
       ]),
+      id: emitted,
     });
     const dedupeKey = `backend-error:${route ?? 'unrouted'}:${String(metadata.name ?? 'Error')}`;
-    if (!state.findings.some((existing) => existing.dedupeKey === dedupeKey)) {
-      state.findings.push({
-        id: uuid(), runId: state.runId, category: 'BACKEND_UNHANDLED_ERROR', severity: 'HIGH',
-        confidence: 0.95, title: `Unhandled server error${route ? ` on ${route}` : ''}`,
-        description: message, url: null, viewport: null,
-        evidenceArtifactIds: [], evidenceChecksums: [],
-        reproductionSteps: route ? [`Call ${route}`] : ['Repeat the captured request sequence'],
-        recommendation: 'Handle the error in the route, or fix the condition that raises it.',
-        scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
-        dedupeKey, generatorSource: 'BROWSER',
-      });
-    }
+    this.pushFinding(controller, {
+      id: uuid(), runId: state.runId, category: 'BACKEND_UNHANDLED_ERROR', severity: 'HIGH',
+      confidence: 0.95, title: `Unhandled server error${route ? ` on ${route}` : ''}`,
+      description: message, url: null, viewport: null,
+      evidenceArtifactIds: [], evidenceChecksums: [],
+      reproductionSteps: route ? [`Call ${route}`] : ['Repeat the captured request sequence'],
+      recommendation: 'Handle the error in the route, or fix the condition that raises it.',
+      scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+      dedupeKey, generatorSource: 'BROWSER',
+    });
   }
 
   /**
@@ -1974,6 +2047,7 @@ export class BrowserObserver {
         detail('Route', route),
         detail('Duration', metadata.durationMs == null ? null : `${metadata.durationMs} ms`),
       ]),
+      id: emitted,
     });
   }
 
@@ -2013,8 +2087,7 @@ export class BrowserObserver {
     }));
     if (input.durationMs < CRITICALLY_SLOW_BACKEND_REQUEST_MS) return;
     const dedupeKey = `backend-slow:${input.endpointKey}`;
-    if (state.findings.some((existing) => existing.dedupeKey === dedupeKey)) return;
-    state.findings.push({
+    this.pushFinding(controller, {
       id: uuid(), runId: state.runId, category: 'BACKEND_SLOW_RESPONSE', severity: 'MEDIUM',
       confidence: 0.9,
       title: `${input.method} ${input.route} took ${(input.durationMs / 1_000).toFixed(1)} s`,
@@ -2396,7 +2469,7 @@ export class BrowserObserver {
       });
       for (const violation of violations) {
         if (violation.impact !== 'critical' && violation.impact !== 'serious') continue;
-        state.findings.push({
+        this.pushFinding(controller, {
           id: uuid(),
           runId: state.runId,
           category: 'ACCESSIBILITY_VIOLATION',
@@ -2642,6 +2715,8 @@ export class BrowserObserver {
       flowPlan: state.flowPlan, coverage: state.coverage, flowStateHistory: state.flowStateHistory,
       stateArtifacts: state.stateArtifacts, annotationCount: state.annotationCount,
       evidenceTrimmed: state.evidenceTrimmed, liveCounts: state.liveCounts,
+      observationsTrimmed: state.observationsTrimmed, transitionsTrimmed: state.transitionsTrimmed,
+      findingsTrimmed: state.findingsTrimmed,
       startedAt: state.startedAt, endedAt: state.endedAt,
       artifacts: artifactFiles.map((file) => ({
         name: path.basename(file), bytes: fs.statSync(file).size, checksum: checksum(file),

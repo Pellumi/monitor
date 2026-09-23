@@ -120,7 +120,21 @@ type DesktopContextValue = {
     reason: string | null;
   } | null>;
   refreshRuns(applicationId: string): Promise<QARunSummary[]>;
+  /** Filtered/searched, independent of the cached unfiltered list `refreshRuns` keeps. */
+  searchRuns(applicationId: string, filters: {
+    q?: string; status?: string; environmentId?: string; archived?: 'true' | 'false' | 'all'; from?: string; to?: string;
+  }): Promise<QARunSummary[]>;
+  /** Empty title clears back to the derived one. */
+  renameRun(runId: string, title: string): Promise<QARunSummary>;
+  archiveRun(runId: string): Promise<QARunSummary>;
+  restoreRun(runId: string): Promise<QARunSummary>;
+  /** Also deletes the run's report, evidence and artifacts, which cascade with it. */
+  deleteRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Record<string, unknown>>;
+  /** Only the SDK packages actually installed in the workspace, each compared against what is published. */
+  checkSdkVersions(applicationId: string): Promise<Array<{
+    ecosystem: 'npm' | 'pypi'; package: string; installed: string; latest: string | null; outdated: boolean;
+  }>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
   /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
@@ -569,6 +583,54 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
+  const searchRuns = useCallback(
+    (applicationId: string, filters: Parameters<DesktopContextValue['searchRuns']>[1]) =>
+      bridge().runs.list(applicationId, filters),
+    [],
+  );
+
+  /** Applies a mutated run to every cached list it appears in, rather than refetching each one. */
+  const patchCachedRun = useCallback((updated: QARunSummary) => {
+    setRuns((current) => {
+      const next = { ...current };
+      for (const applicationId of Object.keys(next)) {
+        if (next[applicationId].some((run) => run.id === updated.id)) {
+          next[applicationId] = next[applicationId].map((run) => (run.id === updated.id ? updated : run));
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const renameRun = useCallback((runId: string, title: string) => perform(async () => {
+    const updated = await bridge().runs.rename(runId, title);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const archiveRun = useCallback((runId: string) => perform(async () => {
+    const updated = await bridge().runs.archive(runId);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const restoreRun = useCallback((runId: string) => perform(async () => {
+    const updated = await bridge().runs.restore(runId);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const deleteRun = useCallback((runId: string) => perform(async () => {
+    await bridge().runs.delete(runId);
+    setRuns((current) => {
+      const next: typeof current = {};
+      for (const applicationId of Object.keys(current)) {
+        next[applicationId] = current[applicationId].filter((run) => run.id !== runId);
+      }
+      return next;
+    });
+  }), [perform]);
+
   useEffect(() => {
     if (!window.tellann?.runs.onLifecycleEvent) return;
     return window.tellann.runs.onLifecycleEvent((event) => {
@@ -667,7 +729,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     switchToQaBranch,
     restoreWorkspaceBranch,
     refreshRuns,
+    searchRuns,
+    renameRun,
+    archiveRun,
+    restoreRun,
+    deleteRun,
     getRun: (runId) => bridge().runs.get(runId),
+    checkSdkVersions: (applicationId) => bridge().runs.checkSdkVersions(applicationId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
     saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
@@ -755,7 +823,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, reopenRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, reopenRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, searchRuns, renameRun, archiveRun, restoreRun, deleteRun, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);

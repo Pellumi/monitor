@@ -593,6 +593,36 @@ button:disabled {
   width: min(280px, 100%);
   padding: 0 10px;
 }
+.segmented-control {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-0);
+}
+.segmented-control button {
+  min-height: calc(var(--control-height) - 4px);
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.segmented-control button:hover {
+  color: var(--text-strong);
+}
+.segmented-control button.selected {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+.list-row[data-archived="true"] {
+  opacity: 0.66;
+}
 .select-content {
   padding: 4px;
   border: 1px solid var(--border);

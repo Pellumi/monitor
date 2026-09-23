@@ -7,6 +7,7 @@ import {
   summarizeDataAccess,
   type TellannRequestContext,
 } from './requestContext';
+import { postQaEvidence } from './qaEvidence';
 
 export interface TrackDataAccessOptions {
   /** The model, table or collection the operation ran against. */
@@ -142,4 +143,11 @@ async function sendDataAccessEvent(
   } catch {
     // Telemetry never fails the operation it describes.
   }
+
+  await postQaEvidence(config, {
+    eventType: 'QA_BACKEND_DATA_ACCESS',
+    metadata: event.metadata as Record<string, unknown>,
+    traceId: event.traceId,
+    runId: event.runId,
+  });
 }

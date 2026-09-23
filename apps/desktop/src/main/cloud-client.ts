@@ -58,6 +58,10 @@ const cloudFetch: typeof fetch = (input: any, init: any = {}) =>
 const API_URL = (
   process.env.TELLANN_API_URL ?? "http://127.0.0.1:3000"
 ).replace(/\/$/, "");
+/** The same gateway the desktop app itself talks to — what `TELLANN_GATEWAY_URL` should be for a server using a standing ingestion key. */
+export function cloudApiUrl(): string {
+  return API_URL;
+}
 const AUTH_URL = (process.env.TELLANN_AUTH_URL ?? API_URL).replace(/\/$/, "");
 
 type Json = Record<string, unknown>;
@@ -593,9 +597,19 @@ export class DesktopCloudClient {
     });
   }
 
-  async runs(applicationId: string): Promise<QARunSummary[]> {
+  async runs(applicationId: string, filters: {
+    q?: string; status?: string; environmentId?: string; archived?: "true" | "false" | "all"; from?: string; to?: string;
+  } = {}): Promise<QARunSummary[]> {
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.environmentId) params.set("environmentId", filters.environmentId);
+    if (filters.archived) params.set("archived", filters.archived);
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    const query = params.toString();
     const runs = await this.request<Array<Json>>(
-      `/applications/${applicationId}/qa-runs`,
+      `/applications/${applicationId}/qa-runs${query ? `?${query}` : ""}`,
     );
     return runs.map((run) => {
       const environment = run.environment as Json | undefined;
@@ -673,8 +687,26 @@ export class DesktopCloudClient {
         artifactCount: Number(counts?.artifacts ?? 0),
         findingCount: Number(counts?.findings ?? 0),
         reportId: typeof run.reportId === "string" ? run.reportId : null,
+        title: typeof run.title === "string" ? run.title : undefined,
+        archivedAt: run.archivedAt ? new Date(String(run.archivedAt)).toISOString() : null,
       };
     });
+  }
+
+  async renameRun(runId: string, title: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}`, { method: "PATCH", body: JSON.stringify({ title }) });
+  }
+
+  async archiveRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/archive`, { method: "POST" });
+  }
+
+  async restoreRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/restore`, { method: "POST" });
+  }
+
+  async deleteRun(runId: string): Promise<void> {
+    await this.request(`/qa-runs/${runId}`, { method: "DELETE" });
   }
 
   async run(runId: string): Promise<Json> {
@@ -1188,6 +1220,23 @@ export class DesktopCloudClient {
     });
   }
 
+  /**
+   * The standing, environment-scoped ingestion keys a server the desktop did
+   * not start can be configured with once and never has to rotate — unlike
+   * the per-run relay credential, which only ever helps a process Tellann
+   * launches itself.
+   */
+  async listIngestionKeys(environmentId: string): Promise<Json> {
+    return this.request(`/environments/${environmentId}/api-keys`);
+  }
+
+  async createIngestionKey(environmentId: string, label?: string): Promise<Json> {
+    return this.request(`/environments/${environmentId}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify({ label: label ?? null }),
+    });
+  }
+
   async uploadEvidenceBatch(runId: string, events: QAEvidenceEvent[]): Promise<Json> {
     return this.request(`/qa-runs/${runId}/evidence-events/batch`, {
       method: "POST",
@@ -1197,6 +1246,11 @@ export class DesktopCloudClient {
 
   async evidenceSummary(runId: string): Promise<Json> {
     return this.request(`/qa-runs/${runId}/evidence-summary`);
+  }
+
+  /** One evidence event's full payload — headers, query, request/response body. */
+  async evidenceEvent(runId: string, eventId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/evidence-events/${eventId}`);
   }
 
   /**

@@ -32,9 +32,16 @@ import {
   sanitizeQaMetadata,
   sanitizeQaUrl,
 } from './qa-privacy';
+import { normalizeQaRunTitle, resolveQaRunTitle } from './qa-run-titles';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
+
+/** A run in one of these statuses is still capturing or being processed — archiving or deleting it would pull evidence out from under it mid-run. */
+export const ACTIVE_QA_RUN_STATUSES = new Set<QARunStatus>([
+  QARunStatus.CREATED, QARunStatus.ARMED, QARunStatus.WAITING_FOR_INITIAL,
+  QARunStatus.RECORDING, QARunStatus.RUNNING, QARunStatus.PAUSED, QARunStatus.PROCESSING,
+]);
 
 export function productionRunModeAllowed(environmentType: EnvironmentType, mode: QARunMode): boolean {
   return environmentType !== EnvironmentType.PRODUCTION || mode === QARunMode.OBSERVATION_ONLY;
@@ -886,13 +893,64 @@ export function createDesktopRouter(input: {
     },
   );
 
+  function withRunTitles<T extends {
+    title: string | null; startedAt: Date | null; createdAt: Date;
+    environment?: { name: string } | null;
+  }>(runs: T[]) {
+    return runs.map((run) => ({ ...run, title: resolveQaRunTitle({ ...run, environmentName: run.environment?.name }) }));
+  }
+
+  /**
+   * Searches by the title the operator sees, not only the one stored.
+   *
+   * Most runs have no stored title — theirs is derived from their
+   * environment and start date — so a plain `title contains` would find
+   * almost nothing. The id prefix shown throughout the desktop UI ("hash")
+   * matches too, since that is the other thing a run is ever identified by.
+   */
+  function qaRunSearch(query: string): Prisma.QARunWhereInput {
+    return {
+      OR: [
+        { title: { contains: query, mode: 'insensitive' } },
+        { id: { startsWith: query.toLowerCase().replace(/[^a-f0-9-]/g, '') } },
+        { title: null, environment: { name: { contains: query, mode: 'insensitive' } } },
+      ],
+    };
+  }
+
+  /**
+   * Lists runs, filtered the way the operator asked for them.
+   *
+   * `archived` decides which shelf is being read: the working list by
+   * default, the archive with `true`, and both with `all`.
+   */
   router.get(
     '/applications/:appId/qa-runs',
     verifyJwt,
     verifyAppOwnership,
     async (req: DesktopRequest, res: Response) => {
+      const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+      const status = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : '';
+      const environmentId = typeof req.query.environmentId === 'string' ? req.query.environmentId.trim() : '';
+      const archived = typeof req.query.archived === 'string' ? req.query.archived.trim().toLowerCase() : 'false';
+      if (status && !Object.values(QARunStatus).includes(status as QARunStatus)) return res.status(400).json({ error: 'INVALID_QA_RUN_STATUS' });
+      if (!['true', 'false', 'all'].includes(archived)) return res.status(400).json({ error: 'INVALID_ARCHIVED_FILTER' });
+      const from = typeof req.query.from === 'string' && req.query.from.trim() ? new Date(req.query.from.trim()) : null;
+      const rawTo = typeof req.query.to === 'string' ? req.query.to.trim() : '';
+      const to = rawTo ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(rawTo) ? `${rawTo}T23:59:59.999Z` : rawTo) : null;
+      if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+        return res.status(400).json({ error: 'INVALID_QA_RUN_DATE_RANGE' });
+      }
+      const where: Prisma.QARunWhereInput = {
+        applicationId: req.params.appId,
+        ...(archived === 'all' ? {} : archived === 'true' ? { archivedAt: { not: null } } : { archivedAt: null }),
+        ...(status ? { status: status as QARunStatus } : {}),
+        ...(environmentId ? { environmentId } : {}),
+        ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+        ...(query ? qaRunSearch(query) : {}),
+      };
       const runs = await prisma.qARun.findMany({
-        where: { applicationId: req.params.appId },
+        where,
         include: {
           environment: { select: { id: true, name: true, type: true } },
           _count: { select: { artifacts: true, findings: true } },
@@ -900,9 +958,99 @@ export function createDesktopRouter(input: {
         orderBy: { createdAt: 'desc' },
         take: Math.min(Math.max(Number(req.query.limit) || 50, 1), 100),
       });
-      res.json(runs);
+      res.json(withRunTitles(runs));
     },
   );
+
+  /** Resolves a run the way every mutating route below needs it: owned by the requesting user, not yet gone. */
+  async function ownedQaRunForMutation(req: DesktopRequest) {
+    return prisma.qARun.findFirst({
+      where: { id: req.params.runId, organization: { memberships: { some: { userId: req.user!.id } } } },
+      include: { environment: { select: { name: true } } },
+    });
+  }
+
+  function auditQaRun(req: DesktopRequest, organizationId: string, action: AuditAction, metadata: Record<string, unknown>) {
+    return prisma.auditLog.create({
+      data: {
+        userId: req.user!.id,
+        organizationId,
+        action,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get('user-agent') ?? null,
+        metadata: metadata as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /** Rename a QA run. An empty title clears back to the derived one. */
+  router.patch('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await ownedQaRunForMutation(req);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const title = normalizeQaRunTitle(req.body?.title);
+    if (title === undefined) return res.status(400).json({ error: 'INVALID_QA_RUN_TITLE' });
+    const previous = withRunTitles([run])[0].title;
+    const updated = await prisma.qARun.update({ where: { id: run.id }, data: { title }, include: { environment: { select: { name: true } } } });
+    const [serialized] = withRunTitles([updated]);
+    if (serialized.title !== previous) {
+      await auditQaRun(req, run.organizationId, AuditAction.QARUN_RENAMED, {
+        runId: run.id, applicationId: run.applicationId, previousTitle: previous, title: serialized.title, derived: title === null,
+      });
+    }
+    res.json(serialized);
+  });
+
+  /** Archive a run: it leaves the working list but keeps its evidence and report, and can be restored. */
+  router.post('/qa-runs/:runId/archive', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await ownedQaRunForMutation(req);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (ACTIVE_QA_RUN_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA_RUN_IN_PROGRESS' });
+    if (run.archivedAt) return res.json(withRunTitles([run])[0]);
+    const updated = await prisma.qARun.update({
+      where: { id: run.id },
+      data: { archivedAt: new Date(), archivedByUserId: req.user!.id },
+      include: { environment: { select: { name: true } } },
+    });
+    const [serialized] = withRunTitles([updated]);
+    await auditQaRun(req, run.organizationId, AuditAction.QARUN_ARCHIVED, {
+      runId: run.id, applicationId: run.applicationId, status: run.status, title: serialized.title,
+    });
+    res.json(serialized);
+  });
+
+  /** Restore an archived run to the working list. */
+  router.post('/qa-runs/:runId/restore', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await ownedQaRunForMutation(req);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (!run.archivedAt) return res.json(withRunTitles([run])[0]);
+    const updated = await prisma.qARun.update({
+      where: { id: run.id },
+      data: { archivedAt: null, archivedByUserId: null },
+      include: { environment: { select: { name: true } } },
+    });
+    const [serialized] = withRunTitles([updated]);
+    await auditQaRun(req, run.organizationId, AuditAction.QARUN_RESTORED, {
+      runId: run.id, applicationId: run.applicationId, title: serialized.title,
+    });
+    res.json(serialized);
+  });
+
+  /**
+   * Permanently deletes a run — its evidence, artifacts, annotations and
+   * report cascade with it at the database level. The audit entry is written
+   * first, since there is no row left to look any of this up from afterward.
+   */
+  router.delete('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await ownedQaRunForMutation(req);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (ACTIVE_QA_RUN_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA_RUN_IN_PROGRESS' });
+    const title = withRunTitles([run])[0].title;
+    await auditQaRun(req, run.organizationId, AuditAction.QARUN_DELETED, {
+      runId: run.id, applicationId: run.applicationId, environmentId: run.environmentId, status: run.status, title,
+    });
+    await prisma.qARun.delete({ where: { id: run.id } });
+    res.status(204).end();
+  });
 
   router.get('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
@@ -1055,6 +1203,160 @@ export function createDesktopRouter(input: {
       }
     }
     return res.status(202).json({ accepted: inserted, duplicates, rejected: 0 });
+  });
+
+  /**
+   * Resolves the persistent, environment-scoped ingestion key (`ApiKey`) the
+   * same way api-gateway's `/internal/validate-key` does, and attaches the
+   * environment it belongs to as `req.ingestionEnvironment`.
+   *
+   * This is the credential a deployed server already has standing in its own
+   * configuration — unlike the per-run relay credential, it never rotates, so
+   * a server the desktop app did not start does not need reconfiguring before
+   * every run.
+   */
+  async function verifyIngestionKey(req: DesktopRequest, res: Response, next: NextFunction) {
+    const authorization = req.get('authorization');
+    if (!authorization?.startsWith('Bearer ')) return res.status(401).json({ error: 'INGESTION_KEY_REQUIRED' });
+    const keyHash = crypto.createHash('sha256').update(authorization.slice(7)).digest('hex');
+    const apiKey = await prisma.apiKey.findUnique({ where: { keyHash }, select: {
+      id: true, revokedAt: true, expiresAt: true,
+      environment: { select: { id: true, applicationId: true, type: true } },
+    } });
+    if (!apiKey || apiKey.revokedAt || (apiKey.expiresAt && apiKey.expiresAt < new Date())) {
+      return res.status(401).json({ error: 'INVALID_OR_REVOKED_INGESTION_KEY' });
+    }
+    if (apiKey.environment.id !== req.params.environmentId) {
+      return res.status(403).json({ error: 'INGESTION_KEY_ENVIRONMENT_MISMATCH' });
+    }
+    prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+    (req as DesktopRequest & { ingestionEnvironment?: typeof apiKey.environment }).ingestionEnvironment = apiKey.environment;
+    next();
+  }
+
+  /**
+   * Backend evidence from a server the desktop did not start and cannot mint
+   * a per-run credential for — a deployment, a CI job, a teammate's machine.
+   * The SDK carries only its standing ingestion key; which run an event
+   * belongs to is resolved here, from whichever run is currently recording
+   * against this environment, rather than from a credential baked into the
+   * process. An environment with no run in progress is not an error: the SDK
+   * calls this unconditionally on every request in production too, and most
+   * of the time there is nothing to attach the traffic to.
+   */
+  router.post(
+    '/environments/:environmentId/qa-evidence/batch',
+    verifyIngestionKey,
+    async (req: DesktopRequest, res: Response) => {
+      const run = await prisma.qARun.findFirst({
+        where: { environmentId: req.params.environmentId, status: { in: [QARunStatus.RECORDING, QARunStatus.RUNNING] } },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true, organizationId: true, applicationId: true, environmentId: true,
+          environment: { select: { id: true, type: true } },
+        },
+      });
+      if (!run) return res.status(202).json({ accepted: 0, duplicates: 0, rejected: 0, reason: 'NO_ACTIVE_RUN' });
+
+      const rawEvents = Array.isArray(req.body?.events) ? req.body.events : Array.isArray(req.body) ? req.body : [];
+      if (!rawEvents.length || rawEvents.length > 500) return res.status(400).json({ error: 'EVIDENCE_BATCH_INVALID' });
+      // The SDK cannot know the run id in advance — that is the entire point
+      // of this route — so it is filled in from what was just resolved,
+      // before the event is validated against the same schema the desktop's
+      // own upload path uses.
+      const parsed = (rawEvents as Array<Record<string, unknown>>)
+        .map((event) => QAEvidenceEventSchema.safeParse({ ...event, runId: event.runId ?? run.id }));
+      const firstInvalid = parsed.find((result) => !result.success);
+      if (firstInvalid && !firstInvalid.success) {
+        return res.status(400).json({ error: 'EVIDENCE_EVENT_INVALID', details: firstInvalid.error.flatten() });
+      }
+      const events = parsed.map((result) => (result.success ? result.data : null)).filter(Boolean) as Array<ReturnType<typeof QAEvidenceEventSchema.parse>>;
+      if (events.some((event) => event.runId !== run.id || event.applicationId !== run.applicationId || event.environmentId !== run.environmentId)) {
+        return res.status(403).json({ error: 'EVIDENCE_CONTEXT_MISMATCH' });
+      }
+      const production = run.environment.type === EnvironmentType.PRODUCTION;
+      if (production && events.some((event) => event.protectedValues.some((value) => value.value !== undefined))) {
+        return res.status(422).json({ error: 'PRODUCTION_PROTECTED_VALUES_REJECTED', captureDegraded: true });
+      }
+      try {
+        assertQaEncryptionConfigured();
+      } catch {
+        return res.status(503).json({ error: 'QA_EVIDENCE_ENCRYPTION_NOT_CONFIGURED' });
+      }
+      let inserted = 0;
+      let duplicates = 0;
+      for (const event of events) {
+        const sanitized = sanitizeQaMetadata(event.metadata, { production });
+        const supplied = event.protectedValues
+          .map((value) => reclassifyQaProtectedValue({
+            keyPath: value.keyPath, kind: value.kind, value: value.value,
+            valueLength: value.valueLength ?? value.value?.length ?? 0,
+          }))
+          .map((value) => protectQaValue(value, { production }));
+        const protectedValues = [...sanitized.protectedValues, ...supplied]
+          .filter((value) => !production || value.kind === 'SECRET')
+          .slice(0, 100);
+        try {
+          await prisma.qARunEvidenceEvent.create({
+            data: {
+              runId: run.id, eventId: event.eventId, sessionId: event.sessionId, traceId: event.traceId,
+              localSequence: event.localSequence, eventType: event.eventType, source: event.source,
+              scope: event.scope, privacyClassification: event.privacyClassification,
+              pageUrl: sanitizeQaUrl(event.pageUrl), normalizedRoute: event.normalizedRoute,
+              acceptedFlowStateKey: event.acceptedFlowStateKey, viewport: event.viewport ?? undefined,
+              interactionGroupId: event.interactionGroupId, causedByEventId: event.causedByEventId,
+              metadata: sanitized.metadata as Prisma.InputJsonValue, occurredAt: new Date(event.timestamp),
+              protectedValues: {
+                create: protectedValues.map((value) => ({
+                  keyPath: value.keyPath, kind: value.kind as QAProtectedValueKind, displayValue: value.displayValue,
+                  valueLength: value.valueLength, fingerprint: value.fingerprint, keyVersion: value.keyVersion,
+                  iv: value.iv, ciphertext: value.ciphertext, authTag: value.authTag,
+                })),
+              },
+            },
+          });
+          inserted += 1;
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            duplicates += 1;
+            continue;
+          }
+          throw error;
+        }
+      }
+      return res.status(202).json({ accepted: inserted, duplicates, rejected: 0, runId: run.id });
+    },
+  );
+
+  /**
+   * One evidence event in full — the payload, headers and query a live row's
+   * `details` list never carries. Used to fill in a request or server-error
+   * row's detail view once the operator asks for it, rather than shipping
+   * that to every row up front.
+   *
+   * The event may still be mid-upload when this is called (the desktop
+   * batches evidence rather than sending it one at a time), so a miss here is
+   * routine, not necessarily wrong — 404 and let the caller decide whether to
+   * retry.
+   */
+  router.get('/qa-runs/:runId/evidence-events/:eventId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const event = await prisma.qARunEvidenceEvent.findFirst({
+      where: { runId: run.id, eventId: req.params.eventId },
+      include: { protectedValues: { select: { id: true, keyPath: true, kind: true, displayValue: true } } },
+    });
+    if (!event) return res.status(404).json({ error: 'EVIDENCE_EVENT_NOT_FOUND' });
+    res.json({
+      eventId: event.eventId,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      pageUrl: event.pageUrl,
+      normalizedRoute: event.normalizedRoute,
+      scope: event.scope,
+      metadata: event.metadata,
+      protectedValues: event.protectedValues,
+    });
   });
 
   /**

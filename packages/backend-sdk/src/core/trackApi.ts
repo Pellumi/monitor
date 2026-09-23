@@ -8,6 +8,7 @@ import {
   sanitizePayload,
 } from './capture';
 import { currentRequestContext, summarizeDataAccess } from './requestContext';
+import { postQaEvidence } from './qaEvidence';
 
 export interface TrackApiOptions {
   /** The concrete path the client called. */
@@ -152,4 +153,13 @@ export async function trackApiEvent(
   } catch {
     // Silently swallow
   }
+
+  // A no-op unless this process is configured with a standing ingestion key
+  // rather than a per-run relay credential — see `postQaEvidence`.
+  await postQaEvidence(config, {
+    eventType: 'QA_BACKEND_REQUEST',
+    metadata: event.metadata as Record<string, unknown>,
+    traceId: event.traceId,
+    runId: event.runId,
+  });
 }
