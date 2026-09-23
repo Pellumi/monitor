@@ -1269,11 +1269,25 @@ export function createDesktopRouter(input: {
     if (!events.length) return;
     try {
       const gatewayUrl = process.env.API_GATEWAY_INTERNAL_URL || 'http://localhost:3000';
-      await fetch(`${gatewayUrl}/internal/qa-run-events/broadcast`, {
+      const response = await fetch(`${gatewayUrl}/internal/qa-run-events/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runId, events }),
       });
+      if (!response.ok) {
+        console.error(`[Onboarding] QA run evidence broadcast rejected: ${response.status} ${await response.text().catch(() => '')}`);
+        return;
+      }
+      const body = await response.json().catch(() => null) as { broadcastCount?: number } | null;
+      // broadcastCount === 0 with a run genuinely being watched almost always
+      // means api-gateway is running more than one process/instance: the
+      // desktop's SSE connection landed on a different one than this request
+      // did, so the in-memory client set here never sees it. That is silent
+      // data loss without this line — the evidence stays correctly persisted,
+      // it just never reaches the live view.
+      if (!body?.broadcastCount) {
+        console.warn(`[Onboarding] QA run evidence broadcast for run ${runId} reached 0 connected desktop clients (${events.length} event(s))`);
+      }
     } catch (err) {
       console.error('[Onboarding] Failed to notify API Gateway of QA run evidence', err);
     }

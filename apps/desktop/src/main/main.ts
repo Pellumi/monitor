@@ -609,12 +609,17 @@ async function runQaRunEventsStream(runId: string, signal: AbortSignal): Promise
       });
       if (!response.ok || !response.body) throw new Error(`QA_RUN_EVENTS_STREAM_${response.status}`);
       backoffMs = MIN_BACKOFF_MS;
+      console.log(`[QaRunEvents] Connected for run ${runId}`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let eventsReceived = 0;
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.warn(`[QaRunEvents] Stream closed by server for run ${runId} after ${eventsReceived} event(s); reconnecting`);
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         let boundary: number;
         while ((boundary = buffer.indexOf('\n\n')) !== -1) {
@@ -628,15 +633,18 @@ async function runQaRunEventsStream(runId: string, signal: AbortSignal): Promise
               events?: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>;
             };
             if (message.type === 'EVENTS' && Array.isArray(message.events)) {
+              eventsReceived += message.events.length;
               await handleQaRunEvidencePush(runId, message.events);
             }
-          } catch {
-            // A keepalive comment or a malformed frame — nothing to act on.
+          } catch (error) {
+            console.warn(`[QaRunEvents] Malformed SSE frame for run ${runId}`, error);
           }
         }
       }
-    } catch {
-      // Network drop or an unauthenticated/expired session; retry below.
+    } catch (error) {
+      if (!signal.aborted) {
+        console.warn(`[QaRunEvents] Connection dropped for run ${runId}, retrying in ${backoffMs}ms`, error);
+      }
     }
     if (signal.aborted) return;
     await delay(backoffMs, signal);
@@ -655,7 +663,10 @@ async function handleQaRunEvidencePush(
   events: Array<{ eventId: string; eventType: string; metadata: unknown; timestamp: string }>,
 ): Promise<void> {
   const active = observer.getState();
-  if (!active || active.runId !== runId || !active.captureTracks?.includes('BACKEND')) return;
+  if (!active || active.runId !== runId || !active.captureTracks?.includes('BACKEND')) {
+    console.warn(`[QaRunEvents] Dropping ${events.length} event(s) for run ${runId}: active run is ${active?.runId ?? 'none'}`);
+    return;
+  }
   for (const event of events) {
     const record = { eventId: event.eventId, metadata: event.metadata, timestamp: event.timestamp };
     if (event.eventType === 'QA_BACKEND_REQUEST') await observer.recordBackendRequestEvent(record);
