@@ -477,7 +477,9 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     prisma.qARun.update({ where: { id: run.id }, data: { reportId: report.id } }),
     prisma.auditLog.create({ data: { userId: run.createdByUserId, organizationId: run.organizationId, action: 'REPORT_GENERATED', metadata: { runId: run.id, reportId: report.id, schemaVersion: '2.0', aiStatus } } }),
   ]);
-  await notifyReportReady(prisma, report.id);
+  await notifyReportReady(prisma, report.id).catch((error) => {
+    console.error('[QAReportWorker] report-ready notification failed', safeError(error));
+  });
 }
 
 export async function processQaReportJobs(prisma: PrismaClient): Promise<number> {
