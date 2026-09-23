@@ -6,6 +6,7 @@
     "build:app": "pnpm --filter dashboard build",
     "build:docs": "pnpm --filter @tellann/docs build",
     "build:marketing": "pnpm --filter @tellann/marketing build",
+    "stop": "node scripts/stop-services.js",
     "dev": "node scripts/dev.js",
     "dev:desktop-intent": "node scripts/run-desktop-intent-stack.mjs",
     "dev:code-intelligence": "pnpm --filter @tellann/code-intelligence-worker dev",
