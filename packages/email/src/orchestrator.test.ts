@@ -19,6 +19,7 @@ type Row = Record<string, any>;
 
 function makeFakePrisma(seed: {
   members?: Array<{ userId: string; email: string; role?: string }>;
+  users?: Array<{ id: string; email: string; deletedAt?: Date | null }>;
   preferences?: Row[];
   pushSubscriptions?: Row[];
   presentDeviceUserIds?: string[];
@@ -118,6 +119,14 @@ function makeFakePrisma(seed: {
         return (seed.members ?? [])
           .filter((m) => !where.role || where.role.in.includes(m.role))
           .map((m) => ({ user: { id: m.userId, email: m.email } }));
+      }),
+    },
+    user: {
+      findMany: vi.fn(async ({ where }: any) => {
+        const ids = new Set(where.id.in);
+        return (seed.users ?? [])
+          .filter((user) => ids.has(user.id) && user.deletedAt == null)
+          .map((user) => ({ id: user.id, email: user.email }));
       }),
     },
     pushSubscription: {
@@ -266,6 +275,29 @@ describe('createNotification', () => {
       ['u1', 'SENT'],
       ['u2', 'SKIPPED'],
     ]);
+  });
+
+  it('hydrates explicit user recipients before sending email', async () => {
+    const sendTransactional = vi.fn(async () => ({ status: 'SENT', providerMessageId: 'p1' }));
+    const { api, deliveries } = makeFakePrisma({
+      users: [{ id: 'u1', email: 'qa-owner@x.test' }],
+    });
+    const orch = new NotificationOrchestrator({ prisma: api as never, emailService: { sendTransactional } });
+
+    await orch.createNotification({
+      ...BASE,
+      sourceEventId: 'evt-explicit-recipient',
+      recipients: [{ userId: 'u1' }],
+      email: { templateKey: 'qa-report-ready' },
+    });
+
+    expect(sendTransactional).toHaveBeenCalledTimes(1);
+    expect(sendTransactional.mock.calls[0][0]).toMatchObject({
+      to: 'qa-owner@x.test',
+      userId: 'u1',
+      _skipCentralNotification: true,
+    });
+    expect(deliveries.filter((d) => d.channel === 'EMAIL').map((d) => d.status)).toEqual(['SENT']);
   });
 
   it('skips push for a user with a visible dashboard client', async () => {

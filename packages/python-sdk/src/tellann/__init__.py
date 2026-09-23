@@ -18,8 +18,16 @@ requires a framework the project does not use.
 
 from __future__ import annotations
 
+from .capture import sanitize_headers, sanitize_payload
 from .client import TELLANN, TellannBackend
 from .events import EVENT_TYPES, MAX_EVENT_BYTES, SOURCE, TellannEvent
+from .request_context import (
+    current_request_context,
+    enter_request_context,
+    exit_request_context,
+    new_request_context,
+    record_data_access,
+)
 from .transport import EventTransport
 
 __version__ = "0.1.0"
@@ -35,11 +43,22 @@ __all__ = [
     "__version__",
     "capture_error",
     "checkpoint",
+    "current_request_context",
+    "enter_request_context",
+    "exit_request_context",
+    "flush_data_access",
     "instrument_django",
+    "instrument_django_orm",
     "instrument_fastapi",
     "instrument_flask",
+    "instrument_sqlalchemy",
     "instrument_starlette",
+    "new_request_context",
+    "record_data_access",
+    "sanitize_headers",
+    "sanitize_payload",
     "track_api",
+    "track_data_access",
     "track_event",
     "track_state",
 ]
@@ -56,6 +75,14 @@ def track_event(*args, **kwargs) -> None:
 
 def track_state(*args, **kwargs) -> None:
     TELLANN.track_state(*args, **kwargs)
+
+
+def track_data_access(*args, **kwargs) -> None:
+    TELLANN.track_data_access(*args, **kwargs)
+
+
+def flush_data_access(*args, **kwargs) -> None:
+    TELLANN.flush_data_access(*args, **kwargs)
 
 
 def capture_error(*args, **kwargs) -> None:

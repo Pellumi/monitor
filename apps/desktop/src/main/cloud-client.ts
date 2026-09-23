@@ -24,6 +24,7 @@ import type {
   IntentDraft,
   InstrumentationDetection,
   InstrumentationPlan,
+  InstrumentationPlanFilters,
   InstrumentationApplyResult,
   InstrumentationValidationResult,
   QAEvidenceEvent,
@@ -32,7 +33,7 @@ import type {
 } from "@tellann/desktop-contracts";
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
 import { resolveTelemetryGateway } from "./gateway-endpoint";
-import type { GuidedRunState } from "@tellann/browser-observer";
+import type { ArtifactCaptureContext, GuidedRunState } from "@tellann/browser-observer";
 import {
   clearDesktopSession,
   loadDesktopSession,
@@ -57,6 +58,10 @@ const cloudFetch: typeof fetch = (input: any, init: any = {}) =>
 const API_URL = (
   process.env.TELLANN_API_URL ?? "http://127.0.0.1:3000"
 ).replace(/\/$/, "");
+/** The same gateway the desktop app itself talks to — what `TELLANN_GATEWAY_URL` should be for a server using a standing ingestion key. */
+export function cloudApiUrl(): string {
+  return API_URL;
+}
 const AUTH_URL = (process.env.TELLANN_AUTH_URL ?? API_URL).replace(/\/$/, "");
 
 type Json = Record<string, unknown>;
@@ -142,13 +147,36 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+type LocalArtifactType =
+  | "SCREENSHOT"
+  | "INSPECT_SCREENSHOT"
+  | "SANITIZED_FINAL_SCREENSHOT"
+  | "PLAYWRIGHT_TRACE"
+  | "ACCESSIBILITY_SNAPSHOT";
+
 type LocalArtifact = {
   name: string;
   filePath: string;
   bytes: number;
   checksum: string;
-  type: "SCREENSHOT" | "INSPECT_SCREENSHOT" | "SANITIZED_FINAL_SCREENSHOT" | "PLAYWRIGHT_TRACE" | "ACCESSIBILITY_SNAPSHOT";
+  type: LocalArtifactType;
+  context?: ArtifactCaptureContext | null;
 };
+
+/**
+ * The stored type decides the content type, the file extension and whether the
+ * report offers a viewer, so it has to follow the bytes rather than a handful
+ * of known filenames — an unrecognised `.png` classified as a text snapshot is
+ * written as `.txt` and never becomes viewable.
+ */
+function classifyArtifact(name: string): LocalArtifactType {
+  const lower = name.toLowerCase();
+  if (lower === "final-sanitized.png") return "SANITIZED_FINAL_SCREENSHOT";
+  if (lower.endsWith(".zip")) return "PLAYWRIGHT_TRACE";
+  if (lower.startsWith("inspect-") && lower.endsWith(".png")) return "INSPECT_SCREENSHOT";
+  if (lower.endsWith(".png")) return "SCREENSHOT";
+  return "ACCESSIBILITY_SNAPSHOT";
+}
 
 export class DesktopCloudClient {
   private refreshing: Promise<StoredDesktopSession> | null = null;
@@ -569,9 +597,19 @@ export class DesktopCloudClient {
     });
   }
 
-  async runs(applicationId: string): Promise<QARunSummary[]> {
+  async runs(applicationId: string, filters: {
+    q?: string; status?: string; environmentId?: string; archived?: "true" | "false" | "all"; from?: string; to?: string;
+  } = {}): Promise<QARunSummary[]> {
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.environmentId) params.set("environmentId", filters.environmentId);
+    if (filters.archived) params.set("archived", filters.archived);
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    const query = params.toString();
     const runs = await this.request<Array<Json>>(
-      `/applications/${applicationId}/qa-runs`,
+      `/applications/${applicationId}/qa-runs${query ? `?${query}` : ""}`,
     );
     return runs.map((run) => {
       const environment = run.environment as Json | undefined;
@@ -649,8 +687,26 @@ export class DesktopCloudClient {
         artifactCount: Number(counts?.artifacts ?? 0),
         findingCount: Number(counts?.findings ?? 0),
         reportId: typeof run.reportId === "string" ? run.reportId : null,
+        title: typeof run.title === "string" ? run.title : undefined,
+        archivedAt: run.archivedAt ? new Date(String(run.archivedAt)).toISOString() : null,
       };
     });
+  }
+
+  async renameRun(runId: string, title: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}`, { method: "PATCH", body: JSON.stringify({ title }) });
+  }
+
+  async archiveRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/archive`, { method: "POST" });
+  }
+
+  async restoreRun(runId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/restore`, { method: "POST" });
+  }
+
+  async deleteRun(runId: string): Promise<void> {
+    await this.request(`/qa-runs/${runId}`, { method: "DELETE" });
   }
 
   async run(runId: string): Promise<Json> {
@@ -1164,6 +1220,23 @@ export class DesktopCloudClient {
     });
   }
 
+  /**
+   * The standing, environment-scoped ingestion keys a server the desktop did
+   * not start can be configured with once and never has to rotate — unlike
+   * the per-run relay credential, which only ever helps a process Tellann
+   * launches itself.
+   */
+  async listIngestionKeys(environmentId: string): Promise<Json> {
+    return this.request(`/environments/${environmentId}/api-keys`);
+  }
+
+  async createIngestionKey(environmentId: string, label?: string): Promise<Json> {
+    return this.request(`/environments/${environmentId}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify({ label: label ?? null }),
+    });
+  }
+
   async uploadEvidenceBatch(runId: string, events: QAEvidenceEvent[]): Promise<Json> {
     return this.request(`/qa-runs/${runId}/evidence-events/batch`, {
       method: "POST",
@@ -1173,6 +1246,11 @@ export class DesktopCloudClient {
 
   async evidenceSummary(runId: string): Promise<Json> {
     return this.request(`/qa-runs/${runId}/evidence-summary`);
+  }
+
+  /** One evidence event's full payload — headers, query, request/response body. */
+  async evidenceEvent(runId: string, eventId: string): Promise<Json> {
+    return this.request(`/qa-runs/${runId}/evidence-events/${eventId}`);
   }
 
   /**
@@ -1232,6 +1310,17 @@ export class DesktopCloudClient {
         bytes: content.length,
         checksum,
         type: "INSPECT_SCREENSHOT",
+        context: {
+          stateKey: input.flowStateKey,
+          route: input.normalizedRoute,
+          // The reviewer's own words are the most useful label this capture
+          // will ever carry, so they become the report card's heading.
+          title: input.comment.slice(0, 120),
+          sequence: null,
+          captureReason: "INSPECT_ANNOTATION",
+          accessibilityViolations: null,
+          capturedAt: new Date().toISOString(),
+        },
       });
       screenshotArtifactId = typeof artifact.id === "string" ? artifact.id : null;
     }
@@ -1662,9 +1751,52 @@ export class DesktopCloudClient {
     );
   }
 
-  async instrumentationPlans(applicationId: string): Promise<Json[]> {
+  async instrumentationPlans(
+    applicationId: string,
+    filters: InstrumentationPlanFilters = {},
+  ): Promise<Json[]> {
+    const query = new URLSearchParams();
+    if (filters.q) query.set("q", filters.q);
+    if (filters.status) query.set("status", filters.status);
+    if (filters.adapterId) query.set("adapterId", filters.adapterId);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.archived) query.set("archived", filters.archived);
+    const serialized = query.toString();
+    const suffix = serialized ? `?${serialized}` : "";
     return this.request(
-      `/v1/applications/${applicationId}/instrumentation/plans`,
+      `/v1/applications/${applicationId}/instrumentation/plans${suffix}`,
+    );
+  }
+
+  async renameInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+    title: string | null,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}`,
+      { method: "PATCH", body: JSON.stringify({ title }) },
+    );
+  }
+
+  async archiveInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/archive`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async restoreInstrumentationPlan(
+    applicationId: string,
+    planId: string,
+  ): Promise<Json> {
+    return this.request(
+      `/v1/applications/${applicationId}/instrumentation/plans/${planId}/restore`,
+      { method: "POST", body: JSON.stringify({}) },
     );
   }
 
@@ -1872,11 +2004,12 @@ export class DesktopCloudClient {
           await this.uploadArtifact(state.runId, artifact),
         );
       } catch (error) {
-        if (
-          artifact.type === "PLAYWRIGHT_TRACE" &&
-          (error as { status?: number }).status === 403
-        )
-          continue;
+        const status = (error as { status?: number }).status;
+        // Evidence is best-effort; the run itself is not. An artifact the
+        // server rejects (unentitled trace, empty capture, bad checksum) used
+        // to abort completion entirely, leaving a finished run stuck open with
+        // no report. Drop the artifact and finish the run instead.
+        if (status && status >= 400 && status < 500) continue;
         throw error;
       }
     }
@@ -1900,17 +2033,19 @@ export class DesktopCloudClient {
         }),
       },
     );
-    await this.request(
-      `/applications/${completed.applicationId}/reconciliation/run`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          environmentId: completed.environmentId,
-          expectedGraphId: completed.expectedGraphVersionId,
-          runId: state.runId,
-        }),
-      },
-    ).catch(() => undefined);
+    if (completed.expectedGraphVersionId) {
+      await this.request(
+        `/applications/${completed.applicationId}/reconciliation/run`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            environmentId: completed.environmentId,
+            expectedGraphId: completed.expectedGraphVersionId,
+            runId: state.runId,
+          }),
+        },
+      ).catch(() => undefined);
+    }
     return completed;
   }
 
@@ -1938,6 +2073,18 @@ export class DesktopCloudClient {
             "x-tellann-artifact-type": artifact.type,
             "x-tellann-artifact-checksum": artifact.checksum,
             "x-tellann-privacy-classification": "INTERNAL",
+            // Header values must stay ASCII-safe: a page title can hold any
+            // codepoint, so the whole context travels URI-encoded.
+            ...(artifact.context
+              ? {
+                  "x-tellann-capture-context": encodeURIComponent(
+                    JSON.stringify(artifact.context),
+                  ),
+                }
+              : {}),
+            ...(artifact.context?.capturedAt
+              ? { "x-tellann-captured-at": artifact.context.capturedAt }
+              : {}),
           },
         );
       } catch (error) {
@@ -1962,21 +2109,33 @@ export class DesktopCloudClient {
         "utf8",
       ),
     ) as {
-      artifacts: Array<{ name: string; bytes: number; checksum: string }>;
+      artifacts: Array<{
+        name: string;
+        bytes: number;
+        checksum: string;
+        context?: ArtifactCaptureContext | null;
+      }>;
     };
-    return manifest.artifacts.map((artifact) => ({
+    // Manifests written before empty captures were filtered out can still list
+    // a zero-byte file, and a capture can be truncated after the manifest is
+    // written. Either way the upload endpoint refuses an empty body, so the
+    // on-disk size is what decides.
+    const present = await Promise.all(
+      manifest.artifacts.map(async (artifact) => {
+        const size = await fs
+          .stat(path.join(state.artifactDirectory, artifact.name))
+          .then((stat) => stat.size)
+          .catch(() => 0);
+        return size > 0 ? artifact : null;
+      }),
+    );
+    return present.filter((artifact) => artifact !== null).map((artifact) => ({
       name: artifact.name,
       filePath: path.join(state.artifactDirectory, artifact.name),
-      type:
-        artifact.name === "final-sanitized.png"
-          ? "SANITIZED_FINAL_SCREENSHOT"
-          : artifact.name === "final.png"
-            ? "SCREENSHOT"
-          : artifact.name === "trace.zip"
-            ? "PLAYWRIGHT_TRACE"
-            : "ACCESSIBILITY_SNAPSHOT",
+      type: classifyArtifact(artifact.name),
       bytes: artifact.bytes,
       checksum: artifact.checksum,
+      context: artifact.context ?? null,
     }));
   }
 

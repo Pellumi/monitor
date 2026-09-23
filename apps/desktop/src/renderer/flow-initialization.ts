@@ -6,8 +6,18 @@ import type { DeclaredFlowSummary } from '@tellann/desktop-contracts';
  * it lives on the binding recorded against this project.
  */
 type FlowBinding = {
+  id?: string;
   status?: string;
+  environmentId?: string;
+  flowVersionId?: string;
   initializations?: Array<{ status?: string }>;
+  scans?: Array<{ status?: string }>;
+};
+
+export type FlowRunReadiness = {
+  ready: boolean;
+  code: 'READY' | 'DRAFT' | 'NOT_BOUND' | 'INACTIVE_BINDING' | 'STALE_VERSION' | 'INITIALIZATION_REQUIRED' | 'SCAN_REQUIRED';
+  message: string;
 };
 
 /** The minimum a Flow has to carry to be pointed at the initialization screen. */
@@ -16,9 +26,14 @@ type LinkableFlow = {
   publishedVersionId?: string | null;
 };
 
-function flowBinding(flow: unknown): FlowBinding | undefined {
-  return (flow as { projectBindings?: FlowBinding[] } | null | undefined)
-    ?.projectBindings?.[0];
+export function flowBindingForEnvironment(
+  flow: unknown,
+  environmentId?: string,
+): FlowBinding | undefined {
+  const bindings = (flow as { projectBindings?: FlowBinding[] } | null | undefined)
+    ?.projectBindings ?? [];
+  if (!environmentId) return bindings[0];
+  return bindings.find((binding) => binding.environmentId === environmentId);
 }
 
 /**
@@ -26,13 +41,25 @@ function flowBinding(flow: unknown): FlowBinding | undefined {
  * declare view) and initialized in *this* project — an active binding whose
  * initialization has completed. A Flow short of that cannot start a run.
  */
-export function isFlowReadyToRun(item: DeclaredFlowSummary) {
-  const binding = flowBinding(item);
-  return (
-    Boolean(item.publishedVersionId) &&
-    binding?.status === 'ACTIVE' &&
-    binding.initializations?.[0]?.status === 'COMPLETED'
-  );
+export function isFlowReadyToRun(item: DeclaredFlowSummary, environmentId?: string) {
+  return flowRunReadiness(item, environmentId).ready;
+}
+
+export function flowRunReadiness(item: DeclaredFlowSummary, environmentId?: string): FlowRunReadiness {
+  const binding = flowBindingForEnvironment(item, environmentId);
+  if (!item.publishedVersionId) return { ready: false, code: 'DRAFT', message: 'Publish this Flow before using it for Guided QA.' };
+  if (!binding) return { ready: false, code: 'NOT_BOUND', message: 'Initialize this Flow for the selected environment.' };
+  if (binding.status !== 'ACTIVE') return { ready: false, code: 'INACTIVE_BINDING', message: 'The project binding is no longer active.' };
+  if (binding.flowVersionId && binding.flowVersionId !== item.publishedVersionId) {
+    return { ready: false, code: 'STALE_VERSION', message: 'This environment is initialized against an older Flow version.' };
+  }
+  if (binding.initializations?.[0]?.status !== 'COMPLETED') {
+    return { ready: false, code: 'INITIALIZATION_REQUIRED', message: 'Complete Flow initialization for this environment.' };
+  }
+  if (binding.scans?.[0]?.status !== 'COMPLETED') {
+    return { ready: false, code: 'SCAN_REQUIRED', message: 'Complete or refresh the Flow scan before Guided QA.' };
+  }
+  return { ready: true, code: 'READY', message: 'Ready for Guided QA.' };
 }
 
 /**
@@ -40,13 +67,13 @@ export function isFlowReadyToRun(item: DeclaredFlowSummary) {
  * "Initialize in project" action exists for. A draft has no version to bind, and
  * an initialized Flow is ready to run instead.
  */
-export function isFlowInitializable(item: DeclaredFlowSummary) {
-  return Boolean(item.publishedVersionId) && !isFlowReadyToRun(item);
+export function isFlowInitializable(item: DeclaredFlowSummary, environmentId?: string) {
+  return Boolean(item.publishedVersionId) && !isFlowReadyToRun(item, environmentId);
 }
 
 /** The Flow an "Initialize a Flow" prompt should open, or null when there is none. */
 export function nextFlowToInitialize(items: DeclaredFlowSummary[]) {
-  return items.find(isFlowInitializable) ?? null;
+  return items.find((item) => isFlowInitializable(item)) ?? null;
 }
 
 /**

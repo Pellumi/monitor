@@ -13,12 +13,15 @@ import {
   type PythonFrameworkEvidence,
   type PythonProject,
 } from '@tellann/python-project';
+import { extendGitIgnoreContext, isGitIgnored, type GitIgnoreContext } from './gitignore';
 export * from './codebase';
 export * from './flow-mapping';
+export * from './annotation-source';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',
-  'vendor', '.venv', 'venv', '__pycache__', 'target', 'bin', 'obj',
+  'vendor', '.venv', 'venv', 'env', '__pycache__', '.tox', '.nox', '.mypy_cache',
+  '.pytest_cache', '.ruff_cache', 'site-packages', 'target', 'bin', 'obj',
 ]);
 const DOC_EXTENSIONS = new Set(['.md', '.txt', '.pdf', '.docx', '.html', '.htm', '.yaml', '.yml', '.json']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.php', '.cs', '.java']);
@@ -322,7 +325,8 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   const maxFiles = options.maxFiles ?? 20_000;
   const maxFileBytes = options.maxFileBytes ?? 512_000;
 
-  const visit = (directory: string) => {
+  const visit = (directory: string, inheritedIgnore: GitIgnoreContext = []) => {
+    const ignoreContext = extendGitIgnoreContext(resolvedRoot, directory, inheritedIgnore);
     if (files.length >= maxFiles) return;
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (files.length >= maxFiles) break;
@@ -331,15 +335,19 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
         continue;
       }
       const absolute = path.join(directory, entry.name);
+      const relative = path.relative(resolvedRoot, absolute).replaceAll('\\', '/');
+      if (isGitIgnored(relative, entry.isDirectory(), ignoreContext)) {
+        excludedFiles += 1;
+        continue;
+      }
       if (entry.isSymbolicLink()) {
         excludedFiles += 1;
         continue;
       }
       if (entry.isDirectory()) {
-        visit(absolute);
+        visit(absolute, ignoreContext);
         continue;
       }
-      const relative = path.relative(resolvedRoot, absolute).replaceAll('\\', '/');
       if (SECRET_FILE.test(relative)) {
         suspectedSecrets += 1;
         excludedFiles += 1;

@@ -3,7 +3,7 @@ initTracing('onboarding-api');
 
 import express, { Request, Response, NextFunction } from 'express';
 import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, NotificationSeverity, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
-import { Feature, Services, isReportFormatEntitled, reportFormatsForTier } from '@tellann/shared';
+import { Feature, Services, isReportFormatEntitled, reportFormatsForTier, useBigIntJson } from '@tellann/shared';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   NotificationEmailService,
@@ -33,6 +33,7 @@ import { createContactRouter } from './contact-routes';
 import { createDocsFeedbackRouter } from './docs-feedback-routes';
 import { normalizeEnvironmentBaseUrl, normalizeEnvironmentName } from './environment-policy';
 import { createStorageClient } from '@tellann/storage';
+import { findOrganizationAuditLogs, parseAuditLogTimestamp } from './organization-audit-log-query';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
@@ -303,6 +304,9 @@ const notificationOrchestrator = new NotificationOrchestrator({
     notificationHub.emit('notification.created', { organizationId, recipientUserIds });
   },
 });
+// Artifact sizes and snapshot byte totals are BigInt columns; without this one
+// of them reaching `res.json` ends the process rather than the request.
+useBigIntJson(app);
 // 30 MB ceiling — document-flow generation posts the raw file as base64 JSON.
 app.use(express.json({ limit: '30mb' }));
 app.use(createDesktopRouter({
@@ -2899,37 +2903,34 @@ app.get('/organizations/:orgId/audit-logs', verifyJwt, verifyOrgMembership, asyn
     return res.status(400).json({ error: 'INVALID_ACTION', message: 'Unsupported audit action filter.' });
   }
 
+  let from: Date | undefined;
+  let to: Date | undefined;
+  try {
+    from = parseAuditLogTimestamp(req.query.from, 'from');
+    to = parseAuditLogTimestamp(req.query.to, 'to');
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'INVALID_DATE_RANGE';
+    return res.status(400).json({ error: code, message: 'Audit log dates must be valid ISO-8601 timestamps.' });
+  }
+  if (from && to && from > to) {
+    return res.status(400).json({ error: 'INVALID_DATE_RANGE', message: 'The start date must be before the end date.' });
+  }
+
   try {
     const hasAuditAccess = await entitlementChecker.canAccess(orgId, Feature.AUDIT_LOGS);
     if (!hasAuditAccess) {
       return res.status(403).json({ error: 'AUDIT_LOGS_REQUIRED', message: 'Audit logs are available on Business and Enterprise plans.' });
     }
 
-    const where: any = {
+    const { data, total } = await findOrganizationAuditLogs(prisma, {
       organizationId: orgId,
-      ...(action ? { action: action as AuditAction } : {}),
-    };
-
-    if (q) {
-      const matchingActions = Object.values(AuditAction).filter((value) => value.toLowerCase().includes(q.toLowerCase()));
-      where.OR = [
-        { userId: { contains: q, mode: 'insensitive' } },
-        { user: { is: { email: { contains: q, mode: 'insensitive' } } } },
-        { user: { is: { displayName: { contains: q, mode: 'insensitive' } } } },
-        ...matchingActions.map((value) => ({ action: value })),
-      ];
-    }
-
-    const [data, total] = await Promise.all([
-      prisma.auditLog.findMany({
-        where,
-        include: { user: { select: { email: true, displayName: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.auditLog.count({ where }),
-    ]);
+      page,
+      limit,
+      query: q,
+      action: action ? action as AuditAction : undefined,
+      from,
+      to,
+    });
 
     res.json({ data, total, page, limit });
   } catch (err) {

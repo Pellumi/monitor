@@ -74,6 +74,12 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_STATE_SNAPSHOT',
   'QA_FLOW_EVENT',
   'QA_CAPTURE_DEGRADED',
+  // Backend track. Reported by the backend SDK through the local relay rather
+  // than observed in the managed browser, so they carry a server route and a
+  // handler rather than a page URL and a viewport.
+  'QA_BACKEND_REQUEST',
+  'QA_BACKEND_ERROR',
+  'QA_BACKEND_DATA_ACCESS',
 ]);
 
 export const QAPendingProtectedValueSchema = z.object({
@@ -123,6 +129,16 @@ export const QAElementFingerprintSchema = z.object({
   cssPath: z.string().max(2_000),
   frameUrl: z.string().max(2_000),
   domFingerprint: z.string().max(200),
+  sourceMapping: z.object({
+    status: z.enum(['MATCHED', 'NO_MATCH', 'NOT_CONNECTED', 'ANALYSIS_UNAVAILABLE']),
+    path: z.string().max(2_000).nullable(),
+    startLine: z.number().int().positive().nullable(),
+    endLine: z.number().int().positive().nullable(),
+    symbol: z.string().max(500).nullable(),
+    confidence: z.number().min(0).max(1).nullable(),
+    strategy: z.enum(['ELEMENT', 'ROUTE']).nullable(),
+    analysisId: z.string().max(200).nullable(),
+  }).nullable().default(null),
 });
 
 export const CreateQARunAnnotationSchema = z.object({
@@ -150,6 +166,11 @@ export const RunLifecycleEventSchema = z.object({
   evidenceCounts: z.record(z.number().int().nonnegative()),
   reportStatus: QAReportStatusSchema.nullable(),
   safeError: z.string().nullable(),
+  /**
+   * What the run captured. The end-of-run notice reads differently for a run
+   * that never opened a browser, and the renderer has no other way to know.
+   */
+  captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).optional(),
   timestamp: z.string().datetime(),
 });
 
@@ -180,12 +201,26 @@ export const DesktopPermissionSchema = z.object({
  * which meant adding a framework silently rejected its own plans everywhere the
  * list had not been updated.
  */
-export const INSTRUMENTATION_FRAMEWORK_IDS = [
-  // JavaScript and TypeScript
+export const JAVASCRIPT_INSTRUMENTATION_FRAMEWORK_IDS = [
   'react-vite', 'nextjs', 'sveltekit', 'nuxt', 'astro', 'remix', 'angular',
   'express', 'fastify', 'nestjs', 'koa', 'hapi',
-  // Python
+] as const;
+
+/**
+ * The frameworks instrumented through the Python adapter.
+ *
+ * Kept apart from the JavaScript ids because the two runtimes are approved
+ * differently: a different SDK distribution, a different set of package
+ * managers, a different environment allowlist. Anything deciding policy by
+ * runtime reads this list rather than restating it.
+ */
+export const PYTHON_INSTRUMENTATION_FRAMEWORK_IDS = [
   'django', 'flask', 'fastapi', 'starlette',
+] as const;
+
+export const INSTRUMENTATION_FRAMEWORK_IDS = [
+  ...JAVASCRIPT_INSTRUMENTATION_FRAMEWORK_IDS,
+  ...PYTHON_INSTRUMENTATION_FRAMEWORK_IDS,
 ] as const;
 
 export const InstrumentationFrameworkIdSchema = z.enum(INSTRUMENTATION_FRAMEWORK_IDS);
@@ -632,6 +667,12 @@ export const BrowserFindingSchema = z.object({
   url: z.string().url().nullable(),
   viewport: z.object({ width: z.number().int(), height: z.number().int() }).nullable(),
   evidenceArtifactIds: z.array(z.string().uuid()),
+  /**
+   * Checksums of artifacts captured for this finding. The desktop client knows
+   * a capture's checksum long before the server has assigned it an id, so the
+   * evidence link is made by checksum at upload time and resolved server-side.
+   */
+  evidenceChecksums: z.array(z.string()).default([]),
   reproductionSteps: z.array(z.string()),
   recommendation: z.string().nullable(),
   scope: QAEvidenceScopeSchema.nullable().optional(),
@@ -681,6 +722,9 @@ export const QARunSummarySchema = QARunSchema.extend({
   artifactCount: z.number().int().nonnegative().default(0),
   findingCount: z.number().int().nonnegative().default(0),
   reportId: z.string().nullable().optional(),
+  /** The operator's own name, or the derived one when they never set it. */
+  title: z.string().optional(),
+  archivedAt: z.string().datetime().nullable().optional(),
 });
 
 export const QualityReportSchema = z.object({
@@ -688,6 +732,8 @@ export const QualityReportSchema = z.object({
   runId: z.string().uuid(),
   status: RunStatusSchema,
   generatedAt: z.string().datetime(),
+  /** One plain-English sentence summarizing the run, ahead of every structured field. */
+  summaryText: z.string().optional(),
   application: z.object({ id: z.string().uuid(), name: z.string() }),
   environment: z.object({
     id: z.string().uuid(),
@@ -1160,6 +1206,23 @@ export const InstrumentationPlanStatusSchema = z.enum([
   'PROPOSED', 'APPROVED', 'APPLYING', 'APPLIED', 'VALIDATING', 'COMPLETED',
   'VALIDATION_FAILED', 'STALE', 'REJECTED', 'FAILED', 'ROLLED_BACK',
 ]);
+/**
+ * How a setup-task list is narrowed before it is fetched.
+ *
+ * `q` matches the title the operator sees, derived titles included; `archived`
+ * chooses the working list (`false`, the default), the archive (`true`), or
+ * both (`all`).
+ */
+export const InstrumentationPlanFiltersSchema = z.object({
+  q: z.string().max(200).optional(),
+  status: InstrumentationPlanStatusSchema.optional(),
+  adapterId: InstrumentationFrameworkIdSchema.optional(),
+  /** Inclusive ISO date (YYYY-MM-DD) or datetime for the created-at range. */
+  from: z.string().min(1).optional(),
+  to: z.string().min(1).optional(),
+  archived: z.enum(['true', 'false', 'all']).optional(),
+});
+export type InstrumentationPlanFilters = z.infer<typeof InstrumentationPlanFiltersSchema>;
 export const StructuredInstrumentationCommandSchema = z.object({
   id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(),
   timeoutMs: z.number().int().min(1_000).max(30 * 60_000), allowedEnvironmentKeys: z.array(z.string()),
@@ -1202,24 +1265,28 @@ export const InstrumentationValidationResultSchema = z.object({
   valid: z.boolean(), checks: z.array(z.object({ name: z.string(), passed: z.boolean(), output: z.string() })),
 });
 
-export const StartGuidedRunInputSchema = z.object({
+const StartRunFlowContextSchema = z.object({
   runId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
   traceId: z.string().uuid().optional(),
   applicationId: z.string().uuid(),
   environmentId: z.string().uuid(),
   workspaceId: z.string().uuid().nullable(),
-  flowId: z.string().uuid(),
-  flowBindingId: z.string().uuid(),
-  flowInitializationId: z.string().uuid(),
-  flowScanId: z.string().uuid(),
+  flowId: z.string().uuid().optional(),
+  flowBindingId: z.string().uuid().optional(),
+  flowInitializationId: z.string().uuid().optional(),
+  flowScanId: z.string().uuid().optional(),
   flowDriftId: z.string().uuid().nullable().optional(),
-  expectedGraphVersionId: z.string().uuid(),
+  // Nullable, not merely optional: a run started without a Flow sends an
+  // explicit null here, which is also what this schema's own transform
+  // normalizes an absent version to. Accepting only `undefined` rejected
+  // every Flow-less run at the IPC boundary.
+  expectedGraphVersionId: z.string().uuid().nullable().optional(),
   captureTracks: z.array(z.enum(['FRONTEND', 'BACKEND'])).min(1).default(['FRONTEND']),
   timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   patchSetId: z.string().uuid().nullable().optional(),
   environmentType: EnvironmentTypeSchema,
-  mode: z.enum(['GUIDED', 'OBSERVATION_ONLY']).default('GUIDED'),
+  mode: z.enum(['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY']).default('GUIDED'),
   targetUrl: z.string().url(),
   productionObservationApproved: z.boolean().optional(),
   launchCommandId: z.string().optional(),
@@ -1228,6 +1295,48 @@ export const StartGuidedRunInputSchema = z.object({
   relayToken: z.string().min(32).optional(),
   agentVersion: z.string().optional(),
 });
+
+const GUIDED_FLOW_CONTEXT_FIELDS = [
+  'flowId', 'flowBindingId', 'flowInitializationId', 'flowScanId', 'expectedGraphVersionId',
+] as const;
+
+/**
+ * Guided captures reconcile against a fully initialized Flow. Assisted captures may carry
+ * candidate Flow context but begin capturing immediately. Observation-only captures are
+ * deliberately session-scoped; legacy callers may send Flow fields, which are stripped.
+ */
+export const StartGuidedRunInputSchema = StartRunFlowContextSchema
+  .superRefine((input, context) => {
+    if (input.mode === 'GUIDED') {
+      for (const field of GUIDED_FLOW_CONTEXT_FIELDS) {
+        if (!input[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for guided runs` });
+      }
+      return;
+    }
+    if (input.mode === 'ASSISTED') {
+      const hasCandidate = Boolean(input.flowId && input.expectedGraphVersionId);
+      const lifecycleValues = [input.flowBindingId, input.flowInitializationId, input.flowScanId];
+      const hasAnyLifecycle = lifecycleValues.some(Boolean) || Boolean(input.flowDriftId);
+      const hasFullLifecycle = lifecycleValues.every(Boolean);
+      const valid = (!hasCandidate && !hasAnyLifecycle && !input.flowId && !input.expectedGraphVersionId)
+        || (hasCandidate && !hasAnyLifecycle)
+        || (hasCandidate && hasFullLifecycle);
+      if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, path: ['flowId'], message: 'Assisted Flow context must be absent, a Flow/version candidate, or a complete initialized context' });
+    }
+  })
+  .transform((input): Omit<z.infer<typeof StartRunFlowContextSchema>, 'expectedGraphVersionId'> & { expectedGraphVersionId: string | null } => {
+    if (input.mode !== 'OBSERVATION_ONLY') return { ...input, expectedGraphVersionId: input.expectedGraphVersionId ?? null };
+    const {
+      flowId: _flowId,
+      flowBindingId: _flowBindingId,
+      flowInitializationId: _flowInitializationId,
+      flowScanId: _flowScanId,
+      flowDriftId: _flowDriftId,
+      expectedGraphVersionId: _expectedGraphVersionId,
+      ...sessionInput
+    } = input;
+    return { ...sessionInput, expectedGraphVersionId: null };
+  });
 
 export const IPC = {
   getVersion: 'tellann:version',
@@ -1251,6 +1360,10 @@ export const IPC = {
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunReport: 'tellann:cloud:runs:report',
   saveRunReportDownload: 'tellann:cloud:runs:report:download',
+  renameRun: 'tellann:cloud:runs:rename',
+  archiveRun: 'tellann:cloud:runs:archive',
+  restoreRun: 'tellann:cloud:runs:restore',
+  deleteRun: 'tellann:cloud:runs:delete',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -1333,12 +1446,37 @@ export const IPC = {
   getRunState: 'tellann:run:state',
   /** renderer -> main: raise the managed browser window above the desktop app. */
   focusRunBrowser: 'tellann:run:browser:focus',
+  /**
+   * renderer -> main: put a page back after the operator closed the managed
+   * window. The run keeps going while the window is gone, so this resumes it
+   * in place rather than starting anything new.
+   */
+  reopenRunBrowser: 'tellann:run:browser:reopen',
+  /**
+   * renderer -> main: the loopback endpoint and credential a server the
+   * operator starts themselves needs in order to report into this run. Kept
+   * out of the run state deliberately: run state is persisted and uploaded,
+   * and a run credential belongs in neither.
+   */
+  getRunRelayConnection: 'tellann:run:relay:connection',
+  /** The environment's standing ingestion keys — the credential a deployed
+   * server is configured with once, rather than per run. */
+  listIngestionKeys: 'tellann:run:ingestion-keys:list',
+  createIngestionKey: 'tellann:run:ingestion-keys:create',
+  /** One evidence event's full payload, for a row's detail view. */
+  getEvidenceEvent: 'tellann:run:evidence-events:get',
+  checkSdkVersions: 'tellann:run:sdk-versions:check',
   /** main -> renderer: the active run's state changed. Replaces polling. */
   runStateChanged: 'tellann:run:state-changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
   getInstrumentationPlan: 'tellann:instrumentation:plans:get',
+  /** renderer → main: rename a setup task (null title restores the derived one). */
+  renameInstrumentationPlan: 'tellann:instrumentation:plans:rename',
+  /** renderer → main: file a setup task away / bring it back. */
+  archiveInstrumentationPlan: 'tellann:instrumentation:plans:archive',
+  restoreInstrumentationPlan: 'tellann:instrumentation:plans:restore',
   approveInstrumentation: 'tellann:instrumentation:approve',
   rejectInstrumentation: 'tellann:instrumentation:reject',
   applyInstrumentation: 'tellann:instrumentation:apply',

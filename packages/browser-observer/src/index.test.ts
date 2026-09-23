@@ -5,6 +5,9 @@ import {
   deriveBrowserState,
   isIdentifierKeyPath,
   isObservationOnlyRequestAllowed,
+  initialCapturePhase,
+  installReadOnlyInteractionGuard,
+  installReadOnlySocketGuard,
   isRetryableTargetConnectionError,
   isSecretKeyPath,
   liveEvidenceForBridgePayload,
@@ -13,8 +16,18 @@ import {
   normalizeFlowKey,
   redactAriaSnapshot,
   sanitizeCapturedUrl,
+  sanitizeBridgeMetadata,
+  scopeEvidenceForCapturePhase,
+  backendRouteTemplate,
+  durationPercentile,
+  emptyBackendSummary,
+  liveEvidenceForBackendRequest,
+  classifyBackendLatency,
+  liveEvidenceForBackendLatency,
+  BrowserObserver,
 } from './index';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
+import type { QAEvidenceEvent } from '@tellann/desktop-contracts';
 
 test('uses the host window viewport for headed QA runs', () => {
   assert.equal(browserContextViewport(false), null);
@@ -29,6 +42,47 @@ test('derives stable browser states without leaking record identifiers', () => {
 test('production observation permits only read HTTP methods', () => {
   for (const method of ['GET', 'HEAD', 'OPTIONS']) assert.equal(isObservationOnlyRequestAllowed(method), true, method);
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(isObservationOnlyRequestAllowed(method), false, method);
+});
+
+test('only strict guided runs wait for a declared initial boundary', () => {
+  assert.equal(initialCapturePhase('GUIDED', 'version-1'), 'PRE_BOUNDARY');
+  assert.equal(initialCapturePhase('ASSISTED', 'version-1'), 'IN_FLOW');
+  assert.equal(initialCapturePhase('ASSISTED', null), 'IN_FLOW');
+  assert.equal(initialCapturePhase('OBSERVATION_ONLY', null), 'IN_FLOW');
+});
+
+test('pre-boundary interaction evidence records intent without auth labels or values', () => {
+  const protectedValues = [{ keyPath: 'field.password', kind: 'SECRET' as const, valueLength: 10 }];
+  assert.deepEqual(
+    scopeEvidenceForCapturePhase(
+      'PRE_BOUNDARY',
+      'QA_FORM_SUBMIT_INTENT',
+      { action: 'https://identity.example/login?token=secret', label: 'Sign in as person@example.com' },
+      protectedValues,
+    ),
+    { metadata: { interactionType: 'FORM_SUBMIT' }, protectedValues: [] },
+  );
+  assert.deepEqual(
+    scopeEvidenceForCapturePhase('IN_FLOW', 'QA_FORM_SUBMIT_INTENT', { label: 'Save order' }, protectedValues),
+    { metadata: { label: 'Save order' }, protectedValues },
+  );
+});
+
+test('the observation-only interaction guard is self-contained and blocks mutation gestures', () => {
+  const source = installReadOnlyInteractionGuard.toString();
+  for (const event of ['click', 'submit', 'keydown', 'beforeinput']) assert.match(source, new RegExp(event));
+  assert.match(source, /stopImmediatePropagation/);
+});
+
+test('the production socket guard replaces WebSocket send before page code runs', () => {
+  const source = installReadOnlySocketGuard.toString();
+  assert.match(source, /WebSocket\.prototype/);
+  assert.match(source, /SecurityError/);
+});
+
+test('browser state derivation removes identifier-shaped route segments and never uses titles', () => {
+  assert.equal(deriveBrowserState('https://example.test/users/person%40example.com', 'Person Name').stateName, 'USERS_DETAIL');
+  assert.equal(deriveBrowserState('https://example.test/reset/reset_token-secret-value', 'Reset for Person').stateName, 'RESET_DETAIL');
 });
 
 test('retries connection refusal while a launched application becomes ready', async () => {
@@ -108,6 +162,18 @@ test('captured urls drop fragments and parameter values but keep parameter names
   );
 });
 
+test('captured urls redact identifier-bearing and unrecognized nested path segments', () => {
+  assert.equal(sanitizeCapturedUrl('https://example.test/reset/abc123?token=secret'), 'https://example.test/reset/DETAIL?token=');
+  assert.equal(sanitizeCapturedUrl('https://example.test/users/customer-slug'), 'https://example.test/users/DETAIL');
+});
+
+test('route bridge metadata cannot retain raw paths or page titles', () => {
+  assert.deepEqual(
+    sanitizeBridgeMetadata('route', { url: 'https://example.test/users/customer-slug?token=secret', title: 'Customer Name' }),
+    { url: 'https://example.test/users/DETAIL?token=', title: null },
+  );
+});
+
 test('the injected mode and phase setters acknowledge delivery', () => {
   // setInteractionMode distinguishes "applied" from "reached a page with no
   // recorder" by the boolean these return. If they stop returning true, the
@@ -126,6 +192,15 @@ test('the inspect overlay waits for the document root before mounting', () => {
   assert.match(source, /document\.documentElement/);
   assert.match(source, /DOMContentLoaded/);
   assert.match(source, /host\.isConnected/);
+});
+
+test('a successful annotation save closes as saved instead of running the cancel path', () => {
+  const source = installQaRecorder.toString();
+  const saveHandler = source.slice(source.indexOf("saveButton.addEventListener"), source.indexOf("Object.defineProperty(globalThis, '__tellannQaSetPhase'"));
+  assert.match(saveHandler, /await invoke\(config\.annotations, payload\)/);
+  assert.match(saveHandler, /Annotation saved/);
+  assert.doesNotMatch(saveHandler, /cancelInspect\(\)/);
+  assert.match(saveHandler, /Annotation could not be saved\. Try again\./);
 });
 
 test('successful network requests are represented in the live panel', () => {
@@ -223,4 +298,242 @@ test('performance rows report the navigation breakdown and real INP, not just pa
   assert.ok(labels.includes('INP=210 ms over 12 interactions'), labels.join(' | '));
   assert.ok(labels.some((entry) => entry.startsWith('Longest task=120 ms in script:')), labels.join(' | '));
   assert.ok(labels.includes('Failed resources=2'), labels.join(' | '));
+});
+
+
+test('backend requests group under the route template the framework matched', () => {
+  assert.equal(backendRouteTemplate('/orders/:id', '/orders/8213'), '/orders/:id');
+  // No template: identifier-looking segments collapse so one route does not
+  // read as thousands.
+  assert.equal(backendRouteTemplate(null, '/orders/8213/items'), '/orders/:id/items');
+  assert.equal(backendRouteTemplate(undefined, '/health?verbose=1'), '/health');
+  assert.equal(backendRouteTemplate('', ''), '/');
+});
+
+test('duration percentiles are nearest-rank over the captured window', () => {
+  assert.equal(durationPercentile([], 95), null);
+  assert.equal(durationPercentile([10], 95), 10);
+  assert.equal(durationPercentile([10, 20, 30, 40], 50), 20);
+  assert.equal(durationPercentile([10, 20, 30, 40], 100), 40);
+});
+
+test('a backend request row reads by route, status and what it touched', () => {
+  const row = liveEvidenceForBackendRequest({
+    method: 'POST', route: '/orders/:id', status: 500, durationMs: 412,
+    handler: 'orders.update', models: ['Order', 'Payment'],
+    requestBytes: 120, responseBytes: 48,
+  });
+  assert.equal(row.kind, 'REQUEST');
+  assert.equal(row.level, 'ERROR');
+  assert.equal(row.message, 'POST /orders/:id — 500');
+  assert.deepEqual(row.details?.find((detail) => detail.label === 'Models'), {
+    label: 'Models', value: 'Order, Payment',
+  });
+  assert.equal(liveEvidenceForBackendRequest({
+    method: 'GET', route: '/orders', status: 404, durationMs: 4,
+  }).level, 'WARN');
+  assert.equal(liveEvidenceForBackendRequest({
+    method: 'GET', route: '/orders', status: 200, durationMs: 4,
+  }).level, 'INFO');
+});
+
+test('an empty backend summary reports nothing rather than zeroed percentiles', () => {
+  const summary = emptyBackendSummary();
+  assert.equal(summary.requests, 0);
+  assert.equal(summary.p95Ms, null);
+  assert.deepEqual(summary.endpoints, []);
+});
+
+test('a backend-only run captures without opening a browser', async () => {
+  const events: QAEvidenceEvent[] = [];
+  const observer = new BrowserObserver({ onEvidenceEvent: (event) => { events.push(event); } });
+  const state = await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    assert.deepEqual(state.captureTracks, ['BACKEND']);
+    // No window was opened, so there is none to show, focus or inspect.
+    assert.equal(state.browserStatus, 'NONE');
+    assert.equal(state.windowResolution, null);
+    await assert.rejects(() => observer.focusBrowser(), /RUN_HAS_NO_BROWSER/);
+    await assert.rejects(() => observer.setInteractionMode('INSPECT'), /RUN_HAS_NO_BROWSER/);
+
+    await observer.recordBackendRequestEvent({
+      eventId: '33333333-3333-4333-8333-333333333333',
+      timestamp: new Date().toISOString(),
+      metadata: {
+        requestId: 'request-1', method: 'post', endpoint: '/orders/8213',
+        route: '/orders/:id', statusCode: 500, durationMs: 120,
+        requestBody: { note: 'ship fast', password: 'hunter2' },
+        models: [{ model: 'Order', operation: 'update', records: 1 }],
+      },
+    });
+
+    const current = observer.getState();
+    assert.equal(current?.backend?.requests, 1);
+    assert.equal(current?.backend?.serverErrors, 1);
+    assert.equal(current?.backend?.endpoints[0].route, '/orders/:id');
+    assert.deepEqual(current?.backend?.endpoints[0].models, ['Order']);
+    // A 5xx from the application's own server is a finding, the same way a
+    // failed browser request is.
+    assert.equal(current?.findings[0]?.category, 'BACKEND_SERVER_ERROR');
+    assert.equal(current?.evidence.some((row) => row.kind === 'REQUEST'), true);
+
+    const captured = events.find((event) => event.eventType === 'QA_BACKEND_REQUEST');
+    assert.ok(captured, 'a backend request is written to the evidence spool');
+    assert.equal(captured.pageUrl, null);
+    assert.equal(captured.viewport, null);
+    // The password never leaves as a value; the ordinary field is carried as a
+    // protected value for the ingestion pipeline to encrypt.
+    const body = captured.metadata.requestBody as Record<string, unknown>;
+    assert.equal(body.password, '[NOT CAPTURED]');
+    const secret = captured.protectedValues.find((value) => value.keyPath.endsWith('password'));
+    assert.equal(secret?.kind, 'SECRET');
+    assert.equal(secret?.value, undefined);
+
+    // A replayed delivery of the same request must not double the totals.
+    await observer.recordBackendRequestEvent({
+      eventId: '44444444-4444-4444-8444-444444444444',
+      timestamp: new Date().toISOString(),
+      metadata: { requestId: 'request-1', method: 'POST', route: '/orders/:id', statusCode: 500, durationMs: 120 },
+    });
+    assert.equal(observer.getState()?.backend?.requests, 1);
+
+    await observer.recordBackendDataAccessEvent({
+      eventId: '55555555-5555-4555-8555-555555555555',
+      timestamp: new Date().toISOString(),
+      metadata: { model: 'Order', operation: 'update', records: 2, route: '/orders/:id', method: 'POST' },
+    });
+    const withData = observer.getState();
+    assert.equal(withData?.backend?.dataOperations, 1);
+    assert.equal(withData?.backend?.models[0].model, 'Order');
+    assert.equal(withData?.backend?.models[0].writes, 1);
+  } finally {
+    await observer.end();
+  }
+});
+
+async function mkdtemp() {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  return fs.mkdtemp(path.join(os.tmpdir(), 'tellann-observer-'));
+}
+
+
+test('an ordinary request is not reported as a latency outlier', () => {
+  assert.equal(classifyBackendLatency({ durationMs: 40, baseline: [] }), null);
+  assert.equal(classifyBackendLatency({ durationMs: 120, baseline: [100, 110, 90, 105, 95] }), null);
+});
+
+test('a request is an outlier on its own scale, or on any scale', () => {
+  // Several times the endpoint's own median, even though it is fast in absolute terms.
+  const relative = classifyBackendLatency({ durationMs: 300, baseline: [20, 22, 18, 25, 21] });
+  assert.equal(relative?.reason, 'BASELINE');
+  assert.equal(relative?.baselineMs, 21);
+  assert.equal(relative?.multiple, 14.3);
+
+  // Slow enough to matter with no baseline to compare against.
+  const absolute = classifyBackendLatency({ durationMs: 1_500, baseline: [] });
+  assert.equal(absolute?.reason, 'ABSOLUTE');
+  assert.equal(absolute?.baselineMs, null);
+
+  // A baseline needs enough samples before it is worth comparing against.
+  assert.equal(classifyBackendLatency({ durationMs: 300, baseline: [20, 22] }), null);
+});
+
+test('a latency row names the route, the time and what it touched', () => {
+  const row = liveEvidenceForBackendLatency({
+    method: 'GET', route: '/reports/:id', durationMs: 6_200, statusCode: 200,
+    reason: 'BASELINE', baselineMs: 40, multiple: 155, models: ['Report', 'User'],
+  });
+  assert.equal(row.kind, 'PERFORMANCE');
+  assert.equal(row.level, 'ERROR', 'a request this slow is an error, not a warning');
+  assert.match(row.message, /155× its usual/);
+  assert.deepEqual(row.details?.find((detail) => detail.label === 'Models'), {
+    label: 'Models', value: 'Report, User',
+  });
+});
+
+test('a backend run fills its Performance pane from slow requests', async () => {
+  const observer = new BrowserObserver({});
+  await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    const call = async (durationMs: number, requestId: string) =>
+      observer.recordBackendRequestEvent({
+        eventId: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        metadata: { requestId, method: 'GET', route: '/reports', statusCode: 200, durationMs },
+      });
+
+    // A fast baseline, then one request several times slower than it.
+    for (let index = 0; index < 6; index += 1) await call(20, `fast-${index}`);
+    assert.equal(observer.getState()?.liveCounts.PERFORMANCE, 0, 'steady traffic is not an outlier');
+
+    await call(400, 'slow-1');
+    const state = observer.getState();
+    assert.equal(state?.liveCounts.PERFORMANCE, 1);
+    const row = state?.evidence.find((item) => item.kind === 'PERFORMANCE');
+    assert.match(row?.message ?? '', /\/reports took 400 ms/);
+
+    // Egregiously slow is a finding as well as a row, and only once per route.
+    await call(9_000, 'slow-2');
+    await call(9_500, 'slow-3');
+    const slowFindings = (observer.getState()?.findings ?? [])
+      .filter((finding) => finding.category === 'BACKEND_SLOW_RESPONSE');
+    assert.equal(slowFindings.length, 1);
+    assert.match(slowFindings[0].title, /took 9\.0 s/);
+  } finally {
+    await observer.end();
+  }
+});
+
+test('collapsed data operations are counted by what they stand for', async () => {
+  const observer = new BrowserObserver({});
+  await observer.start({
+    applicationId: '11111111-1111-4111-8111-111111111111',
+    environmentId: '22222222-2222-4222-8222-222222222222',
+    workspaceId: null,
+    environmentType: 'DEVELOPMENT',
+    mode: 'ASSISTED',
+    captureTracks: ['BACKEND'],
+    targetUrl: 'http://localhost:8000',
+    expectedGraphVersionId: null,
+  }, await mkdtemp());
+
+  try {
+    await observer.recordBackendDataAccessEvent({
+      eventId: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      // One event standing for 40 selects the SDK collapsed.
+      metadata: { model: 'Order', operation: 'select', mutation: false, count: 40 },
+    });
+    const state = observer.getState();
+    assert.equal(state?.backend?.dataOperations, 40);
+    assert.equal(state?.backend?.models[0].reads, 40);
+    assert.match(
+      state?.evidence.find((item) => item.kind === 'DATA')?.message ?? '',
+      /Order\.select ×40/,
+    );
+  } finally {
+    await observer.end();
+  }
 });

@@ -382,7 +382,20 @@ export class NotificationOrchestrator {
     input: CreateNotificationInput,
   ): Promise<NotificationRecipientRef[]> {
     if (input.recipients?.length) {
-      return input.recipients.filter((r) => !!r.userId);
+      const refs = input.recipients.filter((r) => !!r.userId);
+      const missingEmailIds = refs
+        .filter((r) => !r.email)
+        .map((r) => r.userId);
+      if (!missingEmailIds.length) return refs;
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: [...new Set(missingEmailIds)] }, deletedAt: null },
+        select: { id: true, email: true },
+      });
+      const emailByUser = new Map(users.map((user) => [user.id, user.email]));
+      return refs.map((ref) => ({
+        ...ref,
+        email: ref.email ?? emailByUser.get(ref.userId) ?? null,
+      }));
     }
     const memberships = await this.prisma.organizationMembership.findMany({
       where: {

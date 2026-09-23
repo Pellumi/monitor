@@ -33,6 +33,7 @@ import type {
   IntentDraftJob,
   IntentDraftJobCreated,
   InstrumentationDetection,
+  InstrumentationPlanFilters,
   InstrumentationValidationResult,
   QAInteractionMode,
 } from '@tellann/desktop-contracts';
@@ -119,7 +120,21 @@ type DesktopContextValue = {
     reason: string | null;
   } | null>;
   refreshRuns(applicationId: string): Promise<QARunSummary[]>;
+  /** Filtered/searched, independent of the cached unfiltered list `refreshRuns` keeps. */
+  searchRuns(applicationId: string, filters: {
+    q?: string; status?: string; environmentId?: string; archived?: 'true' | 'false' | 'all'; from?: string; to?: string;
+  }): Promise<QARunSummary[]>;
+  /** Empty title clears back to the derived one. */
+  renameRun(runId: string, title: string): Promise<QARunSummary>;
+  archiveRun(runId: string): Promise<QARunSummary>;
+  restoreRun(runId: string): Promise<QARunSummary>;
+  /** Also deletes the run's report, evidence and artifacts, which cascade with it. */
+  deleteRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Record<string, unknown>>;
+  /** Only the SDK packages actually installed in the workspace, each compared against what is published. */
+  checkSdkVersions(applicationId: string): Promise<Array<{
+    ecosystem: 'npm' | 'pypi'; package: string; installed: string; latest: string | null; outdated: boolean;
+  }>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
   getReport(runId: string): Promise<QualityReport>;
   /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
@@ -190,7 +205,11 @@ type DesktopContextValue = {
   correctIntentDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
   detectInstrumentation(input: InstrumentationEnvironmentInput): Promise<{ entitled: boolean; activeControlAllowed: boolean; detections: InstrumentationDetection[] }>;
   proposeInstrumentation(input: InstrumentationEnvironmentInput & { adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
-  listInstrumentationPlans(applicationId: string): Promise<Record<string, unknown>[]>;
+  listInstrumentationPlans(applicationId: string, filters?: InstrumentationPlanFilters): Promise<Record<string, unknown>[]>;
+  /** Rename a setup task. A null title restores the derived one. */
+  renameInstrumentationPlan(applicationId: string, planId: string, title: string | null): Promise<Record<string, unknown>>;
+  archiveInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+  restoreInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   getInstrumentationPlan(applicationId: string, planId: string): Promise<Record<string, unknown>>;
   getLocalInstrumentationResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
   approveInstrumentation(input: InstrumentationEnvironmentInput & { planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;
@@ -209,6 +228,7 @@ type DesktopContextValue = {
   setRunInteractionMode(mode: QAInteractionMode): Promise<GuidedRunState>;
   /** Raises the managed browser window above the desktop app. */
   focusRunBrowser(): Promise<GuidedRunState>;
+  reopenRunBrowser(): Promise<GuidedRunState>;
   retryRunSynchronization(runId: string): Promise<Record<string, unknown>>;
   revealProtectedValue(runId: string, valueId: string): Promise<{ valueId: string; value: string }>;
   endRun(): Promise<GuidedRunState>;
@@ -563,6 +583,54 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
+  const searchRuns = useCallback(
+    (applicationId: string, filters: Parameters<DesktopContextValue['searchRuns']>[1]) =>
+      bridge().runs.list(applicationId, filters),
+    [],
+  );
+
+  /** Applies a mutated run to every cached list it appears in, rather than refetching each one. */
+  const patchCachedRun = useCallback((updated: QARunSummary) => {
+    setRuns((current) => {
+      const next = { ...current };
+      for (const applicationId of Object.keys(next)) {
+        if (next[applicationId].some((run) => run.id === updated.id)) {
+          next[applicationId] = next[applicationId].map((run) => (run.id === updated.id ? updated : run));
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const renameRun = useCallback((runId: string, title: string) => perform(async () => {
+    const updated = await bridge().runs.rename(runId, title);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const archiveRun = useCallback((runId: string) => perform(async () => {
+    const updated = await bridge().runs.archive(runId);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const restoreRun = useCallback((runId: string) => perform(async () => {
+    const updated = await bridge().runs.restore(runId);
+    patchCachedRun(updated);
+    return updated;
+  }), [perform, patchCachedRun]);
+
+  const deleteRun = useCallback((runId: string) => perform(async () => {
+    await bridge().runs.delete(runId);
+    setRuns((current) => {
+      const next: typeof current = {};
+      for (const applicationId of Object.keys(current)) {
+        next[applicationId] = current[applicationId].filter((run) => run.id !== runId);
+      }
+      return next;
+    });
+  }), [perform]);
+
   useEffect(() => {
     if (!window.tellann?.runs.onLifecycleEvent) return;
     return window.tellann.runs.onLifecycleEvent((event) => {
@@ -606,6 +674,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
   // to the control that asked for it, rather than in the app-level error slot.
   const focusRunBrowser = useCallback(async () => {
     const next = await bridge().runs.focusBrowser();
+    setActiveRun(next);
+    return next;
+  }, []);
+
+  // Same reporting rule as focus: the run page owns this failure, inline.
+  const reopenRunBrowser = useCallback(async () => {
+    const next = await bridge().runs.reopenBrowser();
     setActiveRun(next);
     return next;
   }, []);
@@ -654,7 +729,13 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     switchToQaBranch,
     restoreWorkspaceBranch,
     refreshRuns,
+    searchRuns,
+    renameRun,
+    archiveRun,
+    restoreRun,
+    deleteRun,
     getRun: (runId) => bridge().runs.get(runId),
+    checkSdkVersions: (applicationId) => bridge().runs.checkSdkVersions(applicationId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getReport: (runId) => bridge().runs.getReport(runId),
     saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
@@ -719,7 +800,10 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     correctIntentDraft: (applicationId, draftId, correction) => perform(() => bridge().intent.correctDraft(applicationId, draftId, correction)),
     detectInstrumentation: (input) => perform(() => bridge().instrumentation.detect(input)),
     proposeInstrumentation: (input) => perform(() => bridge().instrumentation.propose(input)),
-    listInstrumentationPlans: (applicationId) => bridge().instrumentation.list(applicationId),
+    listInstrumentationPlans: (applicationId, filters) => bridge().instrumentation.list(applicationId, filters),
+    renameInstrumentationPlan: (applicationId, planId, title) => perform(() => bridge().instrumentation.rename(applicationId, planId, title)),
+    archiveInstrumentationPlan: (applicationId, planId) => perform(() => bridge().instrumentation.archive(applicationId, planId)),
+    restoreInstrumentationPlan: (applicationId, planId) => perform(() => bridge().instrumentation.restore(applicationId, planId)),
     getInstrumentationPlan: (applicationId, planId) => bridge().instrumentation.get(applicationId, planId),
     getLocalInstrumentationResult: (applicationId, planId) => bridge().instrumentation.getLocalResult(applicationId, planId),
     approveInstrumentation: (input) => perform(() => bridge().instrumentation.approve(input)),
@@ -732,13 +816,14 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     resumeRun,
     setRunInteractionMode,
     focusRunBrowser,
+    reopenRunBrowser,
     retryRunSynchronization,
     revealProtectedValue,
     endRun,
     clearError: () => setError(null),
   }), [
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
-    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
+    pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, reopenRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, searchRuns, renameRun, archiveRun, restoreRun, deleteRun, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
     avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);
@@ -771,6 +856,15 @@ export function normalizeDesktopError(cause: unknown): string {
   }
   if (/DESKTOP_AUTH_NOT_PENDING/.test(raw)) {
     return 'That sign-in request is no longer active. Cancel it and try again.';
+  }
+  if (/RUN_HAS_NO_BROWSER/.test(raw)) {
+    return 'This run captures your backend only, so there is no browser window to show. Drive the API from your own client and every request your server handles is recorded here.';
+  }
+  if (/QA_BROWSER_DISCONNECTED/.test(raw)) {
+    return 'The managed browser process is gone, so a window cannot be reopened for this run. End the run to keep everything captured so far, then start a new one.';
+  }
+  if (/QA_BROWSER_CLOSED/.test(raw)) {
+    return 'The managed browser window is closed. Reopen it from the run toolbar to carry on in the same session.';
   }
   if (/QA_BRANCH_CONFIRMATION_REQUIRED/.test(raw)) {
     return 'This workspace is not on the QA review branch, and applying there was not confirmed. Try again and Tellann will ask before writing to the current branch.';

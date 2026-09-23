@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import test from 'node:test';
-import { TELLANN, trackApi, captureError, trackState } from './index';
+import { TELLANN, trackApi, captureError, trackState, trackDataAccess, runInRequestContext } from './index';
 import { extractSessionId } from './integrations/express';
 import { TellannEventSchema } from '@tellann/shared';
 
@@ -140,4 +140,230 @@ test('TELLANN Backend SDK Tests', async (t) => {
   });
 
   TELLANN.teardown();
+});
+
+
+test('backend capture carries the payload without carrying the credentials', async (t) => {
+  TELLANN.initialize({
+    endpoint: 'http://collector-backend',
+    tenantId: 'tenant-c1',
+    applicationId: 'app-c1',
+  });
+
+  await t.test('a request carries its route, payloads, headers and sizes', async () => {
+    fetchCalls = [];
+    await trackApi({
+      endpoint: '/api/orders/8213',
+      route: '/api/orders/:id',
+      method: 'post',
+      statusCode: 201,
+      durationMs: 91,
+      handler: 'OrdersController.create',
+      framework: 'express',
+      query: { include: 'items', apiKey: 'live_abc123' },
+      requestBody: { note: 'rush', password: 'hunter2', customer: { email: 'a@b.test' } },
+      responseBody: { id: 8213, status: 'created' },
+      requestHeaders: { 'content-type': 'application/json', authorization: 'Bearer abc', cookie: 'sid=1' },
+      responseHeaders: { 'content-type': 'application/json', 'set-cookie': 'sid=2' },
+    });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.route, '/api/orders/:id');
+    assert.strictEqual(metadata.endpoint, '/api/orders/8213');
+    assert.strictEqual(metadata.method, 'POST');
+    assert.strictEqual(metadata.handler, 'OrdersController.create');
+    assert.strictEqual(metadata.responseBody.status, 'created');
+    assert.ok(metadata.requestBytes > 0 && metadata.responseBytes > 0);
+
+    // Credentials never leave the process, wherever they appear.
+    assert.strictEqual(metadata.requestBody.password, '[REDACTED]');
+    assert.strictEqual(metadata.query.apiKey, '[REDACTED]');
+    assert.strictEqual(metadata.requestBody.note, 'rush');
+    assert.strictEqual(metadata.requestHeaders.authorization, undefined);
+    assert.strictEqual(metadata.requestHeaders.cookie, undefined);
+    assert.strictEqual(metadata.responseHeaders['set-cookie'], undefined);
+    assert.strictEqual(metadata.requestHeaders['content-type'], 'application/json');
+  });
+
+  await t.test('capture can be narrowed without losing the request', async () => {
+    TELLANN.initialize({
+      endpoint: 'http://collector-backend',
+      applicationId: 'app-c1',
+      capture: { requestBody: false, responseBody: false, headers: false },
+    });
+    fetchCalls = [];
+    await trackApi({
+      endpoint: '/api/orders',
+      method: 'GET',
+      statusCode: 200,
+      durationMs: 12,
+      requestBody: { note: 'rush' },
+      responseBody: [{ id: 1 }],
+      requestHeaders: { 'content-type': 'application/json' },
+    });
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.requestBody, undefined);
+    assert.strictEqual(metadata.responseBody, undefined);
+    assert.strictEqual(metadata.requestHeaders, undefined);
+    // Sizes survive, so throughput is still reportable.
+    assert.ok(metadata.requestBytes > 0);
+  });
+
+  await t.test('an oversized payload sheds the body rather than the request', async () => {
+    TELLANN.initialize({
+      endpoint: 'http://collector-backend',
+      applicationId: 'app-c1',
+      capture: { maxBodyBytes: 256 * 1024 },
+    });
+    fetchCalls = [];
+    // Many ordinary fields rather than one huge one: each survives the
+    // per-string clip, and together they push the event past the collector's
+    // 32 KB ceiling.
+    await trackApi({
+      endpoint: '/api/import',
+      method: 'POST',
+      statusCode: 202,
+      durationMs: 300,
+      requestBody: Object.fromEntries(
+        Array.from({ length: 20 }, (_, index) => [`field${index}`, 'x'.repeat(3_000)]),
+      ),
+    });
+    assert.strictEqual(fetchCalls.length, 1);
+    const metadata = fetchCalls[0].body.metadata;
+    assert.strictEqual(metadata.requestBody, undefined);
+    assert.strictEqual(metadata.payloadsOmitted, 'EVENT_SIZE_LIMIT');
+    assert.strictEqual(metadata.endpoint, '/api/import');
+  });
+
+  await t.test('models touched while a request is in flight are attached to it', async () => {
+    TELLANN.initialize({ endpoint: 'http://collector-backend', applicationId: 'app-c1' });
+    fetchCalls = [];
+    const context = { method: 'POST', route: '/api/orders/:id', dataAccess: [] };
+    await runInRequestContext(context, async () => {
+      await trackDataAccess({ model: 'Order', operation: 'update', records: 1 });
+      await trackDataAccess({ model: 'Order', operation: 'update', records: 2 });
+      await trackDataAccess({ model: 'Payment', operation: 'findMany', records: 3 });
+      // Nothing is sent while the request is running: a handler that queries
+      // in a loop would otherwise produce a request's worth of events.
+      assert.strictEqual(fetchCalls.length, 0);
+      await trackApi({
+        endpoint: '/api/orders/8213',
+        route: '/api/orders/:id',
+        method: 'POST',
+        statusCode: 200,
+        durationMs: 40,
+      });
+    });
+
+    const request = fetchCalls.find((call) => call.body.eventType === 'API_REQUEST');
+    // One entry per model and operation, with the record counts summed.
+    assert.deepStrictEqual(request?.body.metadata.models, [
+      { model: 'Order', operation: 'update', records: 3, count: 2, mutation: true },
+      { model: 'Payment', operation: 'findMany', records: 3, count: 1, mutation: false },
+    ]);
+
+    // The integration flushes once the response is done: one row per model and
+    // operation, each carrying how many operations it stands for.
+    await TELLANN.flushDataAccess(context);
+    const dataEvents = fetchCalls.filter((call) => call.body.eventType === 'BUSINESS_EVENT');
+    assert.strictEqual(dataEvents.length, 2);
+    assert.strictEqual(dataEvents[0].body.metadata.businessEventType, 'QA_BACKEND_DATA_ACCESS');
+    assert.strictEqual(dataEvents[0].body.metadata.model, 'Order');
+    assert.strictEqual(dataEvents[0].body.metadata.count, 2);
+    assert.strictEqual(dataEvents[0].body.metadata.records, 3);
+    assert.strictEqual(dataEvents[0].body.metadata.mutation, true);
+    assert.strictEqual(dataEvents[0].body.metadata.route, '/api/orders/:id');
+    assert.strictEqual(dataEvents[1].body.metadata.mutation, false);
+
+    // Flushing twice must not double-report.
+    fetchCalls = [];
+    await TELLANN.flushDataAccess(context);
+    assert.strictEqual(fetchCalls.length, 0);
+  });
+
+  await t.test('data access outside a request is reported immediately, without a route', async () => {
+    fetchCalls = [];
+    // No request to attach to and nothing to flush it later, so it is sent now.
+    await trackDataAccess({ model: 'Invoice', operation: 'delete', records: 4 });
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.strictEqual(fetchCalls[0].body.metadata.route, null);
+    assert.strictEqual(fetchCalls[0].body.metadata.mutation, true);
+    assert.strictEqual(fetchCalls[0].body.metadata.count, 1);
+  });
+});
+
+test('a process configured with a standing ingestion key also relays QA evidence', async (t) => {
+  // Unlike a per-run relay credential, this key never rotates — it is what a
+  // deployed server is configured with once, so its traffic keeps landing in
+  // whichever QA run is resolved server-side, run after run.
+
+  await t.test('a request is relayed to the QA evidence route, run id left for the server', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    const evidenceCall = fetchCalls.find((call) => call.url.includes('/qa-evidence/batch'));
+    assert.ok(evidenceCall, 'expected a QA evidence relay call');
+    assert.strictEqual(evidenceCall!.url, 'https://gateway.example.com/environments/env-e1/qa-evidence/batch');
+    const [event] = evidenceCall!.body.events;
+    assert.strictEqual(event.eventType, 'QA_BACKEND_REQUEST');
+    assert.strictEqual(event.applicationId, 'app-e1');
+    assert.strictEqual(event.environmentId, 'env-e1');
+    assert.strictEqual(event.metadata.method, 'GET');
+    assert.strictEqual('runId' in event, false);
+    TELLANN.teardown();
+  });
+
+  await t.test('a server error is relayed as QA_BACKEND_ERROR evidence', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await captureError({ error: new Error('boom') });
+
+    const [event] = fetchCalls.find((call) => call.url.includes('/qa-evidence/batch'))!.body.events;
+    assert.strictEqual(event.eventType, 'QA_BACKEND_ERROR');
+    assert.strictEqual(event.metadata.message, 'boom');
+    TELLANN.teardown();
+  });
+
+  await t.test('a process pointed at the desktop\'s own local relay is not relayed twice', async () => {
+    // The local relay only ever binds to loopback (`LocalRunRelay.start`);
+    // its own handling of `/v1/events` already turns this into evidence.
+    TELLANN.initialize({
+      endpoint: 'http://127.0.0.1:54832',
+      applicationId: 'app-e1',
+      environmentId: 'env-e1',
+      apiKey: 'run-credential-token',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.ok(!fetchCalls[0].url.includes('/qa-evidence/batch'));
+    TELLANN.teardown();
+  });
+
+  await t.test('no environment id configured means nothing to resolve a run against', async () => {
+    TELLANN.initialize({
+      endpoint: 'https://gateway.example.com',
+      applicationId: 'app-e1',
+      apiKey: 'tellann_ingestion_key',
+    });
+    fetchCalls = [];
+    await trackApi({ endpoint: '/api/orders', method: 'GET', statusCode: 200, durationMs: 8 });
+
+    assert.strictEqual(fetchCalls.length, 1);
+    assert.ok(!fetchCalls[0].url.includes('/qa-evidence/batch'));
+    TELLANN.teardown();
+  });
 });

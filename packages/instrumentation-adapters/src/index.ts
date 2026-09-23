@@ -39,8 +39,9 @@ import {
 export * from './contracts';
 import { beginPatch, finalizePatch, hashChecks, restorePatch, rollbackPatch } from './patching';
 export * from './patching';
-import { pythonAdapters } from './python-adapter';
+import { pythonAdapterRoot, pythonAdapters } from './python-adapter';
 export * from './python-adapter';
+export * from './sdk-versions';
 
 
 
@@ -158,7 +159,7 @@ const latestPublishedVersions = new Map<string, string | null>();
 
 // `npm view` is used rather than a direct registry fetch so the lookup honours the
 // user's registry configuration and credentials, including a private mirror.
-function latestPublishedVersion(packageName: string): string | null {
+export function latestPublishedVersion(packageName: string): string | null {
   const cached = latestPublishedVersions.get(packageName);
   if (cached !== undefined) return cached;
   let resolved: string | null = null;
@@ -475,7 +476,12 @@ export function assignFlowCheckpoints(
   const byAdapter: Record<string, string[]> = {};
   const unassigned: Array<{ checkpointId: string; file: string }> = [];
   const roots = adapterIds.map((id) => {
-    const definition = DEFINITIONS.find((item) => item.id === id)!;
+    // A Python adapter has no `package.json` definition to resolve, so asking
+    // `frameworkPackage` for one used to throw inside its own try/catch and
+    // yield `null` - which dropped the adapter here and left every checkpoint
+    // in a Django or FastAPI project reported as outside the detected packages.
+    const definition = DEFINITIONS.find((item) => item.id === id);
+    if (!definition) return { id, relativeRoot: pythonAdapterRoot(workspaceRoot, id) };
     return { id, relativeRoot: frameworkPackage(workspaceRoot, definition)?.relativeRoot ?? null };
   }).filter((item) => item.relativeRoot !== null);
   for (const checkpoint of manifest?.checkpoints ?? []) {

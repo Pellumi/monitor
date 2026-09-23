@@ -27,6 +27,7 @@ import type {
   IntentDraftJob,
   IntentDraftJobCreated,
   InstrumentationDetection,
+  InstrumentationPlanFilters,
   InstrumentationValidationResult,
   QAInteractionMode,
   QAMentionableMember,
@@ -245,10 +246,18 @@ declare global {
         onImportProgress(callback: (view: DocumentImportView) => void): () => void;
       };
       runs: {
-        list(applicationId: string): Promise<QARunSummary[]>;
+        list(applicationId: string, filters?: {
+          q?: string; status?: string; environmentId?: string; archived?: 'true' | 'false' | 'all'; from?: string; to?: string;
+        }): Promise<QARunSummary[]>;
         get(runId: string): Promise<Record<string, unknown>>;
         getReplay(runId: string): Promise<Record<string, unknown>>;
         getReport(runId: string): Promise<QualityReport>;
+        /** Empty title clears back to the derived one. */
+        rename(runId: string, title: string): Promise<QARunSummary>;
+        archive(runId: string): Promise<QARunSummary>;
+        restore(runId: string): Promise<QARunSummary>;
+        /** Also deletes the run's report, evidence and artifacts, which cascade with it. */
+        delete(runId: string): Promise<void>;
         saveReportDownload(
           runId: string,
           format: ReportExportFormat,
@@ -266,6 +275,59 @@ declare global {
         onStateChanged(callback: (state: GuidedRunState) => void): () => void;
         /** Raises the managed browser window above the desktop app. */
         focusBrowser(): Promise<GuidedRunState>;
+        reopenBrowser(): Promise<GuidedRunState>;
+        relayConnection(): Promise<{
+          endpoint: string;
+          relayToken: string;
+          runId: string;
+          sessionId: string;
+          traceId: string;
+          applicationId: string;
+          environmentId: string;
+        } | null>;
+        /** Active (non-revoked) standing ingestion keys for an environment. */
+        listIngestionKeys(environmentId: string): Promise<{
+          gatewayEndpoint: string;
+          keys: Array<{
+            id: string;
+            keyPrefix: string;
+            label: string | null;
+            createdAt: string;
+            lastUsedAt: string | null;
+            expiresAt: string | null;
+          }>;
+        }>;
+        /** The raw key is returned once, here, and never again. */
+        createIngestionKey(environmentId: string, label?: string): Promise<{
+          gatewayEndpoint: string;
+          key: {
+            id: string;
+            keyPrefix: string;
+            label: string | null;
+            createdAt: string;
+            expiresAt: string | null;
+            rawKey: string;
+          };
+        }>;
+        /** One evidence event's full payload, for a row's detail view. */
+        getEvidenceEvent(runId: string, eventId: string): Promise<{
+          eventId: string;
+          eventType: string;
+          occurredAt: string;
+          pageUrl: string | null;
+          normalizedRoute: string | null;
+          scope: string;
+          metadata: Record<string, unknown>;
+          protectedValues: Array<{ id: string; keyPath: string; kind: string; displayValue: string }>;
+        } | null>;
+        /** Only the SDK packages actually installed in the workspace, each compared against what is published. Empty when no local workspace is attached. */
+        checkSdkVersions(applicationId: string): Promise<Array<{
+          ecosystem: 'npm' | 'pypi';
+          package: string;
+          installed: string;
+          latest: string | null;
+          outdated: boolean;
+        }>>;
         end(): Promise<GuidedRunState>;
         getActive(): Promise<GuidedRunState | null>;
       };
@@ -276,8 +338,12 @@ declare global {
           detections: InstrumentationDetection[];
         }>;
         propose(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; adapterId: InstrumentationDetection['adapterId'] }): Promise<Record<string, unknown>>;
-        list(applicationId: string): Promise<Record<string, unknown>[]>;
+        list(applicationId: string, filters?: InstrumentationPlanFilters): Promise<Record<string, unknown>[]>;
         get(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+        /** Rename a setup task. A null title restores the derived one. */
+        rename(applicationId: string, planId: string, title: string | null): Promise<Record<string, unknown>>;
+        archive(applicationId: string, planId: string): Promise<Record<string, unknown>>;
+        restore(applicationId: string, planId: string): Promise<Record<string, unknown>>;
         getLocalResult(applicationId: string, planId: string): Promise<Record<string, unknown> | null>;
         generateReport(applicationId: string, planId: string, applicationName: string, environmentName: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string; sourceAdded?: boolean; sourceStatus?: string; sourceError?: string }>;
         approve(input: { applicationId: string; environmentId: string; environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION'; planId: string; approvedFileScopes: string[]; approvedCommandIds: string[] }): Promise<Record<string, unknown>>;

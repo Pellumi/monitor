@@ -52,6 +52,14 @@ function AppVersion() {
   return <footer className="auth-footer">Tellann Desktop{version ? ` ${version}` : ''}</footer>;
 }
 
+function secureStorageLabel() {
+  const platform = document.documentElement.dataset.platform;
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  if (platform === 'linux') return 'your Linux keyring';
+  return 'your operating system';
+}
+
 class RendererErrorBoundary extends Component<
   { children: ReactNode },
   { error: Error | null }
@@ -124,7 +132,7 @@ function AuthenticatedApp() {
           <h1>{bridgeAvailable ? 'Sign in to Tellann' : 'Open Tellann in the desktop app'}</h1>
           <p>
             {bridgeAvailable
-              ? 'Sign-in opens in your browser. Source code stays on this device, and your device credential is protected by Windows.'
+              ? `Sign-in opens in your browser. Source code stays on this device, and your device credential is protected by ${secureStorageLabel()}.`
               : 'This URL is only the renderer preview. Authentication, application access, and managed-browser controls are provided by Electron.'}
           </p>
 
@@ -236,15 +244,20 @@ function RunLifecycleResolver() {
   }, [navigate]);
   if (!notice) return null;
   const terminal = notice.completionReason === 'TERMINAL_STATE_REACHED';
+  // A backend run never opened a browser, so saying Chromium closed would be
+  // describing something that did not happen.
+  const closed = notice.captureTracks && !notice.captureTracks.includes('FRONTEND')
+    ? 'Capture stopped'
+    : 'Chromium was closed';
   return (
     <div className="run-lifecycle-toast" role="status" aria-live="polite">
       <strong>{terminal ? 'Terminal state reached' : 'QA run ended'}</strong>
       <span>
         {terminal
-          ? 'Chromium was closed and your QA report is being prepared.'
+          ? `${closed} and your QA report is being prepared.`
           : notice.completionReason === 'MANUAL_STOP_BEFORE_INITIAL'
-            ? 'Chromium was closed. The initial Flow boundary was not reached, so the report will be incomplete.'
-            : 'Chromium was closed before a terminal state. The available in-Flow evidence is being prepared.'}
+            ? `${closed}. The initial Flow boundary was not reached, so the report will be incomplete.`
+            : `${closed} before a terminal state. The available in-Flow evidence is being prepared.`}
       </span>
       {notice.safeError ? <small>{notice.safeError}</small> : null}
     </div>

@@ -8,6 +8,7 @@ import {
   FlowReviewPreviewSchema,
   FlowSuggestionsResponseSchema,
   IPC,
+  StartGuidedRunInputSchema,
 } from './index';
 
 test('whole-flow review IPC channels are stable and distinct', () => {
@@ -38,6 +39,49 @@ test('whole-flow contracts accept transition-only reviews and proposed diagram i
 });
 
 const id = (digit: string) => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+
+const runBase = {
+  applicationId: id('1'), environmentId: id('2'), workspaceId: null,
+  environmentType: 'STAGING' as const, targetUrl: 'https://example.test',
+};
+
+test('QA run contract requires initialized Flow context only for guided mode', () => {
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'GUIDED' }).success, false);
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'ASSISTED' }).success, true);
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'OBSERVATION_ONLY' }).success, true);
+
+  // What the desktop actually sends for a run started without a Flow: the
+  // absent context is explicit nulls, not missing keys.
+  const flowless = StartGuidedRunInputSchema.parse({
+    ...runBase, mode: 'ASSISTED' as const,
+    flowId: undefined, flowBindingId: undefined, flowInitializationId: undefined,
+    flowScanId: undefined, flowDriftId: null, expectedGraphVersionId: null, patchSetId: null,
+  });
+  assert.equal(flowless.expectedGraphVersionId, null);
+
+  const guided = StartGuidedRunInputSchema.parse({
+    ...runBase,
+    flowId: id('3'), flowBindingId: id('4'), flowInitializationId: id('5'),
+    flowScanId: id('6'), expectedGraphVersionId: id('7'),
+  });
+  assert.equal(guided.mode, 'GUIDED');
+});
+
+test('assisted QA contract accepts optional Flow candidates while observation is flowless', () => {
+  const assisted = StartGuidedRunInputSchema.parse({
+    ...runBase, mode: 'ASSISTED', flowId: id('3'), expectedGraphVersionId: id('7'),
+  });
+  assert.equal(assisted.flowId, id('3'));
+  assert.equal(StartGuidedRunInputSchema.safeParse({
+    ...runBase, mode: 'ASSISTED', flowInitializationId: id('5'),
+  }).success, false);
+
+  const observation = StartGuidedRunInputSchema.parse({
+    ...runBase, mode: 'OBSERVATION_ONLY', flowId: id('3'), expectedGraphVersionId: id('7'),
+  });
+  assert.equal('flowId' in observation, false);
+  assert.equal(observation.expectedGraphVersionId, null);
+});
 
 test('flow mapping v2 contracts describe grounded candidates and progress', () => {
   const candidate = FlowMappingCandidateSchema.parse({

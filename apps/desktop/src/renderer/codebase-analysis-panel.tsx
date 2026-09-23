@@ -546,6 +546,8 @@ export function CodebaseAnalysisPanel({
   const [state, setState] = useState<CodebaseAnalysisView | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState(!collapsible);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   // Bumped whenever something starts new work, so polling restarts. Without it
   // a rescan runs in the main process while this view sits on the old result.
@@ -598,6 +600,26 @@ export function CodebaseAnalysisPanel({
       if (timer) clearTimeout(timer);
     };
   }, [applicationId, reloadToken]);
+
+  const cancelAnalysis = useCallback(async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const result = await window.tellann?.projects.cancelCodebaseAnalysis(applicationId);
+      if (!result?.cancelled) {
+        setCancelError("This analysis is no longer running. Refresh the view and try again.");
+        return;
+      }
+      // Restart polling immediately instead of leaving the old progress card
+      // visible until its existing timer happens to fire.
+      setReloadToken((value) => value + 1);
+    } catch (error) {
+      setCancelError(ipcErrorMessage(error, "The analysis could not be cancelled."));
+    } finally {
+      setCancelling(false);
+    }
+  }, [applicationId, cancelling]);
 
   /**
    * Start a fresh analysis of the attached folder. Reports what happened either
@@ -734,13 +756,11 @@ export function CodebaseAnalysisPanel({
           </div>
           <button
             className="analysis-btn-secondary"
-            onClick={() =>
-              void window.tellann?.projects.cancelCodebaseAnalysis(
-                applicationId,
-              )
-            }
+            onClick={() => void cancelAnalysis()}
+            disabled={cancelling}
           >
-            Cancel
+            {cancelling ? <Loader2 size={14} className="spin" /> : null}
+            {cancelling ? "Cancelling…" : "Cancel"}
           </button>
         </div>
         <div className="analysis-progress">
@@ -756,11 +776,12 @@ export function CodebaseAnalysisPanel({
             : ""}{" "}
           · this continues if you navigate away.
         </p>
+        {cancelError ? <div className="analysis-warning"><AlertTriangle size={15} />{cancelError}</div> : null}
         {state.interrupted ? (
           <div className="analysis-warning">
             <AlertTriangle size={15} />
-            The previous run stopped when the desktop closed. It was restarted
-            from the beginning.
+            The previous run stopped when the desktop closed. Cancel this
+            interrupted run, then start a new analysis.
           </div>
         ) : null}
       </section>

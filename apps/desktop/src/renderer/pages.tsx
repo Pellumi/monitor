@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -11,6 +12,8 @@ import {
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowRight,
   BarChart3,
   BookOpenText,
@@ -25,6 +28,7 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitCompareArrows,
   Globe2,
   GraduationCap,
   Hourglass,
@@ -45,6 +49,7 @@ import {
   Plus,
   Pencil,
   RefreshCw,
+  Search,
   SearchCode,
   ShieldCheck,
   ShoppingCart,
@@ -57,6 +62,19 @@ import {
   X,
 } from "lucide-react";
 import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
+import {
+  BACKEND_EMPTY_EVIDENCE,
+  BACKEND_EVIDENCE_TABS,
+  BackendEndpointTable,
+  BackendModelTable,
+  BackendReportCard,
+  BackendRunFacts,
+  BackendWaitingPanel,
+  hasBackendSection,
+  hasBackendTrack,
+  isBackendOnlyRun,
+  type BackendEvidenceTabValue,
+} from "./backend-run";
 import {
   Link,
   Navigate,
@@ -103,14 +121,18 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
   formatEnum,
+  confirmAction,
   showMenu,
   statusTone,
   useSelectableList,
 } from "./components/desktop-ui";
+import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import {
+  flowBindingForEnvironment,
   flowInitializationHref,
+  flowRunReadiness,
   isFlowInitializable,
   isFlowReadyToRun,
   nextFlowToInitialize,
@@ -230,14 +252,17 @@ function EmptyState({
   title,
   description,
   action,
+  className = "",
 }: {
   icon: ReactNode;
   title: string;
   description: string;
   action?: ReactNode;
+  /** `is-inline` tightens the spacing for an empty state inside a card. */
+  className?: string;
 }) {
   return (
-    <section className="page-empty">
+    <section className={`page-empty ${className}`.trimEnd()}>
       {icon}
       <h2>{title}</h2>
       <p className="mb-4 w-full">{description}</p>
@@ -249,7 +274,7 @@ function EmptyState({
 function Status({ children }: { children: ReactNode }) {
   const text = typeof children === "string" ? children : null;
   return (
-    <span className="status-pill" data-tone={text ? statusTone(text) : "neutral"}>
+    <span className="status-pill pt-0.75!" data-tone={text ? statusTone(text) : "neutral"}>
       <span aria-hidden="true" />
       {text ? formatEnum(text) : children}
     </span>
@@ -804,7 +829,7 @@ export function ApplicationOverviewPage() {
     );
 
   const latestRun = runs[projectId]?.[0];
-  const flowReady = flows === null ? null : flows.some(isFlowReadyToRun);
+  const flowReady = flows === null ? null : flows.some((flow) => isFlowReadyToRun(flow));
   const flowToInitialize = nextFlowToInitialize(flows ?? []);
   // Without a published Flow to point at there is nothing to initialize yet, so
   // the step falls back to Intent, where one gets declared and published first.
@@ -2862,6 +2887,7 @@ function ManualIntentBuilder({
     updateDeclaredState,
     deleteDeclaredState,
     addDeclaredTransition,
+    getDeclaredFlows,
     completeDeclaredFlow,
     reopenDeclaredFlow,
     deleteDeclaredFlow,
@@ -8186,6 +8212,92 @@ function useOffQaBranchConfirmation(projectId: string | undefined) {
   return { confirmBranch, modal };
 }
 
+/**
+ * How a detected framework is written for a person. Adapter ids are how the
+ * instrumentation adapters identify themselves; they are not a name.
+ */
+const ADAPTER_LABELS: Record<string, string> = {
+  "react-vite": "React (Vite)",
+  nextjs: "Next.js",
+  sveltekit: "SvelteKit",
+  nuxt: "Nuxt",
+  astro: "Astro",
+  remix: "Remix",
+  angular: "Angular",
+  express: "Express",
+  fastify: "Fastify",
+  nestjs: "NestJS",
+  koa: "Koa",
+  hapi: "hapi",
+  django: "Django",
+  flask: "Flask",
+  fastapi: "FastAPI",
+  starlette: "Starlette",
+};
+
+function adapterLabel(adapterId: unknown) {
+  return ADAPTER_LABELS[String(adapterId)] ?? String(adapterId);
+}
+
+function taskStatusLabel(status: unknown) {
+  return String(status).toLowerCase().replaceAll("_", " ");
+}
+
+/** Every status a setup task can be filtered by, in lifecycle order. */
+const INSTRUMENTATION_STATUSES = [
+  "PROPOSED",
+  "APPROVED",
+  "APPLYING",
+  "APPLIED",
+  "VALIDATING",
+  "COMPLETED",
+  "VALIDATION_FAILED",
+  "STALE",
+  "REJECTED",
+  "FAILED",
+  "ROLLED_BACK",
+] as const;
+
+/**
+ * What a setup task is called.
+ *
+ * The cloud derives this — an initialisation task, or the name of the Flow a
+ * task sets up — and stores an operator's own wording when they rename one.
+ * The fallback here only covers a record fetched before that field existed.
+ */
+function taskTitle(record: Record<string, any>) {
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  if (title) return title;
+  const purpose = String(
+    record.purpose ?? (record.planJson as any)?.instrumentationPurpose ?? "BOOTSTRAP",
+  );
+  return purpose === "FLOW" ? "Flow setup" : "Initialisation";
+}
+
+/**
+ * Which tasks belong on this page.
+ *
+ * Without a Flow in the URL the page is about connecting Tellann, so only the
+ * bootstrap tasks are relevant. With one, the page is about that Flow version —
+ * and, until the SDK handshake lands, the bootstrap task that has to happen
+ * first.
+ */
+function planInScope(
+  record: Record<string, any>,
+  scope: { flowId?: string; flowVersionId?: string; tellannConnected: boolean },
+) {
+  const purpose = String(
+    record.purpose ?? (record.planJson as any)?.instrumentationPurpose ?? "BOOTSTRAP",
+  );
+  if (!scope.flowId) return purpose === "BOOTSTRAP";
+  if (purpose !== "FLOW") return !scope.tellannConnected;
+  return (
+    String(record.flowId ?? (record.planJson as any)?.flowId ?? "") === scope.flowId &&
+    String(record.flowVersionId ?? (record.planJson as any)?.flowVersionId ?? "") ===
+      scope.flowVersionId
+  );
+}
+
 export function InstrumentationPage() {
   const {
     projectId,
@@ -8635,35 +8747,8 @@ export function InstrumentationPage() {
       setCreatingProposal(false);
     }
   };
-  const visiblePlans = flowId
-    ? plans.filter((record) => {
-        const purpose = String(
-          record.purpose ??
-            (record.planJson as any)?.instrumentationPurpose ??
-            "BOOTSTRAP",
-        );
-        // Until the SDK handshake lands, the only actionable task is the
-        // BOOTSTRAP proposal that connects Tellann to this project; after that
-        // only tasks scoped to this Flow version are relevant.
-        if (purpose !== "FLOW") return !tellannConnected;
-        return (
-          String(record.flowId ?? (record.planJson as any)?.flowId ?? "") ===
-            flowId &&
-          String(
-            record.flowVersionId ??
-              (record.planJson as any)?.flowVersionId ??
-              "",
-          ) === flowVersionId
-        );
-      })
-    : plans.filter(
-        (record) =>
-          String(
-            record.purpose ??
-              (record.planJson as any)?.instrumentationPurpose ??
-              "BOOTSTRAP",
-          ) === "BOOTSTRAP",
-      );
+  const historyScope = { flowId, flowVersionId, tellannConnected };
+  const visiblePlans = plans.filter((record) => planInScope(record, historyScope));
   const proposedPlans = visiblePlans.filter(
     (plan) => String(plan.status) === "PROPOSED",
   );
@@ -8808,28 +8893,6 @@ export function InstrumentationPage() {
   const activeTask = visiblePlans.find((record) =>
     inProgressStatuses.has(String(record.status)),
   );
-  const adapterLabels: Record<string, string> = {
-    "react-vite": "React (Vite)",
-    nextjs: "Next.js",
-    sveltekit: "SvelteKit",
-    nuxt: "Nuxt",
-    astro: "Astro",
-    remix: "Remix",
-    angular: "Angular",
-    express: "Express",
-    fastify: "Fastify",
-    nestjs: "NestJS",
-    koa: "Koa",
-    hapi: "hapi",
-    django: "Django",
-    flask: "Flask",
-    fastapi: "FastAPI",
-    starlette: "Starlette",
-  };
-  const adapterLabel = (adapterId: unknown) =>
-    adapterLabels[String(adapterId)] ?? String(adapterId);
-  const taskStatusLabel = (status: unknown) =>
-    String(status).toLowerCase().replaceAll("_", " ");
   const taskHref = (record: Record<string, any>) =>
     `/applications/${projectId}/instrumentation/plans/${record.id}${initializationId ? `?initializationId=${encodeURIComponent(initializationId)}` : ""}`;
   const supportedDetections = detections.filter((item) => item.supported);
@@ -9544,43 +9607,14 @@ export function InstrumentationPage() {
       ) : null}
 
       {/* ── History, out of the way ─────────────────────────────────────── */}
-      {visiblePlans.length ? (
-        <details className="content-card setup-history mt-4">
-          <summary>
-            Setup history · {visiblePlans.length} task
-            {visiblePlans.length === 1 ? "" : "s"}
-          </summary>
-          <div className="data-table mt-3">
-            <div className="table-head">
-              <span>Framework</span>
-              <span>Status</span>
-              <span>Created</span>
-            </div>
-            {visiblePlans.map((plan) => (
-              <Link
-                className="table-row"
-                key={String(plan.id)}
-                to={taskHref(plan)}
-              >
-                <span>
-                  <strong>{adapterLabel(plan.adapterId)}</strong>
-                  <small>
-                    {String(plan.frameworkVersion ?? "unknown version")}
-                  </small>
-                </span>
-                <span>
-                  <Status>{taskStatusLabel(plan.status)}</Status>
-                </span>
-                <span>
-                  {plan.createdAt
-                    ? new Date(String(plan.createdAt)).toLocaleString()
-                    : "—"}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </details>
-      ) : null}
+      <SetupHistoryPanel
+        applicationId={projectId}
+        flowId={flowId}
+        flowVersionId={flowVersionId}
+        tellannConnected={tellannConnected}
+        taskHref={taskHref}
+        onChanged={() => void refreshPlans()}
+      />
 
       <EntitlementModal
         isOpen={entitlementModalOpen}
@@ -9589,6 +9623,544 @@ export function InstrumentationPage() {
         onClose={() => setEntitlementModalOpen(false)}
       />
     </Page>
+  );
+}
+
+type SetupHistoryFilters = {
+  q: string;
+  status: string;
+  adapterId: string;
+  from: string;
+  to: string;
+  archived: "false" | "true";
+};
+
+const EMPTY_SETUP_HISTORY_FILTERS: SetupHistoryFilters = {
+  q: "",
+  status: "",
+  adapterId: "",
+  from: "",
+  to: "",
+  archived: "false",
+};
+
+/**
+ * Every setup task this application has, searchable and filed.
+ *
+ * The list is fetched with its filters rather than filtered on screen: the
+ * cloud holds the full history, and a title search has to reach the derived
+ * names — an initialisation task, or the Flow a task sets up — which only the
+ * cloud can resolve. The page's own working list stays separate and unfiltered,
+ * so narrowing the history never changes which task the page is acting on.
+ */
+function SetupHistoryPanel({
+  applicationId,
+  flowId,
+  flowVersionId,
+  tellannConnected,
+  taskHref,
+  onChanged,
+}: {
+  applicationId: string;
+  flowId?: string;
+  flowVersionId?: string;
+  tellannConnected: boolean;
+  taskHref(record: Record<string, any>): string;
+  onChanged(): void;
+}) {
+  const {
+    listInstrumentationPlans,
+    renameInstrumentationPlan,
+    archiveInstrumentationPlan,
+    restoreInstrumentationPlan,
+  } = useProject();
+  const [filters, setFilters] = useState<SetupHistoryFilters>(
+    EMPTY_SETUP_HISTORY_FILTERS,
+  );
+  const [rows, setRows] = useState<Record<string, any>[]>([]);
+  const [frameworks, setFrameworks] = useState<string[]>([]);
+  // `loading` covers the first fetch, when there is nothing on screen yet and a
+  // skeleton is the honest thing to show. `refreshing` covers every fetch after
+  // it, where the rows already there stay readable while they are re-narrowed.
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Record<string, any> | null>(
+    null,
+  );
+  const [archiveTarget, setArchiveTarget] = useState<Record<
+    string,
+    any
+  > | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const archivedView = filters.archived === "true";
+
+  const load = useCallback(async () => {
+    if (!applicationId) return;
+    try {
+      const records = await listInstrumentationPlans(applicationId, {
+        ...(filters.q ? { q: filters.q } : {}),
+        ...(filters.status ? { status: filters.status as never } : {}),
+        ...(filters.adapterId ? { adapterId: filters.adapterId as never } : {}),
+        ...(filters.from ? { from: filters.from } : {}),
+        ...(filters.to ? { to: filters.to } : {}),
+        archived: filters.archived,
+      });
+      const scoped = (records as Record<string, any>[]).filter((record) =>
+        planInScope(record, { flowId, flowVersionId, tellannConnected }),
+      );
+      setRows(scoped);
+      // Keep the framework options stable while the list is being narrowed: a
+      // dropdown that collapses to whatever survived the current filter cannot
+      // be used to change that filter.
+      setFrameworks((current) =>
+        [
+          ...new Set([
+            ...current,
+            ...scoped.map((record) => String(record.adapterId)),
+          ]),
+        ].sort(),
+      );
+      setError(null);
+    } catch (cause) {
+      setError(normalizeDesktopError(cause));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [
+    applicationId,
+    filters,
+    flowId,
+    flowVersionId,
+    listInstrumentationPlans,
+    tellannConnected,
+  ]);
+
+  useEffect(() => {
+    setRefreshing(true);
+    const timer = window.setTimeout(() => void load(), filters.q ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [load, filters.q]);
+
+  const update = (patch: Partial<SetupHistoryFilters>) =>
+    setFilters((current) => ({ ...current, ...patch }));
+
+  const filtered = Boolean(
+    filters.q || filters.status || filters.adapterId || filters.from || filters.to,
+  );
+  // Clearing narrows nothing away, but it never moves the operator between the
+  // active list and the archive — that is a different shelf, not a filter.
+  const clearedFilters: SetupHistoryFilters = {
+    ...EMPTY_SETUP_HISTORY_FILTERS,
+    archived: filters.archived,
+  };
+
+  const act = async (
+    record: Record<string, any>,
+    action: () => Promise<unknown>,
+  ) => {
+    setPendingId(String(record.id));
+    setError(null);
+    try {
+      await action();
+      await load();
+      onChanged();
+    } catch (cause) {
+      setError(normalizeDesktopError(cause));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <>
+      <RenameTaskModal
+        record={renameTarget}
+        busy={pendingId === String(renameTarget?.id ?? "")}
+        onCancel={() => setRenameTarget(null)}
+        onSave={(title) => {
+          const target = renameTarget!;
+          setRenameTarget(null);
+          void act(target, () =>
+            renameInstrumentationPlan(applicationId, String(target.id), title),
+          );
+        }}
+      />
+      <ConfirmModal
+        isOpen={Boolean(archiveTarget)}
+        title={`Archive "${archiveTarget ? taskTitle(archiveTarget) : ""}"?`}
+        description="Tellann keeps this task and everything recorded against it, but takes it out of the setup list and out of the manifests you can start a QA run against. You can restore it from Archived at any time."
+        confirmLabel="Archive task"
+        cancelLabel="Keep it"
+        variant="primary"
+        busy={pendingId === String(archiveTarget?.id ?? "")}
+        onConfirm={() => {
+          const target = archiveTarget!;
+          setArchiveTarget(null);
+          void act(target, () =>
+            archiveInstrumentationPlan(applicationId, String(target.id)),
+          );
+        }}
+        onCancel={() => setArchiveTarget(null)}
+      />
+      <details className="content-card setup-history mt-4">
+        <summary>
+          {archivedView ? "Archived setup tasks" : "Setup history"}
+          {loading
+            ? ""
+            : ` · ${rows.length} task${rows.length === 1 ? "" : "s"}`}
+        </summary>
+
+        <div className="setup-history-filters mt-3">
+          <label className="setup-history-field setup-history-search">
+            <span>Title</span>
+            <span className="setup-history-search-input">
+              <Search size={13} aria-hidden="true" />
+              <input
+                type="search"
+                value={filters.q}
+                placeholder="Search by title"
+                onChange={(event) => update({ q: event.target.value })}
+              />
+            </span>
+          </label>
+          <div className="setup-history-field">
+            <span>Status</span>
+            <SelectField
+              ariaLabel="Filter by status"
+              value={filters.status}
+              onValueChange={(value) => update({ status: value })}
+              options={[
+                { value: "", label: "Any status" },
+                ...INSTRUMENTATION_STATUSES.map((status) => ({
+                  value: status,
+                  label: formatEnum(status),
+                })),
+              ]}
+              placeholder="Any status"
+            />
+          </div>
+          <div className="setup-history-field">
+            <span>Framework</span>
+            <SelectField
+              ariaLabel="Filter by framework"
+              value={filters.adapterId}
+              onValueChange={(value) => update({ adapterId: value })}
+              options={[
+                { value: "", label: "Any framework" },
+                ...frameworks.map((adapterId) => ({
+                  value: adapterId,
+                  label: adapterLabel(adapterId),
+                })),
+              ]}
+              placeholder="Any framework"
+            />
+          </div>
+          <label className="setup-history-field">
+            <span>Created from</span>
+            <input
+              type="date"
+              value={filters.from}
+              max={filters.to || undefined}
+              onChange={(event) => update({ from: event.target.value })}
+            />
+          </label>
+          <label className="setup-history-field">
+            <span>Created to</span>
+            <input
+              type="date"
+              value={filters.to}
+              min={filters.from || undefined}
+              onChange={(event) => update({ to: event.target.value })}
+            />
+          </label>
+          <div className="setup-history-filter-actions">
+            {filtered ? (
+              <button
+                type="button"
+                className="button"
+                onClick={() => setFilters(clearedFilters)}
+              >
+                <X size={14} />
+                Clear filters
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="button"
+              aria-pressed={archivedView}
+              onClick={() =>
+                update({ archived: archivedView ? "false" : "true" })
+              }
+            >
+              {archivedView ? (
+                <ArchiveRestore size={14} />
+              ) : (
+                <Archive size={14} />
+              )}
+              {archivedView ? "Back to active" : "Archived"}
+            </button>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="context-banner mt-3" role="alert">
+            <AlertTriangle size={15} />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <SetupHistorySkeleton />
+        ) : rows.length ? (
+          <div
+            className="data-table mt-3"
+            aria-busy={refreshing}
+            data-refreshing={refreshing ? "true" : undefined}
+          >
+            <div className="table-head">
+              <span>Title</span>
+              <span>Status</span>
+              <span>Created</span>
+              <span>Actions</span>
+            </div>
+            {rows.map((plan) => {
+              const busy = pendingId === String(plan.id);
+              return (
+                <div className="table-row" key={String(plan.id)}>
+                  <span>
+                    <Link className="setup-history-title" to={taskHref(plan)}>
+                      {taskTitle(plan)}
+                    </Link>
+                    <small>
+                      {adapterLabel(plan.adapterId)} ·{" "}
+                      {String(plan.frameworkVersion ?? "unknown version")}
+                    </small>
+                  </span>
+                  <span>
+                    <Status>{taskStatusLabel(plan.status)}</Status>
+                  </span>
+                  <span>
+                    {plan.createdAt
+                      ? new Date(String(plan.createdAt)).toLocaleString()
+                      : "—"}
+                  </span>
+                  <span className="setup-history-row-actions">
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy}
+                      onClick={() => setRenameTarget(plan)}
+                    >
+                      <Pencil size={14} />
+                      Rename
+                    </button>
+                    {plan.archivedAt ? (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(plan, () =>
+                            restoreInstrumentationPlan(
+                              applicationId,
+                              String(plan.id),
+                            ),
+                          )
+                        }
+                      >
+                        <ArchiveRestore size={14} />
+                        {busy ? "Restoring…" : "Restore"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={busy}
+                        onClick={() => setArchiveTarget(plan)}
+                      >
+                        <Archive size={14} />
+                        Archive
+                      </button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : filtered ? (
+          <EmptyState
+            className="is-inline"
+            icon={<Filter />}
+            title="No task matches these filters"
+            description={`Nothing in ${archivedView ? "the archive" : "this project's setup history"} matches what you asked for. Widen the date range, or clear the filters to see everything.`}
+            action={
+              <button
+                type="button"
+                className="button"
+                onClick={() => setFilters(clearedFilters)}
+              >
+                <X size={14} />
+                Clear filters
+              </button>
+            }
+          />
+        ) : archivedView ? (
+          <EmptyState
+            className="is-inline"
+            icon={<Archive />}
+            title="Nothing is archived"
+            description="Archiving a setup task keeps it and everything recorded against it, while taking it out of the setup list and out of the manifests a QA run can start against."
+            action={
+              <button
+                type="button"
+                className="button"
+                onClick={() => update({ archived: "false" })}
+              >
+                <ArchiveRestore size={14} />
+                Back to active
+              </button>
+            }
+          />
+        ) : (
+          <EmptyState
+            className="is-inline"
+            // icon={<SearchCode />}
+            title="No setup tasks yet"
+            description="Tellann records a task each time it connects itself to this project or prepares a Flow for checking. Detect a framework to create the first one."
+          />
+        )}
+      </details>
+    </>
+  );
+}
+
+/**
+ * The shape of the table that is coming, while the first page is fetched.
+ *
+ * It mirrors the real table — same shell, same four columns, same row height —
+ * so the card settles into its final layout instead of jumping when the rows
+ * arrive.
+ */
+function SetupHistorySkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div
+      className="data-table setup-history-skeleton mt-3"
+      role="status"
+      aria-label="Loading setup tasks"
+    >
+      <div className="table-head" aria-hidden="true">
+        <span>Title</span>
+        <span>Status</span>
+        <span>Created</span>
+        <span>Actions</span>
+      </div>
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="table-row" key={index} aria-hidden="true">
+          <span>
+            <i className="setup-history-bar" data-bar="title" />
+            <i className="setup-history-bar" data-bar="subtitle" />
+          </span>
+          <span>
+            <i className="setup-history-bar" data-bar="status" />
+          </span>
+          <span>
+            <i className="setup-history-bar" data-bar="date" />
+          </span>
+          <span className="setup-history-row-actions">
+            <i className="setup-history-bar" data-bar="action" />
+            <i className="setup-history-bar" data-bar="action" />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Rename a setup task. Submitting an empty name restores the derived one —
+ * clearing the field is how an operator undoes their own wording.
+ */
+function RenameTaskModal({
+  record,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  record: Record<string, any> | null;
+  busy: boolean;
+  onCancel(): void;
+  onSave(title: string | null): void;
+}) {
+  const [value, setValue] = useState("");
+  const recordId = record ? String(record.id) : "";
+  useEffect(() => {
+    if (record) setValue(taskTitle(record));
+    // Re-seed only when a different task is opened, so typing is not undone by
+    // a re-render of the list behind the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordId]);
+  useEffect(() => {
+    if (!record) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onCancel, record]);
+  if (!record) return null;
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-task-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy) onSave(value.trim() ? value.trim() : null);
+        }}
+      >
+        <h2 id="rename-task-title">Rename this setup task</h2>
+        <p>
+          This is what the task is called everywhere in Tellann. Leave it empty
+          to go back to its default name.
+        </p>
+        <label className="dialog-field">
+          <span>Title</span>
+          <input
+            autoFocus
+            maxLength={120}
+            value={value}
+            disabled={busy}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </label>
+        <div className="desktop-modal-actions">
+          <button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? "Saving…" : "Save title"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -9819,7 +10391,7 @@ export function InstrumentationDetailPage() {
     DeclaredFlowSummary[] | null
   >(null);
   const hasInitializedFlow =
-    declaredFlows === null ? null : declaredFlows.some(isFlowReadyToRun);
+    declaredFlows === null ? null : declaredFlows.some((flow) => isFlowReadyToRun(flow));
   const plan = record?.planJson as InstrumentationPlan | undefined;
   const environment = application?.environments.find(
     (item) => item.id === record?.environmentId,
@@ -10228,8 +10800,8 @@ export function InstrumentationDetailPage() {
 
   return (
     <Page
-      title={`Instrumentation · ${plan.adapterId}`}
-      description="Review scope, commands, evidence, local diff, validation, and rollback status."
+      title={taskTitle(record)}
+      description={`${adapterLabel(plan.adapterId)} · Review scope, commands, evidence, local diff, validation, and rollback status.`}
       actions={
         <Status>
           {validationSucceeded ? "COMPLETED" : String(record.status)}
@@ -10968,13 +11540,17 @@ export function InstrumentationDetailPage() {
 function useRuns(projectId?: string) {
   const { runs, refreshRuns } = useDesktop();
   const [loading, setLoading] = useState(true);
+  const refresh = useCallback(
+    () => (projectId ? refreshRuns(projectId) : Promise.resolve([])),
+    [projectId, refreshRuns],
+  );
   useEffect(() => {
     if (!projectId) return;
     void refreshRuns(projectId)
       .catch(() => undefined)
       .finally(() => setLoading(false));
   }, [projectId, refreshRuns]);
-  return { items: projectId ? (runs[projectId] ?? []) : [], loading };
+  return { items: projectId ? (runs[projectId] ?? []) : [], loading, refresh };
 }
 
 function reportHrefFor(projectId: string, run: QARunSummary) {
@@ -10989,22 +11565,64 @@ function formatRunTime(value: string | null | undefined, fallback: string) {
 
 export function RunsPage() {
   const { projectId, application } = useProject();
-  const { items, loading } = useRuns(projectId);
+  const { items, loading, refresh } = useRuns(projectId);
+  const { searchRuns, renameRun, archiveRun, restoreRun, deleteRun } = useDesktop();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const visible = useMemo(() => {
+  const [archivedView, setArchivedView] = useState<"false" | "true" | "all">("false");
+  const [searchResults, setSearchResults] = useState<QARunSummary[] | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [renameTarget, setRenameTarget] = useState<QARunSummary | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<QARunSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<QARunSummary | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // An instant, client-side pass over the already-cached default list while
+  // the debounced, server-backed search (which alone knows about archived
+  // runs, status and date range) is in flight.
+  const clientFiltered = useMemo(() => {
     const terms = query.trim().toLowerCase();
-    if (!terms) return items;
-    return items.filter((run) =>
-      `${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
+    const base = archivedView === "false" ? items.filter((run) => !run.archivedAt) : items;
+    if (!terms) return base;
+    return base.filter((run) =>
+      `${run.title ?? ""} ${run.id} ${run.status} ${run.mode} ${run.environment?.name ?? ""}`
         .toLowerCase()
         .includes(terms),
     );
-  }, [items, query]);
+  }, [items, query, archivedView]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    setSearchResults(null);
+    const timer = window.setTimeout(() => {
+      void searchRuns(projectId, { q: query.trim() || undefined, archived: archivedView })
+        .then(setSearchResults)
+        .catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [projectId, query, archivedView, searchRuns, refreshToken]);
+
+  const visible = searchResults ?? clientFiltered;
   const openRun = useCallback(
     (run: QARunSummary) => navigate(`/applications/${projectId}/qa-runs/${run.id}`),
     [navigate, projectId],
   );
+
+  const act = async (run: QARunSummary, action: () => Promise<unknown>) => {
+    setPendingId(run.id);
+    setActionError(null);
+    try {
+      await action();
+      setRefreshToken((token) => token + 1);
+      void refresh();
+    } catch (cause) {
+      setActionError(normalizeDesktopError(cause));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const list = useSelectableList({
     items: visible,
     getKey: runKey,
@@ -11015,10 +11633,20 @@ export function RunsPage() {
         { id: "open", label: "Open run", accelerator: "Enter" },
         { id: "report", label: "View report", enabled: Boolean(report) },
         { type: "separator" },
+        { id: "rename", label: "Rename…" },
+        run.archivedAt
+          ? { id: "restore", label: "Restore" }
+          : { id: "archive", label: "Archive" },
+        { id: "delete", label: "Delete…" },
+        { type: "separator" },
         { id: "copy", label: "Copy run ID" },
       ]).then((choice) => {
         if (choice === "open") openRun(run);
         if (choice === "report" && report) navigate(report);
+        if (choice === "rename") setRenameTarget(run);
+        if (choice === "archive") setArchiveTarget(run);
+        if (choice === "restore") void act(run, () => restoreRun(run.id));
+        if (choice === "delete") setDeleteTarget(run);
         if (choice === "copy") void window.tellann?.system.copyText(run.id);
       });
     },
@@ -11039,15 +11667,29 @@ export function RunsPage() {
       description="Guided browser execution, captured evidence, reconciliation, and report processing."
       layout={!loading ? "fill" : "scroll"}
       toolbar={
-        items.length ? (
-          <input
-            className="toolbar-search"
-            data-search-input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter runs (Ctrl+F)"
-            aria-label="Filter runs"
-          />
+        items.length || searchResults?.length ? (
+          <>
+            <input
+              className="toolbar-search"
+              data-search-input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search by title, id, environment or status (Ctrl+F)"
+              aria-label="Search runs"
+            />
+            <div className="segmented-control" role="group" aria-label="Show">
+              {(["false", "true", "all"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={archivedView === value ? "selected" : undefined}
+                  onClick={() => setArchivedView(value)}
+                >
+                  {value === "false" ? "Active" : value === "true" ? "Archived" : "All"}
+                </button>
+              ))}
+            </div>
+          </>
         ) : null
       }
       actions={
@@ -11061,6 +11703,11 @@ export function RunsPage() {
         </Link>
       }
     >
+      {actionError ? (
+        <div className="inline-error" role="alert">
+          {actionError}
+        </div>
+      ) : null}
       {loading ? (
         <LoadingState />
       ) : items.length ? (
@@ -11069,7 +11716,7 @@ export function RunsPage() {
             <div
               className="list-view"
               aria-label="QA runs"
-              style={{ "--list-columns": "minmax(130px, 1fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
+              style={{ "--list-columns": "minmax(160px, 1.4fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
               {...list.listProps}
             >
               <div className="list-head" role="presentation">
@@ -11080,14 +11727,14 @@ export function RunsPage() {
                 <span>Started</span>
               </div>
               {visible.map((run) => (
-                <div className="list-row" key={run.id} {...list.rowProps(run)}>
+                <div className="list-row" key={run.id} data-archived={run.archivedAt ? "true" : undefined} {...list.rowProps(run)}>
                   <span className="list-cell-primary">
-                    <strong className="mono">{run.id.slice(0, 8)}</strong>
-                    <small>{formatEnum(run.mode)}</small>
+                    <strong>{run.title ?? run.id.slice(0, 8)}</strong>
+                    <small className="mono">{run.id.slice(0, 8)} · {formatEnum(run.mode)}</small>
                   </span>
                   <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
                   <span>
-                    <Status>{run.status}</Status>
+                    <Status>{run.archivedAt ? "ARCHIVED" : run.status}</Status>
                   </span>
                   <span>
                     {run.artifactCount} artifacts · {run.findingCount} findings
@@ -11105,7 +11752,7 @@ export function RunsPage() {
               <div className="detail-content">
                 <div className="detail-header">
                   <small>QA run</small>
-                  <h2 className="mono">{selected.id.slice(0, 8)}</h2>
+                  <h2>{selected.title ?? selected.id.slice(0, 8)}</h2>
                 </div>
                 <div className="detail-actions">
                   <button className="button primary" type="button" onClick={() => openRun(selected)}>
@@ -11117,11 +11764,48 @@ export function RunsPage() {
                       View report
                     </Link>
                   ) : null}
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={pendingId === selected.id}
+                    onClick={() => setRenameTarget(selected)}
+                  >
+                    Rename
+                  </button>
+                  {selected.archivedAt ? (
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={pendingId === selected.id}
+                      onClick={() => void act(selected, () => restoreRun(selected.id))}
+                    >
+                      <ArchiveRestore size={15} />
+                      Restore
+                    </button>
+                  ) : (
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={pendingId === selected.id}
+                      onClick={() => setArchiveTarget(selected)}
+                    >
+                      <Archive size={15} />
+                      Archive
+                    </button>
+                  )}
+                  <button
+                    className="button danger"
+                    type="button"
+                    disabled={pendingId === selected.id}
+                    onClick={() => setDeleteTarget(selected)}
+                  >
+                    Delete
+                  </button>
                 </div>
                 <dl className="property-list">
                   <div>
                     <dt>Status</dt>
-                    <dd><Status>{selected.status}</Status></dd>
+                    <dd><Status>{selected.archivedAt ? "ARCHIVED" : selected.status}</Status></dd>
                   </div>
                   <div>
                     <dt>Mode</dt>
@@ -11173,7 +11857,121 @@ export function RunsPage() {
           }
         />
       )}
+      <RenameRunModal
+        run={renameTarget}
+        busy={pendingId === renameTarget?.id}
+        onCancel={() => setRenameTarget(null)}
+        onSave={(title) => {
+          const target = renameTarget!;
+          setRenameTarget(null);
+          void act(target, () => renameRun(target.id, title ?? ""));
+        }}
+      />
+      <ConfirmModal
+        isOpen={Boolean(archiveTarget)}
+        title={`Archive "${archiveTarget?.title ?? archiveTarget?.id.slice(0, 8) ?? ""}"?`}
+        description="Tellann keeps this run's evidence and report, but takes it out of the working list. You can restore it from Archived at any time."
+        confirmLabel="Archive run"
+        cancelLabel="Keep it"
+        variant="primary"
+        busy={pendingId === archiveTarget?.id}
+        onConfirm={() => {
+          const target = archiveTarget!;
+          setArchiveTarget(null);
+          void act(target, () => archiveRun(target.id));
+        }}
+        onCancel={() => setArchiveTarget(null)}
+      />
+      <ConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        title={`Delete "${deleteTarget?.title ?? deleteTarget?.id.slice(0, 8) ?? ""}"?`}
+        description="This permanently deletes the run along with its report, evidence and artifacts. This cannot be undone."
+        confirmLabel="Delete permanently"
+        cancelLabel="Cancel"
+        variant="danger"
+        busy={pendingId === deleteTarget?.id}
+        onConfirm={() => {
+          const target = deleteTarget!;
+          setDeleteTarget(null);
+          void act(target, () => deleteRun(target.id));
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </Page>
+  );
+}
+
+function RenameRunModal({
+  run,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  run: QARunSummary | null;
+  busy: boolean;
+  onCancel(): void;
+  onSave(title: string | null): void;
+}) {
+  const [value, setValue] = useState("");
+  const runId = run?.id ?? "";
+  useEffect(() => {
+    if (run) setValue(run.title ?? "");
+    // Re-seed only when a different run is opened, so typing is not undone by
+    // a re-render of the list behind the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
+  useEffect(() => {
+    if (!run) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onCancel, run]);
+  if (!run) return null;
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <form
+        className="desktop-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-run-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy) onSave(value.trim() ? value.trim() : null);
+        }}
+      >
+        <h2 id="rename-run-title">Rename this run</h2>
+        <p>This is what the run is called everywhere in Tellann. Leave it empty to go back to its default name.</p>
+        <label className="dialog-field">
+          <span>Title</span>
+          <input
+            autoFocus
+            maxLength={200}
+            value={value}
+            disabled={busy}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </label>
+        <div className="desktop-modal-actions">
+          <button type="button" className="button" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="button primary" disabled={busy}>
+            {busy ? "Saving…" : "Save title"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -11235,8 +12033,13 @@ export function NewRunPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedFlowId = searchParams.get("flowId") ?? "";
+  const requestedEnvironmentId = searchParams.get("environmentId") ?? "";
+  const requestedMode = searchParams.get("mode");
+  const requestedTargetUrl = searchParams.get("targetUrl") ?? "";
   const [environmentId, setEnvironmentId] = useState(
-    application?.environments[0]?.id ?? "",
+    application?.environments.some((item) => item.id === requestedEnvironmentId)
+      ? requestedEnvironmentId
+      : application?.environments[0]?.id ?? "",
   );
   const environment = application?.environments.find(
     (item) => item.id === environmentId,
@@ -11246,12 +12049,16 @@ export function NewRunPage() {
       ? workspace?.snapshot.suggestedApplicationUrls?.[0]
       : undefined;
   const [targetUrl, setTargetUrl] = useState(
-    detectedApplicationUrl?.url ??
-      environment?.baseUrl ??
+    requestedTargetUrl || detectedApplicationUrl?.url ||
+      environment?.baseUrl ||
       "http://localhost:3000",
   );
-  const [mode, setMode] = useState<"GUIDED" | "OBSERVATION_ONLY">(
-    environment?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "GUIDED",
+  const [mode, setMode] = useState<"GUIDED" | "ASSISTED" | "OBSERVATION_ONLY">(
+    environment?.type === "PRODUCTION"
+      ? "OBSERVATION_ONLY"
+      : requestedMode === "GUIDED" || requestedMode === "ASSISTED" || requestedMode === "OBSERVATION_ONLY"
+        ? requestedMode
+        : "ASSISTED",
   );
   const [productionObservationApproved, setProductionObservationApproved] =
     useState(false);
@@ -11265,6 +12072,13 @@ export function NewRunPage() {
     Array<{ id: string; label: string }>
   >([]);
   const [patchSetId, setPatchSetId] = useState("");
+  // Every callback on the desktop context is rebuilt whenever its shared state
+  // changes — `busy` flips the moment Start is pressed — so the effects below
+  // re-run mid-submit. They may re-read the lists, but they must never move a
+  // selection the operator made: choosing a browser-only run is a real choice,
+  // and `""` is what it looks like.
+  const patchSetChosen = useRef(false);
+  const flowChosen = useRef(false);
   const launchCommands = workspace?.snapshot.launchCommands ?? [];
   const [launchCommandId, setLaunchCommandId] = useState("");
   const [launchApproved, setLaunchApproved] = useState(false);
@@ -11280,44 +12094,45 @@ export function NewRunPage() {
         ? workspace?.snapshot.suggestedApplicationUrls?.[0]?.url
         : undefined;
     setTargetUrl(
-      detected ?? nextEnvironment?.baseUrl ?? "http://localhost:3000",
+      requestedTargetUrl || detected || nextEnvironment?.baseUrl || "http://localhost:3000",
     );
   }, [
     application?.environments,
     environmentId,
+    requestedTargetUrl,
     workspace?.snapshot.suggestedApplicationUrls,
   ]);
   useEffect(() => {
     if (!projectId) return;
     void getDeclaredFlows(projectId).then((items) => {
-      // A Flow that cannot start a run is filtered out rather than surfaced as
-      // a selectable option that later fails.
-      const ready = items.filter(isFlowReadyToRun);
-      setFlows(ready);
+      setFlows(items);
       // Arriving straight from initializing a Flow, that Flow is the one the user
       // means to run — preselect it rather than whichever sorts first.
       const requested = requestedFlowId
-        ? ready.find((item) => item.id === requestedFlowId)
+        ? items.find((item) => item.id === requestedFlowId)
         : undefined;
-      const preferred = requested ?? ready[0];
-      setExpectedGraphVersionId(preferred?.versions?.[0]?.id ?? "");
+      if (flowChosen.current) return;
+      const preferred = requested ?? items.find((item) => isFlowReadyToRun(item, environmentId));
+      setExpectedGraphVersionId(preferred?.publishedVersionId ?? preferred?.versions?.[0]?.id ?? "");
       setSelectedFlowId(preferred?.id ?? "");
     });
-  }, [getDeclaredFlows, projectId, requestedFlowId]);
+  }, [environmentId, getDeclaredFlows, projectId, requestedFlowId]);
   useEffect(() => {
     if (!projectId) return;
-    void listInstrumentationPlans(projectId)
+    // `archived: false` is the default, and it is what keeps a task the operator
+    // filed away out of the manifests a run can be started against.
+    void listInstrumentationPlans(projectId, { archived: "false" })
       .then((plans) => {
         const manifests = plans.flatMap((plan: any) =>
           ((plan.patchSets ?? []) as any[])
             .filter((patch) => patch.status === "VALIDATED")
             .map((patch) => ({
               id: String(patch.id),
-              label: `${String(plan.adapterId)} · ${new Date(String(patch.validatedAt ?? patch.createdAt)).toLocaleString()}`,
+              label: `${taskTitle(plan)} · ${new Date(String(patch.validatedAt ?? patch.createdAt)).toLocaleString()}`,
             })),
         );
         setInstrumentationManifests(manifests);
-        setPatchSetId((current) => current || manifests[0]?.id || "");
+        if (!patchSetChosen.current) setPatchSetId(manifests[0]?.id ?? "");
       })
       .catch(() => undefined);
   }, [listInstrumentationPlans, projectId]);
@@ -11329,22 +12144,25 @@ export function NewRunPage() {
         description="Select another application."
       />
     );
+  const selectedFlow = flows.find((flow) => flow.id === selectedFlowId);
+  const selectedFlowReadiness = selectedFlow
+    ? flowRunReadiness(selectedFlow, environmentId)
+    : null;
   const begin = async () => {
     setRunStartFailure(null);
     try {
-      const selectedFlow = flows.find(
-        (flow) => flow.id === selectedFlowId,
-      ) as any;
-      const binding = selectedFlow?.projectBindings?.[0];
+      const binding = flowBindingForEnvironment(selectedFlow, environmentId) as any;
       const initialization = binding?.initializations?.[0];
       const scan = binding?.scans?.[0];
-      if (
+      const flowRequired = mode === "GUIDED";
+      const attachFlow = Boolean(selectedFlow && isFlowReadyToRun(selectedFlow, environmentId));
+      if (flowRequired && (
         !selectedFlow ||
         !binding ||
         binding.status !== "ACTIVE" ||
         initialization?.status !== "COMPLETED" ||
-        !scan
-      ) {
+        scan?.status !== "COMPLETED"
+      )) {
         throw new Error(
           "Initialize this published Flow in the selected application and environment before starting a QA run.",
         );
@@ -11353,12 +12171,15 @@ export function NewRunPage() {
         applicationId: projectId,
         environmentId,
         workspaceId: workspace?.id ?? null,
-        flowId: selectedFlow.id,
-        flowBindingId: binding.id,
-        flowInitializationId: initialization.id,
-        flowScanId: scan.id,
-        flowDriftId: binding.latestDriftId ?? null,
-        expectedGraphVersionId,
+        flowId: attachFlow ? selectedFlow!.id : undefined,
+        flowBindingId: attachFlow ? binding.id : undefined,
+        flowInitializationId: attachFlow ? initialization.id : undefined,
+        flowScanId: attachFlow ? scan.id : undefined,
+        flowDriftId: attachFlow ? binding.latestDriftId ?? null : null,
+        // `""` is this form's "nothing selected" value, but the contract wants a
+        // uuid or null — sending the empty string fails as a malformed uuid
+        // instead of as the missing Flow context it actually is.
+        expectedGraphVersionId: (attachFlow && expectedGraphVersionId) || null,
         captureTracks:
           captureMode === "COMBINED"
             ? ["FRONTEND", "BACKEND"]
@@ -11389,7 +12210,7 @@ export function NewRunPage() {
   return (
     <Page
       title="New QA run"
-      description="Choose an initialized Flow and capture frontend, backend, or correlated evidence within its initial and terminal boundaries."
+      description="Start capturing immediately, or attach an initialized Flow for strict guided coverage and reconciliation."
     >
       <section className="wizard-card">
         <div className="form-grid">
@@ -11408,11 +12229,14 @@ export function NewRunPage() {
                     : undefined;
                 setTargetUrl(detected ?? next?.baseUrl ?? targetUrl);
                 setMode(
-                  next?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "GUIDED",
+                  next?.type === "PRODUCTION" ? "OBSERVATION_ONLY" : "ASSISTED",
                 );
                 setLaunchCommandId("");
                 setLaunchApproved(false);
                 setProductionObservationApproved(false);
+                // Which Flows are ready depends on the environment, so let the
+                // preferred one be picked again for the new one.
+                flowChosen.current = false;
               }}
               options={application.environments.map((item) => ({
                 value: item.id,
@@ -11435,7 +12259,8 @@ export function NewRunPage() {
               }}
               options={[
                 { value: "GUIDED", label: "Guided" },
-                { value: "OBSERVATION_ONLY", label: "Observation only" },
+                { value: "ASSISTED", label: "Assisted (recommended)" },
+                { value: "OBSERVATION_ONLY", label: "Observation only (read-only)" },
               ]}
             />
           </label>
@@ -11456,24 +12281,26 @@ export function NewRunPage() {
             ) : null}
           </label>
           <label className="full">
-            Flow source of truth
+            Expected Flow {mode === "GUIDED" ? "(required)" : "(optional)"}
             <SelectField
               value={selectedFlowId}
               onValueChange={(flowId) => {
+                flowChosen.current = true;
                 setSelectedFlowId(flowId);
                 setExpectedGraphVersionId(
-                  flows.find((flow) => flow.id === flowId)?.versions?.[0]?.id ??
+                  flows.find((flow) => flow.id === flowId)?.publishedVersionId ??
+                    flows.find((flow) => flow.id === flowId)?.versions?.[0]?.id ??
                     "",
                 );
               }}
               options={[
-                { value: "", label: "Select an initialized published Flow" },
+                { value: "", label: mode === "GUIDED" ? "Select a Flow" : "Start without a Flow" },
                 ...flows.flatMap((flow) =>
                   flow.versions?.[0]
                     ? [
                         {
                           value: flow.id,
-                          label: `${flow.name} / version ${flow.versions[0].version}`,
+                          label: `${flow.name} / version ${flow.versions[0].version} · ${flowRunReadiness(flow, environmentId).message}`,
                         },
                       ]
                     : [],
@@ -11481,11 +12308,23 @@ export function NewRunPage() {
               ]}
             />
             <small>
-              Only Flows that are published and have a completed initialization
-              in this application are listed. If a Flow you created is missing,
-              either publish it from the declare view or initialize it for this
-              application first.
+              Guided mode requires a ready Flow. Assisted mode is interactive
+              and starts capturing immediately. Observation Only is read-only;
+              either kind of run can be reconciled or promoted to a Flow later.
             </small>
+            {selectedFlow && selectedFlowReadiness && !selectedFlowReadiness.ready ? (
+              <span className="inline-actions">
+                <Link
+                  className="text-link"
+                  to={flowInitializationHref(projectId, selectedFlow, environment?.type === "PRODUCTION" ? nonProductionEnvironmentId(application) : environmentId) ?? `/applications/${projectId}/intent`}
+                >
+                  {selectedFlow.publishedVersionId ? "Resolve Flow readiness" : "Open and publish this Flow"}
+                </Link>
+                {mode === "GUIDED" && environment?.type !== "PRODUCTION" ? (
+                  <button className="text-link" type="button" onClick={() => setMode("ASSISTED")}>Continue in Assisted now</button>
+                ) : null}
+              </span>
+            ) : null}
           </label>
           <label className="full">
             Capture tracks
@@ -11500,6 +12339,13 @@ export function NewRunPage() {
                 { value: "COMBINED", label: "Combined frontend + backend" },
               ]}
             />
+            <span className="field-hint">
+              {captureMode === "BACKEND"
+                ? "No browser is opened. Tellann records the requests your server handles — route, status, timing, payloads and the models each one touched — while you drive the API from your own client, your tests or curl. It needs the backend SDK initialized in the process you are exercising."
+                : captureMode === "COMBINED"
+                  ? "Opens the managed browser and records your server's own requests alongside it, so a journey through the UI and the work it caused behind it appear in one run."
+                  : "Opens the managed browser and records what happens on screen: routes, clicks, forms, requests the page makes, performance and screenshots."}
+            </span>
           </label>
           <label className="full">
             <span className="field-label-with-tooltip">
@@ -11522,7 +12368,10 @@ export function NewRunPage() {
             </span>
             <SelectField
               value={patchSetId}
-              onValueChange={setPatchSetId}
+              onValueChange={(value) => {
+                patchSetChosen.current = true;
+                setPatchSetId(value);
+              }}
               options={[
                 {
                   value: "",
@@ -11587,11 +12436,19 @@ export function NewRunPage() {
             </p>
           </div>
         </div> */}
+        {captureMode === "BACKEND" ? (
+          <div className="context-banner">
+            No browser is opened for a backend run. The URL above is recorded as
+            this run's capture target and scopes the local relay; nothing is
+            opened or requested for you.
+          </div>
+        ) : null}
         {environment?.type === "PRODUCTION" ? (
           <>
             <div className="context-banner">
-              Production is observation-only. Tellann blocks process launch, SDK
-              injection, and non-read HTTP requests.
+              Production is observation-only. Tellann blocks page interaction,
+              process launch, SDK injection, and non-read HTTP requests so
+              click or WebSocket handlers cannot mutate the target.
             </div>
             <label className="check-row">
               <input
@@ -11617,8 +12474,7 @@ export function NewRunPage() {
             busy ||
             !targetUrl ||
             !environmentId ||
-            !selectedFlowId ||
-            !expectedGraphVersionId ||
+            Boolean(mode === "GUIDED" && (!selectedFlow || !expectedGraphVersionId || !selectedFlowReadiness?.ready)) ||
             Boolean(launchCommandId && !launchApproved) ||
             Boolean(
               environment?.type === "PRODUCTION" &&
@@ -11630,7 +12486,7 @@ export function NewRunPage() {
           <Play size={16} />
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : "Start guided run"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start read-only observation"}
         </button>
       </section>
       <QaRunStartErrorModal
@@ -11734,28 +12590,44 @@ function planStateStatuses(run: GuidedRunState): Map<string, PlanStateStatus> {
 /** The one sentence telling the user what to do right now. */
 function runInstruction(run: GuidedRunState): { title: string; detail: string } {
   const plan = run.flowPlan;
+  const backendOnly = isBackendOnlyRun(run);
   if (run.status === "PAUSED") {
     return {
       title: "Run paused",
       detail: "Nothing is being recorded. Resume when you are ready to carry on.",
     };
   }
+  if (backendOnly && !plan) {
+    return {
+      title: "Backend capture",
+      detail:
+        "No browser is opened for this run. Exercise the API the way you normally would — your own client, your tests, curl — and every request your server handles is recorded with its payload, timing and the models it touched.",
+    };
+  }
   if (!plan) {
     return {
-      title: run.expectedGraphVersionId ? "Loading the expected Flow" : "Observational run",
+      title: run.expectedGraphVersionId ? "Loading the expected Flow" : run.mode === "ASSISTED" ? "Assisted exploration" : "Observational run",
       detail: run.expectedGraphVersionId
         ? "Everything is being captured. The expected states will appear once the accepted graph loads."
-        : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
+        : run.mode === "ASSISTED"
+          ? "Everything is being captured now. Tellann can turn the observed journey into a reviewable Flow after the run."
+          : "No accepted Flow was selected, so nothing is being reconciled. Everything you do is still captured.",
     };
   }
   const label = (key: string | null) =>
     plan.states.find((state) => state.key === key)?.name ?? key ?? "the next state";
   if (run.phase === "PRE_BOUNDARY") {
-    return {
-      title: `Open ${label(plan.initialStateKey)} in the browser`,
-      detail:
-        "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
-    };
+    return backendOnly
+      ? {
+          title: `Reach ${label(plan.initialStateKey)}`,
+          detail:
+            "Call the API the way you normally would until your application reports this state. Detailed recording starts the moment it does.",
+        }
+      : {
+          title: `Open ${label(plan.initialStateKey)} in the browser`,
+          detail:
+            "Sign in and navigate to where this Flow begins. Detailed recording starts the moment your application reports that state.",
+        };
   }
   if (run.coverage?.terminalReached) {
     return {
@@ -11769,28 +12641,45 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
   return {
     title: next.length ? `Continue to ${next.slice(0, 2).join(" or ")}` : "Carry on through the Flow",
     detail: next.length
-      ? "Drive the application the way a user would. Every step is being recorded against the Flow."
+      ? backendOnly
+        ? "Call the API the way you normally would. Every request is being recorded against the Flow."
+        : "Drive the application the way a user would. Every step is being recorded against the Flow."
       : "This state has no declared next step. Move on to whichever state you expect to reach.",
   };
 }
 
 export function LiveRunPage() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const {
     activeRun: run,
     pauseRun,
     resumeRun,
     setRunInteractionMode,
     focusRunBrowser,
+    reopenRunBrowser,
     endRun,
+    checkSdkVersions,
+    getDeclaredFlows,
+    getDeclaredFlow,
+    reopenDeclaredFlow,
+    generateFlowSuggestions,
+    createDeclaredFlow,
+    addDeclaredState,
+    addDeclaredTransition,
     busy,
   } = useDesktop();
-  const [tab, setTab] = useState<EvidenceTabValue>("FLOW");
+  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [follow, setFollow] = useState(true);
+  const [detailItem, setDetailItem] = useState<LiveEvidence | null>(null);
+  const [outdatedSdks, setOutdatedSdks] = useState<Array<{ ecosystem: "npm" | "pypi"; package: string; installed: string; latest: string | null }>>([]);
+  const [sdkBannerDismissed, setSdkBannerDismissed] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
+  const [draftingFlow, setDraftingFlow] = useState(false);
+  const [flowCandidates, setFlowCandidates] = useState<Array<{ id: string; name: string; score: number; lifecycleStatus?: string }>>([]);
   const [now, setNow] = useState(() => Date.now());
   const listRef = useRef<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState<number>(() => {
@@ -11812,6 +12701,22 @@ export function LiveRunPage() {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [run?.status]);
+
+  // Checked once per run start rather than continuously: an outdated SDK
+  // still reports evidence correctly, so this only ever informs.
+  useEffect(() => {
+    if (!projectId || !run?.runId) return;
+    let cancelled = false;
+    setSdkBannerDismissed(false);
+    void checkSdkVersions(projectId)
+      .then((statuses) => {
+        if (!cancelled) setOutdatedSdks(statuses.filter((status) => status.outdated));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, run?.runId, checkSdkVersions]);
 
   /**
    * Keeps both panels inside the window. A width saved on a wide monitor used
@@ -11874,7 +12779,30 @@ export function LiveRunPage() {
     }
   }, []);
 
-  const activeTab = EVIDENCE_TABS.find((entry) => entry.value === tab) ?? EVIDENCE_TABS[0];
+  // Which evidence panes exist depends on what the run captures. A backend
+  // run has no browser console and no interactions to list; it has requests,
+  // server errors and data operations.
+  const backendOnly = run ? isBackendOnlyRun(run) : false;
+  // A run with no Flow attached can never report a FLOW event, so the tab
+  // would only ever be empty — left out rather than shown dead.
+  const evidenceTabs: Array<{
+    value: EvidenceTabValue | BackendEvidenceTabValue;
+    label: string;
+    icon: typeof Activity;
+    kinds: Array<LiveEvidence["kind"]>;
+  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS).filter(
+    (entry) => entry.value !== "FLOW" || Boolean(run?.flowPlan),
+  );
+  const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
+
+  // A tab from the other track's set — or FLOW when this run has no Flow
+  // attached and it was filtered out above — would leave the panel empty
+  // with no way back, so switching tracks lands on that track's first pane.
+  useEffect(() => {
+    if (evidenceTabs.some((entry) => entry.value === tab)) return;
+    const fallback = evidenceTabs[0]?.value ?? (backendOnly ? "REQUESTS" : "CONSOLE");
+    if (fallback !== tab) setTab(fallback);
+  }, [backendOnly, tab, evidenceTabs]);
   const visible = useMemo(() => {
     if (!run || activeTab.value === "FINDINGS") return [];
     const needle = query.trim().toLowerCase();
@@ -11913,6 +12841,94 @@ export function LiveRunPage() {
       setControlError(normalizeDesktopError(cause));
     }
   }, []);
+
+  const createFlowDraftFromRun = useCallback(async () => {
+    if (!projectId || !run || draftingFlow) return;
+    setDraftingFlow(true);
+    setControlError(null);
+    try {
+      const stateNames = observedDraftStateNames(run.observations);
+      const approved = await confirmAction({
+        title: 'Create a reviewable Flow draft?',
+        message: `Tellann will create ${stateNames.length} draft states from this run.`,
+        detail: `${stateNames.join(' → ')}\n\nIdentifiers are redacted. Nothing is published until you review and publish the draft.`,
+        confirmLabel: 'Create draft',
+      });
+      if (!approved) return;
+      const draft = await createDeclaredFlow(
+        projectId,
+        `Observed ${new URL(run.targetUrl).hostname} journey`,
+        'USER_JOURNEY',
+        `Reviewable draft generated from assisted QA run ${run.runId}.`,
+        'Observed browser journey; verify state names, boundaries, and transitions before publishing.',
+      );
+      const states: string[] = [];
+      for (let index = 0; index < stateNames.length; index += 1) {
+        const created = await addDeclaredState(
+          projectId,
+          draft.id,
+          stateNames[index],
+          'UI',
+          index === 0 ? 'INITIAL' : index === stateNames.length - 1 ? 'TERMINAL' : 'NORMAL',
+          index === stateNames.length - 1 ? 'SUCCESS' : null,
+        );
+        const id = typeof created.id === 'string' ? created.id : null;
+        if (id) states.push(id);
+      }
+      for (let index = 1; index < states.length; index += 1) {
+        await addDeclaredTransition(projectId, draft.id, states[index - 1], states[index], 'Observed navigation');
+      }
+      navigate(`/applications/${projectId}/intent/flows/${draft.id}?sourceRunId=${encodeURIComponent(run.runId)}`);
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    } finally {
+      setDraftingFlow(false);
+    }
+  }, [addDeclaredState, addDeclaredTransition, createDeclaredFlow, draftingFlow, navigate, projectId, run]);
+
+  useEffect(() => {
+    if (!projectId || !run || run.status !== 'COMPLETED' || run.mode !== 'ASSISTED') return;
+    let cancelled = false;
+    void getDeclaredFlows(projectId).then(async (summaries) => {
+      const details = await Promise.all(summaries.slice(0, 12).map((flow) => getDeclaredFlow(projectId, flow.id).catch(() => null)));
+      if (cancelled) return;
+      const lifecycle = new Map(summaries.map((flow) => [flow.id, flow.lifecycleStatus]));
+      setFlowCandidates(rankObservedFlowCandidates(run.observations, details.filter((flow): flow is NonNullable<typeof flow> => Boolean(flow)))
+        .slice(0, 3)
+        .map((candidate) => {
+          const lifecycleStatus = lifecycle.get(candidate.id);
+          return {
+            ...candidate,
+            lifecycleStatus: typeof lifecycleStatus === 'string' ? lifecycleStatus : undefined,
+          };
+        }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [getDeclaredFlow, getDeclaredFlows, projectId, run]);
+
+  const prepareFlowAmendments = useCallback(async (candidate: { id: string; name: string; lifecycleStatus?: string }) => {
+    if (!projectId || !run) return;
+    const approved = await confirmAction({
+      title: `Prepare amendments for ${candidate.name}?`,
+      message: 'Tellann will create reviewable suggestions from this observed journey.',
+      detail: 'A published Flow is reopened as a draft first. No suggestion is applied or published automatically.',
+      confirmLabel: 'Prepare suggestions',
+    });
+    if (!approved) return;
+    setDraftingFlow(true);
+    try {
+      if (candidate.lifecycleStatus !== 'DRAFT') await reopenDeclaredFlow(projectId, candidate.id);
+      await generateFlowSuggestions(projectId, candidate.id, {
+        trigger: 'FLOW_REVIEW_REQUESTED',
+        userDefinedGoals: observedDraftStateNames(run.observations).map((name) => `Reconcile observed state: ${name}`),
+      });
+      navigate(`/applications/${projectId}/intent/flows/${candidate.id}?sourceRunId=${encodeURIComponent(run.runId)}&review=1`);
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    } finally {
+      setDraftingFlow(false);
+    }
+  }, [generateFlowSuggestions, navigate, projectId, reopenDeclaredFlow, run]);
 
   if (!projectId) return <ApplicationRequired />;
   if (!run)
@@ -11955,10 +12971,16 @@ export function LiveRunPage() {
     plan?.states.find((state) => state.key === plan.initialStateKey)?.name ??
     plan?.initialStateKey ??
     null;
-  const tabCount = (entry: (typeof EVIDENCE_TABS)[number]) =>
+  const tabCount = (entry: { value: string; kinds: Array<LiveEvidence["kind"]> }) =>
     entry.value === "FINDINGS"
       ? findings.length
       : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+  const backendTrack = hasBackendTrack(run);
+  const backend = run.backend ?? null;
+  // `NONE` is a backend run, which never had a window; `CLOSED` is one the
+  // operator closed, which can be put back without restarting the run.
+  const browserStatus = run.browserStatus ?? "ACTIVE";
+  const runIsLive = run.status === "RUNNING" || run.status === "PAUSED";
 
   return (
     <div
@@ -12010,17 +13032,54 @@ export function LiveRunPage() {
         </div>
         <div className="run-toolbar-actions">
           <Status>{run.status}</Status>
-          <button
-            className="button"
-            type="button"
-            disabled={busy || run.status === "COMPLETED" || run.status === "FAILED"}
-            onClick={() => void runControl(focusRunBrowser)}
-          >
-            <ExternalLink size={15} />
-            Show browser
-          </button>
+          {browserStatus === "NONE" ? null : browserStatus === "CLOSED" ? (
+            <button
+              className="button primary"
+              type="button"
+              disabled={busy || !runIsLive}
+              title="Open a new window on this run. Capture never stopped."
+              onClick={() => void runControl(reopenRunBrowser)}
+            >
+              <RefreshCw size={15} />
+              Reopen browser
+            </button>
+          ) : (
+            <button
+              className="button"
+              type="button"
+              disabled={busy || !runIsLive}
+              onClick={() => void runControl(focusRunBrowser)}
+            >
+              <ExternalLink size={15} />
+              Show browser
+            </button>
+          )}
         </div>
       </header>
+
+      {outdatedSdks.length && !sdkBannerDismissed ? (
+        <div className="run-sdk-banner" role="status">
+          <TriangleAlert size={15} />
+          <div className="run-sdk-banner-body">
+            {outdatedSdks.map((sdk) => (
+              <span key={sdk.package}>
+                <strong>{sdk.package}</strong> is on <code>{sdk.installed}</code>
+                {sdk.latest ? (
+                  <>
+                    {" "}— <code>{sdk.latest}</code> is available.{" "}
+                  </>
+                ) : (
+                  " — a newer version is available. "
+                )}
+              </span>
+            ))}
+            This run still works either way; update when convenient.
+          </div>
+          <button type="button" className="button" onClick={() => setSdkBannerDismissed(true)}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       <section className="live-flow">
         <div
@@ -12059,64 +13118,110 @@ export function LiveRunPage() {
           </div>
         ) : null}
 
-        <div className="flow-plan-heading">
-          <h2>Expected states</h2>
-          {coverage ? (
-            <span>
-              {coverage.visitedStateKeys.length} / {coverage.expectedStates}
-            </span>
-          ) : null}
-        </div>
-
-        {plan && plan.states.length ? (
-          <ol className="flow-plan">
-            {plan.states.map((state, index) => {
-              const status = statuses.get(state.key) ?? "pending";
-              return (
-                <li key={state.key} className="flow-plan-state" data-status={status}>
-                  <span className="flow-plan-marker">
-                    {status === "done" ? <Check size={13} /> : index + 1}
-                  </span>
-                  <div>
-                    <strong>{state.name}</strong>
-                    <small>
-                      {status === "current"
-                        ? "You are here"
-                        : status === "done"
-                          ? "Visited"
-                          : status === "next"
-                            ? "Expected next"
-                            : state.role === "TERMINAL"
-                              ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
-                              : state.role === "INITIAL"
-                                ? "Starting point"
-                                : "Not reached yet"}
-                    </small>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+        {backendOnly && !plan ? (
+          // No Flow to reconcile against, and no browser/viewport to describe
+          // either — the space "Expected states" would otherwise leave empty
+          // goes to the numbers that actually tell the operator how this run
+          // is going.
+          <div className="flow-backend-summary">
+            <h2>This run</h2>
+            <dl className="property-list">
+              <div>
+                <dt>Elapsed</dt>
+                <dd>{formatDuration(elapsedMs)}</dd>
+              </div>
+              <div>
+                <dt>Requests received</dt>
+                <dd>{backend?.requests ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Failed responses</dt>
+                <dd>{backend?.errors ?? 0}</dd>
+              </div>
+              <div>
+                <dt>SDK connection</dt>
+                <dd>
+                  <Status>{backend?.requests ? "Receiving requests" : "Waiting for the first request"}</Status>
+                </dd>
+              </div>
+            </dl>
+          </div>
         ) : (
-          <p className="flow-plan-empty">
-            {run.expectedGraphVersionId
-              ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
-              : "This run is observational. Nothing is being compared against a declared Flow."}
-          </p>
+          <>
+            <div className="flow-plan-heading">
+              <h2>Expected states</h2>
+              {coverage ? (
+                <span>
+                  {coverage.visitedStateKeys.length} / {coverage.expectedStates}
+                </span>
+              ) : null}
+            </div>
+
+            {plan && plan.states.length ? (
+              <ol className="flow-plan">
+                {plan.states.map((state, index) => {
+                  const status = statuses.get(state.key) ?? "pending";
+                  return (
+                    <li key={state.key} className="flow-plan-state" data-status={status}>
+                      <span className="flow-plan-marker">
+                        {status === "done" ? <Check size={13} /> : index + 1}
+                      </span>
+                      <div>
+                        <strong>{state.name}</strong>
+                        <small>
+                          {status === "current"
+                            ? "You are here"
+                            : status === "done"
+                              ? "Visited"
+                              : status === "next"
+                                ? "Expected next"
+                                : state.role === "TERMINAL"
+                                  ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
+                                  : state.role === "INITIAL"
+                                    ? "Starting point"
+                                    : "Not reached yet"}
+                        </small>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="flow-plan-empty">
+                {run.expectedGraphVersionId
+                  ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
+                  : "This run is observational. Nothing is being compared against a declared Flow."}
+              </p>
+            )}
+          </>
         )}
       </section>
 
       <section className="live-browser">
         <div className="browser-toolbar">
-          <Globe2 size={16} />
-          <strong>Managed Chromium</strong>
+          {backendOnly ? <Network size={16} /> : <Globe2 size={16} />}
+          <strong>{backendOnly ? "Backend capture" : "Managed Chromium"}</strong>
           <span className="browser-toolbar-route">
-            {currentObservation?.url || run.targetUrl}
+            {backendOnly ? run.targetUrl : currentObservation?.url || run.targetUrl}
           </span>
           <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
         <div className="run-workspace">
-          {preBoundary ? (
+          {browserStatus === "CLOSED" && runIsLive ? (
+            <div className="run-rejection" role="status">
+              <TriangleAlert size={15} />
+              <div>
+                <strong>The managed browser window is closed</strong>
+                <p>
+                  Nothing was lost. The run is still recording, and everything
+                  captured so far is intact — reopen the window to carry on in
+                  the same session, or end the run to generate its report.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {preBoundary && !backendOnly ? (
             <section className="run-waiting">
               <header>
                 <Hourglass size={18} />
@@ -12186,7 +13291,29 @@ export function LiveRunPage() {
             </section>
           ) : null}
 
-          {preBoundary ? null : (
+          {backendOnly ? (
+            <>
+              <BackendRunFacts
+                summary={backend}
+                targetUrl={run.targetUrl}
+                connected={Boolean(backend?.requests)}
+              />
+              {backend?.requests ? (
+                <>
+                  <BackendEndpointTable endpoints={backend.endpoints} />
+                  <BackendModelTable models={backend.models} />
+                </>
+              ) : (
+                <BackendWaitingPanel
+                  targetUrl={run.targetUrl}
+                  applicationId={run.applicationId}
+                  environmentId={run.environmentId}
+                />
+              )}
+            </>
+          ) : null}
+
+          {preBoundary || backendOnly ? null : (
           <div className="run-facts">
             <article>
               <small>Current route</small>
@@ -12217,15 +13344,24 @@ export function LiveRunPage() {
             </article>
             <article>
               <small>Interaction mode</small>
-              <strong>{run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+              <strong>{run.mode === "OBSERVATION_ONLY" ? "Read only" : run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
               <span>
-                {run.interactionMode === "INSPECT"
+                {run.mode === "OBSERVATION_ONLY"
+                  ? "Application interaction is blocked; routes, requests, errors, performance, and passive evidence are still recorded."
+                  : run.interactionMode === "INSPECT"
                   ? "Click any element in the browser window to leave a comment."
                   : "Controls in the application behave normally."}
               </span>
             </article>
           </div>
           )}
+
+          {!backendOnly && backendTrack && backend?.requests ? (
+            <>
+              <BackendEndpointTable endpoints={backend.endpoints} />
+              <BackendModelTable models={backend.models} />
+            </>
+          ) : null}
 
           {preBoundary && !findings.length ? null : (
           <section className="run-findings">
@@ -12280,13 +13416,19 @@ export function LiveRunPage() {
             <div>
               <strong>
                 {run.phase === "IN_FLOW"
-                  ? "Recording this Flow in full"
+                  ? backendOnly
+                    ? "Recording every request in full"
+                    : "Recording this Flow in full"
                   : "Recording metadata only, for now"}
               </strong>
               <span>
                 {run.phase === "IN_FLOW"
-                  ? "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
-                  : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
+                  ? backendOnly
+                    ? "Routes, handlers, status codes, server-side timing, request and response payloads, query parameters, safe headers and the models each request touched are all being kept. Passwords, tokens, cookies and payment values are never captured; identifiers are pseudonymized and ordinary payload values are encrypted at rest."
+                    : "Clicks, forms, protected field values, application state, storage, requests, routes, performance and per-state screenshots are all being kept."
+                  : backendOnly
+                    ? "Routes, status codes, timing and the models each request touched are kept. Request and response payloads stay off until your application reports the Flow's first state."
+                    : "Routes, requests, console errors, viewport and performance are kept. Field values, application state and screenshots stay off until your application reports the Flow's first state."}
               </span>
             </div>
           </div>
@@ -12344,7 +13486,7 @@ export function LiveRunPage() {
           </div>
         </div>
         <div className="evidence-tabs" role="tablist">
-          {EVIDENCE_TABS.map((entry) => {
+          {evidenceTabs.map((entry) => {
             const Icon = entry.icon;
             return (
               <button
@@ -12411,13 +13553,17 @@ export function LiveRunPage() {
                     continuesGroup={
                       Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
                     }
+                    onOpenDetail={setDetailItem}
                   />
                 ))
               ) : (
                 <div className="evidence-empty">
                   {query || errorsOnly
                     ? "No rows match this filter."
-                    : "Evidence will appear here as you use the application."}
+                    : backendOnly
+                      ? BACKEND_EMPTY_EVIDENCE[activeTab.value as BackendEvidenceTabValue]
+                        ?? "Evidence will appear here as your server handles requests."
+                      : "Evidence will appear here as you use the application."}
                 </div>
               )}
             </>
@@ -12430,20 +13576,24 @@ export function LiveRunPage() {
           <code>{run.runId.slice(0, 8)}</code>
           <span className="run-mode-status" role="status" aria-live="polite">
             {controlError
-              ? controlError
-              : run.phase === "IN_FLOW"
-                ? "Recording the Flow in full"
+                ? controlError
+                : browserStatus === "CLOSED" && runIsLive
+                ? "Browser window closed — capture is still running"
+                : run.phase === "IN_FLOW"
+                ? backendOnly
+                  ? "Recording every request in full"
+                  : run.mode === "GUIDED" ? "Recording the Flow in full" : "Recording the session in full"
                 : "Metadata only until the Flow starts"}
           </span>
         </div>
         <div>
           {run.status === "RUNNING" || run.status === "PAUSED" ? (
             <>
-              <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
+              {run.mode !== "OBSERVATION_ONLY" && !backendOnly ? <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
                 <button
                   className={run.interactionMode === "NAVIGATE" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "NAVIGATE"}
-                  disabled={busy || run.status === "PAUSED"}
+                  disabled={busy || run.status === "PAUSED" || browserStatus !== "ACTIVE"}
                   onClick={() => void runControl(() => setRunInteractionMode("NAVIGATE"))}
                 >
                   Navigate
@@ -12451,12 +13601,12 @@ export function LiveRunPage() {
                 <button
                   className={run.interactionMode === "INSPECT" ? "selected" : ""}
                   aria-pressed={run.interactionMode === "INSPECT"}
-                  disabled={busy || run.status === "PAUSED"}
+                  disabled={busy || run.status === "PAUSED" || browserStatus !== "ACTIVE"}
                   onClick={() => void runControl(() => setRunInteractionMode("INSPECT"))}
                 >
                   Inspect
                 </button>
-              </div>
+              </div> : null}
               <button
                 className="button"
                 disabled={busy}
@@ -12490,6 +13640,25 @@ export function LiveRunPage() {
               )}
             </>
           ) : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED" && !run.expectedGraphVersionId ? (
+            <button className="button primary" disabled={busy || draftingFlow} onClick={() => void createFlowDraftFromRun()}>
+              <Workflow size={16} />
+              {draftingFlow ? "Creating draft…" : "Create reviewable Flow draft"}
+            </button>
+          ) : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED"
+            ? flowCandidates.map((candidate) => (
+                <button key={candidate.id} className="button" disabled={busy || draftingFlow} onClick={() => void prepareFlowAmendments(candidate)}>
+                  <GitCompareArrows size={16} />
+                  Amend {candidate.name} ({Math.round(candidate.score * 100)}% match)
+                </button>
+              ))
+            : null}
+          {run.status === "COMPLETED" && run.mode === "ASSISTED" && run.expectedGraphVersionId ? (
+            <Link className="button primary" to={`/applications/${projectId}/qa-runs/new?flowId=${encodeURIComponent(run.flowPlan?.flowId ?? '')}&environmentId=${encodeURIComponent(run.environmentId)}&mode=GUIDED`}>
+              <Play size={16} /> Run Guided
+            </Link>
+          ) : null}
         </div>
         <div>
           {confirmEnd && run.phase === "PRE_BOUNDARY"
@@ -12499,18 +13668,32 @@ export function LiveRunPage() {
               : `${run.evidence.length} rows shown · ${run.evidenceTrimmed} trimmed`}
         </div>
       </footer>
+      {detailItem ? (
+        <EvidenceDetailModal runId={run.runId} item={detailItem} onClose={() => setDetailItem(null)} />
+      ) : null}
     </div>
   );
 }
 
-function EvidenceRow({
+/**
+ * Memoized so a state push that changes one row (or adds a new one) does not
+ * re-render every other row already on screen — up to `EVIDENCE_WINDOW` of
+ * these mount at once, and a live run can push a new snapshot 4x/sec.
+ */
+/** Kinds backed by a full evidence event worth opening a detail view for. */
+const DETAILABLE_EVIDENCE_KINDS = new Set<LiveEvidence["kind"]>(["REQUEST", "SERVER", "DATA"]);
+
+const EvidenceRow = memo(function EvidenceRow({
   item,
   continuesGroup,
+  onOpenDetail,
 }: {
   item: LiveEvidence;
   continuesGroup?: boolean;
+  onOpenDetail?: (item: LiveEvidence) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const detailable = Boolean(onOpenDetail) && DETAILABLE_EVIDENCE_KINDS.has(item.kind);
 
   useEffect(() => {
     if (!menu) return;
@@ -12533,6 +13716,20 @@ function EvidenceRow({
       className={`evidence-row evidence-${item.level.toLowerCase()}`}
       data-group-continues={continuesGroup ? "true" : undefined}
       data-unrecorded={item.recorded === false ? "true" : undefined}
+      data-detailable={detailable ? "true" : undefined}
+      role={detailable ? "button" : undefined}
+      tabIndex={detailable ? 0 : undefined}
+      onClick={detailable ? () => onOpenDetail!(item) : undefined}
+      onKeyDown={
+        detailable
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenDetail!(item);
+              }
+            }
+          : undefined
+      }
       onContextMenu={(event) => {
         event.preventDefault();
         setMenu({ x: event.clientX, y: event.clientY });
@@ -12557,7 +13754,12 @@ function EvidenceRow({
         ) : null}
       </div>
       {menu ? (
-        <div className="evidence-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+        <div
+          className="evidence-menu"
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+        >
           <button type="button" role="menuitem" onClick={() => copy(item.message)}>
             <Copy size={13} />
             Copy message
@@ -12584,6 +13786,150 @@ function EvidenceRow({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+});
+
+/**
+ * A request, server error or data-access row's full evidence — the payload,
+ * headers and query the live row's summary line and `details` list never
+ * carry, fetched on demand rather than shipped to every row up front.
+ */
+function EvidenceDetailModal({
+  runId,
+  item,
+  onClose,
+}: {
+  runId: string;
+  item: LiveEvidence;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<Awaited<ReturnType<NonNullable<NonNullable<typeof window.tellann>["runs"]["getEvidenceEvent"]>>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [revealing, setRevealing] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void window.tellann?.runs
+      ?.getEvidenceEvent?.(runId, item.id)
+      .then((result) => {
+        if (!result) {
+          setError("This request hasn't finished uploading yet. Try again in a moment.");
+          return;
+        }
+        setDetail(result);
+      })
+      .catch(() => setError("Couldn't load this request's detail."))
+      .finally(() => setLoading(false));
+  }, [runId, item.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const reveal = async (valueId: string) => {
+    setRevealing(valueId);
+    try {
+      const result = await window.tellann?.runs?.revealProtectedValue?.(runId, valueId);
+      if (result) setRevealed((existing) => ({ ...existing, [valueId]: result.value }));
+    } finally {
+      setRevealing(null);
+    }
+  };
+
+  const metadata = (detail?.metadata ?? {}) as Record<string, unknown>;
+  const fields: Array<[string, unknown]> = (
+    [
+      ["Query", metadata.query],
+      ["Request headers", metadata.requestHeaders],
+      ["Request body", metadata.requestBody],
+      ["Response headers", metadata.responseHeaders],
+      ["Response body", metadata.responseBody],
+      ["Stack", metadata.stack],
+    ] as Array<[string, unknown]>
+  ).filter(([, value]) => value !== undefined && value !== null);
+
+  return (
+    <div
+      className="desktop-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="desktop-modal evidence-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="evidence-detail-title"
+      >
+        <button type="button" className="desktop-modal-close" aria-label="Close" onClick={onClose}>
+          <X size={16} />
+        </button>
+        <h2 id="evidence-detail-title">{item.message}</h2>
+        {item.details?.length ? (
+          <dl className="property-list">
+            {item.details.map((entry) => (
+              <div key={entry.label}>
+                <dt>{entry.label}</dt>
+                <dd>{entry.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {loading ? (
+          <p className="evidence-detail-status">Loading…</p>
+        ) : error ? (
+          <div className="evidence-detail-status">
+            <p>{error}</p>
+            <button type="button" className="button" onClick={load}>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <>
+            {fields.length ? (
+              fields.map(([label, value]) => (
+                <section key={label} className="evidence-detail-field">
+                  <h3>{label}</h3>
+                  <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
+                </section>
+              ))
+            ) : (
+              <p className="evidence-detail-status">
+                Nothing beyond the summary above was captured for this event.
+              </p>
+            )}
+            {detail?.protectedValues?.length ? (
+              <section className="evidence-detail-field">
+                <h3>Protected values</h3>
+                <ul className="evidence-protected-list">
+                  {detail.protectedValues.map((value) => (
+                    <li key={value.id}>
+                      <code>{value.keyPath}</code>
+                      {revealed[value.id] ? (
+                        <span className="mono">{revealed[value.id]}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={revealing === value.id}
+                          onClick={() => void reveal(value.id)}
+                        >
+                          {revealing === value.id ? "Revealing…" : `Reveal (${value.kind.toLowerCase()})`}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -12678,6 +14024,14 @@ function ArtifactLayout({
   );
 }
 
+/** Reads to a reviewer as the reason the capture exists, not as an enum. */
+const CAPTURE_REASON_LABELS: Record<string, string> = {
+  STATE_SETTLED: "Page settled after a route change",
+  RUN_FINAL: "Final state when the run ended",
+  INSPECT_ANNOTATION: "Attached to a reviewer comment",
+  FINDING: "The page when a problem was detected",
+};
+
 function ArtifactGrid({
   items,
   showStorage,
@@ -12729,12 +14083,43 @@ function ArtifactGrid({
                 </Status>
               </div>
               <h3>
+                {typeof metadata.sequence === "number"
+                  ? `${metadata.sequence}. `
+                  : ""}
                 {displayValue(
                   metadata.title ?? metadata.name,
                   `Capture ${index + 1}`,
                 )}
               </h3>
               <dl className="data-list">
+                {metadata.route ? (
+                  <div>
+                    <dt>Route</dt>
+                    <dd className="truncate-value">
+                      {displayValue(metadata.route)}
+                    </dd>
+                  </div>
+                ) : null}
+                {metadata.stateKey ? (
+                  <div>
+                    <dt>Flow state</dt>
+                    <dd className="truncate-value">
+                      {displayValue(metadata.stateKey)}
+                    </dd>
+                  </div>
+                ) : null}
+                {metadata.captureReason ? (
+                  <div>
+                    <dt>Why</dt>
+                    <dd>{CAPTURE_REASON_LABELS[String(metadata.captureReason)] ?? displayValue(metadata.captureReason)}</dd>
+                  </div>
+                ) : null}
+                {typeof metadata.accessibilityViolations === "number" ? (
+                  <div>
+                    <dt>A11y violations</dt>
+                    <dd>{metadata.accessibilityViolations}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Captured</dt>
                   <dd>{formatDate(item.capturedAt ?? item.createdAt)}</dd>
@@ -12795,8 +14180,8 @@ function FindingsLayout({ items }: { items: unknown[] }) {
   if (!items.length)
     return (
       <EmptyRunSection
-        title="No findings"
-        description="No issues were recorded for this run."
+        title="Nothing to review"
+        description="Everything this run exercised completed without a finding — functionality worked as expected."
       />
     );
   return (
@@ -13183,8 +14568,22 @@ export function RunDetailPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const captureTracks = Array.isArray(run?.captureTracks) && run.captureTracks.length
+    ? (run.captureTracks as string[])
+    : ["FRONTEND"];
+  const backendOnly = captureTracks.includes("BACKEND") && !captureTracks.includes("FRONTEND");
+  const hasFlow = Boolean(run?.flowId);
+  // Annotations, Replay and Graph are all pinned to a DOM element, a browser
+  // session or a visited page — none of which a backend-only run ever has.
+  // Reconciliation compares against a declared Flow, so it is left out too
+  // when this run never had one to reconcile against.
+  const runTabs = RUN_TABS.filter((tab) => {
+    if (backendOnly && (tab.value === "annotations" || tab.value === "replay" || tab.value === "graph")) return false;
+    if (tab.value === "reconciliation" && !hasFlow) return false;
+    return true;
+  });
   const requestedTab = searchParams.get("tab") ?? "evidence";
-  const activeTab = RUN_TABS.some((tab) => tab.value === requestedTab)
+  const activeTab = runTabs.some((tab) => tab.value === requestedTab)
     ? requestedTab
     : "evidence";
   useEffect(() => {
@@ -13267,6 +14666,9 @@ export function RunDetailPage() {
     (sum, value) => sum + Number(value || 0),
     0,
   );
+  const requestsHandled = Number(evidenceCounts.QA_BACKEND_REQUEST ?? 0);
+  const failedResponses = Number(evidenceCounts.QA_BACKEND_ERROR ?? 0);
+  const dataOperations = Number(evidenceCounts.QA_BACKEND_DATA_ACCESS ?? 0);
   const reportStatus = String(run.reportStatus ?? (run.reportId ? "READY" : "PENDING"));
   const processingLabels: Record<string, string> = {
     PENDING: "Uploading evidence",
@@ -13279,13 +14681,27 @@ export function RunDetailPage() {
   return (
     <Page
       title={`QA run ${runId.slice(0, 8)}`}
-      description="Run metadata, evidence, findings, reconciliation, and report status."
+      description={
+        backendOnly
+          ? "Requests handled, server errors, data operations and report status."
+          : "Run metadata, evidence, findings, reconciliation, and report status."
+      }
       actions={<Status>{status}</Status>}
     >
       <div className="metric-grid">
-        <Metric label="Evidence events" value={evidenceTotal} />
-        <Metric label="Findings" value={findings.length} />
-        <Metric label="Annotations" value={annotations.length} />
+        {backendOnly ? (
+          <>
+            <Metric label="Requests handled" value={requestsHandled} />
+            <Metric label="Failed responses" value={failedResponses} />
+            <Metric label="Data operations" value={dataOperations} />
+          </>
+        ) : (
+          <>
+            <Metric label="Evidence events" value={evidenceTotal} />
+            <Metric label="Findings" value={findings.length} />
+            <Metric label="Annotations" value={annotations.length} />
+          </>
+        )}
         <Metric
           label="Report"
           value={
@@ -13316,7 +14732,7 @@ export function RunDetailPage() {
         }
       >
         <TabsList aria-label="QA run details">
-          {RUN_TABS.map((tab) => (
+          {runTabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label}
               <span>
@@ -13324,15 +14740,32 @@ export function RunDetailPage() {
                   ? findings.length
                   : tab.value === "annotations"
                     ? annotations.length
-                  : tab.value === "artifacts" || tab.value === "evidence"
+                  : (tab.value === "artifacts" || tab.value === "evidence") && !backendOnly
                     ? artifacts.length
-                    : ""}
+                    : tab.value === "evidence" && backendOnly
+                      ? requestsHandled
+                      : ""}
               </span>
             </TabsTrigger>
           ))}
         </TabsList>
         <TabsContent value="evidence">
-          <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
+          {backendOnly ? (
+            requestsHandled || failedResponses || dataOperations ? (
+              <div className="metric-grid mt-4">
+                <Metric label="Requests handled" value={requestsHandled} />
+                <Metric label="Failed responses" value={failedResponses} />
+                <Metric label="Data operations" value={dataOperations} />
+              </div>
+            ) : (
+              <EmptyRunSection
+                title="No requests captured"
+                description="Requests your server handled during this run appear here once they are synchronized."
+              />
+            )
+          ) : (
+            <ArtifactLayout items={artifacts} heading="Captured evidence" runId={runId} />
+          )}
         </TabsContent>
         <TabsContent value="findings">
           <FindingsLayout items={findings} />
@@ -13344,14 +14777,30 @@ export function RunDetailPage() {
                 const annotation = asRecord(raw);
                 const author = asRecord(annotation.author);
                 const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
+                const sourceMapping = asRecord(asRecord(annotation.elementFingerprint).sourceMapping);
+                const isMatched = sourceMapping.status === "MATCHED";
+                const sourcePath = String(sourceMapping.path ?? "");
+                const sourceStart = Number(sourceMapping.startLine ?? 0);
+                const sourceEnd = Number(sourceMapping.endLine ?? sourceStart);
                 return (
                   <article className="annotation-card" key={String(annotation.id ?? index)}>
                     <div className="annotation-pin">{index + 1}</div>
                     <div>
-                      <strong>{String(author.displayName ?? "Tellann member")}</strong>
-                      <small>{formatDate(annotation.createdAt)} · {String(annotation.normalizedRoute ?? "/")}</small>
-                      <p>{String(annotation.comment ?? "")}</p>
-                      {mentions.length ? <div className="annotation-mentions">Mentioned: {mentions.map((item) => `@${String(asRecord(item).displayNameSnapshot ?? "member")}`).join(", ")}</div> : null}
+                      {author.displayName ? <strong>{String(author.displayName)}</strong> : null}
+                      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.875rem" }}>
+                        {isMatched && sourcePath ? <li><strong>File Name:</strong> {sourcePath}</li> : null}
+                        {isMatched && sourceStart > 0 ? <li><strong>Line Number:</strong> {sourceStart}{sourceEnd > sourceStart ? `–${sourceEnd}` : ""}</li> : null}
+                        <li><strong>Route Path Name:</strong> {String(annotation.normalizedRoute ?? "/")}</li>
+                        {annotation.comment ? <li><strong>Comment:</strong> {String(annotation.comment)}</li> : null}
+                        <li><strong>Time Stamp:</strong> {formatDate(annotation.createdAt)}</li>
+                      </ul>
+                      {mentions.length ? (
+                        <div className="annotation-mentions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                          {mentions.map((item, i) => (
+                            <Status key={i}><span>@{String(asRecord(item).displayNameSnapshot ?? "member")}</span></Status>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </article>
                 );
@@ -13827,6 +15276,13 @@ export function ReportDetailPage() {
     return counts;
   }, {});
   const eventTotal = Number(appendix.eventTotal ?? evidenceEvents.length);
+  const backendSummary = asRecord(sections.backendSummary);
+  const reportCaptureTracks = Array.isArray(runSummary.captureTracks)
+    ? runSummary.captureTracks.map((track) => String(track))
+    : [];
+  const backendOnlyReport =
+    hasBackendSection(sections) && reportCaptureTracks.length > 0 && !reportCaptureTracks.includes("FRONTEND");
+  const hasFlow = Boolean(flowSummary.name || report.flow);
 
   const reveal = async (valueId: string) => {
     if (!runId || revealBusy) return;
@@ -13848,45 +15304,70 @@ export function ReportDetailPage() {
       description={`${report.application.name} · ${report.environment.name} · generated ${new Date(report.generatedAt).toLocaleString()}`}
       actions={<Status>{report.status}</Status>}
     >
+      {report.summaryText ? <p className="report-summary-text">{report.summaryText}</p> : null}
       <div className="metric-grid">
-        <Metric
-          label="Expected coverage"
-          value={
-            report.coverage.expected == null
-              ? "Observational"
-              : `${report.coverage.expected.toFixed(1)}%`
-          }
-        />
-        <Metric
-          label="Observed states"
-          value={report.summary.observedStateCount}
-        />
-        <Metric
-          label="Transitions"
-          value={report.summary.observedTransitionCount}
-        />
-        <Metric
-          label="High priority"
-          value={report.summary.criticalOrHighFindings}
-        />
+        {backendOnlyReport ? (
+          // Coverage, states and transitions are a browser journey's measures.
+          // A run that never opened one is read by its traffic instead.
+          <>
+            <Metric label="Requests handled" value={Number(backendSummary.requests ?? 0)} />
+            <Metric label="Failed responses" value={Number(backendSummary.errors ?? 0)} />
+            <Metric
+              label="p95 response"
+              value={backendSummary.p95Ms == null ? "—" : `${Math.round(Number(backendSummary.p95Ms))} ms`}
+            />
+            <Metric label="High priority" value={report.summary.criticalOrHighFindings} />
+          </>
+        ) : (
+          <>
+            <Metric
+              label="Expected coverage"
+              value={
+                report.coverage.expected == null
+                  ? "Observational"
+                  : `${report.coverage.expected.toFixed(1)}%`
+              }
+            />
+            <Metric
+              label="Observed states"
+              value={report.summary.observedStateCount}
+            />
+            <Metric
+              label="Transitions"
+              value={report.summary.observedTransitionCount}
+            />
+            <Metric
+              label="High priority"
+              value={report.summary.criticalOrHighFindings}
+            />
+          </>
+        )}
       </div>
 
       <section className="content-card report-section">
         <div className="card-heading">
           <div>
-            <small>Flow and run</small>
-            <h2>{String(flowSummary.name ?? report.flow?.name ?? "Selected Flow")}</h2>
+            <small>{hasFlow ? "Flow and run" : "Run"}</small>
+            <h2>{hasFlow ? String(flowSummary.name ?? report.flow?.name ?? "Selected Flow") : "Backend capture"}</h2>
           </div>
-          <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status>
+          {hasFlow ? <Status>Version {String(flowSummary.version ?? report.flow?.version ?? "legacy")}</Status> : null}
         </div>
-        <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
+        {hasFlow ? (
+          <p>{String(flowSummary.purpose ?? report.flow?.purpose ?? "No purpose was declared for this Flow.")}</p>
+        ) : (
+          <p>No Flow was declared for this run — nothing here was reconciled against an expected structure.</p>
+        )}
         <dl className="detail-list report-detail-grid">
           <div><dt>Target</dt><dd>{String(runSummary.url ?? "Not recorded")}</dd></div>
           <div><dt>Environment</dt><dd>{report.environment.name} · {report.environment.type}</dd></div>
           <div><dt>Outcome</dt><dd>{String(runSummary.boundaryOutcome ?? report.boundary.completionReason ?? report.status)}</dd></div>
           <div><dt>Duration</dt><dd>{formatReportDuration(runSummary.durationMs)}</dd></div>
-          <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
-          <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
+          {hasFlow ? (
+            <div><dt>Declared structure</dt><dd>{String(flowSummary.declaredStateCount ?? "—")} states · {String(flowSummary.declaredTransitionCount ?? "—")} transitions</dd></div>
+          ) : null}
+          {backendOnlyReport ? null : (
+            <div><dt>Window resolution</dt><dd>{latestViewport?.innerWidth && latestViewport?.innerHeight ? `${String(latestViewport.innerWidth)} × ${String(latestViewport.innerHeight)} CSS px` : "Not recorded"}</dd></div>
+          )}
         </dl>
         {runSummary.captureDegraded ? (
           <div className="report-warning" role="alert">
@@ -13895,6 +15376,8 @@ export function ReportDetailPage() {
           </div>
         ) : null}
       </section>
+
+      <BackendReportCard sections={sections} />
 
       <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
 
@@ -13915,9 +15398,13 @@ export function ReportDetailPage() {
                 {priority.toLowerCase()}
               </span>
             ))}
-          <span><strong>{missingStateCount}</strong>states not reached</span>
-          <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
-          <span><strong>{annotations.length}</strong>annotations</span>
+          {hasFlow ? (
+            <>
+              <span><strong>{missingStateCount}</strong>states not reached</span>
+              <span><strong>{missingTransitionCount}</strong>transitions not reached</span>
+            </>
+          ) : null}
+          {backendOnlyReport ? null : <span><strong>{annotations.length}</strong>annotations</span>}
           <span><strong>{eventTotal}</strong>evidence events</span>
         </div>
         {detailedFindings.length || criticalFindings.length ? (
@@ -13931,8 +15418,12 @@ export function ReportDetailPage() {
           </>
         ) : (
           <EmptyRunSection
-            title="No findings"
-            description="This run produced no evidence-backed issue that needs your attention."
+            title="Nothing to review"
+            description={
+              backendOnlyReport
+                ? "Every request this run captured completed without a finding — functionality worked as expected."
+                : "This run produced no evidence-backed issue that needs your attention."
+            }
           />
         )}
       </section>
@@ -13949,9 +15440,11 @@ export function ReportDetailPage() {
           <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
             Review evidence timeline
           </Link>
-          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
-            View Flow reconciliation
-          </Link>
+          {hasFlow ? (
+            <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
+              View Flow reconciliation
+            </Link>
+          ) : null}
           <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}`}>
             Open QA run
           </Link>

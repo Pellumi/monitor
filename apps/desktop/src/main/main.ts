@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification as ElectronNotification, session, shell } from 'electron';
-import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -17,6 +17,7 @@ import {
   hierarchyChildren,
   projectAnalysis,
   redactSecrets,
+  resolveAnnotationSource,
   scanWorkspace,
   workingTreeIdentity,
   type previewSanitizedSourceArchive,
@@ -30,7 +31,8 @@ import {
   type RunFlowPlanState,
   type RunFlowPlanTransition,
 } from '@tellann/browser-observer';
-import { DesktopCloudClient } from './cloud-client';
+import { DesktopCloudClient, cloudApiUrl } from './cloud-client';
+import { checkSdkVersions } from './sdk-version-check';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
 import { initializeUpdater } from './update-manager';
 import { closeLocalStore, deleteLocalState, listLocalStateKeys, readLocalState, writeLocalState } from './local-store';
@@ -51,6 +53,8 @@ import { renderQualityReport, qualityReportFileBase, type QualityReportFormat } 
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
 import { loadDesktopEnvironment } from './environment';
 import { DesktopNotificationClient } from './notification-client';
+import { packagedBrowserExecutable } from './browser-executable';
+import { cancelCodebaseAnalysisRun } from './codebase-analysis-cancellation';
 import {
   attachWindowChrome,
   handleSecondInstanceArgv,
@@ -68,7 +72,6 @@ loadDesktopEnvironment();
 
 let mainWindow: BrowserWindow | null = null;
 let quittingAfterRunCleanup = false;
-const packagedChromiumPath = path.join(process.resourcesPath, 'chromium', 'chrome-win64', 'chrome.exe');
 const cloud = new DesktopCloudClient();
 const notificationClient = new DesktopNotificationClient({
   apiUrl: process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000',
@@ -148,6 +151,7 @@ function whenLocalAnalysisSettles(applicationId: string): Promise<{ ok: boolean;
   });
 }
 let pendingSetupHandoffToken: string | null = null;
+let pendingQARunDeepLink: string | null = null;
 let activeOrganizationId: string | null = null;
 const execFileAsync = promisify(execFile);
 const instrumentation = new InstrumentationController(
@@ -177,20 +181,55 @@ const instrumentation = new InstrumentationController(
   },
 );
 
-function captureSetupDeepLink(values: string[]): void {
+function captureTellannDeepLink(values: string[]): void {
   const candidate = values.find((value) => value.startsWith('tellann://'));
   if (!candidate) return;
   try {
     const url = new URL(candidate);
-    if (url.hostname !== 'connect') return;
-    const token = url.searchParams.get('handoff');
-    if (token && token.length >= 32) pendingSetupHandoffToken = token;
+    if (url.hostname === 'connect') {
+      const token = url.searchParams.get('handoff');
+      if (token && token.length >= 32) pendingSetupHandoffToken = token;
+      return;
+    }
+    if (url.hostname !== 'qa-runs' || url.pathname !== '/new') return;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const applicationId = url.searchParams.get('applicationId') ?? url.searchParams.get('appId');
+    if (!applicationId || !uuid.test(applicationId)) return;
+    const params = new URLSearchParams();
+    for (const key of ['environmentId', 'flowId', 'workflowId']) {
+      const value = url.searchParams.get(key);
+      if (value && uuid.test(value)) params.set(key, value);
+    }
+    const mode = url.searchParams.get('mode');
+    if (mode && ['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY'].includes(mode)) params.set('mode', mode);
+    const target = url.searchParams.get('targetUrl');
+    if (target) {
+      try {
+        const parsedTarget = new URL(target);
+        if (['http:', 'https:'].includes(parsedTarget.protocol) && !parsedTarget.username && !parsedTarget.password) {
+          const names = [...new Set(parsedTarget.searchParams.keys())].sort();
+          parsedTarget.search = names.length ? `?${names.map((name) => `${encodeURIComponent(name)}=`).join('&')}` : '';
+          parsedTarget.hash = '';
+          params.set('targetUrl', parsedTarget.toString().slice(0, 2048));
+        }
+      } catch {
+        // Ignore an invalid target; the run form will fall back to the environment URL.
+      }
+    }
+    if (!params.has('flowId') && params.has('workflowId')) params.set('flowId', params.get('workflowId')!);
+    pendingQARunDeepLink = `/applications/${applicationId}/qa-runs/new${params.size ? `?${params.toString()}` : ''}`;
   } catch {
     // Ignore malformed external protocol input.
   }
 }
 
-captureSetupDeepLink(process.argv);
+function deliverPendingQARunDeepLink(): void {
+  if (!pendingQARunDeepLink || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  mainWindow.webContents.send(IPC.notificationOpen, { deepLink: pendingQARunDeepLink });
+  pendingQARunDeepLink = null;
+}
+
+captureTellannDeepLink(process.argv);
 const evidenceQueues = new Map<string, QAEvidenceEvent[]>();
 const evidenceFlushes = new Map<string, Promise<void>>();
 /**
@@ -331,6 +370,7 @@ function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEven
     evidenceCounts: state.evidenceCounts,
     reportStatus: null,
     safeError: null,
+    captureTracks: state.captureTracks,
     timestamp: new Date().toISOString(),
     ...input,
   } satisfies RunLifecycleEvent);
@@ -503,6 +543,18 @@ async function resumeInterruptedRunSynchronization(): Promise<void> {
   }
 }
 
+/** Errors the backend SDK reports, whichever name its integration used. */
+const BACKEND_ERROR_EVENT_TYPES = new Set(['SERVER_ERROR', 'ERROR_EVENT', 'ERROR_OCCURRED', 'UNHANDLED_EXCEPTION']);
+
+/**
+ * Where a process the operator starts themselves reports into the active run.
+ *
+ * Held here rather than on the run state because the run state is written to
+ * the recovery journal and uploaded on completion, and a run credential must
+ * be in neither. It lives exactly as long as the relay does.
+ */
+let activeRelayConnection: { runId: string; endpoint: string; relayToken: string } | null = null;
+
 async function handleRelayedEvents(events: Array<Record<string, unknown>>): Promise<void> {
   const supported = new Set(['FLOW_INITIAL_STATE', 'FLOW_STATE_REACHED', 'FLOW_TRANSITION', 'FLOW_TERMINAL_STATE']);
   for (const event of events) {
@@ -515,6 +567,23 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
     if (eventType === 'BUSINESS_EVENT' && businessEventType === 'QA_CLIENT_STATE_MUTATION') {
       await observer.recordClientStateEvent(event);
       continue;
+    }
+    // The backend track. These used to be forwarded to the cloud and dropped
+    // here, which is why a backend run showed the two requests the managed
+    // browser made and nothing the application's own server handled.
+    if (active.captureTracks?.includes('BACKEND') && String(event.source ?? '') !== 'frontend-sdk') {
+      if (eventType === 'API_REQUEST') {
+        await observer.recordBackendRequestEvent(event);
+        continue;
+      }
+      if (eventType === 'BUSINESS_EVENT' && businessEventType === 'QA_BACKEND_DATA_ACCESS') {
+        await observer.recordBackendDataAccessEvent(event);
+        continue;
+      }
+      if (BACKEND_ERROR_EVENT_TYPES.has(eventType)) {
+        await observer.recordBackendErrorEvent(event);
+        continue;
+      }
     }
     if (!supported.has(eventType)) continue;
     const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {};
@@ -546,7 +615,7 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
 }
 
 const observer = new BrowserObserver({
-  executablePath: app.isPackaged ? packagedChromiumPath : undefined,
+  executablePath: app.isPackaged ? packagedBrowserExecutable(process.resourcesPath) : undefined,
   // Headless mode is reserved for deterministic installed-application
   // acceptance. Normal desktop runs always show the managed browser.
   headless: process.env.TELLANN_BROWSER_HEADLESS === 'true',
@@ -556,17 +625,46 @@ const observer = new BrowserObserver({
     await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
     await applicationLauncher.stop().catch(() => undefined);
     await relay.stop().catch(() => undefined);
+    activeRelayConnection = null;
     await cloud.failRun(state.runId, 'Managed browser terminated unexpectedly').catch(() => undefined);
   },
   onObservation: async () => undefined,
   onEvidenceEvent: async (event) => enqueueEvidence(event),
   searchMentionableMembers: (runId, query) => cloud.mentionableMembers(runId, query),
-  onAnnotation: (runId, annotation) => cloud.saveAnnotation(runId, annotation),
+  onAnnotation: (runId, annotation, applicationId) => {
+    return cloud.saveAnnotation(runId, attachAnnotationSource(applicationId, annotation));
+  },
   // Pushing the state is what lets the run page stop asking for a full copy of
   // it several times a second, which on a busy page meant serialising hundreds
   // of evidence rows across the IPC boundary for no new information.
   onStateChanged: (state) => sendRunState(state),
 });
+
+function attachAnnotationSource<T extends CreateQARunAnnotation>(applicationId: string | undefined, annotation: T): T {
+  const unavailable = (
+    status: 'NOT_CONNECTED' | 'ANALYSIS_UNAVAILABLE' | 'NO_MATCH',
+    analysisId: string | null = null,
+  ) => ({
+    status, path: null, startLine: null, endLine: null, symbol: null,
+    confidence: null, strategy: null, analysisId,
+  } as const);
+  let sourceMapping: NonNullable<CreateQARunAnnotation['elementFingerprint']['sourceMapping']>;
+  if (!applicationId || !selectedWorkspaces.has(applicationId)) {
+    sourceMapping = unavailable('NOT_CONNECTED');
+  } else {
+    const analysis = readAnalysisState(applicationId)?.analysis ?? null;
+    if (!analysis || !['COMPLETED', 'PARTIAL'].includes(analysis.status)) {
+      sourceMapping = unavailable('ANALYSIS_UNAVAILABLE', analysis?.id ?? null);
+    } else {
+      sourceMapping = resolveAnnotationSource(analysis, annotation)
+        ?? unavailable('NO_MATCH', analysis.id);
+    }
+  }
+  return {
+    ...annotation,
+    elementFingerprint: { ...annotation.elementFingerprint, sourceMapping },
+  };
+}
 
 /**
  * Evidence still waiting to reach the cloud. A run that looks healthy while its
@@ -669,12 +767,15 @@ async function completeActiveRun(completionReason: 'TERMINAL_STATE_REACHED' | 'M
     if (resolvedReason === 'TERMINAL_STATE_REACHED' && ElectronNotification.isSupported()) {
       new ElectronNotification({
         title: 'Terminal state reached',
-        body: 'Chromium was closed and your QA report is being prepared.',
+        body: state.captureTracks?.includes('FRONTEND') === false
+          ? 'Capture stopped and your QA report is being prepared.'
+          : 'Chromium was closed and your QA report is being prepared.',
       }).show();
     }
     await relay.emit('QA_RUN_COMPLETED', { observationCount: state.observations.length, findingCount: state.findings.length, completionReason: resolvedReason });
     await applicationLauncher.stop();
     await relay.stop();
+    activeRelayConnection = null;
     await flushEvidence(state.runId, true);
     await cloud.completeRun({ ...state, completionReason: resolvedReason });
     deleteLocalState(`qa-run-recovery:${state.runId}`);
@@ -1871,6 +1972,8 @@ function markAnalysisCancelled(applicationId: string): void {
   if (!state) return;
   writeAnalysisState(applicationId, {
     ...state,
+    // Stop polling a cancelled cloud job. A later rescan registers a fresh job.
+    cloudJobId: null,
     uploadProgress: null,
     analysis: state.analysis
       ? {
@@ -2073,11 +2176,12 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
-    captureSetupDeepLink(argv);
+    captureTellannDeepLink(argv);
     handleSecondInstanceArgv(argv);
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+    deliverPendingQARunDeepLink();
   });
 }
 
@@ -2292,10 +2396,26 @@ function registerIpc(): void {
     if (typeof id !== 'string') throw new Error('INVALID_ID');
     return notificationClient.open(id);
   });
-  ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown, filters?: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return cloud.runs(applicationId);
+    return cloud.runs(applicationId, (filters ?? {}) as Record<string, string>);
+  });
+  ipcMain.handle(IPC.renameRun, (event, runId: string, title: string) => {
+    assertTrustedSender(event);
+    return cloud.renameRun(runId, title);
+  });
+  ipcMain.handle(IPC.archiveRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.archiveRun(runId);
+  });
+  ipcMain.handle(IPC.restoreRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.restoreRun(runId);
+  });
+  ipcMain.handle(IPC.deleteRun, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.deleteRun(runId);
   });
   ipcMain.handle(IPC.getRun, async (event, runId: unknown) => {
     assertTrustedSender(event);
@@ -3000,29 +3120,22 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const state = readAnalysisState(applicationId);
-    // Before a job exists there is nothing for the API to cancel, and no local
-    // worker either: the run being stopped is the archive build or the upload.
     const upload = snapshotUploads.get(applicationId);
-    if (upload) {
-      upload.cancelled = true;
-      upload.abort?.();
-      markAnalysisCancelled(applicationId);
-      return { cancelled: true };
-    }
-    if (state?.mode === 'cloud' && state.cloudJobId) {
-      await cloud.cancelCloudCodebaseAnalysis(applicationId, state.cloudJobId).catch(() => undefined);
-      return { cancelled: true };
-    }
     const worker = codebaseWorkers.get(applicationId);
-    if (!worker) return { cancelled: false };
-    await worker.terminate();
-    codebaseWorkers.delete(applicationId);
-    patchLocalAnalysis(applicationId, {
-      status: 'CANCELLED',
-      stageMessage: 'Analysis cancelled',
-      completedAt: new Date().toISOString(),
+    return cancelCodebaseAnalysisRun({
+      state: state ? {
+        mode: state.mode,
+        cloudJobId: state.cloudJobId,
+        status: state.analysis?.status ?? null,
+      } : null,
+      upload,
+      stopLocalWorker: worker ? async () => {
+        await worker.terminate();
+        codebaseWorkers.delete(applicationId);
+      } : undefined,
+      cancelCloudJob: (jobId) => cloud.cancelCloudCodebaseAnalysis(applicationId, jobId),
+      markCancelled: () => markAnalysisCancelled(applicationId),
     });
-    return { cancelled: true };
   });
   ipcMain.handle(IPC.rescanCodebase, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -3348,11 +3461,31 @@ function registerIpc(): void {
     if (!(INSTRUMENTATION_FRAMEWORK_IDS as readonly string[]).includes(String(adapterId))) throw new Error('INVALID_INSTRUMENTATION_ADAPTER');
     return instrumentation.propose({ ...context, adapterId: adapterId as InstrumentationFrameworkId });
   });
-  ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown) => {
+  ipcMain.handle(IPC.listInstrumentationPlans, async (event, applicationId: unknown, filters: unknown) => {
     assertTrustedSender(event);
     if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
-    return instrumentation.list(applicationId);
+    const parsed = InstrumentationPlanFiltersSchema.safeParse(filters ?? {});
+    if (!parsed.success) throw new Error('INVALID_INSTRUMENTATION_FILTERS');
+    return instrumentation.list(applicationId, parsed.data);
   });
+  ipcMain.handle(IPC.renameInstrumentationPlan, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; planId?: unknown; title?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+    if (value.title !== null && typeof value.title !== 'string') throw new Error('INVALID_INSTRUMENTATION_TITLE');
+    return instrumentation.rename(value.applicationId, value.planId, value.title);
+  });
+  for (const [channel, action] of [
+    [IPC.archiveInstrumentationPlan, 'archive'],
+    [IPC.restoreInstrumentationPlan, 'restore'],
+  ] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertTrustedSender(event);
+      const value = input as { applicationId?: unknown; planId?: unknown };
+      if (typeof value.applicationId !== 'string' || typeof value.planId !== 'string') throw new Error('INVALID_INSTRUMENTATION_PLAN_REQUEST');
+      return instrumentation[action](value.applicationId, value.planId);
+    });
+  }
   ipcMain.handle(IPC.getInstrumentationPlan, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; planId?: unknown };
@@ -3518,6 +3651,9 @@ function registerIpc(): void {
         onQueueChanged: (queue) => writeLocalState(queueKey, queue),
         onEvents: handleRelayedEvents,
       });
+      activeRelayConnection = {
+        runId, endpoint: relaySession.endpoint, relayToken: relaySession.relayToken,
+      };
       await relay.emit('QA_RUN_STARTED', { mode: parsed.mode });
       if (parsed.launchCommandId) {
         if (!parsed.launchApproved) throw new Error('APPLICATION_LAUNCH_APPROVAL_REQUIRED');
@@ -3545,23 +3681,26 @@ function registerIpc(): void {
         agentVersion: app.getVersion(),
       }, path.join(app.getPath('userData'), 'qa-runs'));
       startRunMaintenance(runId);
-      emitRunLifecycle(state, { cloudStatus: 'WAITING_FOR_INITIAL' });
+      emitRunLifecycle(state, { cloudStatus: parsed.mode === 'GUIDED' ? 'WAITING_FOR_INITIAL' : 'RECORDING' });
       // Resolved after the browser is up so a slow graph read never delays the
       // run itself; the page shows a generic plan until this lands.
-      void resolveRunFlowPlan({
-        applicationId: parsed.applicationId,
-        flowId: parsed.flowId,
-        expectedGraphVersionId: parsed.expectedGraphVersionId,
-      }).then((plan) => {
-        if (observer.getState()?.runId !== runId) return;
-        sendRunState(observer.setFlowPlan(plan));
-      }).catch(() => undefined);
+      if (parsed.flowId && parsed.expectedGraphVersionId) {
+        void resolveRunFlowPlan({
+          applicationId: parsed.applicationId,
+          flowId: parsed.flowId,
+          expectedGraphVersionId: parsed.expectedGraphVersionId,
+        }).then((plan) => {
+          if (observer.getState()?.runId !== runId) return;
+          sendRunState(observer.setFlowPlan(plan));
+        }).catch(() => undefined);
+      }
       return decorateRunState(state);
     } catch (error) {
       stopRunMaintenance();
       await applicationLauncher.stop().catch(() => undefined);
       await relay.emit('QA_RUN_FAILED', { reason: 'browser_start_failed' }).catch(() => undefined);
       await relay.stop().catch(() => undefined);
+      activeRelayConnection = null;
       await cloud.failRun(runId, error instanceof Error ? error.message : 'Managed browser failed to start').catch(() => undefined);
       throw error;
     }
@@ -3646,6 +3785,43 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return decorateRunState(await observer.focusBrowser());
   });
+  ipcMain.handle(IPC.reopenRunBrowser, async (event) => {
+    assertTrustedSender(event);
+    return decorateRunState(await observer.reopenBrowser());
+  });
+  ipcMain.handle(IPC.getRunRelayConnection, (event) => {
+    assertTrustedSender(event);
+    const state = observer.getState();
+    if (!state || !activeRelayConnection || activeRelayConnection.runId !== state.runId) return null;
+    return {
+      endpoint: activeRelayConnection.endpoint,
+      relayToken: activeRelayConnection.relayToken,
+      runId: state.runId,
+      sessionId: state.sessionId,
+      traceId: state.traceId,
+      applicationId: state.applicationId,
+      environmentId: state.environmentId,
+    };
+  });
+  ipcMain.handle(IPC.listIngestionKeys, async (event, environmentId: string) => {
+    assertTrustedSender(event);
+    return { gatewayEndpoint: cloudApiUrl(), keys: await cloud.listIngestionKeys(environmentId) };
+  });
+  ipcMain.handle(IPC.createIngestionKey, async (event, environmentId: string, label?: string) => {
+    assertTrustedSender(event);
+    return { gatewayEndpoint: cloudApiUrl(), key: await cloud.createIngestionKey(environmentId, label) };
+  });
+  ipcMain.handle(IPC.getEvidenceEvent, (event, runId: string, eventId: string) => {
+    assertTrustedSender(event);
+    return cloud.evidenceEvent(runId, eventId);
+  });
+  ipcMain.handle(IPC.checkSdkVersions, (event, applicationId: string) => {
+    assertTrustedSender(event);
+    const workspace = selectedWorkspaces.get(applicationId);
+    // No local workspace attached yet — nothing on disk to check.
+    if (!workspace) return [];
+    return checkSdkVersions(workspace.root);
+  });
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
@@ -3657,6 +3833,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerWindowIpc(assertTrustedSender);
   onEndRunRequested(() => void completeActiveRun('MANUAL_STOP_BEFORE_TERMINAL'));
   await createWindow();
+  deliverPendingQARunDeepLink();
   // Re-arm notifications if a session is already stored, and again whenever the
   // window regains focus (the access token may have been refreshed since).
   void syncNotificationOrganization();
@@ -3671,7 +3848,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  captureSetupDeepLink([url]);
+  captureTellannDeepLink([url]);
+  deliverPendingQARunDeepLink();
 });
 
 app.on('window-all-closed', () => {
@@ -3683,7 +3861,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   quittingAfterRunCleanup = true;
   void observer.abort('Desktop application closed during a guided run')
-    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); return state; })
+    .then(async (state) => { await relay.emit('QA_RUN_FAILED', { reason: 'desktop_closed' }).catch(() => undefined); await applicationLauncher.stop().catch(() => undefined); await relay.stop().catch(() => undefined); activeRelayConnection = null; return state; })
     .then((state) => cloud.failRun(state.runId, 'Desktop application closed during a guided run'))
     .catch(() => undefined)
     .finally(() => app.quit());

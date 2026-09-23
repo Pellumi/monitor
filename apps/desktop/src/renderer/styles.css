@@ -4368,6 +4368,7 @@ button:disabled {
   display: grid;
   grid-template:
     "toolbar toolbar toolbar" var(--toolbar-height)
+    "banner banner banner" auto
     "flow browser evidence" minmax(0, 1fr)
     "controls controls controls" var(--toolbar-height)
     / var(--flow-track) minmax(320px, 1fr) var(--evidence-track);
@@ -4391,6 +4392,33 @@ button:disabled {
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-0);
+}
+.run-sdk-banner {
+  grid-area: banner;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: 12px;
+}
+.run-sdk-banner strong {
+  color: var(--text-strong);
+}
+.run-sdk-banner .run-sdk-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.run-sdk-banner code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  font: 11px/1.4 var(--font-mono);
+}
+.run-sdk-banner button {
+  flex: none;
 }
 .run-toolbar-title {
   display: flex;
@@ -4700,6 +4728,8 @@ button:disabled {
 .run-coverage,
 .run-findings,
 .run-timeline,
+.run-endpoints,
+.run-models,
 .run-waiting {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -5096,6 +5126,13 @@ button:disabled {
 .evidence-row[data-unrecorded="true"] {
   opacity: 0.66;
 }
+.evidence-row[data-detailable="true"] {
+  cursor: pointer;
+}
+.evidence-row[data-detailable="true"]:hover,
+.evidence-row[data-detailable="true"]:focus-visible {
+  background: var(--surface-1);
+}
 .evidence-unrecorded {
   display: block;
   margin-top: 3px;
@@ -5130,6 +5167,71 @@ button:disabled {
 .evidence-menu button:hover {
   background: var(--accent);
   color: var(--on-accent);
+}
+
+.evidence-detail-modal {
+  width: min(720px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+}
+.evidence-detail-modal h2 {
+  padding-right: 28px;
+  font: 14px/1.4 var(--font-mono);
+}
+.evidence-detail-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.evidence-detail-field {
+  margin-top: 16px;
+}
+.evidence-detail-field h3 {
+  margin: 0 0 6px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.evidence-detail-field pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-0);
+  color: var(--text);
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.evidence-protected-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.evidence-protected-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-0);
+}
+.evidence-protected-list code {
+  color: var(--text-subtle);
+  font: 11px/1 var(--font-mono);
+}
+.evidence-protected-list .mono {
+  color: var(--text);
+  font: 11px/1 var(--font-mono);
 }
 
 /* ── Transport ───────────────────────────────────────────────────────────── */
@@ -6699,9 +6801,45 @@ button:disabled {
   font-size: 12px;
   line-height: 1.6;
 }
+/* The head and every row are separate grid containers, so a content-sized
+   column resolves differently in each one and the columns stop lining up.
+   Everything but the title is therefore a fixed width. */
 .setup-history .table-head,
 .setup-history .table-row {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 150px 186px 178px;
+}
+.setup-history .table-head > span:last-child,
+.setup-history-row-actions {
+  justify-self: end;
+}
+.setup-history-row-actions {
+  display: flex;
+  gap: 6px;
+}
+.setup-history-title {
+  display: block;
+  color: var(--strong);
+  font-weight: 600;
+}
+/* Filters: one row on a wide window, wrapping to as many as it needs. */
+.setup-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.setup-history-field {
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+}
+.setup-history-search {
+  flex: 1 1 220px;
+}
+.setup-history-filter-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
 }
 
 /* Applying a setup task: live steps and the changes being made. */
@@ -7621,15 +7759,18 @@ button:disabled {
   bottom: 20px;
   z-index: 80;
   width: min(430px, calc(100vw - 40px));
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid var(--border-strong);
   border-left: 3px solid #6ee7a0;
   border-radius: 6px;
   background: var(--surface-1);
   color: var(--text-strong);
   box-shadow: 0 18px 48px rgb(0 0 0 / calc(0.55 * var(--shadow-k)));
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .run-mode-selector {
@@ -7703,7 +7844,7 @@ button:disabled {
   place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: 10%;
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 750;
@@ -7712,7 +7853,38 @@ button:disabled {
 .annotation-card small,
 .annotation-mentions { color: var(--muted); font-size: 11px; }
 .annotation-mentions { margin-top: 6px; color: #a9c7ff; }
+.annotation-source {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  /* margin-top: 8px; */
+  color: #75a7ff;
+  font-size: 11px;
+}
+.annotation-source span {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font: 600 10px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.annotation-source code {
+  overflow-wrap: anywhere;
+  color: inherit;
+  font: 11px/1.5 var(--font-mono);
+}
 
+.report-summary-text {
+  margin: -6px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .report-section { margin-top: 16px; scroll-margin-top: 20px; }
 .report-detail-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .report-detail-grid > div {
@@ -7825,4 +7997,162 @@ button:disabled {
   .run-processing-card,
   .protected-value-row { align-items: flex-start; flex-direction: column; }
   .report-title-list li { align-items: flex-start; flex-direction: column; gap: 5px; }
+}
+
+/* ── backend run workspace ────────────────────────────────────────────────
+   A backend run has no route, viewport or interaction mode to report, so the
+   shared facts grid carries request totals instead, and the workspace gains
+   two tables: what was called, and what it changed. */
+.run-fact-wide {
+  grid-column: 1 / -1;
+}
+.run-facts article[data-tone="warning"] strong {
+  color: var(--caution);
+}
+.run-endpoints > header,
+.run-models > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.run-endpoints h2,
+.run-models h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+.run-endpoints > header span,
+.run-models > header span {
+  color: var(--text-muted);
+  font: 11px/1 var(--font-mono);
+}
+.run-endpoints table,
+.run-models table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+.run-endpoints th,
+.run-endpoints td,
+.run-models th,
+.run-models td {
+  padding: 7px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font: 10px/1.5 var(--font-mono);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.run-endpoints thead th,
+.run-models thead th {
+  color: var(--text-subtle);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.run-endpoints tbody th,
+.run-models tbody th {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.run-endpoints tbody tr:last-child th,
+.run-endpoints tbody tr:last-child td,
+.run-models tbody tr:last-child th,
+.run-models tbody tr:last-child td {
+  border-bottom: 0;
+}
+.run-endpoints tbody tr[data-failing="true"] th {
+  color: var(--danger);
+}
+/* The method sits with the route rather than in a column of its own: read
+   together they are one identifier, and apart they are two lookups. */
+.run-endpoint-method {
+  display: inline-block;
+  min-width: 42px;
+  margin-right: 8px;
+  color: var(--text-subtle);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+.run-endpoint-method[data-method="post"],
+.run-endpoint-method[data-method="put"],
+.run-endpoint-method[data-method="patch"] {
+  color: var(--caution);
+}
+.run-endpoint-method[data-method="delete"] {
+  color: var(--danger);
+}
+
+/* A line of explanation under a form control, for choices whose consequence is
+   not obvious from the label alone. */
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font: 10px/1.6 var(--font-mono);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The environment a server started outside Tellann needs in order to report
+   into the open run. Shown only while the run has nothing to display, because
+   that is the only time it answers a question the operator is actually asking. */
+.run-connect {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2, var(--surface-1));
+}
+.run-connect-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.run-connect-heading strong {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+.run-connect p {
+  margin: 6px 0 10px;
+  color: var(--text-muted);
+  font: 10px/1.6 var(--font-mono);
+}
+.run-connect pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font: 10px/1.7 var(--font-mono);
+  user-select: text;
+}
+
+/* What a report section could not see, listed under it rather than buried in
+   the downloadable document. */
+.report-limitations {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font: 10px/1.7 var(--font-mono);
+}
+.report-limitations li {
+  margin-bottom: 4px;
+}
+/* Inside a report card the tables carry their own frame already. */
+.report-section .run-endpoints,
+.report-section .run-models {
+  margin-top: 16px;
 }

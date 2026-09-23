@@ -593,6 +593,36 @@ button:disabled {
   width: min(280px, 100%);
   padding: 0 10px;
 }
+.segmented-control {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-0);
+}
+.segmented-control button {
+  min-height: calc(var(--control-height) - 4px);
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.segmented-control button:hover {
+  color: var(--text-strong);
+}
+.segmented-control button.selected {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+.list-row[data-archived="true"] {
+  opacity: 0.66;
+}
 .select-content {
   padding: 4px;
   border: 1px solid var(--border);
@@ -1279,6 +1309,181 @@ button:disabled {
   margin: 0;
   color: var(--text-strong);
   overflow-wrap: anywhere;
+}
+
+/* ── Setup history ─────────────────────────────────────────────────────── */
+/* The filter row borrows the shell's own controls — the same field height,
+   border treatment and accent underline as the title bar's selects — so the
+   card reads as part of the app rather than as a form dropped into it. */
+.setup-history > summary {
+  color: var(--text-strong);
+  font: 600 13px var(--font-ui);
+}
+.setup-history-field > span {
+  color: var(--text-muted);
+  font: 600 11px var(--font-ui);
+  text-transform: none;
+}
+.setup-history-field .select-container,
+.setup-history-field .select-trigger {
+  width: 100%;
+}
+.setup-history-search-input {
+  position: relative;
+  display: block;
+}
+.setup-history-search-input > svg {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  color: var(--text-subtle);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.setup-history-field input {
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  color: var(--text-strong);
+  font: 12px var(--font-ui);
+}
+.setup-history-search-input input {
+  padding-left: 28px;
+}
+.setup-history-field input:focus {
+  border-color: var(--border);
+  border-bottom-color: var(--accent);
+  outline: none;
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+.setup-history-field input[type="search"]::-webkit-search-cancel-button {
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+/* The native picker glyph is black-on-black in the dark theme. */
+.setup-history-field input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+}
+.setup-history-field input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+:root:not([data-theme="light"])
+  .setup-history-field
+  input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+.setup-history-row-actions .button,
+.setup-history-filter-actions .button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.setup-history-filter-actions .button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+.setup-history .table-row {
+  align-items: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.setup-history-title {
+  color: var(--text-strong);
+  font: 600 12px var(--font-ui);
+}
+.setup-history-title:hover {
+  color: var(--accent);
+}
+/* An operator can name a task anything; the row keeps its height either way. */
+.setup-history-title,
+.setup-history .table-row > span:first-child > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Narrow windows drop the created column rather than crushing every one of
+   them; the date is still on the task's own page. */
+@media (width < 900px) {
+  .setup-history .table-head > span:nth-child(3),
+  .setup-history .table-row > span:nth-child(3) {
+    display: none;
+  }
+  .setup-history .table-head,
+  .setup-history .table-row {
+    grid-template-columns: minmax(0, 1fr) 150px 178px;
+  }
+}
+/* Re-narrowing an existing list keeps the rows readable rather than replacing
+   them with a skeleton: only the first fetch has nothing to show. */
+.setup-history .data-table[data-refreshing="true"] {
+  opacity: 0.55;
+  transition: opacity 120ms ease-out;
+}
+.setup-history .page-empty.is-inline {
+  margin: 28px auto 24px;
+}
+
+/* A stand-in with the table's own shell and columns, so the card settles into
+   its final shape instead of jumping when the rows arrive. */
+.setup-history-skeleton .table-row {
+  min-height: 46px;
+}
+.setup-history-bar {
+  display: block;
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 300% 100%;
+  animation: flow-skeleton-shimmer 1.8s linear infinite;
+}
+.setup-history-bar[data-bar="title"] {
+  width: 58%;
+}
+.setup-history-bar[data-bar="subtitle"] {
+  width: 38%;
+  height: 7px;
+  margin-top: 7px;
+}
+.setup-history-bar[data-bar="status"] {
+  width: 62px;
+  height: 16px;
+  border-radius: var(--radius);
+}
+.setup-history-bar[data-bar="date"] {
+  width: 74%;
+}
+.setup-history-bar[data-bar="action"] {
+  width: 56px;
+  height: 22px;
+  border-radius: var(--radius);
+}
+.setup-history-skeleton .table-row:nth-child(3) .setup-history-bar[data-bar="title"] {
+  width: 44%;
+}
+.setup-history-skeleton .table-row:nth-child(4) .setup-history-bar[data-bar="title"] {
+  width: 66%;
+}
+.setup-history-skeleton .table-row:nth-child(4) .setup-history-bar[data-bar="subtitle"] {
+  width: 30%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .setup-history-bar {
+    animation: none;
+  }
+  .setup-history .data-table[data-refreshing="true"] {
+    transition: none;
+  }
 }
 
 /* ── Overview and repository analysis ──────────────────────────────────── */

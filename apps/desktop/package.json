@@ -2,7 +2,12 @@
   "name": "@tellann/desktop",
   "version": "0.1.0",
   "description": "Tellann desktop agent for guided browser QA, expected-flow inference, and bounded instrumentation.",
-  "author": "Tellann",
+  "author": {
+    "name": "Tellann Support",
+    "email": "support@tellann.co"
+  },
+  "homepage": "https://tellann.co",
+  "desktopName": "Tellann",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -12,8 +17,12 @@
     "prebuild": "pnpm icon:generate && pnpm --filter @tellann/flow-layout build",
     "build": "vite build && tsc -p tsconfig.main.json",
     "start": "electron dist/main/main/main.js",
-    "package:win": "pnpm build && electron-builder --win nsis",
-    "test:main": "pnpm build && node --test dist/main/main/application-launcher.test.js dist/main/main/git-checkpoint.test.js dist/main/main/flow-marker-scan.test.js dist/main/main/gateway-endpoint.test.js dist/main/main/qa-branch.test.js dist/main/main/quality-report-document.test.js dist/main/main/sdk-installation.test.js dist/main/main/update-policy.test.js",
+    "browser:install": "playwright install chromium",
+    "package:win": "pnpm browser:install && pnpm build && electron-builder --win nsis",
+    "package:linux": "pnpm browser:install && pnpm build && electron-builder --linux AppImage deb",
+    "package:linux:appimage": "pnpm browser:install && pnpm build && electron-builder --linux AppImage",
+    "package:linux:deb": "pnpm browser:install && pnpm build && electron-builder --linux deb",
+    "test:main": "pnpm build && node --test dist/main/main/application-launcher.test.js dist/main/main/browser-executable.test.js dist/main/main/codebase-analysis-cancellation.test.js dist/main/main/git-checkpoint.test.js dist/main/main/flow-marker-scan.test.js dist/main/main/gateway-endpoint.test.js dist/main/main/qa-branch.test.js dist/main/main/quality-report-document.test.js dist/main/main/sdk-installation.test.js dist/main/main/python-environment.test.js dist/main/main/update-policy.test.js",
     "typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.main.json"
   },
   "dependencies": {
@@ -54,7 +63,7 @@
     "appId": "com.tellann.desktop",
     "productName": "Tellann",
     "icon": "build/icon.png",
-    "beforePack": "build/before-pack.cjs",
+    "beforePack": "scripts/stage-browser.cjs",
     "asar": true,
     "files": [
       "dist/**/*",
@@ -79,6 +88,10 @@
         "to": "icon-light.png"
       },
       {
+        "from": "build/chromium",
+        "to": "chromium"
+      },
+      {
         "from": ".env.production",
         "to": ".env.production"
       }
@@ -89,6 +102,17 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
+      "artifactName": "Tellann-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "executableName": "tellann",
+      "syncDesktopName": true,
       "artifactName": "Tellann-${version}-${arch}.${ext}"
     },
     "protocols": [

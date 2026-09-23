@@ -45,7 +45,31 @@ class RecordingOpener:
         return _Response()
 
     def bodies(self) -> List[Dict[str, Any]]:
-        return [json.loads(request.data.decode("utf-8")) for request in self.requests]
+        """Bodies posted to the main event endpoint.
+
+        Excludes the QA-evidence relay requests a request/error event can
+        also produce (see `evidence_bodies`) so every existing assertion
+        about "the event this call sent" keeps meaning exactly that, rather
+        than also picking up its QA-evidence side effect.
+        """
+        return [
+            json.loads(request.data.decode("utf-8"))
+            for request in self.requests
+            if request.full_url.endswith("/v1/events")
+        ]
+
+    def evidence_bodies(self) -> List[Dict[str, Any]]:
+        """Events posted to the QA-evidence relay endpoint, if any.
+
+        Flattened out of the `{"events": [...]}` batch envelope so a test can
+        assert on one event the way it does for `bodies()`.
+        """
+        return [
+            event
+            for request in self.requests
+            if "/qa-evidence/batch" in request.full_url
+            for event in json.loads(request.data.decode("utf-8"))["events"]
+        ]
 
 
 def configured(opener: RecordingOpener) -> TellannBackend:
@@ -106,6 +130,70 @@ class EventEnvelopeTest(unittest.TestCase):
         client.verify_installation()
         client.flush(timeout=3)
         self.assertEqual(opener.bodies()[0]["eventType"], "TELLANN_INITIALIZED")
+        client.teardown()
+
+
+class QaEvidenceRelayTest(unittest.TestCase):
+    """A process configured with a standing ingestion key — the case a
+    deployed server is in, since it is never restarted just to hand the SDK a
+    fresh per-run credential — also relays its backend evidence so a QA run
+    picks it up without the server ever learning which run is in progress."""
+
+    def test_a_request_is_relayed_as_qa_backend_request_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_api("post", "/invoices/{pk}", 201, 12.5, request_id="req-1")
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_REQUEST")
+        self.assertEqual(evidence["applicationId"], "app-1")
+        self.assertEqual(evidence["environmentId"], "env-1")
+        self.assertEqual(evidence["metadata"]["method"], "POST")
+        self.assertEqual(evidence["metadata"]["statusCode"], 201)
+        self.assertNotIn("runId", evidence)  # left for the server to resolve
+        client.teardown()
+
+    def test_a_server_error_is_relayed_as_qa_backend_error_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.capture_error(ValueError("boom"))
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_ERROR")
+        self.assertEqual(evidence["metadata"]["message"], "boom")
+        client.teardown()
+
+    def test_data_access_is_relayed_as_qa_backend_data_access_evidence(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_data_access("Invoice", "update")
+        client.flush(timeout=3)
+
+        (evidence,) = opener.evidence_bodies()
+        self.assertEqual(evidence["eventType"], "QA_BACKEND_DATA_ACCESS")
+        self.assertEqual(evidence["metadata"]["model"], "Invoice")
+        client.teardown()
+
+    def test_a_process_pointed_at_the_desktops_local_relay_is_not_relayed_twice(self) -> None:
+        # The local relay only ever binds to loopback (`LocalRunRelay.start`);
+        # its own `/v1/events` handling already turns this into evidence, so a
+        # second post here would double it.
+        opener = RecordingOpener()
+        client = TellannBackend()
+        client.initialize(
+            endpoint="http://127.0.0.1:54832",
+            application_id="app-1",
+            environment_id="env-1",
+            api_key="run-credential",
+            session_id="session-1",
+            transport=EventTransport("http://127.0.0.1:54832", "run-credential", opener=opener),
+        )
+        client.track_api("get", "/invoices", 200, 4.0)
+        client.flush(timeout=3)
+
+        self.assertEqual(opener.evidence_bodies(), [])
         client.teardown()
 
 
@@ -343,6 +431,241 @@ class DjangoMiddlewareTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = opener.bodies()[0]
         self.assertEqual(body["metadata"]["route"], "/invoices/<int:pk>/")
+        client.teardown()
+
+
+class BackendCaptureTest(unittest.TestCase):
+    """What a backend QA run records about one handled request."""
+
+    def test_a_request_carries_its_payload_without_its_credentials(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        client.track_api(
+            "post",
+            "/api/orders/<int:pk>",
+            201,
+            91.4,
+            endpoint="/api/orders/8213",
+            handler="orders.views.update",
+            framework="django",
+            query={"include": "items", "api_key": "live_abc123"},
+            request_body={"note": "rush", "password": "hunter2"},
+            response_body={"id": 8213, "status": "created"},
+            request_headers={"content-type": "application/json", "cookie": "sid=1"},
+            response_headers={"content-type": "application/json", "set-cookie": "sid=2"},
+        )
+        client.flush(timeout=3)
+
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertEqual(metadata["route"], "/api/orders/<int:pk>")
+        self.assertEqual(metadata["endpoint"], "/api/orders/8213")
+        self.assertEqual(metadata["method"], "POST")
+        self.assertEqual(metadata["handler"], "orders.views.update")
+        self.assertEqual(metadata["responseBody"]["status"], "created")
+        self.assertGreater(metadata["requestBytes"], 0)
+        self.assertGreater(metadata["responseBytes"], 0)
+
+        # Credentials never leave the process, wherever they appear.
+        self.assertEqual(metadata["requestBody"]["password"], "[REDACTED]")
+        self.assertEqual(metadata["query"]["api_key"], "[REDACTED]")
+        self.assertEqual(metadata["requestBody"]["note"], "rush")
+        self.assertNotIn("cookie", metadata["requestHeaders"])
+        self.assertNotIn("set-cookie", metadata["responseHeaders"])
+        self.assertEqual(metadata["requestHeaders"]["content-type"], "application/json")
+        client.teardown()
+
+    def test_capture_can_be_narrowed_without_losing_the_request(self) -> None:
+        opener = RecordingOpener()
+        client = TellannBackend()
+        client.initialize(
+            endpoint="https://gateway.example.com/",
+            application_id="app-1",
+            capture={"request_body": False, "response_body": False, "headers": False},
+            transport=EventTransport("https://gateway.example.com", None, opener=opener),
+        )
+        client.track_api(
+            "GET", "/api/orders", 200, 12,
+            request_body={"note": "rush"},
+            response_body=[{"id": 1}],
+            request_headers={"content-type": "application/json"},
+        )
+        client.flush(timeout=3)
+
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertNotIn("requestBody", metadata)
+        self.assertNotIn("responseBody", metadata)
+        self.assertNotIn("requestHeaders", metadata)
+        # Sizes survive, so throughput is still reportable.
+        self.assertGreater(metadata["requestBytes"], 0)
+        client.teardown()
+
+    def test_models_touched_while_a_request_is_in_flight_are_attached_to_it(self) -> None:
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        context = new_request_context(method="POST", route="/api/orders/<int:pk>")
+        token = enter_request_context(context)
+        try:
+            client.track_data_access("Order", "update", records=1)
+            client.track_data_access("Order", "update", records=2)
+            client.track_data_access("Payment", "select", records=3)
+            client.flush(timeout=3)
+            # Nothing is sent while the request is running: a view that queries
+            # in a loop would otherwise produce a request's worth of events.
+            self.assertEqual(opener.bodies(), [])
+            client.track_api("POST", "/api/orders/<int:pk>", 200, 40)
+            client.flush_data_access(context)
+        finally:
+            exit_request_context(token)
+        client.flush(timeout=3)
+
+        bodies = opener.bodies()
+        request = next(body for body in bodies if body["eventType"] == "API_REQUEST")
+        # One entry per model and operation, with the record counts summed.
+        self.assertEqual(request["metadata"]["models"], [
+            {"model": "Order", "operation": "update", "records": 3, "count": 2, "mutation": True},
+            {"model": "Payment", "operation": "select", "records": 3, "count": 1, "mutation": False},
+        ])
+
+        data_events = [body for body in bodies if body["eventType"] == "BUSINESS_EVENT"]
+        self.assertEqual(len(data_events), 2)
+        self.assertEqual(data_events[0]["metadata"]["businessEventType"], "QA_BACKEND_DATA_ACCESS")
+        self.assertEqual(data_events[0]["metadata"]["model"], "Order")
+        self.assertEqual(data_events[0]["metadata"]["count"], 2)
+        self.assertEqual(data_events[0]["metadata"]["records"], 3)
+        self.assertTrue(data_events[0]["metadata"]["mutation"])
+        self.assertEqual(data_events[0]["metadata"]["route"], "/api/orders/<int:pk>")
+        self.assertFalse(data_events[1]["metadata"]["mutation"])
+        client.teardown()
+
+    def test_flushing_twice_does_not_double_report(self) -> None:
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        context = new_request_context(method="GET", route="/api/orders")
+        token = enter_request_context(context)
+        try:
+            client.track_data_access("Order", "select")
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            self.assertEqual(len(opener.bodies()), 1)
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            self.assertEqual(len(opener.bodies()), 1)
+        finally:
+            exit_request_context(token)
+        client.teardown()
+
+    def test_data_access_outside_a_request_is_reported_without_a_route(self) -> None:
+        opener = RecordingOpener()
+        client = configured(opener)
+        # No request to attach to and nothing to flush it later, so it is sent now.
+        client.track_data_access("Invoice", "delete", records=4)
+        client.flush(timeout=3)
+        metadata = opener.bodies()[0]["metadata"]
+        self.assertIsNone(metadata["route"])
+        self.assertTrue(metadata["mutation"])
+        self.assertEqual(metadata["count"], 1)
+        client.teardown()
+
+    def test_an_oversized_payload_is_described_rather_than_truncated(self) -> None:
+        from tellann.capture import resolve_capture_config, sanitize_payload
+
+        capture = resolve_capture_config({"max_body_bytes": 256})
+        clipped = sanitize_payload({"rows": [{"value": "x" * 100} for _ in range(20)]}, capture)
+        self.assertTrue(clipped["truncated"])
+        self.assertEqual(clipped["keys"], ["rows"])
+
+
+class DjangoReadHookTest(unittest.TestCase):
+    """Reads are taken from the shape of a statement and nothing else."""
+
+    def test_a_select_reports_the_table_it_reads(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        self.assertEqual(
+            table_read_by('SELECT "orders_order"."id" FROM "orders_order" WHERE "orders_order"."id" = %s'),
+            "orders_order",
+        )
+        self.assertEqual(table_read_by("select a.id from `orders` a"), "orders")
+
+    def test_nothing_but_the_table_name_is_taken_from_a_statement(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        # A literal in the statement must never come back out of it.
+        table = table_read_by(
+            "SELECT id FROM customers WHERE email = 'person@example.com' AND token = 'abc123'"
+        )
+        self.assertEqual(table, "customers")
+        self.assertNotIn("person@example.com", table or "")
+        self.assertNotIn("abc123", table or "")
+
+    def test_writes_and_bookkeeping_are_left_to_the_signals(self) -> None:
+        from tellann.integrations.django_orm import table_read_by
+
+        # Writes come from model signals, which name the model rather than the
+        # table, so the statement wrapper stays out of their way.
+        for statement in (
+            'INSERT INTO "orders_order" (id) VALUES (1)',
+            'UPDATE "orders_order" SET total = 1',
+            'DELETE FROM "orders_order"',
+            "BEGIN",
+            "COMMIT",
+            "SAVEPOINT s1",
+        ):
+            self.assertIsNone(table_read_by(statement), statement)
+
+        # Django's own tables are not the application's models.
+        self.assertIsNone(table_read_by("SELECT * FROM django_session"))
+        self.assertIsNone(table_read_by("SELECT 1"))
+        self.assertIsNone(table_read_by(""))
+
+    def test_a_read_is_recorded_against_the_request_and_never_sent_on_its_own(self) -> None:
+        from tellann.integrations.django_orm import read_wrapper
+        from tellann.request_context import (
+            enter_request_context,
+            exit_request_context,
+            new_request_context,
+        )
+
+        opener = RecordingOpener()
+        client = configured(opener)
+        context = new_request_context(method="GET", route="/orders")
+        token = enter_request_context(context)
+        try:
+            executed = []
+
+            def execute(sql, params, many, ctx):
+                executed.append(sql)
+                return "rows"
+
+            for _ in range(40):
+                result = read_wrapper(execute, 'SELECT id FROM "orders_order"', None, False, {})
+                self.assertEqual(result, "rows", "the wrapper returns what the query returned")
+
+            self.assertEqual(len(executed), 40, "every statement still ran")
+            client.flush(timeout=3)
+            self.assertEqual(opener.bodies(), [], "reads are recorded, not sent one by one")
+
+            client.flush_data_access(context)
+            client.flush(timeout=3)
+            bodies = opener.bodies()
+            self.assertEqual(len(bodies), 1, "forty reads of one table are one row")
+            self.assertEqual(bodies[0]["metadata"]["model"], "orders_order")
+            self.assertEqual(bodies[0]["metadata"]["count"], 40)
+            self.assertFalse(bodies[0]["metadata"]["mutation"])
+        finally:
+            exit_request_context(token)
         client.teardown()
 
 

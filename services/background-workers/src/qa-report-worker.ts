@@ -9,6 +9,7 @@ import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tellann/email';
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
+import { summarizeBackendEvidence } from './qa-backend-report';
 
 const AiImprovementSchema = z.object({
   suggestions: z.array(z.object({
@@ -44,6 +45,41 @@ export function resolveFindingScope(
 
 export function isInFlow(item: ScopedImprovement): boolean {
   return item.scope !== 'PRE_BOUNDARY';
+}
+
+type DeclaredState = { key: string; name: string; role: string };
+type DeclaredTransition = { from: string; to: string; action: string };
+type AcceptedFlowEvent = { eventType: string; stateKey: string | null; metadata: unknown };
+
+/**
+ * Reconciliation exists only when the run was pinned to an immutable Flow
+ * version. Session-scoped capture can still contain state-shaped telemetry,
+ * but it must never turn that telemetry into an expected-coverage claim.
+ */
+export function deriveFlowAnalysis(
+  hasDeclaredFlow: boolean,
+  declaredStates: DeclaredState[],
+  declaredTransitions: DeclaredTransition[],
+  acceptedEvents: AcceptedFlowEvent[],
+) {
+  if (!hasDeclaredFlow) {
+    return { missingStates: [], missingTransitions: [], unexpectedStates: [], expectedCoverage: null, reconciledFlows: 0 };
+  }
+  const observedStateKeys = new Set(acceptedEvents.map((event) => normalize(event.stateKey)).filter(Boolean));
+  const observedTransitionKeys = new Set(acceptedEvents.filter((event) => event.eventType === 'FLOW_TRANSITION').map((event) => {
+    const metadata = event.metadata as any;
+    return `${normalize(metadata?.fromStateKey)}>${normalize(event.stateKey)}`;
+  }));
+  const missingStates = declaredStates.filter((state) => !observedStateKeys.has(state.key));
+  const missingTransitions = declaredTransitions.filter((transition) => !observedTransitionKeys.has(`${transition.from}>${transition.to}`));
+  const unexpectedStates = [...observedStateKeys].filter((state) => !declaredStates.some((declared) => declared.key === state));
+  return {
+    missingStates,
+    missingTransitions,
+    unexpectedStates,
+    expectedCoverage: declaredStates.length ? ((declaredStates.length - missingStates.length) / declaredStates.length) * 100 : null,
+    reconciledFlows: 1,
+  };
 }
 
 /**
@@ -140,7 +176,7 @@ async function notifyReportReady(prisma: PrismaClient, reportId: string) {
       templateKey: 'qa-report-ready',
       variables: {
         applicationName: run.application.name,
-        flowName: run.flow?.name ?? 'Selected Flow',
+        flowName: run.flow?.name ?? 'Observational QA session',
         reportUrl: appUrl(deepLink),
       },
     },
@@ -172,7 +208,7 @@ async function notifyReportReady(prisma: PrismaClient, reportId: string) {
         templateKey: 'qa-report-mentioned',
         variables: {
           applicationName: run.application.name,
-          flowName: run.flow?.name ?? 'Selected Flow',
+          flowName: run.flow?.name ?? 'Observational QA session',
           annotationCount,
           reportUrl: appUrl(`${deepLink}#annotations`),
         },
@@ -216,6 +252,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   });
   if (!report) throw new Error('QA_REPORT_NOT_FOUND');
   const run = report.run;
+  const hasDeclaredFlow = Boolean(run.expectedGraphVersion);
   const snapshot = run.expectedGraphVersion?.snapshot as any;
   const declaredStates = (Array.isArray(snapshot?.states) ? snapshot.states : []).map((state: any) => ({
     key: normalize(state.behaviorKey ?? state.stateName ?? state.name),
@@ -235,9 +272,8 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     const metadata = event.metadata as any;
     return `${normalize(metadata?.fromStateKey)}>${normalize(event.stateKey)}`;
   }));
-  const missingStates = declaredStates.filter((state: any) => !observedStateKeys.has(state.key));
-  const missingTransitions = declaredTransitions.filter((transition: any) => !observedTransitionKeys.has(`${transition.from}>${transition.to}`));
-  const unexpectedStates = [...observedStateKeys].filter((state) => !declaredStates.some((declared: any) => declared.key === state));
+  const flowAnalysis = deriveFlowAnalysis(hasDeclaredFlow, declaredStates, declaredTransitions, accepted);
+  const { missingStates, missingTransitions, unexpectedStates } = flowAnalysis;
 
   await prisma.qAReport.update({ where: { id: reportId }, data: { status: QAReportStatus.ANALYZING, rulesStatus: 'RUNNING' } });
   const deterministic = [
@@ -267,13 +303,13 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       evidenceIds: finding.evidenceEvents.map((link) => link.evidenceEventId), effort: 'MEDIUM', reproductionPath: finding.reproductionSteps,
       // A finding with no recorded scope must not silently pass as in-Flow:
       // resolve it from the run's boundary instead.
-      scope: resolveFindingScope(finding.scope, Boolean(run.boundaryStartedAt)),
+      scope: hasDeclaredFlow ? resolveFindingScope(finding.scope, Boolean(run.boundaryStartedAt)) : 'SESSION',
     })),
   ].sort((left, right) => (severityRank[left.priority] ?? 99) - (severityRank[right.priority] ?? 99));
   // Declared-but-unobserved states and transitions are absence findings: they
   // belong to the Flow itself and carry no scope of their own.
-  const inFlowDeterministic = deterministic.filter(isInFlow);
-  const preBoundaryDeterministic = deterministic.filter((item) => !isInFlow(item));
+  const inFlowDeterministic = hasDeclaredFlow ? deterministic.filter(isInFlow) : deterministic;
+  const preBoundaryDeterministic = hasDeclaredFlow ? deterministic.filter((item) => !isInFlow(item)) : [];
 
   let aiSuggestions: any[] = [];
   let aiStatus = 'NOT_ENTITLED_OR_CONFIGURED';
@@ -291,7 +327,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
           // findings must not seed recommendations that land in that section.
           deterministicFindings: inFlowDeterministic.map(({ id, priority, title, impact, confidence, suggestedAction, evidenceIds }) => ({ id, priority, title, impact, confidence, suggestedAction, evidenceIds })),
           performance: run.evidenceEvents
-            .filter((event) => event.eventType === 'QA_PAGE_PERFORMANCE' && event.scope === 'IN_FLOW')
+            .filter((event) => event.eventType === 'QA_PAGE_PERFORMANCE' && (!hasDeclaredFlow || event.scope === 'IN_FLOW'))
             .map((event) => ({ id: event.id, route: event.normalizedRoute, metrics: event.metadata })),
         };
         const generated = await provider.generateStructured({
@@ -350,6 +386,10 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // Report what was actually captured rather than inferring it from whether a
   // patch set happened to be attached.
   const hasClientStateEvidence = run.evidenceEvents.some((event) => event.eventType === 'QA_CLIENT_STATE_MUTATION');
+  // Re-derived from the persisted evidence rather than carried over from the
+  // desktop's live totals: the run state is trimmed as a run grows, and a
+  // report has to be reproducible from what was actually stored.
+  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
   const viewportHistory = run.evidenceEvents
     .filter((event) => event.eventType === 'QA_VIEWPORT_CHANGED')
     .map((event) => {
@@ -368,10 +408,26 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
         orientation: metadata.orientation == null ? null : String(metadata.orientation),
       };
     });
+  // One plain-English sentence, ahead of everything structured below it.
+  // A person skimming the JSON — or an AI agent handed this report to act
+  // on — reads this first rather than reconstructing it from raw counts and
+  // arrays; keeping it a single field is what makes that reliable.
+  const totalFindings = run.findings.length;
+  const criticalOrHighCount = run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length;
+  const backendOnlyRun = run.captureTracks.includes('BACKEND') && !run.captureTracks.includes('FRONTEND');
+  const findingsClause = totalFindings === 0
+    ? 'No findings were raised — everything this run exercised completed as expected.'
+    : `${totalFindings} finding${totalFindings === 1 ? '' : 's'} raised (${criticalOrHighCount} critical or high priority).`;
+  const summaryText = backendOnlyRun && backendSummary
+    ? `Backend run: ${backendSummary.requests} request${backendSummary.requests === 1 ? '' : 's'} handled, ${backendSummary.errors} failed${backendSummary.p95Ms == null ? '' : `, p95 ${Math.round(backendSummary.p95Ms)}ms`}. ${findingsClause}`
+    : hasDeclaredFlow
+      ? `Flow run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} visited, ${observedTransitionKeys.size} transition${observedTransitionKeys.size === 1 ? '' : 's'}${flowAnalysis.expectedCoverage == null ? '' : `, ${flowAnalysis.expectedCoverage.toFixed(1)}% expected coverage`}. ${findingsClause}`
+      : `Observational run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} observed. ${findingsClause}`;
   const payload = {
     id: report.id,
     runId: run.id,
     schemaVersion: '2.0',
+    summaryText,
     status: run.status,
     reportStatus: 'READY',
     generatedAt: new Date().toISOString(),
@@ -402,12 +458,14 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     repository: run.repositorySnapshot ? { revision: run.repositorySnapshot.revision, dirty: run.repositorySnapshot.dirty, scannerVersion: run.repositorySnapshot.scannerVersion, redactionSummary: run.repositorySnapshot.redactionSummary } : null,
     instrumentation: run.patchSet ? { patchSetId: run.patchSet.id, planId: run.patchSet.instrumentationPlanId, adapterId: run.patchSet.instrumentationPlan.adapterId, adapterVersion: run.patchSet.instrumentationPlan.adapterVersion, manifestVersion: run.patchSet.manifestVersion, status: run.patchSet.status, risk: run.patchSet.instrumentationPlan.risk, changedFileHashes: run.patchSet.changedFileHashes, validation: run.patchSet.validationJson, appliedAt: run.patchSet.appliedAt, validatedAt: run.patchSet.validatedAt } : null,
     expectedIntent: run.expectedGraphVersion ? { graphId: run.expectedGraphVersion.graphId, graphVersionId: run.expectedGraphVersion.id, graphName: run.expectedGraphVersion.graph.name, provenance: run.expectedGraphVersion.graph.sourceType, evidenceManifest: snapshot?.evidenceManifest ?? null, expectedStateCount: declaredStates.length, expectedTransitionCount: declaredTransitions.length } : null,
-    coverage: { expected: declaredStates.length ? ((declaredStates.length - missingStates.length) / declaredStates.length) * 100 : null, reconciledFlows: 1 },
+    scopeKind: hasDeclaredFlow ? 'FLOW' : 'SESSION',
+    coverage: { expected: flowAnalysis.expectedCoverage, reconciledFlows: flowAnalysis.reconciledFlows },
     findings: run.findings,
     artifacts: run.artifacts.map((artifact) => ({ ...artifact, bytes: artifact.bytes.toString() })),
     summary: { sessionCount: run.observedSessions.length, observedStateCount: observedStateKeys.size, observedTransitionCount: observedTransitionKeys.size, artifactCount: run.artifacts.length, findingCount: run.findings.length, criticalOrHighFindings: run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length },
     sections: {
-      flowSummary: { name: run.expectedGraphVersion?.graph.name ?? 'Selected Flow', purpose: run.expectedGraphVersion?.graph.purpose ?? null, scope: run.expectedGraphVersion?.graph.scopeStatement ?? null, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion?.version ?? null, provenance: run.expectedGraphVersion?.graph.sourceType ?? null },
+      flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
+      backendSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       inFlowFindings: { recommendedNextActions: improvements.slice(0, 10), findings: improvements, missingStates, missingTransitions, unexpectedStates },
       criticalSystemWideFindings: criticalOutOfFlow,
@@ -424,6 +482,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
             : ['Framework-state evidence was unavailable: no validated state instrumentation reported Redux, Context, or useState mutations during this run. Browser-level QA is unaffected.']),
           ...(run.environment.type === 'PRODUCTION' ? ['Production capture was metadata-only; values and payload bodies were not retained.'] : []),
           ...(appendixTruncated > 0 ? [`The evidence appendix lists the first ${APPENDIX_EVENT_LIMIT} of ${run.evidenceEvents.length} events; the remainder stay queryable through the evidence endpoints.`] : []),
+          ...(backendSummary?.limitations ?? []),
         ],
       },
     },
@@ -434,7 +493,9 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     prisma.qARun.update({ where: { id: run.id }, data: { reportId: report.id } }),
     prisma.auditLog.create({ data: { userId: run.createdByUserId, organizationId: run.organizationId, action: 'REPORT_GENERATED', metadata: { runId: run.id, reportId: report.id, schemaVersion: '2.0', aiStatus } } }),
   ]);
-  await notifyReportReady(prisma, report.id);
+  await notifyReportReady(prisma, report.id).catch((error) => {
+    console.error('[QAReportWorker] report-ready notification failed', safeError(error));
+  });
 }
 
 export async function processQaReportJobs(prisma: PrismaClient): Promise<number> {

@@ -7,7 +7,7 @@ import test from 'node:test';
 import type { CodebaseAnalysis, CodeEntity } from '@tellann/desktop-contracts';
 import {
   analyzeCodebase, answerFromAnalysis, blastRadius, blastRadiusInAnalysis,
-  buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
+  buildInventory, buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
   hierarchyChildren, previewSanitizedSourceArchive, projectAnalysis, redactSecrets,
 } from './index';
 
@@ -267,10 +267,54 @@ test('records a UI action and the handler it triggers', () => {
   const action = analysis.entities.find((entity) => entity.type === 'ui_action');
   assert.ok(action, 'an onClick handler should produce a ui_action');
   assert.match(action!.name, /Buy now/);
+  assert.deepEqual(action!.metadata.labels, ['Buy now']);
   assert.ok(
     analysis.relationships.some((edge) => edge.type === 'ROUTES_TO' && edge.source === action!.id),
     'the action should route to the handler it names',
   );
+});
+
+/**
+ * A control's accessible name is rarely a direct text child. Every shape here
+ * used to collapse to the bare tag name, which left the annotation matcher
+ * with no text to work from at all.
+ */
+test('reads a control label from wherever the markup actually puts it', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-labels-')));
+  write(root, 'package.json', JSON.stringify({
+    name: 'labels', private: true, dependencies: { next: '^15.0.0', react: '^19.0.0' },
+  }));
+  write(root, 'app/panel/page.tsx', [
+    "import { Button } from '../../button';",
+    'declare function t(key: string): string;',
+    'export default function Panel() {',
+    '  const save = () => undefined;',
+    '  return (',
+    '    <main>',
+    '      <button onClick={save}><span>Publish changes</span></button>',
+    '      <button aria-label="Close dialog" onClick={save}>x</button>',
+    '      <input placeholder="Email address" onChange={save} />',
+    "      <button onClick={save}>{t('actions.archive')}</button>",
+    '      <Button data-testid="export-report" id="export" onClick={save}>Export</Button>',
+    '    </main>',
+    '  );',
+    '}',
+  ].join('\n'));
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const actions = analysis.entities.filter((entity) => entity.type === 'ui_action');
+  const labelled = (needle: string) => actions.find((action) => action.name.startsWith(needle));
+
+  assert.ok(labelled('Publish changes'), 'text nested in a <span> is still the label');
+  assert.ok(labelled('Close dialog'), 'an aria-label names an icon-only control');
+  assert.ok(labelled('Email address'), 'a placeholder names a field with no children');
+  assert.ok(labelled('actions.archive'), 'a translation key carries the words it renders');
+
+  const exported = labelled('Export');
+  assert.ok(exported, 'a component element is labelled by its text');
+  assert.equal(exported!.metadata.testId, 'export-report');
+  assert.equal(exported!.metadata.domId, 'export');
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('separates database reads from writes and prefers the declared schema', () => {
@@ -498,6 +542,51 @@ test('never ships credential files, and reports what it excluded', () => {
   assert.ok(archive.redactedFiles >= 1);
   assert.ok(archive.fileCount > 0);
   assert.equal(archive.truncated, false);
+});
+
+test('excludes Python virtual environments from the analysis graph and source archive', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-python-env-')));
+  write(root, 'requirements.txt', 'Django>=5\n');
+  write(root, 'manage.py', 'import os\n');
+  write(root, 'app/views.py', 'def application_view():\n    return "ok"\n');
+  write(root, 'env/pyvenv.cfg', 'home = C:\\Python\n');
+  write(root, 'env/Lib/site-packages/dependency.py', 'def dependency_symbol():\n    return "not app code"\n');
+
+  const inventory = buildInventory(root);
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const archive = buildSanitizedSourceArchive(root);
+  const decoded = zlib.gunzipSync(archive.buffer).toString('utf8');
+
+  assert.ok(inventory.pythonAnalyzable.includes('app/views.py'));
+  assert.equal(inventory.pythonAnalyzable.some((file) => file.startsWith('env/')), false);
+  assert.equal(analysis.entities.some((entity) => entity.path?.startsWith('env/')), false);
+  assert.equal(decoded.includes('dependency_symbol'), false);
+  assert.ok(inventory.exclusions['ignored-directory'] >= 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('excludes gitignored generated assets from inventory, analysis, and source archives', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gitignore-')));
+  write(root, '.gitignore', 'staticfiles/\n*.generated.js\n');
+  write(root, 'requirements.txt', 'Django>=5\n');
+  write(root, 'manage.py', 'import os\n');
+  write(root, 'app/views.py', 'def application_view():\n    return "ok"\n');
+  write(root, 'staticfiles/swagger-ui.js', 'function generated_vendor_bundle() {}\n');
+  write(root, 'app/client.generated.js', 'function generated_client() {}\n');
+
+  const inventory = buildInventory(root);
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const archive = buildSanitizedSourceArchive(root);
+  const decoded = zlib.gunzipSync(archive.buffer).toString('utf8');
+
+  assert.deepEqual(inventory.pythonAnalyzable, ['app/views.py', 'manage.py']);
+  assert.equal(inventory.files.some((file) => file.path.startsWith('staticfiles/')), false);
+  assert.equal(inventory.files.some((file) => file.path.endsWith('.generated.js')), false);
+  assert.equal(analysis.coverage?.languageBytes.JavaScript, undefined);
+  assert.equal(decoded.includes('generated_vendor_bundle'), false);
+  assert.equal(decoded.includes('generated_client'), false);
+  assert.ok(inventory.exclusions.gitignore >= 2);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('previews archive size and exclusions before consent is given', () => {

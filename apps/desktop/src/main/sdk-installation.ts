@@ -1,5 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDirectory, pythonEnvironments, readDirectory } from './python-environment';
+
+// Discovering where a project's interpreter and its packages live belongs with
+// the rest of the Python environment handling; this module only answers whether
+// a distribution is installed in one.
+export { pythonEnvironments } from './python-environment';
 
 export type InstalledPackage = { directory: string; version: string | null };
 
@@ -32,4 +38,50 @@ export function findInstalledPackage(fromDirectory: string, packageName: string)
     if (parent === current) return null;
     current = parent;
   }
+}
+
+/**
+ * PEP 503 normalization, which is what a `.dist-info` directory name is built
+ * from: runs of `-`, `_` and `.` collapse to a single separator, and case is
+ * folded. `Flask_SQLAlchemy` and `flask-sqlalchemy` are the same distribution.
+ */
+function normalizeDistribution(name: string): string {
+  return name.replace(/[-_.]+/g, '-').toLowerCase();
+}
+
+export type InstalledDistribution = {
+  /** The `.dist-info` or `.egg-info` directory that proves the install. */
+  directory: string;
+  version: string | null;
+  /** The environment the distribution was found in, for the check's output. */
+  environment: string;
+};
+
+/**
+ * Finds a pip-installed distribution the way the packaging tools record one:
+ * a `<name>-<version>.dist-info` directory in `site-packages` (PEP 376), or the
+ * older `.egg-info` that a `setup.py develop` install still leaves behind.
+ *
+ * This reads the filesystem rather than asking an interpreter. Running the
+ * project's Python to import a module would execute code from a repository the
+ * member may not have reviewed, for a question a directory listing answers.
+ */
+export function findInstalledPythonDistribution(
+  fromDirectory: string,
+  distribution: string,
+): InstalledDistribution | null {
+  const wanted = normalizeDistribution(distribution);
+  for (const sitePackages of pythonEnvironments(fromDirectory)) {
+    for (const entry of readDirectory(sitePackages)) {
+      const match = /^(.+?)-([^-]+)\.(dist-info|egg-info)$/.exec(entry)
+        // `pip install -e .` writes `<name>.egg-info` with no version in the name.
+        ?? /^(.+?)()\.(egg-info)$/.exec(entry);
+      if (!match) continue;
+      if (normalizeDistribution(match[1]) !== wanted) continue;
+      const directory = path.join(sitePackages, entry);
+      if (!isDirectory(directory)) continue;
+      return { directory, version: match[2] || null, environment: sitePackages };
+    }
+  }
+  return null;
 }

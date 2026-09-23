@@ -26,7 +26,7 @@ export function loadDesktopSession(): StoredDesktopSession | null {
 }
 
 export function saveDesktopSession(value: StoredDesktopSession): void {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('WINDOWS_SECURE_STORAGE_UNAVAILABLE');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS_SECURE_STORAGE_UNAVAILABLE');
   fs.mkdirSync(path.dirname(sessionPath()), { recursive: true });
   fs.writeFileSync(sessionPath(), safeStorage.encryptString(JSON.stringify(value)), { mode: 0o600 });
 }

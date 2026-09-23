@@ -1,5 +1,6 @@
 import { TELLANN } from '../../core/TELLANN';
 import { extractCorrelationContext } from '../express';
+import { runInRequestContext, summarizeDataAccess, type TellannRequestContext } from '../../core/requestContext';
 
 /**
  * Koa integration.
@@ -14,7 +15,11 @@ export type TellannKoaContext = {
   status: number;
   /** Set by `koa-router`; the matched pattern rather than the concrete path. */
   _matchedRoute?: string;
-  request: { headers: Record<string, any> };
+  /** Present when a body parser is registered. */
+  body?: unknown;
+  query?: Record<string, unknown>;
+  request: { headers: Record<string, any>; body?: unknown };
+  response?: { headers?: Record<string, any> };
   state: Record<string, any>;
 };
 
@@ -36,27 +41,51 @@ export function tellannKoaMiddleware(): TellannKoaMiddleware {
     const correlation = extractCorrelationContext(context.request?.headers ?? {});
     context.state.tellann = correlation;
 
-    try {
-      await next();
-    } catch (error) {
-      await TELLANN.captureError({
-        error: error as Error,
-        sessionId: correlation.sessionId,
-        runId: correlation.runId,
-        traceId: correlation.traceId,
-        eventType: 'SERVER_ERROR',
-      });
-      throw error;
-    } finally {
-      await TELLANN.trackApi({
-        endpoint: context._matchedRoute ?? context.path,
-        method: context.method,
-        statusCode: context.status,
-        durationMs: Date.now() - start,
-        sessionId: correlation.sessionId,
-        runId: correlation.runId,
-        traceId: correlation.traceId,
-      });
-    }
+    const tellannContext: TellannRequestContext = {
+      ...correlation,
+      method: context.method,
+      route: context._matchedRoute ?? context.path,
+      dataAccess: [],
+    };
+    await runInRequestContext(
+      tellannContext,
+      async () => {
+        try {
+          await next();
+        } catch (error) {
+          await TELLANN.captureError({
+            error: error as Error,
+            sessionId: correlation.sessionId,
+            runId: correlation.runId,
+            traceId: correlation.traceId,
+            eventType: 'SERVER_ERROR',
+            route: context._matchedRoute ?? context.path,
+            method: context.method,
+            statusCode: context.status,
+          });
+          throw error;
+        } finally {
+          await TELLANN.trackApi({
+            endpoint: context.path,
+            // Read after `next`, by which point the router has matched.
+            route: context._matchedRoute ?? context.path,
+            method: context.method,
+            statusCode: context.status,
+            durationMs: Date.now() - start,
+            sessionId: correlation.sessionId,
+            runId: correlation.runId,
+            traceId: correlation.traceId,
+            framework: 'koa',
+            models: summarizeDataAccess(tellannContext.dataAccess),
+            query: context.query,
+            requestBody: context.request?.body,
+            responseBody: context.body,
+            requestHeaders: context.request?.headers,
+            responseHeaders: context.response?.headers,
+          });
+          await TELLANN.flushDataAccess(tellannContext);
+        }
+      },
+    );
   };
 }

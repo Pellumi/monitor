@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { discoverPythonProjects, type PythonProject } from '@tellann/python-project';
 import { digest, slash } from './core';
+import { extendGitIgnoreContext, isGitIgnored, type GitIgnoreContext } from '../gitignore';
 
 export const IGNORED_DIRECTORIES = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'out', 'coverage', '.turbo',
-  '.cache', 'vendor', '.venv', 'venv', '__pycache__', 'target', 'obj', '.svelte-kit',
+  '.cache', 'vendor', '.venv', 'venv', 'env', '__pycache__', '.tox', '.nox',
+  '.mypy_cache', '.pytest_cache', '.ruff_cache', 'site-packages', 'target', 'obj', '.svelte-kit',
   '.nuxt', '.output', '.parcel-cache', '.yarn', '.pnpm-store', '.gradle', '.idea', '.vscode', '.claude', '.husky', '.changeset', 'storybook-static',
 ]);
 
@@ -82,7 +84,7 @@ const SECRET_LITERAL =
   /\b(sk-[A-Za-z0-9]{16,}|sk_live_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
 export type ExclusionReason =
-  | 'ignored-directory' | 'symlink' | 'secret-path' | 'oversized'
+  | 'ignored-directory' | 'gitignore' | 'symlink' | 'secret-path' | 'oversized'
   /** An analyzable source file too large to read: a genuine coverage gap. */
   | 'oversized-source'
   | 'binary' | 'unreadable' | 'file-budget' | 'archive-budget';
@@ -193,13 +195,14 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
   const languageBytes: Record<string, number> = {};
   const unsupportedLanguageFiles: Record<string, number> = {};
   const exclusions: Record<ExclusionReason, number> = {
-    'ignored-directory': 0, symlink: 0, 'secret-path': 0, oversized: 0,
+    'ignored-directory': 0, gitignore: 0, symlink: 0, 'secret-path': 0, oversized: 0,
     'oversized-source': 0, binary: 0, unreadable: 0, 'file-budget': 0, 'archive-budget': 0,
   };
   let truncated = false;
   const manifestPaths: string[] = [];
 
-  const visit = (directory: string) => {
+  const visit = (directory: string, inheritedIgnore: GitIgnoreContext = []) => {
+    const ignoreContext = extendGitIgnoreContext(root, directory, inheritedIgnore);
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -216,10 +219,14 @@ export function buildInventory(root: string, options: InventoryOptions = {}): In
       if (entry.isSymbolicLink()) { exclusions.symlink += 1; continue; }
       const absolute = path.join(directory, entry.name);
       const relative = slash(path.relative(root, absolute));
+      if (isGitIgnored(relative, entry.isDirectory(), ignoreContext)) {
+        exclusions.gitignore += 1;
+        continue;
+      }
       if (entry.isDirectory()) {
         if (IGNORED_DIRECTORIES.has(entry.name)) { exclusions['ignored-directory'] += 1; continue; }
         directories.push(relative);
-        visit(absolute);
+        visit(absolute, ignoreContext);
         continue;
       }
       if (!entry.isFile()) continue;

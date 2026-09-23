@@ -83,8 +83,13 @@ function readReport(report: Record<string, unknown>) {
   const flow = asRecord(report.flow);
   const flowSummary = asRecord(sections.flowSummary);
   const runSummary = asRecord(sections.runSummary);
+  const backend = asRecord(sections.backendSummary);
   const viewportHistory = records(runSummary.viewportHistory);
   return {
+    // Payloads before session-scoped QA existed were all Flow reports and did
+    // not carry scopeKind. Preserve that legacy interpretation; new flowless
+    // reports identify themselves explicitly as SESSION.
+    hasFlow: report.scopeKind !== "SESSION",
     application: asRecord(report.application),
     environment: asRecord(report.environment),
     summary: asRecord(report.summary),
@@ -95,6 +100,22 @@ function readReport(report: Record<string, unknown>) {
     flow,
     flowSummary,
     runSummary,
+    // A frontend-only run carries no backend section at all, which is how the
+    // renderer knows to leave the chapter out rather than print zeroes.
+    backend,
+    hasBackend: Object.keys(backend).length > 0,
+    // A run that never opened a browser has no viewport, no framework-state
+    // evidence and nothing "window resolution" could ever mean — those rows
+    // are left out of the document rather than printed as "Not recorded".
+    backendOnly: (() => {
+      const tracks = asArray(runSummary.captureTracks).map((item) => String(item));
+      return tracks.includes("BACKEND") && !tracks.includes("FRONTEND");
+    })(),
+    backendEndpoints: records(backend.endpoints),
+    backendModels: records(backend.models),
+    backendErrorGroups: records(backend.serverErrorGroups),
+    backendSlowestRequests: records(backend.slowestRequests),
+    backendLimitations: asArray(backend.limitations).map((item) => String(item)),
     viewportHistory,
     latestViewport: asRecord(viewportHistory.at(-1)),
     eventCounts: asRecord(runSummary.eventCounts),
@@ -117,7 +138,7 @@ function readReport(report: Record<string, unknown>) {
 type ReadReport = ReturnType<typeof readReport>;
 
 function flowTitle(data: ReadReport): string {
-  return text(data.flowSummary.name ?? data.flow.name, "Selected Flow");
+  return data.hasFlow ? text(data.flowSummary.name ?? data.flow.name, "Selected Flow") : "Observational QA";
 }
 
 function windowResolution(data: ReadReport): string {
@@ -127,6 +148,31 @@ function windowResolution(data: ReadReport): string {
   return `${text(latestViewport.innerWidth)} × ${text(latestViewport.innerHeight)} CSS px · ${text(
     latestViewport.devicePixelRatio ?? 1,
   )}× DPR${resizes > 0 ? ` · ${resizes} resize ${resizes === 1 ? "change" : "changes"}` : ""}`;
+}
+
+/** A server-side duration, in the unit that reads at its magnitude. */
+function millisecondText(value: unknown, fallback = "Not recorded"): string {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return fallback;
+  if (ms < 1) return "<1 ms";
+  return ms < 1_000 ? `${Math.round(ms)} ms` : `${(ms / 1_000).toFixed(2)} s`;
+}
+
+function byteText(value: unknown): string {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+/** Status classes as `2xx 14 · 5xx 1`, in ascending class order. */
+function statusClassText(value: unknown): string {
+  const classes = asRecord(value);
+  const entries = Object.entries(classes).sort(([left], [right]) => left.localeCompare(right));
+  return entries.length
+    ? entries.map(([name, count]) => `${name} ${Number(count)}`).join(" · ")
+    : "—";
 }
 
 function durationText(value: unknown): string {
@@ -225,6 +271,150 @@ function renderGaps(data: ReadReport): string {
   </section>`;
 }
 
+/**
+ * What the application's own server did during the run.
+ *
+ * Present only when the run captured backend evidence. It answers the two
+ * questions a browser report cannot: which endpoints were exercised and how
+ * they behaved, and what each one actually changed.
+ */
+function renderBackend(data: ReadReport): string {
+  if (!data.hasBackend) return "";
+  const { backend } = data;
+  const requests = Number(backend.requests ?? 0);
+  const endpointRows = data.backendEndpoints
+    .map(
+      (endpoint) =>
+        `<tr><td>${escapeHtml(text(endpoint.method, "GET"))}</td><td><strong>${escapeHtml(
+          text(endpoint.route, "/"),
+        )}</strong><small>${escapeHtml(
+          [
+            `${text(endpoint.requests, "0")} calls`,
+            statusClassText(endpoint.statusClasses),
+            endpoint.handlers && (endpoint.handlers as unknown[]).length
+              ? `handler ${(endpoint.handlers as unknown[]).map(String).join(", ")}`
+              : "",
+            (endpoint.models as unknown[] | undefined)?.length
+              ? `models ${(endpoint.models as unknown[]).map(String).join(", ")}`
+              : "no data-access evidence",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        )}</small></td><td>${escapeHtml(text(endpoint.errors, "0"))}</td><td>${escapeHtml(
+          millisecondText(endpoint.averageMs, "—"),
+        )}</td><td>${escapeHtml(millisecondText(endpoint.p95Ms, "—"))}</td></tr>`,
+    )
+    .join("");
+  const modelRows = data.backendModels
+    .map(
+      (model) =>
+        `<tr><td>${escapeHtml(text(model.model, "Unknown model"))}</td><td>${escapeHtml(
+          `${text(model.reads, "0")} read / ${text(model.writes, "0")} write`,
+        )}</td><td>${escapeHtml(
+          (model.operations as unknown[] | undefined)?.length
+            ? (model.operations as unknown[]).map(String).join(", ")
+            : "—",
+        )}</td><td>${escapeHtml(
+          (model.endpoints as unknown[] | undefined)?.length
+            ? (model.endpoints as unknown[]).map(String).join(", ")
+            : "—",
+        )}</td></tr>`,
+    )
+    .join("");
+  const errorRows = data.backendErrorGroups
+    .map(
+      (group) =>
+        `<tr><td>${escapeHtml(text(group.name, "Error"))}</td><td><strong>${escapeHtml(
+          text(group.route, "No route recorded"),
+        )}</strong><small>${escapeHtml(text(group.message, ""))}</small></td><td>${escapeHtml(
+          text(group.occurrences, "1"),
+        )}</td></tr>`,
+    )
+    .join("");
+  const slowRows = data.backendSlowestRequests
+    .map(
+      (item) =>
+        `<tr><td>${escapeHtml(`${text(item.method, "GET")} ${text(item.route, "/")}`)}</td><td>${escapeHtml(
+          millisecondText(item.durationMs, "—"),
+        )}</td><td>${escapeHtml(text(item.statusCode, "—"))}</td></tr>`,
+    )
+    .join("");
+
+  return `<section class="major"><div class="section-label">Section // Backend</div><h2>What the server handled</h2>
+    <p>Every request the application's own server reported during this run, as the backend SDK measured it. Durations are server-side handler time, not round trips, so they exclude the network and the client.</p>
+    <div class="metrics">
+      <div><span>Requests</span><strong>${escapeHtml(String(requests))}</strong></div>
+      <div><span>Failed</span><strong>${escapeHtml(text(backend.errors, "0"))}</strong></div>
+      <div><span>p95</span><strong>${escapeHtml(millisecondText(backend.p95Ms, "—"))}</strong></div>
+      <div><span>Data ops</span><strong>${escapeHtml(text(backend.dataOperations, "0"))}</strong></div>
+    </div>
+    <table class="facts">${factRows([
+      ["ENDPOINTS EXERCISED", String(data.backendEndpoints.length)],
+      [
+        "FAILURE BREAKDOWN",
+        requests
+          ? `${text(backend.serverErrors, "0")} server · ${text(backend.clientErrors, "0")} client · ${text(
+              backend.unhandledErrors,
+              "0",
+            )} unhandled${backend.errorRate == null ? "" : ` · ${Number(backend.errorRate).toFixed(1)}% of requests`}`
+          : "No request was recorded",
+      ],
+      [
+        "RESPONSE TIME",
+        requests
+          ? `${millisecondText(backend.p50Ms, "—")} median · ${millisecondText(
+              backend.p95Ms,
+              "—",
+            )} p95 · ${millisecondText(backend.p99Ms, "—")} p99 · ${millisecondText(
+              backend.slowestMs,
+              "—",
+            )} slowest`
+          : "Not measured",
+      ],
+      [
+        "TRANSFERRED",
+        `${byteText(backend.requestBytes)} in · ${byteText(backend.responseBytes)} out`,
+      ],
+      [
+        "THROUGHPUT",
+        backend.requestsPerMinute == null
+          ? "Too few requests to report a rate"
+          : `${Number(backend.requestsPerMinute).toFixed(1)} requests per minute`,
+      ],
+      [
+        "PAYLOADS RETAINED",
+        `${text(backend.payloadsCaptured, "0")} of ${requests} requests`,
+      ],
+      ["MODELS TOUCHED", String(data.backendModels.length)],
+    ])}</table>
+    ${
+      endpointRows
+        ? `<h3>Endpoints</h3><p>Busiest first. A route is the template the framework matched, so calls that differ only by identifier are counted together.</p><table class="index"><tr><td>METHOD</td><td>ROUTE</td><td>ERRORS</td><td>AVG</td><td>P95</td></tr>${endpointRows}</table>`
+        : "<p>No request reached this run.</p>"
+    }
+    ${
+      modelRows
+        ? `<h3>Models affected</h3><p>What the run changed, rather than only what it answered with. Reported by the SDK's data-access hooks; the arguments of a query are never recorded.</p><table class="index"><tr><td>MODEL</td><td>ACCESS</td><td>OPERATIONS</td><td>ENDPOINTS</td></tr>${modelRows}</table>`
+        : ""
+    }
+    ${
+      errorRows
+        ? `<h3>Unhandled server errors</h3><p>Errors the application reported outside a response, grouped by route and type.</p><table class="index"><tr><td>TYPE</td><td>WHERE</td><td>COUNT</td></tr>${errorRows}</table>`
+        : ""
+    }
+    ${
+      slowRows
+        ? `<h3>Slowest requests</h3><table class="index"><tr><td>REQUEST</td><td>DURATION</td><td>STATUS</td></tr>${slowRows}</table>`
+        : ""
+    }
+    ${
+      data.backendLimitations.length
+        ? `<h3>What this section could not see</h3>${list(data.backendLimitations)}`
+        : ""
+    }
+  </section>`;
+}
+
 function renderAnnotations(data: ReadReport): string {
   if (!data.annotations.length) {
     return `<section class="major"><div class="section-label">Section // Annotations</div><h2>Inspect-mode feedback</h2>
@@ -233,6 +423,13 @@ function renderAnnotations(data: ReadReport): string {
   const rows = data.annotations
     .map((annotation) => {
       const author = asRecord(annotation.author);
+      const source = asRecord(asRecord(annotation.element).sourceMapping);
+      const sourcePath = source.status === "MATCHED" ? text(source.path, "") : "";
+      const startLine = Number(source.startLine ?? 0);
+      const endLine = Number(source.endLine ?? startLine);
+      const sourceLabel = sourcePath
+        ? `${sourcePath}${startLine > 0 ? `:${startLine}${endLine > startLine ? `-${endLine}` : ""}` : ""}`
+        : "";
       const mentioned = records(annotation.mentionedTeammates)
         .map((member) => `@${text(member.displayName, "member")}`)
         .join(", ");
@@ -242,7 +439,7 @@ function renderAnnotations(data: ReadReport): string {
         `${text(author.displayName, "QA author")} · ${dateText(annotation.timestamp)} · ${text(
           annotation.route,
           "unknown route",
-        )} · state ${text(annotation.flowState, "outside boundary")}${mentioned ? ` · mentioned ${mentioned}` : ""}`,
+        )} · state ${text(annotation.flowState, "outside boundary")}${sourceLabel ? ` · source ${sourceLabel}` : ""}${mentioned ? ` · mentioned ${mentioned}` : ""}`,
       )}</small></td></tr>`;
     })
     .join("");
@@ -296,7 +493,7 @@ function renderAppendix(data: ReadReport): string {
 export function qualityReportHtml(input: QualityReportDocumentInput): string {
   const { report } = input;
   const data = readReport(report);
-  const title = `${flowTitle(data)} quality report`;
+  const title = data.hasFlow ? `${flowTitle(data)} quality report` : "Observational QA report";
   const counts: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
   for (const finding of data.findings) {
     const priority = text(finding.priority, "MEDIUM").toUpperCase();
@@ -306,7 +503,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
   const snapshotRows = factRows([
     ["APPLICATION", text(data.application.name)],
     ["ENVIRONMENT", `${text(data.environment.name)} · ${text(data.environment.type)}`],
-    ["FLOW", `${flowTitle(data)} · version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`],
+    ...(data.hasFlow ? [["FLOW", `${flowTitle(data)} · version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`] as [string, string]] : []),
     ["RUN", text(report.runId)],
     ["REPORT", text(report.id)],
     ["RUN OUTCOME", text(data.runSummary.boundaryOutcome ?? report.status)],
@@ -383,14 +580,14 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
   </style></head><body><div class="watermark">${TELLANN_LOGO_SVG}</div><main><section class="sheet">
     <div class="brand"><div class="logo">TELLANN</div><span class="badge">Quality // QA run report</span></div>
     <h1>${escapeHtml(title)}</h1>
-    <p class="muted">Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them.</p>
+    <p class="muted">${data.hasFlow ? "Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them." : "Everything this observational session established: what the run captured, every evidence-backed finding, annotations, artifacts, and the auditable capture record behind them."}</p>
     <div class="summary"><div class="metric">${data.findings.length} finding${
       data.findings.length === 1 ? "" : "s"
-    } in this Flow</div><p>${escapeHtml(
-      `${counts.CRITICAL} critical · ${counts.HIGH} high · ${counts.MEDIUM} medium · ${counts.LOW} low · ${counts.INFO} info · ${data.criticalFindings.length} critical outside the Flow`,
+    }${data.hasFlow ? " in this Flow" : " in this session"}</div><p>${escapeHtml(
+      `${counts.CRITICAL} critical · ${counts.HIGH} high · ${counts.MEDIUM} medium · ${counts.LOW} low · ${counts.INFO} info${data.hasFlow ? ` · ${data.criticalFindings.length} critical outside the Flow` : ""}`,
     )}</p></div>
     <div class="metrics">
-      <div><span>Expected coverage</span><strong>${escapeHtml(expectedCoverage)}</strong></div>
+      ${data.hasFlow ? `<div><span>Expected coverage</span><strong>${escapeHtml(expectedCoverage)}</strong></div>` : ""}
       <div><span>Observed states</span><strong>${escapeHtml(text(data.summary.observedStateCount, "0"))}</strong></div>
       <div><span>Transitions</span><strong>${escapeHtml(text(data.summary.observedTransitionCount, "0"))}</strong></div>
       <div><span>High priority</span><strong>${escapeHtml(text(data.summary.criticalOrHighFindings, "0"))}</strong></div>
@@ -402,7 +599,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     }
     <table class="facts">${snapshotRows}</table>
 
-    <section class="major"><div class="section-label">Section // Flow</div><h2>What the Flow declared</h2>
+    ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Flow</div><h2>What the Flow declared</h2>
       <p>${escapeHtml(text(data.flowSummary.purpose ?? data.flow.purpose, "No purpose was declared for this Flow."))}</p>
       <table class="facts">${factRows([
         ["SCOPE", text(data.flowSummary.scope ?? data.flow.scopeStatement, "Not declared")],
@@ -418,7 +615,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ["PROVENANCE", text(data.flowSummary.provenance, "Not recorded")],
         ["COVERAGE", coverageText(data)],
       ])}</table>
-    </section>
+    </section>` : ""}
 
     <section class="major"><div class="section-label">Section // Run</div><h2>How the run was captured</h2>
       <table class="facts">${factRows([
@@ -432,14 +629,22 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ["CAPTURE TRACKS", joined(data.runSummary.captureTracks ?? report.captureTracks, "Not recorded")],
         ["DURATION", durationText(data.runSummary.durationMs)],
         ["BOUNDARY OUTCOME", text(data.runSummary.boundaryOutcome ?? report.status)],
-        [
-          "INSTRUMENTATION",
-          data.runSummary.instrumentationAvailable
-            ? "Validated instrumentation attached"
-            : "Browser-level evidence only",
-        ],
-        ["FRAMEWORK STATE EVIDENCE", data.runSummary.frameworkStateEvidenceCaptured ? "Captured" : "Not captured"],
-        ["WINDOW RESOLUTION", windowResolution(data)],
+        // A backend-only run opened no browser, so there is no viewport,
+        // client instrumentation or framework-state evidence to report —
+        // printing "Not recorded" for all three would just be browser-shaped
+        // noise on a run that was never going to fill them in.
+        ...(data.backendOnly
+          ? []
+          : ([
+              [
+                "INSTRUMENTATION",
+                data.runSummary.instrumentationAvailable
+                  ? "Validated instrumentation attached"
+                  : "Browser-level evidence only",
+              ],
+              ["FRAMEWORK STATE EVIDENCE", data.runSummary.frameworkStateEvidenceCaptured ? "Captured" : "Not captured"],
+              ["WINDOW RESOLUTION", windowResolution(data)],
+            ] as Array<[string, string]>)),
         ["REPOSITORY REVISION", text(data.runSummary.repositoryRevision ?? data.repository.revision, "Not attached")],
         [
           "WORKING TREE",
@@ -465,11 +670,11 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
       }
     </section>
 
-    <section class="major"><div class="section-label">Section // Findings index</div><h2>Every finding in this Flow</h2>
+    <section class="major"><div class="section-label">Section // Findings index</div><h2>${data.hasFlow ? "Every finding in this Flow" : "Session findings"}</h2>
       ${
         indexRows
           ? `<p>Ordered by priority, as the analysis ranked them. Each one is written out in full after this index.</p><table class="index">${indexRows}</table>`
-          : "<p>The deterministic analysis found no in-Flow finding for this run.</p>"
+          : `<p>The deterministic analysis found no ${data.hasFlow ? "in-Flow" : "session"} finding for this run.</p>`
       }
       ${
         data.recommendations.length
@@ -496,9 +701,9 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
 
     ${data.findings.map((finding, index) => renderFinding(finding, index)).join("")}
 
-    ${renderGaps(data)}
+    ${data.hasFlow ? renderGaps(data) : ""}
 
-    <section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
+    ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
       ${
         data.criticalFindings.length
           ? `<p>High-severity failures captured while the run was in progress but outside the declared boundary. They did not affect the coverage figure, and they are still real.</p>${data.criticalFindings
@@ -516,8 +721,9 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
               .join("")}`
           : "<p>No high-confidence, high-severity out-of-Flow failure was recorded during this run.</p>"
       }
-    </section>
+    </section>` : ""}
 
+    ${renderBackend(data)}
     ${renderAnnotations(data)}
     ${renderAppendix(data)}
 
@@ -546,14 +752,14 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
   let csv = csvRow(["Section", "Item", "Priority/Value", "Detail"]);
   csv += csvRow(["Report", "Application", text(data.application.name), text(report.runId)]);
   csv += csvRow(["Report", "Environment", text(data.environment.name), text(data.environment.type)]);
-  csv += csvRow([
+  if (data.hasFlow) csv += csvRow([
     "Report",
     "Flow",
     flowTitle(data),
     `version ${text(data.flowSummary.version ?? data.flow.version, "legacy")}`,
   ]);
   csv += csvRow(["Report", "Generated", dateText(report.generatedAt), `document ${dateText(input.generatedAt)}`]);
-  csv += csvRow(["Coverage", "Expected coverage", coverageText(data), ""]);
+  if (data.hasFlow) csv += csvRow(["Coverage", "Expected coverage", coverageText(data), ""]);
   csv += csvRow(["Coverage", "Observed states", text(data.summary.observedStateCount, "0"), ""]);
   csv += csvRow(["Coverage", "Observed transitions", text(data.summary.observedTransitionCount, "0"), ""]);
   csv += csvRow([
@@ -568,7 +774,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
     durationText(data.runSummary.durationMs),
     joined(data.runSummary.captureTracks, ""),
   ]);
-  csv += csvRow(["Run", "Window resolution", windowResolution(data), ""]);
+  if (!data.backendOnly) csv += csvRow(["Run", "Window resolution", windowResolution(data), ""]);
   for (const [type, count] of Object.entries(data.eventCounts)) {
     csv += csvRow(["Evidence", eventLabel(type), String(Number(count)), ""]);
   }
@@ -586,7 +792,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       )}, confidence ${confidencePercent(finding.confidence)})`,
     ]);
   }
-  for (const state of data.missingStates) {
+  for (const state of data.hasFlow ? data.missingStates : []) {
     csv += csvRow([
       "Coverage gap",
       `Declared state not observed: ${text(state.name ?? state.key, "state")}`,
@@ -594,7 +800,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       text(state.key, ""),
     ]);
   }
-  for (const transition of data.missingTransitions) {
+  for (const transition of data.hasFlow ? data.missingTransitions : []) {
     csv += csvRow([
       "Coverage gap",
       `Declared transition not observed: ${text(transition.from, "?")} -> ${text(transition.to, "?")}`,
@@ -602,16 +808,84 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       text(transition.action, ""),
     ]);
   }
-  for (const state of data.unexpectedStates) {
+  for (const state of data.hasFlow ? data.unexpectedStates : []) {
     csv += csvRow(["Coverage gap", `Observed state not declared: ${state}`, "", ""]);
   }
-  for (const finding of data.criticalFindings) {
+  for (const finding of data.hasFlow ? data.criticalFindings : []) {
     csv += csvRow([
       "Outside Flow",
       text(finding.title, "Critical finding"),
       text(finding.priority, "HIGH"),
       `${text(finding.impact ?? finding.rationale, "")} Next step: ${text(finding.suggestedAction, "")}`,
     ]);
+  }
+  if (data.hasBackend) {
+    const { backend } = data;
+    csv += csvRow([
+      "Backend",
+      "Requests handled",
+      text(backend.requests, "0"),
+      `${text(backend.errors, "0")} failed (${text(backend.serverErrors, "0")} server, ${text(
+        backend.clientErrors,
+        "0",
+      )} client, ${text(backend.unhandledErrors, "0")} unhandled)`,
+    ]);
+    csv += csvRow([
+      "Backend",
+      "Response time",
+      millisecondText(backend.p95Ms, "—"),
+      `median ${millisecondText(backend.p50Ms, "—")} · p99 ${millisecondText(
+        backend.p99Ms,
+        "—",
+      )} · slowest ${millisecondText(backend.slowestMs, "—")}`,
+    ]);
+    csv += csvRow([
+      "Backend",
+      "Transferred",
+      `${byteText(backend.requestBytes)} in / ${byteText(backend.responseBytes)} out`,
+      `${text(backend.payloadsCaptured, "0")} requests retained a payload`,
+    ]);
+    csv += csvRow(["Backend", "Data operations", text(backend.dataOperations, "0"), ""]);
+    for (const endpoint of data.backendEndpoints) {
+      csv += csvRow([
+        "Endpoint",
+        `${text(endpoint.method, "GET")} ${text(endpoint.route, "/")}`,
+        text(endpoint.requests, "0"),
+        `${text(endpoint.errors, "0")} errors · avg ${millisecondText(
+          endpoint.averageMs,
+          "—",
+        )} · p95 ${millisecondText(endpoint.p95Ms, "—")} · ${statusClassText(
+          endpoint.statusClasses,
+        )} · models ${joined(endpoint.models, "none recorded")}`,
+      ]);
+    }
+    for (const model of data.backendModels) {
+      csv += csvRow([
+        "Model",
+        text(model.model, "model"),
+        `${text(model.reads, "0")} read / ${text(model.writes, "0")} write`,
+        `operations ${joined(model.operations, "none recorded")} · endpoints ${joined(
+          model.endpoints,
+          "none recorded",
+        )}`,
+      ]);
+    }
+    for (const group of data.backendErrorGroups) {
+      csv += csvRow([
+        "Server error",
+        `${text(group.name, "Error")} on ${text(group.route, "no route recorded")}`,
+        text(group.occurrences, "1"),
+        text(group.message, ""),
+      ]);
+    }
+    for (const request of data.backendSlowestRequests) {
+      csv += csvRow([
+        "Slowest request",
+        `${text(request.method, "GET")} ${text(request.route, "/")}`,
+        millisecondText(request.durationMs, "—"),
+        `status ${text(request.statusCode, "—")} · ${dateText(request.occurredAt, "")}`,
+      ]);
+    }
   }
   for (const annotation of data.annotations) {
     csv += csvRow([

@@ -587,7 +587,8 @@ function reactAdapter(context: FileContext, node: ts.Node): void {
     ts.isJsxOpeningElement(candidate) || ts.isJsxSelfClosingElement(candidate));
   const tag = element && (ts.isJsxOpeningElement(element) || ts.isJsxSelfClosingElement(element))
     ? element.tagName.getText(context.source) : 'element';
-  const label = readableActionLabel(context, element) ?? tag;
+  const labels = readableActionLabels(context, element);
+  const label = labels[0] ?? tag;
 
   const id = stableId('ui_action', `${context.file}:${node.pos}:${name}`);
   const evidence = context.evidence(node, 'ui-event-handler', FRAMEWORK_ANALYZER, CONFIDENCE.ast);
@@ -600,7 +601,17 @@ function reactAdapter(context: FileContext, node: ts.Node): void {
     endLine: evidence.endLine,
     language: null,
     confidence: CONFIDENCE.ast,
-    metadata: { event: name, element: tag },
+    // `labels` carries every readable string the control could render, and the
+    // two identifiers carry the values a rendered element reports verbatim.
+    // Both exist so the annotation matcher has something better to go on than
+    // the display name, which can only hold one of them.
+    metadata: {
+      event: name,
+      element: tag,
+      labels,
+      testId: literalAttribute(context, element, 'data-testid'),
+      domId: literalAttribute(context, element, 'id'),
+    },
     evidence: [evidence],
   });
   context.graph.addEdge({
@@ -632,17 +643,86 @@ function resolveHandler(context: FileContext, expression: ts.Expression): string
   return declaration ? context.entityForDeclaration(declaration) : undefined;
 }
 
-/** Human-readable text inside a control, used to name the action. */
-function readableActionLabel(context: FileContext, element: ts.Node | undefined): string | null {
-  const parent = element?.parent;
-  if (!parent || !ts.isJsxElement(parent)) return null;
-  for (const child of parent.children) {
-    if (ts.isJsxText(child)) {
-      const text = child.text.trim();
-      if (text) return text.slice(0, 40);
-    }
+/**
+ * Attributes that carry a control's accessible name, in the order the browser
+ * resolves them. Mirroring that order means the first label we keep is the one
+ * a recorded annotation will report as the element's accessible name.
+ */
+const LABEL_ATTRIBUTES = ['aria-label', 'title', 'placeholder', 'alt'];
+const MAX_LABELS = 6;
+const MAX_LABEL_LENGTH = 60;
+const MAX_LABEL_DEPTH = 4;
+
+/** Literal value of a JSX attribute, when it is written as a plain string. */
+function literalAttribute(
+  context: FileContext,
+  element: ts.Node | undefined,
+  attribute: string,
+): string | null {
+  if (!element) return null;
+  if (!ts.isJsxOpeningElement(element) && !ts.isJsxSelfClosingElement(element)) return null;
+  for (const property of element.attributes.properties) {
+    if (!ts.isJsxAttribute(property)) continue;
+    const name = ts.isIdentifier(property.name)
+      ? property.name.text : property.name.getText(context.source);
+    if (name !== attribute) continue;
+    const initializer = property.initializer;
+    if (!initializer) return null;
+    // A computed value tells us nothing the browser could match against, so it
+    // is recorded as absent rather than as a guess.
+    const literal = ts.isJsxExpression(initializer) ? initializer.expression : initializer;
+    if (!literal || !ts.isStringLiteralLike(literal)) return null;
+    return literal.text.trim() || null;
   }
   return null;
+}
+
+/**
+ * Every readable string a control could render. The browser only ever reports
+ * one accessible name, and it has no idea which markup produced it, so a label
+ * nested in a <span>, supplied by aria-label, or returned from a translation
+ * call has to count exactly as much as a direct text child. Reading only direct
+ * text children left icon buttons, wrapped labels and translated labels with no
+ * matchable text at all.
+ */
+function readableActionLabels(context: FileContext, element: ts.Node | undefined): string[] {
+  const found: string[] = [];
+  const push = (value: string | undefined): void => {
+    const text = value?.replace(/\s+/g, ' ').trim();
+    if (!text || found.length >= MAX_LABELS) return;
+    const capped = text.slice(0, MAX_LABEL_LENGTH);
+    if (!found.includes(capped)) found.push(capped);
+  };
+  for (const attribute of LABEL_ATTRIBUTES) push(literalAttribute(context, element, attribute) ?? undefined);
+  const parent = element?.parent;
+  if (parent && ts.isJsxElement(parent)) collectJsxText(parent, push, 0);
+  return found;
+}
+
+/** Text inside a control, however deeply the markup nests it. */
+function collectJsxText(
+  node: ts.JsxElement,
+  push: (value: string | undefined) => void,
+  depth: number,
+): void {
+  if (depth > MAX_LABEL_DEPTH) return;
+  for (const child of node.children) {
+    if (ts.isJsxText(child)) {
+      push(child.text);
+    } else if (ts.isJsxElement(child)) {
+      collectJsxText(child, push, depth + 1);
+    } else if (ts.isJsxExpression(child) && child.expression) {
+      const expression = child.expression;
+      if (ts.isStringLiteralLike(expression)) push(expression.text);
+      // A translated label such as {t('actions.save')} keeps its key, which
+      // still carries the words the rendered control will show.
+      else if (ts.isCallExpression(expression)) {
+        for (const argument of expression.arguments) {
+          if (ts.isStringLiteralLike(argument)) push(argument.text);
+        }
+      }
+    }
+  }
 }
 
 function findAncestor(node: ts.Node, predicate: (candidate: ts.Node) => boolean): ts.Node | undefined {
