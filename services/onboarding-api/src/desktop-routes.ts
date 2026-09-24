@@ -33,6 +33,16 @@ import {
   sanitizeQaUrl,
 } from './qa-privacy';
 import { normalizeQaRunTitle, resolveQaRunTitle } from './qa-run-titles';
+import {
+  BACKEND_EVIDENCE_KINDS,
+  BACKEND_EVIDENCE_SORTS,
+  BACKEND_EVIDENCE_STATUSES,
+  countBackendEvidence,
+  findBackendEvidence,
+  type BackendEvidenceKind,
+  type BackendEvidenceSort,
+  type BackendEvidenceStatus,
+} from './qa-backend-evidence-query';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
@@ -1055,13 +1065,19 @@ export function createDesktopRouter(input: {
   router.get('/qa-runs/:runId', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
-    const groupedEvidence = await prisma.qARunEvidenceEvent.groupBy({
-      by: ['eventType'],
-      where: { runId: run.id },
-      _count: { _all: true },
-    });
+    const [groupedEvidence, backendCounts] = await Promise.all([
+      prisma.qARunEvidenceEvent.groupBy({
+        by: ['eventType'],
+        where: { runId: run.id },
+        _count: { _all: true },
+      }),
+      countBackendEvidence(prisma, run.id),
+    ]);
     res.json({
       ...run,
+      // The name the list shows: the operator's rename, or the derived one.
+      title: resolveQaRunTitle({ ...run, environmentName: run.environment?.name }),
+      backendCounts,
       synchronizationStatus: run.report?.status === QAReportStatus.FAILED ? 'FAILED' : run.report ? 'SYNCHRONIZED' : 'PENDING',
       reportStatus: run.report?.status ?? null,
       evidenceCounts: Object.fromEntries(groupedEvidence.map((item) => [item.eventType, item._count._all])),
@@ -1452,6 +1468,46 @@ export function createDesktopRouter(input: {
       completionReason: run.completionReason,
       lastObservedStateKey: run.lastObservedStateKey,
     });
+  });
+
+  /**
+   * The backend endpoint history of a run — requests, failed responses or data
+   * operations — one page at a time, with search and filters applied in SQL.
+   * Rows carry summary fields only; a row's body, headers and query string come
+   * from `/evidence-events/:eventId` when the operator opens it.
+   */
+  router.get('/qa-runs/:runId/backend-evidence', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const text = (value: unknown, limit: number) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+    const kind = text(req.query.kind, 20) || 'requests';
+    if (!(BACKEND_EVIDENCE_KINDS as readonly string[]).includes(kind)) return res.status(400).json({ error: 'INVALID_EVIDENCE_KIND' });
+    const status = text(req.query.status, 20).toLowerCase();
+    if (status && !(BACKEND_EVIDENCE_STATUSES as readonly string[]).includes(status)) return res.status(400).json({ error: 'INVALID_EVIDENCE_STATUS' });
+    const sort = text(req.query.sort, 20) || 'newest';
+    if (!(BACKEND_EVIDENCE_SORTS as readonly string[]).includes(sort)) return res.status(400).json({ error: 'INVALID_EVIDENCE_SORT' });
+    const access = text(req.query.access, 10).toLowerCase();
+    if (access && access !== 'read' && access !== 'write') return res.status(400).json({ error: 'INVALID_EVIDENCE_ACCESS' });
+    const method = text(req.query.method, 12).toUpperCase();
+    if (method && !/^[A-Z]{1,12}$/.test(method)) return res.status(400).json({ error: 'INVALID_EVIDENCE_METHOD' });
+    const pageSize = Math.min(Math.max(Math.floor(Number(req.query.pageSize)) || 25, 1), 100);
+    const page = Math.max(Math.floor(Number(req.query.page)) || 1, 1);
+    const filters = {
+      runId: run.id,
+      kind: kind as BackendEvidenceKind,
+      page,
+      pageSize,
+      query: text(req.query.q, 200),
+      method: method || undefined,
+      status: (status || undefined) as BackendEvidenceStatus | undefined,
+      access: (access || undefined) as 'read' | 'write' | undefined,
+      sort: sort as BackendEvidenceSort,
+    };
+    const [{ items, total }, counts] = await Promise.all([
+      findBackendEvidence(prisma, filters),
+      countBackendEvidence(prisma, run.id),
+    ]);
+    res.json({ kind, page, pageSize, total, counts, items });
   });
 
   router.get('/qa-runs/:runId/evidence-summary', verifyJwt, async (req: DesktopRequest, res: Response) => {

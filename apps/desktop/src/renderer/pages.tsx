@@ -1,6 +1,8 @@
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -68,6 +70,7 @@ import {
   X,
 } from "lucide-react";
 import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
+import { BackendEvidenceHistory } from "./backend-run-evidence";
 import {
   BACKEND_EMPTY_EVIDENCE,
   BACKEND_EVIDENCE_TABS,
@@ -14434,6 +14437,13 @@ function formatBytes(value: unknown) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * The way on from a run that has nothing to show in a tab: its report, when
+ * one is ready. Carried by context so every empty tab offers it in the same
+ * place, rather than each tab being told about the report.
+ */
+const RunReportActionContext = createContext<ReactNode>(null);
+
 function EmptyRunSection({
   title,
   description,
@@ -14446,6 +14456,7 @@ function EmptyRunSection({
       icon={<BookOpenText size={32} />}
       title={title}
       description={description}
+      action={useContext(RunReportActionContext)}
     />
   );
 }
@@ -15038,6 +15049,9 @@ export function RunDetailPage() {
   const runTabs = RUN_TABS.filter((tab) => {
     if (backendOnly && (tab.value === "annotations" || tab.value === "replay" || tab.value === "graph")) return false;
     if (tab.value === "reconciliation" && !hasFlow) return false;
+    // A run only has artifacts when it captured screenshots or files; an
+    // always-present tab that says "none" is just noise.
+    if (tab.value === "artifacts" && !(Array.isArray(run?.artifacts) && run.artifacts.length)) return false;
     return true;
   });
   const requestedTab = searchParams.get("tab") ?? "evidence";
@@ -15124,9 +15138,13 @@ export function RunDetailPage() {
     (sum, value) => sum + Number(value || 0),
     0,
   );
-  const requestsHandled = Number(evidenceCounts.QA_BACKEND_REQUEST ?? 0);
-  const failedResponses = Number(evidenceCounts.QA_BACKEND_ERROR ?? 0);
-  const dataOperations = Number(evidenceCounts.QA_BACKEND_DATA_ACCESS ?? 0);
+  // Counted where the history is listed, so a total here always matches the
+  // rows behind it. Failed responses are error responses (4xx/5xx) and
+  // unhandled server errors together.
+  const backendCounts = asRecord(run.backendCounts);
+  const requestsHandled = Number(backendCounts.requests ?? evidenceCounts.QA_BACKEND_REQUEST ?? 0);
+  const failedResponses = Number(backendCounts.failed ?? evidenceCounts.QA_BACKEND_ERROR ?? 0);
+  const dataOperations = Number(backendCounts.data ?? evidenceCounts.QA_BACKEND_DATA_ACCESS ?? 0);
   const reportStatus = String(run.reportStatus ?? (run.reportId ? "READY" : "PENDING"));
   const processingLabels: Record<string, string> = {
     PENDING: "Uploading evidence",
@@ -15136,9 +15154,18 @@ export function RunDetailPage() {
     READY: "Ready",
     FAILED: "Failed",
   };
+  const reportAction = run.reportId && reportStatus === "READY" ? (
+    <Link
+      className="button primary"
+      to={`/applications/${projectId}/reports/${encodeURIComponent(String(run.reportId))}?runId=${runId}`}
+    >
+      Open QA report
+      <ArrowRight size={15} />
+    </Link>
+  ) : null;
   return (
     <Page
-      title={`QA run ${runId.slice(0, 8)}`}
+      title={typeof run.title === "string" && run.title.trim() ? run.title : `QA run ${runId.slice(0, 8)}`}
       description={
         backendOnly
           ? "Requests handled, server errors, data operations and report status."
@@ -15183,6 +15210,8 @@ export function RunDetailPage() {
           ) : <span className="processing-spinner" aria-hidden="true" />}
         </section>
       ) : null}
+      <RunReportActionContext.Provider value={reportAction ? <div className="run-report-cta">{reportAction}</div> : null}>
+      <div className="run-detail-body">
       <Tabs
         value={activeTab}
         onValueChange={(tab) =>
@@ -15210,11 +15239,10 @@ export function RunDetailPage() {
         <TabsContent value="evidence">
           {backendOnly ? (
             requestsHandled || failedResponses || dataOperations ? (
-              <div className="metric-grid mt-4">
-                <Metric label="Requests handled" value={requestsHandled} />
-                <Metric label="Failed responses" value={failedResponses} />
-                <Metric label="Data operations" value={dataOperations} />
-              </div>
+              <BackendEvidenceHistory
+                runId={runId}
+                counts={{ requests: requestsHandled, failed: failedResponses, data: dataOperations }}
+              />
             ) : (
               <EmptyRunSection
                 title="No requests captured"
@@ -15284,14 +15312,9 @@ export function RunDetailPage() {
           />
         </TabsContent>
       </Tabs>
-      {run.reportId && reportStatus === "READY" ? (
-        <Link
-          className="button primary mt-4"
-          to={`/applications/${projectId}/reports/${encodeURIComponent(String(run.reportId))}?runId=${runId}`}
-        >
-          Open QA report
-        </Link>
-      ) : null}
+      {reportAction ? <div className="run-report-footer">{reportAction}</div> : null}
+      </div>
+      </RunReportActionContext.Provider>
     </Page>
   );
 }

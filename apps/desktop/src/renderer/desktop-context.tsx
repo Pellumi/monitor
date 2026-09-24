@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  BackendEvidencePage,
+  BackendEvidenceQuery,
   RepositoryMismatch,
   CreateApplicationInput,
   DesktopOrganization,
@@ -136,6 +138,8 @@ type DesktopContextValue = {
     ecosystem: 'npm' | 'pypi'; package: string; installed: string; latest: string | null; outdated: boolean;
   }>>;
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
+  /** One page of a backend run's endpoint history, searched and filtered server-side. */
+  getRunBackendEvidence(runId: string, query: BackendEvidenceQuery): Promise<BackendEvidencePage>;
   getReport(runId: string): Promise<QualityReport>;
   /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
   saveReportDownload(
@@ -746,6 +750,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     getRun: (runId) => bridge().runs.get(runId),
     checkSdkVersions: (applicationId) => bridge().runs.checkSdkVersions(applicationId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
+    getRunBackendEvidence: (runId, query) => bridge().runs.getBackendEvidence(runId, query),
     getReport: (runId) => bridge().runs.getReport(runId),
     saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
     getArtifactDownloadUrl: (runId, artifactId) => bridge().runs.getArtifactDownloadUrl(runId, artifactId),

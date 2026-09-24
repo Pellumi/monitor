@@ -1358,6 +1358,7 @@ export const IPC = {
   listRuns: 'tellann:cloud:runs:list',
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
+  getRunBackendEvidence: 'tellann:cloud:runs:backend-evidence',
   getRunReport: 'tellann:cloud:runs:report',
   saveRunReportDownload: 'tellann:cloud:runs:report:download',
   renameRun: 'tellann:cloud:runs:rename',
@@ -1650,6 +1651,57 @@ export type QaBranchSwitchResult = z.infer<typeof QaBranchSwitchResultSchema>;
 export type RunCorrelationContext = z.infer<typeof RunCorrelationContextSchema>;
 export type QARun = z.infer<typeof QARunSchema>;
 export type QARunSummary = z.infer<typeof QARunSummarySchema>;
+
+/** Which slice of a backend run's endpoint history is being read. */
+export type BackendEvidenceKind = 'requests' | 'failed' | 'data';
+
+export type BackendEvidenceQuery = {
+  kind: BackendEvidenceKind;
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  method?: string;
+  /** A response class (`2xx`…`5xx`) or `unhandled` for errors the server threw. */
+  status?: '2xx' | '3xx' | '4xx' | '5xx' | 'unhandled';
+  /** Data operations only. */
+  access?: 'read' | 'write';
+  sort?: 'newest' | 'oldest' | 'slowest';
+};
+
+/** One row of a backend run's endpoint history. Bodies and headers are fetched per event, not listed. */
+export type BackendEvidenceItem = {
+  id: string;
+  kind: 'REQUEST' | 'ERROR' | 'DATA';
+  occurredAt: string;
+  method: string | null;
+  route: string | null;
+  path: string | null;
+  statusCode: number | null;
+  durationMs: number | null;
+  handler: string | null;
+  framework: string | null;
+  requestBytes: number | null;
+  responseBytes: number | null;
+  models: string[];
+  name: string | null;
+  message: string | null;
+  severity: string | null;
+  model: string | null;
+  operation: string | null;
+  records: number | null;
+  mutation: boolean | null;
+  /** How many identical data operations the SDK collapsed into this row. */
+  count: number | null;
+};
+
+export type BackendEvidencePage = {
+  kind: BackendEvidenceKind;
+  page: number;
+  pageSize: number;
+  total: number;
+  counts: { requests: number; failed: number; data: number };
+  items: BackendEvidenceItem[];
+};
 export type QualityReport = z.infer<typeof QualityReportSchema>;
 export type DeclaredFlowSummary = z.infer<typeof DeclaredFlowSummarySchema>;
 export type DeclaredState = z.infer<typeof DeclaredStateSchema>;

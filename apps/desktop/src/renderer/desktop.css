@@ -2416,3 +2416,121 @@ button.statusbar-item:disabled {
     animation: none;
   }
 }
+
+/* ── Run detail: report call-to-action ─────────────────────────────────── */
+/* A tab with nothing in it carries the report link in its empty state, centred
+   with the message; the footer link is only for tabs that have content. */
+.run-report-cta {
+  display: flex;
+  justify-content: center;
+}
+.run-report-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.run-detail-body:has(.page-empty) .run-report-footer {
+  display: none;
+}
+
+/* ── Run detail: backend endpoint history ──────────────────────────────── */
+.run-history {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.run-history-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.run-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.run-history-filters .toolbar-search {
+  width: 260px;
+}
+.run-history-filters .select-container {
+  width: auto;
+  min-width: 140px;
+}
+.run-history-count {
+  margin-left: 4px;
+  color: var(--text-subtle);
+  font: 10px var(--font-mono);
+}
+.run-history-table {
+  overflow: hidden;
+}
+.run-history-scroll {
+  overflow-x: auto;
+  transition: opacity 0.12s ease;
+}
+.run-history-scroll[data-loading="true"] {
+  opacity: 0.55;
+}
+.run-history-table th[scope="row"] {
+  min-width: 220px;
+}
+.run-history-time {
+  white-space: nowrap;
+}
+.run-history-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font: 10px/1.4 var(--font-mono);
+  font-weight: 400;
+}
+.run-history-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgb(var(--overlay-rgb) / 0.06);
+  color: var(--text);
+  font: 10px/1.6 var(--font-mono);
+  white-space: nowrap;
+}
+.run-history-status[data-tone="success"] { color: var(--success); }
+.run-history-status[data-tone="warning"] { color: var(--warning); }
+.run-history-status[data-tone="danger"] { color: var(--danger); }
+.run-history-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.run-history-empty strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+.run-history-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.run-history-pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-history-pager-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-history-pager-controls .select-container {
+  width: 72px;
+}

@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { app, net, shell } from "electron";
 import type {
+  BackendEvidencePage,
+  BackendEvidenceQuery,
   BranchPolicy,
   CodebaseAnalysis,
   DeclaredFlowDetail,
@@ -715,6 +717,18 @@ export class DesktopCloudClient {
 
   async runReplay(runId: string): Promise<Json> {
     return this.request<Json>(`/qa-runs/${runId}/replay`);
+  }
+
+  async runBackendEvidence(runId: string, query: BackendEvidenceQuery): Promise<BackendEvidencePage> {
+    const params = new URLSearchParams({ kind: query.kind });
+    if (query.page) params.set("page", String(query.page));
+    if (query.pageSize) params.set("pageSize", String(query.pageSize));
+    if (query.q) params.set("q", query.q);
+    if (query.method) params.set("method", query.method);
+    if (query.status) params.set("status", query.status);
+    if (query.access) params.set("access", query.access);
+    if (query.sort) params.set("sort", query.sort);
+    return this.request<BackendEvidencePage>(`/qa-runs/${runId}/backend-evidence?${params.toString()}`);
   }
 
   async runReport(runId: string): Promise<QualityReport> {
