@@ -5191,6 +5191,41 @@ button:disabled {
 .live-evidence .evidence-tabs::-webkit-scrollbar {
   display: none;
 }
+.evidence-subfilters {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.evidence-subfilters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-0);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.evidence-subfilters button:hover {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+.evidence-subfilters button.selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.evidence-subfilters button > span {
+  font: 9px/1.4 var(--font-mono);
+  opacity: 0.75;
+}
 .evidence-list {
   flex: 1;
   min-height: 0;

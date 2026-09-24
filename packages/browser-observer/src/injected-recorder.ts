@@ -21,6 +21,8 @@ export function installQaRecorder(config: {
   bridge: string;
   members: string;
   annotations: string;
+  /** Takes the annotation's screenshot as an element is picked, before the dialog opens. */
+  snapshot: string;
   origin: string;
   production: boolean;
 }) {
@@ -666,9 +668,18 @@ export function installQaRecorder(config: {
   };
   const describeSelection = (element: Element) =>
     `${element.tagName.toLowerCase()} · ${labelFor(element) || 'unnamed element'} · ${location.pathname}`;
-  const selectElement = (element: Element) => {
+  // True while the picture for a picked element is being taken. The dialog
+  // stays closed until it is done, so the picture is of the page rather than of
+  // the dialog, and it never has to be hidden again at save time.
+  let picking = false;
+  const selectElement = async (element: Element) => {
+    if (picking) return;
+    picking = true;
     selected = element;
     position(element);
+    try { await invoke(config.snapshot); } catch { /* the save takes its own picture instead */ }
+    picking = false;
+    if (mode !== 'INSPECT' || selected !== element) return;
     preview.textContent = describeSelection(element);
     panel.hidden = false;
     showShield();
@@ -677,15 +688,16 @@ export function installQaRecorder(config: {
     live.textContent = 'Element selected. Add a comment and optional teammates.';
   };
   shield.addEventListener('mousemove', (event) => {
-    if (mode !== 'INSPECT' || !panel.hidden) return;
+    if (mode !== 'INSPECT' || !panel.hidden || picking) return;
     position(elementAtPoint(event.clientX, event.clientY));
   });
   shield.addEventListener('click', (event) => {
     if (mode !== 'INSPECT' || !panel.hidden) return;
     event.preventDefault();
     event.stopPropagation();
+    if (picking) return;
     const target = elementAtPoint(event.clientX, event.clientY);
-    if (target) selectElement(target);
+    if (target) void selectElement(target);
   });
   /**
    * Defence in depth behind the shield. Preventing `click` alone was never
@@ -714,7 +726,7 @@ export function installQaRecorder(config: {
       if (target.closest('[data-tellann-overlay]')) return;
       event.preventDefault();
       event.stopPropagation();
-      selectElement(target);
+      void selectElement(target);
     }
   }, true);
   // The annotation panel is a modal dialog, so keyboard focus must not escape

@@ -13,6 +13,7 @@ import type {
   StartGuidedRunInput,
 } from '@tellann/desktop-contracts';
 import { installQaRecorder } from './injected-recorder';
+import { captureMaskedViewport } from './silent-capture';
 
 export type LiveEvidenceKind =
   'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW'
@@ -27,6 +28,8 @@ export type LiveEvidence = {
   level: 'INFO' | 'WARN' | 'ERROR';
   message: string;
   details?: Array<{ label: string; value: string }>;
+  /** Playwright's resource type for a `NETWORK` row, so the panel can filter on it. */
+  resourceType?: string;
   /**
    * Ties a row to the interaction that caused it, so the live log can group a
    * click with the requests and state changes it set off.
@@ -240,6 +243,13 @@ export type GuidedRunState = {
   currentFlowStateKey: string | null;
   evidenceCounts: Record<string, number>;
   targetUrl: string;
+  /**
+   * The page the managed browser is on right now, as the operator sees it.
+   * Local to the desktop and never uploaded: unlike `observations[].url`, path
+   * segments and parameter values are kept so the run page can show the real
+   * route rather than a `DETAIL` placeholder.
+   */
+  liveUrl?: string | null;
   /** Updated by the injected recorder on initial load and every resize. */
   windowResolution?: BrowserWindowResolution | null;
   evidence: LiveEvidence[];
@@ -310,6 +320,8 @@ type RequestRecord = {
   startedAt: number;
   method: string;
   url: string;
+  /** What the operator's browser actually requested. Local display only; `url` is what gets uploaded. */
+  displayUrl: string;
   resourceType: string;
   redirectedFrom: string | null;
   safeHeaders: Record<string, string>;
@@ -358,6 +370,12 @@ type RunController = {
    * a screenshot on it.
    */
   lastCaptureSignature: string | null;
+  /**
+   * Screenshot of the page taken as an Inspect element was picked, before the
+   * annotation dialog opened, for the save to attach. Taking it then rather
+   * than at save time is what keeps the dialog on screen while it saves.
+   */
+  annotationShot?: string | null;
   /** Screenshots taken at the moment a finding was raised. */
   findingArtifacts: Array<{ file: string; context: ArtifactCaptureContext }>;
   /** Finding dedupe keys already given a screenshot. */
@@ -529,6 +547,53 @@ export function sanitizeCapturedUrl(raw: string): string {
   } catch { return raw.split(/[?#]/, 1)[0].slice(0, 2_000); }
 }
 
+const SENSITIVE_PARAM_TOKENS = new Set(['key', 'code', 'sig', 'signature', 'auth', 'session', 'sid', 'state', 'nonce']);
+const SENSITIVE_PATH_MARKERS = new Set([
+  'reset', 'verify', 'invite', 'token', 'confirm', 'activate', 'magic', 'unsubscribe', 'password',
+]);
+const REDACTED_VALUE = '[redacted]';
+
+function isSensitiveParamName(name: string): boolean {
+  if (isSecretKeyPath(name)) return true;
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/)
+    .some((token) => SENSITIVE_PARAM_TOKENS.has(token.toLowerCase()));
+}
+
+function looksLikeBearerCredential(segment: string): boolean {
+  return /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/.test(segment) || segment.length > 64;
+}
+
+/**
+ * The URL as the operator sees it, for the live run page only.
+ *
+ * `sanitizeCapturedUrl` is what evidence and uploads use, and it replaces every
+ * unrecognised path segment with `DETAIL` and empties every parameter value.
+ * That is right for anything that leaves the machine, but the live panel is
+ * rendered from local state on the same machine as the browser, and there the
+ * placeholders only hide which record the operator is looking at. This keeps
+ * the real route and values, and still withholds what is a credential in
+ * itself: userinfo, fragments, secret-named parameters, and the segment after
+ * a reset/verify/invite-style marker.
+ */
+export function liveUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    let previous = '';
+    url.pathname = url.pathname.split('/').map((segment) => {
+      const marker = SENSITIVE_PATH_MARKERS.has(previous.toLowerCase());
+      previous = segment;
+      return segment && (marker || looksLikeBearerCredential(segment)) ? REDACTED_VALUE : segment;
+    }).join('/');
+    for (const name of new Set([...url.searchParams.keys()])) {
+      if (isSensitiveParamName(name)) url.searchParams.set(name, REDACTED_VALUE);
+    }
+    return decodeURI(url.toString());
+  } catch { return raw.split(/[?#]/, 1)[0].slice(0, 2_000); }
+}
+
 export function scopeEvidenceForCapturePhase(
   phase: 'PRE_BOUNDARY' | 'IN_FLOW',
   type: QAEvidenceEvent['eventType'],
@@ -609,6 +674,14 @@ export function redactAriaSnapshot(snapshot: string): string {
   return kept.join('\n');
 }
 
+/** Path and query of a live URL, which is what a row's headline should say. */
+function liveRoute(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname || '/'}${parsed.search}`;
+  } catch { return url || 'unknown route'; }
+}
+
 function normalizedRoute(urlValue: string): string | null {
   try { return new URL(urlValue).pathname || '/'; } catch { return null; }
 }
@@ -637,12 +710,15 @@ export function liveEvidenceForBridgePayload(
     metadata.accessibleName ?? metadata.label ?? metadata.name ?? metadata.id ?? metadata.tag ?? 'unnamed element',
   ));
   if (type === 'route') {
-    const url = sanitizeCapturedUrl(String(metadata.url ?? ''));
+    const url = liveUrl(String(metadata.url ?? ''));
     return {
       kind: 'PAGE', level: 'INFO',
-      message: `Navigated to ${normalizedRoute(url) ?? url ?? 'unknown route'}`,
+      message: `Navigated to ${liveRoute(url)}`,
       details: compactDetails([
-        detail('Navigation', metadata.kind), detail('Title', metadata.title), detail('URL', url),
+        detail('Navigation', metadata.kind), detail('Title', metadata.title),
+        // Not through `detail()`: `safeMessage` would blank the parameter values
+        // this row exists to show.
+        url ? { label: 'URL', value: url } : null,
       ]),
     };
   }
@@ -754,8 +830,8 @@ export function liveEvidenceForNetworkRequest(input: {
       ? 'WARN'
       : 'INFO';
   return {
-    kind: 'NETWORK', level,
-    message: `${input.method} ${sanitizeCapturedUrl(input.url)} — ${outcome}`,
+    kind: 'NETWORK', level, resourceType: input.resourceType,
+    message: `${input.method} ${liveUrl(input.url)} — ${outcome}`,
     details: compactDetails([
       detail('Type', input.resourceType), detail('Duration', `${input.durationMs} ms`),
       detail('Transferred', input.transferredBytes == null ? null : `${input.transferredBytes} bytes`),
@@ -1185,7 +1261,7 @@ export class BrowserObserver {
       interactionGroupId: payload.interactionGroupId ?? null,
       causedByEventId: payload.causedByEventId ?? null,
     });
-    const liveEvidence = eventId ? liveEvidenceForBridgePayload({ ...payload, metadata: safeMetadata }) : null;
+    const liveEvidence = eventId ? liveEvidenceForBridgePayload(payload) : null;
     if (liveEvidence) {
       this.addLive(controller.state, { ...liveEvidence, groupId: payload.interactionGroupId ?? null });
     }
@@ -1350,17 +1426,36 @@ export class BrowserObserver {
     const bridgeName = `__tellann_capture_${nonce}`;
     const memberName = `__tellann_members_${nonce}`;
     const annotationName = `__tellann_annotation_${nonce}`;
+    const snapshotName = `__tellann_snapshot_${nonce}`;
     await context.exposeBinding(bridgeName, (_source, payload: BridgePayload) => this.handleBridge(controller, payload));
     await context.exposeBinding(memberName, (_source, query: string) =>
       this.options.searchMentionableMembers?.(runId, String(query).slice(0, 100)) ?? []);
+    // Called by the recorder as an Inspect element is picked, while the page is
+    // still exactly as the operator left it and before the dialog opens. The
+    // save then attaches this picture instead of taking one, so the dialog is
+    // never hidden mid-save to keep it out of frame.
+    await context.exposeBinding(snapshotName, async () => {
+      controller.annotationShot = null;
+      const target = controller.page;
+      if (!target || target.isClosed() || state.environmentType === 'PRODUCTION') return false;
+      const file = path.join(artifactDirectory, `inspect-${Date.now()}.png`);
+      if (!(await captureMaskedViewport(target, file))) return false;
+      controller.annotationShot = file;
+      return true;
+    });
     await context.exposeBinding(annotationName, async (_source, annotation: CreateQARunAnnotation) => {
       if (!controller.page || controller.page.isClosed()) throw new Error('QA_BROWSER_CLOSED');
       if (state.environmentType === 'PRODUCTION') throw new Error('PRODUCTION_VISUAL_ARTIFACT_BLOCKED');
-      const screenshotPath = path.join(artifactDirectory, `inspect-${Date.now()}.png`);
-      await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(true)).catch(() => undefined);
-      const mask = controller.page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
-      await controller.page.screenshot({ path: screenshotPath, fullPage: true, mask: [mask], maskColor: '#111827' }).catch(() => undefined);
-      await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(false)).catch(() => undefined);
+      let screenshotPath = controller.annotationShot ?? null;
+      controller.annotationShot = null;
+      if (!screenshotPath || !hasContent(screenshotPath)) {
+        // No picture from selection time. Fall back to taking one now, which
+        // means hiding the dialog for the length of the capture.
+        screenshotPath = path.join(artifactDirectory, `inspect-${Date.now()}.png`);
+        await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(true)).catch(() => undefined);
+        await this.captureMaskedScreenshot(controller.page, screenshotPath);
+        await controller.page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode?.(false)).catch(() => undefined);
+      }
       try {
         const saved = await this.options.onAnnotation?.(runId, {
           ...annotation,
@@ -1393,7 +1488,7 @@ export class BrowserObserver {
       }
     });
     await context.addInitScript(installQaRecorder, {
-      bridge: bridgeName, members: memberName, annotations: annotationName,
+      bridge: bridgeName, members: memberName, annotations: annotationName, snapshot: snapshotName,
       origin: applicationOrigin, production: observationOnly,
     });
     // Protected values can be captured during IN_FLOW, so DOM/screenshot trace
@@ -1431,6 +1526,11 @@ export class BrowserObserver {
       if (!/^https?:\/\//.test(url)) return;
       const title = await target.title().catch(() => '');
       const derived = deriveBrowserState(url, title);
+      const shownUrl = liveUrl(url);
+      if (state.liveUrl !== shownUrl) {
+        state.liveUrl = shownUrl;
+        this.notifyStateChanged();
+      }
       const previous = state.observations[state.observations.length - 1];
       const safeUrl = sanitizeCapturedUrl(url);
       if (previous?.stateName === derived.stateName && previous.url === safeUrl) return;
@@ -1500,7 +1600,7 @@ export class BrowserObserver {
         ? controller.recentCause : null;
       controller.requests.set(request, {
         startedAt: Date.now(), method: request.method(), url: sanitizeCapturedUrl(request.url()),
-        resourceType: request.resourceType(), redirectedFrom: request.redirectedFrom() ? sanitizeCapturedUrl(request.redirectedFrom()!.url()) : null,
+        displayUrl: request.url(), resourceType: request.resourceType(), redirectedFrom: request.redirectedFrom() ? sanitizeCapturedUrl(request.redirectedFrom()!.url()) : null,
         safeHeaders: headers, metadataBody, protectedValues,
         interactionGroupId: recent?.interactionGroupId ?? null, causedByEventId: recent?.eventId ?? null,
       });
@@ -1553,7 +1653,7 @@ export class BrowserObserver {
       });
       this.addLive(state, { ...liveEvidenceForNetworkRequest({
         method: record.method,
-        url: record.url,
+        url: record.displayUrl,
         status,
         failed,
         blockedByPolicy,
@@ -1622,10 +1722,11 @@ export class BrowserObserver {
           kind: frame === target.mainFrame() ? 'document' : 'frame', url: routeUrl,
         }, { pageUrl: frame.url() });
         if (/^https?:\/\//.test(routeUrl)) {
+          const shownUrl = liveUrl(frame.url());
           this.addLive(state, {
             kind: 'PAGE', level: 'INFO',
-            message: `${frame === target.mainFrame() ? 'Page' : 'Frame'} navigated to ${normalizedRoute(routeUrl) ?? routeUrl}`,
-            details: [{ label: 'URL', value: routeUrl }],
+            message: `${frame === target.mainFrame() ? 'Page' : 'Frame'} navigated to ${liveRoute(shownUrl)}`,
+            details: [{ label: 'URL', value: shownUrl }],
           });
         }
         if (frame === target.mainFrame() && target === controller.page) void captureObservation();
@@ -2306,6 +2407,26 @@ export class BrowserObserver {
   }
 
   /**
+   * Masked screenshot of the page the operator is looking at, taken without
+   * changing anything on screen.
+   *
+   * Playwright's own masked, full-page screenshot paints dark boxes over every
+   * field and resizes the layout, which shows up as a flash on every navigation
+   * and refresh. The viewport is captured from the compositor and masked
+   * afterwards instead. It is the viewport rather than the full page because a
+   * full-page capture is what forces the layout change; the final capture at
+   * the end of a run, when the window is about to close, still takes the whole
+   * page. If the silent path fails, the painted-mask capture is the fallback:
+   * a visible flash is better than a missing or unmasked picture.
+   */
+  private async captureMaskedScreenshot(page: Page, file: string): Promise<void> {
+    if (await captureMaskedViewport(page, file)) return;
+    const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
+    await page.screenshot({ path: file, fullPage: true, mask: [mask], maskColor: '#111827' })
+      .catch(() => undefined);
+  }
+
+  /**
    * Screenshots the page at the moment a finding was raised. A console error or
    * a failed request can happen at any point, with no settle and no route
    * change, so without this the most report-relevant instant of the run is the
@@ -2334,9 +2455,7 @@ export class BrowserObserver {
         state.artifactDirectory,
         `finding-${String(controller.findingArtifacts.length + 1).padStart(3, '0')}-${Date.now()}.png`,
       );
-      const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
-      await page.screenshot({ path: file, fullPage: true, mask: [mask], maskColor: '#111827' })
-        .catch(() => undefined);
+      await this.captureMaskedScreenshot(page, file);
       if (!hasContent(file)) return;
       const pageUrl = sanitizeCapturedUrl(page.url());
       controller.findingArtifacts.push({
@@ -2392,9 +2511,7 @@ export class BrowserObserver {
       const base = `state-${String(state.stateArtifacts.length + 1).padStart(3, '0')}-${Date.now()}`;
       const screenshotPath = path.join(state.artifactDirectory, `${base}.png`);
       const ariaPath = path.join(state.artifactDirectory, `${base}.aria.txt`);
-      const mask = page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]');
-      await page.screenshot({ path: screenshotPath, fullPage: true, mask: [mask], maskColor: '#111827' })
-        .catch(() => undefined);
+      await this.captureMaskedScreenshot(page, screenshotPath);
       if (redactedAria) fs.writeFileSync(ariaPath, redactedAria, 'utf8');
       const violations = await this.runAccessibilityScan(
         controller,

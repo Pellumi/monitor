@@ -16,6 +16,7 @@ import {
   normalizeFlowKey,
   redactAriaSnapshot,
   sanitizeCapturedUrl,
+  liveUrl,
   sanitizeBridgeMetadata,
   scopeEvidenceForCapturePhase,
   backendRouteTemplate,
@@ -26,7 +27,9 @@ import {
   liveEvidenceForBackendLatency,
   BrowserObserver,
 } from './index';
+import zlib from 'node:zlib';
 import { INSPECT_INTERCEPTED_EVENTS, installQaRecorder } from './injected-recorder';
+import { maskPng } from './silent-capture';
 import type { QAEvidenceEvent } from '@tellann/desktop-contracts';
 
 test('uses the host window viewport for headed QA runs', () => {
@@ -203,6 +206,21 @@ test('a successful annotation save closes as saved instead of running the cancel
   assert.match(saveHandler, /Annotation could not be saved\. Try again\./);
 });
 
+test('live urls keep the real route and values but withhold credentials', () => {
+  assert.equal(
+    liveUrl('https://app.test/student/6f1c2e9a-1b2c-4d3e-8f90-a1b2c3d4e5f6/results?page=2&search=ada#frag'),
+    'https://app.test/student/6f1c2e9a-1b2c-4d3e-8f90-a1b2c3d4e5f6/results?page=2&search=ada',
+  );
+  assert.equal(liveUrl('https://user:hunter2@app.test/users/42'), 'https://app.test/users/42');
+  assert.equal(liveUrl('https://app.test/reset/abc123'), 'https://app.test/reset/[redacted]');
+  assert.equal(
+    liveUrl('https://app.test/orders?apiKey=abc&access_token=def&page=1'),
+    'https://app.test/orders?apiKey=[redacted]&access_token=[redacted]&page=1',
+  );
+  // Whatever the live panel shows, what is uploaded is still placeholder-only.
+  assert.equal(sanitizeCapturedUrl('https://app.test/student/42/results?page=2'), 'https://app.test/student/DETAIL/DETAIL?page=');
+});
+
 test('successful network requests are represented in the live panel', () => {
   const live = liveEvidenceForNetworkRequest({
     method: 'GET',
@@ -216,8 +234,9 @@ test('successful network requests are represented in the live panel', () => {
   });
   assert.equal(live.kind, 'NETWORK');
   assert.equal(live.level, 'INFO');
-  assert.match(live.message, /GET https:\/\/app\.test\/api\/orders\?account= — 200/);
-  assert.ok(!live.message.includes('123'));
+  assert.equal(live.message, 'GET https://app.test/api/orders?account=123 — 200');
+  assert.equal(live.resourceType, 'fetch');
+  assert.ok(!live.message.includes('private'));
   assert.deepEqual(live.details, [
     { label: 'Type', value: 'fetch' },
     { label: 'Duration', value: '42 ms' },
@@ -536,4 +555,60 @@ test('collapsed data operations are counted by what they stand for', async () =>
   } finally {
     await observer.end();
   }
+});
+
+test('a picked element is photographed before the dialog opens, and saving never hides the dialog', () => {
+  const source = installQaRecorder.toString();
+  const select = source.slice(source.indexOf('const selectElement'), source.indexOf("shield.addEventListener('mousemove'"));
+  assert.ok(select.indexOf('config.snapshot') > 0, 'selection must take the picture');
+  assert.ok(select.indexOf('config.snapshot') < select.indexOf('panel.hidden = false'), 'the picture comes first');
+  const save = source.slice(source.indexOf('saveButton.addEventListener'), source.indexOf("Object.defineProperty(globalThis, '__tellannQaSetPhase'"));
+  assert.doesNotMatch(save, /__tellannQaScreenshotMode/);
+});
+
+function encodeTestPng(width: number, height: number, rgba: [number, number, number, number]): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buffer: Buffer) => {
+    let value = 0xffffffff;
+    for (const byte of buffer) value = crcTable[(value ^ byte) & 0xff] ^ (value >>> 8);
+    return (value ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const head = Buffer.alloc(4); head.writeUInt32BE(data.length);
+    const tail = Buffer.alloc(4); tail.writeUInt32BE(crc(body));
+    return Buffer.concat([head, body, tail]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  const rows: number[] = [];
+  for (let y = 0; y < height; y += 1) {
+    // Alternate the filter type so the decoder's Sub and Up paths are exercised.
+    rows.push(y % 2 === 0 ? 1 : 2);
+    for (let x = 0; x < width; x += 1) {
+      if (y % 2 === 0) rows.push(...(x === 0 ? rgba : [0, 0, 0, 0]));
+      else rows.push(0, 0, 0, 0);
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+test('masking paints only the requested rectangle of a screenshot', () => {
+  const masked = maskPng(encodeTestPng(4, 4, [255, 255, 255, 255]), [{ x: 1, y: 1, width: 2, height: 2 }]);
+  assert.ok(masked, 'a browser-style truecolour PNG must be maskable');
+  const idat = masked!.subarray(masked!.indexOf('IDAT') + 4, masked!.indexOf('IEND') - 8);
+  const raw = zlib.inflateSync(idat);
+  const pixel = (x: number, y: number) => [...raw.subarray(y * 17 + 1 + x * 4, y * 17 + 1 + x * 4 + 4)];
+  assert.deepEqual(pixel(0, 0), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(3, 3), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(1, 1), [0x11, 0x18, 0x27, 255]);
+  assert.deepEqual(pixel(2, 2), [0x11, 0x18, 0x27, 255]);
+  assert.equal(maskPng(Buffer.from('not a png'), []), null);
 });

@@ -12699,6 +12699,35 @@ const EVIDENCE_TABS: Array<{
 ];
 
 /**
+ * How the Network tab groups Playwright's resource types, in the order the
+ * chips run. `resourceType` is what the request was for, not what it returned,
+ * so an API call made with `fetch` and one made with `XMLHttpRequest` are the
+ * same kind of thing to the person reading the log.
+ */
+const NETWORK_TYPE_FILTERS = [
+  { value: "ALL", label: "All", types: [] as string[] },
+  { value: "API", label: "Fetch/XHR", types: ["fetch", "xhr"] },
+  { value: "DOC", label: "Doc", types: ["document"] },
+  { value: "JS", label: "JS", types: ["script"] },
+  { value: "CSS", label: "CSS", types: ["stylesheet"] },
+  { value: "IMG", label: "Img", types: ["image"] },
+  { value: "MEDIA", label: "Media", types: ["media"] },
+  { value: "FONT", label: "Font", types: ["font"] },
+  { value: "WS", label: "WS", types: ["websocket", "eventsource"] },
+  { value: "OTHER", label: "Other", types: [] as string[] },
+] as const;
+type NetworkTypeFilter = (typeof NETWORK_TYPE_FILTERS)[number]["value"];
+
+/** Which chip a network row belongs under. Rows from before `resourceType` existed carry it as a detail. */
+function networkTypeGroup(item: LiveEvidence): Exclude<NetworkTypeFilter, "ALL"> {
+  const resourceType = (
+    item.resourceType ?? item.details?.find((entry) => entry.label === "Type")?.value ?? ""
+  ).toLowerCase();
+  const group = NETWORK_TYPE_FILTERS.find((entry) => (entry.types as readonly string[]).includes(resourceType));
+  return (group?.value ?? "OTHER") as Exclude<NetworkTypeFilter, "ALL">;
+}
+
+/**
  * Where a side panel is: in the page at full width, collapsed to its rail, put
  * away entirely, or detached into its own window. Everything but `docked` is
  * the operator's own choice and is remembered; `docked` is read back from the
@@ -13088,6 +13117,7 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
   const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
+  const [networkType, setNetworkType] = useState<NetworkTypeFilter>("ALL");
   const [follow, setFollow] = useState(true);
   const [detailItem, setDetailItem] = useState<LiveEvidence | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -13117,11 +13147,28 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
     if (fallback !== tab) setTab(fallback);
   }, [backendOnly, tab, evidenceTabs]);
 
+  const networkTab = activeTab.value === "NETWORK";
+  const networkFilterActive = networkTab && networkType !== "ALL";
+
+  // Per-type row counts for the chips. Taken over every network row rather than
+  // over the filtered list, so a chip says how much there is behind it.
+  const networkTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (!networkTab) return counts;
+    for (const item of run.evidence) {
+      if (item.kind !== "NETWORK") continue;
+      const group = networkTypeGroup(item);
+      counts[group] = (counts[group] ?? 0) + 1;
+    }
+    return counts;
+  }, [run.evidence, networkTab]);
+
   const visible = useMemo(() => {
     if (activeTab.value === "FINDINGS") return [];
     const needle = query.trim().toLowerCase();
     return run.evidence.filter((item) => {
       if (!activeTab.kinds.includes(item.kind)) return false;
+      if (networkFilterActive && networkTypeGroup(item) !== networkType) return false;
       if (errorsOnly && item.level === "INFO") return false;
       if (!needle) return true;
       if (item.message.toLowerCase().includes(needle)) return true;
@@ -13130,7 +13177,7 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
           entry.label.toLowerCase().includes(needle) || entry.value.toLowerCase().includes(needle),
       );
     });
-  }, [run.evidence, activeTab, query, errorsOnly]);
+  }, [run.evidence, activeTab, query, errorsOnly, networkFilterActive, networkType]);
 
   const windowed = visible.length > EVIDENCE_WINDOW ? visible.slice(-EVIDENCE_WINDOW) : visible;
 
@@ -13215,6 +13262,27 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
           );
         })}
       </div>
+      {networkTab ? (
+        <div className="evidence-subfilters" role="group" aria-label="Filter requests by type">
+          {NETWORK_TYPE_FILTERS.filter(
+            (entry) =>
+              entry.value === "ALL" ||
+              entry.value === networkType ||
+              (networkTypeCounts[entry.value] ?? 0) > 0,
+          ).map((entry) => (
+            <button
+              key={entry.value}
+              type="button"
+              className={networkType === entry.value ? "selected" : ""}
+              aria-pressed={networkType === entry.value}
+              onClick={() => setNetworkType(entry.value)}
+            >
+              {entry.label}
+              {entry.value !== "ALL" ? <span>{networkTypeCounts[entry.value] ?? 0}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
         {activeTab.value === "FINDINGS" ? (
           findings.length ? (
@@ -13247,7 +13315,7 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
           )
         ) : (
           <>
-            {run.evidenceTrimmed > 0 && !query && !errorsOnly ? (
+            {run.evidenceTrimmed > 0 && !query && !errorsOnly && !networkFilterActive ? (
               <div className="evidence-trimmed">
                 {run.evidenceTrimmed} earlier rows were dropped from this panel. Every one of them
                 is still in the run's evidence.
@@ -13271,7 +13339,7 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
               ))
             ) : (
               <div className="evidence-empty">
-                {query || errorsOnly
+                {query || errorsOnly || networkFilterActive
                   ? "No rows match this filter."
                   : backendOnly
                     ? BACKEND_EMPTY_EVIDENCE[activeTab.value as BackendEvidenceTabValue]
@@ -13766,7 +13834,7 @@ export function LiveRunPage() {
           {backendOnly ? <Network size={16} /> : <Globe2 size={16} />}
           <strong>{backendOnly ? "Backend capture" : "Managed Chromium"}</strong>
           <span className="browser-toolbar-route">
-            {backendOnly ? run.targetUrl : currentObservation?.url || run.targetUrl}
+            {backendOnly ? run.targetUrl : run.liveUrl || currentObservation?.url || run.targetUrl}
           </span>
           <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
@@ -13801,7 +13869,7 @@ export function LiveRunPage() {
               <dl>
                 <div>
                   <dt>Browser is on</dt>
-                  <dd>{currentObservation?.url || run.targetUrl}</dd>
+                  <dd>{run.liveUrl || currentObservation?.url || run.targetUrl}</dd>
                 </div>
                 <div>
                   <dt>Flow events received</dt>
@@ -13882,7 +13950,7 @@ export function LiveRunPage() {
             <article>
               <small>Current route</small>
               <strong>{currentObservation?.stateName || "Waiting for a route"}</strong>
-              <span>{currentObservation?.url || run.targetUrl}</span>
+              <span>{run.liveUrl || currentObservation?.url || run.targetUrl}</span>
             </article>
             <article>
               <small>Viewport</small>
