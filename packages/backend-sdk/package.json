@@ -1,6 +1,6 @@
 {
   "name": "@tellann/backend-sdk",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Tellann server telemetry and QA-run correlation SDK",
   "license": "UNLICENSED",
   "main": "dist/index.js",
