@@ -9,6 +9,7 @@
  * request, server error and data operation rather than by console and network.
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Copy, Database, Network, ServerCrash, Workflow, Gauge, AlertTriangle } from "lucide-react";
 import type {
   BackendEndpointStat,
@@ -462,6 +463,153 @@ function statusClasses(value: unknown): string {
   return entries.length ? entries.map(([name, count]) => `${name} ${Number(count)}`).join(" · ") : "—";
 }
 
+type Highlight = { label: string; value: string; detail: string; note?: string; tone?: "danger" | "warning" | "success" };
+
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+const endpointLabel = (endpoint: Record<string, unknown>) => `${String(endpoint.method ?? "GET")} ${String(endpoint.route ?? "/")}`;
+
+function largestBy<T>(items: T[], score: (item: T) => number): T | null {
+  let best: T | null = null;
+  let bestScore = 0;
+  for (const item of items) {
+    const value = score(item);
+    if (value > bestScore) {
+      best = item;
+      bestScore = value;
+    }
+  }
+  return best;
+}
+
+/**
+ * The few things a reader would otherwise dig out of two long tables: which
+ * endpoint was slowest, busiest and least reliable, which models took the
+ * reads and the writes, and how the traffic was shaped. A card is left out when
+ * the run has nothing to say for it, rather than shown empty.
+ */
+function reportHighlights(
+  summary: Record<string, unknown>,
+  endpoints: Record<string, unknown>[],
+  models: Record<string, unknown>[],
+  resolutions: Record<string, unknown>,
+): Highlight[] {
+  const cards: Highlight[] = [];
+
+  const slowest = largestBy(endpoints, (endpoint) => numberOf(endpoint.slowestMs) ?? 0);
+  if (slowest) {
+    cards.push({
+      label: "Slowest endpoint",
+      value: formatMilliseconds(numberOf(slowest.slowestMs)),
+      detail: endpointLabel(slowest),
+      note: `${formatMilliseconds(numberOf(slowest.p95Ms))} p95 across ${plural(numberOf(slowest.requests) ?? 0, "call")}`,
+      tone: (numberOf(slowest.slowestMs) ?? 0) >= 5_000 ? "warning" : undefined,
+    });
+  }
+
+  const busiest = largestBy(endpoints, (endpoint) => numberOf(endpoint.requests) ?? 0);
+  if (busiest) {
+    cards.push({
+      label: "Busiest endpoint",
+      value: plural(numberOf(busiest.requests) ?? 0, "call"),
+      detail: endpointLabel(busiest),
+      note: `${formatMilliseconds(numberOf(busiest.averageMs))} on average`,
+    });
+  }
+
+  const failing = endpoints.filter((endpoint) => (numberOf(endpoint.errors) ?? 0) > 0);
+  // Failure rate first, so a route that failed its only call outranks a busy one
+  // with a single stray error; the absolute count breaks ties.
+  const leastReliable = largestBy(
+    failing,
+    (endpoint) => (numberOf(endpoint.errors) ?? 0) / Math.max(numberOf(endpoint.requests) ?? 1, 1) + (numberOf(endpoint.errors) ?? 0) / 1_000,
+  );
+  cards.push(leastReliable
+    ? {
+        label: "Least reliable endpoint",
+        value: `${numberOf(leastReliable.errors) ?? 0} of ${plural(numberOf(leastReliable.requests) ?? 0, "call")} failed`,
+        detail: endpointLabel(leastReliable),
+        note: `${plural(failing.length, "endpoint")} had failures · ${statusClasses(leastReliable.statusClasses)}`,
+        tone: "danger",
+      }
+    : {
+        label: "Reliability",
+        value: "No failing endpoints",
+        detail: endpoints.length ? `All ${plural(endpoints.length, "endpoint")} answered without an error` : "No responses were captured",
+        tone: endpoints.length ? "success" : undefined,
+      });
+
+  const heaviest = largestBy(endpoints, (endpoint) => numberOf(endpoint.responseBytes) ?? 0);
+  if (heaviest) {
+    const calls = Math.max(numberOf(heaviest.requests) ?? 1, 1);
+    cards.push({
+      label: "Heaviest responses",
+      value: formatBytes(numberOf(heaviest.responseBytes) ?? 0),
+      detail: endpointLabel(heaviest),
+      note: `${formatBytes(Math.round((numberOf(heaviest.responseBytes) ?? 0) / calls))} per call`,
+    });
+  }
+
+  const mostRead = largestBy(models, (model) => numberOf(model.reads) ?? 0);
+  if (mostRead) {
+    cards.push({
+      label: "Most-read model",
+      value: plural(numberOf(mostRead.reads) ?? 0, "read"),
+      detail: String(mostRead.model ?? "—"),
+      note: Array.isArray(mostRead.endpoints) && mostRead.endpoints.length ? `Used by ${plural(mostRead.endpoints.length, "endpoint")}` : undefined,
+    });
+  }
+
+  const mostWritten = largestBy(models, (model) => numberOf(model.writes) ?? 0);
+  cards.push(mostWritten
+    ? {
+        label: "Most-written model",
+        value: plural(numberOf(mostWritten.writes) ?? 0, "write"),
+        detail: String(mostWritten.model ?? "—"),
+        note: textList(mostWritten.operations),
+        tone: "warning",
+      }
+    : {
+        label: "Data changes",
+        value: "No writes",
+        detail: models.length ? "This run only read data" : "No data operations were reported",
+      });
+
+  const totalReads = models.reduce((sum, model) => sum + (numberOf(model.reads) ?? 0), 0);
+  const totalWrites = models.reduce((sum, model) => sum + (numberOf(model.writes) ?? 0), 0);
+  if (totalReads + totalWrites) {
+    cards.push({
+      label: "Data footprint",
+      value: `${totalReads + totalWrites} operations`,
+      detail: `${totalReads} reads · ${totalWrites} writes`,
+      note: `Across ${plural(models.length, "model")}`,
+    });
+  }
+
+  const perMinute = numberOf(summary.requestsPerMinute);
+  const first = summary.firstRequestAt ? new Date(String(summary.firstRequestAt)).getTime() : NaN;
+  const last = summary.lastRequestAt ? new Date(String(summary.lastRequestAt)).getTime() : NaN;
+  if (perMinute !== null) {
+    const spanMinutes = Number.isFinite(first) && Number.isFinite(last) ? Math.max(1, Math.round((last - first) / 60_000)) : null;
+    cards.push({
+      label: "Traffic",
+      value: `${perMinute < 10 ? perMinute.toFixed(1) : Math.round(perMinute)} requests/min`,
+      detail: spanMinutes === null ? "Across the run" : `Over ${spanMinutes} minute${spanMinutes === 1 ? "" : "s"} of activity`,
+    });
+  }
+
+  const drafted = numberOf(resolutions.drafted) ?? 0;
+  if (drafted) {
+    cards.push({
+      label: "Suggested resolutions",
+      value: plural(drafted, "finding"),
+      detail: "Have an AI-drafted resolution",
+      note: resolutions.codeContext ? "Drafted with the code that handles each endpoint" : "Drafted from the captured requests",
+    });
+  }
+
+  return cards;
+}
+
 /** True when this report has a backend section worth rendering. */
 export function hasBackendSection(sections: Record<string, unknown>): boolean {
   return Object.keys(record(sections.backendSummary)).length > 0;
@@ -472,11 +620,19 @@ export function hasBackendSection(sections: Record<string, unknown>): boolean {
  * them, and what those endpoints changed. Everything else about a finding
  * stays in the downloadable report, as it does for the rest of this page.
  */
-export function BackendReportCard({ sections }: { sections: Record<string, unknown> }) {
+export function BackendReportCard({
+  sections,
+  runHref,
+}: {
+  sections: Record<string, unknown>;
+  /** Where the full request-by-request history lives, so the card can point at it. */
+  runHref?: string;
+}) {
   const summary = record(sections.backendSummary);
   if (!Object.keys(summary).length) return null;
   const endpoints = rows(summary.endpoints);
   const models = rows(summary.models);
+  const highlights = reportHighlights(summary, endpoints, models, record(sections.findingResolutions));
   const errorGroups = rows(summary.serverErrorGroups);
   const requests = numberOf(summary.requests) ?? 0;
   const limitations = Array.isArray(summary.limitations)
@@ -498,6 +654,13 @@ export function BackendReportCard({ sections }: { sections: Record<string, unkno
       <p>
         Durations are server-side handler time as the SDK measured it, so they
         exclude the network and the client.
+        {runHref ? (
+          <>
+            {" "}
+            Every endpoint, request and data operation is listed in the{" "}
+            <Link to={runHref}>QA run</Link>.
+          </>
+        ) : null}
       </p>
       <dl className="detail-list report-detail-grid">
         <div>
@@ -535,79 +698,17 @@ export function BackendReportCard({ sections }: { sections: Record<string, unkno
         </div>
       </dl>
 
-      {endpoints.length ? (
-        <section className="run-endpoints">
-          <header>
-            <h2>Endpoints</h2>
-            <span>{endpoints.length}</span>
-          </header>
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Route</th>
-                <th scope="col">Calls</th>
-                <th scope="col">Status</th>
-                <th scope="col">Avg</th>
-                <th scope="col">p95</th>
-                <th scope="col">Models</th>
-              </tr>
-            </thead>
-            <tbody>
-              {endpoints.slice(0, 50).map((endpoint, index) => {
-                const method = String(endpoint.method ?? "GET");
-                return (
-                  <tr
-                    key={String(endpoint.key ?? index)}
-                    data-failing={numberOf(endpoint.errors) ? "true" : undefined}
-                  >
-                    <th scope="row">
-                      <span className="run-endpoint-method" data-method={method.toLowerCase()}>
-                        {method}
-                      </span>
-                      <code>{String(endpoint.route ?? "/")}</code>
-                    </th>
-                    <td>{numberOf(endpoint.requests) ?? 0}</td>
-                    <td>{statusClasses(endpoint.statusClasses)}</td>
-                    <td>{formatMilliseconds(numberOf(endpoint.averageMs))}</td>
-                    <td>{formatMilliseconds(numberOf(endpoint.p95Ms))}</td>
-                    <td>{textList(endpoint.models)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      ) : null}
-
-      {models.length ? (
-        <section className="run-models">
-          <header>
-            <h2>Models affected</h2>
-            <span>{models.length}</span>
-          </header>
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Model</th>
-                <th scope="col">Reads</th>
-                <th scope="col">Writes</th>
-                <th scope="col">Records</th>
-                <th scope="col">Operations</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.slice(0, 50).map((model, index) => (
-                <tr key={String(model.model ?? index)}>
-                  <th scope="row"><code>{String(model.model ?? "—")}</code></th>
-                  <td>{numberOf(model.reads) || "—"}</td>
-                  <td>{numberOf(model.writes) || "—"}</td>
-                  <td>{numberOf(model.records) ?? "—"}</td>
-                  <td>{textList(model.operations)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+      {highlights.length ? (
+        <div className="report-highlights" aria-label="Highlights from this run">
+          {highlights.map((highlight) => (
+            <article className="report-highlight" data-tone={highlight.tone} key={highlight.label}>
+              <small>{highlight.label}</small>
+              <strong>{highlight.value}</strong>
+              <span title={highlight.detail}>{highlight.detail}</span>
+              {highlight.note ? <em>{highlight.note}</em> : null}
+            </article>
+          ))}
+        </div>
       ) : null}
 
       {errorGroups.length ? (

@@ -4,6 +4,8 @@ import { app, net, shell } from "electron";
 import type {
   BackendEvidencePage,
   BackendEvidenceQuery,
+  ProtectedValuePage,
+  ProtectedValueQuery,
   BranchPolicy,
   CodebaseAnalysis,
   DeclaredFlowDetail,
@@ -729,6 +731,16 @@ export class DesktopCloudClient {
     if (query.access) params.set("access", query.access);
     if (query.sort) params.set("sort", query.sort);
     return this.request<BackendEvidencePage>(`/qa-runs/${runId}/backend-evidence?${params.toString()}`);
+  }
+
+  async runProtectedValues(runId: string, query: ProtectedValueQuery): Promise<ProtectedValuePage> {
+    const params = new URLSearchParams();
+    if (query.page) params.set("page", String(query.page));
+    if (query.pageSize) params.set("pageSize", String(query.pageSize));
+    if (query.q) params.set("q", query.q);
+    if (query.part) params.set("part", query.part);
+    if (query.method) params.set("method", query.method);
+    return this.request<ProtectedValuePage>(`/qa-runs/${runId}/protected-values?${params.toString()}`);
   }
 
   async runReport(runId: string): Promise<QualityReport> {

@@ -34,6 +34,11 @@ import {
 } from './qa-privacy';
 import { normalizeQaRunTitle, resolveQaRunTitle } from './qa-run-titles';
 import {
+  PROTECTED_VALUE_PARTS,
+  findRevealableProtectedValues,
+  type ProtectedValuePart,
+} from './qa-protected-values-query';
+import {
   BACKEND_EVIDENCE_KINDS,
   BACKEND_EVIDENCE_SORTS,
   BACKEND_EVIDENCE_STATUSES,
@@ -1638,6 +1643,44 @@ export function createDesktopRouter(input: {
       }),
     ]);
     res.status(202).json({ reportId: run.report.id, status: QAReportStatus.PENDING });
+  });
+
+  /**
+   * The protected values this caller can reveal, one page at a time. Empty for
+   * a member who may not reveal anything, and never lists a value that cannot
+   * be revealed, so the report page has nothing to show a reader who could do
+   * nothing with it.
+   */
+  router.get('/qa-runs/:runId/protected-values', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const text = (value: unknown, limit: number) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+    const part = text(req.query.part, 20);
+    if (part && !(PROTECTED_VALUE_PARTS as readonly string[]).includes(part)) return res.status(400).json({ error: 'INVALID_PROTECTED_VALUE_PART' });
+    const method = text(req.query.method, 12).toUpperCase();
+    if (method && !/^[A-Z]{1,12}$/.test(method)) return res.status(400).json({ error: 'INVALID_PROTECTED_VALUE_METHOD' });
+    const pageSize = Math.min(Math.max(Math.floor(Number(req.query.pageSize)) || 25, 1), 100);
+    const page = Math.max(Math.floor(Number(req.query.page)) || 1, 1);
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: req.user!.id, organizationId: run.organizationId } },
+      select: { role: true },
+    });
+    const canReveal = canRevealProtectedValue({
+      requestingUserId: req.user!.id,
+      runCreatedByUserId: run.createdByUserId,
+      role: membership?.role ?? null,
+    });
+    if (!canReveal) return res.json({ canReveal: false, page, pageSize, total: 0, items: [] });
+    const { items, total } = await findRevealableProtectedValues(prisma, {
+      runId: run.id,
+      page,
+      pageSize,
+      query: text(req.query.q, 200),
+      part: (part || undefined) as ProtectedValuePart | undefined,
+      method: method || undefined,
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ canReveal: true, page, pageSize, total, items });
   });
 
   router.post('/qa-runs/:runId/protected-values/:valueId/reveal', verifyJwt, async (req: DesktopRequest, res: Response) => {

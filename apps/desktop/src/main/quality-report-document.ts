@@ -90,6 +90,8 @@ function readReport(report: Record<string, unknown>) {
     // not carry scopeKind. Preserve that legacy interpretation; new flowless
     // reports identify themselves explicitly as SESSION.
     hasFlow: report.scopeKind !== "SESSION",
+    // The run's own name, which the report is filed under.
+    runTitle: text(report.title, ""),
     application: asRecord(report.application),
     environment: asRecord(report.environment),
     summary: asRecord(report.summary),
@@ -187,6 +189,28 @@ function coverageText(data: ReadReport): string {
     : `${Number(expected).toFixed(1)}% of the declared Flow was exercised`;
 }
 
+/** The AI-drafted resolution for a finding, when the report carries one. */
+function renderResolution(item: Record<string, unknown>): string {
+  const resolution = asRecord(item.resolution);
+  const summary = text(resolution.summary, "");
+  if (!summary) return "";
+  const steps = asArray(resolution.steps).map((step) => String(step)).filter(Boolean);
+  const refs = records(resolution.codeRefs);
+  const cause = text(resolution.likelyCause, "");
+  return `<h3>Suggested resolution</h3><p>${escapeHtml(summary)}</p>
+    ${cause ? `<p><strong>Most likely cause.</strong> ${escapeHtml(cause)}</p>` : ""}
+    ${steps.length ? `<p><strong>What to check</strong></p><ol>${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
+    ${refs.length ? `<p><strong>Where to look</strong></p><table class="manifest">${refs
+      .map((ref) => {
+        const start = Number(ref.startLine);
+        const end = Number(ref.endLine);
+        const range = Number.isFinite(start) && start > 0 ? (Number.isFinite(end) && end > start ? `:${start}–${end}` : `:${start}`) : "";
+        return `<tr><td>${escapeHtml(text(ref.role, "CODE").toUpperCase())}</td><td><strong>${escapeHtml(`${text(ref.path, "")}${range}`)}</strong> ${escapeHtml(text(ref.name, ""))}</td></tr>`;
+      })
+      .join("")}</table>` : ""}
+    <p class="muted">Drafted by AI from the captured requests${resolution.basis && asRecord(resolution.basis).code ? " and the code that handles the endpoint" : ""}, with ${escapeHtml(confidencePercent(resolution.confidence))} confidence. Check it against your code before acting on it.</p>`;
+}
+
 /** One finding, with everything the app's summary leaves out. */
 function renderFinding(item: Record<string, unknown>, index: number): string {
   const priority = text(item.priority, "MEDIUM");
@@ -202,6 +226,7 @@ function renderFinding(item: Record<string, unknown>, index: number): string {
     <h3>Why it matters</h3><p>${escapeHtml(impact)}</p>
     ${rationale && rationale !== impact ? `<h3>What the evidence shows</h3><p>${escapeHtml(rationale)}</p>` : ""}
     <h3>Next step</h3><p>${escapeHtml(text(item.suggestedAction, "Investigate and repeat the affected step."))}</p>
+    ${renderResolution(item)}
     <h3>Expected outcome</h3><p>${escapeHtml(text(item.expectedOutcome, "The Flow completes reliably."))}</p>
     <table class="facts">${factRows([
       ["SOURCE", text(item.generator, "RULES")],
@@ -493,7 +518,8 @@ function renderAppendix(data: ReadReport): string {
 export function qualityReportHtml(input: QualityReportDocumentInput): string {
   const { report } = input;
   const data = readReport(report);
-  const title = data.hasFlow ? `${flowTitle(data)} quality report` : "Observational QA report";
+  const title = data.runTitle
+    || (data.hasFlow ? `${flowTitle(data)} quality report` : "Observational QA report");
   const counts: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
   for (const finding of data.findings) {
     const priority = text(finding.priority, "MEDIUM").toUpperCase();
@@ -791,6 +817,15 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
         "not linked",
       )}, confidence ${confidencePercent(finding.confidence)})`,
     ]);
+    const resolution = asRecord(finding.resolution);
+    if (text(resolution.summary, "")) {
+      csv += csvRow([
+        "Suggested resolution",
+        text(finding.title ?? finding.suggestedAction, "Finding"),
+        confidencePercent(resolution.confidence),
+        `${text(resolution.summary, "")} Most likely cause: ${text(resolution.likelyCause, "")} Steps: ${asArray(resolution.steps).map((step) => String(step)).join(" | ")}`,
+      ]);
+    }
   }
   for (const state of data.hasFlow ? data.missingStates : []) {
     csv += csvRow([
@@ -908,7 +943,7 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
 export function qualityReportFileBase(input: QualityReportDocumentInput): string {
   const data = readReport(input.report);
   const name =
-    `${text(data.application.name, "application")}-${flowTitle(data)}`
+    `${text(data.application.name, "application")}-${data.runTitle || flowTitle(data)}`
       .replace(/[^a-z0-9-]+/gi, "-")
       .replace(/^-|-$/g, "")
       .slice(0, 70) || "quality-report";

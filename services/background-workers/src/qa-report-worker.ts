@@ -10,6 +10,7 @@ import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tel
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
 import { summarizeBackendEvidence } from './qa-backend-report';
+import { NO_RESOLUTIONS, draftBackendFindingResolutions, type ResolutionOutcome } from './qa-finding-resolution';
 
 const AiImprovementSchema = z.object({
   suggestions: z.array(z.object({
@@ -369,13 +370,41 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     }
   }
 
+  // A resolution summary per backend finding, drafted from the requests the run
+  // captured for its endpoint and the code that handles it. It is an extra
+  // reading on top of the finding, so it can never fail the report: any error
+  // here leaves the findings exactly as the rules produced them.
+  let resolutions: ResolutionOutcome = NO_RESOLUTIONS;
+  if (aiEnabled) {
+    try {
+      resolutions = await draftBackendFindingResolutions(prisma, {
+        run: {
+          applicationId: run.applicationId,
+          repositorySnapshotId: run.repositorySnapshotId,
+          repositoryRevision: run.repositorySnapshot?.revision ?? null,
+        },
+        findings: run.findings.map((finding) => ({
+          id: finding.id, category: finding.category, severity: finding.severity, title: finding.title,
+          description: finding.description, recommendation: finding.recommendation, dedupeKey: finding.dedupeKey,
+        })),
+        events: run.evidenceEvents,
+      });
+    } catch (error) {
+      resolutions = { ...NO_RESOLUTIONS, status: `FAILED:${safeError(error)}` };
+    }
+  }
+  const withResolution = <T extends { id: string }>(item: T) => {
+    const resolution = resolutions.byFindingId.get(item.id);
+    return resolution ? { ...item, resolution: { ...resolution, generatedAt: new Date().toISOString() } } : item;
+  };
+
   await prisma.qAReport.update({ where: { id: reportId }, data: { status: QAReportStatus.GENERATING, rulesStatus: 'READY', aiStatus } });
   const counts = Object.fromEntries(Object.entries(run.evidenceEvents.reduce<Record<string, number>>((acc, event) => {
     acc[event.eventType] = (acc[event.eventType] ?? 0) + 1;
     return acc;
   }, {})));
-  const improvements = [...inFlowDeterministic, ...aiSuggestions];
-  const criticalOutOfFlow = preBoundaryDeterministic.filter((item) => ['CRITICAL', 'HIGH'].includes(item.priority));
+  const improvements = [...inFlowDeterministic, ...aiSuggestions].map(withResolution);
+  const criticalOutOfFlow = preBoundaryDeterministic.filter((item) => ['CRITICAL', 'HIGH'].includes(item.priority)).map(withResolution);
   // The appendix is a bounded sample, not a full dump: a long run can produce
   // tens of thousands of evidence events, and embedding every one of them with
   // full metadata made the immutable payload unbounded. Counts stay exact; the
@@ -467,6 +496,14 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
       backendSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
+      findingResolutions: {
+        status: resolutions.status,
+        provider: resolutions.provider,
+        model: resolutions.model,
+        drafted: resolutions.drafted,
+        discarded: resolutions.discarded,
+        codeContext: resolutions.codeContext,
+      },
       inFlowFindings: { recommendedNextActions: improvements.slice(0, 10), findings: improvements, missingStates, missingTransitions, unexpectedStates },
       criticalSystemWideFindings: criticalOutOfFlow,
       userAnnotations: run.annotations.map((annotation, index) => ({ id: annotation.id, pin: index + 1, comment: annotation.comment, author: annotation.author, timestamp: annotation.createdAt, route: annotation.normalizedRoute, flowState: annotation.flowStateKey, resolution: annotation.windowResolution, element: annotation.elementFingerprint, screenshotArtifactId: annotation.screenshotArtifactId, mentionedTeammates: annotation.mentions.map((mention) => ({ id: mention.userId, displayName: mention.displayNameSnapshot })) })),
@@ -488,7 +525,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     },
   };
   await prisma.$transaction([
-    prisma.qAReport.update({ where: { id: report.id }, data: { status: QAReportStatus.READY, payload, generatedAt: new Date(), rulesStatus: 'READY', aiStatus, generatorProvenance: { schemaVersion: '2.0', deterministic: true, aiStatus } } }),
+    prisma.qAReport.update({ where: { id: report.id }, data: { status: QAReportStatus.READY, payload, generatedAt: new Date(), rulesStatus: 'READY', aiStatus, generatorProvenance: { schemaVersion: '2.0', deterministic: true, aiStatus, resolutionStatus: resolutions.status } } }),
     prisma.qAReportGenerationJob.update({ where: { reportId: report.id }, data: { status: QAReportJobStatus.COMPLETED, completedAt: new Date(), failureReasonSafe: null } }),
     prisma.qARun.update({ where: { id: run.id }, data: { reportId: report.id } }),
     prisma.auditLog.create({ data: { userId: run.createdByUserId, organizationId: run.organizationId, action: 'REPORT_GENERATED', metadata: { runId: run.id, reportId: report.id, schemaVersion: '2.0', aiStatus } } }),

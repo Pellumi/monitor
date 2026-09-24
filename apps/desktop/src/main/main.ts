@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, screen, session, shell } from 'electron';
-import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BackendEvidenceQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -2739,6 +2739,12 @@ function registerIpc(): void {
     if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
     if (!query || typeof query !== 'object') throw new Error('INVALID_EVIDENCE_QUERY');
     return cloud.runBackendEvidence(runId, query as BackendEvidenceQuery);
+  });
+  ipcMain.handle(IPC.getRunProtectedValues, async (event, runId: unknown, query: unknown) => {
+    assertTrustedSender(event);
+    if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
+    if (!query || typeof query !== 'object') throw new Error('INVALID_PROTECTED_VALUE_QUERY');
+    return cloud.runProtectedValues(runId, query as ProtectedValueQuery);
   });
   ipcMain.handle(IPC.getRunReport, async (event, runId: unknown) => {
     assertTrustedSender(event);

@@ -252,3 +252,32 @@ test('the CSV carries the backend rollup, one row per endpoint and model', () =>
   assert.ok(rows.some((row) => row.includes('POST /orders/:id')));
   assert.ok(rows.some((row) => row.includes('2xx 2 · 5xx 1')));
 });
+
+test('a report is filed under its run\'s name, in the document and in the file name', () => {
+  const named = input({ title: 'Checkout smoke test' });
+  const html = qualityReportHtml(named);
+  assert.ok(html.includes('<title>Checkout smoke test</title>'));
+  assert.ok(html.includes('<h1>Checkout smoke test</h1>'));
+  assert.ok(qualityReportFileBase(named).includes('Checkout-smoke-test'));
+  // A report from before runs were named keeps its Flow-based title.
+  assert.ok(qualityReportHtml(input()).includes('Onboarding Flow quality report'));
+});
+
+test('a finding\'s AI-drafted resolution is carried into the document, with what it rests on', () => {
+  const base = input();
+  (base.report as any).sections.inFlowFindings.findings[0].resolution = {
+    summary: 'The view rejected the caller before it read any data.',
+    likelyCause: 'The permission refused this user.',
+    steps: ['Confirm the caller\'s role.'],
+    codeRefs: [{ id: 'ref1', role: 'handler', name: 'SchoolAnalyticsView', path: 'schools/views.py', startLine: 120, endLine: 168 }],
+    confidence: 0.85,
+    basis: { requests: 1, dataOperations: 1, code: true },
+  };
+  const html = qualityReportHtml(base);
+  assert.ok(html.includes('Suggested resolution'));
+  assert.ok(html.includes('schools/views.py:120–168'));
+  assert.ok(html.includes('the code that handles the endpoint'));
+  assert.ok(qualityReportCsv(base).includes('"Suggested resolution"'));
+  // Findings without one add nothing.
+  assert.ok(!qualityReportHtml(input()).includes('Suggested resolution'));
+});

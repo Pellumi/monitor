@@ -11,6 +11,7 @@ import {
   isReportFormatEntitled,
   reportFormatsForTier,
   resolveDefaultReportFormat,
+  resolveQaRunTitle,
 } from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
@@ -557,8 +558,15 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
     if (!run) return res.status(404).json({ error: 'QA_RUN_NOT_FOUND' });
     if (run.report) {
       if (run.report.status === QAReportStatus.READY && run.report.payload) {
-        res.setHeader('Cache-Control', 'private, max-age=60');
-        return res.json(run.report.payload);
+        // A report is named for its run, and the run can be renamed after the
+        // payload was frozen, so the name is resolved on every read.
+        const frozen = run.report.payload && typeof run.report.payload === 'object' && !Array.isArray(run.report.payload)
+          ? run.report.payload as Record<string, unknown> : {};
+        res.setHeader('Cache-Control', 'private, no-cache');
+        return res.json({
+          ...frozen,
+          title: resolveQaRunTitle({ ...run, environmentName: run.environment?.name }),
+        });
       }
       if (run.report.status === QAReportStatus.FAILED) {
         return res.status(503).json({
@@ -604,6 +612,7 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
     res.json({
       id: reportId,
       runId: run.id,
+      title: resolveQaRunTitle({ ...run, environmentName: run.environment?.name }),
       status: run.status,
       generatedAt: new Date().toISOString(),
       application: run.application,

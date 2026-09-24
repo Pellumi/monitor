@@ -734,6 +734,8 @@ export const QualityReportSchema = z.object({
   generatedAt: z.string().datetime(),
   /** One plain-English sentence summarizing the run, ahead of every structured field. */
   summaryText: z.string().optional(),
+  /** The run's name, resolved on every read so a rename shows up here too. */
+  title: z.string().optional(),
   application: z.object({ id: z.string().uuid(), name: z.string() }),
   environment: z.object({
     id: z.string().uuid(),
@@ -1359,6 +1361,7 @@ export const IPC = {
   getRun: 'tellann:cloud:runs:get',
   getRunReplay: 'tellann:cloud:runs:replay',
   getRunBackendEvidence: 'tellann:cloud:runs:backend-evidence',
+  getRunProtectedValues: 'tellann:cloud:runs:protected-values',
   getRunReport: 'tellann:cloud:runs:report',
   saveRunReportDownload: 'tellann:cloud:runs:report:download',
   renameRun: 'tellann:cloud:runs:rename',
@@ -1692,6 +1695,38 @@ export type BackendEvidenceItem = {
   mutation: boolean | null;
   /** How many identical data operations the SDK collapsed into this row. */
   count: number | null;
+};
+
+export type ProtectedValuePart = 'requestBody' | 'responseBody' | 'query' | 'other';
+
+export type ProtectedValueQuery = {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  part?: ProtectedValuePart;
+  method?: string;
+};
+
+/** A protected value the reader may reveal. Values that can never be revealed are not listed. */
+export type ProtectedValueItem = {
+  id: string;
+  keyPath: string;
+  displayValue: string;
+  valueLength: number;
+  eventType: string;
+  route: string | null;
+  method: string | null;
+  statusCode: number | null;
+  occurredAt: string;
+};
+
+export type ProtectedValuePage = {
+  /** False when the reader is not allowed to reveal values on this run at all. */
+  canReveal: boolean;
+  page: number;
+  pageSize: number;
+  total: number;
+  items: ProtectedValueItem[];
 };
 
 export type BackendEvidencePage = {

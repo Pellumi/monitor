@@ -132,7 +132,7 @@ function RequestRows({ items }: { items: BackendEvidenceItem[] }) {
           <th scope="col">Duration</th>
           <th scope="col">Handler</th>
           <th scope="col">Size</th>
-          <th scope="col">Models</th>
+          {/* <th scope="col">Models</th> */}
         </tr>
       </thead>
       <tbody>
@@ -158,7 +158,7 @@ function RequestRows({ items }: { items: BackendEvidenceItem[] }) {
               <td>{formatDuration(item.durationMs)}</td>
               <td>{item.handler ?? "—"}</td>
               <td>{formatSize(item.responseBytes)}</td>
-              <td>{item.models.length ? item.models.slice(0, 4).join(", ") : "—"}</td>
+              {/* <td>{item.models.length ? item.models.slice(0, 4).join(", ") : "—"}</td> */}
             </tr>
           );
         })}
@@ -207,6 +207,55 @@ function DataRows({ items }: { items: BackendEvidenceItem[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+function BackendEvidenceSkeleton({ kind, rows = 5 }: { kind: BackendEvidenceKind; rows?: number }) {
+  const columns = kind === "data"
+    ? ["Time", "Operation", "Type", "Records", "Endpoint", "Duration"]
+    : ["Time", "Request", "Response", "Duration"];
+
+  return (
+    <div className="run-history-scroll run-history-skeleton" role="status" aria-label="Loading evidence">
+      <table>
+        <thead aria-hidden="true">
+          <tr>
+            {columns.map((column) => (
+              <th scope="col" key={column}>{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }, (_, index) => (
+            <tr key={index} aria-hidden="true">
+              <td className="run-history-time">
+                <i className="run-history-skeleton-bar" data-bar="time" />
+              </td>
+              <th scope="row">
+                <i className="run-history-skeleton-bar" data-bar="title" />
+                <i className="run-history-skeleton-bar" data-bar="subtitle" />
+              </th>
+              <td>
+                <i className="run-history-skeleton-bar" data-bar={kind === "data" ? "type" : "status"} />
+              </td>
+              <td>
+                <i className="run-history-skeleton-bar" data-bar="metric" />
+              </td>
+              {kind === "data" ? (
+                <>
+                  <td>
+                    <i className="run-history-skeleton-bar" data-bar="endpoint" />
+                  </td>
+                  <td>
+                    <i className="run-history-skeleton-bar" data-bar="metric" />
+                  </td>
+                </>
+              ) : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -344,7 +393,7 @@ export function BackendEvidenceHistory({
 
       <div className="run-endpoints run-history-table" aria-busy={loading}>
         {showFirstLoad ? (
-          <p className="run-findings-empty">Loading evidence…</p>
+          <BackendEvidenceSkeleton kind={kind} />
         ) : rows.length ? (
           <div className="run-history-scroll" data-loading={loading ? "true" : undefined}>
             {kind === "data" ? <DataRows items={rows} /> : <RequestRows items={rows} />}

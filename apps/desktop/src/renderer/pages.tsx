@@ -71,6 +71,8 @@ import {
 } from "lucide-react";
 import { CodebaseAnalysisPanel } from "./codebase-analysis-panel";
 import { BackendEvidenceHistory } from "./backend-run-evidence";
+import { ProtectedValuesPanel } from "./protected-values-panel";
+import { ReportFindingTitles as FindingTitleList } from "./report-findings";
 import {
   BACKEND_EMPTY_EVIDENCE,
   BACKEND_EVIDENCE_TABS,
@@ -15610,69 +15612,6 @@ function ReportDownloadCard({
 }
 
 /** Priority pill plus title. What the finding means lives in the downloaded report. */
-function ReportFindingTitles({
-  items,
-  label,
-}: {
-  items: Record<string, unknown>[];
-  label: string;
-}) {
-  const [page, setPage] = useState(0);
-  const itemsPerPage = 10;
-  
-  if (!items.length) return null;
-  
-  const totalPages = Math.ceil(items.length / itemsPerPage);
-  // Ensure page is within bounds in case items array changes
-  const safePage = Math.min(page, Math.max(0, totalPages - 1));
-  const visibleItems = items.slice(safePage * itemsPerPage, (safePage + 1) * itemsPerPage);
-
-  return (
-    <div className="report-title-group">
-      <h3>{label}</h3>
-      <ul className="report-title-list">
-        {visibleItems.map((item, index) => (
-          <li key={String(item.id ?? (safePage * itemsPerPage + index))}>
-            <Status>{String(item.priority ?? "MEDIUM")}</Status>
-            <span>{String(item.title ?? item.suggestedAction ?? "Finding")}</span>
-          </li>
-        ))}
-      </ul>
-      {totalPages > 1 && (
-        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="analysis-btn-secondary"
-            disabled={safePage === 0}
-            onClick={(e) => {
-              e.preventDefault();
-              setPage(p => Math.max(0, p - 1));
-            }}
-            style={{ opacity: safePage === 0 ? 0.5 : 1, cursor: safePage === 0 ? 'not-allowed' : 'pointer' }}
-          >
-            Previous
-          </button>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Page {safePage + 1} of {totalPages}
-          </span>
-          <button
-            type="button"
-            className="analysis-btn-secondary"
-            disabled={safePage === totalPages - 1}
-            onClick={(e) => {
-              e.preventDefault();
-              setPage(p => Math.min(totalPages - 1, p + 1));
-            }}
-            style={{ opacity: safePage === totalPages - 1 ? 0.5 : 1, cursor: safePage === totalPages - 1 ? 'not-allowed' : 'pointer' }}
-          >
-            Next
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /**
  * The report summary.
  *
@@ -15694,16 +15633,17 @@ function formatReportDuration(ms: unknown): string {
   return `${seconds}s`;
 }
 
+function ReportFindingTitles({ items, label }: { items: Record<string, unknown>[]; label: string }) {
+  return <FindingTitleList items={items} label={label} status={(priority) => <Status>{priority}</Status>} />;
+}
+
 export function ReportDetailPage() {
   const { projectId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get("runId");
-  const { getReport, revealProtectedValue, applications } = useDesktop();
+  const { getReport, applications } = useDesktop();
   const [report, setReport] = useState<QualityReport | null>(null);
   const [loading, setLoading] = useState(true);
-  const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
-  const [revealBusy, setRevealBusy] = useState<string | null>(null);
-  const [revealError, setRevealError] = useState<string | null>(null);
   useEffect(() => {
     if (runId)
       void getReport(runId)
@@ -15735,18 +15675,10 @@ export function ReportDetailPage() {
   const annotations = Array.isArray(sections.userAnnotations)
     ? sections.userAnnotations.map(asRecord)
     : [];
-  const evidenceEvents = Array.isArray(appendix.events)
-    ? appendix.events.map(asRecord)
-    : [];
   const missingStateCount = Array.isArray(inFlow.missingStates) ? inFlow.missingStates.length : 0;
   const missingTransitionCount = Array.isArray(inFlow.missingTransitions)
     ? inFlow.missingTransitions.length
     : 0;
-  const protectedValues = evidenceEvents.flatMap((event) =>
-    Array.isArray(event.protectedValues)
-      ? event.protectedValues.map((value) => ({ event, value: asRecord(value) }))
-      : [],
-  );
   const viewportHistory = Array.isArray(runSummary.viewportHistory)
     ? runSummary.viewportHistory.map(asRecord)
     : [];
@@ -15756,7 +15688,7 @@ export function ReportDetailPage() {
     counts[priority] = (counts[priority] ?? 0) + 1;
     return counts;
   }, {});
-  const eventTotal = Number(appendix.eventTotal ?? evidenceEvents.length);
+  const eventTotal = Number(appendix.eventTotal ?? (Array.isArray(appendix.events) ? appendix.events.length : 0));
   const backendSummary = asRecord(sections.backendSummary);
   const reportCaptureTracks = Array.isArray(runSummary.captureTracks)
     ? runSummary.captureTracks.map((track) => String(track))
@@ -15765,23 +15697,9 @@ export function ReportDetailPage() {
     hasBackendSection(sections) && reportCaptureTracks.length > 0 && !reportCaptureTracks.includes("FRONTEND");
   const hasFlow = Boolean(flowSummary.name || report.flow);
 
-  const reveal = async (valueId: string) => {
-    if (!runId || revealBusy) return;
-    setRevealBusy(valueId);
-    setRevealError(null);
-    try {
-      const result = await revealProtectedValue(runId, valueId);
-      setRevealedValues((current) => ({ ...current, [valueId]: result.value }));
-    } catch (error) {
-      setRevealError(normalizeDesktopError(error));
-    } finally {
-      setRevealBusy(null);
-    }
-  };
-
   return (
     <Page
-      title="Quality report"
+      title={report.title?.trim() || "Quality report"}
       description={`${report.application.name} · ${report.environment.name} · generated ${new Date(report.generatedAt).toLocaleString()}`}
       actions={<Status>{report.status}</Status>}
     >
@@ -15858,7 +15776,7 @@ export function ReportDetailPage() {
         ) : null}
       </section>
 
-      <BackendReportCard sections={sections} />
+      <BackendReportCard sections={sections} runHref={`/applications/${projectId}/qa-runs/${report.runId}`} />
 
       <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
 
@@ -15918,49 +15836,21 @@ export function ReportDetailPage() {
           <Status>{`${eventTotal} events`}</Status>
         </div>
         <div className="report-links">
-          <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
-            Review evidence timeline
-          </Link>
+          {backendOnlyReport ? null : (
+            <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/evidence`}>
+              Review evidence timeline
+            </Link>
+          )}
           {hasFlow ? (
             <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}/reconciliation`}>
               View Flow reconciliation
             </Link>
           ) : null}
           <Link className="button" to={`/applications/${projectId}/qa-runs/${report.runId}`}>
-            Open QA run
+            {backendOnlyReport ? "Browse endpoint history" : "Open QA run"}
           </Link>
         </div>
-        {protectedValues.length ? (
-          <details className="report-details protected-values">
-            <summary>Protected values ({protectedValues.length})</summary>
-            <p>
-              Values stay masked, and are never written to a downloaded report. Authorized reveals
-              are individual, rate limited, audited, and never cached.
-            </p>
-            {revealError ? <div className="inline-error" role="alert">{revealError}</div> : null}
-            {protectedValues.map(({ event, value }, index) => {
-              const valueId = String(value.id ?? "");
-              const canReveal = String(value.kind) === "ENCRYPTED";
-              return (
-                <div className="protected-value-row" key={valueId || `${String(event.id)}:${index}`}>
-                  <div>
-                    <strong>{String(value.keyPath ?? "protected value")}</strong>
-                    <small>{String(value.displayValue ?? "[PROTECTED]")} · {String(event.type ?? "event")} · {String(event.route ?? "unknown route")}</small>
-                    {revealedValues[valueId] !== undefined ? <code>{revealedValues[valueId]}</code> : null}
-                  </div>
-                  {canReveal && valueId && revealedValues[valueId] === undefined ? (
-                    <button className="button" type="button" disabled={Boolean(revealBusy)} onClick={() => void reveal(valueId)}>
-                      <Unlock size={15} />
-                      {revealBusy === valueId ? "Authorizing…" : "Reveal"}
-                    </button>
-                  ) : (
-                    <Status>{canReveal ? "REVEALED" : "NOT REVEALABLE"}</Status>
-                  )}
-                </div>
-              );
-            })}
-          </details>
-        ) : null}
+        {runId ? <ProtectedValuesPanel runId={runId} /> : null}
       </section>
     </Page>
   );

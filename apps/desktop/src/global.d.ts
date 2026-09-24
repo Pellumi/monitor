@@ -1,6 +1,8 @@
 import type {
   BackendEvidencePage,
   BackendEvidenceQuery,
+  ProtectedValuePage,
+  ProtectedValueQuery,
   BranchPolicy,
   WorkspaceCompliance,
   QaBranchSwitchResult,
@@ -256,6 +258,7 @@ declare global {
         get(runId: string): Promise<Record<string, unknown>>;
         getReplay(runId: string): Promise<Record<string, unknown>>;
         getBackendEvidence(runId: string, query: BackendEvidenceQuery): Promise<BackendEvidencePage>;
+        getProtectedValues(runId: string, query: ProtectedValueQuery): Promise<ProtectedValuePage>;
         getReport(runId: string): Promise<QualityReport>;
         /** Empty title clears back to the derived one. */
         rename(runId: string, title: string): Promise<QARunSummary>;

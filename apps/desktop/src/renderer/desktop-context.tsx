@@ -11,6 +11,8 @@ import {
 import type {
   BackendEvidencePage,
   BackendEvidenceQuery,
+  ProtectedValuePage,
+  ProtectedValueQuery,
   RepositoryMismatch,
   CreateApplicationInput,
   DesktopOrganization,
@@ -140,6 +142,8 @@ type DesktopContextValue = {
   getRunReplay(runId: string): Promise<Record<string, unknown>>;
   /** One page of a backend run's endpoint history, searched and filtered server-side. */
   getRunBackendEvidence(runId: string, query: BackendEvidenceQuery): Promise<BackendEvidencePage>;
+  /** The protected values the reader may reveal, searched and paged server-side. */
+  getRunProtectedValues(runId: string, query: ProtectedValueQuery): Promise<ProtectedValuePage>;
   getReport(runId: string): Promise<QualityReport>;
   /** Writes the complete report to a file the user chooses. Format is plan-gated in main. */
   saveReportDownload(
@@ -751,6 +755,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     checkSdkVersions: (applicationId) => bridge().runs.checkSdkVersions(applicationId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getRunBackendEvidence: (runId, query) => bridge().runs.getBackendEvidence(runId, query),
+    getRunProtectedValues: (runId, query) => bridge().runs.getProtectedValues(runId, query),
     getReport: (runId) => bridge().runs.getReport(runId),
     saveReportDownload: (runId, format) => bridge().runs.saveReportDownload(runId, format),
     getArtifactDownloadUrl: (runId, artifactId) => bridge().runs.getArtifactDownloadUrl(runId, artifactId),
