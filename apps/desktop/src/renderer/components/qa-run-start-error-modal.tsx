@@ -74,12 +74,13 @@ export function describeQaRunStartFailure(
 
   if (/RUN_ALREADY_ACTIVE/i.test(technicalDetails)) {
     return {
-      title: "Another QA run is already active",
-      summary: "Tellann can capture one local QA run at a time on this device.",
+      title: "A QA run is already recording",
+      summary:
+        "Tellann captures one local QA run at a time on this device, so this run was not started. The run already going is untouched and still recording.",
       targetUrl,
       nextSteps: [
-        "Open the active run and end it, or wait for it to finish.",
-        "Return to this page and try again.",
+        'Open the active run from "QA run running" in the status bar.',
+        "End that run before starting a new one.",
       ],
       technicalDetails,
     };

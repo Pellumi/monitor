@@ -36,6 +36,8 @@ import type {
 import type { GuidedRunState } from '@tellann/browser-observer';
 
 declare global {
+  /** A live run panel that can be popped out of the run page into its own window. */
+  type RunPanelId = 'guide' | 'evidence';
   /** What the desktop knows about an analysis, whichever side is running it. */
   /** Where applying an approved instrumentation task has got to (sent by the main process). */
   type InstrumentationApplyProgress = {
@@ -276,6 +278,14 @@ declare global {
         /** Raises the managed browser window above the desktop app. */
         focusBrowser(): Promise<GuidedRunState>;
         reopenBrowser(): Promise<GuidedRunState>;
+        /** Detaches one of the live run's panels into its own window. */
+        openPanelWindow(panel: RunPanelId): Promise<{ panel: RunPanelId; open: boolean }>;
+        /** Closes a detached panel's window, which puts it back in the run page. */
+        closePanelWindow(panel: RunPanelId): Promise<{ panel: RunPanelId; open: boolean }>;
+        getPanelWindowState(): Promise<Record<RunPanelId, boolean>>;
+        onPanelWindowChanged(
+          callback: (state: { panel: RunPanelId; open: boolean }) => void,
+        ): () => void;
         relayConnection(): Promise<{
           endpoint: string;
           relayToken: string;

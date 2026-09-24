@@ -254,6 +254,15 @@ function bridge() {
   return window.tellann;
 }
 
+/**
+ * Whether a run is still recording on this device. A completed or failed run is
+ * history: it is only a run in progress that holds the application scope, keeps
+ * the run page worth returning to, and stands in the way of starting another.
+ */
+export function isRunInProgress(run: GuidedRunState | null | undefined): run is GuidedRunState {
+  return Boolean(run && (run.status === 'RUNNING' || run.status === 'PAUSED'));
+}
+
 export function DesktopProvider({ children }: { children: ReactNode }) {
   const bridgeAvailable = Boolean(window.tellann);
   const [loading, setLoading] = useState(bridgeAvailable);

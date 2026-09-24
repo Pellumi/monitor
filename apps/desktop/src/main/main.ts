@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, screen, session, shell } from 'electron';
 import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
@@ -63,6 +63,7 @@ import {
   onEndRunRequested,
   registerWindowIpc,
   rendererQuery,
+  secondaryWindowOptions,
   requestAttention,
   setRunIndicator,
   themedWindowIconPath,
@@ -72,6 +73,14 @@ import {
 loadDesktopEnvironment();
 
 let mainWindow: BrowserWindow | null = null;
+/** A live run panel the operator can pop out of the run page into its own window. */
+type RunPanelId = 'guide' | 'evidence';
+/**
+ * The run panels currently popped out. Each renders the same panel from the
+ * same renderer bundle, driven by the same pushed run state, so nothing about
+ * the run changes when the operator detaches or reattaches one.
+ */
+const runPanelWindows = new Map<RunPanelId, BrowserWindow>();
 let quittingAfterRunCleanup = false;
 const cloud = new DesktopCloudClient();
 const notificationClient = new DesktopNotificationClient({
@@ -360,7 +369,7 @@ function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEven
   const ended = input.phase === 'COMPLETE' || input.localStatus === 'CHROMIUM_CLOSED' || input.localStatus === 'FAILED';
   setRunIndicator(ended ? 'idle' : input.cloudStatus === 'PAUSED' ? 'paused' : 'running');
   if (input.localStatus === 'CHROMIUM_CLOSED' || input.localStatus === 'FAILED') requestAttention();
-  mainWindow.webContents.send(IPC.runLifecycleEvent, {
+  const event: RunLifecycleEvent = {
     runId: state.runId,
     applicationId: state.applicationId,
     phase: state.phase,
@@ -374,7 +383,13 @@ function emitRunLifecycle(state: GuidedRunState, input: Partial<RunLifecycleEven
     captureTracks: state.captureTracks,
     timestamp: new Date().toISOString(),
     ...input,
-  } satisfies RunLifecycleEvent);
+  };
+  // A detached panel follows the same run, so it has to hear a run end as
+  // promptly as the page does rather than waiting for the next reconcile.
+  for (const target of [mainWindow, ...runPanelWindows.values()]) {
+    if (!target || target.isDestroyed()) continue;
+    target.webContents.send(IPC.runLifecycleEvent, event);
+  }
 }
 
 function enqueueEvidence(event: QAEvidenceEvent): void {
@@ -669,9 +684,13 @@ async function handleQaRunEvidencePush(
   }
   for (const event of events) {
     const record = { eventId: event.eventId, metadata: event.metadata, timestamp: event.timestamp };
-    if (event.eventType === 'QA_BACKEND_REQUEST') await observer.recordBackendRequestEvent(record);
-    else if (event.eventType === 'QA_BACKEND_DATA_ACCESS') await observer.recordBackendDataAccessEvent(record);
-    else if (event.eventType === 'QA_BACKEND_ERROR') await observer.recordBackendErrorEvent(record);
+    // Already persisted by onboarding-api before this push happened — skip
+    // the desktop's own re-upload path so it never encrypts (and fails
+    // schema validation on) metadata that has already been sanitized once.
+    const options = { skipUpload: true };
+    if (event.eventType === 'QA_BACKEND_REQUEST') await observer.recordBackendRequestEvent(record, options);
+    else if (event.eventType === 'QA_BACKEND_DATA_ACCESS') await observer.recordBackendDataAccessEvent(record, options);
+    else if (event.eventType === 'QA_BACKEND_ERROR') await observer.recordBackendErrorEvent(record, options);
   }
 }
 
@@ -802,8 +821,11 @@ function decorateRunState(state: GuidedRunState): GuidedRunState {
 }
 
 function sendRunState(state: GuidedRunState): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC.runStateChanged, decorateRunState(state));
+  const decorated = decorateRunState(state);
+  for (const target of [mainWindow, ...runPanelWindows.values()]) {
+    if (!target || target.isDestroyed()) continue;
+    target.webContents.send(IPC.runStateChanged, decorated);
+  }
 }
 /**
  * Resolves the published graph a run reconciles against into the shape the run
@@ -2308,7 +2330,12 @@ if (!hasSingleInstanceLock) {
 }
 
 function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
-  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+  // A detached panel is a window this process opened on the same preload and
+  // the same renderer bundle, so it is as trusted as the main window.
+  const trusted = [mainWindow, ...runPanelWindows.values()]
+    .filter((target): target is BrowserWindow => Boolean(target) && !target!.isDestroyed())
+    .map((target) => target.webContents.id);
+  if (!trusted.includes(event.sender.id)) {
     throw new Error('UNTRUSTED_IPC_SENDER');
   }
 }
@@ -2358,6 +2385,14 @@ async function createWindow(): Promise<void> {
   });
   // An attach waiting on consent must not hang if the window disappears.
   mainWindow.on('closed', cancelPendingUploadConsents);
+  // A detached panel must never outlive the window it was popped out of: left
+  // open it would hold the application alive with nothing to drive it.
+  mainWindow.on('closed', () => {
+    for (const panel of runPanelWindows.values()) {
+      if (!panel.isDestroyed()) panel.destroy();
+    }
+    runPanelWindows.clear();
+  });
   mainWindow.webContents.on('render-process-gone', cancelPendingUploadConsents);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -2384,6 +2419,129 @@ async function createWindow(): Promise<void> {
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
   }
+}
+
+/**
+ * The live run's panels that can be popped out, and how each one opens: its own
+ * window size, its title, and the renderer view that draws it alone.
+ */
+const RUN_PANEL_WINDOWS = {
+  guide: { width: 380, height: 760, title: 'Run guide — Tellann', view: 'run-guide', side: 'leading' },
+  evidence: { width: 520, height: 820, title: 'Live evidence — Tellann', view: 'run-evidence', side: 'trailing' },
+} as const satisfies Record<RunPanelId, {
+  width: number;
+  height: number;
+  title: string;
+  view: string;
+  side: 'leading' | 'trailing';
+}>;
+
+/** Narrows whatever the renderer asked for to a panel this process can open. */
+function parseRunPanelId(input: unknown): RunPanelId {
+  if (input === 'guide' || input === 'evidence') return input;
+  throw new Error('UNKNOWN_RUN_PANEL');
+}
+
+/** Where a detached panel lands: beside the main window on its own side of it,
+ *  and overlapping the main window when there is no room out there. */
+function runPanelWindowPosition(panel: RunPanelId): { x: number; y: number } | Record<string, never> {
+  const anchor = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
+  if (!anchor) return {};
+  const spec = RUN_PANEL_WINDOWS[panel];
+  const beside = spec.side === 'leading' ? anchor.x - spec.width - 12 : anchor.x + anchor.width + 12;
+  const display = screen.getDisplayMatching(anchor).workArea;
+  const fits = beside >= display.x && beside + spec.width <= display.x + display.width;
+  return {
+    x: fits ? beside : anchor.x + 24,
+    y: anchor.y + 24,
+  };
+}
+
+/**
+ * Pops one of the live run's panels out into its own window. It loads the same
+ * renderer with the panel's own `view`, which draws that panel alone; run state
+ * still arrives by push from this process, so the detached copy stays live
+ * without a second subscription of any kind.
+ */
+async function openRunPanelWindow(id: RunPanelId): Promise<{ panel: RunPanelId; open: boolean }> {
+  const existing = runPanelWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return { panel: id, open: true };
+  }
+  const spec = RUN_PANEL_WINDOWS[id];
+  const panel = new BrowserWindow({
+    ...secondaryWindowOptions({
+      width: spec.width,
+      height: spec.height,
+      ...runPanelWindowPosition(id),
+    }),
+    icon: themedWindowIconPath(),
+    show: false,
+    title: spec.title,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webviewTag: false,
+      devTools: !app.isPackaged,
+    },
+  });
+  runPanelWindows.set(id, panel);
+  panel.setMenu(null);
+  panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  panel.webContents.on('will-navigate', (event, url) => {
+    const allowed = process.env.VITE_DEV_SERVER_URL;
+    if (!allowed || !url.startsWith(allowed)) event.preventDefault();
+  });
+  panel.once('ready-to-show', () => {
+    if (!panel.isDestroyed()) panel.show();
+  });
+  panel.on('closed', () => {
+    if (runPanelWindows.get(id) === panel) runPanelWindows.delete(id);
+    // Closing the detached window is how the operator puts the panel back, so
+    // the run page has to hear about it however the window was dismissed.
+    notifyRunPanelWindowState(id);
+  });
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  const query = { ...rendererQuery(), view: spec.view };
+  if (devUrl) {
+    await loadRendererUrlWithRetry(panel, `${devUrl}?${new URLSearchParams(query).toString()}`);
+  } else {
+    await panel.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
+  }
+  return { panel: id, open: true };
+}
+
+function closeRunPanelWindow(id: RunPanelId): { panel: RunPanelId; open: boolean } {
+  const panel = runPanelWindows.get(id);
+  if (panel && !panel.isDestroyed()) panel.close();
+  return { panel: id, open: false };
+}
+
+/** Which panels are detached right now, as the run page reads it on mount. */
+function runPanelWindowState(): Record<RunPanelId, boolean> {
+  return {
+    guide: openRunPanelWindows().some(([id]) => id === 'guide'),
+    evidence: openRunPanelWindows().some(([id]) => id === 'evidence'),
+  };
+}
+
+function openRunPanelWindows(): Array<[RunPanelId, BrowserWindow]> {
+  return [...runPanelWindows.entries()].filter(([, panel]) => !panel.isDestroyed());
+}
+
+/** Tells the run page that one panel detached or came back. */
+function notifyRunPanelWindowState(id: RunPanelId): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC.runPanelWindowChanged, {
+    panel: id,
+    open: runPanelWindowState()[id],
+  });
 }
 
 async function loadRendererUrlWithRetry(window: BrowserWindow, url: string): Promise<void> {
@@ -3753,6 +3911,12 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.startGuidedRun, async (event, input: unknown) => {
     assertTrustedSender(event);
+    // Refused here, before anything exists. The observer refuses a second run
+    // too, but only after a run row, a started session and a local relay have
+    // been created for a run that can never start — and the failure path that
+    // cleans those up stops the relay and the event stream, which the run
+    // already recording is the one using.
+    if (observer.getState()) throw new Error('RUN_ALREADY_ACTIVE');
     const parsed = StartGuidedRunInputSchema.parse(input);
     if (parsed.environmentType === 'PRODUCTION' && (parsed.mode !== 'OBSERVATION_ONLY' || !parsed.productionObservationApproved)) {
       throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
@@ -3939,6 +4103,21 @@ function registerIpc(): void {
   ipcMain.handle(IPC.reopenRunBrowser, async (event) => {
     assertTrustedSender(event);
     return decorateRunState(await observer.reopenBrowser());
+  });
+  ipcMain.handle(IPC.openRunPanelWindow, async (event, panel: unknown) => {
+    assertTrustedSender(event);
+    const id = parseRunPanelId(panel);
+    const state = await openRunPanelWindow(id);
+    notifyRunPanelWindowState(id);
+    return state;
+  });
+  ipcMain.handle(IPC.closeRunPanelWindow, (event, panel: unknown) => {
+    assertTrustedSender(event);
+    return closeRunPanelWindow(parseRunPanelId(panel));
+  });
+  ipcMain.handle(IPC.getRunPanelWindowState, (event) => {
+    assertTrustedSender(event);
+    return runPanelWindowState();
   });
   ipcMain.handle(IPC.getRunRelayConnection, (event) => {
     assertTrustedSender(event);

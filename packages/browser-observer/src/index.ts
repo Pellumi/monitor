@@ -1081,6 +1081,17 @@ export class BrowserObserver {
       protectedValues?: QAPendingProtectedValue[];
       interactionGroupId?: string | null;
       causedByEventId?: string | null;
+      /**
+       * Set for evidence that arrived already persisted elsewhere — a
+       * standing-ingestion-key server's requests, resolved and stored by
+       * onboarding-api before the desktop ever hears about them over the QA
+       * run event stream. Re-uploading them here would encrypt already-
+       * redacted metadata a second time (failing schema validation on the
+       * malformed result) and write a second, duplicate row for the same
+       * request. The row already exists; this call only needs to make it
+       * live on screen.
+       */
+      skipUpload?: boolean;
     } = {},
   ): string | null {
     const { state } = controller;
@@ -1123,10 +1134,12 @@ export class BrowserObserver {
     };
     state.evidenceCounts[type] = (state.evidenceCounts[type] ?? 0) + 1;
     this.notifyStateChanged();
-    Promise.resolve(this.options.onEvidenceEvent?.(event)).catch((error) => {
-      state.evidenceCounts.QA_CAPTURE_DEGRADED = (state.evidenceCounts.QA_CAPTURE_DEGRADED ?? 0) + 1;
-      this.addLive(state, { kind: 'PAGE', level: 'ERROR', message: `Evidence upload deferred: ${safeMessage(String(error))}` });
-    });
+    if (!input.skipUpload) {
+      Promise.resolve(this.options.onEvidenceEvent?.(event)).catch((error) => {
+        state.evidenceCounts.QA_CAPTURE_DEGRADED = (state.evidenceCounts.QA_CAPTURE_DEGRADED ?? 0) + 1;
+        this.addLive(state, { kind: 'PAGE', level: 'ERROR', message: `Evidence upload deferred: ${safeMessage(String(error))}` });
+      });
+    }
     return eventId;
   }
 
@@ -1832,7 +1845,7 @@ export class BrowserObserver {
    * they leave this process, identifiers are pseudonymized and ordinary values
    * are encrypted at rest by the ingestion pipeline.
    */
-  async recordBackendRequestEvent(event: Record<string, unknown>): Promise<void> {
+  async recordBackendRequestEvent(event: Record<string, unknown>, options: { skipUpload?: boolean } = {}): Promise<void> {
     if (!this.active) return;
     const controller = this.active;
     const { state } = controller;
@@ -1893,6 +1906,7 @@ export class BrowserObserver {
       // route on evidence the browser never saw.
       pageUrl: null,
       protectedValues,
+      skipUpload: options.skipUpload,
     });
     if (!emitted) return;
     const endpointKey = `${method} ${route}`;
@@ -1944,7 +1958,7 @@ export class BrowserObserver {
   }
 
   /** Records an unhandled error the application's server reported. */
-  async recordBackendErrorEvent(event: Record<string, unknown>): Promise<void> {
+  async recordBackendErrorEvent(event: Record<string, unknown>, options: { skipUpload?: boolean } = {}): Promise<void> {
     if (!this.active) return;
     const controller = this.active;
     const { state } = controller;
@@ -1971,7 +1985,11 @@ export class BrowserObserver {
         ? String(metadata.method ?? context.method).toUpperCase().slice(0, 12) : null,
       statusCode: Number.isFinite(Number(metadata.statusCode)) ? Number(metadata.statusCode) : null,
       severity: metadata.severity ? String(metadata.severity).slice(0, 40) : 'error',
-    }, { eventId: typeof event.eventId === 'string' ? event.eventId : undefined, pageUrl: null });
+    }, {
+      eventId: typeof event.eventId === 'string' ? event.eventId : undefined,
+      pageUrl: null,
+      skipUpload: options.skipUpload,
+    });
     if (!emitted) return;
     if (state.backend) state.backend.unhandledErrors += 1;
     this.addLive(state, {
@@ -2002,7 +2020,7 @@ export class BrowserObserver {
    * records - so the run can answer what a request actually changed rather
    * than only what it answered with.
    */
-  async recordBackendDataAccessEvent(event: Record<string, unknown>): Promise<void> {
+  async recordBackendDataAccessEvent(event: Record<string, unknown>, options: { skipUpload?: boolean } = {}): Promise<void> {
     if (!this.active) return;
     const controller = this.active;
     const { state } = controller;
@@ -2022,7 +2040,11 @@ export class BrowserObserver {
       model, operation, records, mutation, route, count,
       durationMs: Number.isFinite(Number(metadata.durationMs)) ? Number(metadata.durationMs) : null,
       method: metadata.method ? String(metadata.method).toUpperCase().slice(0, 12) : null,
-    }, { eventId: typeof event.eventId === 'string' ? event.eventId : undefined, pageUrl: null });
+    }, {
+      eventId: typeof event.eventId === 'string' ? event.eventId : undefined,
+      pageUrl: null,
+      skipUpload: options.skipUpload,
+    });
     if (!emitted) return;
     const summary = state.backend ?? (state.backend = emptyBackendSummary());
     summary.dataOperations += count;

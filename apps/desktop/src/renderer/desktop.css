@@ -2004,6 +2004,15 @@ button.statusbar-item:disabled {
   box-shadow: 0 32px 64px rgb(0 0 0 / calc(0.45 * var(--shadow-k)));
   animation: dialog-in 0.14s var(--ease);
 }
+
+/* One captured request is a request and a response read against each other, so
+   this dialog is the wide one: two columns of payload rather than the single
+   narrow column every other modal in this layer wants. */
+.desktop-modal.evidence-detail-modal {
+  width: min(1180px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+}
 .desktop-modal h2 {
   color: var(--text-strong);
   font: 600 16px/1.3 var(--font-display);
@@ -2112,6 +2121,41 @@ button.statusbar-item:disabled {
 }
 
 /* ── Sign-in window and splash ─────────────────────────────────────────── */
+/* The run guide popped out of the live run page: the window's own drag strip
+   above the same panel the page renders, scrolling on its own. */
+.run-panel-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--window-bg);
+  color: var(--text);
+}
+.run-panel-window-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 4px 12px 12px;
+  overflow: auto;
+}
+/* The evidence log keeps its own heading, tabs and scrolling list; in a window
+   of its own it has no page edge to be divided from. */
+.run-panel-window-evidence {
+  flex: 1;
+  min-height: 0;
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+/* The window's own title bar already names the panel, so its heading keeps the
+   filter and follow controls and drops the second copy of the title. */
+.run-panel-window-evidence .evidence-heading {
+  justify-content: flex-end;
+}
+.run-panel-window-evidence .evidence-heading h2 {
+  display: none;
+}
 .auth-shell {
   position: fixed;
   inset: 0;

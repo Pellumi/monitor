@@ -238,6 +238,29 @@ export function windowOptions(): Electron.BrowserWindowConstructorOptions {
   };
 }
 
+/**
+ * Chrome for a secondary window (today: the detached run guide). It borrows the
+ * main window's drawn title bar and material so a popped-out panel reads as
+ * part of the same application, but it keeps its own size and never touches the
+ * persisted bounds or mode the main window restores from.
+ */
+export function secondaryWindowOptions(
+  bounds: { width: number; height: number; x?: number; y?: number },
+): Electron.BrowserWindowConstructorOptions {
+  const mica = supportsMica();
+  const dark = nativeTheme.shouldUseDarkColors;
+  return {
+    ...bounds,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: overlayColors(),
+    backgroundColor: mica ? '#00000000' : dark ? '#202020' : '#f3f3f3',
+    ...(mica ? { backgroundMaterial: 'mica' as const } : {}),
+    minWidth: 280,
+    minHeight: 320,
+    maximizable: false,
+  };
+}
+
 /** Query string the renderer reads once at startup to match the native chrome. */
 export function rendererQuery(): Record<string, string> {
   const { accent, onAccent } = accentQuery();

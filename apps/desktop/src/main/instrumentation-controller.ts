@@ -40,9 +40,11 @@ import {
   findInstalledPythonDistribution,
 } from "./sdk-installation";
 import {
+  environmentForInterpreter,
   isPythonInterpreterName,
   pythonEnvironments,
   resolvePythonInterpreter,
+  type ResolvedInterpreter,
 } from "./python-environment";
 
 const execFileAsync = promisify(execFile);
@@ -206,6 +208,7 @@ function validationCheckForCommand(
 function resolveCommand(command: StructuredCommand, cwd: string): {
   executable: string;
   args: string[];
+  interpreter?: ResolvedInterpreter;
 } {
   // `python -m pip install tellann` has to install into the interpreter the
   // project actually runs on. Resolved by name it would install into whichever
@@ -213,10 +216,8 @@ function resolveCommand(command: StructuredCommand, cwd: string): {
   // the project's virtual environment, so the SDK would land somewhere the
   // application never imports from and `compileall` would check the wrong one.
   if (isPythonInterpreterName(command.executable)) {
-    return {
-      executable: resolvePythonInterpreter(cwd, command.executable).executable,
-      args: command.args,
-    };
+    const interpreter = resolvePythonInterpreter(cwd, command.executable);
+    return { executable: interpreter.executable, args: command.args, interpreter };
   }
   const manager = command.executable.replace(/\.cmd$/i, "");
   if (
@@ -273,11 +274,19 @@ async function runCommand(
   if (process.platform === "win32" && process.env.ComSpec && !env.ComSpec) {
     env.ComSpec = process.env.ComSpec;
   }
+  // `python -m pip install tellann` installs into the interpreter it runs on,
+  // but a build backend or a package's own setup step shells out by name, and
+  // those have to land in the same environment rather than on the desktop
+  // application's PATH. The allowlist above still decides what is inherited;
+  // this only adds the environment Tellann resolved.
+  const environment = resolved.interpreter
+    ? environmentForInterpreter(resolved.interpreter, env)
+    : env;
   const started = Date.now();
   try {
     const result = await execFileAsync(resolved.executable, resolved.args, {
       cwd,
-      env,
+      env: environment,
       timeout: command.timeoutMs,
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,

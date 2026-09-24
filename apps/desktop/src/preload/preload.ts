@@ -150,6 +150,10 @@ const IPC = {
   getEvidenceEvent: 'tellann:run:evidence-events:get',
   checkSdkVersions: 'tellann:run:sdk-versions:check',
   runStateChanged: 'tellann:run:state-changed',
+  openRunPanelWindow: 'tellann:run:panel:open',
+  closeRunPanelWindow: 'tellann:run:panel:close',
+  getRunPanelWindowState: 'tellann:run:panel:state',
+  runPanelWindowChanged: 'tellann:run:panel:changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',
@@ -360,6 +364,12 @@ contextBridge.exposeInMainWorld('tellann', {
       return () => ipcRenderer.removeListener(IPC.runStateChanged, subscription);
     },
     focusBrowser: () => ipcRenderer.invoke(IPC.focusRunBrowser),
+    openPanelWindow: (panel: 'guide' | 'evidence') => ipcRenderer.invoke(IPC.openRunPanelWindow, panel),
+    closePanelWindow: (panel: 'guide' | 'evidence') => ipcRenderer.invoke(IPC.closeRunPanelWindow, panel),
+    getPanelWindowState: () => ipcRenderer.invoke(IPC.getRunPanelWindowState),
+    onPanelWindowChanged: (
+      callback: (state: { panel: 'guide' | 'evidence'; open: boolean }) => void,
+    ) => subscribe(IPC.runPanelWindowChanged, callback),
     reopenBrowser: () => ipcRenderer.invoke(IPC.reopenRunBrowser),
     relayConnection: () => ipcRenderer.invoke(IPC.getRunRelayConnection),
     listIngestionKeys: (environmentId: string) => ipcRenderer.invoke(IPC.listIngestionKeys, environmentId),

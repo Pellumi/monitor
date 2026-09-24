@@ -3,7 +3,12 @@ import path from "node:path";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolveWithinWorkspace } from "@tellann/agent-policy";
-import { resolvePythonInterpreter, type ResolvedInterpreter } from "./python-environment";
+import {
+  discoveryDescription,
+  environmentForInterpreter,
+  resolvePythonInterpreter,
+  type ResolvedInterpreter,
+} from "./python-environment";
 
 export type LocalLaunchCommand = {
   id: string;
@@ -86,6 +91,20 @@ function isApprovedPythonCommand(command: LocalLaunchCommand): boolean {
   return PYTHON_COMMAND_SHAPES.some(
     (shape) => shape.scriptName === command.scriptName && shape.matches(command.args),
   );
+}
+
+/**
+ * The environment a launched application runs in.
+ *
+ * A Node command gets the desktop application's own, as before. A Python one
+ * gets it with the project's environment activated, because running the right
+ * interpreter is not the same as running inside its environment: a Django
+ * project that shells out to `python` or reads `VIRTUAL_ENV` would otherwise
+ * reach past the environment Tellann just resolved and back into whatever the
+ * desktop application was started with.
+ */
+function launchEnvironment(interpreter: ResolvedInterpreter | null): NodeJS.ProcessEnv {
+  return interpreter ? environmentForInterpreter(interpreter, process.env) : { ...process.env };
 }
 
 function safeOutput(value: string): string {
@@ -212,8 +231,8 @@ function launchDiagnosis(
   const missing = /No module named '([^']+)'/.exec(output)?.[1];
   if (!missing) return null;
   return interpreter.fromEnvironment
-    ? `${missing} is not installed in the project environment at ${interpreter.environmentRoot}. Install the project's dependencies into it, then try again.`
-    : `No virtual environment was found for this project, so ${interpreter.executable} from PATH was used and it does not have ${missing} installed. Create the project's environment (a .venv beside the code is what Tellann looks for first), install its dependencies, then try again.`;
+    ? `${missing} is not installed in the project environment at ${interpreter.environmentRoot}, which Tellann used because it is ${discoveryDescription(interpreter.discovery)}. Install the project's dependencies into it, then try again.`
+    : `No virtual environment was found for this project, so ${interpreter.executable} from PATH was used and it does not have ${missing} installed. Tellann looks for an environment in the project directory first, then for one Poetry, pipenv, PDM or pyenv keeps elsewhere for it. Create the project's environment, install its dependencies, then try again.`;
 }
 
 export function launchApprovalHash(
@@ -259,7 +278,7 @@ export class LocalApplicationLauncher {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...launchEnvironment(resolved.interpreter),
         TELLANN_RELAY_ENDPOINT: correlation.endpoint,
         TELLANN_RUN_CREDENTIAL: correlation.relayToken,
         TELLANN_RUN_ID: correlation.runId,
@@ -319,7 +338,7 @@ export class LocalApplicationLauncher {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...launchEnvironment(resolved.interpreter),
         TELLANN_GATEWAY_URL: environment.endpoint,
         TELLANN_INGESTION_KEY: environment.ingestionKey,
         TELLANN_APPLICATION_ID: environment.applicationId,

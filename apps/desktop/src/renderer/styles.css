@@ -3194,6 +3194,12 @@ img.profile-avatar {
   background: var(--surface-1);
   color: #f4c95d;
 }
+/* The unattended-run reminder is not a failure, so its mark takes the accent
+   rather than the warning colour the start-error dialog's carries. */
+.active-run-notice[data-kind="reminder"] .qa-run-error-icon {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+}
 .qa-run-error-target {
   display: grid;
   gap: 7px;
@@ -3326,6 +3332,15 @@ img.profile-avatar {
   background: var(--surface-1);
   color: var(--text-strong);
   border-color: var(--border-strong);
+}
+/* A second, consequential choice beside the quiet one: named in the danger
+   colour rather than filled with it, so the dialog keeps one primary action. */
+.confirm-modal-actions button.confirm-modal-btn-cancel.is-danger,
+.confirm-modal-actions button.confirm-modal-btn-cancel.is-danger:hover {
+  color: var(--danger);
+}
+.confirm-modal-actions button.confirm-modal-btn-cancel.is-danger:hover {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
 .confirm-modal-actions button.confirm-modal-btn-action {
   background: var(--accent);
@@ -4485,6 +4500,80 @@ button:disabled {
   overflow: auto;
   border-right: 1px solid var(--border);
 }
+.live-flow.is-minimized,
+.live-evidence.is-minimized {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 4px;
+  overflow: hidden;
+}
+/* Minimised and closed give their width back to the browser column; a detached
+   panel is in its own window, so the page lays out as though it were closed. */
+.live-run-page[data-flow-panel="minimized"] {
+  --flow-track: 44px;
+}
+.live-run-page[data-flow-panel="closed"],
+.live-run-page[data-flow-panel="docked"] {
+  --flow-track: 0px;
+}
+.live-run-page[data-evidence-panel="minimized"] {
+  --evidence-track: 44px;
+}
+.live-run-page[data-evidence-panel="closed"],
+.live-run-page[data-evidence-panel="docked"] {
+  --evidence-track: 0px;
+}
+.flow-panel-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: -4px;
+  color: var(--text-subtle);
+  font: 10px/1.4 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.flow-panel-bar span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-panel-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+.flow-panel-button:hover {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+/* The label reads bottom-to-top so the rail stays one icon wide. */
+.flow-panel-rail-label {
+  flex: 1;
+  color: var(--text-subtle);
+  font: 10px/1 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  text-align: center;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
 .flow-resize-handle,
 .evidence-resize-handle {
   position: absolute;
@@ -4839,7 +4928,11 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--border);
-  overflow: hidden;
+  /* `clip`, not `hidden`: both hold the cells inside the rounded corner, but a
+     scroll container has no automatic minimum size, so in the workspace grid
+     this panel was the row that gave way as the endpoint table grew — squeezed
+     down to its own border and then out of sight. */
+  overflow: clip;
 }
 .run-facts article {
   min-width: 0;
@@ -5057,6 +5150,17 @@ button:disabled {
 .evidence-search button:hover {
   color: var(--text-strong);
 }
+/* The evidence panel's window controls sit at the end of its heading, divided
+   off from the filter and follow controls they have nothing to do with. */
+.evidence-window-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  margin-left: 1px;
+  padding-left: 5px;
+  border-left: 1px solid var(--border);
+}
 .evidence-toggle {
   display: grid;
   place-items: center;
@@ -5169,14 +5273,32 @@ button:disabled {
   color: var(--on-accent);
 }
 
-.evidence-detail-modal {
-  width: min(720px, 100%);
-  max-height: 80vh;
-  overflow: auto;
-}
 .evidence-detail-modal h2 {
   padding-right: 28px;
   font: 14px/1.4 var(--font-mono);
+}
+/* The summary pairs up rather than running down the page, so the height the
+   modal has goes to the payloads underneath. Two columns, not as many as fit:
+   a handler name or a list of models needs room to be read. */
+.evidence-detail-modal .property-list {
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  column-gap: 24px;
+}
+/* What was sent on one side, what came back on the other. */
+.evidence-detail-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0 20px;
+}
+.evidence-detail-column {
+  min-width: 0;
+}
+/* Too narrow to read two payloads side by side: stack them again. */
+@media (max-width: 820px) {
+  .evidence-detail-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .evidence-detail-status {
   display: flex;
@@ -5199,6 +5321,9 @@ button:disabled {
 }
 .evidence-detail-field pre {
   margin: 0;
+  /* A long payload scrolls in place instead of pushing everything below it off
+     the bottom of the modal. */
+  max-height: 340px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -5207,9 +5332,13 @@ button:disabled {
   font: 11px/1.5 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
+  overflow: auto;
 }
 .evidence-protected-list {
   display: grid;
+  /* Dozens of protected keys is normal for one request; in a wide modal they
+     wrap into columns rather than running the dialog off the screen. */
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -5226,8 +5355,13 @@ button:disabled {
   background: var(--surface-0);
 }
 .evidence-protected-list code {
+  min-width: 0;
   color: var(--text-subtle);
-  font: 11px/1 var(--font-mono);
+  font: 11px/1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.evidence-protected-list li > button {
+  flex: none;
 }
 .evidence-protected-list .mono {
   color: var(--text);

@@ -1468,6 +1468,19 @@ export const IPC = {
   checkSdkVersions: 'tellann:run:sdk-versions:check',
   /** main -> renderer: the active run's state changed. Replaces polling. */
   runStateChanged: 'tellann:run:state-changed',
+  /**
+   * renderer -> main: detach one of the live run's side panels ('guide' or
+   * 'evidence') into its own window, so the run page can give the width back to
+   * the browser while that panel stays visible beside the application being
+   * exercised.
+   */
+  openRunPanelWindow: 'tellann:run:panel:open',
+  /** renderer -> main: close a detached panel, which puts it back in the page. */
+  closeRunPanelWindow: 'tellann:run:panel:close',
+  /** renderer -> main: which panels are detached right now. */
+  getRunPanelWindowState: 'tellann:run:panel:state',
+  /** main -> renderer: one panel detached or came back. */
+  runPanelWindowChanged: 'tellann:run:panel:changed',
   detectInstrumentation: 'tellann:instrumentation:detect',
   proposeInstrumentation: 'tellann:instrumentation:propose',
   listInstrumentationPlans: 'tellann:instrumentation:plans:list',

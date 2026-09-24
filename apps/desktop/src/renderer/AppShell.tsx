@@ -5,12 +5,13 @@ import {
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { desktopNavigation } from './navigation';
-import { useDesktop } from './desktop-context';
+import { isRunInProgress, useDesktop } from './desktop-context';
 import { SelectField } from './components/ui/select';
 import { NotificationToaster } from './components/notification-toaster';
 import { UploadConsentModal } from './components/upload-consent-modal';
 import { RepositoryMismatchModal } from './components/repository-mismatch-modal';
 import { CommandPalette, type PaletteItem } from './components/command-palette';
+import { ActiveRunNoticeModal, type ActiveRunNoticeKind } from './components/active-run-notice-modal';
 import { confirmAction, formatEnum, showMenu } from './components/desktop-ui';
 import { ThemedLogo } from './components/themed-logo';
 
@@ -20,6 +21,13 @@ const DEFAULT_SIDEBAR_WIDTH = 232;
 const MIN_SIDEBAR_WIDTH = 196;
 const MAX_SIDEBAR_WIDTH = 360;
 const ICON_SIDEBAR_WIDTH = 52;
+/**
+ * How long a run may be left unattended before the shell raises it. Capture
+ * never stops on its own, so a run page closed and forgotten is a run still
+ * recording — and, until it ends, an application scope that cannot move and a
+ * run that cannot be started.
+ */
+const ACTIVE_RUN_REMINDER_MS = 5 * 60 * 1_000;
 
 // The sections that exist identically under every application. Anything deeper
 // than one of these is a record id owned by the application currently in the
@@ -63,13 +71,20 @@ export function AppShell() {
   const navigate = useNavigate();
   const {
     applications, workspaces, activeRun, busy, cloudAvailable, error, session, avatarDataUri, signOut,
-    refreshApplications, refreshRuns, clearError, attachWorkspace,
+    refreshApplications, refreshRuns, clearError, attachWorkspace, endRun,
   } = useDesktop();
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(storedSidebarMode);
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyBounds, setHistoryBounds] = useState({ index: 0, max: 0 });
   const [dropActive, setDropActive] = useState(false);
+  // Which of the two reasons the active run is being raised, if either.
+  const [runNotice, setRunNotice] = useState<ActiveRunNoticeKind | null>(null);
+  // Bumped each time a reminder is dismissed, to re-arm the next one.
+  const [reminderRound, setReminderRound] = useState(0);
+  // A popped-out run panel means the run is already on screen; reminding the
+  // user about something they are looking at is just noise.
+  const [runPanelDetached, setRunPanelDetached] = useState(false);
   const dragDepth = useRef(0);
   const application = applications.find((item) => item.id === projectId);
   const workspace = projectId ? workspaces[projectId] : undefined;
@@ -83,6 +98,13 @@ export function AppShell() {
     ? <img className="profile-avatar" src={avatarDataUri} alt="" />
     : <span className="profile-avatar" aria-hidden="true">{initials}</span>;
   const isLiveRunPage = Boolean(location.pathname.match(/^\/applications\/[^/]+\/qa-runs\/[^/]+\/live\/?$/));
+  // Only a run still recording holds anything: a finished one is history.
+  const runInProgress = isRunInProgress(activeRun) ? activeRun : null;
+  const runApplicationId = runInProgress?.applicationId ?? null;
+  const runId = runInProgress?.runId ?? null;
+  const liveRunPath = runInProgress
+    ? `/applications/${runInProgress.applicationId}/qa-runs/${runInProgress.runId}/live`
+    : null;
   const activeSidebarMode = isLiveRunPage ? 'closed' : sidebarMode;
   const effectiveSidebarWidth = activeSidebarMode === 'closed' ? 0 : activeSidebarMode === 'icon' ? ICON_SIDEBAR_WIDTH : sidebarWidth;
   const lastProjectId = projectId ?? localStorage.getItem('tellann:last-project') ?? applications[0]?.id;
@@ -131,6 +153,71 @@ export function AppShell() {
   // Mouse back/forward buttons.
   useEffect(() => window.tellann?.window?.onNavigate((direction) => navigate(direction === 'back' ? -1 : 1)), [navigate]);
 
+  // Whether any of the run's panels is open in a window of its own.
+  useEffect(() => {
+    const bridge = window.tellann?.runs;
+    if (!bridge?.getPanelWindowState) return;
+    let cancelled = false;
+    const read = () => {
+      void bridge.getPanelWindowState?.()
+        .then((state) => {
+          if (!cancelled) setRunPanelDetached(Object.values(state).some(Boolean));
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const unsubscribe = bridge.onPanelWindowChanged?.(read);
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  /**
+   * The run left behind. The clock starts when the run page is left and is not
+   * restarted by navigating around afterwards, so the reminder arrives five
+   * minutes after the run went out of sight rather than five minutes after the
+   * last click. Dismissing it arms the next one; returning to the run, ending
+   * it, or having a panel out stops them.
+   */
+  useEffect(() => {
+    if (!runId || isLiveRunPage || runPanelDetached) return;
+    const timer = window.setTimeout(
+      () => setRunNotice((current) => current ?? 'reminder'),
+      ACTIVE_RUN_REMINDER_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [runId, isLiveRunPage, runPanelDetached, reminderRound]);
+
+  // Nothing to raise once the run is over, and nothing to remind someone of
+  // while they are looking at it. A scope refusal survives: the application
+  // select sits in the title bar on the run page too, and the answer to using
+  // it there is the same as anywhere else.
+  useEffect(() => {
+    if (!runId) {
+      setRunNotice(null);
+      return;
+    }
+    if (isLiveRunPage) setRunNotice((current) => (current === 'reminder' ? null : current));
+  }, [runId, isLiveRunPage]);
+
+  /**
+   * The scope cannot move while a run records against it. `changeProject`
+   * refuses the switch outright; this catches every other way into another
+   * application — a link on the applications list, a deep link, the history —
+   * and turns it back with the same explanation.
+   */
+  useEffect(() => {
+    if (!runApplicationId || !projectId || projectId === runApplicationId) return;
+    // Only turn them back towards an application that is actually there. If the
+    // run's application were missing from the list, the unknown-application
+    // guard above would bounce them off it again and the two would trade
+    // navigations for as long as the run lasted.
+    if (!applications.some((item) => item.id === runApplicationId)) return;
+    setRunNotice('scope');
+    navigate(equivalentProjectRoute(location.pathname, runApplicationId), { replace: true });
+  }, [applications, runApplicationId, projectId, location.pathname, navigate]);
+
   const runWindowCommand = useCallback((command: DesktopWindowCommand) => {
     if (command === 'new-run' && lastProjectId) navigate(`/applications/${lastProjectId}/qa-runs/new`);
     else navigate('/applications');
@@ -145,9 +232,42 @@ export function AppShell() {
   }, [runWindowCommand]);
 
   const changeProject = useCallback((nextProjectId: string) => {
+    // Refused rather than bounced: the select stays where it is, and the run
+    // that is in the way explains itself.
+    if (runApplicationId && nextProjectId !== runApplicationId) {
+      setRunNotice('scope');
+      return;
+    }
     localStorage.setItem('tellann:last-project', nextProjectId);
     navigate(equivalentProjectRoute(location.pathname, nextProjectId));
-  }, [location.pathname, navigate]);
+  }, [location.pathname, navigate, runApplicationId]);
+
+  const openActiveRun = useCallback(() => {
+    setRunNotice(null);
+    if (liveRunPath) navigate(liveRunPath);
+  }, [liveRunPath, navigate]);
+
+  /**
+   * Ends the run from here. The main process announces the end, which clears
+   * the active run and takes the window to the run's report, so there is
+   * nothing to navigate to on the way out.
+   */
+  const endActiveRun = useCallback(async () => {
+    try {
+      await endRun();
+      setRunNotice(null);
+    } catch {
+      // `endRun` reports through the shell's own error banner.
+      setRunNotice(null);
+    }
+  }, [endRun]);
+
+  const dismissRunNotice = useCallback(() => {
+    // Dismissing a reminder arms the next one; the scope notice is a refusal,
+    // not a reminder, so it has nothing to re-arm.
+    if (runNotice === 'reminder') setReminderRound((round) => round + 1);
+    setRunNotice(null);
+  }, [runNotice]);
 
   const setMode = useCallback((mode: SidebarMode) => {
     setSidebarMode(mode);
@@ -458,6 +578,20 @@ export function AppShell() {
       <UploadConsentModal />
       <RepositoryMismatchModal />
       <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+
+      {runNotice && runInProgress ? (
+        <ActiveRunNoticeModal
+          kind={runNotice}
+          run={runInProgress}
+          applicationName={
+            applications.find((item) => item.id === runInProgress.applicationId)?.name ?? null
+          }
+          busy={busy}
+          onOpenRun={openActiveRun}
+          onEndRun={() => void endActiveRun()}
+          onDismiss={dismissRunNotice}
+        />
+      ) : null}
 
       {/* Workspace and run state live here only; the sidebar stays navigation. */}
       <footer className="global-statusbar" aria-live="polite">

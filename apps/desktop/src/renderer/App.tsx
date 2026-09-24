@@ -23,6 +23,8 @@ import {
   ReportDetailPage,
   ReportsPage,
   RootResolver,
+  RunEvidencePanel,
+  RunFlowPanelBody,
   RouteResolver,
   RunDetailPage,
   RunsPage,
@@ -40,6 +42,51 @@ function StandaloneWindow({ children, className = '' }: { children: ReactNode; c
         <span>Tellann</span>
       </div>
       {children}
+    </div>
+  );
+}
+
+const DETACHED_PANEL_TITLES = { guide: 'Run guide', evidence: 'Live evidence' } as const;
+
+/**
+ * One of the live run's panels, popped out of the run page into a window of its
+ * own so it can sit beside the application being exercised. It is the same
+ * panel and the same pushed run state as the page renders; nothing here drives
+ * the run.
+ */
+function DetachedRunPanel({ panel }: { panel: 'guide' | 'evidence' }) {
+  const { activeRun, loading } = useDesktop();
+  const [now, setNow] = useState(() => Date.now());
+  // Only the guide counts elapsed time; the evidence log dates its own rows.
+  useEffect(() => {
+    if (panel !== 'guide') return;
+    if (!activeRun || activeRun.status === 'COMPLETED' || activeRun.status === 'FAILED') return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [panel, activeRun?.status]);
+  return (
+    <div className="run-panel-window">
+      <div className="auth-titlebar">
+        <ThemedLogo className="titlebar-icon" />
+        <span>{DETACHED_PANEL_TITLES[panel]}</span>
+      </div>
+      {!activeRun ? (
+        <div className="run-panel-window-body">
+          <p className="flow-plan-empty">
+            {loading
+              ? 'Reading the active run…'
+              : 'No run is active on this device. This window fills in as soon as one starts.'}
+          </p>
+        </div>
+      ) : panel === 'evidence' ? (
+        <div className="live-evidence run-panel-window-evidence">
+          <RunEvidencePanel run={activeRun} />
+        </div>
+      ) : (
+        <div className="run-panel-window-body">
+          <RunFlowPanelBody run={activeRun} now={now} />
+        </div>
+      )}
     </div>
   );
 }
@@ -283,9 +330,15 @@ function SetupHandoffResolver() {
 }
 
 export function App() {
+  // The main process opens a detached panel on the same renderer with this
+  // query, so the window carries that panel alone — no shell, no routes.
+  const view = new URLSearchParams(window.location.search).get('view');
+  const detached = view === 'run-guide' ? 'guide' : view === 'run-evidence' ? 'evidence' : null;
   return (
     <RendererErrorBoundary>
-      <DesktopProvider><AuthenticatedApp /></DesktopProvider>
+      <DesktopProvider>
+        {detached ? <DetachedRunPanel panel={detached} /> : <AuthenticatedApp />}
+      </DesktopProvider>
     </RendererErrorBoundary>
   );
 }

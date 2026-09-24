@@ -43,8 +43,14 @@ import {
   Gauge,
   MessageSquare,
   MoreHorizontal,
+  Minus,
   MousePointerClick,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  PictureInPicture2,
   Play,
   Plus,
   Pencil,
@@ -108,7 +114,7 @@ import type {
   IntentDraftJob,
 } from "@tellann/desktop-contracts";
 import type { GuidedRunState, LiveEvidence } from "@tellann/browser-observer";
-import { useDesktop, normalizeDesktopError } from "./desktop-context";
+import { useDesktop, isRunInProgress, normalizeDesktopError } from "./desktop-context";
 import { SelectField } from "./components/ui/select";
 import { FlowDiagram } from "./components/flow-diagram";
 import { Switch } from "./components/ui/switch";
@@ -12136,6 +12142,7 @@ export function NewRunPage() {
   const {
     projectId,
     application,
+    activeRun,
     workspace,
     startRun,
     busy,
@@ -12144,6 +12151,9 @@ export function NewRunPage() {
     listInstrumentationPlans,
   } = useProject();
   const navigate = useNavigate();
+  // One run records at a time on this device. Rather than let the page offer a
+  // start it cannot honour, it becomes the way back to the run already going.
+  const runInProgress = isRunInProgress(activeRun) ? activeRun : null;
   const [searchParams] = useSearchParams();
   const requestedFlowId = searchParams.get("flowId") ?? "";
   const requestedEnvironmentId = searchParams.get("environmentId") ?? "";
@@ -12581,6 +12591,30 @@ export function NewRunPage() {
             </label>
           </>
         ) : null}
+        {runInProgress ? (
+          <div className="infobar" data-tone="warning" role="status">
+            <TriangleAlert size={16} />
+            <span>
+              A QA run is already recording on this device
+              {runInProgress.status === "PAUSED" ? " (paused)" : ""}. End it
+              before starting another — Tellann captures one local run at a time.
+            </span>
+          </div>
+        ) : null}
+        {runInProgress ? (
+          <button
+            className="button primary"
+            type="button"
+            onClick={() =>
+              navigate(
+                `/applications/${runInProgress.applicationId}/qa-runs/${runInProgress.runId}/live`,
+              )
+            }
+          >
+            <Activity size={16} />
+            Continue run
+          </button>
+        ) : (
         <button
           className="button primary"
           disabled={
@@ -12601,6 +12635,7 @@ export function NewRunPage() {
             ? "Start observation-only run"
             : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start read-only observation"}
         </button>
+        )}
       </section>
       <QaRunStartErrorModal
         failure={runStartFailure}
@@ -12657,6 +12692,157 @@ const EVIDENCE_TABS: Array<{
   { value: "PERFORMANCE", label: "Performance", icon: Gauge, kinds: ["PERFORMANCE", "ACCESSIBILITY"] },
   { value: "FINDINGS", label: "Findings", icon: AlertTriangle, kinds: [] },
 ];
+
+/**
+ * Where a side panel is: in the page at full width, collapsed to its rail, put
+ * away entirely, or detached into its own window. Everything but `docked` is
+ * the operator's own choice and is remembered; `docked` is read back from the
+ * main process, which owns the window.
+ */
+type RunPanelView = "open" | "minimized" | "closed";
+type RunPanelPlacement = RunPanelView | "docked";
+const PANEL_STORAGE_KEYS: Record<RunPanelId, string> = {
+  guide: "tellann:live-flow-panel",
+  evidence: "tellann:live-evidence-panel",
+};
+const PANEL_TITLES: Record<RunPanelId, string> = {
+  guide: "Run guide",
+  evidence: "Live evidence",
+};
+
+function storedPanelView(panel: RunPanelId): RunPanelView {
+  const saved = localStorage.getItem(PANEL_STORAGE_KEYS[panel]);
+  return saved === "minimized" || saved === "closed" ? saved : "open";
+}
+
+/** Pop out, minimise and close: the window controls a run page panel carries. */
+function RunPanelControls({
+  panel,
+  onView,
+  onDock,
+}: {
+  panel: RunPanelId;
+  onView: (panel: RunPanelId, next: RunPanelView) => void;
+  onDock: (panel: RunPanelId) => void;
+}) {
+  const subject = PANEL_TITLES[panel].toLowerCase();
+  return (
+    <>
+      <button
+        type="button"
+        className="flow-panel-button"
+        title={`Open the ${subject} in its own window`}
+        aria-label={`Open the ${subject} in its own window`}
+        onClick={() => void onDock(panel)}
+      >
+        <PictureInPicture2 size={14} />
+      </button>
+      <button
+        type="button"
+        className="flow-panel-button"
+        title={`Minimise the ${subject}`}
+        aria-label={`Minimise the ${subject}`}
+        onClick={() => onView(panel, "minimized")}
+      >
+        <Minus size={14} />
+      </button>
+      <button
+        type="button"
+        className="flow-panel-button"
+        title={`Close the ${subject}`}
+        aria-label={`Close the ${subject}`}
+        onClick={() => onView(panel, "closed")}
+      >
+        <X size={14} />
+      </button>
+    </>
+  );
+}
+
+/**
+ * The way back to a panel that is gone from the page: closed panels come back
+ * here, and a detached one is returned by closing its window. Nothing is shown
+ * while the panel is in the page, minimised or not.
+ */
+function RunPanelRestore({
+  panel,
+  placement,
+  onView,
+  onReturn,
+}: {
+  panel: RunPanelId;
+  placement: RunPanelPlacement;
+  onView: (panel: RunPanelId, next: RunPanelView) => void;
+  onReturn: (panel: RunPanelId) => void;
+}) {
+  const subject = PANEL_TITLES[panel].toLowerCase();
+  const Close = panel === "guide" ? PanelLeftClose : PanelRightClose;
+  const Open = panel === "guide" ? PanelLeftOpen : PanelRightOpen;
+  if (placement === "docked") {
+    return (
+      <button
+        className="button"
+        type="button"
+        title={`Close the separate window and put the ${subject} back in this page`}
+        onClick={() => void onReturn(panel)}
+      >
+        <Close size={15} />
+        Return {panel === "guide" ? "guide" : "evidence"}
+      </button>
+    );
+  }
+  if (placement === "closed") {
+    return (
+      <button
+        className="button"
+        type="button"
+        title={`Show the ${subject} again`}
+        onClick={() => onView(panel, "open")}
+      >
+        <Open size={15} />
+        {PANEL_TITLES[panel]}
+      </button>
+    );
+  }
+  return null;
+}
+
+/** A minimised panel: the rail it collapses to, still able to come back or pop out. */
+function RunPanelRail({
+  panel,
+  onView,
+  onDock,
+}: {
+  panel: RunPanelId;
+  onView: (panel: RunPanelId, next: RunPanelView) => void;
+  onDock: (panel: RunPanelId) => void;
+}) {
+  const subject = PANEL_TITLES[panel].toLowerCase();
+  const Expand = panel === "guide" ? PanelLeftOpen : PanelRightOpen;
+  return (
+    <>
+      <button
+        type="button"
+        className="flow-panel-button"
+        title={`Show the ${subject}`}
+        aria-label={`Show the ${subject}`}
+        onClick={() => onView(panel, "open")}
+      >
+        <Expand size={14} />
+      </button>
+      <span className="flow-panel-rail-label">{PANEL_TITLES[panel]}</span>
+      <button
+        type="button"
+        className="flow-panel-button"
+        title={`Open the ${subject} in its own window`}
+        aria-label={`Open the ${subject} in its own window`}
+        onClick={() => void onDock(panel)}
+      >
+        <PictureInPicture2 size={14} />
+      </button>
+    </>
+  );
+}
 
 /** Rows rendered at once. A log pane only ever shows its tail. */
 const EVIDENCE_WINDOW = 200;
@@ -12761,6 +12947,343 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
   };
 }
 
+/**
+ * The live run's guide panel: what to do right now, any boundary refusal, and
+ * either the expected states or — for a backend run with no Flow — how the run
+ * is going. Rendered inside the run page, and again on its own in the detached
+ * panel window, from the same run state either way.
+ */
+export function RunFlowPanelBody({ run, now }: { run: GuidedRunState; now: number }) {
+  const plan = run.flowPlan;
+  const coverage = run.coverage;
+  const statuses = planStateStatuses(run);
+  const instruction = runInstruction(run);
+  const rejection = run.boundaryRejection;
+  const backendOnly = isBackendOnlyRun(run);
+  const backend = run.backend ?? null;
+  const elapsedMs = now - new Date(run.startedAt).valueOf();
+  return (
+    <>
+      <div className="run-instruction" data-tone={rejection ? "warning" : "normal"}>
+        <small>What to do now</small>
+        <strong>{instruction.title}</strong>
+        <p>{instruction.detail}</p>
+      </div>
+
+      {rejection ? (
+        <div className="run-rejection" role="status">
+          <TriangleAlert size={15} />
+          <div>
+            <strong>Your application reported a state the Flow refused</strong>
+            <p>{BOUNDARY_REJECTION_GUIDANCE[rejection.reason] ?? `The server refused it: ${rejection.reason}.`}</p>
+            <dl>
+              <div>
+                <dt>Reported</dt>
+                <dd>{rejection.stateKey ?? "no state key"}</dd>
+              </div>
+              <div>
+                <dt>Reason</dt>
+                <dd>
+                  <code>{rejection.reason}</code>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      ) : null}
+
+      {backendOnly && !plan ? (
+        // No Flow to reconcile against, and no browser/viewport to describe
+        // either — the space "Expected states" would otherwise leave empty
+        // goes to the numbers that actually tell the operator how this run
+        // is going.
+        <div className="flow-backend-summary">
+          <h2>This run</h2>
+          <dl className="property-list">
+            <div>
+              <dt>Elapsed</dt>
+              <dd>{formatDuration(elapsedMs)}</dd>
+            </div>
+            <div>
+              <dt>Requests received</dt>
+              <dd>{backend?.requests ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Failed responses</dt>
+              <dd>{backend?.errors ?? 0}</dd>
+            </div>
+            <div>
+              <dt>SDK connection</dt>
+              <dd>
+                <Status>{backend?.requests ? "Receiving requests" : "Waiting for the first request"}</Status>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      ) : (
+        <>
+          <div className="flow-plan-heading">
+            <h2>Expected states</h2>
+            {coverage ? (
+              <span>
+                {coverage.visitedStateKeys.length} / {coverage.expectedStates}
+              </span>
+            ) : null}
+          </div>
+
+          {plan && plan.states.length ? (
+            <ol className="flow-plan">
+              {plan.states.map((state, index) => {
+                const status = statuses.get(state.key) ?? "pending";
+                return (
+                  <li key={state.key} className="flow-plan-state" data-status={status}>
+                    <span className="flow-plan-marker">
+                      {status === "done" ? <Check size={13} /> : index + 1}
+                    </span>
+                    <div>
+                      <strong>{state.name}</strong>
+                      <small>
+                        {status === "current"
+                          ? "You are here"
+                          : status === "done"
+                            ? "Visited"
+                            : status === "next"
+                              ? "Expected next"
+                              : state.role === "TERMINAL"
+                                ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
+                                : state.role === "INITIAL"
+                                  ? "Starting point"
+                                  : "Not reached yet"}
+                      </small>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="flow-plan-empty">
+              {run.expectedGraphVersionId
+                ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
+                : "This run is observational. Nothing is being compared against a declared Flow."}
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * The live evidence log: the filter and follow controls, the per-track tabs, and
+ * the tail of what the run has captured. The filter, the open tab and how far
+ * the list is scrolled are a view of the run rather than part of it, so this
+ * owns them — the page and a detached window each keep their own.
+ */
+export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; controls?: ReactNode }) {
+  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
+  const [query, setQuery] = useState("");
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  const [follow, setFollow] = useState(true);
+  const [detailItem, setDetailItem] = useState<LiveEvidence | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // Which evidence panes exist depends on what the run captures. A backend
+  // run has no browser console and no interactions to list; it has requests,
+  // server errors and data operations.
+  const backendOnly = isBackendOnlyRun(run);
+  // A run with no Flow attached can never report a FLOW event, so the tab
+  // would only ever be empty — left out rather than shown dead.
+  const evidenceTabs: Array<{
+    value: EvidenceTabValue | BackendEvidenceTabValue;
+    label: string;
+    icon: typeof Activity;
+    kinds: Array<LiveEvidence["kind"]>;
+  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS).filter(
+    (entry) => entry.value !== "FLOW" || Boolean(run.flowPlan),
+  );
+  const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
+
+  // A tab from the other track's set — or FLOW when this run has no Flow
+  // attached and it was filtered out above — would leave the panel empty
+  // with no way back, so switching tracks lands on that track's first pane.
+  useEffect(() => {
+    if (evidenceTabs.some((entry) => entry.value === tab)) return;
+    const fallback = evidenceTabs[0]?.value ?? (backendOnly ? "REQUESTS" : "CONSOLE");
+    if (fallback !== tab) setTab(fallback);
+  }, [backendOnly, tab, evidenceTabs]);
+
+  const visible = useMemo(() => {
+    if (activeTab.value === "FINDINGS") return [];
+    const needle = query.trim().toLowerCase();
+    return run.evidence.filter((item) => {
+      if (!activeTab.kinds.includes(item.kind)) return false;
+      if (errorsOnly && item.level === "INFO") return false;
+      if (!needle) return true;
+      if (item.message.toLowerCase().includes(needle)) return true;
+      return (item.details ?? []).some(
+        (entry) =>
+          entry.label.toLowerCase().includes(needle) || entry.value.toLowerCase().includes(needle),
+      );
+    });
+  }, [run.evidence, activeTab, query, errorsOnly]);
+
+  const windowed = visible.length > EVIDENCE_WINDOW ? visible.slice(-EVIDENCE_WINDOW) : visible;
+
+  useEffect(() => {
+    if (!follow) return;
+    const node = listRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [windowed.length, follow, tab]);
+
+  const onListScroll = useCallback(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+    setFollow(atBottom);
+  }, []);
+
+  const findings = [...(run.findings ?? [])].reverse();
+  const counts = run.liveCounts ?? ({} as Record<LiveEvidence["kind"], number>);
+  const tabCount = (entry: { value: string; kinds: Array<LiveEvidence["kind"]> }) =>
+    entry.value === "FINDINGS"
+      ? findings.length
+      : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+
+  return (
+    <>
+      <div className="evidence-heading">
+        <h2>Live evidence</h2>
+        <div className="evidence-heading-tools">
+          <label className="evidence-search">
+            <Filter size={13} />
+            <input
+              value={query}
+              placeholder="Filter"
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label="Filter evidence"
+            />
+            {query ? (
+              <button type="button" aria-label="Clear filter" onClick={() => setQuery("")}>
+                <X size={12} />
+              </button>
+            ) : null}
+          </label>
+          <button
+            type="button"
+            className={errorsOnly ? "evidence-toggle selected" : "evidence-toggle"}
+            aria-pressed={errorsOnly}
+            title="Show only warnings and errors"
+            onClick={() => setErrorsOnly((current) => !current)}
+          >
+            <AlertTriangle size={13} />
+          </button>
+          <button
+            type="button"
+            className={follow ? "evidence-toggle selected" : "evidence-toggle"}
+            aria-pressed={follow}
+            title="Follow new events"
+            onClick={() => {
+              setFollow(true);
+              const node = listRef.current;
+              if (node) node.scrollTop = node.scrollHeight;
+            }}
+          >
+            <ArrowDownToLine size={13} />
+          </button>
+          {controls ? <div className="evidence-window-controls">{controls}</div> : null}
+        </div>
+      </div>
+      <div className="evidence-tabs" role="tablist">
+        {evidenceTabs.map((entry) => {
+          const Icon = entry.icon;
+          return (
+            <button
+              key={entry.value}
+              role="tab"
+              aria-selected={tab === entry.value}
+              className={tab === entry.value ? "selected" : ""}
+              onClick={() => setTab(entry.value)}
+            >
+              <Icon size={13} />
+              {entry.label} <span>{tabCount(entry)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
+        {activeTab.value === "FINDINGS" ? (
+          findings.length ? (
+            findings.map((finding) => (
+              <div
+                key={finding.id}
+                className={`evidence-row evidence-${finding.severity === "LOW" || finding.severity === "INFO" ? "info" : finding.severity === "MEDIUM" ? "warn" : "error"}`}
+              >
+                <time>{finding.category.replaceAll("_", " ").toLowerCase()}</time>
+                <span>{finding.severity}</span>
+                <div className="evidence-row-body">
+                  <p>{finding.title}</p>
+                  <dl>
+                    <div>
+                      <dt>Detail</dt>
+                      <dd>{finding.description}</dd>
+                    </div>
+                    {finding.recommendation ? (
+                      <div>
+                        <dt>Fix</dt>
+                        <dd>{finding.recommendation}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="evidence-empty">No findings have been raised in this run.</div>
+          )
+        ) : (
+          <>
+            {run.evidenceTrimmed > 0 && !query && !errorsOnly ? (
+              <div className="evidence-trimmed">
+                {run.evidenceTrimmed} earlier rows were dropped from this panel. Every one of them
+                is still in the run's evidence.
+              </div>
+            ) : null}
+            {visible.length > windowed.length ? (
+              <div className="evidence-trimmed">
+                Showing the most recent {windowed.length} of {visible.length} matching rows.
+              </div>
+            ) : null}
+            {windowed.length ? (
+              windowed.map((item, index) => (
+                <EvidenceRow
+                  key={item.id}
+                  item={item}
+                  continuesGroup={
+                    Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
+                  }
+                  onOpenDetail={setDetailItem}
+                />
+              ))
+            ) : (
+              <div className="evidence-empty">
+                {query || errorsOnly
+                  ? "No rows match this filter."
+                  : backendOnly
+                    ? BACKEND_EMPTY_EVIDENCE[activeTab.value as BackendEvidenceTabValue]
+                      ?? "Evidence will appear here as your server handles requests."
+                    : "Evidence will appear here as you use the application."}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {detailItem ? (
+        <EvidenceDetailModal runId={run.runId} item={detailItem} onClose={() => setDetailItem(null)} />
+      ) : null}
+    </>
+  );
+}
+
 export function LiveRunPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -12782,11 +13305,6 @@ export function LiveRunPage() {
     addDeclaredTransition,
     busy,
   } = useDesktop();
-  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
-  const [query, setQuery] = useState("");
-  const [errorsOnly, setErrorsOnly] = useState(false);
-  const [follow, setFollow] = useState(true);
-  const [detailItem, setDetailItem] = useState<LiveEvidence | null>(null);
   const [outdatedSdks, setOutdatedSdks] = useState<Array<{ ecosystem: "npm" | "pypi"; package: string; installed: string; latest: string | null }>>([]);
   const [sdkBannerDismissed, setSdkBannerDismissed] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -12794,7 +13312,6 @@ export function LiveRunPage() {
   const [draftingFlow, setDraftingFlow] = useState(false);
   const [flowCandidates, setFlowCandidates] = useState<Array<{ id: string; name: string; score: number; lifecycleStatus?: string }>>([]);
   const [now, setNow] = useState(() => Date.now());
-  const listRef = useRef<HTMLDivElement | null>(null);
   const [flowWidth, setFlowWidth] = useState<number>(() => {
     const saved = localStorage.getItem("tellann:live-flow-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
@@ -12804,6 +13321,20 @@ export function LiveRunPage() {
     const saved = localStorage.getItem("tellann:live-evidence-width");
     const parsed = saved ? parseInt(saved, 10) : NaN;
     return !isNaN(parsed) && parsed >= 240 && parsed <= 600 ? parsed : 360;
+  });
+  // How each side panel is shown, remembered between runs: the operator who
+  // wants the whole window for the browser should not have to put a panel away
+  // again every time a run starts.
+  const [panelViews, setPanelViews] = useState<Record<RunPanelId, RunPanelView>>(() => ({
+    guide: storedPanelView("guide"),
+    evidence: storedPanelView("evidence"),
+  }));
+  // Owned by the main process, which is the only thing that knows whether a
+  // detached window still exists — the operator can close one from its own
+  // title bar, and that panel has to come back here when they do.
+  const [dockedPanels, setDockedPanels] = useState<Record<RunPanelId, boolean>>({
+    guide: false,
+    evidence: false,
   });
 
   // Elapsed time and stall detection both need a clock of their own: the run
@@ -12892,59 +13423,54 @@ export function LiveRunPage() {
     }
   }, []);
 
-  // Which evidence panes exist depends on what the run captures. A backend
-  // run has no browser console and no interactions to list; it has requests,
-  // server errors and data operations.
-  const backendOnly = run ? isBackendOnlyRun(run) : false;
-  // A run with no Flow attached can never report a FLOW event, so the tab
-  // would only ever be empty — left out rather than shown dead.
-  const evidenceTabs: Array<{
-    value: EvidenceTabValue | BackendEvidenceTabValue;
-    label: string;
-    icon: typeof Activity;
-    kinds: Array<LiveEvidence["kind"]>;
-  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS).filter(
-    (entry) => entry.value !== "FLOW" || Boolean(run?.flowPlan),
-  );
-  const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
-
-  // A tab from the other track's set — or FLOW when this run has no Flow
-  // attached and it was filtered out above — would leave the panel empty
-  // with no way back, so switching tracks lands on that track's first pane.
-  useEffect(() => {
-    if (evidenceTabs.some((entry) => entry.value === tab)) return;
-    const fallback = evidenceTabs[0]?.value ?? (backendOnly ? "REQUESTS" : "CONSOLE");
-    if (fallback !== tab) setTab(fallback);
-  }, [backendOnly, tab, evidenceTabs]);
-  const visible = useMemo(() => {
-    if (!run || activeTab.value === "FINDINGS") return [];
-    const needle = query.trim().toLowerCase();
-    return run.evidence.filter((item) => {
-      if (!activeTab.kinds.includes(item.kind)) return false;
-      if (errorsOnly && item.level === "INFO") return false;
-      if (!needle) return true;
-      if (item.message.toLowerCase().includes(needle)) return true;
-      return (item.details ?? []).some(
-        (entry) =>
-          entry.label.toLowerCase().includes(needle) || entry.value.toLowerCase().includes(needle),
-      );
-    });
-  }, [run?.evidence, activeTab, query, errorsOnly]);
-
-  const windowed = visible.length > EVIDENCE_WINDOW ? visible.slice(-EVIDENCE_WINDOW) : visible;
-
-  useEffect(() => {
-    if (!follow) return;
-    const node = listRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [windowed.length, follow, tab]);
-
-  const onListScroll = useCallback(() => {
-    const node = listRef.current;
-    if (!node) return;
-    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
-    setFollow(atBottom);
+  const setPanelView = useCallback((panel: RunPanelId, next: RunPanelView) => {
+    setPanelViews((current) => ({ ...current, [panel]: next }));
+    localStorage.setItem(PANEL_STORAGE_KEYS[panel], next);
   }, []);
+
+  useEffect(() => {
+    const bridge = window.tellann?.runs;
+    if (!bridge?.getPanelWindowState) return;
+    let cancelled = false;
+    void bridge
+      .getPanelWindowState()
+      .then((state) => {
+        if (!cancelled) setDockedPanels(state);
+      })
+      .catch(() => undefined);
+    const unsubscribe = bridge.onPanelWindowChanged?.((state) =>
+      setDockedPanels((current) => ({ ...current, [state.panel]: state.open })),
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  const dockPanel = useCallback(async (panel: RunPanelId) => {
+    setControlError(null);
+    try {
+      const state = await window.tellann?.runs.openPanelWindow(panel);
+      setDockedPanels((current) => ({ ...current, [panel]: state?.open ?? true }));
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    }
+  }, []);
+
+  /** Closes the detached window, which is what puts the panel back in the page. */
+  const returnPanel = useCallback(async (panel: RunPanelId) => {
+    setControlError(null);
+    try {
+      await window.tellann?.runs.closePanelWindow(panel);
+      setDockedPanels((current) => ({ ...current, [panel]: false }));
+    } catch (cause) {
+      setControlError(normalizeDesktopError(cause));
+    }
+  }, []);
+
+  // A backend run has no browser console and no interactions to describe, so
+  // the page reads differently throughout because of it.
+  const backendOnly = run ? isBackendOnlyRun(run) : false;
 
   const runControl = useCallback(async (action: () => Promise<unknown>) => {
     setControlError(null);
@@ -13060,9 +13586,6 @@ export function LiveRunPage() {
 
   const plan = run.flowPlan;
   const coverage = run.coverage;
-  const statuses = planStateStatuses(run);
-  const instruction = runInstruction(run);
-  const rejection = run.boundaryRejection;
   const currentObservation = run.observations.at(-1);
   const resolution = run.windowResolution;
   const elapsedMs = now - new Date(run.startedAt).valueOf();
@@ -13084,20 +13607,25 @@ export function LiveRunPage() {
     plan?.states.find((state) => state.key === plan.initialStateKey)?.name ??
     plan?.initialStateKey ??
     null;
-  const tabCount = (entry: { value: string; kinds: Array<LiveEvidence["kind"]> }) =>
-    entry.value === "FINDINGS"
-      ? findings.length
-      : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
   const backendTrack = hasBackendTrack(run);
   const backend = run.backend ?? null;
   // `NONE` is a backend run, which never had a window; `CLOSED` is one the
   // operator closed, which can be put back without restarting the run.
   const browserStatus = run.browserStatus ?? "ACTIVE";
   const runIsLive = run.status === "RUNNING" || run.status === "PAUSED";
+  // Detached wins over whatever a panel was set to in the page: the panel is in
+  // the other window, and closing that window restores this one to the state
+  // the operator last chose here.
+  const placement = (panel: RunPanelId): RunPanelPlacement =>
+    dockedPanels[panel] ? "docked" : panelViews[panel];
+  const guidePlacement = placement("guide");
+  const evidencePlacement = placement("evidence");
 
   return (
     <div
       className="live-run-page"
+      data-flow-panel={guidePlacement}
+      data-evidence-panel={evidencePlacement}
       style={
         {
           "--flow-width": `${flowWidth}px`,
@@ -13144,6 +13672,18 @@ export function LiveRunPage() {
           ) : null}
         </div>
         <div className="run-toolbar-actions">
+          <RunPanelRestore
+            panel="guide"
+            placement={guidePlacement}
+            onView={setPanelView}
+            onReturn={returnPanel}
+          />
+          <RunPanelRestore
+            panel="evidence"
+            placement={evidencePlacement}
+            onView={setPanelView}
+            onReturn={returnPanel}
+          />
           <Status>{run.status}</Status>
           {browserStatus === "NONE" ? null : browserStatus === "CLOSED" ? (
             <button
@@ -13194,121 +13734,27 @@ export function LiveRunPage() {
         </div>
       ) : null}
 
-      <section className="live-flow">
-        <div
-          className="flow-resize-handle"
-          role="separator"
-          aria-label="Resize expected Flow panel"
-          aria-orientation="vertical"
-          onPointerDown={(event) => beginResize(event, "flow")}
-          onDoubleClick={() => resetWidth("flow")}
-        />
-        <div className="run-instruction" data-tone={rejection ? "warning" : "normal"}>
-          <small>What to do now</small>
-          <strong>{instruction.title}</strong>
-          <p>{instruction.detail}</p>
-        </div>
-
-        {rejection ? (
-          <div className="run-rejection" role="status">
-            <TriangleAlert size={15} />
-            <div>
-              <strong>Your application reported a state the Flow refused</strong>
-              <p>{BOUNDARY_REJECTION_GUIDANCE[rejection.reason] ?? `The server refused it: ${rejection.reason}.`}</p>
-              <dl>
-                <div>
-                  <dt>Reported</dt>
-                  <dd>{rejection.stateKey ?? "no state key"}</dd>
-                </div>
-                <div>
-                  <dt>Reason</dt>
-                  <dd>
-                    <code>{rejection.reason}</code>
-                  </dd>
-                </div>
-              </dl>
-            </div>
+      {guidePlacement === "open" ? (
+        <section className="live-flow">
+          <div
+            className="flow-resize-handle"
+            role="separator"
+            aria-label="Resize expected Flow panel"
+            aria-orientation="vertical"
+            onPointerDown={(event) => beginResize(event, "flow")}
+            onDoubleClick={() => resetWidth("flow")}
+          />
+          <div className="flow-panel-bar">
+            <span>{PANEL_TITLES.guide}</span>
+            <RunPanelControls panel="guide" onView={setPanelView} onDock={dockPanel} />
           </div>
-        ) : null}
-
-        {backendOnly && !plan ? (
-          // No Flow to reconcile against, and no browser/viewport to describe
-          // either — the space "Expected states" would otherwise leave empty
-          // goes to the numbers that actually tell the operator how this run
-          // is going.
-          <div className="flow-backend-summary">
-            <h2>This run</h2>
-            <dl className="property-list">
-              <div>
-                <dt>Elapsed</dt>
-                <dd>{formatDuration(elapsedMs)}</dd>
-              </div>
-              <div>
-                <dt>Requests received</dt>
-                <dd>{backend?.requests ?? 0}</dd>
-              </div>
-              <div>
-                <dt>Failed responses</dt>
-                <dd>{backend?.errors ?? 0}</dd>
-              </div>
-              <div>
-                <dt>SDK connection</dt>
-                <dd>
-                  <Status>{backend?.requests ? "Receiving requests" : "Waiting for the first request"}</Status>
-                </dd>
-              </div>
-            </dl>
-          </div>
-        ) : (
-          <>
-            <div className="flow-plan-heading">
-              <h2>Expected states</h2>
-              {coverage ? (
-                <span>
-                  {coverage.visitedStateKeys.length} / {coverage.expectedStates}
-                </span>
-              ) : null}
-            </div>
-
-            {plan && plan.states.length ? (
-              <ol className="flow-plan">
-                {plan.states.map((state, index) => {
-                  const status = statuses.get(state.key) ?? "pending";
-                  return (
-                    <li key={state.key} className="flow-plan-state" data-status={status}>
-                      <span className="flow-plan-marker">
-                        {status === "done" ? <Check size={13} /> : index + 1}
-                      </span>
-                      <div>
-                        <strong>{state.name}</strong>
-                        <small>
-                          {status === "current"
-                            ? "You are here"
-                            : status === "done"
-                              ? "Visited"
-                              : status === "next"
-                                ? "Expected next"
-                                : state.role === "TERMINAL"
-                                  ? `Ending${state.terminalKind ? ` · ${state.terminalKind.toLowerCase()}` : ""}`
-                                  : state.role === "INITIAL"
-                                    ? "Starting point"
-                                    : "Not reached yet"}
-                        </small>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : (
-              <p className="flow-plan-empty">
-                {run.expectedGraphVersionId
-                  ? "The accepted graph for this run could not be read, so the expected states cannot be listed. Capture is unaffected."
-                  : "This run is observational. Nothing is being compared against a declared Flow."}
-              </p>
-            )}
-          </>
-        )}
-      </section>
+          <RunFlowPanelBody run={run} now={now} />
+        </section>
+      ) : guidePlacement === "minimized" ? (
+        <section className="live-flow is-minimized">
+          <RunPanelRail panel="guide" onView={setPanelView} onDock={dockPanel} />
+        </section>
+      ) : null}
 
       <section className="live-browser">
         <div className="browser-toolbar">
@@ -13548,141 +13994,26 @@ export function LiveRunPage() {
         </div>
       </section>
 
-      <aside className="live-evidence">
-        <div
-          className="evidence-resize-handle"
-          role="separator"
-          aria-label="Resize evidence panel"
-          aria-orientation="vertical"
-          onPointerDown={(event) => beginResize(event, "evidence")}
-          onDoubleClick={() => resetWidth("evidence")}
-        />
-        <div className="evidence-heading">
-          <h2>Live evidence</h2>
-          <div className="evidence-heading-tools">
-            <label className="evidence-search">
-              <Filter size={13} />
-              <input
-                value={query}
-                placeholder="Filter"
-                onChange={(event) => setQuery(event.target.value)}
-                aria-label="Filter evidence"
-              />
-              {query ? (
-                <button type="button" aria-label="Clear filter" onClick={() => setQuery("")}>
-                  <X size={12} />
-                </button>
-              ) : null}
-            </label>
-            <button
-              type="button"
-              className={errorsOnly ? "evidence-toggle selected" : "evidence-toggle"}
-              aria-pressed={errorsOnly}
-              title="Show only warnings and errors"
-              onClick={() => setErrorsOnly((current) => !current)}
-            >
-              <AlertTriangle size={13} />
-            </button>
-            <button
-              type="button"
-              className={follow ? "evidence-toggle selected" : "evidence-toggle"}
-              aria-pressed={follow}
-              title="Follow new events"
-              onClick={() => {
-                setFollow(true);
-                const node = listRef.current;
-                if (node) node.scrollTop = node.scrollHeight;
-              }}
-            >
-              <ArrowDownToLine size={13} />
-            </button>
-          </div>
-        </div>
-        <div className="evidence-tabs" role="tablist">
-          {evidenceTabs.map((entry) => {
-            const Icon = entry.icon;
-            return (
-              <button
-                key={entry.value}
-                role="tab"
-                aria-selected={tab === entry.value}
-                className={tab === entry.value ? "selected" : ""}
-                onClick={() => setTab(entry.value)}
-              >
-                <Icon size={13} />
-                {entry.label} <span>{tabCount(entry)}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
-          {activeTab.value === "FINDINGS" ? (
-            findings.length ? (
-              findings.map((finding) => (
-                <div
-                  key={finding.id}
-                  className={`evidence-row evidence-${finding.severity === "LOW" || finding.severity === "INFO" ? "info" : finding.severity === "MEDIUM" ? "warn" : "error"}`}
-                >
-                  <time>{finding.category.replaceAll("_", " ").toLowerCase()}</time>
-                  <span>{finding.severity}</span>
-                  <div className="evidence-row-body">
-                    <p>{finding.title}</p>
-                    <dl>
-                      <div>
-                        <dt>Detail</dt>
-                        <dd>{finding.description}</dd>
-                      </div>
-                      {finding.recommendation ? (
-                        <div>
-                          <dt>Fix</dt>
-                          <dd>{finding.recommendation}</dd>
-                        </div>
-                      ) : null}
-                    </dl>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="evidence-empty">No findings have been raised in this run.</div>
-            )
-          ) : (
-            <>
-              {run.evidenceTrimmed > 0 && !query && !errorsOnly ? (
-                <div className="evidence-trimmed">
-                  {run.evidenceTrimmed} earlier rows were dropped from this panel. Every one of them
-                  is still in the run's evidence.
-                </div>
-              ) : null}
-              {visible.length > windowed.length ? (
-                <div className="evidence-trimmed">
-                  Showing the most recent {windowed.length} of {visible.length} matching rows.
-                </div>
-              ) : null}
-              {windowed.length ? (
-                windowed.map((item, index) => (
-                  <EvidenceRow
-                    key={item.id}
-                    item={item}
-                    continuesGroup={
-                      Boolean(item.groupId) && windowed[index - 1]?.groupId === item.groupId
-                    }
-                    onOpenDetail={setDetailItem}
-                  />
-                ))
-              ) : (
-                <div className="evidence-empty">
-                  {query || errorsOnly
-                    ? "No rows match this filter."
-                    : backendOnly
-                      ? BACKEND_EMPTY_EVIDENCE[activeTab.value as BackendEvidenceTabValue]
-                        ?? "Evidence will appear here as your server handles requests."
-                      : "Evidence will appear here as you use the application."}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </aside>
+      {evidencePlacement === "open" ? (
+        <aside className="live-evidence">
+          <div
+            className="evidence-resize-handle"
+            role="separator"
+            aria-label="Resize evidence panel"
+            aria-orientation="vertical"
+            onPointerDown={(event) => beginResize(event, "evidence")}
+            onDoubleClick={() => resetWidth("evidence")}
+          />
+          <RunEvidencePanel
+            run={run}
+            controls={<RunPanelControls panel="evidence" onView={setPanelView} onDock={dockPanel} />}
+          />
+        </aside>
+      ) : evidencePlacement === "minimized" ? (
+        <aside className="live-evidence is-minimized">
+          <RunPanelRail panel="evidence" onView={setPanelView} onDock={dockPanel} />
+        </aside>
+      ) : null}
 
       <footer className="run-controls">
         <div>
@@ -13781,9 +14112,6 @@ export function LiveRunPage() {
               : `${run.evidence.length} rows shown · ${run.evidenceTrimmed} trimmed`}
         </div>
       </footer>
-      {detailItem ? (
-        <EvidenceDetailModal runId={run.runId} item={detailItem} onClose={() => setDetailItem(null)} />
-      ) : null}
     </div>
   );
 }
@@ -13954,16 +14282,31 @@ function EvidenceDetailModal({
   };
 
   const metadata = (detail?.metadata ?? {}) as Record<string, unknown>;
-  const fields: Array<[string, unknown]> = (
-    [
-      ["Query", metadata.query],
-      ["Request headers", metadata.requestHeaders],
-      ["Request body", metadata.requestBody],
-      ["Response headers", metadata.responseHeaders],
-      ["Response body", metadata.responseBody],
-      ["Stack", metadata.stack],
-    ] as Array<[string, unknown]>
-  ).filter(([, value]) => value !== undefined && value !== null);
+  // Two columns, split the way the event itself is: what was sent on the left,
+  // what came back on the right. A request and its response are read against
+  // each other, and stacking them turned one event into a page of scrolling.
+  const sent: Array<[string, unknown]> = [
+    ["Query", metadata.query],
+    ["Request headers", metadata.requestHeaders],
+    ["Request body", metadata.requestBody],
+  ];
+  const received: Array<[string, unknown]> = [
+    ["Response headers", metadata.responseHeaders],
+    ["Response body", metadata.responseBody],
+    ["Stack", metadata.stack],
+  ];
+  const present = (entries: Array<[string, unknown]>) =>
+    entries.filter(([, value]) => value !== undefined && value !== null);
+  const sentFields = present(sent);
+  const receivedFields = present(received);
+  const fieldCount = sentFields.length + receivedFields.length;
+
+  const renderField = ([label, value]: [string, unknown]) => (
+    <section key={label} className="evidence-detail-field">
+      <h3>{label}</h3>
+      <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
+    </section>
+  );
 
   return (
     <div
@@ -13974,7 +14317,7 @@ function EvidenceDetailModal({
       }}
     >
       <div
-        className="desktop-modal evidence-detail-modal"
+        className="desktop-modal evidence-detail-modal pb-[20px]!"
         role="dialog"
         aria-modal="true"
         aria-labelledby="evidence-detail-title"
@@ -14004,13 +14347,15 @@ function EvidenceDetailModal({
           </div>
         ) : (
           <>
-            {fields.length ? (
-              fields.map(([label, value]) => (
-                <section key={label} className="evidence-detail-field">
-                  <h3>{label}</h3>
-                  <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
-                </section>
-              ))
+            {fieldCount ? (
+              <div className="evidence-detail-columns">
+                {sentFields.length ? (
+                  <div className="evidence-detail-column">{sentFields.map(renderField)}</div>
+                ) : null}
+                {receivedFields.length ? (
+                  <div className="evidence-detail-column">{receivedFields.map(renderField)}</div>
+                ) : null}
+              </div>
             ) : (
               <p className="evidence-detail-status">
                 Nothing beyond the summary above was captured for this event.
