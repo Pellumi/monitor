@@ -178,7 +178,6 @@ async function ensureExportAccess(
 
   const entitlement = await entitlementChecker.getEntitlement(access.organizationId);
   const tier = entitlement.features[Feature.REPORT_EXPORT];
-
   if (!isReportFormatEntitled(format, tier)) {
     res.status(403).json({
       error: 'EXPORT_FORMAT_NOT_ENTITLED',

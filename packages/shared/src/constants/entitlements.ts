@@ -120,7 +120,7 @@ export type ReportExportFormat = (typeof REPORT_EXPORT_FORMATS)[number];
  * otherwise. An unrecognised truthy tier degrades to JSON rather than opening
  * up every format.
  */
-export function reportFormatsForTier(tier: boolean | string | undefined): ReportExportFormat[] {
+export function reportFormatsForTier(tier: boolean | string | null | undefined): ReportExportFormat[] {
   switch (tier) {
     case FeatureTier.ALL_FORMATS:
       return ['JSON', 'PDF', 'CSV', 'HTML'];
@@ -132,7 +132,7 @@ export function reportFormatsForTier(tier: boolean | string | undefined): Report
 }
 
 /** True when `format` (in any casing) is one the tier entitles. */
-export function isReportFormatEntitled(format: string, tier: boolean | string | undefined): boolean {
+export function isReportFormatEntitled(format: string, tier: boolean | string | null | undefined): boolean {
   const normalized = String(format).toUpperCase();
   return reportFormatsForTier(tier).some((allowed) => allowed === normalized);
 }
@@ -146,7 +146,7 @@ export function isReportFormatEntitled(format: string, tier: boolean | string | 
  */
 export function resolveDefaultReportFormat(
   configured: string | null | undefined,
-  tier: boolean | string | undefined,
+  tier: boolean | string | null | undefined,
 ): ReportExportFormat {
   const allowed = reportFormatsForTier(tier);
   const normalized = String(configured ?? '').toUpperCase();
