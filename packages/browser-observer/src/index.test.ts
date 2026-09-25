@@ -18,6 +18,10 @@ import {
   sanitizeCapturedUrl,
   liveUrl,
   sanitizeBridgeMetadata,
+  classifyWebVitals,
+  classifySettleOutcome,
+  classifyFailedResources,
+  formatVitalValue,
   scopeEvidenceForCapturePhase,
   backendRouteTemplate,
   durationPercentile,
@@ -611,4 +615,86 @@ test('masking paints only the requested rectangle of a screenshot', () => {
   assert.deepEqual(pixel(1, 1), [0x11, 0x18, 0x27, 255]);
   assert.deepEqual(pixel(2, 2), [0x11, 0x18, 0x27, 255]);
   assert.equal(maskPng(Buffer.from('not a png'), []), null);
+});
+
+// ── Frontend performance rules ──────────────────────────────────────────────
+
+test('a page within every Core Web Vital threshold raises nothing', () => {
+  assert.equal(
+    classifyWebVitals({ lcp: 1_200, cls: 0.02, inpMs: 90, hiddenMs: 0, supported: true }),
+    null,
+  );
+});
+
+test('a vital exactly at its threshold has not breached it', () => {
+  // The thresholds are the boundary of "poor", not the start of it.
+  assert.equal(classifyWebVitals({ lcp: 4_000, cls: null, inpMs: null, hiddenMs: 0, supported: true }), null);
+  assert.equal(classifyWebVitals({ lcp: null, cls: 0.25, inpMs: null, hiddenMs: 0, supported: true }), null);
+  assert.equal(classifyWebVitals({ lcp: null, cls: null, inpMs: 500, hiddenMs: 0, supported: true }), null);
+  assert.equal(classifyWebVitals({ lcp: 4_001, cls: null, inpMs: null, hiddenMs: 0, supported: true })?.metric, 'LCP');
+});
+
+test('the worst vital wins, measured by how far past its own threshold it is', () => {
+  // LCP 4.4s is 1.1x poor; CLS 0.75 is 3x poor. CLS is the bigger problem even
+  // though its raw number is far smaller.
+  const verdict = classifyWebVitals({ lcp: 4_400, cls: 0.75, inpMs: null, hiddenMs: 0, supported: true });
+  assert.equal(verdict?.metric, 'CLS');
+  assert.equal(verdict?.ratio, 3);
+});
+
+test('paint timings from a backgrounded tab are not evidence of anything', () => {
+  assert.equal(
+    classifyWebVitals({ lcp: 40_000, cls: null, inpMs: null, hiddenMs: 30_000, supported: true }),
+    null,
+  );
+  // Just under the tolerance still counts: the recorder reports exactly 0 for
+  // a route that never went to the background.
+  assert.ok(classifyWebVitals({ lcp: 40_000, cls: null, inpMs: null, hiddenMs: 200, supported: true }));
+});
+
+test('a browser that could not measure vitals reports nothing, not zero', () => {
+  assert.equal(
+    classifyWebVitals({ lcp: null, cls: null, inpMs: null, hiddenMs: null, supported: false }),
+    null,
+  );
+});
+
+test('a vital reads as a duration or a score, whichever it is', () => {
+  assert.equal(formatVitalValue('LCP', 6_200), '6.2 s');
+  assert.equal(formatVitalValue('INP', 780), '780 ms');
+  assert.equal(formatVitalValue('CLS', 0.413), '0.41');
+});
+
+test('only a route settle can time out into a finding', () => {
+  // An interaction settle timing out describes the page, not the click, and
+  // firing per click on a polling page would produce one finding per click.
+  assert.equal(
+    classifySettleOutcome({ trigger: 'interaction', dataReadyTimedOut: true, visuallyStableTimedOut: false, dataReadyMs: null }),
+    null,
+  );
+  assert.equal(
+    classifySettleOutcome({ trigger: 'route', dataReadyTimedOut: true, visuallyStableTimedOut: false, dataReadyMs: null })?.kind,
+    'DATA',
+  );
+  assert.equal(
+    classifySettleOutcome({ trigger: null, dataReadyTimedOut: false, visuallyStableTimedOut: true, dataReadyMs: 400 })?.kind,
+    'VISUAL',
+  );
+  assert.equal(
+    classifySettleOutcome({ trigger: 'route', dataReadyTimedOut: false, visuallyStableTimedOut: false, dataReadyMs: 400 }),
+    null,
+  );
+});
+
+test('a settle that both timed out is reported as the data failure', () => {
+  const verdict = classifySettleOutcome({
+    trigger: 'route', dataReadyTimedOut: true, visuallyStableTimedOut: true, dataReadyMs: null,
+  });
+  assert.equal(verdict?.kind, 'DATA', 'nothing could stabilise because the data never arrived');
+});
+
+test('one dead favicon is noise; several empty resources are a finding', () => {
+  assert.equal(classifyFailedResources({ failedResourceCount: 2, resourceCount: 40 }), null);
+  assert.equal(classifyFailedResources({ failedResourceCount: null, resourceCount: 40 }), null);
+  assert.deepEqual(classifyFailedResources({ failedResourceCount: 3, resourceCount: 40 }), { failed: 3, total: 40 });
 });

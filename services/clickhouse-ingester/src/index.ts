@@ -35,23 +35,19 @@ ORDER BY (tenant_id, application_id, event_timestamp)
 TTL event_timestamp + INTERVAL 2 YEAR;
 `;
 
-const ENDPOINT_METRICS_TABLE_DDL = `
-CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DB}.endpoint_metrics (
-  tenant_id        String,
-  application_id   String,
-  environment_id   Nullable(String),
-  endpoint         String,
-  method           String,
-  status_code      UInt16,
-  duration_ms      UInt32,
-  event_timestamp  DateTime64(3, 'UTC'),
-  session_id       String,
-  ingested_at      DateTime64(3, 'UTC') DEFAULT now64()
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(event_timestamp)
-ORDER BY (tenant_id, application_id, endpoint, event_timestamp);
-`;
+/*
+ * `endpoint_metrics` used to be created here as well as in the endpoint engine,
+ * with a different column set. Because both used `CREATE TABLE IF NOT EXISTS`,
+ * whichever service booted first defined the table and the other silently
+ * inserted against columns that did not exist. The endpoint engine owns that
+ * data now (`endpoint_metrics_v2`), so this service creates and writes only
+ * `events`.
+ *
+ * Nothing was lost in the move: the extraction that fed it looked for
+ * `endpoint` at the top level or under `payload`, while a `TellannEvent`
+ * carries it under `metadata` — so it never fired for the API request events
+ * it was meant for.
+ */
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface EventRow {
@@ -64,17 +60,6 @@ interface EventRow {
   payload: string;         // JSON string
 }
 
-interface EndpointMetricRow {
-  tenant_id: string;
-  application_id: string;
-  environment_id: string | null;
-  endpoint: string;
-  method: string;
-  status_code: number;
-  duration_ms: number;
-  event_timestamp: string;
-  session_id: string;
-}
 
 // ─── ClickHouse client ───────────────────────────────────────────────────────
 function createClickHouseClient(): ClickHouseClient {
@@ -94,14 +79,12 @@ function createClickHouseClient(): ClickHouseClient {
 async function ensureSchema(ch: ClickHouseClient): Promise<void> {
   console.log('[ClickHouseIngester] Ensuring schema...');
   await ch.exec({ query: EVENTS_TABLE_DDL });
-  await ch.exec({ query: ENDPOINT_METRICS_TABLE_DDL });
   console.log('[ClickHouseIngester] Schema ready');
 }
 
 // ─── Batch flusher ────────────────────────────────────────────────────────────
 class BatchFlusher {
   private eventBatch: EventRow[] = [];
-  private endpointBatch: EndpointMetricRow[] = [];
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly ch: ClickHouseClient) {
@@ -122,23 +105,6 @@ class BatchFlusher {
     };
     this.eventBatch.push(row);
 
-    // Extract endpoint metrics if present
-    const endpoint = event.endpoint || (event.payload as any)?.endpoint;
-    const durationMs = event.durationMs || (event.payload as any)?.durationMs;
-    if (endpoint && typeof durationMs === 'number') {
-      this.endpointBatch.push({
-        tenant_id: row.tenant_id,
-        application_id: row.application_id,
-        environment_id: row.environment_id,
-        endpoint: String(endpoint),
-        method: String(event.method || (event.payload as any)?.method || 'UNKNOWN'),
-        status_code: Number(event.statusCode || (event.payload as any)?.statusCode || 0),
-        duration_ms: durationMs,
-        event_timestamp: row.event_timestamp,
-        session_id: row.session_id,
-      });
-    }
-
     if (this.eventBatch.length >= BATCH_SIZE) {
       void this.flush();
     }
@@ -150,9 +116,7 @@ class BatchFlusher {
 
   async flush(): Promise<void> {
     const events = this.eventBatch.splice(0);
-    const endpoints = this.endpointBatch.splice(0);
-
-    if (events.length === 0 && endpoints.length === 0) return;
+    if (events.length === 0) return;
 
     try {
       if (events.length > 0) {
@@ -163,19 +127,10 @@ class BatchFlusher {
         });
         console.log(`[ClickHouseIngester] Flushed ${events.length} events`);
       }
-      if (endpoints.length > 0) {
-        await this.ch.insert({
-          table: 'endpoint_metrics',
-          values: endpoints,
-          format: 'JSONEachRow',
-        });
-        console.log(`[ClickHouseIngester] Flushed ${endpoints.length} endpoint metrics`);
-      }
     } catch (err) {
       console.error('[ClickHouseIngester] Flush failed — events will be retried on next cycle', err);
       // Put events back for retry on next flush
       this.eventBatch.unshift(...events);
-      this.endpointBatch.unshift(...endpoints);
     }
   }
 

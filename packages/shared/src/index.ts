@@ -1,5 +1,6 @@
 export * from './events/types';
 export * from './events/schema';
+export * from './events/route';
 export * from './constants/services';
 export * from './constants/topics';
 export * from './constants/plans';

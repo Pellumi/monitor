@@ -18,6 +18,20 @@ import type {
   GuidedRunState,
   LiveEvidence,
 } from "@tellann/browser-observer";
+import {
+  HighlightGrid,
+  formatBytes,
+  formatMilliseconds,
+  largestBy,
+  numberOf,
+  percentage,
+  plural,
+  record,
+  rows,
+  statusClasses,
+  textList,
+  type Highlight,
+} from "./report-primitives";
 
 export type BackendEvidenceTabValue =
   | "REQUESTS"
@@ -71,26 +85,6 @@ export function isBackendOnlyRun(run: Pick<GuidedRunState, "captureTracks">): bo
 
 export function hasBackendTrack(run: Pick<GuidedRunState, "captureTracks">): boolean {
   return (run.captureTracks ?? ["FRONTEND"]).includes("BACKEND");
-}
-
-function formatMilliseconds(value: number | null | undefined): string {
-  if (value == null) return "—";
-  if (value < 1) return "<1 ms";
-  if (value < 1_000) return `${Math.round(value)} ms`;
-  return `${(value / 1_000).toFixed(value < 10_000 ? 2 : 1)} s`;
-}
-
-function formatBytes(value: number): string {
-  if (!value) return "0 B";
-  if (value < 1_024) return `${value} B`;
-  if (value < 1_024 * 1_024) return `${(value / 1_024).toFixed(1)} KB`;
-  return `${(value / (1_024 * 1_024)).toFixed(1)} MB`;
-}
-
-function percentage(part: number, whole: number): string {
-  if (!whole) return "0%";
-  const value = (part / whole) * 100;
-  return `${value < 10 && value > 0 ? value.toFixed(1) : Math.round(value)}%`;
 }
 
 /**
@@ -437,49 +431,7 @@ export function BackendWaitingPanel({
 // take the section as it was written: loosely typed, tolerant of a payload
 // from an older schema, and never assuming a field is present.
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function rows(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.map(record) : [];
-}
-
-function numberOf(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function textList(value: unknown, fallback = "—"): string {
-  const items = Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
-  return items.length ? items.join(", ") : fallback;
-}
-
-/** `2xx 14 · 5xx 1`, in ascending class order. */
-function statusClasses(value: unknown): string {
-  const entries = Object.entries(record(value)).sort(([left], [right]) => left.localeCompare(right));
-  return entries.length ? entries.map(([name, count]) => `${name} ${Number(count)}`).join(" · ") : "—";
-}
-
-type Highlight = { label: string; value: string; detail: string; note?: string; tone?: "danger" | "warning" | "success" };
-
-const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 const endpointLabel = (endpoint: Record<string, unknown>) => `${String(endpoint.method ?? "GET")} ${String(endpoint.route ?? "/")}`;
-
-function largestBy<T>(items: T[], score: (item: T) => number): T | null {
-  let best: T | null = null;
-  let bestScore = 0;
-  for (const item of items) {
-    const value = score(item);
-    if (value > bestScore) {
-      best = item;
-      bestScore = value;
-    }
-  }
-  return best;
-}
 
 /**
  * The few things a reader would otherwise dig out of two long tables: which

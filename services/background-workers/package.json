@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test dist/qa-report-worker.test.js dist/qa-finding-resolution.test.js"
+    "test": "tsc && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "@tellann/ai": "workspace:*",

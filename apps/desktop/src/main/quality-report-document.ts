@@ -84,6 +84,7 @@ function readReport(report: Record<string, unknown>) {
   const flowSummary = asRecord(sections.flowSummary);
   const runSummary = asRecord(sections.runSummary);
   const backend = asRecord(sections.backendSummary);
+  const frontend = asRecord(sections.frontendSummary);
   const viewportHistory = records(runSummary.viewportHistory);
   return {
     // Payloads before session-scoped QA existed were all Flow reports and did
@@ -96,6 +97,7 @@ function readReport(report: Record<string, unknown>) {
     environment: asRecord(report.environment),
     summary: asRecord(report.summary),
     coverage: asRecord(report.coverage),
+    coverageCaveats: asArray(asRecord(report.coverage).caveats).map((item) => String(item)),
     repository: asRecord(report.repository),
     instrumentation: asRecord(report.instrumentation),
     correlation: asRecord(report.correlation),
@@ -118,6 +120,16 @@ function readReport(report: Record<string, unknown>) {
     backendErrorGroups: records(backend.serverErrorGroups),
     backendSlowestRequests: records(backend.slowestRequests),
     backendLimitations: asArray(backend.limitations).map((item) => String(item)),
+    // A backend-only run carries no frontend section, the same way a
+    // frontend-only run carries no backend one.
+    frontend,
+    hasFrontend: Object.keys(frontend).length > 0,
+    frontendRoutes: records(frontend.routes),
+    frontendNetwork: records(frontend.network),
+    frontendConsoleGroups: records(asRecord(frontend.console).groups),
+    frontendA11yRules: records(asRecord(frontend.accessibility).rules),
+    frontendForms: records(asRecord(frontend.interactions).forms),
+    frontendLimitations: asArray(frontend.limitations).map((item) => String(item)),
     viewportHistory,
     latestViewport: asRecord(viewportHistory.at(-1)),
     eventCounts: asRecord(runSummary.eventCounts),
@@ -187,6 +199,23 @@ function coverageText(data: ReadReport): string {
   return expected === null || expected === undefined
     ? "Observational — no declared Flow to measure against"
     : `${Number(expected).toFixed(1)}% of the declared Flow was exercised`;
+}
+
+/**
+ * How much the coverage figure is worth.
+ *
+ * A clean ratio reads as a fact, and 85% from a degraded capture is not the
+ * same claim as 85% from a clean one. The document said so in a notice; the
+ * figure itself carried none of it.
+ */
+function confidenceText(data: ReadReport): string {
+  const band = text(data.coverage.confidenceBand, "");
+  const score = Number(data.coverage.confidence);
+  const percent = Number.isFinite(score) ? ` (${Math.round(score * 100)}%)` : "";
+  const qualifier = data.coverageCaveats.length
+    ? ` · ${data.coverageCaveats.length} qualifying condition${data.coverageCaveats.length === 1 ? "" : "s"}`
+    : " · nothing qualifies it";
+  return `${band}${percent}${qualifier}`;
 }
 
 /** The AI-drafted resolution for a finding, when the report carries one. */
@@ -297,6 +326,246 @@ function renderGaps(data: ReadReport): string {
 }
 
 /**
+ * What an endpoint touched, with counts where the data hooks reported them.
+ * "reads orders" and "reads orders four hundred times" are different facts.
+ */
+function modelUsageText(endpoint: Record<string, unknown>): string {
+  const usage = records(endpoint.modelUsage);
+  if (usage.length) {
+    return `models ${usage
+      .map((row) => {
+        const reads = Number(row.reads ?? 0);
+        const writes = Number(row.writes ?? 0);
+        const parts = [reads ? `${reads}r` : "", writes ? `${writes}w` : ""].filter(Boolean);
+        return parts.length ? `${text(row.model, "?")} ${parts.join("/")}` : text(row.model, "?");
+      })
+      .join(", ")}`;
+  }
+  const declared = Array.isArray(endpoint.models) ? endpoint.models.map(String) : [];
+  return declared.length ? `models ${declared.join(", ")}` : "no data-access evidence";
+}
+
+/**
+ * How this run's p95 compared with the endpoint's own recent history.
+ *
+ * Carries the sample count, because "3x slower than usual" over four prior
+ * requests is a very different claim from the same ratio over four thousand.
+ */
+function baselineText(value: unknown): string {
+  const baseline = asRecord(value);
+  if (baseline.p95Ms === undefined || baseline.p95Ms === null) return "No history";
+  const ratio = Number(baseline.ratio);
+  const verdict = text(baseline.verdict, "TYPICAL");
+  const usual = millisecondText(baseline.p95Ms, "—");
+  const samples = Number(baseline.samples ?? 0);
+  const comparison = Number.isFinite(ratio) && verdict !== "TYPICAL"
+    ? `${ratio.toFixed(1)}x usual`
+    : "as usual";
+  return `${comparison} (${usual} over ${samples.toLocaleString()} calls)`;
+}
+
+/** A percentile triple as the report prints it, or a dash when unmeasured. */
+function percentileText(value: unknown, unit = "ms"): string {
+  const row = asRecord(value);
+  if (row.p75 === null || row.p75 === undefined) return "Not measured";
+  const format = (raw: unknown) => {
+    if (raw === null || raw === undefined) return "—";
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return "—";
+    if (unit === "") return number.toFixed(2);
+    return number >= 1_000 ? `${(number / 1_000).toFixed(1)} s` : `${Math.round(number)} ms`;
+  };
+  return `${format(row.p50)} p50 · ${format(row.p75)} p75 · ${format(row.p95)} p95`;
+}
+
+function vitalText(value: unknown): string {
+  const vital = asRecord(value);
+  if (!vital.metric) return "—";
+  const metric = String(vital.metric);
+  const raw = Number(vital.value);
+  const reading = metric === "CLS"
+    ? raw.toFixed(2)
+    : raw >= 1_000 ? `${(raw / 1_000).toFixed(1)} s` : `${Math.round(raw)} ms`;
+  return `${metric} ${reading}`;
+}
+
+/**
+ * What the browser saw during the run.
+ *
+ * The counterpart to the backend chapter. Everything here was measured inside
+ * the page, so it includes the network and the client — unlike the server-side
+ * handler timings in the section that follows.
+ */
+function renderFrontend(data: ReadReport): string {
+  if (!data.hasFrontend) return "";
+  const { frontend } = data;
+  const network = asRecord(frontend.networkTotals);
+  const consoleSummary = asRecord(frontend.console);
+  const accessibility = asRecord(frontend.accessibility);
+  const interactions = asRecord(frontend.interactions);
+  const byImpact = asRecord(accessibility.byImpact);
+
+  const routeRows = data.frontendRoutes
+    .map((route) => {
+      const vital = asRecord(route.worstVital);
+      return `<tr><td><strong>${escapeHtml(text(route.route, "/"))}</strong><small>${escapeHtml(
+        [
+          `${text(route.samples, "0")} samples`,
+          route.settleTimeouts ? `${route.settleTimeouts} settle timeout(s)` : "",
+          route.failedResources ? `${route.failedResources} empty resources` : "",
+          route.hiddenSamplesDropped ? `${route.hiddenSamplesDropped} discarded while hidden` : "",
+        ].filter(Boolean).join(" · "),
+      )}</small></td><td>${escapeHtml(percentileText(route.lcpMs))}</td><td>${escapeHtml(
+        percentileText(route.cls, ""),
+      )}</td><td>${escapeHtml(percentileText(route.inpMs))}</td><td>${escapeHtml(
+        percentileText(route.dataReadyMs),
+      )}</td><td>${escapeHtml(vital.metric ? vitalText(route.worstVital) : "Within thresholds")}</td></tr>`;
+    })
+    .join("");
+
+  const networkRows = data.frontendNetwork
+    .map(
+      (row) =>
+        `<tr><td>${escapeHtml(text(row.resourceType, "other"))}</td><td><strong>${escapeHtml(
+          text(row.route, "/"),
+        )}</strong><small>${escapeHtml(statusClassText(row.statusClasses))}</small></td><td>${escapeHtml(
+          text(row.requests, "0"),
+        )}</td><td>${escapeHtml(
+          `${text(row.failed, "0")} failed${Number(row.blocked ?? 0) ? ` · ${row.blocked} blocked` : ""}`,
+        )}</td><td>${escapeHtml(millisecondText(row.p95Ms, "—"))}</td><td>${escapeHtml(
+          byteText(row.transferredBytes),
+        )}</td></tr>`,
+    )
+    .join("");
+
+  const a11yRows = data.frontendA11yRules
+    .map(
+      (rule) =>
+        `<tr><td>${escapeHtml(text(rule.impact, "unknown"))}</td><td><strong>${escapeHtml(
+          text(rule.help, String(rule.ruleId ?? "")),
+        )}</strong><small>${escapeHtml(
+          `${text(rule.ruleId, "")} · ${text(rule.nodes, "0")} element(s) · ${joined(rule.routes, "no route recorded")}`,
+        )}</small></td><td>${escapeHtml(text(rule.occurrences, "1"))}</td></tr>`,
+    )
+    .join("");
+
+  const consoleRows = data.frontendConsoleGroups
+    .map(
+      (group) =>
+        `<tr><td>${escapeHtml(text(group.level, "error"))}</td><td><strong>${escapeHtml(
+          text(group.message, ""),
+        )}</strong><small>${escapeHtml(joined(group.routes, "no route recorded"))}</small></td><td>${escapeHtml(
+          text(group.occurrences, "1"),
+        )}</td></tr>`,
+    )
+    .join("");
+
+  const formRows = data.frontendForms
+    .map(
+      (form) =>
+        `<tr><td><strong>${escapeHtml(text(form.form, "unnamed form"))}</strong><small>${escapeHtml(
+          joined(form.routes, "no route recorded"),
+        )}</small></td><td>${escapeHtml(text(form.submits, "0"))}</td><td>${escapeHtml(
+          `${text(form.invalidSubmits, "0")}${form.invalidRate == null ? "" : ` (${Number(form.invalidRate).toFixed(0)}%)`}`,
+        )}</td></tr>`,
+    )
+    .join("");
+
+  return `<section class="major"><div class="section-label">Section // Browser</div><h2>What the browser saw</h2>
+    <p>Everything in this section was measured inside the page, so it includes the network and the client. A route's numbers are its own: an in-app navigation resets them rather than accumulating across the session.</p>
+    <div class="metrics">
+      <div><span>Routes</span><strong>${escapeHtml(text(frontend.routesObserved, "0"))}</strong></div>
+      <div><span>Console errors</span><strong>${escapeHtml(text(consoleSummary.errors, "0"))}</strong></div>
+      <div><span>Failed requests</span><strong>${escapeHtml(
+        String(Number(network.failed ?? 0) + Number(network.errors ?? 0)),
+      )}</strong></div>
+      <div><span>Worst vital</span><strong>${escapeHtml(vitalText(frontend.worstVital))}</strong></div>
+    </div>
+    <table class="facts">${factRows([
+      [
+        "WORST VITAL",
+        frontend.worstVital
+          ? `${vitalText(frontend.worstVital)} on ${text(asRecord(frontend.worstVital).route, "an unknown route")}`
+          : "Every route measured stayed within the Core Web Vitals thresholds",
+      ],
+      [
+        "NETWORK",
+        `${text(network.requests, "0")} requests · ${text(network.failed, "0")} failed · ${text(
+          network.errors,
+          "0",
+        )} error responses${Number(network.blocked ?? 0) ? ` · ${network.blocked} blocked by policy` : ""} · ${byteText(
+          network.transferredBytes,
+        )} transferred`,
+      ],
+      [
+        "CONSOLE",
+        `${text(consoleSummary.errors, "0")} errors · ${text(consoleSummary.warnings, "0")} warnings · ${text(
+          frontend.runtimeErrors,
+          "0",
+        )} uncaught runtime errors${Number(frontend.crashes ?? 0) ? ` · ${frontend.crashes} page crash(es)` : ""}`,
+      ],
+      [
+        "ACCESSIBILITY",
+        Number(accessibility.scans ?? 0)
+          ? `${text(accessibility.violations, "0")} violations across ${text(
+              accessibility.routesScanned,
+              "0",
+            )} scanned routes · ${
+              Object.entries(byImpact)
+                .map(([impact, count]) => `${count} ${impact}`)
+                .join(" · ") || "no impact recorded"
+            }`
+          : "No accessibility scan ran during this run",
+      ],
+      [
+        "INTERACTIONS",
+        `${text(interactions.clicks, "0")} clicks · ${text(interactions.submitted, "0")} form submissions · ${text(
+          interactions.invalidSubmits,
+          "0",
+        )} rejected by validation · ${text(interactions.fieldChanges, "0")} field changes`,
+      ],
+      [
+        "CLIENT STATE",
+        `${text(frontend.clientStateMutations, "0")} framework-state changes · ${text(
+          frontend.storageMutations,
+          "0",
+        )} browser storage writes`,
+      ],
+    ])}</table>
+    ${
+      routeRows
+        ? `<h3>Routes</h3><p>Worst first. LCP, CLS and INP are the Core Web Vitals as the browser measured them; "data ready" is how long the route took before it stopped fetching.</p><table class="index"><tr><td>ROUTE</td><td>LCP</td><td>CLS</td><td>INP</td><td>DATA READY</td><td>VERDICT</td></tr>${routeRows}</table>`
+        : "<p>No page-performance sample reached this run.</p>"
+    }
+    ${
+      networkRows
+        ? `<h3>Network by resource</h3><p>Grouped by what was fetched, not by the page that fetched it — so a row here cannot be matched to a route above.</p><table class="index"><tr><td>TYPE</td><td>RESOURCE</td><td>REQUESTS</td><td>FAILURES</td><td>P95</td><td>TRANSFERRED</td></tr>${networkRows}</table>`
+        : ""
+    }
+    ${
+      a11yRows
+        ? `<h3>Accessibility rules</h3><p>Counted once per rule per scan, not once per failing element: one contrast failure across four hundred elements is one thing to fix.</p><table class="index"><tr><td>IMPACT</td><td>RULE</td><td>OCCURRENCES</td></tr>${a11yRows}</table>`
+        : ""
+    }
+    ${
+      consoleRows
+        ? `<h3>Console output</h3><table class="index"><tr><td>LEVEL</td><td>MESSAGE</td><td>COUNT</td></tr>${consoleRows}</table>`
+        : ""
+    }
+    ${
+      formRows
+        ? `<h3>Forms</h3><table class="index"><tr><td>FORM</td><td>SUBMISSIONS</td><td>REJECTED</td></tr>${formRows}</table>`
+        : ""
+    }
+    ${
+      data.frontendLimitations.length
+        ? `<h3>What this section could not see</h3>${list(data.frontendLimitations)}`
+        : ""
+    }
+  </section>`;
+}
+
+/**
  * What the application's own server did during the run.
  *
  * Present only when the run captured backend evidence. It answers the two
@@ -319,15 +588,15 @@ function renderBackend(data: ReadReport): string {
             endpoint.handlers && (endpoint.handlers as unknown[]).length
               ? `handler ${(endpoint.handlers as unknown[]).map(String).join(", ")}`
               : "",
-            (endpoint.models as unknown[] | undefined)?.length
-              ? `models ${(endpoint.models as unknown[]).map(String).join(", ")}`
-              : "no data-access evidence",
+            modelUsageText(endpoint),
           ]
             .filter(Boolean)
             .join(" · "),
         )}</small></td><td>${escapeHtml(text(endpoint.errors, "0"))}</td><td>${escapeHtml(
           millisecondText(endpoint.averageMs, "—"),
-        )}</td><td>${escapeHtml(millisecondText(endpoint.p95Ms, "—"))}</td></tr>`,
+        )}</td><td>${escapeHtml(millisecondText(endpoint.p95Ms, "—"))}</td><td>${escapeHtml(
+          baselineText(endpoint.baseline),
+        )}</td></tr>`,
     )
     .join("");
   const modelRows = data.backendModels
@@ -414,7 +683,7 @@ function renderBackend(data: ReadReport): string {
     ])}</table>
     ${
       endpointRows
-        ? `<h3>Endpoints</h3><p>Busiest first. A route is the template the framework matched, so calls that differ only by identifier are counted together.</p><table class="index"><tr><td>METHOD</td><td>ROUTE</td><td>ERRORS</td><td>AVG</td><td>P95</td></tr>${endpointRows}</table>`
+        ? `<h3>Endpoints</h3><p>Busiest first. A route is the template the framework matched, so calls that differ only by identifier are counted together.</p><table class="index"><tr><td>METHOD</td><td>ROUTE</td><td>ERRORS</td><td>AVG</td><td>P95</td><td>VS USUAL</td></tr>${endpointRows}</table>`
         : "<p>No request reached this run.</p>"
     }
     ${
@@ -640,7 +909,15 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ],
         ["PROVENANCE", text(data.flowSummary.provenance, "Not recorded")],
         ["COVERAGE", coverageText(data)],
+        ...(data.coverage.confidenceBand
+          ? ([["CONFIDENCE", confidenceText(data)]] as Array<[string, string]>)
+          : []),
       ])}</table>
+      ${
+        data.coverageCaveats.length
+          ? `<h3>What qualifies that number</h3><p>The coverage figure above was produced under these conditions. It is still the best measure this run can offer; it is not the same claim as the same percentage from a clean capture.</p>${list(data.coverageCaveats)}`
+          : ""
+      }
     </section>` : ""}
 
     <section class="major"><div class="section-label">Section // Run</div><h2>How the run was captured</h2>
@@ -749,6 +1026,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
       }
     </section>` : ""}
 
+    ${renderFrontend(data)}
     ${renderBackend(data)}
     ${renderAnnotations(data)}
     ${renderAppendix(data)}
@@ -827,6 +1105,9 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       ]);
     }
   }
+  for (const caveat of data.coverageCaveats) {
+    csv += csvRow(["Coverage caveat", caveat, text(data.coverage.confidenceBand, ""), ""]);
+  }
   for (const state of data.hasFlow ? data.missingStates : []) {
     csv += csvRow([
       "Coverage gap",
@@ -853,6 +1134,83 @@ export function qualityReportCsv(input: QualityReportDocumentInput): string {
       text(finding.priority, "HIGH"),
       `${text(finding.impact ?? finding.rationale, "")} Next step: ${text(finding.suggestedAction, "")}`,
     ]);
+  }
+  if (data.hasFrontend) {
+    const { frontend } = data;
+    const network = asRecord(frontend.networkTotals);
+    const consoleSummary = asRecord(frontend.console);
+    const accessibility = asRecord(frontend.accessibility);
+    const interactions = asRecord(frontend.interactions);
+    csv += csvRow([
+      "Browser",
+      "Routes exercised",
+      text(frontend.routesObserved, "0"),
+      `${text(consoleSummary.errors, "0")} console errors · ${
+        Number(network.failed ?? 0) + Number(network.errors ?? 0)
+      } failed requests`,
+    ]);
+    csv += csvRow([
+      "Browser",
+      "Worst vital",
+      vitalText(frontend.worstVital),
+      text(asRecord(frontend.worstVital).route, "No route breached a threshold"),
+    ]);
+    csv += csvRow([
+      "Browser",
+      "Interactions",
+      `${text(interactions.clicks, "0")} clicks`,
+      `${text(interactions.submitted, "0")} submissions · ${text(
+        interactions.invalidSubmits,
+        "0",
+      )} rejected by validation`,
+    ]);
+    for (const route of data.frontendRoutes) {
+      csv += csvRow([
+        "Route",
+        text(route.route, "/"),
+        `${text(route.samples, "0")} samples`,
+        `LCP ${percentileText(route.lcpMs)} · CLS ${percentileText(route.cls, "")} · INP ${percentileText(
+          route.inpMs,
+        )} · data ready ${percentileText(route.dataReadyMs)}`,
+      ]);
+    }
+    for (const row of data.frontendNetwork) {
+      csv += csvRow([
+        "Resource",
+        `${text(row.resourceType, "other")} on ${text(row.route, "/")}`,
+        `${text(row.requests, "0")} requests`,
+        `${text(row.failed, "0")} failed · p95 ${millisecondText(row.p95Ms, "—")} · ${byteText(
+          row.transferredBytes,
+        )} transferred`,
+      ]);
+    }
+    for (const rule of data.frontendA11yRules) {
+      csv += csvRow([
+        "Accessibility",
+        `${text(rule.ruleId, "rule")} (${text(rule.impact, "unknown")})`,
+        `${text(rule.nodes, "0")} elements`,
+        `${text(rule.help, "")} · ${joined(rule.routes, "no route recorded")}`,
+      ]);
+    }
+    for (const group of data.frontendConsoleGroups) {
+      csv += csvRow([
+        "Console",
+        text(group.message, "").slice(0, 200),
+        text(group.occurrences, "1"),
+        `${text(group.level, "error")} · ${joined(group.routes, "no route recorded")}`,
+      ]);
+    }
+    for (const form of data.frontendForms) {
+      csv += csvRow([
+        "Form",
+        text(form.form, "unnamed form"),
+        `${text(form.invalidSubmits, "0")} of ${text(form.submits, "0")} rejected`,
+        joined(form.routes, "no route recorded"),
+      ]);
+    }
+    for (const limitation of data.frontendLimitations) {
+      csv += csvRow(["Browser limitation", limitation, "", ""]);
+    }
   }
   if (data.hasBackend) {
     const { backend } = data;

@@ -49,18 +49,31 @@
     "TEST_ORG_B_TOKEN",
     "TEST_REVOKED_ORG_ID",
     "PAYSTACK_TEST_PLAN_CODE",
-    "REDIS_URL"
+    "REDIS_URL",
+    "REPORT_ENGINE_INTERNAL_SECRET",
+    "ENDPOINT_ENGINE_INTERNAL_SECRET",
+    "ENDPOINT_ENGINE_URL"
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build"
+      ],
       "inputs": [
         "src/**/*.tsx",
         "src/**/*.ts",
@@ -69,38 +82,65 @@
         "src/**/*.py",
         "tests/**/*.py"
       ],
-      "outputs": ["coverage/**"]
+      "outputs": [
+        "coverage/**"
+      ]
     },
     "test:e2e": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*.ts", "fixtures/**/*.json"],
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "src/**/*.ts",
+        "fixtures/**/*.json"
+      ],
       "outputs": [],
       "cache": false
     },
     "test:integration": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*.ts"],
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "src/**/*.ts"
+      ],
       "outputs": [],
       "cache": false
     },
     "test:isolation": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*.ts"],
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "src/**/*.ts"
+      ],
       "outputs": [],
       "cache": false
     },
     "test:billing": {
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*.ts"],
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "src/**/*.ts"
+      ],
       "outputs": [],
       "cache": false
     },
     "typecheck": {
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*.ts", "src/**/*.tsx", "tsconfig.json"]
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tsconfig.json"
+      ]
     },
     "dev": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "cache": false,
       "persistent": true
     }

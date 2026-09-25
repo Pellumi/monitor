@@ -11,10 +11,13 @@ import {
   Route,
   ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
 type RunDetail = {
   id: string;
+  /** Already on the response — GET /qa-runs/:id spreads the whole run. */
+  applicationId: string;
   status: string;
   targetUrl: string;
   startedAt: string | null;
@@ -41,7 +44,12 @@ type Report = {
   coverage: { expected: number | null; reconciledFlows: number };
   correlation: {
     runId: string;
-    sessions: Array<{ sessionId: string; traceId: string | null }>;
+    sessions: Array<{
+      sessionId: string;
+      traceId: string | null;
+      startedAt: string | null;
+      endedAt: string | null;
+    }>;
   };
   instrumentation: null | {
     patchSetId: string;
@@ -64,6 +72,16 @@ type Report = {
     criticalOrHighFindings: number;
   };
 };
+
+/** How long a correlated session ran, from the timestamps the report carries. */
+function sessionDuration(session: { startedAt: string | null; endedAt: string | null }): string {
+  if (!session.startedAt || !session.endedAt) return "—";
+  const ms = new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
 
 function formatBytes(rawBytes: string): string {
   const bytes = Number(rawBytes);
@@ -283,12 +301,55 @@ export default function QARunDetailPage() {
       </section>
       {report.data?.correlation.sessions.length ? (
         <section>
-          <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-            <Route className="h-5 w-5" /> Correlation
+          <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold">
+            <Route className="h-5 w-5" /> Sessions this run observed
           </h2>
-          <pre className="overflow-auto rounded-xl border border-neutral-800 bg-neutral-950 p-4 text-xs text-neutral-400">
-            {JSON.stringify(report.data.correlation, null, 2)}
-          </pre>
+          <p className="mb-3 text-sm text-neutral-500">
+            Open a session to replay the events behind a finding — the exact click, request and
+            state change, in order.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {report.data.correlation.sessions.map((session) => (
+              <Link
+                key={session.sessionId}
+                href={`/sessions/${session.sessionId}?appId=${detail.applicationId}`}
+                className="group rounded-xl border border-neutral-800 bg-neutral-900 p-5 transition-colors hover:border-neutral-700"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-sm text-neutral-200">
+                    {session.sessionId.slice(0, 8)}…{session.sessionId.slice(-4)}
+                  </span>
+                  <ExternalLink className="h-4 w-4 text-neutral-600 transition-colors group-hover:text-neutral-300" />
+                </div>
+                <dl className="mt-3 space-y-1 text-xs text-neutral-500">
+                  <div className="flex justify-between gap-2">
+                    <dt>Started</dt>
+                    <dd className="text-neutral-400">
+                      {session.startedAt ? new Date(session.startedAt).toLocaleString() : "—"}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Duration</dt>
+                    <dd className="text-neutral-400">{sessionDuration(session)}</dd>
+                  </div>
+                  {session.traceId ? (
+                    <div className="flex justify-between gap-2">
+                      <dt>Trace</dt>
+                      <dd className="font-mono text-neutral-400">{session.traceId.slice(0, 8)}…</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </Link>
+            ))}
+          </div>
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs text-neutral-600 hover:text-neutral-400">
+              Show raw correlation
+            </summary>
+            <pre className="mt-2 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950 p-4 text-xs text-neutral-400">
+              {JSON.stringify(report.data.correlation, null, 2)}
+            </pre>
+          </details>
         </section>
       ) : null}
     </div>

@@ -37,7 +37,8 @@
     "verify:billing:lifecycle": "node scripts/verify-billing-lifecycle-features.mjs",
     "verify:billing:scope": "node scripts/verify-user-scoped-billing.mjs",
     "verify:billing:routing": "node scripts/verify-plan-change-routing.mjs",
-    "pack:python": "python -m pip install --quiet build && python -m build --outdir release/sdk packages/python-sdk"
+    "pack:python": "python -m pip install --quiet build && python -m build --outdir release/sdk packages/python-sdk",
+    "backfill:session-error-counts": "node scripts/backfill-session-error-counts.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",

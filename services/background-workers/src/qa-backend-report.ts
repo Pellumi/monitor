@@ -37,6 +37,14 @@ export type BackendEndpointReport = {
   statusClasses: Record<string, number>;
   lastStatus: number | null;
   models: string[];
+  /**
+   * What each model was actually used for on this endpoint.
+   *
+   * `models` above says which models a request declared it touched; this says
+   * how many times and in which direction, which is the difference between
+   * "this route reads orders" and "this route reads orders four hundred times".
+   */
+  modelUsage: Array<{ model: string; reads: number; writes: number; records: number | null }>;
   handlers: string[];
   requestBytes: number;
   responseBytes: number;
@@ -95,6 +103,10 @@ export type BackendReportSection = {
   /** Requests per minute across the window the run actually saw traffic in. */
   requestsPerMinute: number | null;
   payloadsCaptured: number;
+  /** Distinct routes observed. The table below may list fewer. */
+  endpointsSeen: number;
+  /** Distinct models observed. The table below may list fewer. */
+  modelsSeen: number;
   endpoints: BackendEndpointReport[];
   models: BackendModelReport[];
   serverErrorGroups: BackendErrorReport[];
@@ -107,6 +119,8 @@ const ENDPOINT_LIMIT = 100;
 const MODEL_LIMIT = 100;
 const ERROR_GROUP_LIMIT = 50;
 const SLOWEST_LIMIT = 10;
+/** Models listed against one endpoint. */
+const MODELS_PER_ENDPOINT = 20;
 
 const BACKEND_EVENT_TYPES = new Set([
   'QA_BACKEND_REQUEST',
@@ -118,24 +132,24 @@ export function isBackendEvidenceEvent(event: { eventType: string }): boolean {
   return BACKEND_EVENT_TYPES.has(event.eventType);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
 
-function asNumber(value: unknown): number | null {
+export function asNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function asText(value: unknown, limit = 300): string | null {
+export function asText(value: unknown, limit = 300): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text ? text.slice(0, limit) : null;
 }
 
-function isoOf(value: Date | string | null | undefined): string | null {
+export function isoOf(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
@@ -149,16 +163,16 @@ export function percentileOf(values: number[], percentile: number): number | nul
   return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
 }
 
-function statusClass(status: number | null): string {
+export function statusClass(status: number | null): string {
   if (status === null) return 'no response';
   return `${Math.floor(status / 100)}xx`;
 }
 
-function rounded(value: number | null): number | null {
+export function rounded(value: number | null): number | null {
   return value === null ? null : Math.round(value * 100) / 100;
 }
 
-function pushUnique(list: string[], value: string | null, limit: number): void {
+export function pushUnique(list: string[], value: string | null, limit: number): void {
   if (!value || list.includes(value) || list.length >= limit) return;
   list.push(value);
 }
@@ -181,7 +195,18 @@ export function summarizeBackendEvidence(
   const endpoints = new Map<string, BackendEndpointReport>();
   const models = new Map<string, BackendModelReport>();
   const errorGroups = new Map<string, BackendErrorReport>();
+  /**
+   * Per-endpoint model usage, accumulated standalone rather than through the
+   * endpoint map. A data-access event can arrive before the request event for
+   * the same endpoint — the SDK collapses a request's operations and may flush
+   * them first — so writing through `endpoints.get(key)` during the loop would
+   * silently lose every early-arriving operation.
+   */
+  const endpointModelUsage = new Map<string, Map<string, { reads: number; writes: number; records: number | null }>>();
   const slowest: BackendSlowRequest[] = [];
+  /** Distinct routes and models seen, so a capped table never mis-states the totals. */
+  let endpointsSeen = 0;
+  let modelsSeen = 0;
   /** Requests carrying a captured body, which is what a reader can inspect. */
   let payloadsCaptured = 0;
   let requests = 0;
@@ -239,6 +264,7 @@ export function summarizeBackendEvidence(
         operations: [], endpoints: [], firstAt: at, lastAt: at,
       };
       if (!existing) {
+        modelsSeen += 1;
         if (models.size >= MODEL_LIMIT) continue;
         models.set(model, entry);
       }
@@ -248,6 +274,15 @@ export function summarizeBackendEvidence(
       entry.lastAt = at ?? entry.lastAt;
       pushUnique(entry.operations, operation, 12);
       pushUnique(entry.endpoints, route ? `${method ? `${method} ` : ''}${route}` : null, 20);
+      if (route) {
+        const endpointKey = `${(method ?? 'GET').toUpperCase()} ${route}`;
+        const usage = endpointModelUsage.get(endpointKey) ?? new Map();
+        endpointModelUsage.set(endpointKey, usage);
+        const row = usage.get(model) ?? { reads: 0, writes: 0, records: null };
+        if (metadata.mutation === true) row.writes += count; else row.reads += count;
+        if (records !== null) row.records = (row.records ?? 0) + records;
+        usage.set(model, row);
+      }
       continue;
     }
 
@@ -266,14 +301,33 @@ export function summarizeBackendEvidence(
     if (!firstRequestAt || (at && at < firstRequestAt)) firstRequestAt = at ?? firstRequestAt;
     if (!lastRequestAt || (at && at > lastRequestAt)) lastRequestAt = at ?? lastRequestAt;
 
+    // Run-wide timing is accumulated before the endpoint table is capped.
+    // These used to sit below the cap's `continue`, so on an application with
+    // more than ENDPOINT_LIMIT routes the run's average, percentiles and
+    // slowest-request list silently excluded every request past the cap — the
+    // limitation text said the table was shortened, not that the totals beside
+    // it were wrong.
+    if (durationMs !== null) {
+      durations.push(durationMs);
+      totalDurationMs += durationMs;
+      const perEndpoint = endpointDurations.get(key) ?? [];
+      perEndpoint.push(durationMs);
+      endpointDurations.set(key, perEndpoint);
+      slowest.push({
+        method, route, durationMs, statusCode: status,
+        occurredAt: at, eventId: asText(event.eventId ?? event.id, 100),
+      });
+    }
+
     const existing = endpoints.get(key);
     const entry = existing ?? {
       key, method, route, requests: 0, errors: 0, clientErrors: 0, serverErrors: 0,
       averageMs: null, p95Ms: null, slowestMs: null, statusClasses: {},
-      lastStatus: null, models: [], handlers: [], requestBytes: 0, responseBytes: 0,
+      lastStatus: null, models: [], modelUsage: [], handlers: [], requestBytes: 0, responseBytes: 0,
       firstAt: at, lastAt: at,
     };
     if (!existing) {
+      endpointsSeen += 1;
       if (endpoints.size >= ENDPOINT_LIMIT) continue;
       endpoints.set(key, entry);
     }
@@ -290,21 +344,25 @@ export function summarizeBackendEvidence(
       const model = asText(asRecord(raw).model ?? raw, 120);
       pushUnique(entry.models, model, 20);
     }
-    if (durationMs !== null) {
-      durations.push(durationMs);
-      totalDurationMs += durationMs;
-      const perEndpoint = endpointDurations.get(key) ?? [];
-      perEndpoint.push(durationMs);
-      endpointDurations.set(key, perEndpoint);
-      entry.slowestMs = Math.max(entry.slowestMs ?? 0, durationMs);
-      slowest.push({
-        method, route, durationMs, statusCode: status,
-        occurredAt: at, eventId: asText(event.eventId ?? event.id, 100),
-      });
-    }
+    if (durationMs !== null) entry.slowestMs = Math.max(entry.slowestMs ?? 0, durationMs);
   }
 
   for (const [key, entry] of endpoints) {
+    // Joined in the final pass, so an operation that arrived before its
+    // request is still counted. A model the request declared but no operation
+    // touched is kept at 0/0 — that disagreement is itself a signal.
+    const usage = endpointModelUsage.get(key);
+    const usageRows = usage
+      ? [...usage.entries()].map(([model, row]) => ({ model, ...row }))
+      : [];
+    for (const declared of entry.models) {
+      if (!usageRows.some((row) => row.model === declared)) {
+        usageRows.push({ model: declared, reads: 0, writes: 0, records: null });
+      }
+    }
+    entry.modelUsage = usageRows
+      .sort((left, right) => (right.reads + right.writes) - (left.reads + left.writes))
+      .slice(0, MODELS_PER_ENDPOINT);
     const samples = endpointDurations.get(key) ?? [];
     entry.averageMs = samples.length
       ? rounded(samples.reduce((sum, value) => sum + value, 0) / samples.length)
@@ -342,6 +400,8 @@ export function summarizeBackendEvidence(
       ? rounded((requests / spanMs) * 60_000)
       : null,
     payloadsCaptured,
+    endpointsSeen,
+    modelsSeen,
     endpoints: [...endpoints.values()].sort((left, right) => right.requests - left.requests),
     models: [...models.values()].sort((left, right) =>
       (right.reads + right.writes) - (left.reads + left.writes)),
@@ -356,8 +416,11 @@ export function summarizeBackendEvidence(
       ...(requests && !models.size
         ? ['No data-access evidence was reported, so the models each request touched are unknown. Wire the SDK\'s ORM hooks to record them.']
         : []),
-      ...(endpoints.size >= ENDPOINT_LIMIT
-        ? [`The endpoint table lists the ${ENDPOINT_LIMIT} busiest routes; the remainder stay queryable through the evidence endpoints.`]
+      ...(endpointsSeen > endpoints.size
+        ? [`The endpoint table lists ${endpoints.size} of ${endpointsSeen} routes. Every total above it — requests, failures, response times and the slowest requests — counts all of them; the rest of the table stays queryable through the evidence endpoints.`]
+        : []),
+      ...(modelsSeen > models.size
+        ? [`The model table lists ${models.size} of ${modelsSeen} models. The data-operation total above it counts all of them.`]
         : []),
       ...(!requests && tracksBackend
         ? ['This run selected the backend capture track but no request reached it. Check that the SDK is initialized in the process under test and pointed at the run.']

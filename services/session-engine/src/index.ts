@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('session-engine');
 
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { TellannEvent, Topics, ConsumerGroups, Feature } from '@tellann/shared';
+import { TellannEvent, Topics, ConsumerGroups, Feature, isErrorEventType } from '@tellann/shared';
 import { PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { createStorageClient, buildReplayKey } from '@tellann/storage';
@@ -10,7 +10,8 @@ import { createStorageClient, buildReplayKey } from '@tellann/storage';
 interface SessionRepository {
   save(sessionId: string, event: TellannEvent): Promise<void>;
   load(sessionId: string): Promise<TellannEvent[]>;
-  complete(sessionId: string): Promise<void>;
+  /** Resolves true when this caller created the statistics, i.e. won the completion claim. */
+  complete(sessionId: string): Promise<boolean>;
 }
 
 const prisma = new PrismaClient();
@@ -23,6 +24,18 @@ const storage = createStorageClient();
 // 30 seconds pass with no new event, the session is considered complete.
 const SESSION_IDLE_TIMEOUT_MS = 30_000;
 const sessionIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// ─── Orphan recovery ───────────────────────────────────────────────────
+// The idle timers above only exist in this process's memory, so a restart
+// loses every one of them. These bound a query-driven sweep that finds the
+// sessions those timers would have completed and completes them instead.
+const ORPHAN_SWEEP_INTERVAL_MS = 60_000;
+/** Time past the idle timeout before a session is presumed orphaned. */
+const ORPHAN_GRACE_MS = SESSION_IDLE_TIMEOUT_MS * 2;
+/** Sessions completed per sweep; a backlog drains over successive ticks. */
+const ORPHAN_SWEEP_BATCH = 200;
+/** How long shutdown waits for in-flight completions before giving up. */
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 
 // ─── Entitlement Gate ─────────────────────────────────────────
 // Checks SESSION_RECORDING entitlement for the application's org.
@@ -152,11 +165,27 @@ class PostgresSessionRepository implements SessionRepository {
     }));
   }
 
-  async complete(sessionId: string): Promise<void> {
+  /**
+   * Writes the session's statistics and reports whether this process was the
+   * one that created them.
+   *
+   * The row is `create`d rather than `upsert`ed so the unique constraint on
+   * `sessionId` acts as the completion claim: exactly one caller can win, and
+   * only the winner goes on to upload the replay and announce the session.
+   * Without that, the idle timer and the orphan sweeper could both complete the
+   * same session and emit `SESSIONS_COMPLETED` twice.
+   *
+   * A losing caller still refreshes the numbers — a late-arriving event is a
+   * legitimate reason to re-complete a session — it just does not re-announce.
+   */
+  async complete(sessionId: string): Promise<boolean> {
     const events = await this.load(sessionId);
-    if (events.length === 0) return;
+    if (events.length === 0) return false;
 
-    const errorCount = events.filter(e => e.eventType === 'ERROR_EVENT').length;
+    // Every error-shaped event counts, not only `ERROR_EVENT`: a session full
+    // of unhandled exceptions used to report zero errors here and in the
+    // replay timeline.
+    const errorCount = events.filter(e => isErrorEventType(e.eventType)).length;
 
     // Gap 5 fix: compute durationMs from first/last event timestamps
     // instead of session.startTime/endTime (which may be inaccurate for
@@ -164,13 +193,22 @@ class PostgresSessionRepository implements SessionRepository {
     const firstTs = new Date(events[0].timestamp).getTime();
     const lastTs  = new Date(events[events.length - 1].timestamp).getTime();
     const durationMs = lastTs - firstTs;
+    const statistics = { eventCount: events.length, errorCount, durationMs };
 
-    await prisma.sessionStatistic.upsert({
-      where: { sessionId },
-      update: { eventCount: events.length, errorCount, durationMs },
-      create: { sessionId, eventCount: events.length, errorCount, durationMs }
-    });
+    try {
+      await prisma.sessionStatistic.create({ data: { sessionId, ...statistics } });
+      return true;
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      await prisma.sessionStatistic.update({ where: { sessionId }, data: statistics });
+      return false;
+    }
   }
+}
+
+/** A Prisma unique-constraint violation, which here means "someone else claimed it". */
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'P2002');
 }
 
 
@@ -229,7 +267,12 @@ async function emitCompletedSession(sessionId: string) {
   const events = await repository.load(sessionId);
   if (events.length === 0) return;
 
-  await repository.complete(sessionId);
+  // Whoever creates the statistics row owns the rest of completion. A session
+  // that was already completed — by the sweeper, or by this timer before a
+  // late event rearmed it — has its numbers refreshed above and stops here,
+  // rather than uploading a second replay and announcing itself twice.
+  const claimed = await repository.complete(sessionId);
+  if (!claimed) return;
 
   const sessionData = {
     sessionId,
@@ -279,6 +322,59 @@ async function emitCompletedSession(sessionId: string) {
   console.log(`[SessionEngine] Emitted completed session ${sessionId}`);
 }
 
+/**
+ * Completes sessions whose idle timer never fired.
+ *
+ * The timers live in this process's memory, so a restart, a crash or a deploy
+ * used to orphan every session that was in flight: no statistics, no replay,
+ * no `SESSIONS_COMPLETED`, and nothing that would ever retry. Those sessions
+ * showed "—" for duration, events and errors in the dashboard forever.
+ *
+ * This is query-driven rather than memory-driven, so it recovers them on the
+ * next tick after any restart. A session this process still holds a timer for
+ * is skipped — that timer is about to do the same work, and the completion
+ * claim would make the loser's work wasted anyway.
+ */
+async function sweepOrphanedSessions(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - SESSION_IDLE_TIMEOUT_MS - ORPHAN_GRACE_MS);
+  const orphans = await prisma.session.findMany({
+    where: { statistics: { is: null }, endTime: { lt: cutoff } },
+    select: { id: true },
+    orderBy: { endTime: 'asc' },
+    take: ORPHAN_SWEEP_BATCH,
+  });
+
+  let completed = 0;
+  for (const { id } of orphans) {
+    if (sessionIdleTimers.has(id)) continue;
+    // One unrecoverable session must not abort the sweep for every other one.
+    try {
+      await emitCompletedSession(id);
+      completed += 1;
+    } catch (err) {
+      console.error(`[SessionEngine] Orphan completion failed for ${id}`, err);
+    }
+  }
+  if (completed) console.log(`[SessionEngine] Swept ${completed} orphaned session(s)`);
+  return completed;
+}
+
+/**
+ * Completes everything still armed before the process goes away, so a rolling
+ * deploy does not manufacture the orphans the sweeper then has to find.
+ */
+async function drainPendingSessions(): Promise<void> {
+  const pending = [...sessionIdleTimers.keys()];
+  for (const timer of sessionIdleTimers.values()) clearTimeout(timer);
+  sessionIdleTimers.clear();
+  if (!pending.length) return;
+  console.log(`[SessionEngine] Draining ${pending.length} pending session(s)`);
+  await Promise.race([
+    Promise.allSettled(pending.map((sessionId) => emitCompletedSession(sessionId))),
+    new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_TIMEOUT_MS)),
+  ]);
+}
+
 async function start() {
   if (process.env.KAFKA_ENABLED === 'false') {
     console.log('[SessionEngine] KAFKA_ENABLED=false — Kafka consumer not started');
@@ -291,13 +387,27 @@ async function start() {
 
   console.log(`[SessionEngine] Started consuming ${Topics.TELEMETRY_EVENTS}`);
 
+  const sweepTimer = setInterval(() => {
+    void sweepOrphanedSessions().catch((err) =>
+      console.error('[SessionEngine] Orphan sweep failed', err));
+  }, ORPHAN_SWEEP_INTERVAL_MS);
+  // Never hold the process open on the sweep alone.
+  sweepTimer.unref?.();
+  void sweepOrphanedSessions().catch((err) =>
+    console.error('[SessionEngine] Initial orphan sweep failed', err));
+
   await consumer.run({
     eachMessage: processEvent,
   });
 
   process.on('SIGTERM', async () => {
     console.log('[SessionEngine] SIGTERM — disconnecting');
+    clearInterval(sweepTimer);
+    // Stop taking new work before draining, so a fresh event cannot rearm a
+    // timer that is about to be abandoned.
     await consumer.disconnect();
+    await drainPendingSessions().catch((err) =>
+      console.error('[SessionEngine] Drain failed', err));
     await producer.disconnect();
     await prisma.$disconnect();
     process.exit(0);

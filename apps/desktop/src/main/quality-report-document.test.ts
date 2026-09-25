@@ -281,3 +281,143 @@ test('a finding\'s AI-drafted resolution is carried into the document, with what
   // Findings without one add nothing.
   assert.ok(!qualityReportHtml(input()).includes('Suggested resolution'));
 });
+
+// ── Browser section ─────────────────────────────────────────────────────────
+
+const FRONTEND_SECTION = {
+  routes: [
+    {
+      route: '/checkout',
+      samples: 3,
+      hiddenSamplesDropped: 1,
+      settleTimeouts: 1,
+      failedResources: 4,
+      lcpMs: { p50: 4_800, p75: 6_200, p95: 7_000, samples: 3 },
+      cls: { p50: 0.3, p75: 0.41, p95: 0.5, samples: 3 },
+      inpMs: { p50: null, p75: null, p95: null, samples: 0 },
+      dataReadyMs: { p50: 400, p75: 500, p95: 900, samples: 2 },
+      worstVital: { metric: 'CLS', value: 0.41, rating: 'poor' },
+    },
+  ],
+  routesObserved: 1,
+  worstVital: { route: '/checkout', metric: 'CLS', value: 0.41 },
+  network: [
+    {
+      route: '/api/orders', resourceType: 'xhr', requests: 12, failed: 2, blocked: 0,
+      statusClasses: { '2xx': 10, '5xx': 2 }, p95Ms: 900, transferredBytes: 4_096,
+    },
+  ],
+  networkGroupsSeen: 1,
+  networkTotals: { requests: 12, failed: 2, blocked: 0, errors: 2, transferredBytes: 4_096, p95Ms: 900 },
+  console: {
+    errors: 3, warnings: 1,
+    groups: [{ level: 'error', message: 'Cannot read properties of undefined', occurrences: 3, routes: ['/checkout'] }],
+  },
+  runtimeErrors: 1,
+  crashes: 0,
+  accessibility: {
+    scans: 2, routesScanned: 2, violations: 5,
+    byImpact: { critical: 1, serious: 4 },
+    rules: [{ ruleId: 'color-contrast', help: 'Elements must have sufficient contrast', impact: 'critical', occurrences: 1, nodes: 400, routes: ['/checkout'], targets: ['.btn'] }],
+    cleanRoutes: ['/cart'],
+  },
+  interactions: {
+    clicks: 20, clicksPreBoundary: 4, submitIntents: 3, submitIntentsPreBoundary: 1,
+    submitted: 2, invalidSubmits: 1, invalidRate: 50, fieldChanges: 9,
+    forms: [{ form: 'checkout', submits: 2, invalidSubmits: 1, invalidRate: 50, routes: ['/checkout'] }],
+  },
+  storageMutations: 6,
+  clientStateMutations: 0,
+  limitations: ['The browser did not support event, so INP was not measured for this run.'],
+};
+
+function frontendInput() {
+  const base = input();
+  (base.report as any).sections.frontendSummary = FRONTEND_SECTION;
+  return base;
+}
+
+test('the browser chapter reports what the page did, not what the server did', () => {
+  const html = qualityReportHtml(frontendInput());
+  assert.ok(html.includes('What the browser saw'));
+  assert.ok(html.includes('/checkout'));
+  assert.ok(html.includes('CLS 0.41'), 'a layout-shift score reads as a score, not a duration');
+  assert.ok(html.includes('Cannot read properties of undefined'));
+  assert.ok(html.includes('color-contrast'));
+  assert.ok(html.includes('Routes'));
+  assert.ok(html.includes('Network by resource'));
+  assert.ok(html.includes('Accessibility rules'));
+  assert.ok(html.includes('Forms'));
+  assert.ok(html.includes('so INP was not measured'), 'limitations are stated, not implied');
+});
+
+test('a report with no browser section leaves the chapter out entirely', () => {
+  // The legacy assembler in report-engine serves reports with no `sections`
+  // key at all, so every reader has to tolerate the section being absent
+  // rather than printing an empty chapter of zeroes.
+  const html = qualityReportHtml(input());
+  assert.ok(!html.includes('What the browser saw'));
+});
+
+test('a report whose sections key is missing altogether still renders', () => {
+  const legacy = input();
+  delete (legacy.report as any).sections;
+  const html = qualityReportHtml(legacy);
+  assert.ok(html.includes('Quality // QA run report'));
+  assert.ok(!html.includes('What the browser saw'));
+  assert.ok(!html.includes('What the server handled'));
+});
+
+test('an unmeasured vital says so rather than printing a zero', () => {
+  const html = qualityReportHtml(frontendInput());
+  assert.ok(html.includes('Not measured'), 'INP had no samples on this route');
+});
+
+test('the CSV carries the browser rows a spreadsheet would want', () => {
+  const csv = qualityReportCsv(frontendInput());
+  const sections = new Set(csv.split('\n').filter(Boolean).map((row) => row.split(',')[0]));
+  for (const section of ['"Browser"', '"Route"', '"Resource"', '"Accessibility"', '"Console"', '"Form"']) {
+    assert.ok(sections.has(section), `${section} rows present`);
+  }
+});
+
+test('the CSV has no browser rows when the run captured no browser evidence', () => {
+  const csv = qualityReportCsv(input());
+  const sections = new Set(csv.split('\n').filter(Boolean).map((row) => row.split(',')[0]));
+  assert.ok(!sections.has('"Browser"'));
+  assert.ok(!sections.has('"Route"'));
+});
+
+// ── Coverage confidence ─────────────────────────────────────────────────────
+
+test('a qualified coverage figure carries its qualifications', () => {
+  const qualified = input({
+    coverage: {
+      expected: 40, reconciledFlows: 1, confidence: 0.45, confidenceBand: 'LOW',
+      caveats: ['Capture was degraded during this run.', 'The working tree had uncommitted changes.'],
+    },
+  });
+  const html = qualityReportHtml(qualified);
+  assert.ok(html.includes('CONFIDENCE'));
+  assert.ok(html.includes('LOW (45%)'));
+  assert.ok(html.includes('2 qualifying conditions'));
+  assert.ok(html.includes('What qualifies that number'));
+  assert.ok(html.includes('The working tree had uncommitted changes.'));
+
+  const csv = qualityReportCsv(qualified);
+  assert.ok(csv.includes('"Coverage caveat"'));
+});
+
+test('an unqualified coverage figure prints no confidence row', () => {
+  const html = qualityReportHtml(input());
+  assert.ok(!html.includes('What qualifies that number'));
+});
+
+test('readReport tolerates a malformed frontend section without throwing', () => {
+  for (const malformed of ['not an object', [], null, 42]) {
+    const broken = input();
+    (broken.report as any).sections.frontendSummary = malformed;
+    assert.doesNotThrow(() => qualityReportHtml(broken));
+    assert.doesNotThrow(() => qualityReportCsv(broken));
+  }
+});

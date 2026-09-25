@@ -13,6 +13,20 @@ const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
 const emailService = new NotificationEmailService(prisma);
 const REPORT_ENGINE_URL = (process.env.REPORT_ENGINE_URL || `http://localhost:${Services.REPORT_ENGINE}`).replace(/\/$/, '');
+
+/**
+ * Headers for a call to another Tellann service.
+ *
+ * Sibling services verify their caller now, and this process acts on its own
+ * behalf rather than a user's, so it authenticates with the shared secret
+ * convention used elsewhere (see `POST /billing/internal/billing-cycle`).
+ * Unset locally, where the receiving service falls back to trusting loopback
+ * callers outside production.
+ */
+function internalHeaders(): Record<string, string> {
+  const secret = process.env.REPORT_ENGINE_INTERNAL_SECRET?.trim();
+  return secret ? { 'x-tellann-internal-secret': secret } : {};
+}
 const COVERAGE_ENGINE_URL = (process.env.COVERAGE_ENGINE_URL || `http://localhost:${Services.COVERAGE_ENGINE}`).replace(/\/$/, '');
 const FDRS_API_URL = (process.env.FDRS_API_URL || `http://localhost:${Services.FDRS_API}`).replace(/\/$/, '');
 app.use(express.json());
@@ -290,9 +304,13 @@ app.get('/demonstrations/:id/results', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Demonstration not found' });
     }
 
-    // Fetch compiled report from Report Engine
-    const response = await fetch(`${REPORT_ENGINE_URL}/reports/${demo.applicationId}/latest`);
-    
+    // Fetch compiled report from Report Engine. The report engine now verifies
+    // its caller, and this is a service-to-service call with no user behind it,
+    // so it presents the shared internal secret instead of a session.
+    const response = await fetch(`${REPORT_ENGINE_URL}/reports/${demo.applicationId}/latest`, {
+      headers: internalHeaders(),
+    });
+
     if (!response.ok) {
       throw new Error(`Report Engine returned ${response.status}`);
     }

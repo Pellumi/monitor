@@ -12,16 +12,23 @@ import {
   reportFormatsForTier,
   resolveDefaultReportFormat,
   resolveQaRunTitle,
+  isErrorEventType,
+  readErrorEventDetail,
 } from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import PDFDocument from 'pdfkit';
 import { createStorageClient } from '@tellann/storage';
+import { createCallerGuards, type CallerRequest } from './auth';
 
 const storage = createStorageClient();
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+const { verifyCaller, requireApplicationAccess, assertApplicationAccess } = createCallerGuards(prisma, {
+  serviceName: 'ReportEngine',
+  internalSecretEnv: 'REPORT_ENGINE_INTERNAL_SECRET',
+});
 
 /**
  * Base URL of the Endpoint Engine. In local dev every service shares localhost
@@ -35,6 +42,36 @@ const ENDPOINT_ENGINE_URL = (
 
 const endpointAnalysisUrl = (applicationId: string) =>
   `${ENDPOINT_ENGINE_URL}/endpoints/${applicationId}/analysis`;
+
+/**
+ * Headers for a call to the endpoint engine, which verifies its caller now.
+ * This is a service-to-service call with no user behind it, so it presents the
+ * shared internal secret rather than a session.
+ */
+function endpointEngineHeaders(): Record<string, string> {
+  const secret = process.env.ENDPOINT_ENGINE_INTERNAL_SECRET?.trim();
+  return secret ? { 'x-tellann-internal-secret': secret } : {};
+}
+
+/**
+ * The environment a listing should be scoped to.
+ *
+ * An explicit choice wins; otherwise the application's default environment is
+ * used, the same way `/reports/:id/latest` resolves it. Returning null means
+ * "this application has no environments at all", which must not silently
+ * become "show me everything".
+ */
+async function resolveEnvironmentScope(
+  applicationId: string,
+  requested: string | undefined,
+): Promise<string | null> {
+  if (requested) return requested;
+  const fallback = await prisma.environment.findFirst({
+    where: { applicationId, isDefault: true },
+    select: { id: true },
+  });
+  return fallback?.id ?? null;
+}
 
 async function uploadMeteredReport(applicationId: string, key: string, buffer: Buffer, contentType: string) {
   const application = await prisma.application.findUnique({ where: { id: applicationId }, select: { organizationId: true } });
@@ -155,7 +192,7 @@ async function ensureExportAccess(
   return true;
 }
 
-app.get('/reports/:applicationId/latest', async (req: Request, res: Response) => {
+app.get('/reports/:applicationId/latest', verifyCaller, requireApplicationAccess('applicationId'), async (req: Request, res: Response) => {
   const { applicationId } = req.params;
   const environmentId = req.query.environmentId as string | undefined;
 
@@ -284,7 +321,7 @@ app.get('/reports/:applicationId/latest', async (req: Request, res: Response) =>
 });
 
 // 2. Behavioral Graph Export
-app.get('/applications/:id/graph', async (req: Request, res: Response) => {
+app.get('/applications/:id/graph', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
 
   try {
@@ -320,7 +357,7 @@ app.get('/applications/:id/graph', async (req: Request, res: Response) => {
 });
 
 // 3. Workflows List API
-app.get('/applications/:id/workflows', async (req: Request, res: Response) => {
+app.get('/applications/:id/workflows', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
   try {
     const workflows = await prisma.workflow.findMany({ 
@@ -341,7 +378,7 @@ app.get('/applications/:id/workflows', async (req: Request, res: Response) => {
 });
 
 // 4. Session List
-app.get('/applications/:id/sessions', async (req: Request, res: Response) => {
+app.get('/applications/:id/sessions', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
   const page  = Math.max(1, parseInt(req.query.page  as string ?? '1', 10));
   const limit = Math.min(100, parseInt(req.query.limit as string ?? '20', 10));
@@ -349,14 +386,22 @@ app.get('/applications/:id/sessions', async (req: Request, res: Response) => {
   const to    = req.query.to   as string | undefined;
 
   try {
+    // Sessions are environment-scoped like every sibling endpoint here. Without
+    // this, development, staging and production sessions were interleaved with
+    // nothing on the row to tell them apart.
+    const environmentId = await resolveEnvironmentScope(
+      applicationId,
+      req.query.environmentId as string | undefined,
+    );
     const where: any = { applicationId };
+    if (environmentId) where.environmentId = environmentId;
     if (from || to) {
       where.startTime = {};
       if (from) where.startTime.gte = new Date(from);
       if (to)   where.startTime.lte = new Date(to);
     }
 
-    const [sessions, total] = await Promise.all([
+    const [sessions, total, applicationTotal] = await Promise.all([
       prisma.session.findMany({
         where,
         include: { statistics: true },
@@ -365,6 +410,10 @@ app.get('/applications/:id/sessions', async (req: Request, res: Response) => {
         take: limit,
       }),
       prisma.session.count({ where }),
+      // Lets the dashboard tell "this environment is empty" apart from "this
+      // application has never reported a session", which are different problems
+      // with different fixes.
+      prisma.session.count({ where: { applicationId } }),
     ]);
 
     res.json({
@@ -375,8 +424,11 @@ app.get('/applications/:id/sessions', async (req: Request, res: Response) => {
         durationMs:  s.statistics?.durationMs ?? null,
         eventCount:  s.statistics?.eventCount ?? null,
         errorCount:  s.statistics?.errorCount ?? null,
+        qaRunId:     s.qaRunId,
       })),
       total,
+      applicationTotal,
+      environmentId,
       page,
       limit,
     });
@@ -387,7 +439,7 @@ app.get('/applications/:id/sessions', async (req: Request, res: Response) => {
 });
 
 // 5. Session Replay Timeline
-app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
+app.get('/sessions/:sessionId/replay', verifyCaller, async (req: CallerRequest, res: Response) => {
   const { sessionId } = req.params;
 
   try {
@@ -400,6 +452,11 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
     });
 
     if (!session) return res.status(404).json({ error: 'Session not found' });
+    // Ownership first, then entitlement. They answer different questions —
+    // "may this caller see it" and "does this plan include replay" — and asking
+    // only the second let any signed-in user read any session whose owning
+    // organization happened to be entitled.
+    if (!(await assertApplicationAccess(req, res, session.applicationId))) return;
     const replayAccess = await ensureFeatureAccess(session.applicationId, Feature.SESSION_REPLAY, res);
     if (!replayAccess.allowed) return;
 
@@ -477,12 +534,16 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
         offset:     e.offset,
       }));
 
+    // Every error-shaped event, not only `ERROR_EVENT` — the timeline already
+    // colours unhandled exceptions and server errors red, while this panel used
+    // to leave them out entirely. The message lives under a different key per
+    // producing SDK, so it is read through the shared normalizer.
     const errors = timeline
-      .filter((e) => e.eventType === 'ERROR_EVENT')
+      .filter((e) => isErrorEventType(e.eventType))
       .map((e) => ({
-        message: (e.metadata as any).message,
-        stack:   (e.metadata as any).stack,
-        offset:  e.offset,
+        eventType: e.eventType,
+        ...readErrorEventDetail(e.metadata as Record<string, unknown>),
+        offset:    e.offset,
       }));
 
     // Gap 5: Extract state transitions from relevant event types
@@ -528,10 +589,15 @@ app.get('/sessions/:sessionId/replay', async (req: Request, res: Response) => {
  * Canonical browser-first QA report. It is deliberately run-scoped so evidence
  * from another environment or execution can never leak into this result.
  */
-app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
+app.get('/qa-runs/:runId/report', verifyCaller, async (req: CallerRequest, res: Response) => {
   try {
-    const run = await prisma.qARun.findUnique({
-      where: { id: req.params.runId },
+    // Tenancy rides on the lookup itself, so it covers both the immutable
+    // payload branch below and the legacy assembler further down. An internal
+    // caller has already scoped its own request and needs no membership.
+    const run = await prisma.qARun.findFirst({
+      where: req.internal
+        ? { id: req.params.runId }
+        : { id: req.params.runId, organization: { memberships: { some: { userId: req.user!.id } } } },
       include: {
         application: { select: { id: true, name: true } },
         environment: { select: { id: true, name: true, type: true } },
@@ -718,10 +784,10 @@ app.get('/qa-runs/:runId/report', async (req: Request, res: Response) => {
 });
 
 // 6. Endpoint Intelligence proxy
-app.get('/reports/:applicationId/endpoint-intelligence', async (req: Request, res: Response) => {
+app.get('/reports/:applicationId/endpoint-intelligence', verifyCaller, requireApplicationAccess('applicationId'), async (req: Request, res: Response) => {
   const { applicationId } = req.params;
   try {
-    const upstream = await fetch(endpointAnalysisUrl(applicationId));
+    const upstream = await fetch(endpointAnalysisUrl(applicationId), { headers: endpointEngineHeaders() });
     if (!upstream.ok) {
       return res.status(upstream.status).json({ error: 'Endpoint Engine unavailable' });
     }
@@ -733,7 +799,7 @@ app.get('/reports/:applicationId/endpoint-intelligence', async (req: Request, re
 });
 
 // 7. Report Export (HTML/JSON/CSV/PDF)
-app.get('/reports/:applicationId/export', async (req: Request, res: Response) => {
+app.get('/reports/:applicationId/export', verifyCaller, requireApplicationAccess('applicationId'), async (req: Request, res: Response) => {
   const { applicationId } = req.params;
   const environmentId = req.query.environmentId as string | undefined;
 
@@ -818,7 +884,7 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     // Fetch clickhouse endpoint metrics from endpoint-engine
     let endpoints: any[] = [];
     try {
-      const upstream = await fetch(endpointAnalysisUrl(applicationId));
+      const upstream = await fetch(endpointAnalysisUrl(applicationId), { headers: endpointEngineHeaders() });
       if (upstream.ok) {
         const payload = await upstream.json();
         endpoints = payload.endpoints || [];
@@ -860,30 +926,6 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `tellann-report-${applicationId}-${dateStr}`;
-
-    if (req.query.notifyEmail === 'true') {
-      const userId = req.headers['x-tellann-user-id'] as string | undefined;
-      if (userId && application.organizationId) {
-        void prisma.user.findUnique({ where: { id: userId } }).then((user) => {
-          if (!user) return;
-          return emailService.sendTransactional({
-            templateKey: 'report-export-ready',
-            to: user.email,
-            userId,
-            organizationId: application.organizationId,
-            applicationId,
-            eventType: 'REPORT_EXPORT_READY',
-            deepLink: `/reports?applicationId=${applicationId}`,
-            variables: {
-              applicationName: application.name,
-              format: format.toUpperCase(),
-              reportUrl: appUrl(`/reports?applicationId=${applicationId}`),
-            },
-            idempotencyKey: buildIdempotencyKey(['report-export-ready', applicationId, format, userId, dateStr]),
-          });
-        }).catch((err) => console.error('[Email] report-export-ready failed', err));
-      }
-    }
 
     if (format === 'json') {
       const content = Buffer.from(JSON.stringify(reportData, null, 2), 'utf-8');
@@ -1279,6 +1321,58 @@ app.get('/reports/:applicationId/export', async (req: Request, res: Response) =>
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+/**
+ * Announces a finished export by email.
+ *
+ * This used to be a `?notifyEmail=true` query parameter on the export GET, so
+ * fetching a report sent mail as a side effect — and a link or a prefetch could
+ * trigger it. Sending is a POST because it changes something outside this
+ * system.
+ */
+app.post(
+  '/reports/:applicationId/export/notify',
+  verifyCaller,
+  requireApplicationAccess('applicationId'),
+  async (req: CallerRequest, res: Response) => {
+    const { applicationId } = req.params;
+    const format = String(req.body?.format ?? 'json').toLowerCase();
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'UNAUTHORIZED' });
+
+    try {
+      const application = await prisma.application.findUnique({
+        where: { id: applicationId },
+        select: { name: true, organizationId: true },
+      });
+      if (!application?.organizationId) return res.status(404).json({ error: 'Application not found' });
+
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      await emailService.sendTransactional({
+        templateKey: 'report-export-ready',
+        to: user.email,
+        userId,
+        organizationId: application.organizationId,
+        applicationId,
+        eventType: 'REPORT_EXPORT_READY',
+        deepLink: `/reports?applicationId=${applicationId}`,
+        variables: {
+          applicationName: application.name,
+          format: format.toUpperCase(),
+          reportUrl: appUrl(`/reports?applicationId=${applicationId}`),
+        },
+        idempotencyKey: buildIdempotencyKey(['report-export-ready', applicationId, format, userId, dateStr]),
+      });
+      res.status(202).json({ queued: true });
+    } catch (err) {
+      console.error('[ReportEngine] report-export-ready notification failed', err);
+      res.status(500).json({ error: 'NOTIFICATION_FAILED' });
+    }
+  },
+);
 
 void emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
 

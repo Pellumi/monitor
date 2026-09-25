@@ -9,7 +9,10 @@ import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tellann/email';
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
-import { summarizeBackendEvidence } from './qa-backend-report';
+import { summarizeBackendEvidence, type BackendReportSection } from './qa-backend-report';
+import { summarizeFrontendEvidence, type FrontendReportSection } from './qa-frontend-report';
+import { appendixLimitation, selectAppendixEvents } from './qa-evidence-appendix';
+import { NO_BASELINE, baselineKey, compareToBaseline, fetchEndpointBaselines } from './qa-endpoint-baseline';
 import { NO_RESOLUTIONS, draftBackendFindingResolutions, type ResolutionOutcome } from './qa-finding-resolution';
 
 const AiImprovementSchema = z.object({
@@ -114,6 +117,164 @@ export function anchorAiSuggestion<T extends {
     : null;
   if (!evidenceIds.length && affectedState === null && affectedTransition === null) return null;
   return { ...suggestion, evidenceIds, affectedState, affectedTransition };
+}
+
+// ─── Summary sentence and coverage confidence ────────────────────────────
+
+/**
+ * One plain-English sentence, ahead of everything structured below it.
+ *
+ * A person skimming the JSON — or an AI agent handed this report to act on —
+ * reads this first rather than reconstructing it from raw counts and arrays;
+ * keeping it a single field is what makes that reliable. Which means it has to
+ * cover whatever the run actually captured: a frontend run used to get a
+ * sentence about states and transitions with no mention of the console errors,
+ * failed requests or accessibility violations it had just found.
+ */
+export function buildSummaryText(input: {
+  captureTracks: string[];
+  hasDeclaredFlow: boolean;
+  observedStates: number;
+  observedTransitions: number;
+  expectedCoverage: number | null;
+  totalFindings: number;
+  criticalOrHighFindings: number;
+  backend: BackendReportSection | null;
+  frontend: FrontendReportSection | null;
+}): string {
+  const plural = (count: number, one: string, many = `${one}s`) =>
+    `${count} ${count === 1 ? one : many}`;
+
+  const findingsClause = input.totalFindings === 0
+    ? 'No findings were raised — everything this run exercised completed as expected.'
+    : `${plural(input.totalFindings, 'finding')} raised (${input.criticalOrHighFindings} critical or high priority).`;
+
+  const backendClause = input.backend
+    ? `Server handled ${plural(input.backend.requests, 'request')}, ${input.backend.errors} failed`
+      + `${input.backend.p95Ms == null ? '' : `, p95 ${Math.round(input.backend.p95Ms)}ms`}.`
+    : null;
+
+  const frontendClause = (() => {
+    const frontend = input.frontend;
+    if (!frontend) return null;
+    const failedRequests = frontend.networkTotals.failed + frontend.networkTotals.errors;
+    const worst = frontend.worstVital;
+    const vital = worst
+      ? `, worst vital ${worst.metric} ${formatVitalValue(worst.metric, worst.value)} on ${worst.route}`
+      : '';
+    return `${plural(frontend.console.errors, 'console error')}, `
+      + `${plural(failedRequests, 'failed request')}, `
+      + `${plural(frontend.accessibility.violations, 'accessibility violation')}${vital}.`;
+  })();
+
+  const tracksBackend = input.captureTracks.includes('BACKEND');
+  const tracksFrontend = input.captureTracks.includes('FRONTEND');
+
+  // Backend-only: there is no page to describe, so states and transitions
+  // would be an empty gesture.
+  if (tracksBackend && !tracksFrontend && input.backend) {
+    return `Backend run: ${plural(input.backend.requests, 'request')} handled, `
+      + `${input.backend.errors} failed`
+      + `${input.backend.p95Ms == null ? '' : `, p95 ${Math.round(input.backend.p95Ms)}ms`}. `
+      + findingsClause;
+  }
+
+  const scopeClause = input.hasDeclaredFlow
+    ? `${plural(input.observedStates, 'state')} visited, ${plural(input.observedTransitions, 'transition')}`
+      + `${input.expectedCoverage == null ? '' : `, ${input.expectedCoverage.toFixed(1)}% expected coverage`}`
+    : `${plural(input.observedStates, 'state')} observed`;
+
+  const lead = tracksBackend && tracksFrontend
+    ? 'Full-stack run'
+    : input.hasDeclaredFlow ? 'Flow run' : 'Observational run';
+
+  return [
+    `${lead}: ${scopeClause}.`,
+    frontendClause,
+    tracksBackend && tracksFrontend ? backendClause : null,
+    findingsClause,
+  ].filter(Boolean).join(' ');
+}
+
+function formatVitalValue(metric: string, value: number): string {
+  if (metric === 'CLS') return value.toFixed(2);
+  return value >= 1_000 ? `${(value / 1_000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+export type CoverageConfidence = {
+  /** 0–1. Null when there is no coverage figure to qualify. */
+  score: number | null;
+  band: 'HIGH' | 'MODERATE' | 'LOW' | null;
+  caveats: string[];
+};
+
+/**
+ * How much the coverage figure beside it is worth.
+ *
+ * `expectedCoverage` is a clean ratio, and a clean ratio reads as a fact. But
+ * the same 85% means something different when capture was degraded, the
+ * working tree was dirty, or no validated instrumentation was attached. The
+ * PDF showed a degradation notice; nothing in the payload did, so any
+ * programmatic consumer read the number with none of that context.
+ */
+export function assessCoverageConfidence(input: {
+  hasExpectedCoverage: boolean;
+  captureDegraded: boolean;
+  repositoryDirty: boolean | null;
+  hasValidatedInstrumentation: boolean;
+  hasClientStateEvidence: boolean;
+  productionCapture: boolean;
+  appendixTruncated: boolean;
+  quarantinedEvents: number;
+}): CoverageConfidence {
+  if (!input.hasExpectedCoverage) return { score: null, band: null, caveats: [] };
+
+  const caveats: string[] = [];
+  let score = 1;
+  const deduct = (amount: number, caveat: string) => {
+    score -= amount;
+    caveats.push(caveat);
+  };
+
+  // Degraded capture is the only condition that can move the figure two bands:
+  // it means evidence was rejected outright, so the denominator is itself suspect.
+  if (input.captureDegraded) {
+    deduct(0.4, 'Capture was degraded during this run — some evidence was rejected rather than '
+      + 'recorded, so the coverage figure is computed over less than the run actually produced.');
+  }
+  if (input.repositoryDirty === true) {
+    deduct(0.1, 'The working tree had uncommitted changes, so the code this run exercised does not '
+      + 'correspond to any revision the repository can be returned to.');
+  }
+  if (!input.hasValidatedInstrumentation) {
+    deduct(0.15, 'No validated instrumentation was attached, so coverage rests on browser-level '
+      + 'evidence alone.');
+  }
+  if (!input.hasClientStateEvidence) {
+    deduct(0.1, 'No framework-state evidence was reported, so a state the application entered '
+      + 'without changing the page could not be observed.');
+  }
+  if (input.productionCapture) {
+    deduct(0.1, 'Production capture is metadata-only: values and payload bodies were not retained, '
+      + 'so a state can be confirmed as reached but not as correct.');
+  }
+  if (input.quarantinedEvents > 0) {
+    deduct(0.1, `${input.quarantinedEvents} Flow event${input.quarantinedEvents === 1 ? ' was' : 's were'} `
+      + 'refused at the boundary and excluded from coverage.');
+  }
+  if (input.appendixTruncated) {
+    deduct(0.05, 'The run produced more evidence than the appendix carries, so the appendix is a '
+      + 'sample rather than the complete record.');
+  }
+
+  score = Math.max(0.2, Math.round(score * 100) / 100);
+  return { score, band: confidenceBand(score), caveats };
+}
+
+export function confidenceBand(score: number): 'HIGH' | 'MODERATE' | 'LOW' {
+  if (score >= 0.9) return 'HIGH';
+  if (score >= 0.7) return 'MODERATE';
+  return 'LOW';
 }
 
 function safeError(error: unknown): string {
@@ -409,9 +570,17 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // tens of thousands of evidence events, and embedding every one of them with
   // full metadata made the immutable payload unbounded. Counts stay exact; the
   // events themselves remain queryable through the evidence endpoints.
+  //
+  // What it keeps is chosen rather than sliced. Taking the first N left the
+  // appendix describing the run's warm-up while everything the report was
+  // about fell off the end.
   const APPENDIX_EVENT_LIMIT = 2_000;
-  const appendixEvents = run.evidenceEvents.slice(0, APPENDIX_EVENT_LIMIT);
-  const appendixTruncated = run.evidenceEvents.length - appendixEvents.length;
+  const citedEvidenceIds = new Set(
+    run.findings.flatMap((finding) => finding.evidenceEvents.map((link) => link.evidenceEventId)),
+  );
+  const appendixSelection = selectAppendixEvents(run.evidenceEvents, citedEvidenceIds, APPENDIX_EVENT_LIMIT);
+  const appendixEvents = appendixSelection.events;
+  const appendixTruncated = appendixSelection.truncated;
   // Report what was actually captured rather than inferring it from whether a
   // patch set happened to be attached.
   const hasClientStateEvidence = run.evidenceEvents.some((event) => event.eventType === 'QA_CLIENT_STATE_MUTATION');
@@ -419,6 +588,30 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // desktop's live totals: the run state is trimmed as a run grows, and a
   // report has to be reproducible from what was actually stored.
   const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+  const frontendSummary = summarizeFrontendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+
+  // What each endpoint normally does, so the run's own p95 has something to be
+  // read against. Strictly additive: the endpoint engine being unreachable,
+  // unconfigured or slow leaves every number below exactly as measured, and
+  // says so rather than implying the route has no history.
+  const baselines = backendSummary?.endpoints.length
+    ? await fetchEndpointBaselines({
+        applicationId: run.applicationId,
+        environmentId: run.environmentId,
+        runId: run.id,
+        routes: backendSummary.endpoints.map((endpoint) => ({ method: endpoint.method, route: endpoint.route })),
+      }).catch((error) => ({ ...NO_BASELINE, status: `UNAVAILABLE:${safeError(error)}` }))
+    : NO_BASELINE;
+  if (backendSummary) {
+    for (const endpoint of backendSummary.endpoints) {
+      (endpoint as Record<string, unknown>).baseline = compareToBaseline(
+        endpoint.p95Ms,
+        baselines.byRoute.get(baselineKey(endpoint.method, endpoint.route)),
+      );
+    }
+    (backendSummary as Record<string, unknown>).baselineStatus = baselines.status;
+    (backendSummary as Record<string, unknown>).baselineWindowDays = baselines.windowDays;
+  }
   const viewportHistory = run.evidenceEvents
     .filter((event) => event.eventType === 'QA_VIEWPORT_CHANGED')
     .map((event) => {
@@ -437,21 +630,29 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
         orientation: metadata.orientation == null ? null : String(metadata.orientation),
       };
     });
-  // One plain-English sentence, ahead of everything structured below it.
-  // A person skimming the JSON — or an AI agent handed this report to act
-  // on — reads this first rather than reconstructing it from raw counts and
-  // arrays; keeping it a single field is what makes that reliable.
   const totalFindings = run.findings.length;
   const criticalOrHighCount = run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length;
-  const backendOnlyRun = run.captureTracks.includes('BACKEND') && !run.captureTracks.includes('FRONTEND');
-  const findingsClause = totalFindings === 0
-    ? 'No findings were raised — everything this run exercised completed as expected.'
-    : `${totalFindings} finding${totalFindings === 1 ? '' : 's'} raised (${criticalOrHighCount} critical or high priority).`;
-  const summaryText = backendOnlyRun && backendSummary
-    ? `Backend run: ${backendSummary.requests} request${backendSummary.requests === 1 ? '' : 's'} handled, ${backendSummary.errors} failed${backendSummary.p95Ms == null ? '' : `, p95 ${Math.round(backendSummary.p95Ms)}ms`}. ${findingsClause}`
-    : hasDeclaredFlow
-      ? `Flow run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} visited, ${observedTransitionKeys.size} transition${observedTransitionKeys.size === 1 ? '' : 's'}${flowAnalysis.expectedCoverage == null ? '' : `, ${flowAnalysis.expectedCoverage.toFixed(1)}% expected coverage`}. ${findingsClause}`
-      : `Observational run: ${observedStateKeys.size} state${observedStateKeys.size === 1 ? '' : 's'} observed. ${findingsClause}`;
+  const summaryText = buildSummaryText({
+    captureTracks: run.captureTracks,
+    hasDeclaredFlow,
+    observedStates: observedStateKeys.size,
+    observedTransitions: observedTransitionKeys.size,
+    expectedCoverage: flowAnalysis.expectedCoverage,
+    totalFindings,
+    criticalOrHighFindings: criticalOrHighCount,
+    backend: backendSummary,
+    frontend: frontendSummary,
+  });
+  const coverageConfidence = assessCoverageConfidence({
+    hasExpectedCoverage: flowAnalysis.expectedCoverage !== null,
+    captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED'),
+    repositoryDirty: run.repositorySnapshot?.dirty ?? null,
+    hasValidatedInstrumentation: Boolean(run.patchSet),
+    hasClientStateEvidence,
+    productionCapture: run.environment.type === 'PRODUCTION',
+    appendixTruncated: appendixTruncated > 0,
+    quarantinedEvents: quarantined.length,
+  });
   const payload = {
     id: report.id,
     runId: run.id,
@@ -488,13 +689,23 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     instrumentation: run.patchSet ? { patchSetId: run.patchSet.id, planId: run.patchSet.instrumentationPlanId, adapterId: run.patchSet.instrumentationPlan.adapterId, adapterVersion: run.patchSet.instrumentationPlan.adapterVersion, manifestVersion: run.patchSet.manifestVersion, status: run.patchSet.status, risk: run.patchSet.instrumentationPlan.risk, changedFileHashes: run.patchSet.changedFileHashes, validation: run.patchSet.validationJson, appliedAt: run.patchSet.appliedAt, validatedAt: run.patchSet.validatedAt } : null,
     expectedIntent: run.expectedGraphVersion ? { graphId: run.expectedGraphVersion.graphId, graphVersionId: run.expectedGraphVersion.id, graphName: run.expectedGraphVersion.graph.name, provenance: run.expectedGraphVersion.graph.sourceType, evidenceManifest: snapshot?.evidenceManifest ?? null, expectedStateCount: declaredStates.length, expectedTransitionCount: declaredTransitions.length } : null,
     scopeKind: hasDeclaredFlow ? 'FLOW' : 'SESSION',
-    coverage: { expected: flowAnalysis.expectedCoverage, reconciledFlows: flowAnalysis.reconciledFlows },
+    coverage: {
+      expected: flowAnalysis.expectedCoverage,
+      reconciledFlows: flowAnalysis.reconciledFlows,
+      // How much the figure beside it is worth. A clean ratio reads as a fact,
+      // and 85% from a degraded capture is not the same claim as 85% from a
+      // clean one.
+      confidence: coverageConfidence.score,
+      confidenceBand: coverageConfidence.band,
+      caveats: coverageConfidence.caveats,
+    },
     findings: run.findings,
     artifacts: run.artifacts.map((artifact) => ({ ...artifact, bytes: artifact.bytes.toString() })),
     summary: { sessionCount: run.observedSessions.length, observedStateCount: observedStateKeys.size, observedTransitionCount: observedTransitionKeys.size, artifactCount: run.artifacts.length, findingCount: run.findings.length, criticalOrHighFindings: run.findings.filter((finding) => ['CRITICAL', 'HIGH'].includes(finding.severity)).length },
     sections: {
       flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
       backendSummary,
+      frontendSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       findingResolutions: {
         status: resolutions.status,
@@ -511,6 +722,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
         events: appendixEvents.map((event) => ({ id: event.id, eventId: event.eventId, type: event.eventType, source: event.source, scope: event.scope, timestamp: event.occurredAt, route: event.normalizedRoute ?? routeFromUrl(event.pageUrl), state: event.acceptedFlowStateKey, interactionGroupId: event.interactionGroupId, causedByEventId: event.causedByEventId, metadata: event.metadata, protectedValues: event.protectedValues })),
         eventTotal: run.evidenceEvents.length,
         eventsTruncated: appendixTruncated > 0 ? appendixTruncated : 0,
+        eventsByType: appendixSelection.byType,
         acceptedFlowEvents: accepted,
         quarantinedFlowEvents: quarantined,
         limitations: [
@@ -518,7 +730,8 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
             ? []
             : ['Framework-state evidence was unavailable: no validated state instrumentation reported Redux, Context, or useState mutations during this run. Browser-level QA is unaffected.']),
           ...(run.environment.type === 'PRODUCTION' ? ['Production capture was metadata-only; values and payload bodies were not retained.'] : []),
-          ...(appendixTruncated > 0 ? [`The evidence appendix lists the first ${APPENDIX_EVENT_LIMIT} of ${run.evidenceEvents.length} events; the remainder stay queryable through the evidence endpoints.`] : []),
+          ...(appendixTruncated > 0 ? [appendixLimitation(appendixEvents.length, run.evidenceEvents.length)] : []),
+          ...(frontendSummary?.limitations ?? []),
           ...(backendSummary?.limitations ?? []),
         ],
       },

@@ -1,7 +1,12 @@
 import { AuditAction, PrismaClient } from '@tellann/db';
+import { Services } from '@tellann/shared';
 import { createStorageClient } from '@tellann/storage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const ENDPOINT_ENGINE_URL = (
+  process.env.ENDPOINT_ENGINE_URL || `http://localhost:${Services.ENDPOINT_ENGINE}`
+).replace(/\/$/, '');
 
 export interface RetentionSweepResult {
   dryRun: boolean;
@@ -9,6 +14,35 @@ export interface RetentionSweepResult {
   sessions: number;
   demonstrations: number;
   storageObjects: number;
+  /** Applications whose endpoint metrics were asked to age out. */
+  endpointMetricApplications: number;
+}
+
+/**
+ * Asks the endpoint engine to drop metrics older than an application's
+ * retention window.
+ *
+ * ClickHouse stays owned by that service rather than giving this worker its own
+ * client, and the mutation it issues is asynchronous — this returns as soon as
+ * the request is accepted. Never fatal: endpoint metrics ageing out is not
+ * worth abandoning a sweep of Postgres and object storage over.
+ */
+async function expireEndpointMetrics(applicationId: string, retentionDays: number): Promise<boolean> {
+  const secret = process.env.ENDPOINT_ENGINE_INTERNAL_SECRET?.trim();
+  try {
+    const response = await fetch(
+      `${ENDPOINT_ENGINE_URL}/endpoints/${applicationId}/retention?retentionDays=${Math.floor(retentionDays)}`,
+      { method: 'DELETE', headers: secret ? { 'x-tellann-internal-secret': secret } : {} },
+    );
+    if (!response.ok) {
+      console.warn(`[retention-worker] endpoint metrics retention returned ${response.status} for ${applicationId}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[retention-worker] endpoint metrics retention unreachable for ${applicationId}`, err);
+    return false;
+  }
 }
 
 export async function runRetentionSweep(
@@ -19,7 +53,7 @@ export async function runRetentionSweep(
   const now = options.now ?? new Date();
   const storage = createStorageClient();
   const entitlements = await prisma.entitlement.findMany({ select: { organizationId: true, limits: true } });
-  const result: RetentionSweepResult = { dryRun, organizations: 0, sessions: 0, demonstrations: 0, storageObjects: 0 };
+  const result: RetentionSweepResult = { dryRun, organizations: 0, sessions: 0, demonstrations: 0, storageObjects: 0, endpointMetricApplications: 0 };
 
   for (const entitlement of entitlements) {
     const agreement = await prisma.enterpriseAgreement.findUnique({ where: { organizationId: entitlement.organizationId } });
@@ -42,6 +76,23 @@ export async function runRetentionSweep(
       select: { id: true, objectKey: true },
       take: 500,
     });
+    // Endpoint metrics live in ClickHouse under their own TTL ceiling, so they
+    // are expired per application rather than by the Postgres row counts above.
+    // This runs even when nothing else aged out this tick: an application can
+    // have months of request metrics and no expired sessions at all.
+    const applications = await prisma.application.findMany({
+      where: { organizationId: entitlement.organizationId },
+      select: { id: true },
+      take: 500,
+    });
+    if (!dryRun) {
+      for (const application of applications) {
+        if (await expireEndpointMetrics(application.id, retentionDays)) {
+          result.endpointMetricApplications += 1;
+        }
+      }
+    }
+
     if (!sessions.length && !demonstrations.length && !objects.length) continue;
 
     result.organizations += 1;

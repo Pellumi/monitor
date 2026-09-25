@@ -780,6 +780,15 @@ export const QualityReportSchema = z.object({
   coverage: z.object({
     expected: z.number().nullable(),
     reconciledFlows: z.number().int().nonnegative(),
+    /**
+     * How much the figure above is worth. A clean ratio reads as a fact, and
+     * the same percentage from a degraded capture, a dirty working tree or a
+     * run with no validated instrumentation is not the same claim. Optional
+     * because a report generated before this existed carries neither.
+     */
+    confidence: z.number().min(0).max(1).nullable().optional(),
+    confidenceBand: z.enum(['HIGH', 'MODERATE', 'LOW']).nullable().optional(),
+    caveats: z.array(z.string()).optional(),
   }),
   findings: z.array(z.unknown()),
   artifacts: z.array(z.unknown()),

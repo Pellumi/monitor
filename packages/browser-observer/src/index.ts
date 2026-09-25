@@ -390,6 +390,11 @@ type RunController = {
   backendSeenRequests: Set<string>;
   /** Performance rows already spent on each endpoint. */
   backendSlowRows: Map<string, number>;
+  /**
+   * Findings each route-scoped frontend rule has spent, so no one rule can
+   * push earlier evidence off the front of `state.findings`.
+   */
+  frontendRuleSpend: Map<string, number>;
 };
 
 type BridgePayload = {
@@ -434,6 +439,34 @@ const BACKEND_BASELINE_MIN_SAMPLES = 5;
 const MAX_SLOW_ROWS_PER_ENDPOINT = 10;
 /** A request this slow is reported as a finding, not only as a row. */
 const CRITICALLY_SLOW_BACKEND_REQUEST_MS = 5_000;
+/**
+ * Core Web Vitals "poor" thresholds, as web.dev defines them.
+ *
+ * The backend track has had a latency rule since it was written; the browser
+ * track measured all of this and raised nothing, so a route could take six
+ * seconds to paint and the report would not mention it.
+ */
+const POOR_LCP_MS = 4_000;
+const POOR_CLS = 0.25;
+const POOR_INP_MS = 500;
+/**
+ * Time a route may have spent hidden before its paint timings are unusable.
+ * LCP stops being reported while a tab is hidden but the clock keeps running,
+ * so a backgrounded route measures against time the user never experienced.
+ */
+const MAX_HIDDEN_MS_FOR_VITALS = 250;
+/** Failed resources on one route before it is worth a finding, not a count. */
+const FAILED_RESOURCE_FINDING_MIN = 3;
+/**
+ * Findings one route-scoped rule may raise.
+ *
+ * `pushFinding` trims from the front at MAX_FINDINGS, so the first thing an
+ * unbounded rule costs is the earliest evidence of the run — for a Flow run,
+ * the boundary crossing; for any run, the first console error, which is the
+ * one most likely to explain everything after it. Five route-scoped rules on a
+ * 50-route application would reach 150 findings before a single real defect.
+ */
+const MAX_FRONTEND_RULE_FINDINGS = 10;
 /** Rows kept in the live panel. Older rows are counted in `evidenceTrimmed`. */
 const MAX_LIVE_EVIDENCE = 500;
 /**
@@ -904,6 +937,129 @@ export function classifyBackendLatency(input: {
 }
 
 /** How a slow backend request reads in the Performance pane. */
+/**
+ * The worst Core Web Vital a page-performance sample breached, if any.
+ *
+ * One verdict per sample rather than one per metric: a genuinely slow route
+ * breaches several at once, and three near-duplicate findings about the same
+ * page help nobody. Ranked by how far past its threshold each metric is, so
+ * the one reported is the one that hurts most.
+ */
+export type VitalsVerdict = {
+  metric: 'LCP' | 'CLS' | 'INP';
+  value: number;
+  threshold: number;
+  /** How many times past the "poor" threshold, for severity. */
+  ratio: number;
+};
+
+export function classifyWebVitals(input: {
+  lcp: number | null;
+  cls: number | null;
+  inpMs: number | null;
+  hiddenMs: number | null;
+  supported: boolean;
+}): VitalsVerdict | null {
+  // A browser that could not measure these reported nothing, not zero.
+  if (!input.supported) return null;
+  // Paint timings taken while the tab was hidden are measured against a clock
+  // the user never experienced, so they are not evidence of anything.
+  if (input.hiddenMs !== null && input.hiddenMs > MAX_HIDDEN_MS_FOR_VITALS) return null;
+
+  const candidates: VitalsVerdict[] = [];
+  if (input.lcp !== null && input.lcp > POOR_LCP_MS) {
+    candidates.push({ metric: 'LCP', value: input.lcp, threshold: POOR_LCP_MS, ratio: input.lcp / POOR_LCP_MS });
+  }
+  if (input.inpMs !== null && input.inpMs > POOR_INP_MS) {
+    candidates.push({ metric: 'INP', value: input.inpMs, threshold: POOR_INP_MS, ratio: input.inpMs / POOR_INP_MS });
+  }
+  if (input.cls !== null && input.cls > POOR_CLS) {
+    candidates.push({ metric: 'CLS', value: input.cls, threshold: POOR_CLS, ratio: input.cls / POOR_CLS });
+  }
+  // Ties break LCP > INP > CLS, which is the order they were pushed in.
+  return candidates.sort((left, right) => right.ratio - left.ratio)[0] ?? null;
+}
+
+/** How a vital reads to a person: seconds for time, a bare score for CLS. */
+export function formatVitalValue(metric: VitalsVerdict['metric'], value: number): string {
+  if (metric === 'CLS') return value.toFixed(2);
+  return value >= 1_000 ? `${(value / 1_000).toFixed(1)} s` : `${Math.round(value)} ms`;
+}
+
+/**
+ * Whether a route finished settling, and which half of the check gave up.
+ *
+ * Route settles only. An interaction settle timing out describes the page — a
+ * spinner, a poller — not the click, and firing per click on such a page would
+ * produce one finding per click.
+ */
+export type SettleVerdict = { kind: 'DATA' | 'VISUAL'; dataReadyMs: number | null };
+
+export function classifySettleOutcome(input: {
+  trigger: string | null;
+  dataReadyTimedOut: boolean;
+  visuallyStableTimedOut: boolean;
+  dataReadyMs: number | null;
+}): SettleVerdict | null {
+  if (input.trigger === 'interaction') return null;
+  if (input.dataReadyTimedOut) return { kind: 'DATA', dataReadyMs: input.dataReadyMs };
+  if (input.visuallyStableTimedOut) return { kind: 'VISUAL', dataReadyMs: input.dataReadyMs };
+  return null;
+}
+
+/**
+ * Resources that arrived with nothing in them.
+ *
+ * This is the class the network rule cannot see: a broken image or font that
+ * produced a response, so it never fired `requestfailed`, but transferred no
+ * bytes and decoded to nothing. Below a few, a single dead favicon or blocked
+ * analytics beacon is noise rather than a defect.
+ */
+export function classifyFailedResources(input: {
+  failedResourceCount: number | null;
+  resourceCount: number | null;
+}): { failed: number; total: number } | null {
+  const failed = input.failedResourceCount ?? 0;
+  if (failed < FAILED_RESOURCE_FINDING_MIN) return null;
+  return { failed, total: input.resourceCount ?? failed };
+}
+
+/** What a breached vital means for the person who was waiting on the page. */
+function describeVital(
+  verdict: VitalsVerdict,
+  route: string,
+  reading: string,
+  interactionCount: number | null,
+): string {
+  if (verdict.metric === 'LCP') {
+    return `The largest element on ${route} finished painting after ${reading}, against a 2.5 s `
+      + 'good and 4 s poor threshold. The page was visible throughout, so this is what the '
+      + 'operator actually waited for.';
+  }
+  if (verdict.metric === 'CLS') {
+    return `Content on ${route} shifted by ${reading} after first paint, against a 0.1 good and `
+      + '0.25 poor threshold. Layout moving under a pointer is what makes a tap land on the '
+      + 'wrong control.';
+  }
+  return `The 98th-percentile interaction on ${route} took ${reading} to paint a response`
+    + `${interactionCount ? ` across ${interactionCount} interactions` : ''}, against a 200 ms `
+    + 'good and 500 ms poor threshold.';
+}
+
+function recommendVital(metric: VitalsVerdict['metric'], attribution: unknown): string {
+  if (metric === 'LCP') {
+    return 'Find what the largest element on this route is and what holds it up: an unoptimised '
+      + 'hero image, a font swap, or data the route waits for before it renders anything at all.';
+  }
+  if (metric === 'CLS') {
+    return 'Reserve space for anything that arrives late — images without dimensions, injected '
+      + 'banners, fonts that reflow — so the page stops moving once the reader is looking at it.';
+  }
+  const source = typeof attribution === 'string' && attribution ? attribution : null;
+  return 'Shorten the main-thread work each interaction schedules.'
+    + (source ? ` The longest task on this route was attributed to ${source}.` : '');
+}
+
 export function liveEvidenceForBackendLatency(input: {
   method: string;
   route: string;
@@ -1219,6 +1375,216 @@ export class BrowserObserver {
     return eventId;
   }
 
+  /**
+   * Whether a route-scoped rule may still raise a finding.
+   *
+   * `pushFinding` trims from the front, so an unbounded rule does not just add
+   * noise — it silently deletes the earliest findings of the run. The budget is
+   * announced once when it runs out, so the operator sees the rule stopped
+   * rather than concluding the rest of the application is clean.
+   */
+  private withinFindingBudget(controller: RunController, rule: string): boolean {
+    const spent = controller.frontendRuleSpend.get(rule) ?? 0;
+    if (spent >= MAX_FRONTEND_RULE_FINDINGS) return false;
+    controller.frontendRuleSpend.set(rule, spent + 1);
+    if (spent + 1 === MAX_FRONTEND_RULE_FINDINGS) {
+      this.addLive(controller.state, {
+        kind: 'PERFORMANCE',
+        level: 'WARN',
+        message: `Reached the ${MAX_FRONTEND_RULE_FINDINGS}-finding limit for ${rule}`,
+        details: [{
+          label: 'Why',
+          value: 'Further routes with this problem are still captured as evidence, but stop being '
+            + 'raised as separate findings so they cannot crowd out the rest of the run.',
+        }],
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Raises the browser-side performance findings for one page-performance
+   * sample.
+   *
+   * The recorder emits four disjoint shapes under `QA_PAGE_PERFORMANCE`: a
+   * settle sample carries `trigger` and timings, a vitals sample carries
+   * `supported` and Web Vitals, and the unsupported fallback carries neither.
+   * Each arm below reads only the shape it belongs to.
+   */
+  private reportFrontendPerformance(controller: RunController, metadata: Record<string, unknown>): void {
+    const { state } = controller;
+    const number = (value: unknown): number | null => {
+      if (value === null || value === undefined || value === '') return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const route = typeof metadata.route === 'string' && metadata.route
+      ? metadata.route
+      : this.currentRoute(controller);
+
+    // ── Core Web Vitals ───────────────────────────────────────────────────
+    if (metadata.supported !== undefined) {
+      const verdict = classifyWebVitals({
+        lcp: number(metadata.lcp),
+        cls: number(metadata.cls),
+        inpMs: number(metadata.inpMs),
+        hiddenMs: number(metadata.hiddenMs),
+        supported: metadata.supported !== false,
+      });
+      if (verdict && this.withinFindingBudget(controller, 'poor Core Web Vitals')) {
+        const reading = formatVitalValue(verdict.metric, verdict.value);
+        const finding: BrowserFinding = {
+          id: uuid(), runId: state.runId, category: 'FRONTEND_POOR_WEB_VITAL',
+          // Two or more times past "poor" is not a tuning problem.
+          severity: verdict.ratio >= 2 ? 'HIGH' : 'MEDIUM',
+          confidence: 0.9,
+          title: `${route} scored ${reading} ${verdict.metric}`,
+          description: describeVital(verdict, route, reading, number(metadata.interactionCount)),
+          url: sanitizeCapturedUrl(state.liveUrl ?? state.targetUrl),
+          viewport: controller.page && !controller.page.isClosed() ? controller.page.viewportSize() : null,
+          evidenceArtifactIds: [], evidenceChecksums: [],
+          reproductionSteps: [
+            `Open ${route}`,
+            'Record a performance profile with network and CPU left as the browser found them',
+            `Compare the ${verdict.metric} the profile reports against the ${formatVitalValue(verdict.metric, verdict.threshold)} poor threshold`,
+          ],
+          recommendation: recommendVital(verdict.metric, metadata.longestTaskAttribution),
+          scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+          // Per metric per route, never per value: an SPA route re-measured on
+          // every return would otherwise raise a new finding every visit.
+          dedupeKey: `vital:${verdict.metric}:${route}`,
+          generatorSource: 'BROWSER',
+        };
+        if (this.pushFinding(controller, finding)) {
+          void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        }
+      }
+
+      // ── Resources that arrived empty ────────────────────────────────────
+      const resources = classifyFailedResources({
+        failedResourceCount: number(metadata.failedResourceCount),
+        resourceCount: number(metadata.resourceCount),
+      });
+      if (resources && this.withinFindingBudget(controller, 'failed page resources')) {
+        const finding: BrowserFinding = {
+          id: uuid(), runId: state.runId, category: 'FRONTEND_FAILED_RESOURCES',
+          severity: 'MEDIUM',
+          // A legitimately empty response looks identical, and the description
+          // says so — the confidence should reflect that rather than overstate.
+          confidence: 0.8,
+          title: `${resources.failed} resources did not load on ${route}`,
+          description: `${resources.failed} of ${resources.total} resources on ${route} transferred `
+            + 'no bytes and decoded to nothing. That is usually a broken image, font or script. A '
+            + 'legitimately empty response reads the same way, so check the list before acting.',
+          url: sanitizeCapturedUrl(state.liveUrl ?? state.targetUrl),
+          viewport: controller.page && !controller.page.isClosed() ? controller.page.viewportSize() : null,
+          evidenceArtifactIds: [], evidenceChecksums: [],
+          reproductionSteps: [
+            `Open ${route}`,
+            'Filter the network panel to failed requests and compare against the resources this run recorded',
+          ],
+          recommendation: 'Find which resources returned nothing. A broken asset path survives a '
+            + 'deploy silently because nothing fails loudly — the page just renders without it.',
+          scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+          dedupeKey: `resources:${route}`,
+          generatorSource: 'BROWSER',
+        };
+        if (this.pushFinding(controller, finding)) {
+          void this.captureFindingEvidence(controller, finding).catch(() => undefined);
+        }
+      }
+    }
+
+    // ── Routes that never settled ─────────────────────────────────────────
+    const settle = classifySettleOutcome({
+      trigger: typeof metadata.trigger === 'string' ? metadata.trigger : null,
+      dataReadyTimedOut: metadata.dataReadyTimedOut === true,
+      visuallyStableTimedOut: metadata.visuallyStableTimedOut === true,
+      dataReadyMs: number(metadata.dataReadyMs),
+    });
+    if (settle && this.withinFindingBudget(controller, 'routes that never settled')) {
+      const data = settle.kind === 'DATA';
+      this.pushFinding(controller, {
+        id: uuid(), runId: state.runId, category: 'FRONTEND_ROUTE_NEVER_SETTLED',
+        severity: 'MEDIUM', confidence: 0.85,
+        title: data ? `${route} never stopped fetching` : `${route} never stopped moving`,
+        description: data
+          ? `${route} still had same-origin data requests in flight at the 10-second observation `
+            + 'cap, so the run could not establish when its data was ready. That is either a slow '
+            + 'dependency, a request that never completes, or polling on an interval shorter than '
+            + 'the quiet period.'
+          : `Data on ${route} was ready${settle.dataReadyMs === null ? '' : ` after ${Math.round(settle.dataReadyMs)} ms`}, `
+            + 'but the DOM was still mutating at the 10-second cap, so the run could not establish '
+            + 'when the page stopped moving. A carousel, a live clock or a re-render loop all read '
+            + 'this way.',
+        url: sanitizeCapturedUrl(state.liveUrl ?? state.targetUrl),
+        viewport: controller.page && !controller.page.isClosed() ? controller.page.viewportSize() : null,
+        evidenceArtifactIds: [], evidenceChecksums: [],
+        reproductionSteps: [`Open ${route}`, 'Watch the network and elements panels after the route has rendered'],
+        recommendation: 'Check what is still running once the route has rendered: an interval, a '
+          + 'subscription that re-renders on every tick, or a request that never resolves. If it is '
+          + 'intentional, it still means every screenshot of this route is taken mid-motion.',
+        scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+        dedupeKey: `settle:${route}:${data ? 'data' : 'visual'}`,
+        generatorSource: 'BROWSER',
+      });
+    }
+  }
+
+  /**
+   * Raises a finding for a submit the browser's own constraint validation
+   * rejected.
+   *
+   * LOW severity on purpose. A form failing `checkValidity()` is usually the
+   * browser doing its job, and this earns its place only as a signal that the
+   * operator hit a wall. MEDIUM would sort routine typos above real failures.
+   *
+   * No screenshot: the submit schedules an interaction settle, whose artifact
+   * is captured about a quarter second later — after the inline error has
+   * rendered. A shot taken here would show the form before the error appears.
+   */
+  private reportFormValidationFailure(controller: RunController, metadata: Record<string, unknown>): void {
+    const { state } = controller;
+    const label = typeof metadata.formName === 'string' && metadata.formName
+      ? metadata.formName
+      : typeof metadata.formId === 'string' && metadata.formId ? metadata.formId : 'a form';
+    const route = this.currentRoute(controller);
+    if (!this.withinFindingBudget(controller, 'forms rejected by validation')) return;
+    this.pushFinding(controller, {
+      id: uuid(), runId: state.runId, category: 'FRONTEND_FORM_VALIDATION_FAILED',
+      severity: 'LOW', confidence: 0.7,
+      title: `Submitting ${label} was rejected by validation`,
+      description: `The ${label} form on ${route} failed the browser's own constraint validation `
+        + 'when it was submitted, so nothing was sent. That is expected when a field was genuinely '
+        + 'left wrong, and a defect when a field the operator filled in correctly was still rejected.',
+      url: sanitizeCapturedUrl(state.liveUrl ?? state.targetUrl),
+      viewport: controller.page && !controller.page.isClosed() ? controller.page.viewportSize() : null,
+      evidenceArtifactIds: [], evidenceChecksums: [],
+      reproductionSteps: [
+        `Open ${route}`,
+        `Fill in ${label} and submit it`,
+        'Read which field the browser reports as invalid',
+      ],
+      recommendation: 'Compare the field the browser rejected against the constraint the markup '
+        + 'declares. A required field that is populated but still invalid usually means a pattern '
+        + 'or a type that does not match what the operator was asked for.',
+      scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+      dedupeKey: `form-invalid:${route}:${label}`,
+      generatorSource: 'BROWSER',
+    });
+  }
+
+  /** The route the managed page is on, for a finding that has no other anchor. */
+  private currentRoute(controller: RunController): string {
+    try {
+      const page = controller.page;
+      if (!page || page.isClosed()) return 'the page under test';
+      return normalizedRoute(sanitizeCapturedUrl(page.url())) ?? 'the page under test';
+    } catch {
+      return 'the page under test';
+    }
+  }
+
   private async handleBridge(controller: RunController, payload: BridgePayload): Promise<void> {
     const map: Record<string, QAEvidenceEvent['eventType']> = {
       route: 'QA_ROUTE_CHANGED', viewport: 'QA_VIEWPORT_CHANGED', click: 'QA_CONTROL_CLICKED',
@@ -1267,6 +1633,15 @@ export class BrowserObserver {
     }
     if (eventId && ['click', 'submit_intent', 'submit', 'route'].includes(String(payload.type))) {
       controller.recentCause = { eventId, interactionGroupId: payload.interactionGroupId ?? null, at: Date.now() };
+    }
+    // Only on an event that was actually emitted: `emit` drops everything
+    // outside PRE_BOUNDARY_TYPES before the boundary, and a finding must never
+    // be raised for evidence the run did not keep.
+    if (eventId && payload.type === 'performance') {
+      this.reportFrontendPerformance(controller, safeMetadata);
+    }
+    if (eventId && payload.type === 'submit' && safeMetadata.valid === false) {
+      this.reportFormValidationFailure(controller, safeMetadata);
     }
     // Opens a new snapshot window. Whether anything actually changed is decided
     // at capture time by comparing page structure, not assumed here.
@@ -1342,6 +1717,7 @@ export class BrowserObserver {
       findingArtifacts: [], capturedFindingKeys: new Set(), findingDedupeKeys: new Set(),
       backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
       backendSlowRows: new Map(),
+      frontendRuleSpend: new Map(),
     };
     this.active = controller;
     if (!browserTrack) {
@@ -1756,6 +2132,37 @@ export class BrowserObserver {
       target.on('crash', () => {
         if (!this.active || controller.stopping) return;
         this.emit(controller, 'QA_PAGE_CRASH', { reason: 'Managed browser page crashed' });
+        // A crashed renderer is the most severe thing a run can observe and it
+        // raised no finding at all — the report carried it as one row in the
+        // appendix. Pushed before `handleUnexpectedTermination`, which persists
+        // the run: a finding added after that races the write and is lost.
+        //
+        // No screenshot: the page is gone. `captureMaskedScreenshot` throws on
+        // a crashed page, and the `isClosed()` guard does not catch
+        // crashed-but-open.
+        const crashedRoute = this.currentRoute(controller);
+        this.pushFinding(controller, {
+          id: uuid(), runId: state.runId, category: 'FRONTEND_PAGE_CRASH',
+          // Not an inference: the browser told us the renderer died.
+          severity: 'CRITICAL', confidence: 1,
+          title: `The page crashed on ${crashedRoute}`,
+          description: 'The browser renderer process for the page under test terminated. '
+            + 'Everything after this point in the run is missing because the page stopped '
+            + 'existing, not because nothing happened.',
+          url: sanitizeCapturedUrl(state.liveUrl ?? state.targetUrl),
+          viewport: null,
+          evidenceArtifactIds: [], evidenceChecksums: [],
+          reproductionSteps: [
+            `Open ${crashedRoute}`,
+            'Repeat the last interaction recorded before this point in the evidence timeline',
+          ],
+          recommendation: "Reproduce with the browser's crash reporter enabled. A renderer crash "
+            + 'is almost always an out-of-memory condition, an infinite render loop, or a native '
+            + 'module the page loaded.',
+          scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
+          dedupeKey: `crash:${crashedRoute}`,
+          generatorSource: 'BROWSER',
+        });
         state.status = 'FAILED';
         state.endedAt = new Date().toISOString();
         this.addLive(state, { kind: 'PAGE', level: 'ERROR', message: 'Managed browser page crashed' });

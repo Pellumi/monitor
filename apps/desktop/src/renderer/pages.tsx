@@ -86,6 +86,7 @@ import {
   isBackendOnlyRun,
   type BackendEvidenceTabValue,
 } from "./backend-run";
+import { FrontendReportCard } from "./frontend-run";
 import {
   Link,
   Navigate,
@@ -15788,7 +15789,14 @@ export function ReportDetailPage() {
         ) : (
           <>
             <Metric
-              label="Expected coverage"
+              // A clean ratio reads as a fact, so the band travels with it:
+              // 85% from a degraded capture is not the same claim as 85% from
+              // a clean one, and the caveats are listed in the document.
+              label={
+                report.coverage.confidenceBand
+                  ? `Expected coverage · ${report.coverage.confidenceBand.toLowerCase()} confidence`
+                  : "Expected coverage"
+              }
               value={
                 report.coverage.expected == null
                   ? "Observational"
@@ -15844,6 +15852,10 @@ export function ReportDetailPage() {
         ) : null}
       </section>
 
+      {/* Browser first, then server: the order a request travels, and the
+          order `summaryText` puts its clauses in. Both cards suppress
+          themselves when the run captured nothing for that track. */}
+      <FrontendReportCard sections={sections} runHref={`/applications/${projectId}/qa-runs/${report.runId}`} />
       <BackendReportCard sections={sections} runHref={`/applications/${projectId}/qa-runs/${report.runId}`} />
 
       <ReportDownloadCard runId={runId} entitlements={application?.entitlements ?? null} />
