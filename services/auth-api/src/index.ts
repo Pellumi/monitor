@@ -1164,6 +1164,15 @@ app.patch('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Respons
   }
 });
 
+/** Dashboard layouts a person may choose between. */
+const DASHBOARD_PERSONAS = [
+  'DEVELOPER',
+  'QA_ENGINEER',
+  'ENGINEERING_MANAGER',
+  'PRODUCT_MANAGER',
+  'ORGANIZATION_ADMIN',
+];
+
 const preferenceFields = [
   'theme',
   'density',
@@ -1176,6 +1185,7 @@ const preferenceFields = [
   'rememberLastApplication',
   'rememberLastEnvironment',
   'reportsOpenInNewTab',
+  'dashboardPersona',
   'graphPreferences',
   'replayPreferences',
   'reportPreferences',
@@ -1208,6 +1218,18 @@ app.put('/auth/preferences', verifyAuth, async (req: AuthenticatedRequest, res: 
   }
   if (data.tablePageSize !== undefined && ![10, 25, 50, 100].includes(Number(data.tablePageSize))) {
     return res.status(400).json({ error: 'INVALID_PAGE_SIZE', message: 'tablePageSize must be 10, 25, 50, or 100' });
+  }
+  // Validated rather than stored as free text: the dashboard switches layout on
+  // this value, and an unrecognised one would render an empty grid.
+  if (
+    data.dashboardPersona !== undefined &&
+    data.dashboardPersona !== null &&
+    !DASHBOARD_PERSONAS.includes(String(data.dashboardPersona))
+  ) {
+    return res.status(400).json({
+      error: 'INVALID_DASHBOARD_PERSONA',
+      message: `dashboardPersona must be one of ${DASHBOARD_PERSONAS.join(', ')}`,
+    });
   }
   const createData = { ...data };
   data.version = { increment: 1 };

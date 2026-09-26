@@ -3,6 +3,7 @@ export * from './events/schema';
 export * from './events/route';
 export * from './constants/services';
 export * from './constants/topics';
+export * from './kafka';
 export * from './constants/plans';
 export * from './constants/docs-pages';
 export * from './constants/entitlements';

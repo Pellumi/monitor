@@ -16,6 +16,7 @@ import {
 } from './notification-digest-worker';
 import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
 import { runRetentionSweep } from './retention-worker';
+import { runSchemaBootstrap } from './schema-bootstrap-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
 import { runBillingCycle } from './billing-cycle-worker';
@@ -421,6 +422,10 @@ interface JobDefinition {
 }
 
 const JOB_DEFINITIONS: JobDefinition[] = [
+  // Indexes that `migrate deploy` cannot build, because CREATE INDEX CONCURRENTLY
+  // cannot run inside its implicit transaction. Idempotent and cheap once built —
+  // two catalogue queries per tick — so it is safe to leave on the schedule.
+  { name: 'schema-bootstrap',                 handler: () => runSchemaBootstrap(prisma).then(() => undefined), every: 3_600_000 },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },

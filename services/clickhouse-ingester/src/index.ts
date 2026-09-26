@@ -3,7 +3,7 @@ initTracing('clickhouse-ingester');
 
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, Consumer, EachBatchPayload } from 'kafkajs';
-import { Topics, ConsumerGroups } from '@tellann/shared';
+import { Topics, ConsumerGroups, kafkaEnabled } from '@tellann/shared';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',');
@@ -164,6 +164,14 @@ async function createKafkaConsumer(): Promise<Consumer> {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
+  // This service is nothing but a Kafka consumer, so without Kafka it had no way
+  // to do its job and no gate to say so — it tried to connect, failed, and exited
+  // 1 forever. Every sibling consumer now asks the same shared helper.
+  if (!kafkaEnabled()) {
+    console.log('[ClickHouseIngester] Kafka disabled — nothing to consume, exiting cleanly');
+    return;
+  }
+
   console.log('[ClickHouseIngester] Starting...');
   console.log(`[ClickHouseIngester] Kafka brokers: ${KAFKA_BROKERS.join(', ')}`);
   console.log(`[ClickHouseIngester] ClickHouse: ${CLICKHOUSE_HOST}/${CLICKHOUSE_DB}`);

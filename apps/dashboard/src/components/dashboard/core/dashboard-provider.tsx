@@ -4,6 +4,8 @@ import React, { createContext, useCallback, useContext, useMemo, useState } from
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useEntitlement } from "@/hooks/use-entitlement";
+import { usePreferences } from "@/components/preferences-provider";
+import type { Preferences } from "@/lib/preferences";
 import {
   DashboardEntitlements,
   DashboardOverviewResponse,
@@ -32,8 +34,35 @@ export function DashboardProvider({
   data: DashboardOverviewResponse | null;
   hasApplications: boolean;
 }) {
-  const [userRole, setUserRole] = useState<UserRole>("DEVELOPER");
   const { entitlements } = useEntitlement();
+  const { preferences, applyPreferences } = usePreferences();
+
+  /**
+   * Which layout to show, and remembering the choice.
+   *
+   * Held locally so switching is instant, seeded from the account so it follows
+   * the reader to another device. The write is fire-and-forget: failing to save
+   * a layout preference must not interrupt anyone, and the local value still
+   * applies for this session.
+   */
+  const [localRole, setLocalRole] = useState<UserRole | null>(null);
+  const userRole = localRole ?? (preferences.dashboardPersona as UserRole);
+
+  const setUserRole = useCallback(
+    (role: UserRole) => {
+      setLocalRole(role);
+      const next = { ...preferences, dashboardPersona: role as Preferences["dashboardPersona"] };
+      applyPreferences(next);
+      void authenticatedFetch("/api-gateway/auth/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      }).catch(() => {
+        // The layout still changed for this session.
+      });
+    },
+    [preferences, applyPreferences],
+  );
   const queryClient = useQueryClient();
   const applicationId = data?.application?.id;
 
@@ -82,7 +111,7 @@ export function DashboardProvider({
       isAcknowledging: acknowledge.isPending,
       setUserRole,
     }),
-    [data, state, userRole, entitlements, acknowledgeFirstAnalysis, acknowledge.isPending],
+    [data, state, userRole, entitlements, acknowledgeFirstAnalysis, acknowledge.isPending, setUserRole],
   );
 
   return (

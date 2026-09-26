@@ -151,6 +151,8 @@ export interface MeasuredSummary {
     high: number;
     medium: number;
     low: number;
+    /** Keeps one headline number without hiding what it is made of. */
+    byOrigin: { ruleInference: number; browserRun: number };
   }>;
 }
 
@@ -222,6 +224,81 @@ export interface MissingFlowFinding {
   category: MissingFlowCategory | null;
   severity: FindingSeverity;
   evidence: string;
+  detectedAt: string;
+}
+
+/** Which way a declared flow's coverage moved since its previous reconciliation. */
+export type FlowTrend = 'IMPROVED' | 'STABLE' | 'DECLINED' | 'NEW';
+
+/**
+ * One declared flow's coverage, and how it moved.
+ *
+ * Declared flows rather than observed workflows: a `Workflow` row is a single
+ * session's traversal with a generated name and no history, so a change feed
+ * over those would be noise even if the data existed. A declared flow is a
+ * named, stable thing someone authored, and `ReconciliationReport` records its
+ * coverage every time it is reconciled.
+ */
+export interface FlowChangeRow {
+  flowId: string;
+  flowName: string;
+  /** 0..100. */
+  current: number;
+  /** Null on a flow's first reconciliation — there is nothing behind it yet. */
+  previous: number | null;
+  delta: number | null;
+  trend: FlowTrend;
+  generatedAt: string;
+}
+
+/**
+ * Where observation is concentrated, and where it is not.
+ *
+ * Deliberately excludes transition success rate, failure rate and average
+ * duration. `Transition` records a frequency and nothing else — there are no
+ * outcome or timing columns anywhere — so those three would have to be invented.
+ */
+export interface BehaviorSummary {
+  hottestStates: Array<{ name: string; visitCount: number }>;
+  coldestStates: Array<{ name: string; visitCount: number }>;
+  hottestTransitions: Array<{ from: string; to: string; frequency: number }>;
+  coldestTransitions: Array<{ from: string; to: string; frequency: number }>;
+  /** Declared transitions never observed, summed across reconciled flows. */
+  declaredButNeverObserved: number | null;
+}
+
+/** One entry in the activity feed. */
+export interface ActivityEntry {
+  id: string;
+  /** The raw event name, for the client to key behaviour off if it needs to. */
+  eventName: string;
+  /** A readable sentence, resolved server-side so an unknown name degrades well. */
+  description: string;
+  occurredAt: string;
+}
+
+/**
+ * A defect observed during a run, as opposed to a gap inferred by a rule.
+ *
+ * Kept in its own array rather than merged with the rule-inferred findings.
+ * "A rule expects an error state nobody has seen" and "this page crashed" are
+ * different kinds of claim, and one list would erase the distinction.
+ *
+ * These belong to their run and have no resolution concept — a browser finding
+ * cannot be closed the way a missing state can — so this is "findings from
+ * recent runs", not an open-issue list.
+ */
+export interface ObservedFinding {
+  id: string;
+  origin: 'BROWSER_RUN';
+  runId: string;
+  /** Free text from the detector, e.g. FRONTEND_PAGE_CRASH. */
+  category: string;
+  severity: FindingSeverity;
+  title: string;
+  description: string;
+  recommendation: string | null;
+  relatedStateName: string | null;
   detectedAt: string;
 }
 
@@ -445,6 +522,12 @@ export interface DashboardOverviewResponse {
   /** True when older analyses exist beyond the returned series. */
   coverageHistoryTruncated: boolean;
   expectedVsObserved: ExpectedVsObserved | null;
+  /** Declared-flow coverage movement, most-regressed first. */
+  flowChanges: FlowChangeRow[];
+  behavior: BehaviorSummary | null;
+  /** Empty when the plan does not include team features. */
+  activity: ActivityEntry[];
+  observedFindings: ObservedFinding[];
   privacy: PrivacyStatus | null;
   usage: PlanUsage | null;
   liveDemonstration: LiveDemonstrationStats | null;

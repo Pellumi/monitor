@@ -18,6 +18,9 @@ import {
   normalizePreferences,
   TABLE_PAGE_SIZES,
   type Density,
+  DASHBOARD_PERSONAS,
+  DASHBOARD_PERSONA_LABELS,
+  type DashboardPersona,
   type Preferences,
 } from "@/lib/preferences";
 import {
@@ -185,6 +188,26 @@ export default function PreferencesPage() {
               >
                 <SelectItem value="COMFORTABLE">Comfortable</SelectItem>
                 <SelectItem value="COMPACT">Compact</SelectItem>
+              </SelectField>
+              <SelectField
+                label="Dashboard layout"
+                description="Which cards the overview leads with. A working preference, not a permission — it changes nothing about what you can access."
+                value={preferences.dashboardPersona}
+                onChange={(value) =>
+                  update(
+                    "dashboardPersona",
+                    (DASHBOARD_PERSONAS as readonly string[]).includes(value)
+                      ? (value as DashboardPersona)
+                      : "DEVELOPER",
+                  )
+                }
+                displayValue={DASHBOARD_PERSONA_LABELS[preferences.dashboardPersona]}
+              >
+                {DASHBOARD_PERSONAS.map((persona) => (
+                  <SelectItem key={persona} value={persona}>
+                    {DASHBOARD_PERSONA_LABELS[persona]}
+                  </SelectItem>
+                ))}
               </SelectField>
               <SelectField
                 label="Table page size"

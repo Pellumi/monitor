@@ -1,0 +1,32 @@
+-- SessionEvent's indexes, and why they are not created here.
+--
+-- `SessionEvent` had no index of any kind. It predates this migration history —
+-- it was created by `prisma db push`, and `grep -rn "SessionEvent"
+-- packages/db/prisma/migrations` finds nothing before this file — and Prisma does
+-- not index foreign keys on PostgreSQL. So `session.events`, read on every
+-- completion, every orphan sweep and every replay render, was a sequential scan
+-- of the largest table in the schema.
+--
+-- The two indexes it needs are:
+--
+--   "SessionEvent_sessionId_timestamp_idx" ON "SessionEvent"("sessionId", "timestamp")
+--   "SessionEvent_sessionId_eventType_idx" ON "SessionEvent"("sessionId", "eventType")
+--
+-- They are deliberately NOT created in this file. `CREATE INDEX CONCURRENTLY`
+-- cannot run inside a transaction block and `prisma migrate deploy` runs each
+-- migration as one implicit transaction, so the only form available here is a
+-- plain `CREATE INDEX` — which takes an ACCESS EXCLUSIVE lock for the whole build
+-- and would block every ingest write for minutes on a table this size.
+--
+-- Instead they are built concurrently, out of band, by the `schema-bootstrap` job
+-- in services/background-workers/src/schema-bootstrap-worker.ts. That job is
+-- idempotent: it reads pg_index, skips an index that is already valid, and drops
+-- and rebuilds one left INVALID by a failed concurrent build (which `IF NOT
+-- EXISTS` would otherwise match forever, leaving the index present but unusable
+-- by the planner).
+--
+-- If you are adding an index to a large table, do the same. Do not put it here.
+
+-- This migration intentionally changes no schema. It exists so the provenance of
+-- those indexes is recorded in the history rather than being folklore.
+SELECT 1;

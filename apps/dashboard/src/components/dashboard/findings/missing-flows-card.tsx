@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { useDashboard } from "../core/dashboard-provider";
 import { ArrowRight, GitFork } from "lucide-react";
+import { SeverityTag } from "./severity-tag";
 
 export function MissingFlowsCard() {
   const { data, state } = useDashboard();
@@ -56,9 +57,7 @@ export function MissingFlowsCard() {
                 <span className="text-xs font-bold text-white">
                   {flow.flowName}
                 </span>
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase">
-                  {flow.severity}
-                </span>
+                <SeverityTag severity={flow.severity} />
               </div>
               <div className="flex items-center justify-between text-[11px] font-mono text-neutral-400">
                 <span>{flow.workflowName ? `Workflow: ${flow.workflowName}` : "Workflow unrecorded"}</span>

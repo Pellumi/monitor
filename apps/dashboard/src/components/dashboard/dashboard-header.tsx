@@ -8,6 +8,7 @@ import { useDashboard } from "./core/dashboard-provider";
 import { UserRole } from "./core/types";
 import { Activity, ArrowRight, Play, Plus, Zap } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DASHBOARD_PERSONAS, DASHBOARD_PERSONA_LABELS } from "@/lib/preferences";
 
 export function DashboardHeader() {
   const { appId } = useSelectedApplication();
@@ -103,26 +104,35 @@ export function DashboardHeader() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        {/* Role Selector (UX testing & role-based view adaptation) */}
-        {/* <div className="relative inline-block text-xs">
-          <select
-            aria-label="User role mode"
-            value={userRole}
-            onChange={(e) => setUserRole(e.target.value as UserRole)}
-            className="bg-[#141414] border border-[#2d2d2d] text-neutral-300 text-xs rounded px-2.5 py-1.5 focus:outline-none focus:border-neutral-500 font-mono cursor-pointer"
-          >
-            <option value="DEVELOPER">Developer View</option>
-            <option value="QA_ENGINEER">QA Engineer View</option>
-            <option value="ENGINEERING_MANAGER">Manager View</option>
-            <option value="PRODUCT_MANAGER">PM View</option>
-            <option value="ORGANIZATION_ADMIN">Admin View</option>
-          </select>
-        </div> */}
+        {/* Which layout to arrange the overview into. Persisted to the
+            account, so it follows the reader to another device. */}
+        {state.lifecycle === "ACTIVE" && (
+          <Select value={userRole} onValueChange={(value) => setUserRole(value as UserRole)} width="200px">
+            <SelectTrigger
+              aria-label="Dashboard layout"
+              className="bg-[#141414] border-[#2d2d2d] text-neutral-300 text-xs font-mono py-1.5 px-2.5"
+            >
+              <SelectValue placeholder="Select layout">
+                {DASHBOARD_PERSONA_LABELS[userRole]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="font-mono">
+              {DASHBOARD_PERSONAS.map((persona) => (
+                <SelectItem key={persona} value={persona}>
+                  {DASHBOARD_PERSONA_LABELS[persona]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {/* Date Range Selector */}
         {state.lifecycle === "ACTIVE" && (
           <Select value={range} onValueChange={setRange} width="180px">
-            <SelectTrigger className="bg-[#141414] border-[#2d2d2d] text-neutral-300 text-xs font-mono py-1.5 px-2.5">
+            <SelectTrigger
+              aria-label="Date range"
+              className="bg-[#141414] border-[#2d2d2d] text-neutral-300 text-xs font-mono py-1.5 px-2.5"
+            >
               <SelectValue placeholder="Select range" />
             </SelectTrigger>
             <SelectContent className="font-mono">

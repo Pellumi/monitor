@@ -21,6 +21,11 @@ import {
   type FindingSeverity,
   type MeasuredValue,
   type MeasurementStatus,
+  type ActivityEntry,
+  type BehaviorSummary,
+  type FlowChangeRow,
+  type FlowTrend,
+  type ObservedFinding,
   type PlanUsage,
   type ReportSummary,
 } from '@tellann/shared';
@@ -803,4 +808,237 @@ export function deriveExpectedVsObserved(input: {
     },
     topGaps,
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Flow change feed
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Coverage movement below which a flow is called stable.
+ *
+ * Exact equality would label a 0.3-point drift as "Improved", which is the same
+ * kind of overclaim as reporting an unmeasured value as zero.
+ */
+export const FLOW_TREND_THRESHOLD = 1;
+
+const TREND_ORDER: Record<FlowTrend, number> = {
+  DECLINED: 0,
+  IMPROVED: 1,
+  NEW: 2,
+  STABLE: 3,
+};
+
+export function classifyFlowTrend(current: number, previous: number | null): FlowTrend {
+  if (previous === null) return 'NEW';
+  const delta = current - previous;
+  if (Math.abs(delta) < FLOW_TREND_THRESHOLD) return 'STABLE';
+  return delta > 0 ? 'IMPROVED' : 'DECLINED';
+}
+
+/**
+ * How each declared flow's coverage has moved since its previous reconciliation.
+ *
+ * Regressions sort first: a flow that went backwards is the one thing on this
+ * page worth interrupting someone for.
+ */
+export function deriveFlowChangeFeed(rows: ReconciliationRow[], limit = 6): FlowChangeRow[] {
+  const byFlow = new Map<string, ReconciliationRow[]>();
+  for (const row of rows) {
+    const existing = byFlow.get(row.flowId);
+    if (existing) existing.push(row);
+    else byFlow.set(row.flowId, [row]);
+  }
+
+  const changes: FlowChangeRow[] = [];
+  for (const flowRows of byFlow.values()) {
+    const ordered = [...flowRows].sort(
+      (a, b) => b.generatedAt.getTime() - a.generatedAt.getTime(),
+    );
+    const [newest, previous] = ordered;
+    const current = Number((newest.expectedCoverageScore * 100).toFixed(1));
+    const before =
+      previous === undefined ? null : Number((previous.expectedCoverageScore * 100).toFixed(1));
+
+    changes.push({
+      flowId: newest.flowId,
+      flowName: newest.flowName,
+      current,
+      previous: before,
+      delta: before === null ? null : Number((current - before).toFixed(1)),
+      trend: classifyFlowTrend(current, before),
+      generatedAt: newest.generatedAt.toISOString(),
+    });
+  }
+
+  return changes
+    .sort((a, b) => {
+      const byTrend = TREND_ORDER[a.trend] - TREND_ORDER[b.trend];
+      if (byTrend !== 0) return byTrend;
+      // Within a trend, the biggest move first.
+      return Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0);
+    })
+    .slice(0, limit);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Activity
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Readable sentences for the activation events the platform emits.
+ *
+ * None of these can name a person: ActivationEvent carries no user. Saying
+ * "Sarah recorded a session" would mean joining an unrelated audit trail and
+ * risking the wrong name against the wrong event, so the copy is deliberately
+ * impersonal.
+ */
+const ACTIVITY_SENTENCES: Record<string, string> = {
+  ORG_CREATED: 'Organisation created',
+  APP_CREATED: 'Application created',
+  SDK_CONNECTED: 'SDK connected',
+  INSTALL_TEST_PASSED: 'Installation verified',
+  FLOW_DRAFTED: 'A flow was drafted',
+  FLOW_SAVED: 'A flow was saved',
+  AI_FLOW_DRAFT_CREATED: 'A flow was drafted from a document',
+  DEMO_COMPLETED: 'A demonstration was completed',
+  DEMO_THRESHOLD_MET: 'Demonstration threshold met',
+  REPORT_GENERATED: 'A report was generated',
+  VALUE_REALIZED: 'First value realised',
+};
+
+/**
+ * A readable line for one event.
+ *
+ * An unrecognised name degrades to a humanised form rather than printing a raw
+ * token at someone — new event names are added in other services and must not
+ * leak SCREAMING_SNAKE_CASE into the feed.
+ */
+export function describeActivityEvent(eventName: string): string {
+  const known = ACTIVITY_SENTENCES[eventName];
+  if (known) return known;
+  const words = eventName.toLowerCase().replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Activity recorded';
+}
+
+export function toActivityEntries(
+  events: Array<{ id: string; eventName: string; occurredAt: Date }>,
+): ActivityEntry[] {
+  return events.map((event) => ({
+    id: event.id,
+    eventName: event.eventName,
+    description: describeActivityEvent(event.eventName),
+    occurredAt: event.occurredAt.toISOString(),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Behaviour summary
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Where observation is concentrated, and where it is thin.
+ *
+ * Built only from State.visitCount and Transition.frequency, which are the only
+ * behavioural counters that exist. Success rate, failure rate and average
+ * duration — the three the spec leads with — have no column anywhere and are
+ * omitted rather than approximated from something adjacent.
+ */
+export function deriveBehaviorSummary(input: {
+  states: Array<{ name: string; visitCount: number }>;
+  transitions: Array<{ from: string; to: string; frequency: number }>;
+  declaredButNeverObserved: number | null;
+  limit?: number;
+}): BehaviorSummary | null {
+  const limit = input.limit ?? 5;
+  if (input.states.length === 0 && input.transitions.length === 0) return null;
+
+  const statesByVisits = [...input.states].sort((a, b) => b.visitCount - a.visitCount);
+  const transitionsByFrequency = [...input.transitions].sort((a, b) => b.frequency - a.frequency);
+
+  // The cold lists never overlap the hot ones: with fewer items than twice the
+  // limit, showing the same row as both the most and least visited is nonsense.
+  const hottestStates = statesByVisits.slice(0, limit);
+  const hottestTransitions = transitionsByFrequency.slice(0, limit);
+
+  return {
+    hottestStates,
+    coldestStates: statesByVisits
+      .slice(limit)
+      .slice(-limit)
+      .reverse(),
+    hottestTransitions,
+    coldestTransitions: transitionsByFrequency
+      .slice(limit)
+      .slice(-limit)
+      .reverse(),
+    declaredButNeverObserved: input.declaredButNeverObserved,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Observed findings
+// ─────────────────────────────────────────────────────────────
+
+export interface BrowserFindingRow {
+  id: string;
+  runId: string;
+  category: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string | null;
+  relatedStateName: string | null;
+  createdAt: Date;
+}
+
+export function toObservedFindings(rows: BrowserFindingRow[]): ObservedFinding[] {
+  return rows.map((row) => ({
+    id: row.id,
+    origin: 'BROWSER_RUN' as const,
+    runId: row.runId,
+    category: row.category,
+    severity: normaliseSeverity(row.severity),
+    title: row.title,
+    description: row.description,
+    recommendation: row.recommendation,
+    relatedStateName: row.relatedStateName,
+    detectedAt: row.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * Both kinds of finding under one headline, without merging them.
+ *
+ * The origin split is what keeps "12 findings" from hiding that eleven are rule
+ * inferences and one is an observed crash.
+ */
+export function combineFindingCounts(
+  ruleTally: { total: number; critical: number; high: number; medium: number; low: number },
+  observed: ObservedFinding[],
+) {
+  const combined = {
+    ...ruleTally,
+    byOrigin: { ruleInference: ruleTally.total, browserRun: observed.length },
+  };
+  combined.total += observed.length;
+  for (const finding of observed) {
+    switch (finding.severity) {
+      case 'CRITICAL':
+        combined.critical += 1;
+        break;
+      case 'HIGH':
+        combined.high += 1;
+        break;
+      case 'MEDIUM':
+        combined.medium += 1;
+        break;
+      case 'LOW':
+        combined.low += 1;
+        break;
+      default:
+        break;
+    }
+  }
+  return combined;
 }

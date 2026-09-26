@@ -12,6 +12,30 @@ import { normalizeThemePreference, type ThemePreference } from './theme';
 
 export type Density = 'COMFORTABLE' | 'COMPACT';
 
+/**
+ * Which layout the dashboard overview arranges itself into.
+ *
+ * A working preference, not an identity. Organisation roles are
+ * OWNER/ADMIN/MEMBER/VIEWER and say nothing about how someone reads this page.
+ */
+export const DASHBOARD_PERSONAS = [
+  'DEVELOPER',
+  'QA_ENGINEER',
+  'ENGINEERING_MANAGER',
+  'PRODUCT_MANAGER',
+  'ORGANIZATION_ADMIN',
+] as const;
+
+export type DashboardPersona = (typeof DASHBOARD_PERSONAS)[number];
+
+export const DASHBOARD_PERSONA_LABELS: Record<DashboardPersona, string> = {
+  DEVELOPER: 'Developer',
+  QA_ENGINEER: 'QA engineer',
+  ENGINEERING_MANAGER: 'Engineering manager',
+  PRODUCT_MANAGER: 'Product manager',
+  ORGANIZATION_ADMIN: 'Organisation admin',
+};
+
 export const TABLE_PAGE_SIZES = [10, 25, 50, 100] as const;
 
 export interface Preferences {
@@ -25,6 +49,7 @@ export interface Preferences {
   defaultLandingPage: string;
   rememberLastApplication: boolean;
   rememberLastEnvironment: boolean;
+  dashboardPersona: DashboardPersona;
   /**
    * @deprecated Reports are delivered as file exports (JSON/PDF/CSV), never as a
    * navigable page, so there is no link for this to retarget. The field is kept
@@ -45,6 +70,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   defaultLandingPage: '/',
   rememberLastApplication: true,
   rememberLastEnvironment: true,
+  dashboardPersona: 'DEVELOPER',
   reportsOpenInNewTab: false,
   version: 1,
 };
@@ -75,6 +101,10 @@ export function normalizePreferences(value: unknown): Preferences {
         : DEFAULT_PREFERENCES.defaultLandingPage,
     rememberLastApplication: bool(raw.rememberLastApplication, DEFAULT_PREFERENCES.rememberLastApplication),
     rememberLastEnvironment: bool(raw.rememberLastEnvironment, DEFAULT_PREFERENCES.rememberLastEnvironment),
+    // An unrecognised persona falls back rather than rendering an empty grid.
+    dashboardPersona: (DASHBOARD_PERSONAS as readonly string[]).includes(String(raw.dashboardPersona))
+      ? (raw.dashboardPersona as DashboardPersona)
+      : DEFAULT_PREFERENCES.dashboardPersona,
     reportsOpenInNewTab: bool(raw.reportsOpenInNewTab, DEFAULT_PREFERENCES.reportsOpenInNewTab),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : DEFAULT_PREFERENCES.version,
   };

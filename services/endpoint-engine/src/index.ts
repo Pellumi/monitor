@@ -6,7 +6,7 @@ import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, EachMessagePayload } from 'kafkajs';
 import { MemberRole, PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
-import { Feature, TellannEvent, Topics, Services, canonicalRoute, canonicalRouteFromPath } from '@tellann/shared';
+import { Feature, TellannEvent, Topics, Services, canonicalRoute, canonicalRouteFromPath, kafkaEnabled } from '@tellann/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import { createCallerGuards, type CallerRequest } from './auth';
 
@@ -551,13 +551,13 @@ async function start(): Promise<void> {
   await emailService.syncBuiltinTemplates().catch((err) => console.error('[Email] Template sync failed', err));
   await ensureTable();
 
-  if (process.env.KAFKA_ENABLED !== 'false') {
+  if (kafkaEnabled()) {
     await consumer.connect();
     await consumer.subscribe({ topic: Topics.TELEMETRY_EVENTS, fromBeginning: true });
     await consumer.run({ eachMessage: processEvent });
     console.log(`[EndpointEngine] Consuming ${Topics.TELEMETRY_EVENTS}`);
   } else {
-    console.log('[EndpointEngine] KAFKA_ENABLED=false — Kafka consumer not started');
+    console.log('[EndpointEngine] Kafka disabled — endpoint metrics consumer not started');
   }
 
   // Start HTTP server

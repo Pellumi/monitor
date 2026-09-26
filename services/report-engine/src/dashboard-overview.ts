@@ -41,8 +41,11 @@ import type { CallerRequest } from './auth';
 import {
   COVERAGE_HISTORY_LIMIT,
   classifyGraphNodes,
+  combineFindingCounts,
   deriveAnalysisStatus,
+  deriveBehaviorSummary,
   deriveErrorCoverage,
+  deriveFlowChangeFeed,
   deriveExpectedCoverage,
   deriveExpectedVsObserved,
   deriveHealthIssues,
@@ -56,7 +59,10 @@ import {
   pickDeltaBaseline,
   ratioPercent,
   resolveRangeWindow,
+  latestReconciliationPerFlow,
+  toActivityEntries,
   toCoverageHistory,
+  toObservedFindings,
   toReportSummaries,
   topNodesByVisits,
   transitionKey,
@@ -73,6 +79,8 @@ const GRAPH_NODE_LIMIT = 150;
 const SESSION_LIMIT = 10;
 /** Findings returned; the cards show fewer and link out for the rest. */
 const FINDING_LIMIT = 25;
+/** Activity rows returned; the card shows fewer and links out. */
+const ACTIVITY_LIMIT = 20;
 
 type Middleware = (req: CallerRequest, res: Response, next: () => void) => unknown;
 
@@ -80,6 +88,7 @@ export interface DashboardOverviewDeps {
   prisma: PrismaClient;
   entitlementChecker: { getEntitlement: (orgId: string) => Promise<{
     planType: string;
+    features: Record<string, boolean | string>;
     limits: { applications: number; storageGb: number; retentionDays: number };
   }> };
   verifyCaller: Middleware;
@@ -195,6 +204,9 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
           organizationApplicationCount,
           storageTotals,
           entitlement,
+          activationEvents,
+          browserFindings,
+          rankedTransitions,
           protectedValueGroups,
         ] = await Promise.all([
           prisma.applicationOnboardingProgress.findUnique({ where: { applicationId } }),
@@ -317,6 +329,62 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
           application.organizationId
             ? entitlementChecker.getEntitlement(application.organizationId).catch(() => null)
             : Promise.resolve(null),
+          // Activity. Served by the index added for exactly this read; the
+          // pre-existing one leads with the organisation and event name.
+          prisma.activationEvent.findMany({
+            where: {
+              applicationId,
+              ...(environmentId ? { environmentId } : {}),
+              ...(window.fromDate || window.toDate
+                ? {
+                    occurredAt: {
+                      ...(window.fromDate ? { gte: window.fromDate } : {}),
+                      ...(window.toDate ? { lte: window.toDate } : {}),
+                    },
+                  }
+                : {}),
+            },
+            select: { id: true, eventName: true, occurredAt: true },
+            orderBy: { occurredAt: 'desc' },
+            take: ACTIVITY_LIMIT,
+          }),
+          // Observed defects from runs. Scoped through the run, which is the
+          // only route: a finding carries no application of its own.
+          prisma.browserFinding.findMany({
+            where: {
+              run: {
+                applicationId,
+                archivedAt: null,
+                ...(environmentId ? { environmentId } : {}),
+                ...(window.fromDate || window.toDate
+                  ? {
+                      createdAt: {
+                        ...(window.fromDate ? { gte: window.fromDate } : {}),
+                        ...(window.toDate ? { lte: window.toDate } : {}),
+                      },
+                    }
+                  : {}),
+              },
+            },
+            select: {
+              id: true, runId: true, category: true, severity: true, title: true,
+              description: true, recommendation: true, relatedStateName: true, createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: FINDING_LIMIT,
+          }),
+          // Transitions between the states already fetched, for the hot/cold
+          // path view. `frequency` is the only behavioural counter there is.
+          prisma.transition.findMany({
+            where: { applicationId },
+            select: {
+              frequency: true,
+              fromState: { select: { name: true } },
+              toState: { select: { name: true } },
+            },
+            orderBy: { frequency: 'desc' },
+            take: GRAPH_NODE_LIMIT,
+          }),
           // Privacy: protected values recorded against this application's runs.
           // Bounded by the same window as everything else — both so the card
           // agrees with the rest of the page, and because an all-time count
@@ -619,6 +687,33 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
         const totalEndpoints = endpointAnalysis?.totalEndpoints ?? 0;
         const unhealthy = (endpointAnalysis?.slowEndpoints ?? 0) + (endpointAnalysis?.errorEndpoints ?? 0);
 
+        // ── Change feed, activity, behaviour, observed findings ──
+        const flowChanges = deriveFlowChangeFeed(reconciliations);
+        const observedFindings = toObservedFindings(browserFindings);
+
+        // Team-gated per the spec. A plan without team features gets an empty
+        // array rather than a card it cannot use.
+        const canSeeActivity = Boolean(entitlement?.features?.[Feature.TEAM_COLLABORATION]);
+        const activity = canSeeActivity ? toActivityEntries(activationEvents) : [];
+
+        const behavior = deriveBehaviorSummary({
+          states: graphStates.map((state) => ({
+            name: state.name,
+            visitCount: state.visitCount,
+          })),
+          transitions: rankedTransitions.map((transition) => ({
+            from: transition.fromState.name,
+            to: transition.toState.name,
+            frequency: transition.frequency,
+          })),
+          declaredButNeverObserved: reconciliations.length
+            ? latestReconciliationPerFlow(reconciliations).reduce(
+                (sum, row) => sum + row.trueGapTransitions,
+                0,
+              )
+            : null,
+        });
+
         const payload: DashboardOverviewResponse = {
           lifecycle,
           maturity: deriveMaturity(analysisCount, sessionCount),
@@ -672,8 +767,10 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
               ? withBasisDelta(measured(observedEdges.length), baseline?.observedTransitions, basis)
               : measured(observedEdges.length),
             sessionCount: measured(sessionCount),
+            // Both origins under one headline, with the split preserved so
+            // "12 findings" cannot hide that eleven are rule inferences.
             findingsCount: applyTallyDelta(
-              measured(findingTally),
+              measured(combineFindingCounts(findingTally, observedFindings)),
               baseline?.openFindings,
               basis,
             ),
@@ -765,6 +862,10 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
           coverageHistory,
           coverageHistoryTruncated: snapshotSeries.length > COVERAGE_HISTORY_LIMIT,
           expectedVsObserved,
+          flowChanges,
+          behavior,
+          activity,
+          observedFindings,
           privacy: derivePrivacyStatus(protectedValueGroups),
           usage,
           liveDemonstration,

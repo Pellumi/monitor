@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('event-collector');
 
 import express, { Request, Response } from 'express';
-import { TellannEventSchema, EventBatchSchema, Topics, Feature } from '@tellann/shared';
+import { TellannEventSchema, EventBatchSchema, Topics, Feature, kafkaEnabled, telemetryTransport } from '@tellann/shared';
 import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
@@ -14,10 +14,14 @@ const MAX_EVENT_SIZE = 32 * 1024;  // 32 KB
 const MAX_REPLAY_SIZE = 128 * 1024; // 128 KB
 
 // ─── Kafka setup (conditional) ────────────────────────────────────────────────
-// When KAFKA_ENABLED=false (local dev / test) events are written directly to
-// Postgres as RawEvent rows. This allows the platform to run without a Kafka
-// broker and makes unit tests simpler.
-const KAFKA_ENABLED = process.env.KAFKA_ENABLED === 'true';
+// Kafka is opt-in. Without it, events are written directly to Postgres, which is
+// a first-class deployment rather than a test convenience: the completion sweep
+// and the graph projection both run off Postgres too.
+//
+// The flag is read through the shared helper because this service and the
+// consumers downstream of it used to disagree about what an unset variable
+// meant — see `kafkaEnabled` in @tellann/shared.
+const KAFKA_ENABLED = kafkaEnabled();
 
 let producer: { connect: () => Promise<void>; send: (opts: any) => Promise<void>; disconnect: () => Promise<void> } | null = null;
 let prisma: PrismaClient | null = null;
@@ -40,7 +44,7 @@ if (KAFKA_ENABLED) {
 } else {
   // Postgres fallback
   prisma = new PrismaClient();
-  console.log('[EventCollector] KAFKA_ENABLED=false — writing events to Postgres (RawEvent)');
+  console.log('[EventCollector] Kafka disabled — writing session events directly to Postgres');
 }
 
 // Entitlement checker — shares prisma instance when available, otherwise creates its own
@@ -227,7 +231,7 @@ app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'healthy',
     kafkaEnabled: KAFKA_ENABLED,
-    transport: KAFKA_ENABLED ? 'kafka' : 'postgres',
+    transport: telemetryTransport(),
   });
 });
 
@@ -325,7 +329,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(
-      `[EventCollector] Running on port ${PORT} | transport=${KAFKA_ENABLED ? 'kafka' : 'postgres'}`,
+      `[EventCollector] Running on port ${PORT} | transport=${telemetryTransport()}`,
     );
   });
 }

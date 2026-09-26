@@ -2900,6 +2900,9 @@ model ActivationEvent {
   occurredAt     DateTime @default(now())
 
   @@index([organizationId, eventName, occurredAt])
+  /// The activity feed reads one application's events newest-first; the index
+  /// above is keyed on the organisation and event name and cannot serve it.
+  @@index([applicationId, occurredAt])
 }
 
 // =============================================================================
@@ -3108,6 +3111,16 @@ model UserPreference {
   rememberLastApplication Boolean  @default(true)
   rememberLastEnvironment Boolean  @default(true)
   reportsOpenInNewTab     Boolean  @default(false)
+  /// Which dashboard layout to arrange the overview into.
+  ///
+  /// A working preference, not an identity: organisation roles are
+  /// OWNER/ADMIN/MEMBER/VIEWER and say nothing about whether someone reads the
+  /// overview as a developer or a product manager. Null means the default.
+  ///
+  /// A typed column rather than a blob, deliberately. The three Json
+  /// preference columns below are referenced only by the API's allowlist and
+  /// are read by nothing, so they are a pattern in name only.
+  dashboardPersona        String?
   graphPreferences        Json?
   replayPreferences       Json?
   reportPreferences       Json?

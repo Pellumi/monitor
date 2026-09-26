@@ -3,8 +3,8 @@
 import React from "react";
 import Link from "next/link";
 import { useDashboard } from "../core/dashboard-provider";
-import { FindingSeverity } from "../core/types";
 import { ArrowRight, AlertTriangle } from "lucide-react";
+import { SeverityTag } from "./severity-tag";
 
 export function MissingStatesCard() {
   const { data, state } = useDashboard();
@@ -75,23 +75,5 @@ export function MissingStatesCard() {
         </div>
       )}
     </div>
-  );
-}
-
-function SeverityTag({ severity }: { severity: FindingSeverity }) {
-  const styles = {
-    CRITICAL: "bg-red-500/10 text-red-400 border-red-500/20",
-    HIGH: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    MEDIUM: "bg-yellow-500/10 text-yellow-300 border-yellow-500/20",
-    LOW: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    INFO: "bg-neutral-500/10 text-neutral-400 border-neutral-500/20",
-  }[severity];
-
-  return (
-    <span
-      className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded border uppercase ${styles}`}
-    >
-      {severity}
-    </span>
   );
 }

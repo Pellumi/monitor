@@ -527,12 +527,33 @@ class TellannFrontendSDK {
         }
       } else {
         // Fallback to fetch
-        await fetch(`${target}/v1/events/batch`, {
+        const response = await fetch(`${target}/v1/events/batch`, {
           method: 'POST',
           headers,
           body: payload,
           keepalive: true, // Use keepalive for page unloads if beacon is unavailable
         });
+
+        // `fetch` only rejects on a network failure, so a rejected batch used to
+        // land here as a success: the catch below never ran, the events were
+        // never re-buffered, and nothing was logged outside debug mode. A
+        // collector that answered 400 — which is what an unrecognised envelope
+        // field or one malformed event in two hundred produces — silently lost
+        // the whole batch.
+        //
+        // A 4xx will not pass on a retry, so re-sending is pointless; say so
+        // loudly instead. A 5xx or a 429 is transient, so it goes back in the
+        // buffer for the next flush.
+        if (!response.ok) {
+          if (response.status >= 500 || response.status === 429) {
+            throw new Error(`Collector responded ${response.status}`);
+          }
+          console.error(
+            `[Tellann] Collector rejected ${eventsToSend.length} event(s) with `
+            + `${response.status}. The batch was dropped; it would not succeed on a retry.`,
+          );
+          return;
+        }
       }
     } catch (error) {
       if (this.config.debug) {

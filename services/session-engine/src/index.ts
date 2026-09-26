@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('session-engine');
 
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { TellannEvent, Topics, ConsumerGroups, Feature, isErrorEventType } from '@tellann/shared';
+import { TellannEvent, Topics, ConsumerGroups, Feature, isErrorEventType, kafkaEnabled } from '@tellann/shared';
 import { PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { createStorageClient, buildReplayKey } from '@tellann/storage';
@@ -376,8 +376,18 @@ async function drainPendingSessions(): Promise<void> {
 }
 
 async function start() {
-  if (process.env.KAFKA_ENABLED === 'false') {
-    console.log('[SessionEngine] KAFKA_ENABLED=false — Kafka consumer not started');
+  // Read through the shared helper, so this service and the collector upstream of
+  // it agree about what an unset variable means. They did not: the collector
+  // treated it as "write to Postgres" while this process treated it as "consume
+  // Kafka", so with no broker configured `producer.connect()` exhausted its
+  // retries and the catch below exited 1. It crash-looped, and because the
+  // orphan sweep is armed further down this function, nothing on the Postgres
+  // path was ever completed — no statistics, no replay, no graph.
+  if (!kafkaEnabled()) {
+    console.log(
+      '[SessionEngine] Kafka disabled — nothing to consume. Session completion for the '
+      + 'Postgres transport runs in background-workers.',
+    );
     return;
   }
 

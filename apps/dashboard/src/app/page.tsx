@@ -26,6 +26,11 @@ import { QualitySummary } from "@/components/dashboard/overview/quality-summary"
 import { CoverageSummary } from "@/components/dashboard/overview/coverage-summary";
 import { WorkflowCoverageList } from "@/components/dashboard/overview/workflow-coverage-list";
 import { ExpectedVsObserved } from "@/components/dashboard/overview/expected-vs-observed";
+import { FlowChangeFeed } from "@/components/dashboard/overview/flow-change-feed";
+import { WorkflowAttention } from "@/components/dashboard/overview/workflow-attention";
+import { BehaviorSummaryCard } from "@/components/dashboard/overview/behavior-summary";
+import { ObservedFindingsCard } from "@/components/dashboard/findings/observed-findings-card";
+import { ActivityFeed } from "@/components/dashboard/activity/activity-feed";
 import { MissingStatesCard } from "@/components/dashboard/findings/missing-states-card";
 import { MissingFlowsCard } from "@/components/dashboard/findings/missing-flows-card";
 import { SuggestedDemonstrationsCard } from "@/components/dashboard/findings/suggested-demonstrations";
@@ -115,10 +120,17 @@ function MainDashboardLayout() {
               <MissingStatesCard />
               <MissingFlowsCard />
             </div>
+            <ObservedFindingsCard />
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <CoverageTrend />
             <RecentReports />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <WorkflowAttention />
+              <BehaviorSummaryCard />
+            </div>
+            <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
               <ObservationStatusCard />
               <PrivacyStatusCard />
@@ -132,16 +144,23 @@ function MainDashboardLayout() {
           <div className="space-y-6">
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <SuggestedDemonstrationsCard />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <MissingStatesCard />
               <MissingFlowsCard />
             </div>
+            <ObservedFindingsCard />
             <WorkflowCoverageList />
             <QualitySummary />
             <RecentSessions />
             <CoverageTrend />
             <RecentReports />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <WorkflowAttention />
+              <BehaviorSummaryCard />
+            </div>
+            <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
               <ObservationStatusCard />
               <PrivacyStatusCard />
@@ -157,12 +176,19 @@ function MainDashboardLayout() {
             <CoverageTrend />
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <RecentReports />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <MissingStatesCard />
               <MissingFlowsCard />
             </div>
+            <ObservedFindingsCard />
             <EndpointHealth />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <WorkflowAttention />
+              <BehaviorSummaryCard />
+            </div>
+            <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
               <ObservationStatusCard />
               <PrivacyStatusCard />
@@ -180,13 +206,20 @@ function MainDashboardLayout() {
             </div>
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <QualitySummary />
             <SuggestedDemonstrationsCard />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <MissingStatesCard />
               <MissingFlowsCard />
             </div>
+            <ObservedFindingsCard />
             <RecentReports />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <WorkflowAttention />
+              <BehaviorSummaryCard />
+            </div>
+            <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
               <ObservationStatusCard />
               <PrivacyStatusCard />
@@ -208,6 +241,7 @@ function MainDashboardLayout() {
             <EndpointHealth />
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <RecentSessions />
           </div>
         );
@@ -218,6 +252,7 @@ function MainDashboardLayout() {
             <QualitySummary />
             <CoverageSummary />
             <ExpectedVsObserved />
+            <FlowChangeFeed />
             <CoverageTrend />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <GraphPreview />
@@ -227,10 +262,16 @@ function MainDashboardLayout() {
               <MissingStatesCard />
               <MissingFlowsCard />
             </div>
+            <ObservedFindingsCard />
             <SuggestedDemonstrationsCard />
             <RecentSessions />
             <EndpointHealth />
             <RecentReports />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <WorkflowAttention />
+              <BehaviorSummaryCard />
+            </div>
+            <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
               <ObservationStatusCard />
               <PrivacyStatusCard />

@@ -30,6 +30,14 @@ import {
   toCoverageHistory,
   toReportSummaries,
   withBasisDelta,
+  classifyFlowTrend,
+  combineFindingCounts,
+  deriveBehaviorSummary,
+  deriveFlowChangeFeed,
+  describeActivityEvent,
+  toActivityEntries,
+  toObservedFindings,
+  type BrowserFindingRow,
   type ReconciliationRow,
   type SnapshotPoint,
   type WorkflowCoverageInput,
@@ -731,4 +739,184 @@ test('reconciliation scores are scaled from 0..1 exactly once', () => {
     ],
   });
   assert.equal(result?.topGaps[0].expectedCoverage, 87.3);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Flow change feed
+// ─────────────────────────────────────────────────────────────
+
+function recon(over: Partial<ReconciliationRow> = {}): ReconciliationRow {
+  return {
+    id: 'r1',
+    flowId: 'flow-a',
+    flowName: 'Checkout',
+    qaRunId: null,
+    generatedAt: new Date('2026-09-20T00:00:00.000Z'),
+    expectedCoverageScore: 0.7,
+    transitionCoverageScore: 0.7,
+    trueGapCount: 0,
+    trueGapTransitions: 0,
+    undeclaredCount: 0,
+    undeclaredTransitions: 0,
+    ...over,
+  };
+}
+
+test('a flow reconciled once is NEW, not a hundred-point improvement', () => {
+  const [row] = deriveFlowChangeFeed([recon({ expectedCoverageScore: 0.73 })]);
+  assert.equal(row.trend, 'NEW');
+  assert.equal(row.previous, null);
+  assert.equal(row.delta, null);
+  assert.equal(row.current, 73);
+});
+
+test('a movement below the threshold is stable, not an improvement', () => {
+  assert.equal(classifyFlowTrend(73.4, 73.0), 'STABLE');
+  assert.equal(classifyFlowTrend(73.0, 73.4), 'STABLE');
+  assert.equal(classifyFlowTrend(75, 73), 'IMPROVED');
+  assert.equal(classifyFlowTrend(71, 73), 'DECLINED');
+});
+
+test('only the newest two reports per flow are compared', () => {
+  const rows = [
+    recon({ id: 'r-old', generatedAt: new Date('2026-09-01T00:00:00.000Z'), expectedCoverageScore: 0.1 }),
+    recon({ id: 'r-new', generatedAt: new Date('2026-09-20T00:00:00.000Z'), expectedCoverageScore: 0.8 }),
+    recon({ id: 'r-mid', generatedAt: new Date('2026-09-10T00:00:00.000Z'), expectedCoverageScore: 0.6 }),
+  ];
+  const [row] = deriveFlowChangeFeed(rows);
+  assert.equal(row.current, 80);
+  assert.equal(row.previous, 60, 'the middle report is the baseline, not the oldest');
+  assert.equal(row.delta, 20);
+});
+
+test('regressions lead the feed', () => {
+  const pair = (flowId: string, older: number, newer: number) => [
+    recon({ id: `${flowId}-1`, flowId, flowName: flowId, generatedAt: new Date('2026-09-01T00:00:00.000Z'), expectedCoverageScore: older }),
+    recon({ id: `${flowId}-2`, flowId, flowName: flowId, generatedAt: new Date('2026-09-20T00:00:00.000Z'), expectedCoverageScore: newer }),
+  ];
+  const feed = deriveFlowChangeFeed([
+    ...pair('improved', 0.5, 0.9),
+    ...pair('declined', 0.9, 0.5),
+    ...pair('stable', 0.7, 0.7),
+  ]);
+  assert.equal(feed[0].flowName, 'declined');
+  assert.equal(feed[feed.length - 1].flowName, 'stable');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Activity
+// ─────────────────────────────────────────────────────────────
+
+test('known events read as sentences', () => {
+  assert.equal(describeActivityEvent('DEMO_COMPLETED'), 'A demonstration was completed');
+  assert.equal(describeActivityEvent('SDK_CONNECTED'), 'SDK connected');
+});
+
+test('an unknown event degrades to something readable, never a raw token', () => {
+  // Other services add event names without touching this file.
+  assert.equal(describeActivityEvent('SOMETHING_NEW_HAPPENED'), 'Something new happened');
+  assert.equal(describeActivityEvent(''), 'Activity recorded');
+});
+
+test('activity entries carry both the raw name and the sentence', () => {
+  const [entry] = toActivityEntries([
+    { id: 'a1', eventName: 'REPORT_GENERATED', occurredAt: new Date('2026-09-26T09:00:00.000Z') },
+  ]);
+  assert.equal(entry.eventName, 'REPORT_GENERATED');
+  assert.equal(entry.description, 'A report was generated');
+  assert.equal(entry.occurredAt, '2026-09-26T09:00:00.000Z');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Behaviour summary
+// ─────────────────────────────────────────────────────────────
+
+test('an application with no observations has no behaviour summary', () => {
+  assert.equal(
+    deriveBehaviorSummary({ states: [], transitions: [], declaredButNeverObserved: null }),
+    null,
+  );
+});
+
+test('hot and cold lists never contain the same row', () => {
+  // With fewer states than twice the limit, naive slicing would report the same
+  // state as both the most and the least visited.
+  const summary = deriveBehaviorSummary({
+    states: [
+      { name: 'HOME', visitCount: 90 },
+      { name: 'CART', visitCount: 40 },
+      { name: 'HELP', visitCount: 1 },
+    ],
+    transitions: [],
+    declaredButNeverObserved: null,
+    limit: 2,
+  });
+  assert.deepEqual(summary?.hottestStates.map((s) => s.name), ['HOME', 'CART']);
+  assert.deepEqual(summary?.coldestStates.map((s) => s.name), ['HELP']);
+});
+
+test('the behaviour summary ranks by the counters that exist', () => {
+  const summary = deriveBehaviorSummary({
+    states: [],
+    transitions: [
+      { from: 'A', to: 'B', frequency: 2 },
+      { from: 'B', to: 'C', frequency: 50 },
+    ],
+    declaredButNeverObserved: 4,
+    limit: 1,
+  });
+  assert.equal(summary?.hottestTransitions[0].from, 'B');
+  assert.equal(summary?.coldestTransitions[0].from, 'A');
+  assert.equal(summary?.declaredButNeverObserved, 4);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Observed findings
+// ─────────────────────────────────────────────────────────────
+
+function browserFinding(over: Partial<BrowserFindingRow> = {}): BrowserFindingRow {
+  return {
+    id: 'bf-1',
+    runId: 'run-1',
+    category: 'FRONTEND_PAGE_CRASH',
+    severity: 'CRITICAL',
+    title: 'Checkout page crashed',
+    description: 'The page threw during render.',
+    recommendation: null,
+    relatedStateName: null,
+    createdAt: new Date('2026-09-26T10:00:00.000Z'),
+    ...over,
+  };
+}
+
+test('observed findings carry their origin and keep their severity', () => {
+  const [finding] = toObservedFindings([browserFinding()]);
+  assert.equal(finding.origin, 'BROWSER_RUN');
+  assert.equal(finding.severity, 'CRITICAL');
+  assert.equal(finding.runId, 'run-1');
+});
+
+test('the combined count keeps both origins visible and still sums', () => {
+  const ruleTally = { total: 11, critical: 0, high: 5, medium: 4, low: 2 };
+  const observed = toObservedFindings([
+    browserFinding({ id: 'a', severity: 'CRITICAL' }),
+    browserFinding({ id: 'b', severity: 'HIGH' }),
+  ]);
+  const combined = combineFindingCounts(ruleTally, observed);
+
+  assert.equal(combined.total, 13);
+  assert.deepEqual(combined.byOrigin, { ruleInference: 11, browserRun: 2 });
+  assert.equal(combined.critical, 1);
+  assert.equal(combined.high, 6);
+  assert.equal(
+    combined.critical + combined.high + combined.medium + combined.low,
+    combined.total,
+  );
+});
+
+test('no observed findings leaves the rule tally untouched', () => {
+  const ruleTally = { total: 3, critical: 0, high: 1, medium: 1, low: 1 };
+  const combined = combineFindingCounts(ruleTally, []);
+  assert.equal(combined.total, 3);
+  assert.deepEqual(combined.byOrigin, { ruleInference: 3, browserRun: 0 });
 });

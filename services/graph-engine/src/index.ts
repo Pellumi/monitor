@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('graph-engine');
 
 import { Kafka, EachMessagePayload } from 'kafkajs';
-import { Services, Topics, ConsumerGroups, TellannEvent } from '@tellann/shared';
+import { Services, Topics, ConsumerGroups, TellannEvent, kafkaEnabled } from '@tellann/shared';
 import { PrismaClient } from '@tellann/db';
 import { getRuleSet, ApplicationRuleSet, reconstructRuleSet } from '@tellann/rules';
 
@@ -343,8 +343,15 @@ async function processCompletedSession({ message }: EachMessagePayload) {
 }
 
 async function start() {
-  if (process.env.KAFKA_ENABLED === 'false') {
-    console.log('[GraphEngine] KAFKA_ENABLED=false — Kafka consumer not started (set KAFKA_ENABLED=true to enable)');
+  // Shared helper, so an unset variable cannot mean "consume Kafka" here while it
+  // means "write to Postgres" in the collector. Without a broker this process used
+  // to fail to connect and exit 1, which is why the Postgres transport produced no
+  // observed graph at all. Projection for that transport runs in background-workers.
+  if (!kafkaEnabled()) {
+    console.log(
+      '[GraphEngine] Kafka disabled — nothing to consume. Session projection for the '
+      + 'Postgres transport runs in background-workers.',
+    );
     return;
   }
 

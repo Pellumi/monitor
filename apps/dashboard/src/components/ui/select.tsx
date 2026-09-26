@@ -43,6 +43,8 @@ interface SelectContextType {
   isOpen: boolean;
   setIsOpen: (isOpen: boolean) => void;
   containerRef: RefObject<HTMLDivElement | null>;
+  /** So closing can put focus back where the keyboard user left it. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
 }
 
 // Create context with initial value and type
@@ -60,6 +62,80 @@ interface SelectProps {
 export function Select({ value, onValueChange, children, width = "", className }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  /**
+   * Keyboard navigation.
+   *
+   * Options are real buttons, so focus is moved between them directly rather
+   * than tracked with `aria-activedescendant` — the DOM stays the source of
+   * truth and screen readers announce each option as it is reached.
+   *
+   * Handled on the container so it works whether focus is on the trigger, an
+   * option, or the search box inside the list.
+   */
+  const moveFocus = (direction: 1 | -1 | 'first' | 'last') => {
+    const options = Array.from(
+      containerRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [],
+    ).filter((option) => !option.disabled);
+    if (options.length === 0) return;
+
+    if (direction === 'first') {
+      options[0].focus();
+      return;
+    }
+    if (direction === 'last') {
+      options[options.length - 1].focus();
+      return;
+    }
+
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    if (current === -1) {
+      (direction === 1 ? options[0] : options[options.length - 1]).focus();
+      return;
+    }
+    // Wraps, which is what a listbox is expected to do.
+    const next = (current + direction + options.length) % options.length;
+    options[next].focus();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    switch (event.key) {
+      case 'Escape':
+        if (!isOpen) return;
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        if (!isOpen) setIsOpen(true);
+        // Let the list render before reaching into it.
+        requestAnimationFrame(() => moveFocus(isOpen ? 1 : 'first'));
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        if (!isOpen) setIsOpen(true);
+        requestAnimationFrame(() => moveFocus(isOpen ? -1 : 'last'));
+        break;
+      case 'Home':
+        if (!isOpen) return;
+        event.preventDefault();
+        moveFocus('first');
+        break;
+      case 'End':
+        if (!isOpen) return;
+        event.preventDefault();
+        moveFocus('last');
+        break;
+      case 'Tab':
+        // Tabbing away closes, matching what every native select does.
+        if (isOpen) setIsOpen(false);
+        break;
+      default:
+        break;
+    }
+  };
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -83,9 +159,15 @@ export function Select({ value, onValueChange, children, width = "", className }
         isOpen,
         setIsOpen,
         containerRef,
+        triggerRef,
       }}
     >
-      <div ref={containerRef} className={cn("relative", isOpen && "z-50", className)} style={{ width }}>
+      <div
+        ref={containerRef}
+        onKeyDown={handleKeyDown}
+        className={cn("relative", isOpen && "z-50", className)}
+        style={{ width }}
+      >
         {children}
       </div>
     </SelectContext.Provider>
@@ -108,14 +190,17 @@ export function SelectTrigger({ children, id, name, className, disabled }: Selec
     throw new Error("SelectTrigger must be used within a Select component");
   }
 
-  const { isOpen, setIsOpen } = context;
+  const { isOpen, setIsOpen, triggerRef } = context;
 
   return (
     <button
+      ref={triggerRef}
       id={id}
       name={name}
       type="button"
       disabled={disabled}
+      aria-haspopup="listbox"
+      aria-expanded={isOpen}
       onClick={() => setIsOpen(!isOpen)}
       className={cn(
         "flex items-center justify-between w-full px-3 py-2 border border-[#262626] rounded bg-black text-white text-sm cursor-pointer focus:border-white focus:outline-none focus:ring-1 focus:ring-white disabled:opacity-50 disabled:cursor-not-allowed transition-all",
@@ -296,15 +381,21 @@ export function SelectContent({ children, className }: SelectContentProps) {
             <ChevronUp className="h-4 w-4 text-white animate-bounce" />
           </div>
         )}
+        {/* The options themselves are the listbox. The wrappers above are
+            chrome — a search box and scroll affordances — and must not sit
+            inside it, or a screen reader announces them as options. */}
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          role="listbox"
           className="max-h-[150px] overflow-y-auto no-scrollbar relative"
         >
           {filteredChildren.length > 0 ? (
             filteredChildren
           ) : (
-            <div className="p-2 text-center text-[#8e9192] text-xs">No results found</div>
+            <div role="presentation" className="p-2 text-center text-[#8e9192] text-xs">
+              No results found
+            </div>
           )}
         </div>
         {showScrollDown && (
@@ -331,18 +422,33 @@ export function SelectItem({ value, children, className }: SelectItemProps) {
     throw new Error("SelectItem must be used within a Select component");
   }
 
-  const { onValueChange, setIsOpen } = context;
+  const { onValueChange, setIsOpen, value: selectedValue, triggerRef } = context;
 
   const handleSelect = () => {
     onValueChange(value);
     setIsOpen(false);
+    // Focus goes back to the trigger, or a keyboard user is stranded on an
+    // element that has just been unmounted.
+    triggerRef.current?.focus();
   };
 
   return (
     <button
       type="button"
+      role="option"
+      aria-selected={selectedValue === value}
       onClick={handleSelect}
-      className={cn("block w-full px-4 py-2 text-left hover:bg-[#262626] text-white text-xs cursor-pointer transition-colors", className)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handleSelect();
+        }
+      }}
+      className={cn(
+        "block w-full px-4 py-2 text-left hover:bg-[#262626] text-white text-xs cursor-pointer transition-colors",
+        "focus:outline-none focus:bg-[#262626] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white",
+        className,
+      )}
     >
       {children}
     </button>
