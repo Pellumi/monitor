@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from '@tellann/db';
 import type { TellannEvent } from '@tellann/shared';
 import { isUniqueViolation } from './prisma-errors';
+import { applyPrivacyFloor, resolveIdentity, resolvePrivacyFloor } from './identity';
 
 /**
  * Persisting one telemetry event.
@@ -13,7 +14,12 @@ import { isUniqueViolation } from './prisma-errors';
  */
 
 export type IngestOutcome =
-  | { accepted: true; sessionId: string; created: boolean }
+  | {
+      accepted: true;
+      sessionId: string;
+      created: boolean;
+      identity: { endUserId: string | null; aliasCreated: boolean };
+    }
   | { accepted: false; reason: 'UNKNOWN_APPLICATION' | 'MALFORMED' };
 
 export interface IngestOptions {
@@ -219,11 +225,37 @@ export async function applyEventToSession(
     created = false;
   }
 
+  // Identity, after the session row exists so there is something to attribute to.
+  // The floor runs here rather than at the edge of the read plane: raw identity must
+  // never reach Kafka, a log line, or the outbox payload.
+  let identity: { endUserId: string | null; aliasCreated: boolean } = {
+    endUserId: null,
+    aliasCreated: false,
+  };
+  if (event.anonymousId || event.endUserExternalId) {
+    const floor = await resolvePrivacyFloor(prisma, event.applicationId);
+    const floored = applyPrivacyFloor(floor, {
+      externalId: event.endUserExternalId ?? null,
+      traits: event.endUserTraits ?? null,
+    });
+    identity = await resolveIdentity(prisma, {
+      applicationId: event.applicationId,
+      sessionId: event.sessionId,
+      anonymousId: event.anonymousId ?? null,
+      externalId: floored.externalId,
+      externalIdHash: floored.externalIdHash,
+      traits: floored.traits,
+      // The event's own timestamp, never now(): an out-of-order or replayed batch
+      // must not overwrite newer traits with older ones.
+      at: timestamp,
+    });
+  }
+
   if (environmentId) {
     await recordActivation(prisma, event, application, environmentId);
   }
 
-  return { accepted: true, sessionId: event.sessionId, created };
+  return { accepted: true, sessionId: event.sessionId, created, identity };
 }
 
 export interface IngestBatchResult {
@@ -231,6 +263,8 @@ export interface IngestBatchResult {
   duplicates: number;
   rejected: Array<{ eventId: string; reason: 'UNKNOWN_APPLICATION' | 'MALFORMED' }>;
   sessionIds: string[];
+  /** Browsers linked to a person for the first time, so a back-link can be queued. */
+  aliasesCreated: number;
 }
 
 /** Applies a batch, sharing one application lookup across it. */
@@ -239,7 +273,9 @@ export async function applyEventsToSessions(
   events: TellannEvent[],
 ): Promise<IngestBatchResult> {
   const applicationCache = new Map<string, ApplicationRow | null>();
-  const result: IngestBatchResult = { accepted: 0, duplicates: 0, rejected: [], sessionIds: [] };
+  const result: IngestBatchResult = {
+    accepted: 0, duplicates: 0, rejected: [], sessionIds: [], aliasesCreated: 0,
+  };
   const sessionIds = new Set<string>();
 
   for (const event of events) {
@@ -250,6 +286,7 @@ export async function applyEventsToSessions(
     }
     result.accepted += 1;
     if (!outcome.created) result.duplicates += 1;
+    if (outcome.identity.aliasCreated) result.aliasesCreated += 1;
     sessionIds.add(outcome.sessionId);
   }
 

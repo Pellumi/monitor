@@ -12,6 +12,23 @@ export type EventType =
   | 'VISUAL_ASSERTION_FAILED' | 'ACCESSIBILITY_FINDING' | 'INSTRUMENTATION_VERIFIED'
   | 'REPOSITORY_SNAPSHOT_CREATED' | 'EXPECTED_FLOW_VERSION_SELECTED';
 
+/**
+ * What the page is, rather than what happened on it. Captured once per session and
+ * attached to every event; stored once, on the session row, never per event.
+ */
+export interface ClientContext {
+  deviceType?: 'desktop' | 'mobile' | 'tablet' | 'bot' | 'unknown';
+  browserName?: string;
+  browserVersion?: string;
+  osName?: string;
+  osVersion?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  locale?: string;
+  timezone?: string;
+  releaseVersion?: string;
+}
+
 export interface TellannEvent {
   eventId: string;
   sessionId: string;
@@ -27,4 +44,16 @@ export interface TellannEvent {
   eventType: EventType;
   timestamp: string;
   metadata: Record<string, any>;
+
+  // ── Envelope 1.1 ───────────────────────────────────────────────────────
+  /** Stable per-browser id, from localStorage. */
+  anonymousId?: string | null;
+  /** The customer's own user id, as asserted by identify(). A proposal: the server
+   *  applies the application's privacy floor before storing anything. */
+  endUserExternalId?: string | null;
+  endUserTraits?: Record<string, any> | null;
+  context?: ClientContext | null;
+  /** Sampling is decided per session, never per event. */
+  sampled?: boolean;
+  sampleRate?: number;
 }

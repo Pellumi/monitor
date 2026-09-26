@@ -986,6 +986,8 @@ model Application {
   promotionDecisions     PromotionDecision[]
   recommendationEvidence RecommendationEvidence[]
   intentNormalizations   IntentNormalizationEntry[]
+  endUsers               EndUser[]
+  privacySetting         ApplicationPrivacySetting?
 }
 
 model ApplicationProfile {
@@ -1024,6 +1026,14 @@ model Session {
   /// Stable per-browser id from the SDK's localStorage. Present on anonymous
   /// traffic, which is most traffic.
   anonymousId  String?
+  /// The LAST identity asserted during this session, with identifiedAt recording
+  /// the first. A session is one browser visit; if it identifies as A, logs out and
+  /// identifies as B, the honest model would split it -- but sessionId is the
+  /// correlation key for replay chunks, observations and the completion claim, so
+  /// splitting is worse. Per-event truth stays on SessionEvent, and the filterable
+  /// set of everyone seen in the session lives on SessionFacet.endUserIds.
+  endUserId    String?
+  endUser      EndUser?  @relation(fields: [endUserId], references: [id], onDelete: SetNull)
   /// When identity was FIRST asserted in this session. Kept separately from the
   /// identity itself because that is last-write-wins: a shared device can identify
   /// as one person, log out, and identify as another within one browser visit.
@@ -1059,6 +1069,87 @@ model Session {
 
   @@index([qaRunId])
   @@index([applicationId, environmentId, startTime])
+  @@index([endUserId, startTime])
+}
+
+/// One of a client's own users, as asserted by the SDK's identify().
+///
+/// Deliberately has NO counters. Anything incremented is wrong under Kafka's
+/// `fromBeginning: true` replay and under at-least-once outbox delivery; session
+/// counts are derived from Session/SessionFacet at read time instead.
+model EndUser {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  /// The client's own id for this person. Null when the application's privacy mode
+  /// is HASHED, so the row still groups sessions without storing an identifier.
+  externalId      String?
+  /// Always populated: sha256(perApplicationSalt || externalId). Search and
+  /// stitching key in every privacy mode, so switching modes cannot fragment an
+  /// identity or change what a query matches.
+  externalIdHash  String
+  traits          Json      @default("{}")
+  /// The EVENT timestamp that produced the current traits, never now(). Without it
+  /// a replayed or out-of-order batch resurrects stale traits.
+  traitsUpdatedAt DateTime?
+  firstSeenAt     DateTime
+  lastSeenAt      DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  aliases  EndUserAlias[]
+  sessions Session[]
+
+  @@index([applicationId, externalIdHash])
+  @@index([applicationId, lastSeenAt])
+}
+
+/// A browser that has been seen to belong to an end user.
+///
+/// The unique is on the TRIPLE, not on (applicationId, anonymousId): a shared
+/// device legitimately maps one browser to several people over time, and a
+/// pair-unique would destroy the previous mapping on every logout and silently
+/// re-attribute that person's earlier sessions.
+model EndUserAlias {
+  id            String    @id @default(uuid())
+  applicationId String
+  anonymousId   String
+  endUserId     String
+  endUser       EndUser   @relation(fields: [endUserId], references: [id], onDelete: Cascade)
+  firstSeenAt   DateTime
+  lastSeenAt    DateTime
+  /// Null means the historical back-link for this pair has not run. Doubles as the
+  /// work queue, which is why it is indexed.
+  backlinkedAt  DateTime?
+
+  @@unique([applicationId, anonymousId, endUserId])
+  @@index([applicationId, anonymousId, lastSeenAt])
+  @@index([backlinkedAt])
+}
+
+/// What an application is allowed to have stored about its users.
+///
+/// Defaults to HASHED, not RAW. Moving identity into the envelope took traits out of
+/// the SDK sanitizer's reach, so without a server-side floor an SDK upgrade alone
+/// would start storing PII for an application whose owner never visited a settings
+/// page. Turning on RAW is an explicit, audited act.
+model ApplicationPrivacySetting {
+  id            String      @id @default(uuid())
+  applicationId String      @unique
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  /// RAW | HASHED | DISABLED. DISABLED drops identity entirely; anonymousId still
+  /// flows, so sessions still group per browser.
+  identityMode     String   @default("HASHED")
+  /// Per-application, generated once, never leaves the server.
+  identitySalt     String
+  /// Trait keys allowed through. An ALLOW-list: the deny-list approach is precisely
+  /// what produced the `userid` collision that destroyed identity in the first place.
+  allowedTraitKeys String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model SessionEvent {
@@ -3115,6 +3206,15 @@ enum AuditAction {
   BILLING_PROFILE_UPDATED
   ENTERPRISE_SALES_REQUESTED
   RETENTION_DATA_DELETED
+
+  // ─── Privacy ──────────────────────────────────────
+  // Turning an application's identity mode to RAW means the platform starts storing
+  // the customer's own user identifiers. That is a decision someone made, so it is
+  // recorded as one rather than inferred later from a settings row.
+  PRIVACY_IDENTITY_MODE_CHANGED
+  PRIVACY_TRAIT_ALLOWLIST_CHANGED
+  END_USER_ERASED
+
   PROGRAMMATIC_TOKEN_CREATED
   PROGRAMMATIC_TOKEN_REVOKED
 

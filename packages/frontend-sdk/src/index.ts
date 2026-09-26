@@ -3,6 +3,16 @@ import type { EventType, TellannEvent } from './event-types';
 export type { EventType, TellannEvent } from './event-types';
 import { WorkflowTracker } from './workflow-tracker.js';
 import { setupAutoTrack, sanitizeMetadata } from './auto-track.js';
+import { setupNetworkTracking } from './network-track.js';
+import { captureClientContext } from './client-context.js';
+import {
+  clearStoredSession,
+  rememberIdentity,
+  resolveAnonymousId,
+  resolveSession,
+  touchSession,
+} from './session-store.js';
+import type { ClientContext } from './event-types.js';
 
 const CLIENT_STATE_SECRET_KEY = /password|passwd|passcode|secret|token|authorization|cookie|session|auth|private.?key|cvv|cvc|card/i;
 
@@ -107,6 +117,24 @@ export interface TellannConfig {
   traceId?: string;
   agentVersion?: string;
   instrumentationManifestVersion?: string;
+  /**
+   * The build of the customer's application. Makes "did this start with the
+   * Tuesday deploy?" answerable, which nothing in the product could ask before.
+   */
+  releaseVersion?: string;
+  /**
+   * Fraction of sessions to capture, 0..1. Decided once per session, never per
+   * event: an event-sampled session is uninterpretable as a funnel.
+   */
+  sampleRate?: number;
+  /** Capture the application's own fetch/XHR calls. Default true. */
+  autoTrackNetwork?: boolean;
+  /**
+   * Extra origins that count as the application -- an API on another subdomain.
+   * Same-origin is always included; anything else is left alone, because the
+   * session id is ours to know and not a third party's.
+   */
+  networkOrigins?: string[];
 }
 
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit for standard events
@@ -119,6 +147,18 @@ class TellannFrontendSDK {
   private flushInterval: number | null = null;
   private workflowTracker = new WorkflowTracker();
   private teardownAutoTrack: (() => void) | null = null;
+  private teardownNetworkTrack: (() => void) | null = null;
+  private teardownLifecycle: (() => void) | null = null;
+
+  /** Stable per-browser id. Null when localStorage is unusable. */
+  private anonymousId: string | null = null;
+  /** The identity in force, carried in the envelope rather than in metadata. */
+  private endUserExternalId: string | null = null;
+  private endUserTraits: Record<string, any> | null = null;
+  private clientContext: ClientContext = {};
+  /** Whether this session was selected for capture, and with what probability. */
+  private sampled = true;
+  private sampleRate = 1;
 
   initialize(config: TellannConfig) {
     this.config = {
@@ -129,9 +169,14 @@ class TellannFrontendSDK {
       debug: false,
       flushIntervalMs: 5000,
       maxBufferSize: 200,
+      autoTrackNetwork: true,
+      sampleRate: 1,
       ...config
     };
 
+    this.anonymousId = resolveAnonymousId(uuidv4);
+    this.clientContext = captureClientContext(this.config.releaseVersion ?? null);
+    this.resolveSampling();
     this.startSession();
     this.startFlushInterval();
 
@@ -143,13 +188,62 @@ class TellannFrontendSDK {
       errorTracking: this.config.errorTracking
     });
 
+    // Nothing patched fetch or XHR before, so API_REQUEST only existed where the
+    // customer had also installed the backend SDK -- and the correlation header that
+    // SDK reads was never sent, so the join both halves were built for never
+    // happened by default.
+    if (this.config.autoTrackNetwork !== false) {
+      this.teardownNetworkTrack = setupNetworkTracking({
+        endpoint: this.config.endpoint,
+        allowedOrigins: this.config.networkOrigins,
+        track: (eventType, metadata) => this.trackEvent(eventType, metadata),
+        sessionId: () => this.sessionId,
+      });
+    }
+
+    this.installLifecycleHandlers();
+
     if (this.config.debug) {
       console.log('[Tellann] Initialized and auto-tracking started', this.config);
     }
   }
 
+  /**
+   * Decides once, per session, whether this session is captured.
+   *
+   * Per-session and not per-event: a session whose events were sampled individually
+   * cannot be read as a funnel, because the gaps are indistinguishable from steps the
+   * user never took.
+   */
+  private resolveSampling(): void {
+    const rate = Math.min(1, Math.max(0, this.config?.sampleRate ?? 1));
+    this.sampleRate = rate;
+    this.sampled = rate >= 1 ? true : Math.random() < rate;
+  }
+
+  /**
+   * Starts or resumes the session for this page load.
+   *
+   * Previously this minted a fresh uuid every time with nothing persisted, so every
+   * page load was a new session: one journey through a multi-page app became a dozen
+   * disconnected four-event sessions, each closed by the server idle timeout mid-task.
+   */
   startSession() {
-    this.sessionId = this.config?.sessionId ?? uuidv4();
+    const resolution = resolveSession({
+      newId: uuidv4,
+      pinnedId: this.config?.sessionId ?? null,
+      identity: this.endUserExternalId,
+    });
+    this.sessionId = resolution.sessionId;
+
+    if (resolution.isNew) {
+      this.trackEvent('SESSION_STARTED', {
+        reason: resolution.reason,
+        url: window.location.href,
+        referrer: document.referrer,
+      });
+    }
+
     this.trackEvent('PAGE_VIEW', {
       url: window.location.href,
       title: document.title,
@@ -158,8 +252,36 @@ class TellannFrontendSDK {
   }
 
   endSession() {
+    if (this.sessionId) this.trackEvent('SESSION_ENDED', { reason: 'EXPLICIT' });
+    clearStoredSession();
     this.sessionId = null;
     this.flush();
+  }
+
+  /**
+   * Flushes on the events that actually precede a page going away.
+   *
+   * `beforeunload` is unreliable on mobile, where a backgrounded tab is often killed
+   * without it. `pagehide` and a `visibilitychange` to hidden are the pair that do
+   * fire -- and they are exactly when the last actions before a crash would otherwise
+   * be lost from the buffer.
+   */
+  private installLifecycleHandlers(): void {
+    const onHide = () => {
+      touchSession();
+      void this.flush();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') onHide();
+    };
+
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    this.teardownLifecycle = () => {
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }
 
   teardown() {
@@ -170,6 +292,17 @@ class TellannFrontendSDK {
     if (this.teardownAutoTrack) {
       this.teardownAutoTrack();
       this.teardownAutoTrack = null;
+    }
+    // Restoring the fetch/XHR patches matters more than the listeners: leaving them
+    // installed after teardown would keep a reference to a torn-down SDK alive and
+    // keep decorating the application's requests.
+    if (this.teardownNetworkTrack) {
+      this.teardownNetworkTrack();
+      this.teardownNetworkTrack = null;
+    }
+    if (this.teardownLifecycle) {
+      this.teardownLifecycle();
+      this.teardownLifecycle = null;
     }
     this.endSession();
   }
@@ -212,10 +345,23 @@ class TellannFrontendSDK {
       agentVersion: this.config.agentVersion ?? null,
       instrumentationManifestVersion: this.config.instrumentationManifestVersion ?? null,
       source: 'frontend-sdk',
-      eventVersion: '1.0',
+      eventVersion: '1.1',
       eventType,
       timestamp: new Date().toISOString(),
       metadata: sanitizedMetadata,
+
+      // Envelope, not metadata -- which is the whole point. sanitizeMetadata never
+      // sees these, so identity survives; and because it never sees them, the
+      // server-side privacy floor is what governs them.
+      anonymousId: this.anonymousId,
+      endUserExternalId: this.endUserExternalId,
+      endUserTraits: this.endUserTraits,
+      // Repeated on every event rather than sent once: a scheme that relied on the
+      // first event surviving fails the moment a page load produces two batches and
+      // the first is rejected. ~220 bytes against a 32 KB limit.
+      context: this.clientContext,
+      sampled: this.sampled,
+      sampleRate: this.sampleRate,
     };
 
     // Payload Size Enforcement
@@ -236,6 +382,10 @@ class TellannFrontendSDK {
       console.error('[Tellann] Failed to compute size of event, discarding', err);
       return;
     }
+
+    // A session that was not selected for capture produces nothing at all. Checked
+    // here rather than at flush time so an unsampled session costs no memory either.
+    if (!this.sampled) return;
 
     this.eventBuffer.push(event);
 
@@ -462,12 +612,51 @@ class TellannFrontendSDK {
     });
   }
 
-  identifyUser(userId: string, traits?: Record<string, any>) {
-    this.trackEvent('BUSINESS_EVENT', {
-      businessEventType: 'USER_IDENTIFIED',
-      userId,
-      traits: traits || {},
-    });
+  /**
+   * Associates this session with one of the application's own users.
+   *
+   * This used to write `{ businessEventType: 'USER_IDENTIFIED', userId }` into a
+   * BUSINESS_EVENT's metadata -- where `sanitizeMetadata`'s identifier rule matched
+   * `'userId'.toLowerCase() === 'userid'` and replaced it with the literal string
+   * `'[PSEUDONYMIZED BY QA INGESTION]'`. Identity was destroyed in the page, before
+   * it was ever sent, for as long as the method existed.
+   *
+   * The fix is layering, not a weaker rule: that rule protects customers who put
+   * identifiers into arbitrary business-event payloads and stays exactly as it was.
+   * Identity is envelope data, which the sanitizer does not touch -- and therefore
+   * the server-side privacy floor is what decides whether it is stored raw, hashed,
+   * or not at all.
+   */
+  identifyUser(externalId: string, traits?: Record<string, any>) {
+    const next = String(externalId).slice(0, 256);
+    const changed = this.endUserExternalId !== null && this.endUserExternalId !== next;
+
+    this.endUserExternalId = next;
+    this.endUserTraits = traits ?? null;
+
+    // A different person on the same browser is a different visit. Blending them
+    // would attribute one person's behaviour to another, which is worse than an
+    // extra session.
+    if (changed) {
+      this.trackEvent('SESSION_ENDED', { reason: 'IDENTITY_CHANGED' });
+      void this.flush();
+      clearStoredSession();
+      this.startSession();
+    }
+
+    rememberIdentity(next);
+    this.trackEvent('USER_IDENTIFIED', {});
+  }
+
+  /** Forgets the identity, leaving the browser anonymous again. */
+  resetIdentity() {
+    this.endUserExternalId = null;
+    this.endUserTraits = null;
+    rememberIdentity(null);
+    this.trackEvent('SESSION_ENDED', { reason: 'IDENTITY_RESET' });
+    void this.flush();
+    clearStoredSession();
+    this.startSession();
   }
 
   private startFlushInterval() {

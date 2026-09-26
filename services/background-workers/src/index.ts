@@ -22,6 +22,7 @@ import {
   runSessionCompletionRelay,
   runSessionCompletionSweep,
 } from './session-completion-worker';
+import { runEndUserBacklink, runEndUserPrune } from './end-user-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
 import { runBillingCycle } from './billing-cycle-worker';
@@ -437,6 +438,10 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   { name: 'session-completion-sweep',        handler: () => runSessionCompletionSweep(prisma).then(() => undefined), every: 30_000 },
   { name: 'session-completion-relay',        handler: () => runSessionCompletionRelay(prisma), every: 5_000 },
   { name: 'empty-session-prune',             handler: () => runEmptySessionPrune(prisma).then(() => undefined), pattern: '0 3 * * *' },
+  // Attributing a browser's earlier anonymous sessions once someone identifies.
+  // Enqueued because a kiosk anonymousId can have thousands of prior sessions.
+  { name: 'end-user-backlink',               handler: () => runEndUserBacklink(prisma).then(() => undefined), every: 30_000 },
+  { name: 'end-user-prune',                  handler: () => runEndUserPrune(prisma).then(() => undefined), pattern: '0 4 * * 0' },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },

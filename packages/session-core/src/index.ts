@@ -1,6 +1,7 @@
 export * from './deps';
 export * from './prisma-errors';
 export * from './load-session';
+export * from './identity';
 export * from './ingest-event';
 export * from './complete-session';
 export * from './sweep';

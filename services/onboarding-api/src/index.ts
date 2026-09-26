@@ -18,6 +18,7 @@ import {
   normalizeFrequency,
 } from '@tellann/email';
 import { createNotificationRouter, notificationHub } from './notification-routes';
+import { createPrivacyRouter } from './privacy-routes';
 import { generateAiFlowDraft } from '@tellann/ai';
 import { getActiveRulesets, getDomainTemplate, inferDomain, inferDomainTemplate } from '@tellann/rules';
 import { writeAuditLog, extractAuditContext } from '@tellann/authz';
@@ -328,6 +329,10 @@ app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppO
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));
 app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership }));
+// What an application may store about its users, and the erasure path a data-subject
+// request needs. Defaults to HASHED: moving identity into the event envelope took
+// traits out of the SDK sanitizer's reach, so this floor is what replaces it.
+app.use(createPrivacyRouter({ prisma, verifyJwt, verifyAppOwnership }));
 // Public: the marketing contact form posts here without a session.
 app.use(createContactRouter({ prisma, emailService }));
 // Public and anonymous by design; the router owns its strict docs-origin CORS,
