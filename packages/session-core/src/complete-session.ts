@@ -7,6 +7,7 @@ import {
   type SessionStatistics,
 } from './deps';
 import { loadSessionEvents } from './load-session';
+import { computeSessionFacet, type SessionRowForFacet } from './facets';
 import { isUniqueViolation } from './prisma-errors';
 
 export type CompletionOutcome =
@@ -56,22 +57,32 @@ export async function completeSession(
   const { prisma, sink } = deps;
   const logger = depsLogger(deps);
 
-  const events = await prisma.$transaction(async (tx) => {
+  const loaded = await prisma.$transaction(async (tx) => {
     const [lock] = await tx.$queryRaw<Array<{ locked: boolean }>>`
       SELECT pg_try_advisory_xact_lock(hashtextextended(${sessionId}, 0)) AS "locked"
     `;
     if (!lock?.locked) return null;
-    return loadSessionEvents(tx, sessionId);
+    const [events, session] = await Promise.all([
+      loadSessionEvents(tx, sessionId),
+      tx.session.findUnique({
+        where: { id: sessionId },
+        select: {
+          id: true, applicationId: true, environmentId: true, tenantId: true, qaRunId: true,
+          anonymousId: true, endUserId: true, deviceType: true, browserName: true,
+          osName: true, releaseVersion: true, sampleRate: true,
+        },
+      }),
+    ]);
+    return { events, session };
   });
 
-  if (events === null) return { status: 'LOCK_HELD', sessionId };
-  if (events.length === 0) {
-    // Distinguish "no events yet" from "no such session": the first is a session
-    // that will complete later, the second is a sweep candidate that has been
-    // deleted underneath us and must not be retried.
-    const exists = await prisma.session.findUnique({ where: { id: sessionId }, select: { id: true } });
-    return exists ? { status: 'NO_EVENTS', sessionId } : { status: 'MISSING', sessionId };
-  }
+  if (loaded === null) return { status: 'LOCK_HELD', sessionId };
+  const { events, session } = loaded;
+  // "No events yet" and "no such session" are different: the first is a session that
+  // will complete later, the second a sweep candidate deleted underneath us that must
+  // not be retried.
+  if (!session) return { status: 'MISSING', sessionId };
+  if (events.length === 0) return { status: 'NO_EVENTS', sessionId };
 
   const first = events[0];
   const statistics = computeStatistics(events);
@@ -88,10 +99,27 @@ export async function completeSession(
 
   const completedAt = depsNow(deps);
 
+  // Free: completion already loaded every event to compute the statistics above.
+  const facet = computeSessionFacet({
+    session: session as SessionRowForFacet,
+    events,
+    statistics,
+  });
+
   try {
     await prisma.$transaction(async (tx) => {
       await tx.sessionStatistic.create({ data: { sessionId, ...statistics } });
-      await tx.session.update({ where: { id: sessionId }, data: { completedAt } });
+      await tx.session.update({
+        where: { id: sessionId },
+        data: { completedAt, facetVersion: facet.facetVersion },
+      });
+      // Upserted rather than created: a facet may already exist from a backfill that
+      // ran before this session was claimed.
+      await tx.sessionFacet.upsert({
+        where: { sessionId },
+        create: facet,
+        update: facet,
+      });
       await sink.enqueue(tx, announcement);
     });
     return { status: 'COMPLETED', sessionId, statistics };
@@ -104,11 +132,12 @@ export async function completeSession(
     // announcement is not repeated. The refresh happens outside the failed
     // transaction, which has already been rolled back.
     await prisma.sessionStatistic.update({ where: { sessionId }, data: statistics });
+    // A re-measure changes eventCount and errorCount, which are facet fields, so the
+    // facet is rewritten here rather than left for the backfill to notice.
+    await prisma.sessionFacet.upsert({ where: { sessionId }, create: facet, update: facet });
     await prisma.session.update({
       where: { id: sessionId },
-      // A re-measure invalidates the facet projection: eventCount and errorCount
-      // are both facet fields. Nulling the version is what enqueues the rebuild.
-      data: { facetVersion: null },
+      data: { facetVersion: facet.facetVersion },
     });
     logger.log(`[session-core] Session ${sessionId} was already complete — statistics refreshed`);
     return { status: 'ALREADY_COMPLETE', sessionId, statistics };

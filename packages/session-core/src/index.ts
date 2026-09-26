@@ -2,6 +2,8 @@ export * from './deps';
 export * from './prisma-errors';
 export * from './load-session';
 export * from './identity';
+export * from './facets';
+export * from './facet-backfill';
 export * from './ingest-event';
 export * from './complete-session';
 export * from './sweep';

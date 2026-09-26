@@ -27,6 +27,7 @@ interface GraphWorld {
   workflowExecutions: Set<string>;
   ruleSet: ApplicationRuleSet | null;
   fdrsTriggers: string[];
+  facetUpdates: Array<{ where: any; data: any }>;
   seq: number;
 }
 
@@ -40,6 +41,7 @@ function newWorld(ruleSet: ApplicationRuleSet | null = null): GraphWorld {
     workflowExecutions: new Set(),
     ruleSet,
     fdrsTriggers: [],
+    facetUpdates: [],
     seq: 0,
   };
 }
@@ -164,6 +166,16 @@ function fakePrisma(world: GraphWorld): PrismaClient {
       },
     },
     session: { async findUnique() { return null; } },
+    // The projection enriches the facet with the flow-shaped fields afterwards.
+    // No declared flow here, so there are no terminal states and nothing is called
+    // abandoned -- which is the honest answer, not a failure.
+    behaviorGraphNode: { async findMany() { return []; } },
+    sessionFacet: {
+      async updateMany({ where, data }: { where: any; data: any }) {
+        world.facetUpdates.push({ where, data });
+        return { count: 1 };
+      },
+    },
   } as unknown as PrismaClient;
 }
 
@@ -411,4 +423,27 @@ test('an announcement whose payload was nulled re-loads its events', async () =>
   const result = await projectSessionIntoGraph({ ...d, prisma }, stripped);
   assert.equal(result.statesObserved, 1);
   assert.equal(result.skipped, false);
+});
+
+test('the projection enriches the facet with the states it observed', async () => {
+  // Completion writes the facet from raw events; only the projection knows which states
+  // those events mapped to, because that depends on the application's rule set.
+  const world = newWorld(RULES);
+  const d = deps(world);
+  const result = await projectSessionIntoGraph(
+    { ...d, prisma: withProfile(d.prisma, 'LMS') },
+    announcement([
+      evt('PAGE_VIEW', { url: 'https://lms.test/courses' }),
+      evt('PAGE_VIEW', { url: 'https://lms.test/quiz/start' }),
+    ]),
+  );
+
+  assert.equal(result.statesObserved, 2);
+  assert.equal(world.facetUpdates.length, 1);
+  const data = world.facetUpdates[0].data;
+  assert.deepEqual([...data.stateNames].sort(), ['COURSE_CATALOG', 'QUIZ_STARTED']);
+  assert.deepEqual(data.workflowNames, ['QUIZ_STARTED Workflow']);
+  assert.ok(data.projectedAt instanceof Date);
+  // No declared terminal states, so no verdict on abandonment.
+  assert.equal(data.abandoned, false);
 });

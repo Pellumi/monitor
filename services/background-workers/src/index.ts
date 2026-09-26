@@ -21,6 +21,7 @@ import {
   runEmptySessionPrune,
   runSessionCompletionRelay,
   runSessionCompletionSweep,
+  runSessionFacetBackfill,
 } from './session-completion-worker';
 import { runEndUserBacklink, runEndUserPrune } from './end-user-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
@@ -442,6 +443,9 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   // Enqueued because a kiosk anonymousId can have thousands of prior sessions.
   { name: 'end-user-backlink',               handler: () => runEndUserBacklink(prisma).then(() => undefined), every: 30_000 },
   { name: 'end-user-prune',                  handler: () => runEndUserPrune(prisma).then(() => undefined), pattern: '0 4 * * 0' },
+  // Facets for sessions that completed before SessionFacet existed, and rebuilds after
+  // a facet field is added. Rate-limited by its own batch size rather than by schedule.
+  { name: 'session-facet-backfill',          handler: () => runSessionFacetBackfill(prisma).then(() => undefined), every: 60_000 },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },

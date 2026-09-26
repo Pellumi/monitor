@@ -1173,6 +1173,93 @@ model SessionStatistic {
   durationMs Int
 }
 
+/// One row per session, carrying everything a reader can filter on.
+///
+/// Denormalised on purpose, and the reason is the query shape rather than JSON being
+/// slow: the predicates live on child tables while the sort key and the total live on
+/// the parent. "error message contains" and "event type present" are over
+/// SessionEvent; "state touched" is over StateObservation, whose sessionId is not even
+/// a relation; the ordering is Session.startTime DESC. No arrangement of GIN indexes
+/// fixes that -- Postgres must either materialise a large set of session ids and then
+/// sort the parents, or scan the parents and probe the children per row.
+///
+/// Collapsing it to one row per session puts every predicate and the sort key in the
+/// same table: one index scan plus a bitmap AND, no joins, and a COUNT that is
+/// answerable. Half the facets are derived anyway (abandoned, maxStatusCode, the
+/// concatenated error text), and deriving those per keystroke is not viable.
+///
+/// sessionId is the primary key and deliberately NOT a relation: a facet must be
+/// writable independently of relation integrity, and retention deletes it explicitly.
+model SessionFacet {
+  sessionId     String  @id
+  applicationId String
+  environmentId String?
+  tenantId      String
+
+  startTime  DateTime
+  endTime    DateTime
+  durationMs Int
+  eventCount Int
+  errorCount Int
+  qaRunId    String?
+
+  // ── Identity ───────────────────────────────────────────────────────────
+  anonymousId String?
+  /// The session's terminal identity, for display on the row.
+  endUserId   String?
+  /// EVERY identity asserted anywhere in the session, for the filter. Session.endUserId
+  /// is the last one, but "sessions for user A" has to match a session where A appears
+  /// on any event -- including one they signed out of halfway through.
+  endUserIds  String[] @default([])
+
+  // ── Client context ─────────────────────────────────────────────────────
+  deviceType     String?
+  browserName    String?
+  osName         String?
+  releaseVersion String?
+  sampleRate     Float?
+
+  // ── Presence sets, all GIN-indexed in SQL ──────────────────────────────
+  eventTypes    String[] @default([])
+  stateNames    String[] @default([])
+  workflowNames String[] @default([])
+  /// Canonicalised with canonicalRouteFromPath. Without that, /orders/17 and
+  /// /orders/18 are two entries, the array's cardinality is unbounded, and the GIN
+  /// index loses all selectivity. Not polish -- it is what keeps the column indexable.
+  routes        String[] @default([])
+  statusCodes   Int[]    @default([])
+  maxStatusCode Int?
+  errorNames    String[] @default([])
+
+  // ── Flow outcome ───────────────────────────────────────────────────────
+  enteredFlows         String[] @default([])
+  reachedTerminalFlows String[] @default([])
+  /// Entered a flow and never reached a terminal state. The question the product
+  /// promises to answer and previously had no column behind.
+  abandoned            Boolean  @default(false)
+
+  /// NOTE: the table also has a `searchVector tsvector GENERATED ALWAYS AS (...) STORED`
+  /// column, declared in SQL only. Prisma cannot express a generated column, and
+  /// listing it here would make the client try to write it. It is read through
+  /// $queryRaw in session-search-query.ts.
+
+  /// Truncated concatenation of the session's error messages, for substring search.
+  errorText String?
+
+  /// Which revision of computeSessionFacet produced this row, so a new facet column
+  /// ships via the backfill worker instead of re-completing every session.
+  facetVersion Int       @default(1)
+  /// When the graph projection enriched the state and flow arrays. Completion writes
+  /// the row; projection fills those in afterwards, so a facet has a brief window with
+  /// empty state arrays and this makes that visible rather than silent.
+  projectedAt  DateTime?
+  computedAt   DateTime  @default(now())
+
+  @@index([applicationId, environmentId, startTime])
+  @@index([endUserId, startTime])
+  @@index([anonymousId, startTime])
+}
+
 /// "This session is complete" and "downstream has been told" as one atomic fact.
 ///
 /// Completion used to create the statistics row and then publish to Kafka. If the

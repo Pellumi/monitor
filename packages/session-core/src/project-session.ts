@@ -3,6 +3,7 @@ import type { TellannEvent } from '@tellann/shared';
 import { getRuleSet, reconstructRuleSet, type ApplicationRuleSet } from '@tellann/rules';
 import { depsLogger, type SessionAnnouncement, type SessionCoreDeps } from './deps';
 import { loadSessionEvents } from './load-session';
+import { computeFlowFacets } from './facets';
 
 /**
  * Turning one completed session into observed states, transitions and workflows.
@@ -279,6 +280,8 @@ export async function projectSessionIntoGraph(
 
   let previousStateId: string | null = null;
   let previousEventId: string | null = null;
+  /** Every state this session touched, for the facet's filterable arrays. */
+  const observedStateNames = new Set<string>();
 
   for (const event of events) {
     const timestamp = new Date(event.timestamp);
@@ -310,6 +313,8 @@ export async function projectSessionIntoGraph(
         result.transitionsObserved += 1;
       }
 
+      observedStateNames.add(explicit.fromState);
+      observedStateNames.add(explicit.toState);
       previousStateId = toState.id;
       previousEventId = event.eventId;
       continue;
@@ -336,6 +341,7 @@ export async function projectSessionIntoGraph(
       }
     }
 
+    observedStateNames.add(stateInfo.name);
     previousStateId = state.id;
     previousEventId = event.eventId;
   }
@@ -343,6 +349,18 @@ export async function projectSessionIntoGraph(
   const workflow = await discoverWorkflow(prisma, applicationId, sessionId, events, ruleSet);
   result.workflowName = workflow.name;
   result.workflowIsNewExecution = workflow.isNewExecution;
+
+  // Completion wrote the facet; this fills in the half only the projection knows,
+  // because a session's states depend on the application's rule set rather than on its
+  // raw events. `abandoned` -- entered a flow and never reached a terminal state -- is
+  // the question the product promises to answer and had no column behind it before.
+  await enrichSessionFacet(prisma, {
+    sessionId,
+    applicationId,
+    environmentId,
+    stateNames: [...observedStateNames],
+    workflowNames: workflow.name ? [workflow.name] : [],
+  });
 
   logger.log(
     `[session-core] Projected session ${sessionId}: `
@@ -418,4 +436,50 @@ async function discoverWorkflow(
     data: { executionCount: { increment: 1 } },
   });
   return { name: workflow.name, isNewExecution: true };
+}
+
+/**
+ * Fills in the flow-shaped facet fields after the observations exist.
+ *
+ * Terminal states come from the application's declared flows, because "did this session
+ * finish what it started" is only meaningful against a declaration of what finishing
+ * means. With no declared flow there are no terminals, so nothing is called abandoned —
+ * which is the honest answer rather than calling every session a failure.
+ */
+async function enrichSessionFacet(
+  prisma: PrismaClient,
+  input: {
+    sessionId: string;
+    applicationId: string;
+    environmentId: string | null;
+    stateNames: string[];
+    workflowNames: string[];
+  },
+): Promise<void> {
+  const terminalNodes = await prisma.behaviorGraphNode.findMany({
+    where: {
+      role: 'TERMINAL',
+      graph: {
+        applicationId: input.applicationId,
+        isActive: true,
+        ...(input.environmentId
+          ? { OR: [{ environmentId: input.environmentId }, { environmentId: null }] }
+          : {}),
+      },
+    },
+    select: { stateName: true },
+  });
+
+  const facets = computeFlowFacets({
+    stateNames: input.stateNames,
+    workflowNames: input.workflowNames,
+    terminalStateNames: terminalNodes.map((node) => node.stateName),
+  });
+
+  // updateMany, not update: a session whose facet has not been written yet (projection
+  // racing a backfill) must not throw here. Completion owns creating the row.
+  await prisma.sessionFacet.updateMany({
+    where: { sessionId: input.sessionId },
+    data: { ...facets, projectedAt: new Date() },
+  });
 }

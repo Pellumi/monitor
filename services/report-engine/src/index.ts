@@ -16,6 +16,14 @@ import {
   readErrorEventDetail,
 } from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
+import {
+  queryBool,
+  queryInt,
+  queryInts,
+  queryList,
+  searchSessions,
+  type SessionSearchFilters,
+} from './session-search-query';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import PDFDocument from 'pdfkit';
 import { createStorageClient } from '@tellann/storage';
@@ -391,63 +399,147 @@ app.get('/applications/:id/workflows', verifyCaller, requireApplicationAccess('i
   }
 });
 
-// 4. Session List
+// 4. Session List / search
+//
+// Previously this accepted page, limit, from, to and environmentId and nothing else, so
+// "a client reports a problem, go find that session" -- the workflow the product is sold
+// on -- had nowhere to start. Every filter below reads one row per session from
+// SessionFacet, so the plan is an index scan plus a bitmap AND rather than a set of
+// anti-joins against the largest tables in the schema.
 app.get('/applications/:id/sessions', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
-  const page  = Math.max(1, parseInt(req.query.page  as string ?? '1', 10));
-  const limit = Math.min(100, parseInt(req.query.limit as string ?? '20', 10));
-  const from  = req.query.from as string | undefined;
-  const to    = req.query.to   as string | undefined;
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string ?? '20', 10)));
 
   try {
-    // Sessions are environment-scoped like every sibling endpoint here. Without
-    // this, development, staging and production sessions were interleaved with
-    // nothing on the row to tell them apart.
+    // Sessions are environment-scoped like every sibling endpoint here. Without this,
+    // development, staging and production sessions were interleaved with nothing on the
+    // row to tell them apart.
     const environmentId = await resolveEnvironmentScope(
       applicationId,
       req.query.environmentId as string | undefined,
     );
-    const where: any = { applicationId };
-    if (environmentId) where.environmentId = environmentId;
-    if (from || to) {
-      where.startTime = {};
-      if (from) where.startTime.gte = new Date(from);
-      if (to)   where.startTime.lte = new Date(to);
-    }
 
-    const [sessions, total, applicationTotal] = await Promise.all([
-      prisma.session.findMany({
-        where,
-        include: { statistics: true },
-        orderBy: { startTime: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.session.count({ where }),
-      // Lets the dashboard tell "this environment is empty" apart from "this
-      // application has never reported a session", which are different problems
-      // with different fixes.
-      prisma.session.count({ where: { applicationId } }),
-    ]);
+    const from = req.query.from ? new Date(req.query.from as string) : undefined;
+    const to = req.query.to ? new Date(req.query.to as string) : undefined;
+
+    const filters: SessionSearchFilters = {
+      applicationId,
+      environmentId,
+      ...(from && !Number.isNaN(from.getTime()) ? { from } : {}),
+      ...(to && !Number.isNaN(to.getTime()) ? { to } : {}),
+      endUser: (req.query.endUser as string) || undefined,
+      anonymousId: (req.query.anonymousId as string) || undefined,
+      errorContains: (req.query.errorContains as string) || undefined,
+      hasError: queryBool(req.query.hasError),
+      eventType: queryList(req.query.eventType),
+      stateName: queryList(req.query.stateName),
+      workflowName: queryList(req.query.workflowName),
+      route: queryList(req.query.route),
+      statusCode: queryInts(req.query.statusCode),
+      statusClass: req.query.statusClass === '4xx' || req.query.statusClass === '5xx'
+        ? req.query.statusClass
+        : undefined,
+      minDurationMs: queryInt(req.query.minDurationMs),
+      maxDurationMs: queryInt(req.query.maxDurationMs),
+      deviceType: queryList(req.query.deviceType),
+      browserName: queryList(req.query.browserName),
+      releaseVersion: queryList(req.query.releaseVersion),
+      abandoned: queryBool(req.query.abandoned),
+      q: (req.query.q as string) || undefined,
+      cursor: (req.query.cursor as string) || undefined,
+      page: queryInt(req.query.page),
+      limit,
+    };
+
+    const result = await searchSessions(prisma, filters);
+
+    // Kept because the dashboard uses it to tell "this environment is empty" apart from
+    // "this application has never reported a session", which are different problems with
+    // different fixes.
+    const applicationTotal = await prisma.session.count({ where: { applicationId } });
 
     res.json({
-      sessions: sessions.map((s) => ({
-        id:          s.id,
-        startTime:   s.startTime,
-        endTime:     s.endTime,
-        durationMs:  s.statistics?.durationMs ?? null,
-        eventCount:  s.statistics?.eventCount ?? null,
-        errorCount:  s.statistics?.errorCount ?? null,
-        qaRunId:     s.qaRunId,
+      sessions: result.sessions.map((session) => ({
+        id: session.id,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        durationMs: session.durationMs,
+        eventCount: session.eventCount,
+        errorCount: session.errorCount,
+        qaRunId: session.qaRunId,
+        endUserId: session.endUserId,
+        endUserLabel: session.endUserLabel,
+        anonymousId: session.anonymousId,
+        deviceType: session.deviceType,
+        browserName: session.browserName,
+        releaseVersion: session.releaseVersion,
+        abandoned: session.abandoned,
       })),
-      total,
+      total: result.total,
+      totalIsExact: result.totalIsExact,
       applicationTotal,
       environmentId,
-      page,
-      limit,
+      // A facet exists only once a session completes, so an in-flight session cannot
+      // satisfy a filter. Reported rather than silently missing -- a reader who just
+      // reproduced a bug is exactly who will look inside that 30-90 second window.
+      excludedInFlight: result.excludedInFlight,
+      cursor: result.cursor,
+      page: result.page,
+      limit: result.limit,
     });
   } catch (err) {
     console.error('[ReportEngine] Error listing sessions', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 4b. End users, and one user's history.
+//
+// The other half of findability: a support engineer with a name, not a session id.
+app.get('/applications/:id/end-users', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
+  const { id: applicationId } = req.params;
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string ?? '25', 10)));
+  const search = (req.query.q as string | undefined)?.trim();
+
+  try {
+    const endUsers = await prisma.endUser.findMany({
+      where: {
+        applicationId,
+        // A HASHED-mode application stores no identifier, so searching by name finds
+        // nothing there -- by design. Pasting the raw id still works, because it hashes
+        // to the same value the row was stored under.
+        ...(search ? { externalId: { contains: search, mode: 'insensitive' } } : {}),
+      },
+      orderBy: { lastSeenAt: 'desc' },
+      take: limit,
+      select: {
+        id: true, externalId: true, externalIdHash: true,
+        firstSeenAt: true, lastSeenAt: true, traits: true,
+      },
+    });
+
+    // Counted per user rather than stored on the row: any counter on EndUser would be
+    // wrong under Kafka replay and at-least-once outbox delivery.
+    const counts = await prisma.session.groupBy({
+      by: ['endUserId'],
+      where: { applicationId, endUserId: { in: endUsers.map((u) => u.id) } },
+      _count: { _all: true },
+    });
+    const countBy = new Map(counts.map((row) => [row.endUserId, row._count._all]));
+
+    res.json({
+      endUsers: endUsers.map((user) => ({
+        id: user.id,
+        label: user.externalId ?? user.externalIdHash.slice(0, 12),
+        isIdentified: user.externalId !== null,
+        firstSeenAt: user.firstSeenAt,
+        lastSeenAt: user.lastSeenAt,
+        traits: user.traits,
+        sessionCount: countBy.get(user.id) ?? 0,
+      })),
+    });
+  } catch (err) {
+    console.error('[ReportEngine] Error listing end users', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

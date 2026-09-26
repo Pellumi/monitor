@@ -1,12 +1,14 @@
 import type { PrismaClient } from '@tellann/db';
 import { kafkaEnabled } from '@tellann/shared';
 import {
+  backfillSessionFacets,
   drainCompletionOutbox,
   outboxSink,
   projectSessionIntoGraph,
   pruneEmptySessions,
   sweepCompletableSessions,
   triggerReconciliation,
+  type FacetBackfillResult,
   type SessionCoreDeps,
   type SweepResult,
 } from '@tellann/session-core';
@@ -59,4 +61,15 @@ export async function runSessionCompletionRelay(prisma: PrismaClient): Promise<v
  */
 export async function runEmptySessionPrune(prisma: PrismaClient): Promise<number> {
   return pruneEmptySessions(coreDeps(prisma));
+}
+
+/**
+ * Builds facets for sessions that completed without one.
+ *
+ * Backfills the existing corpus, which is otherwise unsearchable, and is what lets a new
+ * facet field ship later: bump SESSION_FACET_VERSION and stale rows are rebuilt at a
+ * rate-limited pace instead of needing every session re-completed.
+ */
+export async function runSessionFacetBackfill(prisma: PrismaClient): Promise<FacetBackfillResult> {
+  return backfillSessionFacets(coreDeps(prisma));
 }

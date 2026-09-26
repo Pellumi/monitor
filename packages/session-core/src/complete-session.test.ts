@@ -15,6 +15,7 @@ import type { CompletionSink, SessionAnnouncement, SessionCoreDeps } from './dep
 interface FakeWorld {
   sessions: Map<string, any>;
   statistics: Map<string, any>;
+  facets: Map<string, any>;
   lockAvailable: boolean;
   announcements: SessionAnnouncement[];
 }
@@ -33,6 +34,14 @@ function fakeDeps(world: FakeWorld): SessionCoreDeps {
         if (!session) throw new Error('NOT_FOUND');
         Object.assign(session, data);
         return session;
+      },
+    },
+    sessionFacet: {
+      async upsert({ where, create, update }: { where: { sessionId: string }; create: any; update: any }) {
+        const existing = world.facets.get(where.sessionId);
+        const row = existing ? { ...existing, ...update } : { ...create };
+        world.facets.set(where.sessionId, row);
+        return row;
       },
     },
     sessionStatistic: {
@@ -57,6 +66,7 @@ function fakeDeps(world: FakeWorld): SessionCoreDeps {
     async $transaction(fn: (client: any) => Promise<any>) { return fn(tx); },
     session: tx.session,
     sessionStatistic: tx.sessionStatistic,
+    sessionFacet: tx.sessionFacet,
   } as unknown as PrismaClient;
 
   const sink: CompletionSink = {
@@ -88,7 +98,14 @@ function world(events: any[], options: { lockAvailable?: boolean; alreadyComplet
       qaRunId: null,
       traceId: null,
       completedAt: null,
-      facetVersion: 7,
+      facetVersion: null,
+      anonymousId: 'anon-1',
+      endUserId: null,
+      deviceType: 'desktop',
+      browserName: 'Chrome',
+      osName: 'macOS',
+      releaseVersion: null,
+      sampleRate: null,
       events,
     }],
   ]);
@@ -100,6 +117,7 @@ function world(events: any[], options: { lockAvailable?: boolean; alreadyComplet
   return {
     sessions,
     statistics,
+    facets: new Map<string, any>(),
     lockAvailable: options.lockAvailable ?? true,
     announcements: [],
   };
@@ -190,12 +208,37 @@ test('a late event refreshes the statistics without re-announcing', async () => 
   assert.equal(w.announcements.length, 0);
 });
 
-test('a re-measure invalidates the facet projection', async () => {
-  // eventCount and errorCount are both facet fields, so a refreshed statistic that
-  // left facetVersion alone would leave the search index disagreeing with the row.
-  const w = world([event({ id: 'e1', at: '2026-09-29T12:00:00.000Z' })], { alreadyComplete: true });
+test('a re-measure rewrites the facet rather than leaving it stale', async () => {
+  // eventCount and errorCount are facet fields, so a refreshed statistic that left the
+  // facet alone would make search disagree with the row it returns.
+  const events = [event({ id: 'e1', at: '2026-09-29T12:00:00.000Z' })];
+  const w = world(events, { alreadyComplete: true });
+  events.push(event({ id: 'e2', at: '2026-09-29T12:00:04.000Z', type: 'SERVER_ERROR' }));
+
   await completeSession(fakeDeps(w), 'session-1');
-  assert.equal(w.sessions.get('session-1').facetVersion, null);
+
+  const facet = w.facets.get('session-1');
+  assert.equal(facet.eventCount, 2);
+  assert.equal(facet.errorCount, 1);
+  assert.equal(facet.durationMs, 4_000);
+});
+
+test('completion writes a facet carrying what the reader will filter on', async () => {
+  const w = world([
+    event({ id: 'e1', at: '2026-09-29T12:00:00.000Z' }),
+    event({ id: 'e2', at: '2026-09-29T12:00:03.000Z', type: 'UNHANDLED_EXCEPTION' }),
+  ]);
+  await completeSession(fakeDeps(w), 'session-1');
+
+  const facet = w.facets.get('session-1');
+  assert.ok(facet, 'a completed session is searchable');
+  assert.equal(facet.applicationId, 'app-1');
+  assert.equal(facet.environmentId, 'env-1');
+  assert.equal(facet.anonymousId, 'anon-1');
+  assert.equal(facet.deviceType, 'desktop');
+  assert.deepEqual([...facet.eventTypes].sort(), ['PAGE_VIEW', 'UNHANDLED_EXCEPTION']);
+  assert.deepEqual(facet.errorNames, ['UNHANDLED_EXCEPTION']);
+  assert.equal(w.sessions.get('session-1').facetVersion, facet.facetVersion);
 });
 
 test('a session another process holds the lock on is skipped, not failed', async () => {
