@@ -2,7 +2,8 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('event-collector');
 
 import express, { Request, Response } from 'express';
-import { TellannEventSchema, EventBatchSchema, Topics, Feature, kafkaEnabled, telemetryTransport } from '@tellann/shared';
+import { TellannEventSchema, EventBatchSchema, Topics, Feature, kafkaEnabled, telemetryTransport, type TellannEvent } from '@tellann/shared';
+import { applyEventsToSessions } from '@tellann/session-core';
 import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
@@ -156,8 +157,14 @@ async function processRunFlowBoundaries(
 }
 
 /**
- * Sends events to Kafka (when enabled) or persists canonical session records
- * directly to Postgres for local/development stacks.
+ * Hands events to whichever transport this deployment uses.
+ *
+ * The Postgres branch used to be a second, drifted copy of session-engine's session
+ * upsert -- it validated environmentId and runId against the application, which
+ * session-engine did not, and it minted an Application row from the event payload,
+ * which is how anything reaching this endpoint could create a tenant-less row that
+ * then owned real sessions. Both now call `applyEventsToSessions` in
+ * @tellann/session-core, and the stricter behaviour is the one that survived.
  */
 async function publishEvents(events: Array<Record<string, unknown>>, sessionId: string): Promise<void> {
   if (KAFKA_ENABLED && producer) {
@@ -172,57 +179,15 @@ async function publishEvents(events: Array<Record<string, unknown>>, sessionId: 
     return;
   }
 
-  // Event IDs make buffered/offline replay idempotent in the Postgres fallback.
-  if (prisma) {
-    for (const event of events) {
-      const eventId = String(event.eventId);
-      const correlatedSessionId = String(event.sessionId || sessionId);
-      const applicationId = String(event.applicationId);
-      const timestamp = new Date(String(event.timestamp));
-      const requestedEnvironmentId = typeof event.environmentId === 'string' ? event.environmentId : null;
-      const requestedRunId = typeof event.runId === 'string' ? event.runId : null;
-      const [environment, run] = await Promise.all([
-        requestedEnvironmentId ? prisma.environment.findFirst({ where: { id: requestedEnvironmentId, applicationId }, select: { id: true } }) : null,
-        requestedRunId ? prisma.qARun.findFirst({ where: { id: requestedRunId, applicationId }, select: { id: true } }) : null,
-      ]);
-      await prisma.application.upsert({
-        where: { id: applicationId },
-        update: {},
-        create: { id: applicationId, name: `App ${applicationId}` },
-      });
-      await prisma.session.upsert({
-        where: { id: correlatedSessionId },
-        update: {
-          endTime: timestamp,
-          environmentId: environment?.id,
-          qaRunId: run?.id,
-          traceId: typeof event.traceId === 'string' ? event.traceId : undefined,
-        },
-        create: {
-          id: correlatedSessionId,
-          applicationId,
-          environmentId: environment?.id ?? null,
-          tenantId: String(event.tenantId),
-          qaRunId: run?.id ?? null,
-          traceId: typeof event.traceId === 'string' ? event.traceId : null,
-          startTime: timestamp,
-          endTime: timestamp,
-        },
-      });
-      await prisma.sessionEvent.upsert({
-        where: { id: eventId },
-        update: {},
-        create: {
-          id: eventId,
-          sessionId: correlatedSessionId,
-          eventType: String(event.eventType),
-          eventVersion: String(event.eventVersion),
-          source: String(event.source),
-          timestamp,
-          metadata: (event.metadata ?? {}) as object,
-        },
-      });
-    }
+  if (!prisma) return;
+
+  // Event IDs make buffered/offline replay idempotent on this path.
+  const result = await applyEventsToSessions(prisma, events as unknown as TellannEvent[]);
+  if (result.rejected.length > 0) {
+    console.warn(
+      `[EventCollector] Dropped ${result.rejected.length} of ${events.length} event(s)`,
+      result.rejected.slice(0, 5),
+    );
   }
 }
 

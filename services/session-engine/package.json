@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "tsc --noEmit"
   },
   "dependencies": {
     "@tellann/shared": "workspace:*",
@@ -13,7 +14,8 @@
     "@tellann/db": "workspace:*",
     "@tellann/entitlement-checker": "workspace:*",
     "@tellann/storage": "workspace:*",
-    "kafkajs": "^2.2.4"
+    "kafkajs": "^2.2.4",
+    "@tellann/session-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

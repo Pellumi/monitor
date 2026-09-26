@@ -997,21 +997,33 @@ model ApplicationProfile {
 }
 
 model Session {
-  id            String            @id // matches sessionId
+  id            String       @id // matches sessionId
   applicationId String
-  application   Application       @relation(fields: [applicationId], references: [id])
+  application   Application  @relation(fields: [applicationId], references: [id])
   environmentId String?
-  environment   Environment?      @relation(fields: [environmentId], references: [id])
+  environment   Environment? @relation(fields: [environmentId], references: [id])
   tenantId      String
   qaRunId       String?
-  qaRun         QARun?            @relation(fields: [qaRunId], references: [id], onDelete: SetNull)
+  qaRun         QARun?       @relation(fields: [qaRunId], references: [id], onDelete: SetNull)
   traceId       String?
   startTime     DateTime
   endTime       DateTime
-  events        SessionEvent[]
-  statistics    SessionStatistic?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+
+  /// Set by the one writer that won the completion claim. The sweep used to find
+  /// its candidates with `statistics: { is: null }`, a LEFT JOIN anti-join across
+  /// the two largest tables with nothing to support it; this column carries a
+  /// partial index on the not-yet-complete rows instead, so the candidate query
+  /// stays proportional to the backlog however many completed sessions pile up.
+  completedAt  DateTime?
+  /// Which revision of the facet projection produced this session's SessionFacet
+  /// row. Null means never projected. Lets a new facet column ship without
+  /// re-completing the corpus -- see the session-facet-backfill worker.
+  facetVersion Int?
+
+  events     SessionEvent[]
+  statistics SessionStatistic?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
 
   @@index([qaRunId])
   @@index([applicationId, environmentId, startTime])
@@ -1038,10 +1050,53 @@ model SessionStatistic {
   durationMs Int
 }
 
+/// "This session is complete" and "downstream has been told" as one atomic fact.
+///
+/// Completion used to create the statistics row and then publish to Kafka. If the
+/// publish threw, the session stayed claimed and was never announced: the graph
+/// never saw it, and nothing retried, because the next sweep found statistics
+/// present and skipped it. The row below is written inside the claim transaction,
+/// so the two cannot disagree, and delivery becomes a separately retried step with
+/// a visible backlog.
+///
+/// It is also what gives the Postgres transport parity. With Kafka, a relay in
+/// session-engine drains this to SESSIONS_COMPLETED; without it, a worker drains
+/// it straight into the graph projection. Same rows, same results, one code path.
+model SessionCompletionOutbox {
+  id            String    @id @default(uuid())
+  /// One announcement per session, ever. This is what makes the whole path
+  /// idempotent under `fromBeginning: true` replay for free.
+  sessionId     String    @unique
+  applicationId String
+  environmentId String?
+  tenantId      String
+  /// The announcement, events included. Nulled on delivery so this table does not
+  /// become a second copy of SessionEvent; a retried row that lost its payload
+  /// re-loads the events from sessionId instead.
+  payload       Json?
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  lastError     String?
+  claimedAt     DateTime?
+  deliveredAt   DateTime?
+  /// Backoff: a failed delivery is not retried before this.
+  availableAt   DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([status, availableAt])
+  @@index([applicationId, createdAt])
+}
+
 model State {
   id            String      @id @default(uuid())
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id])
+  /// Nullable, and added before it is read, so the unique index below is built
+  /// once rather than rebuilt when environment scoping lands. Until then a
+  /// null-environment state is the shared, application-wide node this table has
+  /// always held -- which is why development and production behaviour currently
+  /// merge into one graph.
+  environmentId String?
   name          String
   category      String?
   visitCount    Int         @default(0)
@@ -1057,6 +1112,8 @@ model Transition {
   id            String      @id @default(uuid())
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id])
+  /// See the note on State.environmentId.
+  environmentId String?
   fromStateId   String
   fromState     State       @relation("FromState", fields: [fromStateId], references: [id])
   toStateId     String
@@ -1077,6 +1134,8 @@ model StateObservation {
   eventId   String
   timestamp DateTime
 
+  /// The idempotency key for a projection -- see the note on TransitionObservation.
+  @@unique([sessionId, eventId, stateId])
   /// sessionId is not a relation scalar, so nothing created an index for it.
   /// Every environment-scoped graph count joins through it.
   @@index([sessionId, timestamp])
@@ -1091,6 +1150,11 @@ model TransitionObservation {
   toEventId    String
   timestamp    DateTime
 
+  /// A projection of one session is now a routine repeat, not a rare accident:
+  /// a Kafka consumer and a Postgres worker can both complete the same session,
+  /// and `fromBeginning: true` replays it on every rebalance. This is what makes
+  /// re-projecting a no-op instead of doubling every counter.
+  @@unique([sessionId, fromEventId, toEventId])
   /// See the note on StateObservation.
   @@index([sessionId, timestamp])
 }
@@ -1137,18 +1201,18 @@ model MissingState {
 }
 
 model CoverageSnapshot {
-  id                 String       @id @default(uuid())
-  applicationId      String
-  application        Application  @relation(fields: [applicationId], references: [id])
-  environmentId      String?
-  environment        Environment? @relation(fields: [environmentId], references: [id])
-  createdAt          DateTime     @default(now())
-  observedStates     Int
-  candidateStates    Int
-  approvedStates     Int
-  coveragePercent    Float
-  transitionCoverage Float        @default(0)
-  flowCoverage       Float        @default(0)
+  id                  String       @id @default(uuid())
+  applicationId       String
+  application         Application  @relation(fields: [applicationId], references: [id])
+  environmentId       String?
+  environment         Environment? @relation(fields: [environmentId], references: [id])
+  createdAt           DateTime     @default(now())
+  observedStates      Int
+  candidateStates     Int
+  approvedStates      Int
+  coveragePercent     Float
+  transitionCoverage  Float        @default(0)
+  flowCoverage        Float        @default(0)
   /// Recorded so a change summary can be derived from two snapshots. The
   /// observed-state count was already here; without these two, "+5 transitions
   /// observed, 6 gaps closed" has nowhere to come from.
@@ -1199,10 +1263,26 @@ model Workflow {
   path            Json
   stateCount      Int
   transitionCount Int
+  /// Maintained from WorkflowExecution rather than incremented, so a replayed or
+  /// doubly-completed session cannot inflate it.
   executionCount  Int         @default(1)
   createdAt       DateTime    @default(now())
 
   missingFlows MissingFlow[]
+  executions   WorkflowExecution[]
+}
+
+/// One row per session that walked a workflow's path. Exists so executionCount is
+/// a count of facts rather than a running total nobody can audit or correct.
+model WorkflowExecution {
+  id         String   @id @default(uuid())
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  sessionId  String
+  observedAt DateTime @default(now())
+
+  @@unique([workflowId, sessionId])
+  @@index([sessionId])
 }
 
 model Demonstration {
@@ -1932,44 +2012,44 @@ model FlowProjectBinding {
 }
 
 model FlowScan {
-  id                   String               @id @default(uuid())
-  organizationId       String
-  applicationId        String
-  flowId               String
-  flow                 BehaviorGraph        @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  flowVersionId        String
-  flowVersion          BehaviorGraphVersion @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
-  bindingId            String
-  binding              FlowProjectBinding   @relation(fields: [bindingId], references: [id], onDelete: Cascade)
-  repositorySnapshotId String
-  repositorySnapshot   RepositorySnapshot   @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  id                    String               @id @default(uuid())
+  organizationId        String
+  applicationId         String
+  flowId                String
+  flow                  BehaviorGraph        @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId         String
+  flowVersion           BehaviorGraphVersion @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  bindingId             String
+  binding               FlowProjectBinding   @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  repositorySnapshotId  String
+  repositorySnapshot    RepositorySnapshot   @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
   codebaseAnalysisJobId String?
   codebaseAnalysisJob   CodebaseAnalysisJob? @relation(fields: [codebaseAnalysisJobId], references: [id], onDelete: SetNull)
-  parentScanId         String?
-  parentScan           FlowScan?            @relation("FlowScanParent", fields: [parentScanId], references: [id], onDelete: SetNull)
-  childScans           FlowScan[]           @relation("FlowScanParent")
-  kind                 FlowScanKind
-  status               FlowScanStatus       @default(CREATED)
-  scannerVersion       String
-  analysisMode         String?
-  analysisGraphVersion String?
-  analysisContentHash  String?
-  analysisRevision     String?
-  analysisBranch       String?
-  analysisDirty        Boolean?
-  retrievalVersion     String?
-  mappingStatus        String?
-  mappingProgress      Json?
-  candidateEvidence    Json?
-  mappingProvenance    Json?
-  detectedRoutes       Json?
-  detectedComponents   Json?
-  detectedEndpoints    Json?
-  conformanceFindings  Json?
-  errorMessageSafe     String?
-  startedAt            DateTime?
-  completedAt          DateTime?
-  createdAt            DateTime             @default(now())
+  parentScanId          String?
+  parentScan            FlowScan?            @relation("FlowScanParent", fields: [parentScanId], references: [id], onDelete: SetNull)
+  childScans            FlowScan[]           @relation("FlowScanParent")
+  kind                  FlowScanKind
+  status                FlowScanStatus       @default(CREATED)
+  scannerVersion        String
+  analysisMode          String?
+  analysisGraphVersion  String?
+  analysisContentHash   String?
+  analysisRevision      String?
+  analysisBranch        String?
+  analysisDirty         Boolean?
+  retrievalVersion      String?
+  mappingStatus         String?
+  mappingProgress       Json?
+  candidateEvidence     Json?
+  mappingProvenance     Json?
+  detectedRoutes        Json?
+  detectedComponents    Json?
+  detectedEndpoints     Json?
+  conformanceFindings   Json?
+  errorMessageSafe      String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime             @default(now())
 
   initializations FlowInitialization[]
   previousDrifts  FlowDrift[]          @relation("FlowDriftPreviousScan")

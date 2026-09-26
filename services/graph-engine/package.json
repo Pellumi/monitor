@@ -13,7 +13,8 @@
     "@tellann/telemetry": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/rules": "workspace:*",
-    "kafkajs": "^2.2.4"
+    "kafkajs": "^2.2.4",
+    "@tellann/session-core": "workspace:*"
   },
   "devDependencies": {
     "ts-node-dev": "^2.0.0",

@@ -17,6 +17,11 @@ import {
 import { runCrossTenantIndexBuilder } from './cross-tenant-index-builder';
 import { runRetentionSweep } from './retention-worker';
 import { runSchemaBootstrap } from './schema-bootstrap-worker';
+import {
+  runEmptySessionPrune,
+  runSessionCompletionRelay,
+  runSessionCompletionSweep,
+} from './session-completion-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
 import { runBillingCycle } from './billing-cycle-worker';
@@ -426,6 +431,12 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   // cannot run inside its implicit transaction. Idempotent and cheap once built —
   // two catalogue queries per tick — so it is safe to leave on the schedule.
   { name: 'schema-bootstrap',                 handler: () => runSchemaBootstrap(prisma).then(() => undefined), every: 3_600_000 },
+  // Session completion for both transports. With Kafka the idle timers in
+  // session-engine usually get there first and this is the safety net that
+  // recovers whatever a restart orphaned; without Kafka it is the only path.
+  { name: 'session-completion-sweep',        handler: () => runSessionCompletionSweep(prisma).then(() => undefined), every: 30_000 },
+  { name: 'session-completion-relay',        handler: () => runSessionCompletionRelay(prisma), every: 5_000 },
+  { name: 'empty-session-prune',             handler: () => runEmptySessionPrune(prisma).then(() => undefined), pattern: '0 3 * * *' },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },

@@ -112,6 +112,11 @@ export async function runRetentionSweep(
       prisma.transitionObservation.deleteMany({ where: { sessionId: { in: sessionIds } } }),
       prisma.sessionEvent.deleteMany({ where: { sessionId: { in: sessionIds } } }),
       prisma.sessionStatistic.deleteMany({ where: { sessionId: { in: sessionIds } } }),
+      // Every table keyed by sessionId has to be listed here or it outlives its
+      // retention window invisibly. These are keyed on a plain scalar, not a
+      // relation, so no cascade would catch them.
+      prisma.sessionCompletionOutbox.deleteMany({ where: { sessionId: { in: sessionIds } } }),
+      prisma.workflowExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }),
       prisma.demonstration.deleteMany({ where: { id: { in: demonstrationIds } } }),
       prisma.session.deleteMany({ where: { id: { in: sessionIds } } }),
       prisma.auditLog.create({
