@@ -22,6 +22,9 @@ export type EventType =
   | 'WORKFLOW_COMPLETED'
   | 'WORKFLOW_FAILED'
   | 'WORKFLOW_CANCELLED'
+  | 'SESSION_STARTED'
+  | 'SESSION_ENDED'
+  | 'USER_IDENTIFIED'
   | 'TELLANN_ONBOARDING_TEST'
   | 'TELLANN_INITIALIZED'
   | 'QA_RUN_STARTED'
@@ -36,6 +39,26 @@ export type EventType =
   | 'REPOSITORY_SNAPSHOT_CREATED'
   | 'EXPECTED_FLOW_VERSION_SELECTED';
 
+/** Envelope revisions in circulation. See EVENT_VERSIONS in ./schema. */
+export type EventVersion = '1.0' | '1.1';
+
+/**
+ * What the page was, rather than what happened on it. Captured once per session and
+ * repeated on every event; persisted once, on `Session`, never per event.
+ */
+export interface ClientContext {
+  deviceType?: 'desktop' | 'mobile' | 'tablet' | 'bot' | 'unknown';
+  browserName?: string;
+  browserVersion?: string;
+  osName?: string;
+  osVersion?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  locale?: string;
+  timezone?: string;
+  releaseVersion?: string;
+}
+
 export interface TellannEvent {
   eventId: string;
   sessionId: string;
@@ -47,10 +70,29 @@ export interface TellannEvent {
   agentVersion?: string | null;
   instrumentationManifestVersion?: string | null;
   source: string;
-  eventVersion: string;
+  /**
+   * Provenance only. Nothing branches on this, because the fleet is always mixed
+   * and a 1.1 SDK is not a 1.1 payload -- treat every optional field below as
+   * independently absent instead.
+   */
+  eventVersion: EventVersion | string;
   eventType: EventType;
   timestamp: string;
   metadata: Record<string, any>;
+
+  // ── 1.1 ────────────────────────────────────────────────────────────────
+  /** Stable per-browser id, from localStorage. */
+  anonymousId?: string | null;
+  /** The customer's own user id, as asserted by identify(). A proposal: the
+   *  collector applies the per-application privacy floor before it is stored. */
+  endUserExternalId?: string | null;
+  endUserTraits?: Record<string, any> | null;
+  context?: ClientContext | null;
+  /** Whether the session was selected for capture, and with what probability.
+   *  Sampling is decided per session, never per event: an event-sampled session is
+   *  uninterpretable as a funnel. */
+  sampled?: boolean;
+  sampleRate?: number;
 }
 
 export interface ApiRequestEvent extends TellannEvent {

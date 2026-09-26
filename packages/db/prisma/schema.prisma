@@ -1020,6 +1020,38 @@ model Session {
   /// re-completing the corpus -- see the session-facet-backfill worker.
   facetVersion Int?
 
+  // ── Identity (envelope 1.1) ────────────────────────────────────────────
+  /// Stable per-browser id from the SDK's localStorage. Present on anonymous
+  /// traffic, which is most traffic.
+  anonymousId  String?
+  /// When identity was FIRST asserted in this session. Kept separately from the
+  /// identity itself because that is last-write-wins: a shared device can identify
+  /// as one person, log out, and identify as another within one browser visit.
+  identifiedAt DateTime?
+
+  // ── Client context (envelope 1.1) ──────────────────────────────────────
+  // Carried on every event on the wire but stored once here. Per-event storage
+  // would be ~44 KB of duplication per session, about 12 GB at 50M events. Written
+  // first-writer-wins: context describes the page load and must not flap.
+  deviceType     String?
+  browserName    String?
+  browserVersion String?
+  osName         String?
+  osVersion      String?
+  viewportWidth  Int?
+  viewportHeight Int?
+  locale         String?
+  timezone       String?
+  releaseVersion String?
+  /// The probability this session was captured with, so a rollup over a sampled
+  /// application can multiply back up to a population estimate.
+  sampleRate     Float?
+
+  /// Both have been in the TellannEvent type and set by the SDK all along; the
+  /// collector's Zod schema silently discarded them until envelope 1.1.
+  agentVersion                   String?
+  instrumentationManifestVersion String?
+
   events     SessionEvent[]
   statistics SessionStatistic?
   createdAt  DateTime          @default(now())

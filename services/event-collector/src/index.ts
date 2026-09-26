@@ -2,7 +2,7 @@ import { initTracing } from '@tellann/telemetry';
 initTracing('event-collector');
 
 import express, { Request, Response } from 'express';
-import { TellannEventSchema, EventBatchSchema, Topics, Feature, kafkaEnabled, telemetryTransport, type TellannEvent } from '@tellann/shared';
+import { TellannEventSchema, parseEventBatch, Topics, Feature, kafkaEnabled, telemetryTransport, type TellannEvent } from '@tellann/shared';
 import { applyEventsToSessions } from '@tellann/session-core';
 import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
@@ -249,10 +249,30 @@ app.post('/v1/events/batch', async (req: Request, res: Response) => {
       });
     }
 
-    const events = EventBatchSchema.parse(req.body);
+    // Element-by-element, not all-or-nothing. `EventBatchSchema.parse` threw on the
+    // first bad element and the catch below answered 400, so one event the server
+    // did not yet understand discarded every event that shared its flush -- and
+    // because `fetch` does not reject on a 400, the SDK did not even re-buffer them.
+    // A widening envelope across a fleet of pinned SDK versions makes that a
+    // data-loss amplifier. 400 is now reserved for a body that is not an array.
+    const parsed = parseEventBatch(req.body);
+    if (!parsed.wellFormed) {
+      return res.status(400).json({ error: 'Event batch must be an array' });
+    }
+    if (parsed.rejected.length > 0) {
+      console.warn(
+        `[EventCollector] Rejected ${parsed.rejected.length} of ${parsed.rejected.length + parsed.events.length} event(s) in batch`,
+        parsed.rejected.slice(0, 5),
+      );
+    }
 
+    const events = parsed.events;
     if (events.length === 0) {
-      return res.status(202).json({ accepted: true, eventCount: 0 });
+      return res.status(202).json({
+        accepted: true,
+        eventCount: 0,
+        rejectedCount: parsed.rejected.length,
+      });
     }
 
     const validEvents = events.filter((event) => {
@@ -268,14 +288,21 @@ app.post('/v1/events/batch', async (req: Request, res: Response) => {
     });
 
     if (validEvents.length === 0) {
-      return res.status(413).json({ error: 'All events in batch exceeded size limit constraints' });
+      return res.status(413).json({
+        error: 'All events in batch exceeded size limit constraints',
+        rejectedCount: parsed.rejected.length,
+      });
     }
 
     const enriched = validEvents.map((e) => applyRunCorrelation(applyGatewayIdentity(e, req), req));
     await publishEvents(enriched, enriched[0].sessionId);
     await processRunFlowBoundaries(enriched, req);
 
-    res.status(202).json({ accepted: true, eventCount: validEvents.length });
+    res.status(202).json({
+      accepted: true,
+      eventCount: validEvents.length,
+      rejectedCount: parsed.rejected.length,
+    });
   } catch (error) {
     console.error('[EventCollector] Batch event parse/publish error', error);
     res.status(400).json({ error: 'Invalid event batch payload' });

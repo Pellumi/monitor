@@ -59,13 +59,25 @@ async function upsertSessionWindow(
   runId: string | null,
   timestamp: Date,
 ): Promise<void> {
+  const context = event.context ?? {};
   await prisma.$executeRaw`
     INSERT INTO "Session" (
       "id", "applicationId", "environmentId", "tenantId", "qaRunId", "traceId",
-      "startTime", "endTime", "createdAt", "updatedAt"
+      "startTime", "endTime", "createdAt", "updatedAt",
+      "anonymousId", "deviceType", "browserName", "browserVersion",
+      "osName", "osVersion", "viewportWidth", "viewportHeight",
+      "locale", "timezone", "releaseVersion", "sampleRate",
+      "agentVersion", "instrumentationManifestVersion"
     ) VALUES (
       ${event.sessionId}, ${event.applicationId}, ${environmentId}, ${event.tenantId},
-      ${runId}, ${event.traceId ?? null}, ${timestamp}, ${timestamp}, NOW(), NOW()
+      ${runId}, ${event.traceId ?? null}, ${timestamp}, ${timestamp}, NOW(), NOW(),
+      ${event.anonymousId ?? null},
+      ${context.deviceType ?? null}, ${context.browserName ?? null}, ${context.browserVersion ?? null},
+      ${context.osName ?? null}, ${context.osVersion ?? null},
+      ${context.viewportWidth ?? null}, ${context.viewportHeight ?? null},
+      ${context.locale ?? null}, ${context.timezone ?? null}, ${context.releaseVersion ?? null},
+      ${event.sampleRate ?? null},
+      ${event.agentVersion ?? null}, ${event.instrumentationManifestVersion ?? null}
     )
     ON CONFLICT ("id") DO UPDATE SET
       "endTime"       = GREATEST("Session"."endTime",   EXCLUDED."endTime"),
@@ -73,6 +85,25 @@ async function upsertSessionWindow(
       "environmentId" = COALESCE("Session"."environmentId", EXCLUDED."environmentId"),
       "qaRunId"       = COALESCE("Session"."qaRunId",       EXCLUDED."qaRunId"),
       "traceId"       = COALESCE("Session"."traceId",       EXCLUDED."traceId"),
+      -- First writer wins for everything below. Context describes the page load, so
+      -- it must not flap between events; and a later event that simply omits a field
+      -- (an SDK reconfigured mid-session, a privacy extension switched on) must not
+      -- erase what an earlier one established.
+      "anonymousId"    = COALESCE("Session"."anonymousId",    EXCLUDED."anonymousId"),
+      "deviceType"     = COALESCE("Session"."deviceType",     EXCLUDED."deviceType"),
+      "browserName"    = COALESCE("Session"."browserName",    EXCLUDED."browserName"),
+      "browserVersion" = COALESCE("Session"."browserVersion", EXCLUDED."browserVersion"),
+      "osName"         = COALESCE("Session"."osName",         EXCLUDED."osName"),
+      "osVersion"      = COALESCE("Session"."osVersion",      EXCLUDED."osVersion"),
+      "viewportWidth"  = COALESCE("Session"."viewportWidth",  EXCLUDED."viewportWidth"),
+      "viewportHeight" = COALESCE("Session"."viewportHeight", EXCLUDED."viewportHeight"),
+      "locale"         = COALESCE("Session"."locale",         EXCLUDED."locale"),
+      "timezone"       = COALESCE("Session"."timezone",       EXCLUDED."timezone"),
+      "releaseVersion" = COALESCE("Session"."releaseVersion", EXCLUDED."releaseVersion"),
+      "sampleRate"     = COALESCE("Session"."sampleRate",     EXCLUDED."sampleRate"),
+      "agentVersion"   = COALESCE("Session"."agentVersion",   EXCLUDED."agentVersion"),
+      "instrumentationManifestVersion" = COALESCE(
+        "Session"."instrumentationManifestVersion", EXCLUDED."instrumentationManifestVersion"),
       "updatedAt"     = NOW()
   `;
 }
