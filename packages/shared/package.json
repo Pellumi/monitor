@@ -13,6 +13,10 @@
       "types": "./dist/entitlements.d.ts",
       "default": "./dist/entitlements.js"
     },
+    "./dashboard-contract": {
+      "types": "./dist/dashboard-contract.d.ts",
+      "default": "./dist/dashboard-contract.js"
+    },
     "./metrics": {
       "types": "./dist/metrics.d.ts",
       "default": "./dist/metrics.js"

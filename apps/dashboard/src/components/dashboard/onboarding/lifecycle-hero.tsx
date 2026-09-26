@@ -157,6 +157,14 @@ export function LifecycleHero() {
 
   if (state.lifecycle === "ACTIVE" && data?.summary) {
     const { summary, coverage } = data;
+    // Every tile here is a change since the previous analysis. Until deltas are
+    // recorded there is nothing to show, and a panel of four "Pending" values
+    // is worse than no panel.
+    const hasAnyDelta =
+      summary.statesObserved.delta != null ||
+      summary.transitionsObserved.delta != null ||
+      coverage?.workflowCoverage.delta != null;
+    if (!hasAnyDelta) return null;
     return (
       <div className="rounded-md border border-[#262626] bg-[#131313] p-5 text-white space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#262626] pb-3">
@@ -165,7 +173,7 @@ export function LifecycleHero() {
             <span className="text-sm font-semibold text-white">Analysis Delta</span>
           </div>
           <span className="inline-block border border-[#444748] text-[#8e9192] px-2 py-0.5 text-[11px] font-mono tracking-wider uppercase rounded-sm">
-            Last analysis: {data.analysis?.lastAnalysisAt ?? "Pending"}
+            Last analysis: {data.analysis?.lastAnalysisAt ? new Date(data.analysis.lastAnalysisAt).toLocaleDateString() : "Pending"}
           </span>
         </div>
 

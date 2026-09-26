@@ -60,8 +60,9 @@ export function MissingFlowsCard() {
                   {flow.severity}
                 </span>
               </div>
-              <div className="text-[11px] font-mono text-neutral-400">
-                Workflow: {flow.workflowName}
+              <div className="flex items-center justify-between text-[11px] font-mono text-neutral-400">
+                <span>{flow.workflowName ? `Workflow: ${flow.workflowName}` : "Workflow unrecorded"}</span>
+                {flow.category && <span className="text-neutral-500">{flow.category}</span>}
               </div>
               <div className="text-[11px] font-mono text-purple-300 bg-[#111] p-2 rounded border border-[#2d2d2d] overflow-x-auto">
                 {flow.path.join(" -> ")}

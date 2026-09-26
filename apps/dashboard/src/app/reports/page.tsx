@@ -1,6 +1,7 @@
 'use client';
 import { isReportFormatEntitled } from '@tellann/shared/entitlements';
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
+import { useEntitlement } from '@/hooks/use-entitlement';
 import { Button } from '@/components/ui/button';
 
 import React from 'react';
@@ -146,27 +147,29 @@ function ReportsContent() {
   );
   const requestedRunId = searchParams.get('runId');
   const selectedRun = completedRuns.find((run) => run.id === requestedRunId) ?? completedRuns[0];
-  const { data: qaReport, isLoading: isQaReportLoading, error: qaReportError } = useQuery<QARunReport>({
+  const { data: qaReportResult, isLoading: isQaReportLoading, error: qaReportError } = useQuery<
+    { state: 'ready'; report: QARunReport } | { state: 'generating' }
+  >({
     queryKey: ['qa-run-report', selectedRun?.id],
     queryFn: async () => {
       const res = await authenticatedFetch(`${REPORT_ENGINE}/qa-runs/${selectedRun!.id}/report`);
+      // 202 means the report is still being generated and the body carries only
+      // {reportId, status, retryEligible}. `res.ok` treats that as success, so
+      // rendering it as a report read `runId` off an object that has none and
+      // crashed the page for anyone who opened it mid-generation.
+      if (res.status === 202) return { state: 'generating' };
       if (!res.ok) throw new Error('Failed to fetch the QA run report');
-      return res.json();
+      return { state: 'ready', report: (await res.json()) as QARunReport };
     },
     enabled: !!selectedRun,
+    // While it is generating, keep checking so the page fills in on its own.
+    refetchInterval: (query) => (query.state.data?.state === 'generating' ? 5_000 : false),
   });
 
-  const { data: entitlement } = useQuery<{
-    features: Record<string, boolean | string>;
-  }>({
-    queryKey: ['report-entitlement', selectedOrgId],
-    queryFn: async () => {
-      const res = await authenticatedFetch(`/api-gateway/organizations/${selectedOrgId}/entitlement`);
-      if (!res.ok) throw new Error('Failed to fetch report entitlement');
-      return res.json();
-    },
-    enabled: !!selectedOrgId,
-  });
+  const qaReport = qaReportResult?.state === 'ready' ? qaReportResult.report : undefined;
+  const isQaReportGenerating = qaReportResult?.state === 'generating';
+
+  const { entitlement } = useEntitlement();
 
   const exportTier = entitlement?.features?.REPORT_EXPORT;
 
@@ -189,6 +192,18 @@ function ReportsContent() {
         description="Reports combine captured sessions, discovered workflows, and coverage results. Send telemetry first, then Tellann can produce the report."
         primaryAction={{ label: 'Start a demonstration', href: `/qa-runs/new?appId=${encodeURIComponent(appId)}` }}
         secondaryAction={{ label: 'Connect SDK', href: `/applications/${encodeURIComponent(appId)}/connect` }}
+      />
+    );
+  }
+  if (selectedRun && isQaReportGenerating) {
+    return (
+      <EmptyState
+        variant="activation"
+        illustration="report"
+        eyebrow="Report generating"
+        title="Your report is being assembled"
+        description="The run finished and its report is still being generated. This page updates itself as soon as it is ready."
+        secondaryAction={{ label: 'View QA runs', href: '/qa-runs' }}
       />
     );
   }

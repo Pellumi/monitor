@@ -1014,6 +1014,7 @@ model Session {
   updatedAt     DateTime          @updatedAt
 
   @@index([qaRunId])
+  @@index([applicationId, environmentId, startTime])
 }
 
 model SessionEvent {
@@ -1075,6 +1076,10 @@ model StateObservation {
   sessionId String
   eventId   String
   timestamp DateTime
+
+  /// sessionId is not a relation scalar, so nothing created an index for it.
+  /// Every environment-scoped graph count joins through it.
+  @@index([sessionId, timestamp])
 }
 
 model TransitionObservation {
@@ -1085,6 +1090,9 @@ model TransitionObservation {
   fromEventId  String
   toEventId    String
   timestamp    DateTime
+
+  /// See the note on StateObservation.
+  @@index([sessionId, timestamp])
 }
 
 model CandidateState {
@@ -1098,16 +1106,34 @@ model CandidateState {
 }
 
 model MissingState {
-  id            String      @id @default(uuid())
+  id            String       @id @default(uuid())
   applicationId String
-  application   Application @relation(fields: [applicationId], references: [id])
+  application   Application  @relation(fields: [applicationId], references: [id])
+  /// Findings are per-environment: a gap demonstrated away in staging is still
+  /// a gap in production. Nullable only because rows predating this column
+  /// were backfilled to the application's default environment and an
+  /// application need not have one.
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id])
   stateName     String
   sourceState   String
   ruleName      String
+  /// The detecting rule's own classification. Null where the rule was
+  /// synthesised from a declared transition and has none to give.
+  category      String?
   severity      String?
-  confidence    Float       @default(1.0)
+  confidence    Float        @default(1.0)
   reason        String?
-  detectedAt    DateTime    @default(now())
+  detectedAt    DateTime     @default(now())
+  /// Refreshed on every analysis that still finds the gap, so a stale finding
+  /// is distinguishable from a live one.
+  lastSeenAt    DateTime     @default(now())
+  /// Set once the candidate state is observed. Findings are resolved, never
+  /// deleted, so "gaps you closed since last time" stays answerable — and a
+  /// regression re-opens the same row rather than creating a duplicate.
+  resolvedAt    DateTime?
+
+  @@index([applicationId, environmentId, resolvedAt])
 }
 
 model CoverageSnapshot {
@@ -1123,18 +1149,46 @@ model CoverageSnapshot {
   coveragePercent    Float
   transitionCoverage Float        @default(0)
   flowCoverage       Float        @default(0)
+  /// Recorded so a change summary can be derived from two snapshots. The
+  /// observed-state count was already here; without these two, "+5 transitions
+  /// observed, 6 gaps closed" has nowhere to come from.
+  ///
+  /// Nullable, and deliberately without a default: a snapshot taken before
+  /// these columns existed did not measure zero, it measured nothing. A
+  /// `NOT NULL DEFAULT 0` would make the two indistinguishable one layer below
+  /// the `MeasurementStatus` that exists to tell them apart, and every historic
+  /// row would then difference into a large fabricated improvement.
+  observedTransitions Int?
+  openFindings        Int?
+
+  /// Every dashboard load reads the newest snapshot for an application and
+  /// environment; without this the read is a full scan plus a sort.
+  @@index([applicationId, environmentId, createdAt])
 }
 
 model MissingFlow {
-  id            String      @id @default(uuid())
+  id            String       @id @default(uuid())
   applicationId String
-  application   Application @relation(fields: [applicationId], references: [id])
+  application   Application  @relation(fields: [applicationId], references: [id])
+  /// See the note on MissingState.environmentId.
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id])
+  /// The workflow this gap was derived from. Detection already walks a
+  /// specific workflow to produce the suggestion; keeping the link is what
+  /// lets the finding name it instead of saying "Application Flow".
+  workflowId    String?
+  workflow      Workflow?    @relation(fields: [workflowId], references: [id], onDelete: SetNull)
   sourceFlow    Json
   suggestedFlow Json
   reason        String
+  category      String?
   severity      String?
-  confidence    Float       @default(1.0)
-  createdAt     DateTime    @default(now())
+  confidence    Float        @default(1.0)
+  createdAt     DateTime     @default(now())
+  lastSeenAt    DateTime     @default(now())
+  resolvedAt    DateTime?
+
+  @@index([applicationId, environmentId, resolvedAt])
 }
 
 model Workflow {
@@ -1147,6 +1201,8 @@ model Workflow {
   transitionCount Int
   executionCount  Int         @default(1)
   createdAt       DateTime    @default(now())
+
+  missingFlows MissingFlow[]
 }
 
 model Demonstration {
@@ -1359,6 +1415,10 @@ model BehaviorGraphNode {
   suggestions DeclaredStateSuggestion[]
   edgesFrom   BehaviorGraphEdge[]       @relation("FromNode")
   edgesTo     BehaviorGraphEdge[]       @relation("ToNode")
+
+  /// Relation scalar, so nothing indexed it. Counting a graph's nodes scans
+  /// the table without this.
+  @@index([graphId])
 }
 
 model BehaviorGraphEdge {
@@ -1380,6 +1440,9 @@ model BehaviorGraphEdge {
   provenance     StateProvenance   @default(USER_AUTHORED)
   evidenceIds    String[]          @default([])
   createdAt      DateTime          @default(now())
+
+  /// See the note on BehaviorGraphNode.
+  @@index([graphId])
 }
 
 model DeclaredStateSuggestion {
@@ -1472,6 +1535,7 @@ model ReconciliationReport {
 
   @@index([flowId, flowVersionId, generatedAt])
   @@index([qaRunId])
+  @@index([applicationId, environmentId, generatedAt])
 }
 
 model BehaviorGraphVersion {
@@ -1643,6 +1707,8 @@ model Environment {
   sessions              Session[]
   behaviorGraphs        BehaviorGraph[]
   coverageSnapshots     CoverageSnapshot[]
+  missingStates         MissingState[]
+  missingFlows          MissingFlow[]
   observedSnapshots     ObservedGraphSnapshot[]
   demonstrations        Demonstration[]
   reconciliationReports ReconciliationReport[]

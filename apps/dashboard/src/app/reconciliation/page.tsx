@@ -3,6 +3,7 @@ import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Button } from '@/components/ui/button';
 
 import { useState, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSelectedApplication } from '@/hooks/use-selected-application';
 import { ApplicationRequiredState } from '@/components/application-required-state';
@@ -538,6 +539,11 @@ function ReconciliationContent() {
   const queryClient = useQueryClient();
 
   const [activeTabFlowId, setActiveTabFlowId] = useState<string>('');
+  // Lets a link name the flow to open. Without this the page always landed on
+  // whichever flow happened to sort first, so a "inspect this gap" link from
+  // elsewhere pointed at the wrong one.
+  const searchParams = useSearchParams();
+  const requestedFlowId = searchParams.get('flowId');
 
   const { data: flows, isLoading: isFlowsLoading } = useQuery<DeclaredFlow[]>({
     queryKey: ['reconciliation-flows', appId],
@@ -562,7 +568,9 @@ function ReconciliationContent() {
 
   const selectedFlowId = flows?.some((flow) => flow.id === activeTabFlowId)
     ? activeTabFlowId
-    : flows?.[0]?.id ?? '';
+    : flows?.some((flow) => flow.id === requestedFlowId)
+      ? (requestedFlowId as string)
+      : flows?.[0]?.id ?? '';
 
   const activeReport = useMemo(() => {
     return reports?.find((r) => r.flowId === selectedFlowId);

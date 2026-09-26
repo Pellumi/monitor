@@ -42,18 +42,21 @@ export const lmsRules: ApplicationRuleSet = {
     {
       trigger: "QUIZ_SUBMITTED",
       candidate: "QUIZ_FAILED",
+      category: "ERROR",
       confidence: 0.95,
       reason: "Observed quiz submission; expect a failure/retake state."
     },
     {
       trigger: "COURSE_ENROLLED",
       candidate: "ENROLLMENT_REJECTED",
+      category: "ERROR",
       confidence: 0.8,
       reason: "Observed course enrollment; expect payment or capacity rejection path."
     },
     {
       trigger: "COURSE_PUBLISHED",
       candidate: "COURSE_ARCHIVED",
+      category: "EMPTY",
       confidence: 0.7,
       reason: "Published courses eventually need an archival or deletion path."
     }
@@ -67,6 +70,7 @@ export const lmsRules: ApplicationRuleSet = {
           to: "QUIZ_ABANDONED"
         }
       },
+      category: "ALTERNATIVE",
       confidence: 0.85,
       reason: "Students may start a quiz and abandon it before submission."
     },
@@ -78,6 +82,7 @@ export const lmsRules: ApplicationRuleSet = {
           to: "ENROLLMENT_REJECTED"
         }
       },
+      category: "FAILURE",
       confidence: 0.9,
       reason: "Enrollment attempt may fail due to prerequisites or limits."
     }

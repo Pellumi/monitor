@@ -81,6 +81,10 @@ export function reconstructRuleSet(compiledRules: any, profileType: string): App
         missingStates.push({
           trigger: rule.fromState,
           candidate: rule.toState,
+          // A declared transition says a path is expected, not what kind of
+          // path it is. Guessing LOADING/EMPTY/ERROR/RECOVERY here would put a
+          // category on the dashboard that nothing in the system stands behind.
+          category: null,
           confidence: rule.confidence ?? 1.0,
           reason: `Declared transition from ${rule.fromState} to ${rule.toState}`,
         });

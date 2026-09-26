@@ -34,19 +34,18 @@ export function CoverageSummary() {
       title: "Transition Coverage",
       measured: coverage?.transitionCoverage,
       color: "bg-purple-500",
-      description: "Observed state-to-state transitions",
-    },
-    {
-      title: "Endpoint Coverage",
-      measured: coverage?.endpointCoverage,
-      color: "bg-amber-500",
-      description: "APIs called during demonstrations",
+      // The coverage engine swaps this metric for the reconciliation score
+      // once a flow is declared. Two different measurements under one label is
+      // what the caption disambiguates.
+      description: coverage?.transitionCoverageFromDeclaredFlow
+        ? "Conformance to your declared flow"
+        : "Observed state-to-state transitions",
     },
     {
       title: "Error Coverage",
       measured: coverage?.errorCoverage,
       color: "bg-[#e54545]",
-      description: "Demonstrated error & recovery paths",
+      description: "Error & recovery states the ruleset expects",
     },
   ];
 
@@ -68,7 +67,7 @@ export function CoverageSummary() {
         </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {items.map((item, idx) => {
           const formattedVal = renderMeasuredPercentage(item.measured);
           const valNum = item.measured?.status === "MEASURED" ? item.measured.value ?? 0 : 0;
@@ -93,13 +92,19 @@ export function CoverageSummary() {
                 {formattedVal}
               </div>
 
-              {/* Horizontal Progress Bar */}
-              <div className="w-full h-2 bg-[#222] rounded-full overflow-hidden">
-                <div
-                  className={`h-full ${item.color} transition-all duration-500`}
-                  style={{ width: `${Math.min(100, Math.max(0, valNum))}%` }}
-                />
-              </div>
+              {/* A bar is only drawn for a real measurement: a full-width
+                  empty track reads as zero, which is a different claim from
+                  "not measured". */}
+              {item.measured?.status === "MEASURED" ? (
+                <div className="w-full h-2 bg-[#222] rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${item.color} transition-all duration-500`}
+                    style={{ width: `${Math.min(100, Math.max(0, valNum))}%` }}
+                  />
+                </div>
+              ) : (
+                <div className="w-full h-2 rounded-full border border-dashed border-[#2d2d2d]" />
+              )}
 
               <p className="text-[10px] text-neutral-500 leading-tight">
                 {item.description}

@@ -66,6 +66,17 @@ export interface NotificationsContextType {
   dismissToast: (id: string) => void;
   permission: NotificationPermissionState;
   refreshPermission: () => void;
+  /**
+   * Called for every notification that arrives, from either path.
+   *
+   * Notifications reach this provider two ways — the SSE listener and the
+   * always-on reconciliation poll — and a subscriber wired to only the first
+   * would silently miss everything that arrives while the stream is degraded.
+   * Both funnel through `upsertRow`, so this fires from there.
+   *
+   * Returns its own unsubscribe.
+   */
+  subscribe: (listener: (notification: InAppNotification) => void) => () => void;
 }
 
 const NotificationsContext = createContext<NotificationsContextType | null>(null);
@@ -181,8 +192,24 @@ function NotificationsRuntime({
     return () => window.clearTimeout(timer);
   }, [toasts]);
 
+  const subscribers = useRef(new Set<(notification: InAppNotification) => void>());
+
+  const subscribe = useCallback((listener: (notification: InAppNotification) => void) => {
+    subscribers.current.add(listener);
+    return () => {
+      subscribers.current.delete(listener);
+    };
+  }, []);
+
   // Merge one row from the stream / a mutation response into the list.
   const upsertRow = useCallback((row: InAppNotification) => {
+    for (const listener of subscribers.current) {
+      try {
+        listener(row);
+      } catch {
+        // A subscriber's failure must not stop the notification being stored.
+      }
+    }
     setNotifications((current) => {
       const index = current.findIndex((item) => item.id === row.id);
       if (index === -1) {
@@ -441,6 +468,7 @@ function NotificationsRuntime({
       dismissToast,
       permission,
       refreshPermission,
+      subscribe,
     }),
     [
       notifications,
@@ -461,6 +489,7 @@ function NotificationsRuntime({
       dismissToast,
       permission,
       refreshPermission,
+      subscribe,
     ],
   );
 

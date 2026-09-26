@@ -887,6 +887,7 @@ async function main() {
   fastify.all('/applications/:id/declared-flow/*', forwardToFdrs);
   fastify.all('/applications/:id/reconciliation', forwardToFdrs);
   fastify.all('/applications/:id/reconciliation/*', forwardToFdrs);
+  fastify.all('/applications/:id/dashboard-overview', forwardToReportEngine);
   fastify.all('/applications/:id/graph', forwardToReportEngine);
   fastify.all('/applications/:id/workflows', forwardToReportEngine);
   fastify.all('/applications/:id/sessions', forwardToReportEngine);

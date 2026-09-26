@@ -5,9 +5,35 @@ export type ExactRouteRule = { type: 'exactRoute', route: string, state: string 
 
 export type StateExtractionRule = EventRule | MetadataRule | RoutePatternRule | ExactRouteRule;
 
+/**
+ * What kind of gap an unobserved state represents.
+ *
+ * This is the rule's own classification, not a guess made downstream. It is
+ * required so that every rule states what it is looking for: a dashboard that
+ * prints "ERROR" over a missing empty-state is worse than one that prints
+ * nothing, and a default value here is how that happens.
+ */
+export type MissingStateCategory = 'LOADING' | 'EMPTY' | 'ERROR' | 'RECOVERY';
+
+/** The same, for an unobserved path rather than an unobserved state. */
+export type MissingFlowCategory =
+  | 'FAILURE'
+  | 'ALTERNATIVE'
+  | 'RECOVERY'
+  | 'RARE'
+  | 'EDGE_CASE';
+
 export interface MissingStateRule {
   trigger: string;
   candidate: string;
+  /**
+   * Required, but nullable: a rule must state its classification, and `null`
+   * is a legitimate answer for a rule synthesised from a declared transition,
+   * which says a path is expected without saying what kind of path it is.
+   * Requiring the property is what stops a new rule from silently inheriting
+   * someone else's category.
+   */
+  category: MissingStateCategory | null;
   confidence: number;
   reason: string;
 }
@@ -22,6 +48,7 @@ export interface FlowTransformation {
 export interface MissingFlowRule {
   pattern: string[];
   transformation: FlowTransformation;
+  category: MissingFlowCategory;
   confidence: number;
   reason: string;
 }

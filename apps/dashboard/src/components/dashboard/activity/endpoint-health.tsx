@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { useSelectedApplication } from "@/hooks/use-selected-application";
 import { useDashboard } from "../core/dashboard-provider";
-import { renderMeasuredValue } from "../core/measurement-state";
+import { renderMeasuredPercentage, renderMeasuredValue } from "../core/measurement-state";
 import { Activity, ArrowRight, Clock, AlertCircle } from "lucide-react";
 
 export function EndpointHealth() {
@@ -42,7 +42,7 @@ export function EndpointHealth() {
             Endpoint Health & Performance
           </h3>
           <p className="text-xs text-neutral-400 font-mono mt-0.5">
-            {renderMeasuredValue(endpoints.observedCount)} endpoints observed / Avg latency: {renderMeasuredValue(endpoints.averageLatencyMs)} ms
+            {renderMeasuredValue(endpoints.observedCount)} endpoints observed / Avg latency: {renderMeasuredValue(endpoints.averageLatencyMs)} ms / {renderMeasuredPercentage(endpoints.healthyPercentage)} healthy
           </p>
         </div>
         <Link
@@ -60,9 +60,14 @@ export function EndpointHealth() {
         <div className="space-y-3">
           <h4 className="text-xs font-bold text-neutral-300 flex items-center gap-1.5 uppercase tracking-wider">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            Slowest Endpoints (Latency in ms)
+            Slowest Endpoints (p95 latency)
           </h4>
           <div className="space-y-2">
+            {endpoints.slowEndpoints.length === 0 && (
+              <p className="text-[11px] text-neutral-500">
+                No endpoint is slow enough to rank, with enough calls to judge.
+              </p>
+            )}
             {endpoints.slowEndpoints.map((ep) => (
               <div
                 key={ep.id}
@@ -76,11 +81,11 @@ export function EndpointHealth() {
                     <span className="font-bold text-white">{ep.path}</span>
                   </div>
                   <span className="text-[10px] text-neutral-500 block mt-1">
-                    {ep.callCount} API requests captured
+                    {ep.callCount} requests / {ep.averageLatencyMs} ms avg
                   </span>
                 </div>
                 <span className="text-sm font-bold text-amber-400">
-                  {ep.averageLatencyMs} ms
+                  {ep.p95Ms} ms
                 </span>
               </div>
             ))}
@@ -94,6 +99,11 @@ export function EndpointHealth() {
             Highest Error Rates (% Failed)
           </h4>
           <div className="space-y-2">
+            {endpoints.errorProneEndpoints.length === 0 && (
+              <p className="text-[11px] text-neutral-500">
+                No endpoint is failing often enough to rank.
+              </p>
+            )}
             {endpoints.errorProneEndpoints.map((ep) => (
               <div
                 key={ep.id}
@@ -107,7 +117,7 @@ export function EndpointHealth() {
                     <span className="font-bold text-white">{ep.path}</span>
                   </div>
                   <span className="text-[10px] text-neutral-500 block mt-1">
-                    {ep.errorCount} total errors recorded
+                    {ep.callCount} requests captured
                   </span>
                 </div>
                 <span className="text-sm font-bold text-red-400">

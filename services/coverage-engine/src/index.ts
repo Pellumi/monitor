@@ -152,30 +152,99 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     const newMissingStates = [];
     const newMissingFlows = [];
     
+    // 2. Close findings the application has since answered.
+    //
+    // This runs before detection so a state observed in this analysis resolves
+    // its finding even if the rule that produced it no longer fires. Resolution
+    // is a stamp rather than a delete: the row is what makes "gaps closed since
+    // your last analysis" answerable, and a regression re-opens it below.
+    // Rows recorded before findings carried an environment have a null one.
+    // Matching only this environment would strand them open forever, so an
+    // observation anywhere retires them; if the gap still exists in another
+    // environment, detection re-creates it there with a real environment.
+    const findingScope = targetEnvId
+      ? { OR: [{ environmentId: targetEnvId }, { environmentId: null }] }
+      : { environmentId: null };
+
+    const resolvedStateFindings = await prisma.missingState.updateMany({
+      where: {
+        applicationId,
+        ...findingScope,
+        resolvedAt: null,
+        stateName: { in: [...observedStateNames] },
+      },
+      data: { resolvedAt: new Date() },
+    });
+
+    // The same for flows: a gap is closed once a real workflow walks the path
+    // that was only ever suggested. Done as its own pass rather than inside the
+    // rule loop below, so a flow whose rule no longer fires still gets closed.
+    const allWorkflowsForResolution = await prisma.workflow.findMany({
+      where: { applicationId },
+      select: { path: true },
+    });
+    const knownWorkflowPaths = new Set(
+      allWorkflowsForResolution.map((workflow) => JSON.stringify(workflow.path)),
+    );
+    const openFlowsForResolution = await prisma.missingFlow.findMany({
+      where: { applicationId, ...findingScope, resolvedAt: null },
+      select: { id: true, suggestedFlow: true },
+    });
+    const closedFlowIds = openFlowsForResolution
+      .filter((flow) => knownWorkflowPaths.has(JSON.stringify(flow.suggestedFlow)))
+      .map((flow) => flow.id);
+    if (closedFlowIds.length > 0) {
+      await prisma.missingFlow.updateMany({
+        where: { id: { in: closedFlowIds } },
+        data: { resolvedAt: new Date() },
+      });
+    }
+
     if (ruleSet) {
       // 2a. Generate Missing States
       for (const state of observedStates) {
         const missingRules = ruleSet.missingStates.filter(r => r.trigger === state.name);
-        
+
         for (const rule of missingRules) {
           if (!observedStateNames.has(rule.candidate)) {
             let missingStateRec = await prisma.missingState.findFirst({
-              where: { applicationId, stateName: rule.candidate, sourceState: state.name }
+              where: {
+                applicationId,
+                environmentId: targetEnvId || null,
+                stateName: rule.candidate,
+                sourceState: state.name,
+              }
             });
-            
+
             if (!missingStateRec) {
               missingStateRec = await prisma.missingState.create({
                 data: {
                   applicationId,
+                  environmentId: targetEnvId || null,
                   stateName: rule.candidate,
                   sourceState: state.name,
                   ruleName: "Missing State Inference",
+                  // The rule's own classification, not one inferred downstream.
+                  category: rule.category,
                   severity: "HIGH",
                   confidence: rule.confidence,
                   reason: rule.reason
                 }
               });
               newMissingStates.push(missingStateRec);
+            } else {
+              // Still missing. Refresh the sighting, and re-open it if this is
+              // a regression of something previously resolved.
+              missingStateRec = await prisma.missingState.update({
+                where: { id: missingStateRec.id },
+                data: {
+                  lastSeenAt: new Date(),
+                  resolvedAt: null,
+                  category: rule.category,
+                  confidence: rule.confidence,
+                  reason: rule.reason,
+                },
+              });
             }
 
             // Add to Candidate States (auto-approved for MVP)
@@ -235,24 +304,45 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
               where: { applicationId, path: { equals: suggestedFlow } }
             });
 
-            if (!existingVariation) {
-              const existingMissingFlow = await prisma.missingFlow.findFirst({
-                where: { applicationId, reason: flowRule.reason, sourceFlow: { equals: workflowPath } }
-              });
-
-              if (!existingMissingFlow) {
-                const flow = await prisma.missingFlow.create({
-                  data: {
-                    applicationId,
-                    sourceFlow: workflowPath,
-                    suggestedFlow: suggestedFlow,
-                    reason: flowRule.reason,
-                    severity: "HIGH",
-                    confidence: flowRule.confidence
-                  }
-                });
-                newMissingFlows.push(flow);
+            const existingMissingFlow = await prisma.missingFlow.findFirst({
+              where: {
+                applicationId,
+                environmentId: targetEnvId || null,
+                reason: flowRule.reason,
+                sourceFlow: { equals: workflowPath },
               }
+            });
+
+            if (existingVariation) {
+              // Already retired by the resolve pass above.
+            } else if (!existingMissingFlow) {
+              const flow = await prisma.missingFlow.create({
+                data: {
+                  applicationId,
+                  environmentId: targetEnvId || null,
+                  // Detection already walks a specific workflow; keeping the
+                  // link is what lets the finding name it.
+                  workflowId: existingWorkflow.id,
+                  sourceFlow: workflowPath,
+                  suggestedFlow: suggestedFlow,
+                  reason: flowRule.reason,
+                  category: flowRule.category,
+                  severity: "HIGH",
+                  confidence: flowRule.confidence
+                }
+              });
+              newMissingFlows.push(flow);
+            } else {
+              await prisma.missingFlow.update({
+                where: { id: existingMissingFlow.id },
+                data: {
+                  lastSeenAt: new Date(),
+                  resolvedAt: null,
+                  workflowId: existingWorkflow.id,
+                  category: flowRule.category,
+                  confidence: flowRule.confidence,
+                },
+              });
             }
           }
         }
@@ -262,7 +352,16 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     // 3. Load DB Aggregates
     const totalCandidates = await prisma.candidateState.count({ where: { applicationId } });
     const totalApproved = await prisma.candidateState.count({ where: { applicationId, approved: true } });
-    const allMissingFlows = await prisma.missingFlow.findMany({ where: { applicationId } });
+    // Denominators count open findings in THIS environment. Counting resolved
+    // ones kept coverage permanently depressed — closing a gap could not raise
+    // the score — and counting other environments' findings meant a staging
+    // demonstration moved production's number.
+    const openMissingFlows = await prisma.missingFlow.findMany({
+      where: { applicationId, ...findingScope, resolvedAt: null },
+    });
+    const openMissingStateCount = await prisma.missingState.count({
+      where: { applicationId, ...findingScope, resolvedAt: null },
+    });
     
     const observedTransitions = await prisma.transition.findMany({
       where: {
@@ -278,11 +377,11 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
 
     // 4. Calculate Coverage Dimensions
     const observedCount = observedStates.length;
-    const stateDenominator = observedCount + totalCandidates;
+    const stateDenominator = observedCount + openMissingStateCount;
     const stateCoveragePercent = stateDenominator === 0 ? 0 : (observedCount / stateDenominator) * 100;
 
     const observedTransCount = observedTransitions.length;
-    const missingTransCount = allMissingFlows.length; // 1 missing trans per flow
+    const missingTransCount = openMissingFlows.length; // 1 missing trans per flow
     const transDenominator = observedTransCount + missingTransCount;
     let transitionCoveragePercent = transDenominator === 0 ? 0 : (observedTransCount / transDenominator) * 100;
     
@@ -296,7 +395,7 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     }
 
     const observedFlowCount = countObservedFlows(observedTransitions);
-    const missingFlowCount = allMissingFlows.length;
+    const missingFlowCount = openMissingFlows.length;
     const flowDenominator = observedFlowCount + missingFlowCount;
     const flowCoveragePercent = flowDenominator === 0 ? 0 : (observedFlowCount / flowDenominator) * 100;
 
@@ -315,7 +414,10 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
         approvedStates: totalApproved,
         coveragePercent: stateCoveragePercent,
         transitionCoverage: transitionCoveragePercent,
-        flowCoverage: flowCoveragePercent
+        flowCoverage: flowCoveragePercent,
+        // Recorded so two snapshots can be differenced into a change summary.
+        observedTransitions: observedTransCount,
+        openFindings: openMissingStateCount + openMissingFlows.length
       }
     });
 
@@ -323,6 +425,9 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     const report = {
       title: "Coverage Report",
       metrics: {
+        // Reported so a caller can see that this analysis closed gaps, not
+        // only that the score moved.
+        resolvedFindings: resolvedStateFindings.count,
         stateCoverage: `${stateCoveragePercent.toFixed(1)}%`,
         transitionCoverage: `${transitionCoveragePercent.toFixed(1)}%`,
         flowCoverage: `${flowCoveragePercent.toFixed(1)}%`,
@@ -332,14 +437,14 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
       },
       observed: observedStates.map(s => s.name),
       missing: await prisma.missingState.findMany({
-        where: { applicationId },
+        where: { applicationId, ...findingScope, resolvedAt: null },
         select: { stateName: true }
       }).then(ms => ms.map(m => m.stateName)),
       transitions: {
         observedCount: observedTransCount,
         edges: observedTransitions.map(t => `${t.fromState.name} -> ${t.toState.name}`)
       },
-      missingFlows: allMissingFlows.map(mf => (mf.suggestedFlow as string[]).join(' -> ')),
+      missingFlows: openMissingFlows.map(mf => (mf.suggestedFlow as string[]).join(' -> ')),
       snapshotId: snapshot.id
     };
 

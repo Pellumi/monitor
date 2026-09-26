@@ -7,17 +7,14 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSelectedApplication } from "@/hooks/use-selected-application";
+import {
+  ANALYSIS_NOTIFICATION_TYPES,
+  useInvalidateOnNotification,
+} from "@/hooks/use-invalidate-on-notification";
 
 // Core Providers & Data
 import { DashboardProvider, useDashboard } from "@/components/dashboard/core/dashboard-provider";
-import {
-  DashboardOverviewResponse,
-  MissingStateFinding,
-  MissingFlowFinding,
-  CoverageOpportunity,
-  DiscoveredWorkflow,
-  RecentSession,
-} from "@/components/dashboard/core/types";
+import { DashboardOverviewResponse } from "@/components/dashboard/core/types";
 
 // Modular Components
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -28,6 +25,7 @@ import { FirstAnalysisReady } from "@/components/dashboard/onboarding/first-anal
 import { QualitySummary } from "@/components/dashboard/overview/quality-summary";
 import { CoverageSummary } from "@/components/dashboard/overview/coverage-summary";
 import { WorkflowCoverageList } from "@/components/dashboard/overview/workflow-coverage-list";
+import { ExpectedVsObserved } from "@/components/dashboard/overview/expected-vs-observed";
 import { MissingStatesCard } from "@/components/dashboard/findings/missing-states-card";
 import { MissingFlowsCard } from "@/components/dashboard/findings/missing-flows-card";
 import { SuggestedDemonstrationsCard } from "@/components/dashboard/findings/suggested-demonstrations";
@@ -71,313 +69,31 @@ const EndpointHealth = dynamic(
   },
 );
 
+/**
+ * The whole overview, from one endpoint.
+ *
+ * This replaced eight parallel requests stitched together here by ~250 lines of
+ * untyped mapping. That arrangement could not fail: `Promise.allSettled` always
+ * resolved, so an outage produced a response with every field missing, which
+ * read as "SDK not connected" and answered a mature account with an onboarding
+ * wizard. Throwing on a non-ok response is what makes `isError` mean something,
+ * because `authenticatedFetch` returns failures rather than raising them.
+ */
 async function fetchDashboardOverview(
   appId: string,
   range: string,
+  environmentId?: string,
 ): Promise<DashboardOverviewResponse> {
-  // Fetch real data from the supported service endpoints concurrently.
-  const [
-    reportRes,
-    workflowsRes,
-    sessionsRes,
-    graphRes,
-    endpointsRes,
-    appRes,
-    progressRes,
-    setupRes,
-  ] = await Promise.allSettled([
-    authenticatedFetch(`/api-gateway/reports/${appId}/latest`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/workflows`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/sessions?page=1&limit=10&range=${encodeURIComponent(range)}`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/graph`),
-    authenticatedFetch(`/api-gateway/reports/${appId}/endpoint-intelligence`),
-    authenticatedFetch(`/api-gateway/applications/${appId}`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/onboarding-progress`),
-    authenticatedFetch(`/api-gateway/applications/${appId}/sdk-setup`),
-  ]);
+  const params = new URLSearchParams({ range });
+  if (environmentId) params.set("environmentId", environmentId);
 
-  const reportData = reportRes.status === "fulfilled" && reportRes.value.ok ? await reportRes.value.json() : null;
-  const workflowsData = workflowsRes.status === "fulfilled" && workflowsRes.value.ok ? await workflowsRes.value.json() : null;
-  const sessionsData = sessionsRes.status === "fulfilled" && sessionsRes.value.ok ? await sessionsRes.value.json() : null;
-  const graphData = graphRes.status === "fulfilled" && graphRes.value.ok ? await graphRes.value.json() : null;
-  const endpointsData = endpointsRes.status === "fulfilled" && endpointsRes.value.ok ? await endpointsRes.value.json() : null;
-  const appData = appRes.status === "fulfilled" && appRes.value.ok ? await appRes.value.json() : null;
-  const progressData = progressRes.status === "fulfilled" && progressRes.value.ok ? await progressRes.value.json() : null;
-  const setupData = setupRes.status === "fulfilled" && setupRes.value.ok ? await setupRes.value.json() : null;
-
-  // Build ApplicationContext
-  const appName = appData?.name || reportData?.application || "Application";
-  const appEnv = appData?.environment?.type || "development";
-  const appPlan = appData?.organization?.planType?.toLowerCase() || "solo";
-
-  // Build telemetry and session counts from DB
-  const rawSessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [];
-  const sessionCount = sessionsData?.total ?? rawSessions.length ?? reportData?.summary?.sessionCount ?? 0;
-  const hasWorkflowResponse = Array.isArray(workflowsData);
-  const workflowList = hasWorkflowResponse ? workflowsData : Array.isArray(reportData?.observedWorkflows) ? reportData.observedWorkflows : [];
-  const workflowCount = hasWorkflowResponse
-    ? workflowList.length
-    : (reportData?.summary?.workflowCount ?? workflowList.length);
-
-  // Build missing states & flows from DB
-  const rawMissingStates = Array.isArray(reportData?.missingStates) ? reportData.missingStates : [];
-  const rawMissingFlows = Array.isArray(reportData?.missingFlows) ? reportData.missingFlows : [];
-
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const mappedMissingStates: MissingStateFinding[] = rawMissingStates.map((ms: any, idx: number) => ({
-    id: `ms-real-${idx}`,
-    stateName: ms.stateName || ms.name || "UNREACHED_STATE",
-    workflowName: ms.workflowName || "Application Workflow",
-    category: (ms.category?.toUpperCase() as any) || "ERROR",
-    severity: (ms.severity?.toUpperCase() as any) || (ms.confidence > 0.8 ? "HIGH" : "MEDIUM"),
-    evidence: ms.reason || `Not observed in ${sessionCount} analyzed sessions.`,
-  }));
-
-  const mappedMissingFlows: MissingFlowFinding[] = rawMissingFlows.map((mf: any, idx: number) => ({
-    id: `mf-real-${idx}`,
-    flowName: mf.flowName || `Missing Path #${idx + 1}`,
-    workflowName: mf.workflowName || "Application Flow",
-    path: Array.isArray(mf.path) ? mf.path : ["START", "UNTESTED_PATH"],
-    category: (mf.category?.toUpperCase() as any) || "FAILURE",
-    severity: (mf.severity?.toUpperCase() as any) || "HIGH",
-    evidence: mf.reason || `Unobserved path variant.`,
-  }));
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  // Build Coverage Opportunities from DB missing flows
-  const mappedOpportunities: CoverageOpportunity[] = mappedMissingFlows.slice(0, 2).map((mf, idx) => ({
-    id: `opp-real-${idx}`,
-    workflowId: `wf-${idx}`,
-    workflowName: mf.workflowName,
-    title: `Demonstrate ${mf.flowName}`,
-    description: `Workflow missing unobserved path: ${mf.path.join(" -> ")}`,
-    unobservedPathsCount: mf.path.length,
-    suggestedSteps: [
-      `Execute steps leading to ${mf.path[0] || "start"}`,
-      `Trigger ${mf.path[1] || "alternate path"} condition`,
-      `Verify application recovery or error handling`,
-    ],
-  }));
-
-  // Build Discovered Workflows from DB
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const mappedWorkflows: DiscoveredWorkflow[] = workflowList.map((wf: any, idx: number) => {
-    const name = wf.name || `Workflow #${idx + 1}`;
-    const pathArr = Array.isArray(wf.path) ? wf.path : [];
-    const executionCount = wf.executionCount ?? wf.count ?? 0;
-    const coverage = wf.coverage ?? wf.coveragePercentage ?? 0;
-    return {
-      id: wf.id || `wf-real-${idx}`,
-      name,
-      coverage,
-      stateCount: wf.stateCount ?? pathArr.length,
-      missingPathCount: wf.missingPathCount ?? 0,
-      demonstrationCount: executionCount,
-      severity: coverage < 65 ? "HIGH" : coverage < 85 ? "MEDIUM" : "LOW",
-    };
-  });
-
-  // Build Behavior Graph preview from DB
-  const graphStates = Array.isArray(graphData?.states) ? graphData.states : [];
-  const graphTransitions = Array.isArray(graphData?.transitions) ? graphData.transitions : [];
-
-  const graphNodes = graphStates.length > 0
-    ? graphStates.map((s: any, idx: number) => ({
-        id: s.id || String(idx + 1),
-        label: s.name || s.label || `STATE_${idx + 1}`,
-        type: idx === 0 ? "entry" : idx === graphStates.length - 1 ? "exit" : "state",
-        visitCount: s.visitCount ?? 0,
-      }))
-    : [];
-
-  const graphEdges = graphTransitions.length > 0
-    ? graphTransitions.map((t: any, idx: number) => ({
-        id: t.id || `e-${idx}`,
-        source: t.fromStateId || String(idx + 1),
-        target: t.toStateId || String(idx + 2),
-        label: t.action || "transition",
-      }))
-    : [];
-
-  // Build Endpoint Performance from DB
-  const rawEndpoints = Array.isArray(endpointsData?.endpoints) ? endpointsData.endpoints : [];
-  const totalEp = endpointsData?.totalEndpoints ?? rawEndpoints.length;
-  const slowEpCount = endpointsData?.slowEndpoints ?? rawEndpoints.filter((e: any) => e.avgMs > 500).length;
-  const errorEpCount = endpointsData?.errorEndpoints ?? rawEndpoints.filter((e: any) => e.errorRate > 0.05).length;
-  const avgLatency = rawEndpoints.length > 0
-    ? Math.round(rawEndpoints.reduce((sum: number, e: any) => sum + (e.avgMs || 0), 0) / rawEndpoints.length)
-    : 0;
-
-  const slowEndpointsList = rawEndpoints
-    .filter((e: any) => e.avgMs > 300 || e.avgMs == null)
-    .slice(0, 3)
-    .map((e: any, idx: number) => ({
-      id: `ep-slow-${idx}`,
-      method: e.method || "GET",
-      path: e.endpoint || e.path || "/api",
-      averageLatencyMs: e.avgMs ?? 0,
-      callCount: e.requestCount ?? 0,
-    }));
-
-  const errorEndpointsList = rawEndpoints
-    .filter((e: any) => e.errorRate > 0.01)
-    .slice(0, 2)
-    .map((e: any, idx: number) => ({
-      id: `ep-err-${idx}`,
-      method: e.method || "POST",
-      path: e.endpoint || e.path || "/api/action",
-      errorRatePercentage: Number(((e.errorRate ?? 0) * 100).toFixed(1)),
-      errorCount: Math.round((e.requestCount ?? 0) * (e.errorRate ?? 0)),
-    }));
-
-  // Build Sessions from DB
-  const mappedSessions: RecentSession[] = rawSessions.slice(0, 5).map((s: any, idx: number) => ({
-    id: s.id,
-    type: idx % 2 === 0 ? "Guided" : "Exploratory",
-    durationSeconds: s.durationMs != null ? Math.round(s.durationMs / 1000) : 0,
-    eventCount: s.eventCount ?? 0,
-    workflowCount: s.workflowCount ?? 0,
-    findingsCount: s.errorCount ?? s.findingsCount ?? 0,
-    timestamp: s.startTime ? new Date(s.startTime).toLocaleTimeString() : "Time unavailable",
-    completenessPercentage: s.completenessPercentage ?? 0,
-  }));
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  // Construct Coverage metrics from DB report
-  const cov = reportData?.coverage || {};
-  const hasCoverageData = cov.stateCoverage != null || cov.flowCoverage != null || cov.transitionCoverage != null;
-
-  const stateCoverageVal = cov.stateCoverage ?? null;
-  const transitionCoverageVal = cov.transitionCoverage ?? null;
-  const workflowCoverageVal = cov.flowCoverage ?? null;
-
-  const isMeasured = sessionCount > 0 || hasCoverageData;
-  const firstAnalysisGenerated = Boolean(
-    progressData?.analysisGenerated ||
-    progressData?.firstReportGenerated ||
-    reportData?.id ||
-    reportData?.reportId,
+  const response = await authenticatedFetch(
+    `/api-gateway/applications/${appId}/dashboard-overview?${params.toString()}`,
   );
-
-  const response: DashboardOverviewResponse = {
-    lifecycle: !setupData?.readiness?.connected
-      ? "SDK_SETUP"
-      : !progressData?.demonstrationCompleted
-        ? "READY_TO_DEMONSTRATE"
-        : !progressData?.firstAnalysisReviewed
-          ? "FIRST_ANALYSIS_READY"
-          : "ACTIVE",
-    maturity: sessionCount > 10 ? "ESTABLISHED" : sessionCount > 1 ? "EARLY" : "NEW",
-    application: {
-      id: appId,
-      name: appName,
-      environment: appEnv as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-      plan: appPlan as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-    },
-    onboarding: {
-      applicationCreated: true,
-      frontendConnected: setupData?.readiness?.targets?.some((target: { kind?: string; verified?: boolean }) => target.kind === "FRONTEND" && target.verified)
-        ?? setupData?.readiness?.connected
-        ?? progressData?.sdkConnected
-        ?? false,
-      backendConnected: setupData?.readiness?.targets?.some((target: { kind?: string; verified?: boolean }) => target.kind === "BACKEND" && target.verified) ?? false,
-      telemetryVerified: setupData?.readiness?.installationTestPassed ?? false,
-      firstDemonstrationCompleted: progressData?.demonstrationCompleted ?? false,
-      firstAnalysisGenerated,
-      firstAnalysisReviewed: progressData?.firstAnalysisReviewed ?? false,
-    },
-    telemetry: {
-      frontendStatus: sessionCount > 0 ? "ACTIVE" : "INACTIVE",
-      backendStatus: totalEp > 0 ? "ACTIVE" : "NOT_CONFIGURED",
-      lastEventAt: rawSessions[0]?.startTime || null,
-      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-      eventCount: rawSessions.reduce((sum: number, s: any) => sum + (s.eventCount || 0), 0),
-    },
-    analysis: {
-      status: sessionCount > 0 ? "COMPLETED" : "NOT_STARTED",
-      analysisCount: firstAnalysisGenerated ? Math.max(1, sessionCount) : 0,
-      latestAnalysisId: reportData?.analysisId ?? reportData?.id ?? reportData?.reportId,
-      lastAnalysisAt: rawSessions[0]?.startTime ? new Date(rawSessions[0].startTime).toLocaleDateString() : undefined,
-    },
-    summary: {
-      workflowsDiscovered: {
-        status: isMeasured ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? workflowCount : null,
-      },
-      statesObserved: {
-        status: isMeasured ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? graphNodes.length : null,
-      },
-      transitionsObserved: {
-        status: isMeasured ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? graphEdges.length : null,
-      },
-      sessionCount: {
-        status: isMeasured ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? sessionCount : null,
-      },
-      findingsCount: {
-        status: isMeasured ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured
-          ? {
-              total: mappedMissingStates.length + mappedMissingFlows.length,
-              critical: mappedMissingStates.filter((s) => s.severity === "CRITICAL").length,
-              high: mappedMissingStates.filter((s) => s.severity === "HIGH").length + mappedMissingFlows.filter((f) => f.severity === "HIGH").length,
-              medium: mappedMissingStates.filter((s) => s.severity === "MEDIUM").length,
-              low: mappedMissingStates.filter((s) => s.severity === "LOW").length,
-            }
-          : null,
-      },
-    },
-    coverage: {
-      workflowCoverage: {
-        status: isMeasured && workflowCoverageVal != null ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? workflowCoverageVal : null,
-      },
-      stateCoverage: {
-        status: isMeasured && stateCoverageVal != null ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? stateCoverageVal : null,
-      },
-      transitionCoverage: {
-        status: isMeasured && transitionCoverageVal != null ? "MEASURED" : "NOT_MEASURED",
-        value: isMeasured ? transitionCoverageVal : null,
-      },
-      endpointCoverage: {
-        status: totalEp > 0 ? "MEASURED" : "NOT_MEASURED",
-        value: totalEp > 0 ? Math.round(((totalEp - slowEpCount - errorEpCount) / Math.max(1, totalEp)) * 100) : null,
-      },
-      errorCoverage: {
-        status: "NOT_MEASURED",
-        value: null,
-      },
-    },
-    workflows: mappedWorkflows,
-    missingStates: mappedMissingStates,
-    missingFlows: mappedMissingFlows,
-    opportunities: mappedOpportunities,
-    graph: {
-      nodeCount: graphNodes.length,
-      edgeCount: graphEdges.length,
-      workflowCount: workflowCount,
-      entryPointCount: graphNodes.filter((n: { type: string }) => n.type === "entry").length,
-      exitPointCount: graphNodes.filter((n: { type: string }) => n.type === "exit").length,
-      nodes: graphNodes,
-      edges: graphEdges,
-    },
-    sessions: mappedSessions,
-    endpoints: totalEp > 0 ? {
-      observedCount: { status: "MEASURED", value: totalEp },
-      averageLatencyMs: { status: "MEASURED", value: avgLatency },
-      slowEndpoints: slowEndpointsList,
-      errorProneEndpoints: errorEndpointsList,
-    } : undefined,
-    reports: [],
-    coverageHistory: [],
-    liveDemonstration: null,
-    healthIssues: [],
-  };
-
-  return response;
+  if (!response.ok) {
+    throw new Error(`Dashboard overview request failed (${response.status})`);
+  }
+  return response.json();
 }
 
 function MainDashboardLayout() {
@@ -400,6 +116,7 @@ function MainDashboardLayout() {
               <MissingFlowsCard />
             </div>
             <CoverageSummary />
+            <ExpectedVsObserved />
             <CoverageTrend />
             <RecentReports />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -414,6 +131,7 @@ function MainDashboardLayout() {
         return (
           <div className="space-y-6">
             <CoverageSummary />
+            <ExpectedVsObserved />
             <SuggestedDemonstrationsCard />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <MissingStatesCard />
@@ -438,6 +156,7 @@ function MainDashboardLayout() {
             <QualitySummary />
             <CoverageTrend />
             <CoverageSummary />
+            <ExpectedVsObserved />
             <RecentReports />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <MissingStatesCard />
@@ -460,6 +179,7 @@ function MainDashboardLayout() {
               <WorkflowCoverageList />
             </div>
             <CoverageSummary />
+            <ExpectedVsObserved />
             <QualitySummary />
             <SuggestedDemonstrationsCard />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -487,6 +207,7 @@ function MainDashboardLayout() {
             <RecentReports />
             <EndpointHealth />
             <CoverageSummary />
+            <ExpectedVsObserved />
             <RecentSessions />
           </div>
         );
@@ -496,6 +217,7 @@ function MainDashboardLayout() {
           <div className="space-y-6">
             <QualitySummary />
             <CoverageSummary />
+            <ExpectedVsObserved />
             <CoverageTrend />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <GraphPreview />
@@ -548,20 +270,45 @@ function OverviewContent() {
   const activeAppId = appId || selectedApplication?.id || "";
   const range = searchParams.get("range") || "30d";
 
-  const { data, isLoading } = useQuery<DashboardOverviewResponse>({
-    queryKey: ["dashboard-overview", activeAppId, range],
-    queryFn: () => fetchDashboardOverview(activeAppId, range),
+  const environmentId = searchParams.get("envId") || undefined;
+
+  // A finished run now pushes the page forward. Without this the overview
+  // stopped polling once ACTIVE and only caught up on a tab refocus.
+  useInvalidateOnNotification(ANALYSIS_NOTIFICATION_TYPES, ["dashboard-overview"]);
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<DashboardOverviewResponse>({
+    queryKey: ["dashboard-overview", activeAppId, range, environmentId ?? null],
+    queryFn: () => fetchDashboardOverview(activeAppId, range, environmentId),
     enabled: !!activeAppId,
     refetchInterval: (query) => {
       if (query.state.data?.lifecycle === "ACTIVE") return false;
-      return typeof document !== "undefined" && document.hidden ? 15_000 : 3_000;
+      // One request now instead of eight, so a slower cadence still feels live
+      // while onboarding without hammering the API.
+      return typeof document !== "undefined" && document.hidden ? 30_000 : 10_000;
     },
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: "always",
+    // An outage must surface as an error, not as a retry storm behind a spinner.
+    retry: 1,
   });
 
-  if (isApplicationsLoading || (isLoading && activeAppId)) {
+  if (isApplicationsLoading) {
     return <DashboardSkeleton />;
+  }
+
+  if (applications.length > 0 && !activeAppId) {
+    // Applications exist but none has been resolved yet. Rendering the
+    // dashboard here would report NEW_ACCOUNT and tell someone who already has
+    // applications to go and create one.
+    return <DashboardSkeleton />;
+  }
+
+  if (isLoading && activeAppId) {
+    return <DashboardSkeleton />;
+  }
+
+  if (isError && activeAppId) {
+    return <DashboardLoadError onRetry={() => void refetch()} isRetrying={isFetching} />;
   }
 
   if (applications.length === 0) {
@@ -597,6 +344,34 @@ export default function OverviewPage() {
     <Suspense fallback={<DashboardSkeleton />}>
       <OverviewContent />
     </Suspense>
+  );
+}
+
+/**
+ * Shown when the overview could not be loaded.
+ *
+ * The specific regression this prevents: the page used to absorb every failure
+ * and fall through to the onboarding lifecycle, so a customer with months of
+ * data was told to connect their SDK whenever the backend was down.
+ */
+function DashboardLoadError({ onRetry, isRetrying }: { onRetry: () => void; isRetrying: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 py-24">
+      <h1 className="text-lg font-bold text-white tracking-tight">
+        We couldn&apos;t load your dashboard
+      </h1>
+      <p className="text-sm text-[#c4c7c8] leading-relaxed">
+        Your data is safe — this request didn&apos;t get through. Nothing here has changed.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={isRetrying}
+        className="px-5 py-2 bg-white text-black font-semibold rounded-md text-xs hover:bg-neutral-200 transition-colors disabled:opacity-60 cursor-pointer"
+      >
+        {isRetrying ? "Retrying…" : "Try again"}
+      </button>
+    </div>
   );
 }
 

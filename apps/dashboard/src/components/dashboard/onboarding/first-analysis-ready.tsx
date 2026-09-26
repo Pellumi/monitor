@@ -6,7 +6,7 @@ import { useDashboard } from "../core/dashboard-provider";
 import { PartyPopper, ArrowRight, Play } from "lucide-react";
 
 export function FirstAnalysisReady() {
-  const { data, state, acknowledgeFirstAnalysis } = useDashboard();
+  const { data, state, acknowledgeFirstAnalysis, isAcknowledging } = useDashboard();
 
   if (state.lifecycle !== "FIRST_ANALYSIS_READY") return null;
 
@@ -74,10 +74,11 @@ export function FirstAnalysisReady() {
       <div className="flex flex-wrap items-center gap-4 pt-2">
         <button
           onClick={acknowledgeFirstAnalysis}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-black font-bold rounded text-xs hover:bg-emerald-400 transition-colors shadow-md cursor-pointer"
+          disabled={isAcknowledging}
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-black font-bold rounded text-xs hover:bg-emerald-400 transition-colors shadow-md cursor-pointer disabled:opacity-60"
         >
-          Explore Analysis Model
-          <ArrowRight className="w-4 h-4" />
+          {isAcknowledging ? "Opening…" : "Explore Analysis Model"}
+          <ArrowRight className="w-4 h-4" aria-hidden="true" />
         </button>
 
         <Link

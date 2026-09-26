@@ -6,6 +6,7 @@ export * from './constants/topics';
 export * from './constants/plans';
 export * from './constants/docs-pages';
 export * from './constants/entitlements';
+export * from './contracts/dashboard-overview';
 export * from './metrics';
 export * from './json-bigint';
 export * from './qa-run-title';

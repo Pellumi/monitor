@@ -60,8 +60,12 @@ export function MissingStatesCard() {
                 <SeverityTag severity={item.severity} />
               </div>
               <div className="flex items-center justify-between text-[11px] font-mono text-neutral-400">
-                <span>Workflow: {item.workflowName}</span>
-                <span className="text-neutral-500">{item.category}</span>
+                {/* The state this gap was inferred from — a real observed
+                    state, unlike the "Application Workflow" placeholder that
+                    used to sit here. */}
+                <span>{item.workflowName ? `After: ${item.workflowName}` : "Source unrecorded"}</span>
+                {/* Only shown when the detecting rule actually classified it. */}
+                {item.category && <span className="text-neutral-500">{item.category}</span>}
               </div>
               <p className="text-[11px] font-mono text-amber-400/90 leading-tight pt-1">
                 {item.evidence}

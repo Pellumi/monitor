@@ -20,6 +20,7 @@ import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/
 import PDFDocument from 'pdfkit';
 import { createStorageClient } from '@tellann/storage';
 import { createCallerGuards, type CallerRequest } from './auth';
+import { createDashboardOverviewRouter } from './dashboard-overview';
 
 const storage = createStorageClient();
 const app = express();
@@ -190,6 +191,20 @@ async function ensureExportAccess(
 
   return true;
 }
+
+// The dashboard overview, assembled here rather than in the browser. Mounted
+// after the shared guards and helpers it is handed, so it reuses this service's
+// tenancy and environment resolution rather than reimplementing them.
+app.use(createDashboardOverviewRouter({
+  prisma,
+  entitlementChecker,
+  verifyCaller,
+  requireApplicationAccess,
+  ensureFeatureAccess,
+  resolveEnvironmentScope,
+  endpointAnalysisUrl,
+  endpointEngineHeaders,
+}));
 
 app.get('/reports/:applicationId/latest', verifyCaller, requireApplicationAccess('applicationId'), async (req: Request, res: Response) => {
   const { applicationId } = req.params;

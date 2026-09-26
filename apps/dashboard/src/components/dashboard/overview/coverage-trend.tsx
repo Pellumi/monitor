@@ -73,7 +73,9 @@ export function CoverageTrend() {
             </defs>
 
             <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-            <XAxis dataKey="timestamp" stroke="#666" fontSize={11} fontFamily="monospace" />
+            {/* `label` is the server's locale-free tick; `timestamp` is the
+                full ISO value and would print across the whole axis. */}
+            <XAxis dataKey="label" stroke="#666" fontSize={11} fontFamily="monospace" />
             <YAxis stroke="#666" fontSize={11} fontFamily="monospace" domain={[0, 100]} unit="%" />
 
             <Tooltip

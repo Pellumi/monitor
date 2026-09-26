@@ -33,18 +33,23 @@ export function RecentSessions() {
         </Link>
       </div>
 
+      {sessions.length === 0 ? (
+        <p className="py-8 text-center text-xs font-mono text-neutral-500">
+          No sessions in this window. Widen the date range or record a demonstration.
+        </p>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-mono">
+          <caption className="sr-only">Recent observed sessions, newest first</caption>
           <thead>
             <tr className="border-b border-[#262626] text-neutral-400 font-semibold uppercase tracking-wider text-[10px]">
-              <th className="py-2.5 px-3">Session</th>
-              <th className="py-2.5 px-3">Type</th>
-              <th className="py-2.5 px-3 text-center">Duration</th>
-              <th className="py-2.5 px-3 text-center">Events</th>
-              <th className="py-2.5 px-3 text-center">Workflows</th>
-              <th className="py-2.5 px-3 text-center">Replay Integrity</th>
-              <th className="py-2.5 px-3 text-right">Time</th>
-              <th className="py-2.5 px-3 text-right">Action</th>
+              <th scope="col" className="py-2.5 px-3">Session</th>
+              <th scope="col" className="py-2.5 px-3">Source</th>
+              <th scope="col" className="py-2.5 px-3 text-center">Duration</th>
+              <th scope="col" className="py-2.5 px-3 text-center">Events</th>
+              <th scope="col" className="py-2.5 px-3 text-center">Errors</th>
+              <th scope="col" className="py-2.5 px-3 text-right">Started</th>
+              <th scope="col" className="py-2.5 px-3 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#222]">
@@ -55,27 +60,36 @@ export function RecentSessions() {
                     href={`/sessions/${ses.id}`}
                     className="font-bold text-emerald-400 hover:underline"
                   >
-                    {ses.id}
+                    {ses.id.slice(0, 12)}
                   </Link>
                 </td>
-                <td className="py-3 px-3 text-neutral-300">{ses.type}</td>
+                {/* Whether a session came from a guided QA run is knowable;
+                    "Guided" and "Exploratory" used to alternate by row index. */}
+                <td className="py-3 px-3 text-neutral-300">
+                  {ses.qaRunId ? "Guided run" : "SDK capture"}
+                </td>
                 <td className="py-3 px-3 text-center text-neutral-400">
-                  {Math.floor(ses.durationSeconds / 60)}m {ses.durationSeconds % 60}s
+                  {ses.durationSeconds === null
+                    ? <span className="text-neutral-600">&mdash;</span>
+                    : `${Math.floor(ses.durationSeconds / 60)}m ${ses.durationSeconds % 60}s`}
                 </td>
                 <td className="py-3 px-3 text-center text-neutral-300">
-                  {ses.eventCount}
-                </td>
-                <td className="py-3 px-3 text-center text-neutral-300">
-                  {ses.workflowCount}
+                  {ses.eventCount ?? <span className="text-neutral-600">&mdash;</span>}
                 </td>
                 <td className="py-3 px-3 text-center">
-                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                    <CheckCircle2 className="w-3 h-3" />
-                    {ses.completenessPercentage}% complete
-                  </span>
+                  {ses.errorCount === null ? (
+                    <span className="text-neutral-600">&mdash;</span>
+                  ) : ses.errorCount > 0 ? (
+                    <span className="text-red-400 font-bold">{ses.errorCount}</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                      <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
+                      <span>0</span>
+                    </span>
+                  )}
                 </td>
                 <td className="py-3 px-3 text-right text-neutral-500">
-                  {ses.timestamp}
+                  {new Date(ses.timestamp).toLocaleString()}
                 </td>
                 <td className="py-3 px-3 text-right">
                   <Link
@@ -90,6 +104,7 @@ export function RecentSessions() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

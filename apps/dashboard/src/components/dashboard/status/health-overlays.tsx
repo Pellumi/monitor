@@ -3,8 +3,20 @@
 import React from "react";
 import Link from "next/link";
 import { useDashboard } from "../core/dashboard-provider";
-import { AlertOctagon, AlertTriangle, Clock, HardDrive } from "lucide-react";
+import { DashboardHealthIssue } from "../core/types";
+import { AlertOctagon, Clock, HardDrive } from "lucide-react";
 
+/**
+ * Operational banners.
+ *
+ * Each issue carries the figures its copy states. The storage banner used to
+ * print a hardcoded "94%" — true for no account — and blamed the retention
+ * policy for deletions that retention does not perform: it runs on age, never
+ * on storage pressure. Both now come from the payload.
+ *
+ * The `INGESTION_PROBLEM` banner was removed rather than left unreachable. No
+ * ingestion rejection is recorded anywhere, so nothing could ever raise it.
+ */
 export function HealthOverlays() {
   const { state } = useDashboard();
 
@@ -12,104 +24,115 @@ export function HealthOverlays() {
 
   return (
     <div className="space-y-3 font-mono text-xs">
-      {state.healthIssues.map((issue) => {
-        switch (issue) {
-          case "ANALYSIS_FAILED":
-            return (
-              <div
-                key={issue}
-                className="p-4 rounded-md border border-red-500/40 bg-red-950/20 text-red-300 flex items-start justify-between gap-4"
-              >
-                <div className="flex items-start gap-3">
-                  <AlertOctagon className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-white">Analysis Could Not Be Completed</h4>
-                    <p className="text-neutral-300 mt-0.5">
-                      Events were received successfully, but workflow & state extraction failed during analysis.
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/qa-runs"
-                  className="px-3 py-1 bg-red-500 text-black font-bold text-xs rounded hover:bg-red-400 shrink-0"
-                >
-                  Retry Analysis
-                </Link>
-              </div>
-            );
-          case "INGESTION_PROBLEM":
-            return (
-              <div
-                key={issue}
-                className="p-4 rounded-md border border-amber-500/40 bg-amber-950/20 text-amber-300 flex items-start justify-between gap-4"
-              >
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-white">Ingestion Health Warning</h4>
-                    <p className="text-neutral-300 mt-0.5">
-                      Telemetry events are arriving with corrupted key identifiers or invalid schemas.
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/settings/ingestion-keys"
-                  className="px-3 py-1 border border-amber-500 text-amber-300 font-semibold text-xs rounded hover:bg-amber-500/10 shrink-0"
-                >
-                  Check Ingestion Keys
-                </Link>
-              </div>
-            );
-          case "NO_RECENT_DATA":
-            return (
-              <div
-                key={issue}
-                className="p-4 rounded-md border border-[#333] bg-[#1a1a1a] text-neutral-300 flex items-start justify-between gap-4"
-              >
-                <div className="flex items-start gap-3">
-                  <Clock className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-white">No Telemetry Received Recently</h4>
-                    <p className="text-neutral-400 mt-0.5">
-                      No behavioral events have been received in over 72 hours.
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/qa-runs/new"
-                  className="px-3 py-1 bg-white text-black font-semibold text-xs rounded hover:bg-neutral-200 shrink-0"
-                >
-                  Record Demonstration
-                </Link>
-              </div>
-            );
-          case "PLAN_LIMIT_REACHED":
-            return (
-              <div
-                key={issue}
-                className="p-4 rounded-md border border-purple-500/40 bg-purple-950/20 text-purple-300 flex items-start justify-between gap-4"
-              >
-                <div className="flex items-start gap-3">
-                  <HardDrive className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-white">Storage Threshold Exceeded (94%)</h4>
-                    <p className="text-neutral-300 mt-0.5">
-                      Storage is near capacity. Older replay assets may be removed per your retention policy.
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/settings/billing"
-                  className="px-3 py-1 bg-purple-500 text-white font-bold text-xs rounded hover:bg-purple-400 shrink-0"
-                >
-                  Upgrade Storage
-                </Link>
-              </div>
-            );
-          default:
-            return null;
-        }
-      })}
+      {state.healthIssues.map((issue, index) => (
+        <HealthOverlay key={`${issue.kind}-${index}`} issue={issue} />
+      ))}
     </div>
   );
+}
+
+function HealthOverlay({ issue }: { issue: DashboardHealthIssue }) {
+  switch (issue.kind) {
+    case "ANALYSIS_FAILED":
+      return (
+        <Banner
+          tone="danger"
+          icon={<AlertOctagon className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />}
+          title="Analysis could not be completed"
+          body={
+            issue.reason
+              ? issue.reason
+              : "Events were received, but the analysis did not finish."
+          }
+          action={{ label: "Retry analysis", href: `/qa-runs/${issue.runId}` }}
+        />
+      );
+
+    case "NO_RECENT_DATA":
+      return (
+        <Banner
+          tone="neutral"
+          icon={<Clock className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />}
+          title="No telemetry received recently"
+          body={`The last event arrived ${formatAge(issue.hoursSinceLastEvent)} ago. Findings and coverage below reflect that data, not today's.`}
+          action={{ label: "Record demonstration", href: "/qa-runs/new" }}
+        />
+      );
+
+    case "PLAN_LIMIT_REACHED":
+      return (
+        <Banner
+          tone="warning"
+          icon={<HardDrive className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />}
+          title={
+            issue.metric === "STORAGE"
+              ? `Storage is at ${issue.usedPercent}% of your ${issue.planName} plan`
+              : `You are using ${issue.used} of ${issue.limit} applications`
+          }
+          body={
+            issue.consequence === "NEW_UPLOADS_REJECTED"
+              ? `${formatMb(issue.used)} of ${formatMb(issue.limit)} used. New report exports and run artifacts will be rejected until you free space or upgrade. Nothing already stored is removed.`
+              : "You cannot create another application on this plan until you upgrade or remove one."
+          }
+          action={{ label: "View plan", href: "/settings/billing" }}
+        />
+      );
+
+    default:
+      return null;
+  }
+}
+
+const TONES = {
+  danger: "border-red-500/40 bg-red-950/20 text-red-300",
+  warning: "border-purple-500/40 bg-purple-950/20 text-purple-300",
+  neutral: "border-[#333] bg-[#1a1a1a] text-neutral-300",
+} as const;
+
+const ACTION_TONES = {
+  danger: "bg-red-500 text-black hover:bg-red-400",
+  warning: "bg-purple-500 text-white hover:bg-purple-400",
+  neutral: "bg-white text-black hover:bg-neutral-200",
+} as const;
+
+function Banner({
+  tone,
+  icon,
+  title,
+  body,
+  action,
+}: {
+  tone: keyof typeof TONES;
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+  action: { label: string; href: string };
+}) {
+  return (
+    <div className={`p-4 rounded-md border flex items-start justify-between gap-4 ${TONES[tone]}`}>
+      <div className="flex items-start gap-3">
+        {icon}
+        <div>
+          <h4 className="font-bold text-white">{title}</h4>
+          <p className="text-neutral-300 mt-0.5 leading-relaxed">{body}</p>
+        </div>
+      </div>
+      <Link
+        href={action.href}
+        className={`px-3 py-1 font-bold text-xs rounded shrink-0 ${ACTION_TONES[tone]}`}
+      >
+        {action.label}
+      </Link>
+    </div>
+  );
+}
+
+/** Hours are what the payload carries; days are what a person reads. */
+function formatAge(hours: number): string {
+  if (hours < 48) return `${hours} hours`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+function formatMb(mb: number): string {
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }

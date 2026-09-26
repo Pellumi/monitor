@@ -1,5 +1,10 @@
 "use client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import {
+  ENTITLEMENT_QUERY_KEY,
+  useEntitlement as useOrganizationEntitlement,
+  type ResolvedEntitlement,
+} from "@/hooks/use-entitlement";
 import { usePreferences } from '@/components/preferences-provider';
 import {
   getLastApplication,
@@ -95,11 +100,12 @@ interface Environment {
   isDefault?: boolean;
 }
 
-interface Entitlement {
-  planType: string;
-  features: Record<string, boolean | string>;
-  limits: Record<string, number>;
-}
+/**
+ * The organisation's resolved entitlement, as `/organizations/:id/entitlement`
+ * returns it. Aliased to the shared hook's type so the sidebar and every other
+ * reader cannot disagree about the shape.
+ */
+type Entitlement = ResolvedEntitlement;
 
 interface NavItem {
   name: string;
@@ -112,10 +118,17 @@ interface NavItem {
 // Entitlement context — shared between AppSelector & NavigationList
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Shares the resolved entitlement with the nav items below.
+ *
+ * It also carried `selectedEnvId`, which nothing ever read — and could not
+ * have: this provider wraps the sidebar only, never the page content.
+ * Environment selection travels by `?envId=` instead.
+ */
 const EntitlementContext = createContext<{
   entitlement: Entitlement | null;
-  selectedEnvId: string | null;
-}>({ entitlement: null, selectedEnvId: null });
+  isEntitlementLoading: boolean;
+}>({ entitlement: null, isEntitlementLoading: false });
 
 function useEntitlement() {
   return useContext(EntitlementContext);
@@ -274,14 +287,24 @@ const adminNavigation: NavItem[] = [
 // Helper: check if a feature is enabled on the entitlement
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Whether the plan grants a feature.
+ *
+ * Deliberately permissive while the entitlement is still loading: hiding
+ * navigation someone is entitled to and then flashing it in is worse than the
+ * brief reverse. But a *loaded* entitlement that simply lacks the feature is a
+ * definite no — returning true there was plainly wrong, and contradicted the
+ * shared hook, which documents that nothing is granted until it knows.
+ */
 function isFeatureEnabled(
   entitlement: Entitlement | null,
-  feature?: string,
+  feature: string | undefined,
+  isLoading: boolean,
 ): boolean {
   if (!feature) return true;
-  if (!entitlement?.features) return true;
+  if (isLoading || !entitlement?.features) return true;
   const value = entitlement.features[feature];
-  if (value === undefined) return true;
+  if (value === undefined) return false;
   return value === true || (typeof value === "string" && value !== "false");
 }
 
@@ -291,10 +314,8 @@ function isFeatureEnabled(
 
 function AppSelector({
   onEntitlementLoaded,
-  onEnvSelected,
 }: {
   onEntitlementLoaded: (e: Entitlement | null) => void;
-  onEnvSelected: (envId: string | null) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -340,7 +361,7 @@ function AppSelector({
         queryKey: ["organization-applications", selectedOrgId],
       });
       await queryClient.invalidateQueries({
-        queryKey: ["sidebar-entitlement", selectedOrgId],
+        queryKey: [ENTITLEMENT_QUERY_KEY, selectedOrgId],
       });
 
       if (selectedApp?.id === deletedId) {
@@ -376,18 +397,11 @@ function AppSelector({
     enabled: !!selectedOrgId,
   });
 
-  const { data: entitlement } = useQuery<Entitlement>({
-    queryKey: ["sidebar-entitlement", selectedOrgId],
-    queryFn: async () => {
-      if (!selectedOrgId) return null;
-      const res = await authenticatedFetch(
-        `/api-gateway/organizations/${selectedOrgId}/entitlement`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch entitlement");
-      return res.json();
-    },
-    enabled: !!selectedOrgId,
-  });
+  // Shares one query key with every other surface that reads entitlements, so
+  // the plan is fetched once per organisation rather than three times. The
+  // local `useEntitlement` below is a different thing: it hands this value plus
+  // the selected environment down to the nav items.
+  const { entitlement, isLoading: isEntitlementLoading } = useOrganizationEntitlement();
 
   const { preferences } = usePreferences();
 
@@ -418,6 +432,7 @@ function AppSelector({
   const hasMultipleEnvs = isFeatureEnabled(
     entitlement ?? null,
     "MULTIPLE_ENVIRONMENTS",
+    isEntitlementLoading,
   );
   const rememberedEnv = preferRemembered(
     environments,
@@ -433,9 +448,7 @@ function AppSelector({
     onEntitlementLoaded(entitlement ?? null);
   }, [entitlement, onEntitlementLoaded]);
 
-  useEffect(() => {
-    onEnvSelected(selectedEnv?.id ?? null);
-  }, [selectedEnv?.id, onEnvSelected]);
+
 
   // Auto-select an app if the URL names none (or names one that is not in this
   // organisation), preferring the remembered one.
@@ -819,7 +832,7 @@ function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
   const routeParams = useParams<{ appId?: string }>();
   const appId = routeParams?.appId || searchParams.get("appId");
   const envId = searchParams.get("envId");
-  const { entitlement } = useEntitlement();
+  const { entitlement, isEntitlementLoading } = useEntitlement();
 
   const isSettingsMode = pathname.startsWith("/settings");
   const isAdminMode = pathname.startsWith("/admin");
@@ -859,7 +872,7 @@ function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
   }
 
   const renderNavItem = (item: NavItem, hasAppId = true) => {
-    const enabled = isFeatureEnabled(entitlement, item.requiredFeature);
+    const enabled = isFeatureEnabled(entitlement, item.requiredFeature, isEntitlementLoading);
     const isActive =
       pathname === item.href ||
       (item.href !== "/" && pathname.startsWith(item.href + "/"));
@@ -1229,7 +1242,9 @@ function clampSidebarWidth(value: number) {
 
 export function Sidebar() {
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
-  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
+  // Same query key as the selector below, so this is the cached value, not a
+  // second request. Needed so nav gating can tell "loading" from "not granted".
+  const { isLoading: isEntitlementLoading } = useOrganizationEntitlement();
   const { collapsed } = useSidebarMode();
   const { resolvedTheme } = useTheme();
   const iconSrc =
@@ -1287,7 +1302,7 @@ export function Sidebar() {
   }, [width]);
 
   return (
-    <EntitlementContext.Provider value={{ entitlement, selectedEnvId }}>
+    <EntitlementContext.Provider value={{ entitlement, isEntitlementLoading }}>
       <div
         style={collapsed ? undefined : { width }}
         className={twMerge(
@@ -1346,7 +1361,6 @@ export function Sidebar() {
           <div className={collapsed ? "hidden" : "pt-3"}>
             <AppSelector
               onEntitlementLoaded={setEntitlement}
-              onEnvSelected={setSelectedEnvId}
             />
           </div>
         </Suspense>

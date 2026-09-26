@@ -34,12 +34,14 @@ export const ecommerceRules: ApplicationRuleSet = {
     {
       trigger: "CHECKOUT_SUCCESS",
       candidate: "PAYMENT_FAILURE",
+      category: "ERROR",
       confidence: 0.95,
       reason: "Observed successful checkout; expect a complementary failure path."
     },
     {
       trigger: "CART",
       candidate: "EMPTY_CART",
+      category: "EMPTY",
       confidence: 0.85,
       reason: "Cart is accessed, user should be able to empty it."
     }
@@ -53,6 +55,7 @@ export const ecommerceRules: ApplicationRuleSet = {
           to: "EMPTY_CART"
         }
       },
+      category: "ALTERNATIVE",
       confidence: 0.9,
       reason: "Shopping flow should account for cart abandonment."
     }

@@ -2452,7 +2452,33 @@ app.post('/applications/:appId/profile', async (req: Request, res: Response) => 
 // Onboarding Progress API
 // ─────────────────────────────────────────────────────────────
 
-app.get('/applications/:appId/onboarding-progress', async (req: Request, res: Response) => {
+/** The onboarding milestones a client may set. Everything else is service-owned. */
+const ONBOARDING_PROGRESS_FIELDS = [
+  'templateSelected',
+  'expectedFlowsDefined',
+  'connectionMethodSelected',
+  'sdkTargetsConfigured',
+  'sessionObserved',
+  'installationTestPassed',
+  'sdkConnected',
+  'demonstrationCompleted',
+  'analysisGenerated',
+  'firstAnalysisReviewed',
+  'firstReportGenerated',
+  'valueRealized',
+  'valueRealizedReason',
+] as const;
+
+/**
+ * Onboarding progress for one application.
+ *
+ * Both this and the PATCH below were registered without middleware while the
+ * gateway proxies `/applications` wholesale, so anyone who could reach the
+ * gateway and guess an application id could read and write another tenant's
+ * onboarding state. Every sibling route in this file already carries these two
+ * guards; only the dashboard calls these, always with a session.
+ */
+app.get('/applications/:appId/onboarding-progress', verifyJwt, verifyAppOwnership, async (req: Request, res: Response) => {
   const { appId } = req.params;
   try {
     let progress = await prisma.applicationOnboardingProgress.findUnique({ where: { applicationId: appId } });
@@ -2496,9 +2522,18 @@ app.get('/applications/:appId/onboarding-progress', async (req: Request, res: Re
   }
 });
 
-app.patch('/applications/:appId/onboarding-progress', async (req: Request, res: Response) => {
+app.patch('/applications/:appId/onboarding-progress', verifyJwt, verifyAppOwnership, async (req: Request, res: Response) => {
   const { appId } = req.params;
-  const updateData = req.body;
+  // Spreading the raw body into `update` made every column on the model
+  // writable by the caller, including ones only services should set. Mirrors
+  // the `preferenceFields` allowlist in auth-api.
+  const updateData: Record<string, unknown> = {};
+  for (const field of ONBOARDING_PROGRESS_FIELDS) {
+    if (req.body?.[field] !== undefined) updateData[field] = req.body[field];
+  }
+  if (Object.keys(updateData).length === 0) {
+    return res.status(400).json({ error: 'NO_UPDATABLE_FIELDS' });
+  }
 
   try {
     const existing = await prisma.applicationOnboardingProgress.findUnique({

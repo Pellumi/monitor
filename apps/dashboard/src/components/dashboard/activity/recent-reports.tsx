@@ -33,6 +33,11 @@ export function RecentReports() {
         </Link>
       </div>
 
+      {reports.length === 0 ? (
+        <p className="py-8 text-center text-xs font-mono text-neutral-500">
+          No reports generated yet. One is produced after a QA run completes.
+        </p>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         {reports.map((rep) => (
           <div
@@ -47,13 +52,13 @@ export function RecentReports() {
                 {rep.title}
               </h4>
               <span className="text-[10px] text-neutral-400 block mt-2">
-                Generated {rep.generatedAt}
+                Generated {new Date(rep.generatedAt).toLocaleString()}
               </span>
             </div>
 
             <div className="flex items-center gap-2 pt-2 border-t border-[#262626]">
               <Link
-                href={`/reports?id=${rep.id}`}
+                href={`/reports?runId=${rep.runId}`}
                 className="text-xs text-white hover:text-emerald-400 font-semibold underline"
               >
                 View
@@ -71,6 +76,7 @@ export function RecentReports() {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
