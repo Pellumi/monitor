@@ -2,10 +2,11 @@
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { Button } from '@/components/ui/button';
 
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useParams } from 'next/navigation';
 import Link from 'next/link';
+import { DomReplayPlayer } from '@/components/sessions/dom-replay-player';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -29,6 +30,11 @@ const EVENT_COLOR: Record<string, string> = {
   WORKFLOW_COMPLETED:  'bg-emerald-500',
   WORKFLOW_FAILED:     'bg-rose-500',
 };
+
+/** Mirrors ERROR_EVENT_TYPES in @tellann/shared: what counts as something going wrong. */
+const ERROR_EVENT_TYPES = new Set([
+  'ERROR_EVENT', 'ERROR_OCCURRED', 'UNHANDLED_EXCEPTION', 'SERVER_ERROR', 'CLIENT_ERROR',
+]);
 
 const EVENT_TEXT: Record<string, string> = {
   PAGE_VIEW:           'text-blue-400',
@@ -376,6 +382,11 @@ function ReplayViewerContent() {
   const sessionId    = params.id;
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  /** Whether a DOM recording exists, which decides the layout. */
+  const [hasRecording, setHasRecording] = useState(false);
+  /** So a `?t=` link lands on the right moment exactly once, not on every render. */
+  const [appliedDeepLink, setAppliedDeepLink] = useState(false);
+  const [permalinkCopied, setPermalinkCopied] = useState(false);
 
   const { data, isLoading, error } = useQuery<ReplayData>({
     queryKey: ['session-replay', sessionId],
@@ -447,6 +458,56 @@ function ReplayViewerContent() {
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selectedIdx]);
 
+  /**
+   * The first thing that went wrong.
+   *
+   * The reason a reader opened this page, nine times in ten -- and previously they had to
+   * scan a list of nineteen event types to find it.
+   */
+  const firstErrorIdx = useMemo(() => {
+    if (!data) return -1;
+    return data.timeline.findIndex((event) => ERROR_EVENT_TYPES.has(event.eventType));
+  }, [data]);
+
+  const jumpToFirstError = useCallback(() => {
+    if (firstErrorIdx < 0) return;
+    setIsPlaying(false);
+    setSelectedIdx(firstErrorIdx);
+  }, [firstErrorIdx]);
+
+  /** A shared link carries an offset; land on the nearest event to it. */
+  useEffect(() => {
+    if (appliedDeepLink || !data) return;
+    const raw = searchParams.get('t');
+    if (!raw) { setAppliedDeepLink(true); return; }
+
+    const target = Number.parseInt(raw, 10);
+    if (Number.isFinite(target) && data.timeline.length > 0) {
+      let nearest = 0;
+      for (let index = 1; index < data.timeline.length; index += 1) {
+        if (Math.abs(data.timeline[index].offset - target)
+            < Math.abs(data.timeline[nearest].offset - target)) {
+          nearest = index;
+        }
+      }
+      setSelectedIdx(nearest);
+    }
+    setAppliedDeepLink(true);
+  }, [appliedDeepLink, data, searchParams]);
+
+  /** A link back to this exact moment, for pasting into a ticket. */
+  const copyPermalink = useCallback(async () => {
+    const offset = selectedIdx !== null && data ? data.timeline[selectedIdx].offset : 0;
+    const url = `${window.location.origin}${window.location.pathname}?appId=${appId}&t=${offset}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setPermalinkCopied(true);
+      setTimeout(() => setPermalinkCopied(false), 2_000);
+    } catch {
+      // Clipboard access can be denied; the URL is still in the address bar to copy.
+    }
+  }, [selectedIdx, data, appId]);
+
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -467,6 +528,10 @@ function ReplayViewerContent() {
           setIsPlaying(false);
           goPrev();
           break;
+        case 'e':
+          e.preventDefault();
+          jumpToFirstError();
+          break;
         case '1': setPlaybackSpeed(0.5); break;
         case '2': setPlaybackSpeed(1); break;
         case '3': setPlaybackSpeed(2); break;
@@ -475,7 +540,7 @@ function ReplayViewerContent() {
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, jumpToFirstError]);
 
 
 
@@ -637,14 +702,37 @@ function ReplayViewerContent() {
           ))}
         </div>
 
+        {/* Jump to the reason the reader opened this page */}
+        <div className="flex items-center gap-2">
+          {firstErrorIdx >= 0 && (
+            <Button
+              onClick={jumpToFirstError}
+              variant="secondary"
+              size="sm"
+              className="border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+              tooltip="Jump to the first error (e)"
+            >
+              First error
+            </Button>
+          )}
+          <Button
+            onClick={copyPermalink}
+            variant="secondary"
+            size="sm"
+            tooltip="Copy a link to this moment"
+          >
+            {permalinkCopied ? 'Copied' : 'Link'}
+          </Button>
+        </div>
+
         {/* Keyboard hints */}
-        <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-600">
+        <div className="hidden xl:flex items-center gap-2 text-xs text-neutral-600">
           <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">Space</kbd>
           <span>play</span>
           <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">← →</kbd>
           <span>step</span>
-          <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">1-4</kbd>
-          <span>speed</span>
+          <kbd className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-neutral-500">e</kbd>
+          <span>error</span>
         </div>
       </div>
 
@@ -684,17 +772,31 @@ function ReplayViewerContent() {
           </div>
         </div>
 
-        {/* Detail panel */}
-        <div className="flex-1 flex flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
-          <div className="border-b border-neutral-800 px-4 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
-            {selected ? `${selected.eventType} @ ${formatOffset(selected.offset)}` : 'Select an event'}
+        {/* The screen, and beneath it whatever the selected event was.
+            The player follows this page's clock rather than keeping its own: two clocks
+            would drift and the reader would have to reconcile them. */}
+        <div className="flex flex-1 flex-col gap-4 overflow-hidden">
+          <div className={hasRecording ? 'min-h-0 flex-[3]' : 'flex-shrink-0'}>
+            <DomReplayPlayer
+              sessionId={sessionId}
+              offsetMs={selected ? selected.offset : 0}
+              isPlaying={isPlaying}
+              speed={playbackSpeed}
+              onAvailabilityChange={setHasRecording}
+            />
           </div>
-          <div className="flex-1 overflow-auto p-4">
-            {selected ? (
-              <EventDetail event={selected} />
-            ) : (
-              <p className="text-sm text-neutral-600">Click an event in the list or timeline to inspect its metadata.</p>
-            )}
+
+          <div className={`flex min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 ${hasRecording ? 'flex-[2]' : 'flex-1'}`}>
+            <div className="border-b border-neutral-800 px-4 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
+              {selected ? `${selected.eventType} @ ${formatOffset(selected.offset)}` : 'Select an event'}
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {selected ? (
+                <EventDetail event={selected} />
+              ) : (
+                <p className="text-sm text-neutral-600">Click an event in the list or timeline to inspect its metadata.</p>
+              )}
+            </div>
           </div>
         </div>
 

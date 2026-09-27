@@ -844,6 +844,18 @@ async function main() {
     http2: false,
   });
 
+  // DOM replay chunks and the config the SDK records under.
+  //
+  // httpProxy, never forwardToUpstream: that helper does JSON.stringify(request.body)
+  // and buffers the whole upstream response, which would both corrupt a gzip body and
+  // hold megabytes per request in memory. This streams.
+  await fastify.register(httpProxy, {
+    upstream: UPSTREAM.EVENT_COLLECTOR,
+    prefix: '/v1/replay',
+    rewritePrefix: '/v1/replay',
+    http2: false,
+  });
+
   // Demonstration workflow
   await fastify.register(httpProxy, {
     upstream: UPSTREAM.DEMONSTRATION_API,

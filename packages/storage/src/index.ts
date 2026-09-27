@@ -198,9 +198,34 @@ export class StorageClient {
     return { url, expiresAt, key, adapter: adapter.name };
   }
 
-  /** Presign an already-uploaded key. */
+  /**
+   * Presign an already-uploaded key.
+   *
+   * Tries the fallback too. `upload` and `download` already fall back, so an object
+   * written while the primary was unavailable lives on the secondary -- and this method,
+   * which only ever asked the primary, could never produce a URL for it. Nothing
+   * presigned after the fact until replay manifests did, which is what made a latent
+   * asymmetry a live bug.
+   */
   async presign(key: string, ttlSeconds = 86400): Promise<string> {
-    return this.primary.presign(key, ttlSeconds);
+    try {
+      return await this.primary.presign(key, ttlSeconds);
+    } catch (error) {
+      if (!this.fallback) throw error;
+      return this.fallback.presign(key, ttlSeconds);
+    }
+  }
+
+  /**
+   * Whether a presigned URL from this client is usable in a browser.
+   *
+   * The local-filesystem adapter "presigns" by returning a `data:` URL with the whole
+   * file base64-encoded. For a 2 MB replay chunk that is a 2.7 MB string, for a 30-chunk
+   * manifest ~80 MB of JSON -- and many content-security policies block `data:` anyway.
+   * Callers check this and stream through their own route instead.
+   */
+  get supportsPresignedUrls(): boolean {
+    return this.primary.name !== 'local';
   }
 
   /** Delete an object. */
@@ -308,6 +333,27 @@ export function buildReportKey(applicationId: string, format: string): string {
   const date = new Date().toISOString().slice(0, 10);
   const rnd = crypto.randomBytes(4).toString('hex');
   return `reports/${applicationId}/${date}/${rnd}.${format}`;
+}
+
+/**
+ * One chunk of a session's DOM recording.
+ *
+ * Zero-padded so a lexicographic listing is also chronological, and deterministic so a
+ * retried upload overwrites rather than duplicating -- which, with the unique on
+ * (sessionId, seq), is the whole idempotency story for replay ingest.
+ */
+export function buildReplayChunkKey(sessionId: string, seq: number): string {
+  return `replays/${sessionId}/chunks/${String(seq).padStart(6, '0')}.jsonl.gz`;
+}
+
+/** The chunk index for a session, if one is ever materialised. */
+export function buildReplayManifestKey(sessionId: string): string {
+  return `replays/${sessionId}/manifest.json`;
+}
+
+/** Everything belonging to one session's recording, for deletion. */
+export function replaySessionPrefix(sessionId: string): string {
+  return `replays/${sessionId}/`;
 }
 
 export function buildReplayKey(sessionId: string): string {

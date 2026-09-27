@@ -141,10 +141,12 @@ test('TELLANN Frontend SDK Tests', async (t) => {
 
     await (TELLANN as any).flush();
 
-    assert.strictEqual(fetchCalls.length, 1);
-    assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
-    assert.strictEqual(fetchCalls[0].headers.Authorization, 'Bearer tellann_test_key');
-    assert.strictEqual(fetchCalls[0].headers['x-tellann-environment-id'], 'env-auth');
+    // Filtered rather than counted: initialize() also fetches /v1/replay/config, and a
+    // raw call count would make every future channel break this assertion.
+    const batchCalls = fetchCalls.filter((call) => call.url.endsWith('/v1/events/batch'));
+    assert.strictEqual(batchCalls.length, 1);
+    assert.strictEqual(batchCalls[0].headers.Authorization, 'Bearer tellann_test_key');
+    assert.strictEqual(batchCalls[0].headers['x-tellann-environment-id'], 'env-auth');
   });
 
   await t.test('verifyInstallation sends onboarding test event immediately', async () => {
@@ -166,10 +168,10 @@ test('TELLANN Frontend SDK Tests', async (t) => {
     fetchCalls = [];
     await TELLANN.verifyInstallation();
 
-    assert.strictEqual(fetchCalls.length, 1);
-    assert.strictEqual(fetchCalls[0].url, 'http://gateway/v1/events/batch');
-    assert.ok(Array.isArray(fetchCalls[0].body));
-    assert.ok(fetchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST'));
+    const batchCalls = fetchCalls.filter((call) => call.url.endsWith('/v1/events/batch'));
+    assert.strictEqual(batchCalls.length, 1);
+    assert.ok(Array.isArray(batchCalls[0].body));
+    assert.ok(batchCalls[0].body.some((event: any) => event.eventType === 'TELLANN_INITIALIZED' || event.eventType === 'TELLANN_ONBOARDING_TEST'));
   });
 
   await t.test('a guided run flushes Flow events through the local relay', async () => {
@@ -204,13 +206,14 @@ test('TELLANN Frontend SDK Tests', async (t) => {
       TELLANN.trackFlowInitialState('flow-version-1', 'onboarding');
       await (TELLANN as any).flush();
 
-      assert.strictEqual(fetchCalls.length, 1);
-      assert.strictEqual(fetchCalls[0].url, 'http://127.0.0.1:51234/v1/events/batch');
-      assert.strictEqual(fetchCalls[0].headers.Authorization, 'Bearer relay-token');
+      const batchCalls = fetchCalls.filter((call) => call.url.endsWith('/v1/events/batch'));
+      assert.strictEqual(batchCalls.length, 1);
+      assert.strictEqual(batchCalls[0].url, 'http://127.0.0.1:51234/v1/events/batch');
+      assert.strictEqual(batchCalls[0].headers.Authorization, 'Bearer relay-token');
       // The relay's CORS allow-list has no environment header; sending one
       // would fail the preflight and drop the batch.
-      assert.strictEqual(fetchCalls[0].headers['x-tellann-environment-id'], undefined);
-      const initial = fetchCalls[0].body.find((event: any) => event.eventType === 'FLOW_INITIAL_STATE');
+      assert.strictEqual(batchCalls[0].headers['x-tellann-environment-id'], undefined);
+      const initial = batchCalls[0].body.find((event: any) => event.eventType === 'FLOW_INITIAL_STATE');
       assert.ok(initial);
       assert.strictEqual(initial.metadata.flowVersionId, 'flow-version-1');
       assert.strictEqual(initial.metadata.stateKey, 'onboarding');

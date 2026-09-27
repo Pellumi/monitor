@@ -8,6 +8,9 @@ const ENDPOINT_ENGINE_URL = (
   process.env.ENDPOINT_ENGINE_URL || `http://localhost:${Services.ENDPOINT_ENGINE}`
 ).replace(/\/$/, '');
 
+/** Ledger entries reclaimed per organisation per tick. See the note at its use. */
+const STORAGE_OBJECT_BUDGET = 5_000;
+
 export interface RetentionSweepResult {
   dryRun: boolean;
   organizations: number;
@@ -16,6 +19,10 @@ export interface RetentionSweepResult {
   storageObjects: number;
   /** Applications whose endpoint metrics were asked to age out. */
   endpointMetricApplications: number;
+  /** Organisations skipped entirely because of a legal hold. */
+  heldOrganizations: number;
+  /** Sessions whose DOM recording was deleted ahead of their events. */
+  replayOnlySessions: number;
 }
 
 /**
@@ -45,6 +52,66 @@ async function expireEndpointMetrics(applicationId: string, retentionDays: numbe
   }
 }
 
+/**
+ * Deletes DOM recordings that expire before their session does.
+ *
+ * `ApplicationReplaySetting.retentionDays` can be shorter than the organisation's -- a
+ * customer may want recordings gone in seven days while keeping the events for ninety --
+ * and the main sweep reads only the organisation's window, so without this the shorter
+ * setting would have no effect at all.
+ */
+async function sweepExpiredReplays(
+  prisma: PrismaClient,
+  storage: ReturnType<typeof createStorageClient>,
+  organizationId: string,
+  now: Date,
+  dryRun: boolean,
+): Promise<number> {
+  const settings = await prisma.applicationReplaySetting.findMany({
+    where: { retentionDays: { not: null }, application: { organizationId } },
+    select: { applicationId: true, retentionDays: true },
+  });
+
+  let sessions = 0;
+  for (const setting of settings) {
+    const days = setting.retentionDays;
+    if (!days || days <= 0) continue;
+    const cutoff = new Date(now.getTime() - days * DAY_MS);
+
+    const chunks = await prisma.replayChunk.findMany({
+      where: { applicationId: setting.applicationId, createdAt: { lt: cutoff } },
+      select: { id: true, objectKey: true, sessionId: true },
+      take: STORAGE_OBJECT_BUDGET,
+    });
+    if (chunks.length === 0) continue;
+
+    const sessionIds = [...new Set(chunks.map((chunk) => chunk.sessionId))];
+    sessions += sessionIds.length;
+    if (dryRun) continue;
+
+    // Objects first, rows last: a crash between the two leaves rows pointing at nothing,
+    // which a later pass can clean, rather than objects nothing points at, which are
+    // invisible and unbillable.
+    for (const chunk of chunks) {
+      await storage.delete(chunk.objectKey).catch((err: unknown) => {
+        console.warn(`[retention] Failed to delete replay object ${chunk.objectKey}`, err);
+      });
+    }
+    await prisma.replayChunk.deleteMany({ where: { id: { in: chunks.map((c) => c.id) } } });
+
+    // The per-session ledger entry goes with the last of its chunks.
+    for (const sessionId of sessionIds) {
+      const remaining = await prisma.replayChunk.count({ where: { sessionId } });
+      if (remaining > 0) continue;
+      await prisma.storageLedgerEntry.updateMany({
+        where: { objectKey: `replays/${sessionId}/` },
+        data: { deletedAt: now, bytes: 0n, reservedBytes: 0n },
+      });
+    }
+  }
+  return sessions;
+}
+
 export async function runRetentionSweep(
   prisma: PrismaClient,
   options: { dryRun?: boolean; now?: Date } = {},
@@ -53,11 +120,17 @@ export async function runRetentionSweep(
   const now = options.now ?? new Date();
   const storage = createStorageClient();
   const entitlements = await prisma.entitlement.findMany({ select: { organizationId: true, limits: true } });
-  const result: RetentionSweepResult = { dryRun, organizations: 0, sessions: 0, demonstrations: 0, storageObjects: 0, endpointMetricApplications: 0 };
+  const result: RetentionSweepResult = { dryRun, organizations: 0, sessions: 0, demonstrations: 0, storageObjects: 0, endpointMetricApplications: 0, heldOrganizations: 0, replayOnlySessions: 0 };
 
   for (const entitlement of entitlements) {
     const agreement = await prisma.enterpriseAgreement.findUnique({ where: { organizationId: entitlement.organizationId } });
-    if (agreement?.legalHold) continue;
+    if (agreement?.legalHold) {
+      // Correct to skip -- but it means a held organisation's storage grows without
+      // bound, and replay chunks are exactly the artefact a hold is usually about. So
+      // it is reported rather than silently passed over.
+      result.heldOrganizations += 1;
+      continue;
+    }
     const retentionDays = Number((entitlement.limits as Record<string, unknown>)?.retentionDays);
     if (!Number.isFinite(retentionDays) || retentionDays <= 0 || retentionDays >= 9999) continue;
     const cutoff = new Date(now.getTime() - retentionDays * DAY_MS);
@@ -71,10 +144,15 @@ export async function runRetentionSweep(
       select: { id: true },
       take: 500,
     });
+    // A higher budget than its siblings, because replay makes this the fastest-growing
+    // thing retention has to reclaim: one ledger entry per recorded session, where a
+    // session may be tens of megabytes. At 500 a day a busy application's quota would
+    // never recover. (The entry is per session, not per chunk, precisely so this number
+    // can stay in the thousands rather than the tens of thousands.)
     const objects = await prisma.storageLedgerEntry.findMany({
       where: { organizationId: entitlement.organizationId, deletedAt: null, createdAt: { lt: cutoff } },
       select: { id: true, objectKey: true },
-      take: 500,
+      take: STORAGE_OBJECT_BUDGET,
     });
     // Endpoint metrics live in ClickHouse under their own TTL ceiling, so they
     // are expired per application rather than by the Postgres row counts above.
@@ -92,6 +170,11 @@ export async function runRetentionSweep(
         }
       }
     }
+
+    // Before the early continue: an organisation whose events have not expired can still
+    // have recordings that have, and skipping here would mean the shorter replay window
+    // silently never applied.
+    result.replayOnlySessions += await sweepExpiredReplays(prisma, storage, entitlement.organizationId, now, dryRun);
 
     if (!sessions.length && !demonstrations.length && !objects.length) continue;
 
@@ -117,6 +200,11 @@ export async function runRetentionSweep(
       // relation, so no cascade would catch them.
       prisma.sessionCompletionOutbox.deleteMany({ where: { sessionId: { in: sessionIds } } }),
       prisma.workflowExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }),
+      prisma.sessionFacet.deleteMany({ where: { sessionId: { in: sessionIds } } }),
+      // Rows last is deliberate -- see the object-deletion loop above. A crash between the
+      // two leaves recoverable orphan ROWS rather than orphan OBJECTS, which would be
+      // invisible, unbillable and undeletable.
+      prisma.replayChunk.deleteMany({ where: { sessionId: { in: sessionIds } } }),
       prisma.demonstration.deleteMany({ where: { id: { in: demonstrationIds } } }),
       prisma.session.deleteMany({ where: { id: { in: sessionIds } } }),
       prisma.auditLog.create({

@@ -19,6 +19,16 @@ export enum Feature {
   MISSING_FLOW_DETECTION  = 'MISSING_FLOW_DETECTION',
   MISSING_STATE_DETECTION = 'MISSING_STATE_DETECTION',
   ENDPOINT_INTELLIGENCE   = 'ENDPOINT_INTELLIGENCE',
+  /**
+   * Visual DOM replay, as distinct from SESSION_REPLAY.
+   *
+   * SESSION_REPLAY is in CORE_FEATURES, i.e. enabled on every plan including FREE, so
+   * every gate on it is dead code that can only fail on a hand-edited Entitlement row.
+   * Gating DOM capture on it would hand free-tier organisations unlimited object
+   * storage. This is deliberately NOT a core feature, and both ingest and playback gate
+   * on it -- there is no reason to pay to store what the plan cannot play back.
+   */
+  DOM_SESSION_REPLAY      = 'DOM_SESSION_REPLAY',
   DASHBOARD_ACCESS        = 'DASHBOARD_ACCESS',
 
   // â”€â”€ Desktop Agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -79,6 +89,15 @@ export interface ResourceLimits {
   demoSessions:    number | null; // null = unlimited
   maxEnvironmentsPerApp: number;
   maxApiKeys:      number;
+  /**
+   * How long DOM recordings are kept, which is usually shorter than event retention:
+   * a recording is megabytes where an event is bytes. Null means "same as
+   * retentionDays". Read when computing an application's effective replay config, so a
+   * plan downgrade tightens capture without anyone editing a setting.
+   */
+  replayRetentionDays?: number | null;
+  /** Ceiling on the fraction of sessions a plan may record visually. */
+  replaySampleRate?: number;
 }
 
 /**

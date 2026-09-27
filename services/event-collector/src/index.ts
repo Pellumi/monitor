@@ -4,6 +4,8 @@ initTracing('event-collector');
 import express, { Request, Response } from 'express';
 import { TellannEventSchema, parseEventBatch, Topics, Feature, kafkaEnabled, telemetryTransport, type TellannEvent } from '@tellann/shared';
 import { applyEventsToSessions } from '@tellann/session-core';
+import { createStorageClient } from '@tellann/storage';
+import { registerReplayRoutes } from './replay-routes';
 import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
@@ -12,7 +14,6 @@ const app = express();
 app.use(express.json({ limit: '5mb' }));
 
 const MAX_EVENT_SIZE = 32 * 1024;  // 32 KB
-const MAX_REPLAY_SIZE = 128 * 1024; // 128 KB
 
 // ─── Kafka setup (conditional) ────────────────────────────────────────────────
 // Kafka is opt-in. Without it, events are written directly to Postgres, which is
@@ -50,6 +51,9 @@ if (KAFKA_ENABLED) {
 
 // Entitlement checker — shares prisma instance when available, otherwise creates its own
 const entitlementPrisma = prisma ?? new PrismaClient();
+// Replay chunks go to object storage; the adapter is resolved from the environment the
+// same way report-engine resolves it for exports.
+const replayStorage = createStorageClient();
 const entitlementChecker = new EntitlementChecker(entitlementPrisma);
 
 /**
@@ -75,10 +79,17 @@ async function checkSessionRecordingEntitlement(req: Request): Promise<string | 
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getEventLimit(eventType: string): number {
-  return typeof eventType === 'string' && eventType.includes('REPLAY')
-    ? MAX_REPLAY_SIZE
-    : MAX_EVENT_SIZE;
+/**
+ * The size ceiling for an event.
+ *
+ * There used to be a second, larger budget for any event type whose name contained
+ * "REPLAY". No such type has ever existed -- grep EventTypeSchema -- so the branch was
+ * dead, and worse, it was a booby trap: the first rrweb-related event type anyone added
+ * would silently get 128 KB here and read as sanction for sending recordings through
+ * this route. DOM chunks have their own route, their own parser and their own limit.
+ */
+function getEventLimit(_eventType: string): number {
+  return MAX_EVENT_SIZE;
 }
 
 function applyGatewayIdentity<T extends { tenantId: string; applicationId: string }>(
@@ -190,6 +201,15 @@ async function publishEvents(events: Array<Record<string, unknown>>, sessionId: 
     );
   }
 }
+
+// ─── DOM replay ingest ────────────────────────────────────────────────────────
+// A separate route because one rrweb full snapshot is 200-800 KB against the 32 KB
+// ceiling above, and because its handler must never parse the body.
+registerReplayRoutes(app, {
+  prisma: entitlementPrisma,
+  storage: replayStorage,
+  entitlementChecker,
+});
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 app.get('/health', (_req: Request, res: Response) => {

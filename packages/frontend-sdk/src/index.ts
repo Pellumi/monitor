@@ -4,6 +4,7 @@ export type { EventType, TellannEvent } from './event-types';
 import { WorkflowTracker } from './workflow-tracker.js';
 import { setupAutoTrack, sanitizeMetadata } from './auto-track.js';
 import { setupNetworkTracking } from './network-track.js';
+import { createReplayRecorder, fetchReplayConfig, type ReplayController } from './replay.js';
 import { captureClientContext } from './client-context.js';
 import {
   clearStoredSession,
@@ -135,10 +136,18 @@ export interface TellannConfig {
    * session id is ours to know and not a third party's.
    */
   networkOrigins?: string[];
+  /**
+   * Capture the DOM for visual replay. Default true, but the *server* decides what is
+   * actually recorded and how heavily it is masked: this only opts out entirely.
+   */
+  visualReplay?: boolean;
 }
 
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit for standard events
-const MAX_REPLAY_SIZE_BYTES = 128 * 1024; // 128 KB limit for replay events (e.g. if eventType is a replay event)
+// There was a second, 128 KB budget here for any event type whose name contained
+// "REPLAY". No such type exists, so it never applied -- and it would have been read as
+// permission to send DOM recordings through /v1/events, which cannot carry them. Visual
+// replay uses its own channel; see ./replay.ts.
 
 class TellannFrontendSDK {
   private config: TellannConfig | null = null;
@@ -149,6 +158,7 @@ class TellannFrontendSDK {
   private teardownAutoTrack: (() => void) | null = null;
   private teardownNetworkTrack: (() => void) | null = null;
   private teardownLifecycle: (() => void) | null = null;
+  private replay: ReplayController | null = null;
 
   /** Stable per-browser id. Null when localStorage is unusable. */
   private anonymousId: string | null = null;
@@ -203,9 +213,68 @@ class TellannFrontendSDK {
 
     this.installLifecycleHandlers();
 
+    // Last, and deliberately not awaited: the config fetch and the rrweb import must never
+    // delay the application's own startup. Everything above already works without it.
+    if (this.config.visualReplay !== false) {
+      void this.startVisualReplay();
+    }
+
     if (this.config.debug) {
       console.log('[Tellann] Initialized and auto-tracking started', this.config);
     }
+  }
+
+  /**
+   * Fetches the masking config and starts DOM recording under it.
+   *
+   * The SDK does not choose its own masking. If this fetch fails, nothing is recorded --
+   * silence is the right failure mode, because recording under rules that may since have
+   * been tightened is worse than not recording.
+   */
+  private async startVisualReplay(): Promise<void> {
+    if (!this.config) return;
+    try {
+      const config = await fetchReplayConfig(this.config.endpoint, this.ingestHeaders());
+      if (!config || config.mode === 'OFF') return;
+
+      // A session excluded by event sampling must not be recorded visually either; the two
+      // would otherwise disagree about which sessions exist.
+      if (!this.sampled) return;
+      // The plan's own ceiling on how many sessions may be recorded, applied per session
+      // so a recording is never half a session.
+      if (config.sampleRate < 1 && Math.random() >= config.sampleRate) return;
+
+      this.replay = await createReplayRecorder({
+        endpoint: this.config.endpoint,
+        applicationId: this.config.applicationId,
+        sessionId: () => this.sessionId,
+        headers: () => this.ingestHeaders(),
+        config,
+        debug: this.config.debug,
+      });
+      await this.replay.start();
+    } catch (error) {
+      if (this.config.debug) console.error('[Tellann] Visual replay failed to start', error);
+    }
+  }
+
+  /** The ingest headers, shared by the event flush and the replay channel. */
+  private ingestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (!this.config) return headers;
+    if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
+    if (this.config.environmentId) headers['x-tellann-environment-id'] = this.config.environmentId;
+    return headers;
+  }
+
+  /**
+   * Flushes the recording buffer because something went wrong.
+   *
+   * This is what makes ERROR mode worth having: the last thirty seconds before a failure
+   * are uploaded, and the ninety-nine sessions where nothing broke cost nothing.
+   */
+  captureReplayOnError(reason: string): void {
+    void this.replay?.captureRetroactive(reason);
   }
 
   /**
@@ -304,6 +373,10 @@ class TellannFrontendSDK {
       this.teardownLifecycle();
       this.teardownLifecycle = null;
     }
+    if (this.replay) {
+      this.replay.stop();
+      this.replay = null;
+    }
     this.endSession();
   }
 
@@ -321,7 +394,7 @@ class TellannFrontendSDK {
     try {
       const rawPayload = JSON.stringify({ eventType, metadata });
       const rawSize = typeof Blob !== 'undefined' ? new Blob([rawPayload]).size : rawPayload.length;
-      const rawLimit = eventType.includes('REPLAY') ? MAX_REPLAY_SIZE_BYTES : MAX_EVENT_SIZE_BYTES;
+      const rawLimit = MAX_EVENT_SIZE_BYTES;
       if (rawSize > rawLimit) {
         console.error(`[Tellann] Event of type "${eventType}" discarded. Size (${rawSize} bytes) exceeds limit of ${rawLimit} bytes.`);
         return;
@@ -371,7 +444,7 @@ class TellannFrontendSDK {
         ? new Blob([eventJson]).size 
         : eventJson.length;
 
-      const limit = eventType.includes('REPLAY') ? MAX_REPLAY_SIZE_BYTES : MAX_EVENT_SIZE_BYTES;
+      const limit = MAX_EVENT_SIZE_BYTES;
       if (eventSize > limit) {
         console.error(
           `[Tellann] Event of type "${eventType}" discarded. Size (${eventSize} bytes) exceeds limit of ${limit} bytes.`
@@ -597,6 +670,9 @@ class TellannFrontendSDK {
 
   captureException(error: Error | unknown, context?: Record<string, any>) {
     const err = error instanceof Error ? error : new Error(String(error));
+    // Flush the DOM buffer as well as recording the event: the recording is what makes
+    // the error diagnosable, and it is discarded moments later if nothing asks for it.
+    this.captureReplayOnError(err.message.slice(0, 120));
     this.trackEvent('ERROR_OCCURRED', {
       message: err.message,
       stack: err.stack || null,

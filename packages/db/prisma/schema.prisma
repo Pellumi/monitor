@@ -988,6 +988,7 @@ model Application {
   intentNormalizations   IntentNormalizationEntry[]
   endUsers               EndUser[]
   privacySetting         ApplicationPrivacySetting?
+  replaySetting          ApplicationReplaySetting?
 }
 
 model ApplicationProfile {
@@ -1171,6 +1172,97 @@ model SessionStatistic {
   eventCount Int
   errorCount Int
   durationMs Int
+}
+
+/// One compressed slice of a session's DOM recording.
+///
+/// The replay the product had was an event-log scrubber: no DOM was captured anywhere in
+/// the codebase, and the "element preview" was a mock synthesised from a CSS selector. A
+/// support engineer chasing "the user cannot create an exam" saw event names and had to
+/// reason about the screen from memory.
+///
+/// Chunks do not go through /v1/events -- a single rrweb full snapshot is 200-800 KB
+/// uncompressed against that route's 32 KB ceiling. They have their own ingest route
+/// whose handler never parses the body, which is the property everything else follows
+/// from: metadata travels in headers and the bytes stream straight to object storage.
+model ReplayChunk {
+  id String @id @default(uuid())
+
+  /// A plain scalar, not a relation: chunks routinely arrive before the first telemetry
+  /// batch has created the Session row, and a required relation would reject them.
+  /// Indexed explicitly, because Prisma indexes no non-relation scalar -- the same trap
+  /// StateObservation.sessionId fell into.
+  sessionId      String
+  applicationId  String
+  environmentId  String?
+  organizationId String?
+
+  seq       Int
+  /// Deterministic, so a retried upload overwrites instead of duplicating.
+  objectKey String @unique
+  bytes     BigInt
+
+  startOffsetMs Int
+  endOffsetMs   Int
+  eventCount    Int
+
+  format          String  @default("rrweb-v2")
+  encoding        String  @default("gzip")
+  /// Whether this chunk begins with a full snapshot, so the player knows where it can
+  /// start. Taken from the SDK's header and therefore a HINT -- the collector does not
+  /// parse the body -- which the player verifies and walks back from if it is wrong.
+  hasFullSnapshot Boolean @default(false)
+  /// CONTINUOUS | ERROR | MANUAL. An ERROR chunk is a retroactive flush of the ring
+  /// buffer, which is how a session gets a recording without recording all of them.
+  trigger         String  @default("CONTINUOUS")
+  /// sha256 of the masking config the SDK applied. Attestation, not enforcement: the
+  /// collector refuses a chunk whose profile is stale, so tightening a setting takes
+  /// effect within one chunk interval instead of at the customer's next deploy.
+  maskProfileHash String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([sessionId, seq])
+  @@index([sessionId, seq])
+  @@index([applicationId, createdAt])
+}
+
+/// What an application records visually, and how heavily it is masked.
+///
+/// The effective config is the stricter of this and the SDK's own defaults, computed
+/// server-side and fetched by the SDK before recording starts. The SDK does not choose
+/// it -- but see the note on enforcement: a server cannot retroactively clean a chunk
+/// whose DOM text was already serialised, only refuse to store it.
+model ApplicationReplaySetting {
+  id            String      @id @default(uuid())
+  applicationId String      @unique
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  /// OFF | ERROR | ALWAYS. Defaults to ERROR: ALWAYS is 5-20 MB compressed for a
+  /// ten-minute session, which at any real traffic is the dominant line in the
+  /// storage ledger.
+  mode String @default("ERROR")
+
+  maskAllInputs            Boolean  @default(true)
+  maskAllText              Boolean  @default(false)
+  blockSelectors           String[] @default([])
+  maskSelectors            String[] @default([])
+  recordCanvas             Boolean  @default(false)
+  recordCrossOriginIframes Boolean  @default(false)
+
+  sampleRate    Float @default(1.0)
+  maxChunkBytes Int   @default(2097152)
+  /// How much of the past an ERROR-triggered flush carries with it.
+  bufferSeconds Int   @default(30)
+  /// Null means the organisation's retention. Set shorter when a customer wants
+  /// recordings gone sooner than their events.
+  retentionDays Int?
+
+  /// sha256 of the effective config. The SDK echoes it on every chunk.
+  profileHash String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// One row per session, carrying everything a reader can filter on.

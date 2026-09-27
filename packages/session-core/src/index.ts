@@ -4,6 +4,7 @@ export * from './load-session';
 export * from './identity';
 export * from './facets';
 export * from './facet-backfill';
+export * from './replay-config';
 export * from './ingest-event';
 export * from './complete-session';
 export * from './sweep';

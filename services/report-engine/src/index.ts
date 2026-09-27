@@ -544,6 +544,120 @@ app.get('/applications/:id/end-users', verifyCaller, requireApplicationAccess('i
   }
 });
 
+// 4c. The DOM recording for a session.
+//
+// Ownership BEFORE entitlement, matching the handler below and the comment there
+// recording the bug where it was the other way round. It matters more here: checking
+// entitlement first would let any signed-in user enumerate another tenant's session ids
+// and learn which of them have recordings.
+app.get('/sessions/:sessionId/replay/manifest', verifyCaller, async (req: CallerRequest, res: Response) => {
+  const { sessionId } = req.params;
+
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { id: true, applicationId: true, startTime: true },
+    });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    if (!(await assertApplicationAccess(req, res, session.applicationId))) return;
+
+    const access = await ensureFeatureAccess(session.applicationId, Feature.DOM_SESSION_REPLAY, res);
+    if (!access.allowed) return;
+
+    const chunks = await prisma.replayChunk.findMany({
+      where: { sessionId },
+      orderBy: { seq: 'asc' },
+    });
+
+    if (chunks.length === 0) {
+      // Not an error: most sessions have no recording, because the default mode only
+      // captures when something goes wrong. The player falls back to the event timeline.
+      return res.json({ sessionId, format: null, chunks: [], available: false });
+    }
+
+    // The local-filesystem adapter "presigns" by base64-encoding the whole file into a
+    // data: URL -- 2.7 MB of string for a 2 MB chunk, ~80 MB of JSON for a 30-chunk
+    // manifest, and blocked by many content-security policies. So when the adapter cannot
+    // produce a real URL, the manifest points at the streaming route below instead.
+    const canPresign = storage.supportsPresignedUrls;
+    const ttlSeconds = 300;
+
+    const entries = await Promise.all(chunks.map(async (chunk) => {
+      let url: string | null = null;
+      if (canPresign) {
+        try {
+          url = await storage.presign(chunk.objectKey, ttlSeconds);
+        } catch (err) {
+          console.warn(`[ReportEngine] Failed to presign replay chunk ${chunk.objectKey}`, err);
+        }
+      }
+      return {
+        seq: chunk.seq,
+        startOffsetMs: chunk.startOffsetMs,
+        endOffsetMs: chunk.endOffsetMs,
+        eventCount: chunk.eventCount,
+        hasFullSnapshot: chunk.hasFullSnapshot,
+        trigger: chunk.trigger,
+        encoding: chunk.encoding,
+        bytes: Number(chunk.bytes),
+        // A relative path, so the browser keeps its cookies and the gateway keeps
+        // streaming rather than buffering.
+        url: url ?? `/api-gateway/sessions/${sessionId}/replay/chunks/${chunk.seq}`,
+        isPresigned: Boolean(url),
+      };
+    }));
+
+    res.json({
+      sessionId,
+      format: chunks[0].format,
+      available: true,
+      startTime: session.startTime,
+      expiresAt: canPresign ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null,
+      totalBytes: entries.reduce((sum, entry) => sum + entry.bytes, 0),
+      chunks: entries,
+    });
+  } catch (err) {
+    console.error('[ReportEngine] Error building replay manifest', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Streaming fallback for adapters that cannot presign (local development), and for any
+// deployment that would rather not hand out object-storage URLs at all.
+app.get('/sessions/:sessionId/replay/chunks/:seq', verifyCaller, async (req: CallerRequest, res: Response) => {
+  const { sessionId } = req.params;
+  const seq = Number.parseInt(req.params.seq, 10);
+  if (!Number.isFinite(seq)) return res.status(400).json({ error: 'Invalid chunk sequence' });
+
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { applicationId: true },
+    });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    // The same order as the manifest. Repeated rather than factored out because getting
+    // it wrong in one place is the failure this comment exists to prevent.
+    if (!(await assertApplicationAccess(req, res, session.applicationId))) return;
+
+    const access = await ensureFeatureAccess(session.applicationId, Feature.DOM_SESSION_REPLAY, res);
+    if (!access.allowed) return;
+
+    const chunk = await prisma.replayChunk.findFirst({ where: { sessionId, seq } });
+    if (!chunk) return res.status(404).json({ error: 'Chunk not found' });
+
+    const body = await storage.download(chunk.objectKey);
+    res.setHeader('Content-Type', 'application/gzip');
+    if (chunk.encoding === 'gzip') res.setHeader('Content-Encoding', 'gzip');
+    // Immutable: a chunk's bytes never change once written, and the deterministic key
+    // means a retry overwrites with identical content.
+    res.setHeader('Cache-Control', 'private, max-age=300, immutable');
+    res.send(body);
+  } catch (err) {
+    console.error('[ReportEngine] Error streaming replay chunk', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // 5. Session Replay Timeline
 app.get('/sessions/:sessionId/replay', verifyCaller, async (req: CallerRequest, res: Response) => {
   const { sessionId } = req.params;
