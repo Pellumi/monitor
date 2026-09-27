@@ -90,7 +90,7 @@ async function seed() {
 
   const membership = await prisma.organizationMembership.findFirst({
     include: { organization: true, user: true },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { joinedAt: 'asc' },
   });
   assert(membership, 'no organization membership exists; run the onboarding flow or seed:plans first');
 
@@ -201,7 +201,10 @@ async function verifyAnonymousIngest(ctx) {
   // The two fields the Zod schema silently stripped before envelope 1.1.
   assert(session.browserName === 'Chrome', 'browserName was not persisted');
 
-  const events = await prisma.sessionEvent.count({ where: { sessionId: ctx.sessionId } });
+  const events = await waitFor('all three session events to be persisted', async () => {
+    const count = await prisma.sessionEvent.count({ where: { sessionId: ctx.sessionId } });
+    return count === 3 ? count : null;
+  });
   assert(events === 3, `expected 3 events, found ${events}`);
 
   record('anonymousSessionCreated', true);
@@ -297,9 +300,12 @@ async function verifySharedDevice(ctx) {
     }),
   ]);
 
-  const third = await waitFor('the third session to be attributed', async () => {
+  const third = await waitFor('the third session to be attributed to the second person', async () => {
     const row = await prisma.session.findUnique({ where: { id: thirdSessionId } });
-    return row?.endUserId ? row : null;
+    // SESSION_STARTED can briefly adopt the browser's previous owner before the
+    // following USER_IDENTIFIED event is consumed. Wait for that explicit identity
+    // to win instead of treating the intermediate attribution as the final result.
+    return row?.endUserId && row.endUserId !== ctx.endUserId ? row : null;
   });
   assert(third.endUserId !== ctx.endUserId, 'the second person was merged into the first');
 
