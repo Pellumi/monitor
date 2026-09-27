@@ -1007,6 +1007,50 @@ export function toObservedFindings(rows: BrowserFindingRow[]): ObservedFinding[]
   }));
 }
 
+/** A friction finding as it arrives from Postgres. */
+export interface FrictionFindingRow {
+  id: string;
+  category: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string | null;
+  relatedStateName: string | null;
+  sampleSessionIds: string[];
+  observedValue: number | null;
+  affectedSessions: number;
+  detectedAt: Date;
+}
+
+/**
+ * Friction findings, in the same shape as browser findings.
+ *
+ * Same list, different origin -- deliberately, so the card renders both without a second
+ * component, while `origin` keeps "this page crashed during a run" distinguishable from
+ * "errors concentrate at this state across 300 production sessions".
+ *
+ * `runId` is null, which is the reason this needed a separate model rather than a widened
+ * BrowserFinding: that table's runId is non-null and cascades from QARun, and production
+ * traffic has no run.
+ */
+export function toFrictionFindings(rows: FrictionFindingRow[]): ObservedFinding[] {
+  return rows.map((row) => ({
+    id: row.id,
+    origin: 'OBSERVED_SESSION' as const,
+    runId: null,
+    category: row.category,
+    severity: normaliseSeverity(row.severity),
+    title: row.title,
+    description: row.description,
+    recommendation: row.recommendation,
+    relatedStateName: row.relatedStateName,
+    detectedAt: row.detectedAt.toISOString(),
+    sampleSessionIds: row.sampleSessionIds,
+    observedValue: row.observedValue,
+    affectedSessions: row.affectedSessions,
+  }));
+}
+
 /**
  * Both kinds of finding under one headline, without merging them.
  *
@@ -1017,9 +1061,14 @@ export function combineFindingCounts(
   ruleTally: { total: number; critical: number; high: number; medium: number; low: number },
   observed: ObservedFinding[],
 ) {
+  // Split by origin rather than lumped: "a rule expects an error state nobody has seen",
+  // "this page crashed during a run" and "errors concentrate at this state in production"
+  // are three different kinds of claim, and one number would erase the distinction.
+  const browserRun = observed.filter((finding) => finding.origin === 'BROWSER_RUN').length;
+  const observedSession = observed.filter((finding) => finding.origin === 'OBSERVED_SESSION').length;
   const combined = {
     ...ruleTally,
-    byOrigin: { ruleInference: ruleTally.total, browserRun: observed.length },
+    byOrigin: { ruleInference: ruleTally.total, browserRun, observedSession },
   };
   combined.total += observed.length;
   for (const finding of observed) {

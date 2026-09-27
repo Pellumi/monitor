@@ -1249,6 +1249,9 @@ importers:
       '@tellann/rules':
         specifier: workspace:*
         version: link:../../packages/rules
+      '@tellann/session-core':
+        specifier: workspace:*
+        version: link:../../packages/session-core
       '@tellann/shared':
         specifier: workspace:*
         version: link:../../packages/shared

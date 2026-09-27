@@ -1,5 +1,7 @@
 import { PrismaClient } from '@tellann/db';
 import { normalizeIntent } from '@tellann/derivation-engine';
+// Pure scoring over the daily rollups, so it lives with them rather than here.
+import { declarationPriority, type StateTrafficWeight } from '@tellann/session-core';
 import { Services } from '@tellann/shared';
 
 const prisma = new PrismaClient();
@@ -18,6 +20,69 @@ export interface ReconciliationReportResult {
   transitionCoverageScore: number;
   trueGapTransitionsList: any[];
   undeclaredTransitionsList: any[];
+}
+
+/** How far back the weighting looks. Long enough to be stable, short enough to be current. */
+const TRAFFIC_WINDOW_DAYS = 30;
+
+/**
+ * Recent traffic per observed state name.
+ *
+ * `undeclared` entries carried `observationCount` -- State.visitCount, a monotone lifetime
+ * total. So a path used once a year ranked alongside one used hourly, and a broken path
+ * ranked alongside a healthy one. Reading the daily rollups instead makes "declare this
+ * next" a judgement about volume and breakage rather than about mere existence.
+ *
+ * Returns an empty map when the rollups have not run yet, and every caller falls back to the
+ * lifetime count -- degraded ordering rather than no reconciliation.
+ */
+async function loadStateTraffic(
+  applicationId: string,
+  environmentId: string | undefined,
+): Promise<Map<string, StateTrafficWeight>> {
+  const since = new Date(Date.now() - TRAFFIC_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const weights = new Map<string, StateTrafficWeight>();
+
+  try {
+    const rows = await prisma.$queryRaw<Array<{
+      stateName: string;
+      weightedVisits: number | null;
+      uniqueEndUsers: number | null;
+      uniqueSessions: number | null;
+      errorCount: number | null;
+      lastSeenAt: Date | null;
+    }>>`
+      SELECT
+        st."name" AS "stateName",
+        SUM(m."weightedVisits")::double precision AS "weightedVisits",
+        MAX(m."uniqueEndUsers")::int AS "uniqueEndUsers",
+        SUM(m."uniqueSessions")::int AS "uniqueSessions",
+        SUM(m."errorCount")::int AS "errorCount",
+        MAX(m."day") AS "lastSeenAt"
+      FROM "ObservedStateMetric" m
+      JOIN "State" st ON st."id" = m."stateId"
+      WHERE m."applicationId" = ${applicationId}
+        AND m."day" >= ${since}
+        AND (${environmentId ?? null}::text IS NULL OR m."environmentId" = ${environmentId ?? null})
+      GROUP BY st."name"
+    `;
+
+    for (const row of rows) {
+      const sessions = row.uniqueSessions ?? 0;
+      weights.set(row.stateName, {
+        weightedVisits: row.weightedVisits ?? 0,
+        uniqueEndUsers: row.uniqueEndUsers ?? 0,
+        errorRate: sessions > 0 ? (row.errorCount ?? 0) / sessions : 0,
+        lastSeenAt: row.lastSeenAt,
+      });
+    }
+  } catch (err) {
+    // The rollup tables may not exist yet on a database mid-migration. Reconciliation is
+    // more important than the ordering of its output.
+    console.warn('[FDRS] Could not load state traffic weights; falling back to lifetime counts', err);
+  }
+
+  return weights;
 }
 
 /**
@@ -64,6 +129,10 @@ export async function runReconciliation(applicationId: string, environmentId?: s
   });
 
   const reports: ReconciliationReportResult[] = [];
+
+  // Recent traffic per state, so the undeclared list is ordered by what matters rather than
+  // by lifetime existence.
+  const stateTraffic = await loadStateTraffic(applicationId, targetEnvId);
 
   // Find sessions in the target environment
   const sessions = targetEnvId ? await prisma.session.findMany({
@@ -210,9 +279,23 @@ export async function runReconciliation(applicationId: string, environmentId?: s
 
     for (const obs of observedStates) {
       if (!declaredStateNames.has(obs.name)) {
+        const weight = stateTraffic.get(obs.name);
+        const priority = declarationPriority(weight, obs.visitCount);
+
         undeclaredStates.push({
           stateName: obs.name,
+          // Kept for compatibility with readers that already display it, though it is the
+          // lifetime total and therefore the weakest signal here.
           observationCount: obs.visitCount,
+          // What actually decides whether this is worth declaring.
+          weightedVisits: weight?.weightedVisits ?? null,
+          uniqueEndUsers: weight?.uniqueEndUsers ?? null,
+          errorRate: weight?.errorRate ?? null,
+          lastSeenAt: weight?.lastSeenAt ?? null,
+          priority,
+          // An inferred node is a suggestion about vocabulary as much as about coverage, and
+          // a reader deciding what to declare should know which it is looking at.
+          isRouteInduced: obs.category === 'ROUTE',
         });
 
         // Write UNDECLARED State evidence
@@ -222,16 +305,25 @@ export async function runReconciliation(applicationId: string, environmentId?: s
             workflowId: flow.id,
             evidenceType: 'UNDECLARED',
             source: 'RECONCILIATION',
-            confidence: 0.8,
+            // Confidence now reflects the traffic behind the recommendation rather than
+            // being the same 0.8 for everything ever observed once.
+            confidence: Math.min(0.99, 0.5 + priority / 10),
             payload: {
               type: 'STATE',
               stateName: obs.name,
               observationCount: obs.visitCount,
+              weightedVisits: weight?.weightedVisits ?? null,
+              errorRate: weight?.errorRate ?? null,
+              priority,
+              isRouteInduced: obs.category === 'ROUTE',
             } as any,
           },
         });
       }
     }
+
+    // Most important first, so a reader working down the list is working down by impact.
+    undeclaredStates.sort((a: any, b: any) => (b.priority ?? 0) - (a.priority ?? 0));
 
     const confirmedCount = confirmedStates.length;
     const trueGapCount = trueGaps.length;

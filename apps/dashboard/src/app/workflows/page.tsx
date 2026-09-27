@@ -3,6 +3,7 @@ import { authenticatedFetch } from '@/lib/authenticated-fetch';
 
 import { useQuery } from '@tanstack/react-query';
 
+import Link from 'next/link';
 import { Suspense } from 'react';
 import { ApplicationRequiredState } from '@/components/application-required-state';
 import { EmptyState } from '@/components/empty-state';
@@ -101,6 +102,7 @@ function WorkflowsContent() {
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">Path Signature</th>
               <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-neutral-400">Executions</th>
+              <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-neutral-400">Evidence</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-800 bg-neutral-900">
@@ -112,6 +114,16 @@ function WorkflowsContent() {
                 </td>
                 <td className="whitespace-nowrap px-6 py-4 text-right text-sm text-neutral-400">
                   {workflow.executionCount}
+                </td>
+                <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
+                  {/* A discovered workflow is a claim about behaviour, and until now there
+                      was no way to go and look at the behaviour it was derived from. */}
+                  <Link
+                    href={`/sessions?appId=${appId}&workflowName=${encodeURIComponent(workflow.name)}`}
+                    className="text-blue-400 transition-colors hover:text-blue-300"
+                  >
+                    Sessions →
+                  </Link>
                 </td>
               </tr>
             ))}

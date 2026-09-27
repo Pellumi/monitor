@@ -63,6 +63,7 @@ import {
   toActivityEntries,
   toCoverageHistory,
   toObservedFindings,
+  toFrictionFindings,
   toReportSummaries,
   topNodesByVisits,
   transitionKey,
@@ -206,6 +207,7 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
           entitlement,
           activationEvents,
           browserFindings,
+          frictionFindings,
           rankedTransitions,
           protectedValueGroups,
         ] = await Promise.all([
@@ -371,6 +373,23 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
               description: true, recommendation: true, relatedStateName: true, createdAt: true,
             },
             orderBy: { createdAt: 'desc' },
+            take: FINDING_LIMIT,
+          }),
+          // Friction detected in production traffic. Unlike a browser finding this IS
+          // application-scoped -- it is an aggregate over sessions, not an event inside a
+          // run -- and it has a resolution concept, so only open ones are shown.
+          prisma.observedFrictionFinding.findMany({
+            where: {
+              applicationId,
+              ...(environmentId ? { environmentId } : {}),
+              resolvedAt: null,
+            },
+            select: {
+              id: true, category: true, severity: true, title: true, description: true,
+              recommendation: true, relatedStateName: true, sampleSessionIds: true,
+              observedValue: true, affectedSessions: true, detectedAt: true,
+            },
+            orderBy: [{ severity: 'asc' }, { detectedAt: 'desc' }],
             take: FINDING_LIMIT,
           }),
           // Transitions between the states already fetched, for the hot/cold
@@ -689,7 +708,13 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
 
         // ── Change feed, activity, behaviour, observed findings ──
         const flowChanges = deriveFlowChangeFeed(reconciliations);
-        const observedFindings = toObservedFindings(browserFindings);
+        // One list, two origins. The card renders both without a second component, while
+        // `origin` keeps "this page crashed during a run" distinguishable from "errors
+        // concentrate at this state across 300 production sessions".
+        const observedFindings = [
+          ...toFrictionFindings(frictionFindings),
+          ...toObservedFindings(browserFindings),
+        ];
 
         // Team-gated per the spec. A plan without team features gets an empty
         // array rather than a card it cannot use.

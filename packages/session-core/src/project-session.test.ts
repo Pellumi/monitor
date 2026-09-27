@@ -386,20 +386,37 @@ test('an application with no profile is labelled with ECOMMERCE states', async (
   assert.notEqual(names[0], 'EXAMS_NEW', 'the state is named by a rule, not by the route');
 });
 
-test('an unprofiled application whose URL matches no ECOMMERCE rule projects nothing', async () => {
+test('an application with no rule set is described by its own routes', async () => {
+  // This test used to assert the opposite -- that no rule set meant no observed graph at
+  // all -- and that was the defect, not the contract. getRuleSet resolves only ECOMMERCE
+  // and LMS, so every other application produced an empty graph. Route induction is what
+  // changed, and the assertion changed with it.
   const world = newWorld(null);
   const d = deps(world);
-  // Force the null rule set the projection sees for a profile type with no
-  // built-in, which is every profile type except ECOMMERCE and LMS.
   const prisma = withProfile(d.prisma, 'HEALTHCARE');
 
   const result = await projectSessionIntoGraph({ ...d, prisma }, announcement([
     evt('PAGE_VIEW', { url: 'https://clinic.test/patients/42' }),
   ]));
 
-  assert.equal(result.statesObserved, 0, 'no rule set means no observed graph at all');
-  assert.equal(result.workflowName, null);
+  assert.equal(result.statesObserved, 1);
+  assert.deepEqual([...world.states.values()].map((s) => s.name), ['ROUTE_PATIENTS_PARAM']);
+  assert.equal(result.workflowName, 'ROUTE_PATIENTS_PARAM Workflow');
   assert.equal(result.skipped, false);
+});
+
+test('an event with no route and no matching rule still yields nothing', async () => {
+  // Induction reads a URL. A click or a business event without one is not a place.
+  const world = newWorld(null);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'HEALTHCARE');
+
+  const result = await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('BUTTON_CLICK', { buttonName: 'Save' }),
+  ]));
+
+  assert.equal(result.statesObserved, 0);
+  assert.equal(result.workflowName, null);
 });
 
 test('an announcement whose payload was nulled re-loads its events', async () => {
@@ -446,4 +463,79 @@ test('the projection enriches the facet with the states it observed', async () =
   assert.ok(data.projectedAt instanceof Date);
   // No declared terminal states, so no verdict on abandonment.
   assert.equal(data.abandoned, false);
+});
+
+// ─── Route induction (Stage 6) ────────────────────────────────────────────────
+
+test('a route nobody wrote a rule for still becomes a state', async () => {
+  // The whole point of induction. getRuleSet resolves exactly ECOMMERCE and LMS, so an
+  // application whose routes nobody hand-wrote rules for produced no nodes at all --
+  // which is why the observed graph was empty for real customers.
+  const world = newWorld(null);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'HEALTHCARE');
+
+  const result = await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('PAGE_VIEW', { url: 'https://clinic.test/patients/42/chart' }),
+  ]));
+
+  assert.equal(result.statesObserved, 1);
+  const names = [...world.states.values()].map((state) => state.name);
+  assert.deepEqual(names, ['ROUTE_PATIENTS_PARAM_CHART']);
+});
+
+test('two record ids under the same route are one state, not two', async () => {
+  // canonicalRouteFromPath collapsing identifiers is what keeps induction from producing
+  // an unbounded family of states -- one per row the customer's database holds.
+  const world = newWorld(null);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'HEALTHCARE');
+
+  await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('PAGE_VIEW', { url: 'https://clinic.test/patients/42/chart' }),
+    evt('PAGE_VIEW', { url: 'https://clinic.test/patients/9001/chart' }),
+  ]));
+
+  assert.equal(world.states.size, 1);
+  assert.equal([...world.states.values()][0].visitCount, 2);
+});
+
+test('a rule still outranks the route it would have been induced from', async () => {
+  // Induction runs only where every rule declined, so a declared vocabulary is never
+  // overridden by an inferred one.
+  const world = newWorld(RULES);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'LMS');
+
+  await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('PAGE_VIEW', { url: 'https://lms.test/courses' }),
+  ]));
+
+  const names = [...world.states.values()].map((state) => state.name);
+  assert.deepEqual(names, ['COURSE_CATALOG'], 'the rule name, not ROUTE_COURSES');
+});
+
+test('an induced state is marked as inferred, not as declared', async () => {
+  // So a reader, and the declaration suggestion queue, can tell the two apart.
+  const world = newWorld(null);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'HEALTHCARE');
+
+  await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('PAGE_VIEW', { url: 'https://clinic.test/appointments' }),
+  ]));
+
+  assert.equal([...world.states.values()][0].category, 'ROUTE');
+});
+
+test('the root path gets a name rather than an empty one', async () => {
+  const world = newWorld(null);
+  const d = deps(world);
+  const prisma = withProfile(d.prisma, 'HEALTHCARE');
+
+  await projectSessionIntoGraph({ ...d, prisma }, announcement([
+    evt('PAGE_VIEW', { url: 'https://clinic.test/' }),
+  ]));
+
+  assert.deepEqual([...world.states.values()].map((s) => s.name), ['ROUTE_ROOT']);
 });

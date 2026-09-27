@@ -152,6 +152,10 @@ export interface MeasuredSummary {
     medium: number;
     low: number;
     /** Keeps one headline number without hiding what it is made of. */
+    /**
+     * Which pipeline produced them. Three sources now: rule inference over the
+     * declared graph, guided browser runs, and aggregated production traffic.
+     */
     byOrigin: { ruleInference: number; browserRun: number };
   }>;
 }
@@ -290,9 +294,18 @@ export interface ActivityEntry {
  */
 export interface ObservedFinding {
   id: string;
-  origin: 'BROWSER_RUN';
-  runId: string;
-  /** Free text from the detector, e.g. FRONTEND_PAGE_CRASH. */
+  /**
+   * Where the observation came from.
+   *
+   * BROWSER_RUN is a guided QA run: someone drove the application and something went wrong
+   * in front of them. OBSERVED_SESSION is production traffic, aggregated -- "errors
+   * concentrate here", not "this page crashed once". The two support very different
+   * responses, so a reader has to be able to tell them apart.
+   */
+  origin: 'BROWSER_RUN' | 'OBSERVED_SESSION';
+  /** Null for an OBSERVED_SESSION finding: production traffic has no QA run. */
+  runId: string | null;
+  /** Free text from the detector, e.g. FRONTEND_PAGE_CRASH or FRICTION_ABANDONMENT. */
   category: string;
   severity: FindingSeverity;
   title: string;
@@ -300,6 +313,14 @@ export interface ObservedFinding {
   recommendation: string | null;
   relatedStateName: string | null;
   detectedAt: string;
+  /**
+   * Sessions that show it, so an aggregate claim is checkable rather than asserted. Empty
+   * for a BROWSER_RUN finding, whose evidence is the run itself.
+   */
+  sampleSessionIds?: string[];
+  /** What was measured, where the finding is a ratio. Absent for a one-off event. */
+  observedValue?: number | null;
+  affectedSessions?: number;
 }
 
 export interface CoverageOpportunity {

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@tellann/db';
-import type { TellannEvent } from '@tellann/shared';
+import { canonicalRouteFromPath, type TellannEvent } from '@tellann/shared';
 import { getRuleSet, reconstructRuleSet, type ApplicationRuleSet } from '@tellann/rules';
 import { depsLogger, type SessionAnnouncement, type SessionCoreDeps } from './deps';
 import { loadSessionEvents } from './load-session';
@@ -79,6 +79,83 @@ export function extractState(
   }
 
   return null;
+}
+
+/**
+ * A state derived from the route itself, when no rule recognised it.
+ *
+ * This is the difference between a graph and an empty graph for a real customer.
+ * `getRuleSet` resolves exactly two profile types -- ECOMMERCE and LMS -- and every call
+ * site falls back to ECOMMERCE, so an application whose routes nobody hand-wrote rules
+ * for produced no nodes at all, or worse, produced e-commerce state names for an LMS.
+ *
+ * Rules keep their precedence: this only runs when every one of them declined, so a
+ * declared vocabulary is never overridden by an inferred one.
+ *
+ * `canonicalRouteFromPath` is what makes it safe. It collapses identifier-shaped segments
+ * to `{param}`, so `/exams/17/edit` and `/exams/18/edit` are one state rather than an
+ * unbounded family of them. It already existed in @tellann/shared and was used only by
+ * endpoint-engine -- the observed graph never touched it, which is part of why the two
+ * halves of the product described the same traffic differently.
+ */
+export function induceStateFromRoute(event: TellannEvent): { name: string; category: string } | null {
+  if (event.eventType !== 'PAGE_VIEW' && event.eventType !== 'ROUTE_CHANGE') return null;
+
+  const metadata = event.metadata ?? {};
+  const raw = typeof metadata.url === 'string'
+    ? metadata.url
+    : typeof metadata.to === 'string' ? metadata.to : null;
+  if (!raw) return null;
+
+  let path: string;
+  try {
+    path = raw.startsWith('http') ? new URL(raw).pathname : raw;
+  } catch {
+    return null;
+  }
+
+  const canonical = canonicalRouteFromPath(path);
+  if (!canonical) return null;
+
+  // `/` is a real place -- most applications' entry point -- and needs a name that is not
+  // the empty string.
+  if (canonical === '/') return { name: 'ROUTE_ROOT', category: 'ROUTE' };
+
+  // ROUTE_ prefixed, so an inferred node is distinguishable at a glance from a declared
+  // one in the graph, in reconciliation, and in a suggestion queue. `{param}` becomes
+  // PARAM rather than being dropped, because /users/{param} and /users/new are different
+  // places and collapsing them would merge them.
+  const name = `ROUTE_${canonical
+    .replace(/\{param\}/g, 'PARAM')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()}`;
+
+  return { name: name.slice(0, 120), category: 'ROUTE' };
+}
+
+/**
+ * The state an event represents: a rule if one matches, otherwise the route.
+ *
+ * `sourceKind` travels with it so a reader, and the declaration suggestion queue, can tell
+ * an inferred node from one someone actually declared.
+ */
+export function resolveStateForEvent(
+  event: TellannEvent,
+  ruleSet: ApplicationRuleSet | null,
+  options: { induceRoutes?: boolean } = {},
+): { name: string; category: string; sourceKind: 'EXPLICIT' | 'RULE' | 'ROUTE_INDUCED' } | null {
+  if (event.eventType === 'STATE_ENTERED') {
+    const explicit = extractState(event, ruleSet);
+    if (explicit) return { ...explicit, sourceKind: 'EXPLICIT' };
+  }
+
+  const byRule = extractState(event, ruleSet);
+  if (byRule) return { ...byRule, sourceKind: 'RULE' };
+
+  if (options.induceRoutes === false) return null;
+  const induced = induceStateFromRoute(event);
+  return induced ? { ...induced, sourceKind: 'ROUTE_INDUCED' } : null;
 }
 
 export function normalizeStateName(raw: string): string {
@@ -320,7 +397,7 @@ export async function projectSessionIntoGraph(
       continue;
     }
 
-    const stateInfo = extractState(event, ruleSet);
+    const stateInfo = resolveStateForEvent(event, ruleSet);
     if (!stateInfo) continue;
 
     const state = await upsertObservedState(prisma, applicationId, environmentId, stateInfo.name, stateInfo.category);
@@ -401,7 +478,7 @@ async function discoverWorkflow(
       }
       continue;
     }
-    const stateInfo = extractState(event, ruleSet);
+    const stateInfo = resolveStateForEvent(event, ruleSet);
     if (stateInfo && (pathNames.length === 0 || pathNames[pathNames.length - 1] !== stateInfo.name)) {
       pathNames.push(stateInfo.name);
     }

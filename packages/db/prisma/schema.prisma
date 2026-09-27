@@ -1174,6 +1174,164 @@ model SessionStatistic {
   durationMs Int
 }
 
+/// A day of observed behaviour at one state.
+///
+/// State.visitCount is a monotone lifetime total with no decay, so "how is this system used
+/// *now*" and "is this getting worse" were both unanswerable -- the number could only ever
+/// go up, and a state abandoned six months ago looked identical to one visited this morning.
+///
+/// Computed by aggregation over the observations, never incremented, so a re-run is a no-op
+/// and a corrected session corrects the rollup.
+model ObservedStateMetric {
+  applicationId String
+  environmentId String?
+  stateId       String
+  /// Date-truncated UTC. The grain everything else here is keyed on.
+  day           DateTime
+
+  visits         Int
+  /// visits divided by the session's sampleRate, so a 10%-sampled application reports a
+  /// population estimate rather than a sample count.
+  weightedVisits Float
+  uniqueEndUsers Int
+  uniqueSessions Int
+  /// Errors in the sessions that touched this state. Attribution to a state, which the
+  /// product promised and had no structure behind: errorCount lived per session only.
+  errorCount     Int
+  /// How long sessions spent here before moving on. Null when a state was only ever the
+  /// last thing in its session, so there is no "before moving on".
+  dwellP50Ms     Int?
+  dwellP95Ms     Int?
+
+  computedAt DateTime @default(now())
+
+  @@id([applicationId, stateId, day])
+  @@index([applicationId, environmentId, day])
+  @@index([stateId, day])
+}
+
+/// A day of observed behaviour on one transition. See ObservedStateMetric.
+model ObservedTransitionMetric {
+  applicationId String
+  environmentId String?
+  transitionId  String
+  day           DateTime
+
+  traversals         Int
+  weightedTraversals Float
+  uniqueSessions     Int
+  /// Traversals in a session that also recorded an error. Not causation -- naming it
+  /// `failures` would claim more than the data supports.
+  errorSessions      Int
+
+  computedAt DateTime @default(now())
+
+  @@id([applicationId, transitionId, day])
+  @@index([applicationId, environmentId, day])
+}
+
+/// A distinct path through the observed graph.
+///
+/// Replaces Workflow's path-equality lookup, which created one row per distinct exact
+/// sequence -- `findFirst({ path: { equals: [...] } })` against a Json column, with no
+/// index and no bound on how many rows a busy application could produce -- and named each
+/// one "<LAST_STATE> Workflow".
+model JourneyPath {
+  id            String   @id @default(uuid())
+  applicationId String
+  environmentId String?
+  /// sha256 of the state sequence. The identity, so the lookup is an index hit rather than
+  /// a Json comparison.
+  pathHash      String
+  path          Json
+  stateCount    Int
+  /// The first state, so paths can be grouped by where they begin without parsing `path`.
+  entryState    String
+  exitState     String
+  firstSeenAt   DateTime
+  lastSeenAt    DateTime
+
+  daily JourneyPathDaily[]
+
+  /// The real uniqueness is (applicationId, COALESCE(environmentId,'-'), pathHash), created
+  /// in SQL. Prisma cannot express a COALESCE expression index, and a plain @@unique
+  /// including a nullable column is unusable in `where` -- Prisma's generated input type
+  /// rejects null -- so writes go through a raw ON CONFLICT. Same pattern as State and
+  /// Transition.
+  @@index([applicationId, environmentId, pathHash])
+  @@index([applicationId, environmentId, lastSeenAt])
+}
+
+/// A day of one path being walked.
+model JourneyPathDaily {
+  journeyPathId String
+  journeyPath   JourneyPath @relation(fields: [journeyPathId], references: [id], onDelete: Cascade)
+  day           DateTime
+
+  executions         Int
+  weightedExecutions Float
+  uniqueEndUsers     Int
+  /// Sessions on this path that reached a declared terminal state.
+  completions        Int
+  /// ...and that did not. The question the product promises to answer.
+  abandonments       Int
+  errorSessions      Int
+  medianMs           Int?
+
+  computedAt DateTime @default(now())
+
+  @@id([journeyPathId, day])
+  @@index([day])
+}
+
+/// Something observed traffic says is going wrong.
+///
+/// A separate model from BrowserFinding, whose runId is non-null and cascades from QARun --
+/// a finding derived from a production session has no QA run to hang off, and widening that
+/// column would make every existing query ambiguous about what it is looking at.
+model ObservedFrictionFinding {
+  id            String  @id @default(uuid())
+  applicationId String
+  environmentId String?
+
+  /// FRICTION_ERROR_RATE | FRICTION_ABANDONMENT | FRICTION_RAGE_CLICK |
+  /// FRICTION_DEAD_CLICK | FRICTION_SLOW_STATE | FRICTION_RETRY_LOOP
+  category   String
+  severity   String
+  confidence Float  @default(0.5)
+
+  title          String
+  description    String
+  recommendation String?
+
+  relatedStateName    String?
+  relatedTransitionId String?
+  relatedRoute        String?
+  /// A handful of sessions that show it, so the finding deep-links into the evidence
+  /// rather than asserting something the reader cannot check.
+  sampleSessionIds    String[] @default([])
+
+  /// What the finding is a measurement OF, so it can be recomputed and compared.
+  observedValue    Float?
+  baselineValue    Float?
+  affectedSessions Int    @default(0)
+
+  observationWindowStart DateTime
+  observationWindowEnd   DateTime
+
+  /// Stable across recomputations of the same problem, so a finding is refreshed rather
+  /// than duplicated every time the rollup runs.
+  dedupeKey  String
+  detectedAt DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  resolvedAt DateTime?
+
+  /// See the note on JourneyPath: the COALESCE unique lives in SQL.
+  @@index([applicationId, environmentId, dedupeKey])
+  @@index([applicationId, environmentId, resolvedAt])
+  @@index([applicationId, severity, detectedAt])
+}
+
 /// One compressed slice of a session's DOM recording.
 ///
 /// The replay the product had was an event-log scrubber: no DOM was captured anywhere in

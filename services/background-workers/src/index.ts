@@ -24,6 +24,10 @@ import {
   runSessionFacetBackfill,
 } from './session-completion-worker';
 import { runEndUserBacklink, runEndUserPrune } from './end-user-worker';
+import {
+  runBehaviorRollupJob,
+  runFrictionDetectionJob,
+} from './behavior-intelligence-worker';
 import { applyScheduledSubscriptionChanges } from './subscription-change-worker';
 import { processBillingDunning } from './billing-dunning-worker';
 import { runBillingCycle } from './billing-cycle-worker';
@@ -446,6 +450,12 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   // Facets for sessions that completed before SessionFacet existed, and rebuilds after
   // a facet field is added. Rate-limited by its own batch size rather than by schedule.
   { name: 'session-facet-backfill',          handler: () => runSessionFacetBackfill(prisma).then(() => undefined), every: 60_000 },
+  // Gives observed behaviour a time dimension: State.visitCount is a lifetime total with
+  // no decay, so "how is this used now" and "is this getting worse" had no answer.
+  { name: 'behavior-rollup',                 handler: () => runBehaviorRollupJob(prisma).then(() => undefined), pattern: '30 1 * * *' },
+  // Reads those rollups and names the places that go wrong. After the rollup, so it never
+  // reports on a day that has not been aggregated yet.
+  { name: 'friction-detection',              handler: () => runFrictionDetectionJob(prisma).then(() => undefined), pattern: '0 5 * * *' },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },

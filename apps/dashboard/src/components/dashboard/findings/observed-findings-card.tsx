@@ -7,15 +7,19 @@ import { SeverityTag } from "./severity-tag";
 import { ArrowRight, Bug } from "lucide-react";
 
 /**
- * Defects observed during runs, as distinct from gaps inferred by a rule.
+ * What was actually observed going wrong, as distinct from gaps inferred by a rule.
  *
- * Kept apart from the missing-state and missing-flow cards on purpose. "A rule
- * expects an error state nobody has seen" and "this page crashed" are different
- * kinds of claim, and one list would erase the difference.
+ * Kept apart from the missing-state and missing-flow cards on purpose. "A rule expects an
+ * error state nobody has seen" and "this page crashed" are different kinds of claim, and one
+ * list would erase the difference.
  *
- * These belong to their run and have no resolution — a browser finding cannot
- * be closed the way a missing state can — so this is findings *from recent
- * runs*, not an open-issue list, and the copy says so.
+ * Two origins share this card, and the row says which:
+ *
+ *  - BROWSER_RUN: something went wrong during a guided run, in front of someone. It belongs
+ *    to that run, has no resolution concept, and links to the run.
+ *  - OBSERVED_SESSION: a pattern across production traffic -- "errors concentrate here",
+ *    not "this crashed once". It is application-scoped, it can be resolved, and it links to
+ *    the sessions that show it, because an aggregate claim should be checkable.
  */
 export function ObservedFindingsCard() {
   const { data, state } = useDashboard();
@@ -26,6 +30,8 @@ export function ObservedFindingsCard() {
   if (findings.length === 0) return null;
 
   const applicationId = data?.application?.id ?? "";
+  const frictionCount = findings.filter((finding) => finding.origin === "OBSERVED_SESSION").length;
+  const runCount = findings.length - frictionCount;
 
   return (
     <div className="rounded-lg border border-[#262626] bg-[#141414] p-6 space-y-4">
@@ -33,10 +39,14 @@ export function ObservedFindingsCard() {
         <div>
           <h3 className="text-sm font-bold text-white font-mono tracking-tight flex items-center gap-2">
             <Bug className="w-4 h-4 text-red-400" aria-hidden="true" />
-            Observed during runs
+            Observed going wrong
           </h3>
           <p className="text-xs text-neutral-400 font-mono mt-0.5">
-            Defects captured while your application was running
+            {frictionCount > 0 && runCount > 0
+              ? `${frictionCount} pattern${frictionCount === 1 ? "" : "s"} in production, ${runCount} from runs`
+              : frictionCount > 0
+                ? "Patterns across your real traffic"
+                : "Defects captured while your application was running"}
           </p>
         </div>
         <Link
@@ -63,14 +73,42 @@ export function ObservedFindingsCard() {
               {finding.description}
             </p>
 
-            <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 pt-0.5">
-              <span>{humaniseCategory(finding.category)}</span>
-              <Link
-                href={`/qa-runs/${finding.runId}`}
-                className="text-neutral-400 hover:text-white underline"
-              >
-                See the run
-              </Link>
+            <div className="flex items-center justify-between gap-3 text-[10px] font-mono text-neutral-500 pt-0.5">
+              <span className="flex items-center gap-2">
+                {humaniseCategory(finding.category)}
+                {finding.origin === "OBSERVED_SESSION" && finding.affectedSessions ? (
+                  // The volume behind the claim, because a ratio without a denominator is
+                  // not a finding -- "30% of 6 sessions" and "30% of 600" are different
+                  // facts and only one is worth acting on.
+                  <span className="text-neutral-600">
+                    {finding.affectedSessions} session{finding.affectedSessions === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+              </span>
+
+              {finding.origin === "OBSERVED_SESSION" ? (
+                // Deep-links into the filtered session list, so the reader lands on the
+                // evidence rather than on a claim they have to go and verify by hand.
+                <Link
+                  href={
+                    finding.relatedStateName
+                      ? `/sessions?appId=${applicationId}&stateName=${encodeURIComponent(finding.relatedStateName)}${
+                          finding.category === "FRICTION_ABANDONMENT" ? "&abandoned=1" : "&hasError=1"
+                        }`
+                      : `/sessions?appId=${applicationId}&hasError=1`
+                  }
+                  className="text-neutral-400 hover:text-white underline whitespace-nowrap"
+                >
+                  See the sessions
+                </Link>
+              ) : (
+                <Link
+                  href={`/qa-runs/${finding.runId}`}
+                  className="text-neutral-400 hover:text-white underline whitespace-nowrap"
+                >
+                  See the run
+                </Link>
+              )}
             </div>
 
             {finding.recommendation && (
@@ -83,7 +121,9 @@ export function ObservedFindingsCard() {
       </div>
 
       <p className="text-[10px] text-neutral-500 leading-relaxed">
-        Findings belong to the run that captured them and are not tracked to closure.
+        {frictionCount > 0
+          ? "Production patterns clear themselves once the behaviour stops. Run findings belong to the run that captured them and are not tracked to closure."
+          : "Findings belong to the run that captured them and are not tracked to closure."}
       </p>
     </div>
   );

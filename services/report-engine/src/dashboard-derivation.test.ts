@@ -37,6 +37,7 @@ import {
   describeActivityEvent,
   toActivityEntries,
   toObservedFindings,
+  toFrictionFindings,
   type BrowserFindingRow,
   type ReconciliationRow,
   type SnapshotPoint,
@@ -905,7 +906,7 @@ test('the combined count keeps both origins visible and still sums', () => {
   const combined = combineFindingCounts(ruleTally, observed);
 
   assert.equal(combined.total, 13);
-  assert.deepEqual(combined.byOrigin, { ruleInference: 11, browserRun: 2 });
+  assert.deepEqual(combined.byOrigin, { ruleInference: 11, browserRun: 2, observedSession: 0 });
   assert.equal(combined.critical, 1);
   assert.equal(combined.high, 6);
   assert.equal(
@@ -918,5 +919,61 @@ test('no observed findings leaves the rule tally untouched', () => {
   const ruleTally = { total: 3, critical: 0, high: 1, medium: 1, low: 1 };
   const combined = combineFindingCounts(ruleTally, []);
   assert.equal(combined.total, 3);
-  assert.deepEqual(combined.byOrigin, { ruleInference: 3, browserRun: 0 });
+  assert.deepEqual(combined.byOrigin, { ruleInference: 3, browserRun: 0, observedSession: 0 });
+});
+
+test('production friction is counted apart from run findings', () => {
+  // Three sources, three numbers. "12 findings" must not hide that eleven are rule
+  // inferences, one is a crash someone watched happen, and none is a production pattern --
+  // or the reverse. Each one calls for a different response.
+  const ruleTally = { total: 4, critical: 0, high: 2, medium: 1, low: 1 };
+  const observed = [
+    ...toObservedFindings([browserFinding({ id: 'run-1', severity: 'HIGH' })]),
+    ...toFrictionFindings([{
+      id: 'friction-1',
+      category: 'FRICTION_ABANDONMENT',
+      severity: 'MEDIUM',
+      title: 'Users stop at CHECKOUT',
+      description: '40% of sessions that entered CART ended at CHECKOUT.',
+      recommendation: null,
+      relatedStateName: 'CHECKOUT',
+      sampleSessionIds: ['s1', 's2'],
+      observedValue: 0.4,
+      affectedSessions: 80,
+      detectedAt: new Date('2026-10-04T00:00:00.000Z'),
+    }]),
+  ];
+
+  const combined = combineFindingCounts(ruleTally, observed);
+
+  assert.equal(combined.total, 6);
+  assert.deepEqual(combined.byOrigin, { ruleInference: 4, browserRun: 1, observedSession: 1 });
+  assert.equal(
+    combined.critical + combined.high + combined.medium + combined.low,
+    combined.total,
+  );
+});
+
+test('a friction finding carries no run and cites the sessions behind it', () => {
+  // runId null is exactly why this needed its own model: BrowserFinding.runId is non-null
+  // and cascades from QARun, and production traffic has no run. The session ids are what
+  // make an aggregate claim checkable instead of asserted.
+  const [finding] = toFrictionFindings([{
+    id: 'friction-2',
+    category: 'FRICTION_ERROR_RATE',
+    severity: 'HIGH',
+    title: 'Errors concentrate at EXAM_CREATE',
+    description: '30% of 200 sessions recorded an error.',
+    recommendation: 'Open one of the sessions below.',
+    relatedStateName: 'EXAM_CREATE',
+    sampleSessionIds: ['s1', 's2', 's3'],
+    observedValue: 0.3,
+    affectedSessions: 200,
+    detectedAt: new Date('2026-10-04T00:00:00.000Z'),
+  }]);
+
+  assert.equal(finding.origin, 'OBSERVED_SESSION');
+  assert.equal(finding.runId, null);
+  assert.deepEqual(finding.sampleSessionIds, ['s1', 's2', 's3']);
+  assert.equal(finding.affectedSessions, 200);
 });
