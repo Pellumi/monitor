@@ -81,16 +81,27 @@ CREATE INDEX IF NOT EXISTS "SessionFacet_abandoned_idx"
 
 -- ── Free text ────────────────────────────────────────────────────────────────
 -- A STORED generated column, so it cannot drift from its inputs and needs no trigger.
--- to_tsvector is built in, so this requires no extension -- which matters, because no
--- migration in this repository has ever created one and a managed Postgres may refuse.
+-- PostgreSQL marks array_to_string(anyarray, text) STABLE because the generic function
+-- can call a type-specific output function whose result depends on settings. These arrays
+-- are text[], whose concatenation is deterministic, but generated expressions still reject
+-- the generic function on volatility alone. Keep that narrow guarantee in one typed wrapper
+-- rather than falsely labelling a generic conversion immutable.
+CREATE OR REPLACE FUNCTION "tellann_text_array_to_string"(values_to_join TEXT[], delimiter TEXT)
+RETURNS TEXT
+LANGUAGE SQL
+IMMUTABLE
+PARALLEL SAFE
+RETURNS NULL ON NULL INPUT
+AS 'SELECT array_to_string(values_to_join, delimiter)';
+
 ALTER TABLE "SessionFacet"
   ADD COLUMN IF NOT EXISTS "searchVector" tsvector
   GENERATED ALWAYS AS (
     to_tsvector('simple',
       COALESCE("errorText", '') || ' ' ||
-      COALESCE(array_to_string("stateNames", ' '), '') || ' ' ||
-      COALESCE(array_to_string("workflowNames", ' '), '') || ' ' ||
-      COALESCE(array_to_string("routes", ' '), '') || ' ' ||
+      COALESCE("tellann_text_array_to_string"("stateNames", ' '), '') || ' ' ||
+      COALESCE("tellann_text_array_to_string"("workflowNames", ' '), '') || ' ' ||
+      COALESCE("tellann_text_array_to_string"("routes", ' '), '') || ' ' ||
       COALESCE("browserName", '') || ' ' ||
       COALESCE("osName", '') || ' ' ||
       COALESCE("deviceType", '') || ' ' ||
