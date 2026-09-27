@@ -1149,6 +1149,14 @@ model ApplicationPrivacySetting {
   /// what produced the `userid` collision that destroyed identity in the first place.
   allowedTraitKeys String[] @default([])
 
+  /// Capture nothing until the visitor has agreed. Off by default, because turning it on
+  /// for an application that never wired up grantConsent() would silently stop all
+  /// telemetry -- so it is the customer's deliberate choice, not ours.
+  requireConsent  Boolean @default(false)
+  /// Honour navigator.doNotTrack. Also off by default and for the same reason, and because
+  /// the header is advisory rather than a legal instruction in most jurisdictions.
+  honorDoNotTrack Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

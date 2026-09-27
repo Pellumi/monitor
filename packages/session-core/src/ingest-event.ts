@@ -267,7 +267,15 @@ export interface IngestBatchResult {
   aliasesCreated: number;
 }
 
-/** Applies a batch, sharing one application lookup across it. */
+/**
+ * Applies a batch.
+ *
+ * Per event this used to be three sequential round-trips -- an application lookup, a session
+ * upsert, an event insert -- so a 200-event batch was 600 of them. The event rows, which are
+ * the bulk, now go in one `createMany`, and the session window is folded once per session
+ * rather than once per event. What is left per event is the identity work, which genuinely
+ * has to be ordered: a later assertion must win over an earlier one.
+ */
 export async function applyEventsToSessions(
   prisma: PrismaClient,
   events: TellannEvent[],
@@ -276,20 +284,138 @@ export async function applyEventsToSessions(
   const result: IngestBatchResult = {
     accepted: 0, duplicates: 0, rejected: [], sessionIds: [], aliasesCreated: 0,
   };
-  const sessionIds = new Set<string>();
+  if (events.length === 0) return result;
 
+  // A batch is almost always one session, so the identity and activation work is done once
+  // per session via the last event that carries each -- not once per event.
+  const bySession = new Map<string, TellannEvent[]>();
   for (const event of events) {
-    const outcome = await applyEventToSession(prisma, event, { applicationCache });
-    if (!outcome.accepted) {
-      result.rejected.push({ eventId: event.eventId, reason: outcome.reason });
-      continue;
-    }
-    result.accepted += 1;
-    if (!outcome.created) result.duplicates += 1;
-    if (outcome.identity.aliasCreated) result.aliasesCreated += 1;
-    sessionIds.add(outcome.sessionId);
+    const list = bySession.get(event.sessionId);
+    if (list) list.push(event);
+    else bySession.set(event.sessionId, [event]);
   }
 
-  result.sessionIds = [...sessionIds];
+  const insertable: TellannEvent[] = [];
+
+  for (const [sessionId, sessionEvents] of bySession) {
+    // Ordered, so "the session window" and "the last identity asserted" both mean what they
+    // say even when a batch arrives out of order.
+    sessionEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    let anyAccepted = false;
+    for (const event of sessionEvents) {
+      const prepared = await prepareEvent(prisma, event, applicationCache);
+      if (!prepared.ok) {
+        result.rejected.push({ eventId: event.eventId, reason: prepared.reason });
+        continue;
+      }
+
+      await upsertSessionWindow(prisma, event, prepared.environmentId, prepared.runId, prepared.timestamp);
+      insertable.push(event);
+      anyAccepted = true;
+
+      if (event.anonymousId || event.endUserExternalId) {
+        const identity = await resolveIdentityForEvent(prisma, event, prepared.timestamp);
+        if (identity.aliasCreated) result.aliasesCreated += 1;
+      }
+
+      if (prepared.environmentId) {
+        await recordActivation(prisma, event, prepared.application, prepared.environmentId);
+      }
+    }
+
+    if (anyAccepted) result.sessionIds.push(sessionId);
+  }
+
+  if (insertable.length > 0) {
+    // One statement for the bulk. skipDuplicates makes a replayed or retried batch a no-op,
+    // which is the same guarantee the per-event path got from catching P2002 -- without
+    // paying for a round-trip per event to find out.
+    const inserted = await prisma.sessionEvent.createMany({
+      data: insertable.map((event) => ({
+        id: event.eventId,
+        sessionId: event.sessionId,
+        eventType: event.eventType,
+        eventVersion: event.eventVersion,
+        source: event.source,
+        timestamp: new Date(event.timestamp),
+        metadata: (event.metadata ?? {}) as Prisma.InputJsonValue,
+      })),
+      skipDuplicates: true,
+    });
+    result.accepted = insertable.length;
+    result.duplicates = insertable.length - inserted.count;
+  }
+
   return result;
+}
+
+type PreparedEvent =
+  | {
+      ok: true;
+      application: ApplicationRow;
+      environmentId: string | null;
+      runId: string | null;
+      timestamp: Date;
+    }
+  | { ok: false; reason: 'UNKNOWN_APPLICATION' | 'MALFORMED' };
+
+/** The per-event validation both the single and the batch path share. */
+async function prepareEvent(
+  prisma: PrismaClient,
+  event: TellannEvent,
+  applicationCache: Map<string, ApplicationRow | null>,
+): Promise<PreparedEvent> {
+  const application = await resolveApplication(prisma, event.applicationId, applicationCache);
+  if (!application) return { ok: false, reason: 'UNKNOWN_APPLICATION' };
+
+  const timestamp = new Date(event.timestamp);
+  if (Number.isNaN(timestamp.getTime())) return { ok: false, reason: 'MALFORMED' };
+
+  const [environment, run] = await Promise.all([
+    event.environmentId
+      ? prisma.environment.findFirst({
+        where: { id: event.environmentId, applicationId: event.applicationId },
+        select: { id: true },
+      })
+      : null,
+    event.runId
+      ? prisma.qARun.findFirst({
+        where: { id: event.runId, applicationId: event.applicationId },
+        select: { id: true },
+      })
+      : null,
+  ]);
+
+  return {
+    ok: true,
+    application,
+    environmentId: environment?.id ?? null,
+    runId: run?.id ?? null,
+    timestamp,
+  };
+}
+
+/** The identity resolution both paths share, floor included. */
+async function resolveIdentityForEvent(
+  prisma: PrismaClient,
+  event: TellannEvent,
+  timestamp: Date,
+): Promise<{ endUserId: string | null; aliasCreated: boolean }> {
+  const floor = await resolvePrivacyFloor(prisma, event.applicationId);
+  const floored = applyPrivacyFloor(floor, {
+    externalId: event.endUserExternalId ?? null,
+    traits: event.endUserTraits ?? null,
+  });
+  return resolveIdentity(prisma, {
+    applicationId: event.applicationId,
+    sessionId: event.sessionId,
+    anonymousId: event.anonymousId ?? null,
+    externalId: floored.externalId,
+    externalIdHash: floored.externalIdHash,
+    traits: floored.traits,
+    // The event's own timestamp, never now(): an out-of-order or replayed batch must not
+    // overwrite newer traits with older ones.
+    at: timestamp,
+  });
 }

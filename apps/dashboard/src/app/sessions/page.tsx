@@ -13,6 +13,7 @@ import { usePreferences } from '@/components/preferences-provider';
 import { usePersistedFilter } from '@/hooks/use-persisted-filter';
 import { useSessionFilters, type SessionFilters } from '@/hooks/use-session-filters';
 import { SessionFilterBar } from '@/components/sessions/session-filter-bar';
+import { LiveSessionsStrip } from '@/components/sessions/live-sessions-strip';
 
 interface Environment {
   id: string;
@@ -260,6 +261,14 @@ function SessionsContent() {
           )}
         </div>
       </div>
+
+      {/* Off while filtering: a live feed would fight the list the reader is working
+          through, and they have already told us what they are looking for. */}
+      <LiveSessionsStrip
+        appId={appId}
+        environmentId={environmentId || (data?.environmentId ?? null)}
+        enabled={activeCount === 0}
+      />
 
       <SessionFilterBar
         controller={controller}

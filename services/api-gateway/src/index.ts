@@ -903,6 +903,10 @@ async function main() {
   fastify.all('/applications/:id/graph', forwardToReportEngine);
   fastify.all('/applications/:id/workflows', forwardToReportEngine);
   fastify.all('/applications/:id/sessions', forwardToReportEngine);
+  // NOTE: forwardToUpstream buffers the entire upstream response before replying, so it can
+  // never carry an event stream -- the request would simply hang. The live-session stream is
+  // therefore served under /sessions, which is registered as an @fastify/http-proxy prefix
+  // below and streams. Anything Server-Sent must go through a proxy prefix, not this helper.
   fastify.all('/qa-runs/:runId/report', forwardToReportEngine);
 
   await fastify.register(httpProxy, {

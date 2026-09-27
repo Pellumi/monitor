@@ -16,6 +16,7 @@ import {
   readErrorEventDetail,
 } from '@tellann/shared';
 import { getRuleSet } from '@tellann/rules';
+import { registerLiveSessionRoute } from './live-sessions-route';
 import {
   queryBool,
   queryInt,
@@ -492,6 +493,13 @@ app.get('/applications/:id/sessions', verifyCaller, requireApplicationAccess('id
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// 4a. Sessions recording right now.
+//
+// Under /sessions rather than /applications/:id/sessions/live, because the gateway forwards
+// the latter with a helper that buffers the whole response -- which for an event stream means
+// the request never returns. /sessions is a streaming proxy prefix.
+registerLiveSessionRoute(app, { prisma, verifyCaller, assertApplicationAccess });
 
 // 4b. End users, and one user's history.
 //

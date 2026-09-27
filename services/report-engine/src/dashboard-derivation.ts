@@ -25,6 +25,7 @@ import {
   type BehaviorSummary,
   type FlowChangeRow,
   type FlowTrend,
+  type IntegrationStatus,
   type ObservedFinding,
   type PlanUsage,
   type ReportSummary,
@@ -1090,4 +1091,63 @@ export function combineFindingCounts(
     }
   }
   return combined;
+}
+
+/**
+ * How long telemetry may be silent before that is itself the news.
+ *
+ * Six hours, not minutes: a low-traffic staging environment goes quiet overnight and that is
+ * normal. What is not normal is a production application that reported hourly for a month
+ * and has said nothing since Tuesday.
+ */
+export const INGEST_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+
+export interface IngestFreshness {
+  status: IntegrationStatus;
+  lastEventAt: string | null;
+  /** Null when nothing has ever been received. */
+  silentForMs: number | null;
+  /** True when data has arrived before but not recently -- the case that was invisible. */
+  isStale: boolean;
+}
+
+/**
+ * Whether telemetry is actually arriving.
+ *
+ * `frontendStatus` was `sessionCount > 0 ? 'ACTIVE' : …`. A count only ever rises, so an
+ * application that reported once in March and never again read as ACTIVE forever — the
+ * single most misleading indicator on the dashboard, because it was green in exactly the
+ * situation a reader most needs to be told something is wrong.
+ *
+ * ACTIVE means recent. INACTIVE now means "connected, but silent for a while", which is a
+ * different and more useful claim than "connected at some point".
+ */
+export function deriveIngestFreshness(input: {
+  lastEventAt: Date | null;
+  everConnected: boolean;
+  now?: Date;
+}): IngestFreshness {
+  const now = input.now ?? new Date();
+
+  if (!input.lastEventAt) {
+    return {
+      // Connected-but-never-reported is a real state: the SDK announced itself and no
+      // session followed. INACTIVE rather than NOT_CONFIGURED, so the reader is pointed at
+      // "why is nothing arriving" instead of "install the SDK" they already installed.
+      status: input.everConnected ? 'INACTIVE' : 'NOT_CONFIGURED',
+      lastEventAt: null,
+      silentForMs: null,
+      isStale: false,
+    };
+  }
+
+  const silentForMs = Math.max(0, now.getTime() - input.lastEventAt.getTime());
+  const isStale = silentForMs > INGEST_STALE_AFTER_MS;
+
+  return {
+    status: isStale ? 'INACTIVE' : 'ACTIVE',
+    lastEventAt: input.lastEventAt.toISOString(),
+    silentForMs,
+    isStale,
+  };
 }

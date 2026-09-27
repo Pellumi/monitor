@@ -6,6 +6,7 @@ import { TellannEventSchema, parseEventBatch, Topics, Feature, kafkaEnabled, tel
 import { applyEventsToSessions } from '@tellann/session-core';
 import { createStorageClient } from '@tellann/storage';
 import { registerReplayRoutes } from './replay-routes';
+import { ingestBudgetMiddleware } from './backpressure';
 import { PrismaClient, processQaFlowBoundaryEvent } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import jwt from 'jsonwebtoken';
@@ -221,7 +222,7 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // ─── Single event ─────────────────────────────────────────────────────────────
-app.post('/v1/events', async (req: Request, res: Response) => {
+app.post('/v1/events', ingestBudgetMiddleware(() => 1), async (req: Request, res: Response) => {
   try {
     // ── SESSION_RECORDING entitlement gate (fail-open) ──────────
     const entitlementError = await checkSessionRecordingEntitlement(req);
@@ -257,7 +258,12 @@ app.post('/v1/events', async (req: Request, res: Response) => {
 });
 
 // ─── Batch events ─────────────────────────────────────────────────────────────
-app.post('/v1/events/batch', async (req: Request, res: Response) => {
+app.post(
+  '/v1/events/batch',
+  // Counted from the raw body before validation: a batch of a thousand malformed events is
+  // exactly as expensive to reject as a thousand valid ones, so the budget has to see it.
+  ingestBudgetMiddleware((req) => (Array.isArray(req.body) ? req.body.length : 1)),
+  async (req: Request, res: Response) => {
   try {
     // ── SESSION_RECORDING entitlement gate (fail-open) ──────────
     const entitlementError = await checkSessionRecordingEntitlement(req);
@@ -326,8 +332,9 @@ app.post('/v1/events/batch', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[EventCollector] Batch event parse/publish error', error);
     res.status(400).json({ error: 'Invalid event batch payload' });
-  }
-});
+    }
+  },
+);
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || process.env.EVENT_COLLECTOR_PORT || 3001;

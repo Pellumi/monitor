@@ -38,6 +38,7 @@ import {
   toActivityEntries,
   toObservedFindings,
   toFrictionFindings,
+  deriveIngestFreshness,
   type BrowserFindingRow,
   type ReconciliationRow,
   type SnapshotPoint,
@@ -976,4 +977,55 @@ test('a friction finding carries no run and cites the sessions behind it', () =>
   assert.equal(finding.runId, null);
   assert.deepEqual(finding.sampleSessionIds, ['s1', 's2', 's3']);
   assert.equal(finding.affectedSessions, 200);
+});
+
+// ─── Ingest freshness (Stage 7) ────────────────────────────────────────────────
+
+test('telemetry that arrived minutes ago is ACTIVE', () => {
+  const freshness = deriveIngestFreshness({
+    lastEventAt: new Date('2026-10-05T11:55:00.000Z'),
+    everConnected: true,
+    now: new Date('2026-10-05T12:00:00.000Z'),
+  });
+  assert.equal(freshness.status, 'ACTIVE');
+  assert.equal(freshness.isStale, false);
+});
+
+test('an application that reported once in March is not ACTIVE', () => {
+  // The bug this replaces, and the most misleading indicator on the dashboard: frontendStatus
+  // was `sessionCount > 0`, and a count only ever rises -- so this read green in exactly the
+  // situation a reader most needs to be warned about.
+  const freshness = deriveIngestFreshness({
+    lastEventAt: new Date('2026-03-01T00:00:00.000Z'),
+    everConnected: true,
+    now: new Date('2026-10-05T12:00:00.000Z'),
+  });
+  assert.equal(freshness.status, 'INACTIVE');
+  assert.equal(freshness.isStale, true);
+  assert.ok(freshness.silentForMs! > 0, 'and says how long it has been quiet');
+});
+
+test('a quiet night does not trip the staleness threshold', () => {
+  // A low-traffic staging environment goes silent overnight and that is normal. A threshold
+  // in minutes would cry wolf every morning.
+  const freshness = deriveIngestFreshness({
+    lastEventAt: new Date('2026-10-05T04:00:00.000Z'),
+    everConnected: true,
+    now: new Date('2026-10-05T09:00:00.000Z'),
+  });
+  assert.equal(freshness.status, 'ACTIVE');
+});
+
+test('connected but never reported is INACTIVE, not NOT_CONFIGURED', () => {
+  // A real state: the SDK announced itself and no session followed. Pointing that reader at
+  // "install the SDK" sends them to re-do something they already did.
+  const freshness = deriveIngestFreshness({ lastEventAt: null, everConnected: true });
+  assert.equal(freshness.status, 'INACTIVE');
+  assert.equal(freshness.silentForMs, null);
+  assert.equal(freshness.isStale, false, 'never-arrived is not the same as went-quiet');
+});
+
+test('nothing installed is NOT_CONFIGURED', () => {
+  const freshness = deriveIngestFreshness({ lastEventAt: null, everConnected: false });
+  assert.equal(freshness.status, 'NOT_CONFIGURED');
 });

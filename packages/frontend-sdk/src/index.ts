@@ -7,6 +7,7 @@ import { setupNetworkTracking } from './network-track.js';
 import { createReplayRecorder, fetchReplayConfig, type ReplayController } from './replay.js';
 import { captureClientContext } from './client-context.js';
 import {
+  clearAnonymousId,
   clearStoredSession,
   rememberIdentity,
   resolveAnonymousId,
@@ -141,6 +142,19 @@ export interface TellannConfig {
    * actually recorded and how heavily it is masked: this only opts out entirely.
    */
   visualReplay?: boolean;
+  /**
+   * Hold everything until `grantConsent()` is called.
+   *
+   * Nothing is sent and nothing is buffered while consent is withheld -- a buffer that
+   * filled up waiting would be a consent violation the moment it flushed.
+   */
+  requireConsent?: boolean;
+  /**
+   * Honour `navigator.doNotTrack`. Off by default: the header is advisory rather than a
+   * legal instruction in most jurisdictions, so respecting it is the customer's call to
+   * make about their own users.
+   */
+  honorDoNotTrack?: boolean;
 }
 
 const MAX_EVENT_SIZE_BYTES = 32 * 1024; // 32 KB limit for standard events
@@ -159,6 +173,8 @@ class TellannFrontendSDK {
   private teardownNetworkTrack: (() => void) | null = null;
   private teardownLifecycle: (() => void) | null = null;
   private replay: ReplayController | null = null;
+  /** False while consent is required and not yet given, or while DNT is honoured. */
+  private capturing = true;
 
   /** Stable per-browser id. Null when localStorage is unusable. */
   private anonymousId: string | null = null;
@@ -183,6 +199,16 @@ class TellannFrontendSDK {
       sampleRate: 1,
       ...config
     };
+
+    this.capturing = this.resolveCapturingAllowed();
+    if (!this.capturing) {
+      // Nothing is started: no anonymous id minted, no session, no listeners, no recorder.
+      // Withholding consent has to mean nothing happens, not that nothing is *sent*.
+      if (this.config.debug) {
+        console.log('[Tellann] Capture withheld pending consent; call TELLANN.grantConsent()');
+      }
+      return;
+    }
 
     this.anonymousId = resolveAnonymousId(uuidv4);
     this.clientContext = captureClientContext(this.config.releaseVersion ?? null);
@@ -275,6 +301,60 @@ class TellannFrontendSDK {
    */
   captureReplayOnError(reason: string): void {
     void this.replay?.captureRetroactive(reason);
+  }
+
+  /** Whether this browser has agreed, as recorded on the device. */
+  private consentGranted(): boolean {
+    try {
+      return globalThis.localStorage?.getItem('tellann_consent') === 'granted';
+    } catch {
+      // No storage means no record of consent, which must read as "not granted".
+      return false;
+    }
+  }
+
+  /**
+   * Whether capture may start at all.
+   *
+   * Do Not Track is checked before consent, because a visitor who has asked not to be
+   * tracked has already answered the question consent would ask.
+   */
+  private resolveCapturingAllowed(): boolean {
+    if (this.config?.honorDoNotTrack) {
+      const nav = globalThis.navigator as (Navigator & { msDoNotTrack?: string }) | undefined;
+      const signal = nav?.doNotTrack ?? (globalThis as Record<string, any>).doNotTrack ?? nav?.msDoNotTrack;
+      if (signal === '1' || signal === 'yes') return false;
+    }
+    if (this.config?.requireConsent) return this.consentGranted();
+    return true;
+  }
+
+  /**
+   * Records consent and begins capturing.
+   *
+   * Idempotent, so an application that calls it on every page load of a consented visitor
+   * does not start a second set of listeners.
+   */
+  grantConsent(): void {
+    try { globalThis.localStorage?.setItem('tellann_consent', 'granted'); } catch { /* best effort */ }
+    if (this.capturing || !this.config) return;
+    this.capturing = true;
+    // Re-run the parts initialize() skipped. The config is already resolved.
+    this.initialize(this.config);
+  }
+
+  /**
+   * Withdraws consent, stops capture, and forgets the browser.
+   *
+   * The anonymous id is cleared too: leaving it would let the next grant re-link this
+   * browser to everything it did before consent was withdrawn.
+   */
+  revokeConsent(): void {
+    try { globalThis.localStorage?.setItem('tellann_consent', 'revoked'); } catch { /* best effort */ }
+    this.eventBuffer = [];
+    this.capturing = false;
+    this.teardown();
+    clearAnonymousId();
   }
 
   /**
@@ -381,6 +461,10 @@ class TellannFrontendSDK {
   }
 
   trackEvent(eventType: EventType, metadata: Record<string, any> = {}) {
+    // Checked first, and before the buffer: consent withheld means nothing is retained, not
+    // that nothing is transmitted. A buffer that filled up while waiting would become a
+    // violation the moment it flushed.
+    if (!this.capturing) return;
     if (!this.config || !this.sessionId) {
       if (this.config?.debug) {
         console.warn('[Tellann] SDK not initialized or session not started');

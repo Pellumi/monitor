@@ -126,10 +126,21 @@ export interface OnboardingMilestones {
 }
 
 export interface TelemetryStatus {
+  /**
+   * ACTIVE means telemetry arrived recently, not that it ever arrived.
+   *
+   * This used to be derived from `sessionCount > 0`. A count only rises, so an application
+   * that reported once in March read as ACTIVE forever — green in precisely the situation a
+   * reader most needs to be warned about.
+   */
   frontendStatus: IntegrationStatus;
   backendStatus: IntegrationStatus;
   lastEventAt: string | null;
   eventCount: number;
+  /** How long telemetry has been silent. Null when none has ever arrived. */
+  silentForMs?: number | null;
+  /** Reported separately from the status, so the UI can say *why* it is not ACTIVE. */
+  isStale?: boolean;
 }
 
 export interface AnalysisStatus {

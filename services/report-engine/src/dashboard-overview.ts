@@ -64,6 +64,7 @@ import {
   toCoverageHistory,
   toObservedFindings,
   toFrictionFindings,
+  deriveIngestFreshness,
   toReportSummaries,
   topNodesByVisits,
   transitionKey,
@@ -691,6 +692,10 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
         }
 
         const frontendConnected = Boolean(progress?.sdkConnected) || sessionCount > 0;
+        const ingestFreshness = deriveIngestFreshness({
+          lastEventAt: lastSession._max.endTime ?? null,
+          everConnected: frontendConnected,
+        });
         const backendConnected = (endpointAnalysis?.totalEndpoints ?? 0) > 0;
 
         const lifecycle = deriveLifecycle({
@@ -763,7 +768,10 @@ export function createDashboardOverviewRouter(deps: DashboardOverviewDeps): Rout
             firstAnalysisReviewed: Boolean(progress?.firstAnalysisReviewed),
           },
           telemetry: {
-            frontendStatus: sessionCount > 0 ? 'ACTIVE' : frontendConnected ? 'INACTIVE' : 'NOT_CONFIGURED',
+            // Recency, not existence. See deriveIngestFreshness.
+            frontendStatus: ingestFreshness.status,
+            silentForMs: ingestFreshness.silentForMs,
+            isStale: ingestFreshness.isStale,
             backendStatus: backendConnected ? 'ACTIVE' : 'NOT_CONFIGURED',
             lastEventAt: lastSession._max.endTime?.toISOString() ?? null,
             eventCount: sessionTotals._sum.eventCount ?? 0,
