@@ -74,9 +74,32 @@ test('extracts OpenAPI operations and creates evidence-backed review proposals',
     buffer: Buffer.from('openapi: 3.0.0\ninfo:\n  title: Account API\n  version: 1.0.0\npaths:\n  /login:\n    post:\n      summary: Authenticate a user\n      responses:\n        "200": { description: Authenticated }'),
   });
   assert.equal(document.structure.openapi?.operations, 1);
+  // An operation list is not a user journey; the baseline says so instead of inventing one.
   const draft = inferEvidenceBackedIntent([document]);
-  assert.ok(draft.workflows.length > 0);
-  assert.ok(draft.workflows[0].evidenceIds.length > 0);
+  assert.equal(draft.workflows.length, 0);
+  assert.match(draft.unresolvedQuestions[0] ?? '', /journey/i);
+});
+
+test('reads a journey from prose as short states and actions, not sentences', async () => {
+  const text = [
+    'This is the sample flow for an admin onboarding and creating a course on the system',
+    'The admin opens the system and lands on the login page, they input their email and password to be authenticated.',
+    'On successful authentication, they are carried to their dashboard.',
+    'On their dashboard sidebar, they will see the Courses link, which they will click to be navigated to the Courses page.',
+    'They will then click on the "Create A Course" button to create the course, a modal will appear.',
+    'The admin will the input the course title and the course code and click "Create" to create the course.',
+    'On successful course creation their Course Overview page will refresh to show the new course created.',
+  ].join(' ');
+  const document = await extractDocument({ filename: 'sample_course_creation_flow.txt', mimeType: 'text/plain', buffer: Buffer.from(text) });
+  const draft = inferEvidenceBackedIntent([document]);
+  assert.equal(draft.workflows.length, 1);
+  const [flow] = draft.workflows;
+  assert.equal(flow.name, 'Sample course creation flow');
+  assert.deepEqual(flow.states.map((state) => state.name), ['GUEST', 'LOGIN_PAGE', 'DASHBOARD', 'COURSES_PAGE', 'CREATE_COURSE_MODAL', 'COURSE_OVERVIEW_PAGE']);
+  assert.deepEqual(flow.states.map((state) => state.role), ['INITIAL', 'NORMAL', 'NORMAL', 'NORMAL', 'NORMAL', 'TERMINAL']);
+  assert.deepEqual(flow.transitions.map((transition) => transition.action), ['OPEN_APP', 'SUBMIT_CREDENTIALS', 'CLICK_COURSES_LINK', 'CLICK_CREATE_COURSE', 'SUBMIT_FORM']);
+  assert.ok(flow.states.every((state) => state.evidenceIds.length > 0));
+  assert.ok(flow.states.every((state) => state.name.length <= 32));
 });
 
 test('extracts plain text and HTML while excluding executable markup', async () => {

@@ -125,6 +125,16 @@ const MESSAGES: Record<AutomationStopReason, (detail: string | null, target: str
     message: d ?? 'This application signs people in in a way Tellann does not type into for you (single sign-on, a one-time code, or a CAPTCHA).',
     tone: 'notice', nextStep: 'Sign in yourself in the browser Tellann opened when asked, and the run will carry on from there.',
   }),
+  FLOW_REQUIREMENTS_NOT_MET: (d) => ({
+    title: 'This run does not meet what the Flow needs',
+    message: d ?? 'The Flow declares an account, an environment or data that this run was not given.',
+    tone: 'notice', nextStep: 'Choose a matching persona, environment or run data, then start the run again. Nothing was done to your application.',
+  }),
+  MANUAL_ACTION_REQUIRED: (d) => ({
+    title: 'A step needed you',
+    message: d ?? 'The Flow marks a step as needing a person, and nobody answered it.',
+    tone: 'notice', nextStep: 'Start the run again and approve or complete the step when Tellann asks. The states it did not reach say nothing about the application.',
+  }),
   FRAMEWORK_NOT_YET_SUPPORTED: (d) => ({
     title: 'Automated Run does not support this application yet',
     message: d ?? `Automated Run does not understand this kind of application yet. We are working on it and it is coming soon. ${OTHER_MODES}`,
@@ -151,16 +161,37 @@ export function summarizeAutomationEvent(type: string, data: Record<string, unkn
   switch (type) {
     case 'QA_AUTOMATION_PLAN_CREATED': return { text: `Planned the run towards ${str(data.targetStateKey) ?? 'the target state'}.`, tone: 'info' };
     case 'QA_AUTOMATION_INITIAL_STATE_REACHED': return { text: `Reached where the Flow starts (${str(data.stateKey) ?? 'first state'}).`, tone: 'success' };
-    case 'QA_AUTOMATION_ACTION_SELECTED': return { text: `Doing: ${str(data.action) ?? 'the next step'}.`, tone: 'info' };
-    case 'QA_AUTOMATION_ACTION_VERIFIED':
-      return data.ok === false
-        ? { text: `${str(data.observedState) ? `Ended up in ${str(data.observedState)}` : 'The page did not move on'}, not the expected ${str(data.expectedState) ?? 'state'}.`, tone: 'problem' }
-        : { text: `Now in ${str(data.observedState) ?? str(data.expectedState) ?? 'the next state'}.`, tone: 'success' };
+    case 'QA_AUTOMATION_ACTION_SELECTED':
+      return {
+        text: data.mode === 'MANUAL' ? `Next, for you to do: ${str(data.action) ?? 'the next step'}.`
+          : data.mode === 'CONFIRM' ? `Next, once you approve: ${str(data.action) ?? 'the next step'}.`
+          : `Doing: ${str(data.action) ?? 'the next step'}.`,
+        tone: 'info',
+      };
+    case 'QA_AUTOMATION_ACTION_VERIFIED': {
+      if (data.ok === false) {
+        return { text: `${str(data.observedState) ? `Ended up in ${str(data.observedState)}` : 'The page did not move on'}, not the expected ${str(data.expectedState) ?? 'state'}.`, tone: 'problem' };
+      }
+      // What the Flow said the step causes, against what the page did. Never stops the run; it is a finding.
+      const effects = Array.isArray(data.effects) ? data.effects as Array<Record<string, unknown>> : [];
+      const off = effects.filter((effect) => effect.outcome !== 'MATCHED');
+      const where = str(data.observedState) ?? str(data.expectedState) ?? 'the next state';
+      return off.length
+        ? { text: `Now in ${where}, but ${off.map((effect) => effect.outcome === 'NOT_OBSERVED'
+            ? `${str(effect.method)} ${str(effect.route)} was not seen`
+            : `${str(effect.method)} ${str(effect.route)} returned ${String(effect.observedStatus)}, not ${String(effect.expectedStatus)}`).join('; ')}.`, tone: 'notice' }
+        : { text: `Now in ${where}.`, tone: 'success' };
+    }
     case 'QA_AUTOMATION_ACTION_BLOCKED': return { text: str(data.detail) ?? 'A step was blocked by the safety policy.', tone: 'notice' };
     case 'QA_AUTOMATION_REPLAN': return { text: 'The page was not where expected, so the route was worked out again.', tone: 'notice' };
     case 'QA_AUTOMATION_TERMINAL_STATE_REACHED': return { text: `Reached the goal (${str(data.stateKey) ?? 'target state'}).`, tone: 'success' };
     case 'QA_AUTOMATION_MANUAL_ACTION_REQUIRED': return { text: str(data.detail) ?? 'Waiting for you to sign in.', tone: 'notice' };
-    case 'QA_AUTOMATION_MANUAL_ACTION_COMPLETED': return { text: data.outcome === 'DONE' ? 'You finished signing in. Carrying on.' : 'The wait for you to sign in ended.', tone: data.outcome === 'DONE' ? 'success' : 'notice' };
+    case 'QA_AUTOMATION_MANUAL_ACTION_COMPLETED': {
+      const what = data.kind === 'CONFIRM_STEP' ? 'approval' : data.kind === 'MANUAL_STEP' ? 'that step' : 'signing in';
+      return data.outcome === 'DONE'
+        ? { text: data.kind === 'CONFIRM_STEP' ? 'Approved. Carrying on.' : data.kind === 'MANUAL_STEP' ? 'You did the step. Checking it worked.' : 'You finished signing in. Carrying on.', tone: 'success' }
+        : { text: `The wait for you to finish ${what} ended.`, tone: 'notice' };
+    }
     case 'QA_AUTOMATION_TRACE_RETAINED': return { text: 'Kept a diagnostic trace of the step that went wrong.', tone: 'info' };
     default: return null;
   }

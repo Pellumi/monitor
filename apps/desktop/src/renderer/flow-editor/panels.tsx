@@ -732,11 +732,14 @@ export function SettingsPanel({
   editable,
   onSave,
   onDelete,
+  extra,
 }: {
   flow: FlowDetail;
   editable: boolean;
   onSave(input: FlowSettingsInput): Promise<boolean>;
   onDelete(): void;
+  /** More sections about the flow, shown between its settings and the danger zone. */
+  extra?: ReactNode;
 }) {
   const [value, setValue] = useState(() => settingsFromFlow(flow));
   useEffect(() => setValue(settingsFromFlow(flow)), [flow]);
@@ -817,6 +820,8 @@ export function SettingsPanel({
           </button>
         ) : null}
       </form>
+
+      {extra}
 
       <details className="flow-section flow-danger">
         <summary>

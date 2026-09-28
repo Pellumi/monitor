@@ -75,9 +75,12 @@ import {
   SuggestionsPanel,
   TERMINAL_KINDS,
 } from './panels';
+import { RequiresEditor, StateDeclarationEditor, TransitionDeclarationEditor } from './declaration-panels';
+import { transitionDeclarationSummary } from '@tellann/flow-layout';
 import {
   flowIsEditable,
   useFlowEditor,
+  useReusableFlows,
   type FlowDetail,
   type FlowState,
   type FlowTransition,
@@ -278,6 +281,8 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
     ? flow?.transitions.find((transition) => transition.id === selection.id) ?? null
     : null;
   const badgeCount = editor.suggestions.length + editor.review.suggestions.length;
+  // Only asked for when a state is being edited: most edits never need the list of flows that could be reused.
+  const reusableFlows = useReusableFlows(projectId, flowId, editable && Boolean(selectedState));
 
   if (flow && layoutFlowId.current !== flow.id) {
     layoutFlowId.current = flow.id;
@@ -332,7 +337,12 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
       source: transition.fromStateId,
       target: transition.toStateId,
       type: 'transition' as const,
-      data: { label: transition.action ?? '', proposed },
+      data: {
+        label: transition.action ?? '',
+        proposed,
+        mode: (transition as { mode?: string }).mode,
+        detail: transitionDeclarationSummary(transition as never).join(' · '),
+      },
       selected: selection?.kind === 'transition' && selection.id === transition.id,
       markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: 'var(--text-subtle)' },
     })),
@@ -918,24 +928,40 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
 
               {tab === 'build' ? (
                 selectedState ? (
-                  <SelectedStateEditor
-                    state={selectedState}
-                    editable={editable}
-                    connectedCount={flow.transitions.filter((item) => item.fromStateId === selectedState.id || item.toStateId === selectedState.id).length}
-                    onSave={(input) => editor.updateState(selectedState, input)}
-                    onDelete={() => void deleteState(selectedState)}
-                    onClose={() => setSelection(null)}
-                  />
+                  <>
+                    <SelectedStateEditor
+                      state={selectedState}
+                      editable={editable}
+                      connectedCount={flow.transitions.filter((item) => item.fromStateId === selectedState.id || item.toStateId === selectedState.id).length}
+                      onSave={(input) => editor.updateState(selectedState, input)}
+                      onDelete={() => void deleteState(selectedState)}
+                      onClose={() => setSelection(null)}
+                    />
+                    <StateDeclarationEditor
+                      state={selectedState}
+                      editable={editable}
+                      reusableFlows={reusableFlows}
+                      onSave={(spec) => editor.updateStateSpec(selectedState, spec)}
+                    />
+                  </>
                 ) : selectedTransition ? (
-                  <SelectedTransitionEditor
-                    transition={selectedTransition}
-                    fromName={stateNameById.get(selectedTransition.fromStateId) ?? 'Unknown state'}
-                    toName={stateNameById.get(selectedTransition.toStateId) ?? 'Unknown state'}
-                    editable={editable}
-                    onSave={(action) => editor.updateTransition(selectedTransition.id, action)}
-                    onDelete={() => void deleteTransition(selectedTransition)}
-                    onClose={() => setSelection(null)}
-                  />
+                  <>
+                    <SelectedTransitionEditor
+                      transition={selectedTransition}
+                      fromName={stateNameById.get(selectedTransition.fromStateId) ?? 'Unknown state'}
+                      toName={stateNameById.get(selectedTransition.toStateId) ?? 'Unknown state'}
+                      editable={editable}
+                      onSave={(action) => editor.updateTransition(selectedTransition.id, action)}
+                      onDelete={() => void deleteTransition(selectedTransition)}
+                      onClose={() => setSelection(null)}
+                    />
+                    <TransitionDeclarationEditor
+                      transition={selectedTransition}
+                      actor={(flow as { requires?: { actor?: string } | null }).requires?.actor ?? (flow.states.find((state) => state.id === selectedTransition.fromStateId) as { actor?: string | null } | undefined)?.actor ?? undefined}
+                      editable={editable}
+                      onSave={(spec) => editor.updateTransitionSpec(selectedTransition, spec)}
+                    />
+                  </>
                 ) : (
                   <>
                     {editable ? (
@@ -995,6 +1021,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                   editable={editable}
                   onSave={(input) => editor.updateFlow(input)}
                   onDelete={() => setDeleteOpen(true)}
+                  extra={<RequiresEditor flow={flow} editable={editable} onSave={(requires) => editor.updateFlow({ requires })} />}
                 />
               ) : null}
             </div>

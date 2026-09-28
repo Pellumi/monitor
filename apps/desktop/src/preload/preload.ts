@@ -274,14 +274,14 @@ contextBridge.exposeInMainWorld('tellann', {
     getDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.getDeclaredFlow, { applicationId, flowId }),
     createDeclaredFlow: (applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string) => ipcRenderer.invoke(IPC.createDeclaredFlow, { applicationId, name, workflowType, purpose, scopeStatement, template }),
     addDeclaredState: (applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.addDeclaredState, { applicationId, flowId, stateName, category, role, terminalKind }),
-    updateDeclaredState: (applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null) => ipcRenderer.invoke(IPC.updateDeclaredState, { applicationId, flowId, stateId, stateName, category, role, terminalKind }),
+    updateDeclaredState: (applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null, spec?: Record<string, unknown>) => ipcRenderer.invoke(IPC.updateDeclaredState, { applicationId, flowId, stateId, stateName, category, role, terminalKind, spec }),
     deleteDeclaredState: (applicationId: string, flowId: string, stateId: string) => ipcRenderer.invoke(IPC.deleteDeclaredState, { applicationId, flowId, stateId }),
     addDeclaredTransition: (applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string) => ipcRenderer.invoke(IPC.addDeclaredTransition, { applicationId, flowId, fromStateId, toStateId, action }),
     completeDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.completeDeclaredFlow, { applicationId, flowId }),
     reopenDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.reopenDeclaredFlow, { applicationId, flowId }),
     deleteDeclaredFlow: (applicationId: string, flowId: string) => ipcRenderer.invoke(IPC.deleteDeclaredFlow, { applicationId, flowId }),
-    updateDeclaredTransition: (applicationId: string, flowId: string, transitionId: string, action: string) =>
-      ipcRenderer.invoke(IPC.updateDeclaredTransition, { applicationId, flowId, transitionId, action }),
+    updateDeclaredTransition: (applicationId: string, flowId: string, transitionId: string, action: string, spec?: Record<string, unknown>) =>
+      ipcRenderer.invoke(IPC.updateDeclaredTransition, { applicationId, flowId, transitionId, action, spec }),
     deleteDeclaredTransition: (applicationId: string, flowId: string, transitionId: string) =>
       ipcRenderer.invoke(IPC.deleteDeclaredTransition, { applicationId, flowId, transitionId }),
     updateDeclaredFlow: (applicationId: string, flowId: string, input: unknown) =>

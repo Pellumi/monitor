@@ -4,9 +4,10 @@ import type {
   CodeEvidence,
   CodeRelationship,
 } from '@tellann/desktop-contracts';
+import { canonicalPattern, normalizeText } from '@tellann/automation-engine';
 
 /** Increment when ranking semantics or the returned evidence shape changes. */
-export const FLOW_MAPPING_RETRIEVAL_VERSION = '2.0.0';
+export const FLOW_MAPPING_RETRIEVAL_VERSION = '2.1.0';
 
 export type FlowCheckpointKind = 'STATE' | 'TRANSITION';
 export type FlowMappingStatus = 'RESOLVED' | 'AMBIGUOUS' | 'UNRESOLVED' | 'UNSUPPORTED';
@@ -27,6 +28,8 @@ export type FlowMappingStateInput = {
   terminalKind?: 'SUCCESS' | 'FAILURE' | 'CANCELLATION' | 'ALTERNATE' | null;
   canonicalBehavior?: string | null;
   aliases?: string[] | null;
+  /** Routes a person declared for the state (`/courses/{param}`). A code route that matches one is the state's page. */
+  routes?: string[] | null;
 };
 
 export type FlowMappingTransitionInput = {
@@ -36,6 +39,8 @@ export type FlowMappingTransitionInput = {
   action?: string | null;
   condition?: string | null;
   aliases?: string[] | null;
+  /** The control a person declared the step operates. A control in the code that says the same is the step's control. */
+  control?: { label?: string | null; testId?: string | null; role?: string | null } | null;
 };
 
 export type FlowMappingFlowInput = {
@@ -62,6 +67,10 @@ export type FlowMappingQuery = {
   sourceStateName: string | null;
   targetStateId: string | null;
   targetStateName: string | null;
+  /** Canonical routes declared for the state. Empty when none were. */
+  declaredRoutes: string[];
+  /** The control declared for the step, with its label normalised. */
+  declaredControl: { label: string | null; testId: string | null; role: string | null } | null;
 };
 
 export type FlowMappingRelationshipPath = {
@@ -80,6 +89,8 @@ export type FlowMappingScoreBreakdown = {
   feature: number;
   evidence: number;
   sourceLocation: number;
+  /** 1 when the candidate is what a person declared (their route, their control); absent otherwise. */
+  declared?: number;
 };
 
 export type FlowMappingCandidate = {
@@ -207,6 +218,8 @@ export function buildFlowMappingQueries(flow: FlowMappingFlowInput): FlowMapping
       sourceStateName: null,
       targetStateId: null,
       targetStateName: null,
+      declaredRoutes: [...new Set((state.routes ?? []).filter((route) => typeof route === 'string' && route.startsWith('/')).map(canonicalPattern))],
+      declaredControl: null,
     };
   });
 
@@ -229,6 +242,10 @@ export function buildFlowMappingQueries(flow: FlowMappingFlowInput): FlowMapping
       sourceStateName: source?.stateName ?? null,
       targetStateId: transition.toStateId,
       targetStateName: target?.stateName ?? null,
+      declaredRoutes: [],
+      declaredControl: transition.control && (transition.control.label || transition.control.testId)
+        ? { label: transition.control.label ? normalizeText(transition.control.label) : null, testId: transition.control.testId ?? null, role: transition.control.role ?? null }
+        : null,
     };
   });
 
@@ -370,6 +387,12 @@ export type RetrievalIndex = {
   featureMembers: Map<string, string[]>;
   /** Entities that can be a candidate at all, in stable order. */
   locatable: CodeEntity[];
+  /** canonical route -> the `ui_route` entities that declare it. What a person's declared route is matched against. */
+  routeEntities: Map<string, string[]>;
+  /** normalised control label -> the `ui_action` entities that carry it. */
+  labelEntities: Map<string, string[]>;
+  /** test id -> the `ui_action` entities that carry it. */
+  testIdEntities: Map<string, string[]>;
 };
 
 function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
@@ -455,10 +478,28 @@ function buildRetrievalIndex(analysis: CodebaseAnalysis): RetrievalIndex {
     }
   }
 
+  const routeEntities = new Map<string, string[]>();
+  const labelEntities = new Map<string, string[]>();
+  const testIdEntities = new Map<string, string[]>();
+  const put = (map: Map<string, string[]>, key: string, id: string) => {
+    const existing = map.get(key);
+    if (existing) { if (!existing.includes(id)) existing.push(id); } else map.set(key, [id]);
+  };
+  for (const entity of analysis.entities) {
+    if (!location.has(entity.id)) continue;
+    if (entity.type === 'ui_route' && typeof entity.metadata.route === 'string') put(routeEntities, canonicalPattern(entity.metadata.route), entity.id);
+    if (entity.type === 'ui_action') {
+      const labels = Array.isArray(entity.metadata.labels) ? entity.metadata.labels : [];
+      for (const label of labels) if (typeof label === 'string' && label.trim()) put(labelEntities, normalizeText(label), entity.id);
+      if (typeof entity.metadata.testId === 'string' && entity.metadata.testId) put(testIdEntities, entity.metadata.testId, entity.id);
+    }
+  }
+
   return {
     byId, entityTerms, entityDirectTerms, relationships, features, featureTerms, evidenceTerms, location,
     postings, featurePostings, featureMembers,
     locatable: analysis.entities.filter((entity) => location.has(entity.id)),
+    routeEntities, labelEntities, testIdEntities,
   };
 }
 
@@ -635,6 +676,52 @@ function candidateFor(
   };
 }
 
+const ELEMENT_FOR_ROLE: Record<string, string> = { link: 'a', button: 'button', select: 'select' };
+
+/**
+ * The code entities a person's declaration points at, found by what they wrote and not by how it is worded.
+ *
+ * A route the person declared matches the `ui_route` that declares the same canonical route. A control they named
+ * matches the `ui_action` carrying that label or test id; when several do and the person said what kind of control
+ * it is (a link, a button), those of that kind are preferred. Nothing is inferred: no declaration, no match.
+ */
+function declaredEntities(index: RetrievalIndex, query: FlowMappingQuery): CodeEntity[] {
+  const ids = new Set<string>();
+  for (const route of query.declaredRoutes) for (const id of index.routeEntities.get(route) ?? []) ids.add(id);
+  const control = query.declaredControl;
+  if (control) {
+    const found = new Set<string>();
+    if (control.testId) for (const id of index.testIdEntities.get(control.testId) ?? []) found.add(id);
+    if (control.label) for (const id of index.labelEntities.get(control.label) ?? []) found.add(id);
+    const wanted = control.role ? ELEMENT_FOR_ROLE[control.role] : undefined;
+    const ofKind = wanted ? [...found].filter((id) => index.byId.get(id)?.metadata.element === wanted) : [];
+    for (const id of ofKind.length > 0 ? ofKind : found) ids.add(id);
+  }
+  return [...ids].map((id) => index.byId.get(id)).filter((entity): entity is CodeEntity => Boolean(entity && index.location.has(entity.id)));
+}
+
+/** What a person's declaration says about where this checkpoint lives: as strong as evidence gets, short of an anchor. */
+function declaredCandidateFor(index: RetrievalIndex, entity: CodeEntity, query: FlowMappingQuery): FlowMappingCandidate {
+  const location = index.location.get(entity.id)!;
+  const breakdown: FlowMappingScoreBreakdown = {
+    lexical: 0, entityType: 1, graph: 0, feature: 0, evidence: 0, sourceLocation: location.startLine !== null ? 1 : 0.45, declared: 1,
+  };
+  return {
+    id: `${query.checkpointId}:${entity.id}`,
+    entityId: entity.id,
+    entityType: entity.type,
+    name: entity.name,
+    ...location,
+    score: 0.95,
+    scoreBreakdown: breakdown,
+    confidence: round(Math.min(0.95, entity.confidence)),
+    placementKinds: placementKinds(entity),
+    featureIds: [],
+    evidence: entity.evidence.slice(0, 8),
+    relationshipPaths: [],
+  };
+}
+
 function rankCandidates(left: FlowMappingCandidate, right: FlowMappingCandidate): number {
   return right.score - left.score
     || right.confidence - left.confidence
@@ -713,7 +800,14 @@ export function retrieveFlowMappings(input: RetrieveFlowMappingsInput): FlowMapp
     const actionVerb = query.kind === 'TRANSITION' ? splitTerms(query.name)[0] ?? null : null;
     const allQueryTerms = [...query.terms, ...query.contextTerms];
     const ranked = topRanked(RANKED_BUFFER);
+    // What a person declared comes first, and is not also scored as a guess.
+    const declaredIds = new Set<string>();
+    for (const entity of declaredEntities(index, query)) {
+      declaredIds.add(entity.id);
+      ranked.offer(declaredCandidateFor(index, entity, query));
+    }
     for (const entity of reachableCandidates(index, query, allQueryTerms)) {
+      if (declaredIds.has(entity.id)) continue;
       const candidate = candidateFor(index, entity, query, actionVerb, allQueryTerms);
       if (candidate) ranked.offer(candidate);
     }

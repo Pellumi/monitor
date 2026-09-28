@@ -15,6 +15,8 @@ export type StateRole = 'NORMAL' | 'INITIAL' | 'TERMINAL';
 export type TerminalKind = 'SUCCESS' | 'FAILURE' | 'CANCELLATION' | 'ALTERNATE';
 export type StateInput = { stateName: string; category: string; role: StateRole; terminalKind: TerminalKind };
 export type FlowSettingsInput = { name: string; purpose: string; scopeStatement: string; workflowType: string };
+/** A published flow of this application that another flow can use as one of its states. */
+export type ReusableFlow = { id: string; name: string };
 
 type SuggestionTrigger =
   | 'STATE_ADDED'
@@ -37,6 +39,32 @@ function intent() {
   const bridge = window.tellann?.intent;
   if (!bridge) throw new Error('Open Tellann in the desktop app to edit flows.');
   return bridge;
+}
+
+/**
+ * The flows another flow can stand a state for: published, and not this one. Loaded on demand, once, because most edits
+ * never need the list.
+ */
+export function useReusableFlows(projectId: string, flowId: string, enabled: boolean): ReusableFlow[] {
+  const [flows, setFlows] = useState<ReusableFlow[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const all = await intent().listDeclaredFlows(projectId);
+        if (cancelled) return;
+        setFlows(all
+          .filter((item) => item.id !== flowId && item.lifecycleStatus === 'PUBLISHED' && Boolean(item.publishedVersionId))
+          .map((item) => ({ id: item.id, name: item.name })));
+      } catch {
+        // Not being able to list them only means none are offered.
+        if (!cancelled) setFlows([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, flowId, projectId]);
+  return flows;
 }
 
 export function flowIsEditable(flow: FlowDetail | null): boolean {
@@ -231,6 +259,22 @@ export function useFlowEditor(projectId: string, flowId: string) {
     return true;
   }, [afterGraphChange, flowId, projectId, run]);
 
+  /**
+   * What a person declared about a state: how to recognise it, who is there, another flow it stands for. Saved on its
+   * own, with the name and role as they are, so it can never change them.
+   */
+  const updateStateSpec = useCallback(async (state: FlowState, spec: Record<string, unknown>) => {
+    const outcome = await run('update-state', () => intent().updateDeclaredState(
+      projectId, flowId, state.id, state.stateName, state.category || 'BUSINESS',
+      (state.role as StateRole | undefined) ?? 'NORMAL',
+      state.role === 'TERMINAL' ? (state.terminalKind as TerminalKind | null | undefined) ?? 'SUCCESS' : null,
+      spec,
+    ));
+    if (!outcome.ok) return false;
+    await afterGraphChange(null);
+    return true;
+  }, [afterGraphChange, flowId, projectId, run]);
+
   /** A flow has one initial state, so any other initial state becomes intermediate. */
   const setInitialState = useCallback(async (state: FlowState) => {
     const others = (flow?.states ?? []).filter((item) => item.id !== state.id && item.role === 'INITIAL');
@@ -273,6 +317,14 @@ export function useFlowEditor(projectId: string, flowId: string) {
     return true;
   }, [afterGraphChange, flowId, projectId, run]);
 
+  /** What a person declared about a step: its control, inputs, effects and who does it. The action is left as it is. */
+  const updateTransitionSpec = useCallback(async (transition: FlowTransition, spec: Record<string, unknown>) => {
+    const outcome = await run('update-transition', () => intent().updateDeclaredTransition(projectId, flowId, transition.id, (transition.action ?? '').trim(), spec));
+    if (!outcome.ok) return false;
+    await afterGraphChange(null);
+    return true;
+  }, [afterGraphChange, flowId, projectId, run]);
+
   const deleteTransition = useCallback(async (transitionId: string) => {
     const outcome = await run('delete-transition', () => intent().deleteDeclaredTransition(projectId, flowId, transitionId));
     if (!outcome.ok) return false;
@@ -280,7 +332,7 @@ export function useFlowEditor(projectId: string, flowId: string) {
     return true;
   }, [afterGraphChange, flowId, projectId, run]);
 
-  const updateFlow = useCallback(async (input: Partial<FlowSettingsInput>) => {
+  const updateFlow = useCallback(async (input: Partial<FlowSettingsInput> & { requires?: unknown }) => {
     const outcome = await run('update-flow', () => intent().updateDeclaredFlow(projectId, flowId, input));
     if (!outcome.ok) return false;
     await afterGraphChange(null);
@@ -469,10 +521,12 @@ export function useFlowEditor(projectId: string, flowId: string) {
     refreshFlow,
     addState,
     updateState,
+    updateStateSpec,
     setInitialState,
     deleteState,
     addTransition,
     updateTransition,
+    updateTransitionSpec,
     deleteTransition,
     updateFlow,
     publish,

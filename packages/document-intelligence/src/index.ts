@@ -3,7 +3,10 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
-import { sanitizeAiInputFull } from '@tellann/ai';
+import {
+  deriveJourneyFromProse, normalizeWorkflowLanguage, sanitizeAiInputFull,
+  type FlowRequires, type StateRecognizer, type StepMode, type TransitionControl, type TransitionEffect, type TransitionInput,
+} from '@tellann/ai';
 
 export const DOCUMENT_PROCESSOR_VERSION = 'document-intelligence/1.0.0';
 export const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(['.pdf', '.docx', '.md', '.markdown', '.txt', '.html', '.htm', '.json', '.yaml', '.yml']);
@@ -52,8 +55,16 @@ export type IntentDraftProposal = {
     description: string;
     confidence: number;
     evidenceIds: string[];
-    states: Array<{ key: string; name: string; category: 'NAVIGATION' | 'UI' | 'BUSINESS' | 'ERROR' | 'SYSTEM'; confidence: number; evidenceIds: string[] }>;
-    transitions: Array<{ from: string; to: string; action: string; confidence: number; evidenceIds: string[] }>;
+    states: Array<{
+      key: string; name: string; category: 'NAVIGATION' | 'UI' | 'BUSINESS' | 'ERROR' | 'SYSTEM'; confidence: number; evidenceIds: string[];
+      role?: 'NORMAL' | 'INITIAL' | 'TERMINAL'; terminalKind?: string | null; description?: string; actor?: string;
+      recognizer?: StateRecognizer;
+    }>;
+    transitions: Array<{
+      from: string; to: string; action: string; condition?: string; confidence: number; evidenceIds: string[];
+      control?: TransitionControl; inputs?: TransitionInput[]; effects?: TransitionEffect[]; mode?: StepMode;
+    }>;
+    requires?: FlowRequires;
   }>;
 };
 
@@ -191,7 +202,21 @@ export type EvidenceBackedDocument = Pick<ExtractedDocument, 'title'> & {
   segments: Array<Pick<EvidenceSegment, 'id' | 'heading' | 'excerpt' | 'excludedFromAi'>>;
 };
 
-/** Deterministic, review-only baseline. It never writes graph truth. */
+/** "sample_course_creation_flow" -> "Sample course creation flow": a file name is not a title. */
+function readableName(value: string): string {
+  const text = value.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return text ? text[0].toUpperCase() + text.slice(1) : value;
+}
+
+/**
+ * Deterministic, review-only baseline. It never writes graph truth.
+ *
+ * It reads each section as a journey (see `deriveJourneyFromProse`): the places
+ * the user arrives at become states and what they do to get there becomes the
+ * transitions. Text that describes no journey, such as an API listing or a product
+ * overview, produces nothing; the baseline says so rather than turning its
+ * sentences into steps.
+ */
 export function inferEvidenceBackedIntent(documents: EvidenceBackedDocument[]): IntentDraftProposal {
   const usable = documents.flatMap((document) => document.segments.filter((segment) => !segment.excludedFromAi).map((segment) => ({ document, segment })));
   const grouped = new Map<string, typeof usable>();
@@ -202,23 +227,40 @@ export function inferEvidenceBackedIntent(documents: EvidenceBackedDocument[]): 
     values.push(item);
     grouped.set(groupKey, values);
   }
-  const workflows = [...grouped.entries()].slice(0, 30).map(([workflowKey, items]) => {
+  const workflows: IntentDraftProposal['workflows'] = [];
+  for (const [workflowKey, items] of [...grouped.entries()].slice(0, 30)) {
+    const journey = deriveJourneyFromProse(items.map((item) => ({ id: item.segment.id, text: item.segment.excerpt })));
+    if (!journey) continue;
     const evidenceIds = items.map((item) => item.segment.id);
-    const sentences = items.flatMap((item) => item.segment.excerpt.split(/(?:\n|(?<=[.!?])\s+)/)).map((value) => value.trim()).filter((value) => value.length > 12).slice(0, 12);
-    const stateNames = sentences.length ? sentences : [items[0].segment.heading ?? items[0].document.title];
-    const states = stateNames.map((name, index) => ({ key: `${workflowKey}_${index + 1}`, name: name.slice(0, 120), category: /fail|error|invalid|denied|cancel/i.test(name) ? 'ERROR' as const : 'BUSINESS' as const, confidence: 0.72, evidenceIds }));
-    const transitions = states.slice(1).map((state, index) => ({ from: states[index].key, to: state.key, action: 'NEXT', confidence: 0.64, evidenceIds }));
-    return { key: workflowKey, name: items[0].segment.heading ?? items[0].document.title, description: items[0].segment.excerpt.slice(0, 300), confidence: 0.72, evidenceIds, states, transitions };
-  });
+    const name = readableName(items[0].segment.heading ?? items[0].document.title);
+    const flow = normalizeWorkflowLanguage({ key: workflowKey, name, states: journey.states, transitions: journey.transitions, requires: journey.requires });
+    // Each state and transition remembers the section it was read from.
+    const stateEvidence = new Map(journey.states.map((state) => [state.key, state.evidenceIds]));
+    workflows.push({
+      key: workflowKey, name, description: items[0].segment.excerpt.slice(0, 300), confidence: 0.5, evidenceIds,
+      states: flow.states.map((state) => ({
+        key: state.key, name: state.name, category: state.category as 'NAVIGATION' | 'UI' | 'BUSINESS' | 'ERROR' | 'SYSTEM', confidence: 0.5,
+        evidenceIds: stateEvidence.get(state.key) ?? evidenceIds,
+        role: state.role, terminalKind: (state.terminalKind as string | null | undefined) ?? null, description: state.description, actor: state.actor,
+        recognizer: state.recognizer,
+      })),
+      transitions: flow.transitions.map((transition) => ({
+        from: transition.from, to: transition.to, action: transition.action ?? '', condition: transition.condition, confidence: 0.5,
+        control: transition.control, inputs: transition.inputs, effects: transition.effects, mode: transition.mode,
+        evidenceIds: (transition.evidenceIds as string[] | undefined) ?? evidenceIds,
+      })),
+      requires: flow.requires,
+    });
+  }
   const conflicts: IntentDraftProposal['conflicts'] = [];
   for (const [workflowKey, items] of grouped) {
     const normalized = new Set(items.map((item) => item.segment.excerpt.toLowerCase().replace(/\s+/g, ' ').slice(0, 240)));
     if (items.length > 1 && normalized.size > 1) conflicts.push({ key: workflowKey, description: `Sources provide differing descriptions for ${items[0].segment.heading ?? items[0].document.title}.`, evidenceIds: items.map((item) => item.segment.id) });
   }
   return {
-    source: documents.length > 1 ? 'HYBRID_ANALYSIS' : 'DOCUMENT', confidence: workflows.length ? 0.72 : 0,
-    actors: [], assumptions: ['Document order is treated as workflow order until reviewed.'],
-    unresolvedQuestions: workflows.length ? [] : ['No workflow-like requirements were found in the approved document summary.'],
+    source: documents.length > 1 ? 'HYBRID_ANALYSIS' : 'DOCUMENT', confidence: workflows.length ? 0.5 : 0,
+    actors: [], assumptions: workflows.length ? ['Steps were read from the wording of the documents without an AI provider; check each state and action.'] : [],
+    unresolvedQuestions: workflows.length ? [] : ['No user journey (the pages a user visits and what they do there) could be read from the documents.'],
     conflicts, workflows,
   };
 }

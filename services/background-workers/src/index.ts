@@ -4,7 +4,10 @@ import { reapAbandonedAutomatedRuns } from './qa-automation-reaper';
 initTracing('background-workers');
 
 import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@tellann/db';
-import { generateAiFlowDraft, resolveAiProvider, sanitizeAiInputFull } from '@tellann/ai';
+import {
+  AllProvidersFailedError, describeProviderError, generateAiFlowDraft, groundInDocument, lintWorkflowLanguage, normalizeWorkflowLanguage,
+  resolveAiProvider, sanitizeAiInputFull, type ProviderAttempt,
+} from '@tellann/ai';
 import { runRuleCandidatePromoter } from './rule-candidate-promoter';
 import {
   runWeeklyReportDigest,
@@ -57,7 +60,35 @@ type DraftGeneration = {
   method: 'AI_PROVIDER' | 'DOCUMENT_BASELINE' | 'RULE_TEMPLATE';
   reason: 'PROVIDER_NOT_CONFIGURED' | 'PROVIDER_FAILED' | null;
   message: string | null;
+  /** What each provider said when it failed, so the reviewer (and support) can tell why. */
+  attempts?: ProviderAttempt[];
 };
+
+/**
+ * Whether every provider failed for a reason that usually passes on its own: the
+ * model at capacity, a rate limit, a timeout or a dropped connection. A refused key,
+ * an empty balance or a missing model will not fix itself, so retrying those only
+ * makes the person wait.
+ */
+function isTransientProviderFailure(attempts: ProviderAttempt[]): boolean {
+  return attempts.length > 0 && attempts.every((attempt) =>
+    /(?:408|429|500|502|503|504)|TIMEOUT|circuit open|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(attempt.error));
+}
+
+/** Thrown to hand a job back to the queue so a passing outage does not decide the draft. */
+class TransientProviderFailure extends Error {
+  constructor(summary: string) {
+    super(`AI provider temporarily unavailable: ${summary}`);
+    this.name = 'TransientProviderFailure';
+  }
+}
+
+/** "gemini-3.5-flash-lite: high demand" — the short form of why a provider failed, for a person. */
+function summarizeProviderFailure(attempts: ProviderAttempt[]): string {
+  return attempts
+    .map((attempt) => `${attempt.model}: ${attempt.error.replace(/^.*?failed with /i, '').replace(/^AI_[A-Z_]+:?\s*/, '').slice(0, 90)}`)
+    .join('; ');
+}
 
 /**
  * A draft built straight from the stored evidence of the selected documents,
@@ -93,14 +124,22 @@ async function documentBaselineDraft(job: any, evidenceIds: string[], manifest: 
   if (!proposal.workflows.length) return null;
   return {
     domainKey: job.domainKey,
-    // Sentence order is not a reliable workflow; keep confidence modest.
+    // Steps read from wording alone are a starting point for a person to check.
     confidence: Math.min(0.5, proposal.confidence),
     assumptions: proposal.assumptions,
     workflows: proposal.workflows.map((workflow) => ({
       key: workflow.key, name: workflow.name, description: workflow.description, workflowType: 'DOCUMENT_DERIVED',
       evidenceIds: workflow.evidenceIds,
-      states: workflow.states.map((state) => ({ key: state.key, name: state.name, category: state.category, evidenceIds: state.evidenceIds })),
-      transitions: workflow.transitions.map((transition) => ({ from: transition.from, to: transition.to, action: transition.action, evidenceIds: transition.evidenceIds })),
+      states: workflow.states.map((state) => ({
+        key: state.key, name: state.name, category: state.category, evidenceIds: state.evidenceIds,
+        role: state.role, terminalKind: state.terminalKind ?? null, description: state.description, actor: state.actor,
+        recognizer: state.recognizer,
+      })),
+      transitions: workflow.transitions.map((transition) => ({
+        from: transition.from, to: transition.to, action: transition.action, condition: transition.condition, evidenceIds: transition.evidenceIds,
+        control: transition.control, inputs: transition.inputs, effects: transition.effects, mode: transition.mode,
+      })),
+      requires: workflow.requires,
     })),
     missingFlowCandidates: [],
     missingStateCandidates: [],
@@ -174,13 +213,23 @@ export async function runAiDraftJobProcessor(): Promise<void> {
         // Run AI generation (productDescription is already sanitized/redacted)
         let result: { draft: any; provider: string; model: string; promptHash: string; validation: unknown } | null = null;
         let generation: DraftGeneration = { method: 'AI_PROVIDER', reason: null, message: null };
+        let failedAttempts: ProviderAttempt[] = [];
         if (providerConfigured || !documentDerived) {
           try {
+            // No explicit provider: the chain tries every configured model in turn, so
+            // one model being at capacity does not decide the outcome.
+            // Flows already published for this application: the ones a state may stand for instead of being redrawn.
+            const existing = await prisma.behaviorGraph.findMany({
+              where: { applicationId: job.applicationId, graphType: 'DECLARED', publishedVersionId: { not: null } },
+              select: { name: true }, orderBy: { updatedAt: 'desc' }, take: 30,
+            });
             result = await generateAiFlowDraft({
               productDescription: job.productDescription,
               domainKey: job.domainKey,
               rulesets,
-              provider,
+              existingFlows: existing.map((flow) => flow.name),
+              // Reading a whole document takes longer than a one-line description.
+              timeoutMs: documentDerived ? 60_000 : undefined,
             });
             if (!providerConfigured) {
               generation = {
@@ -189,19 +238,30 @@ export async function runAiDraftJobProcessor(): Promise<void> {
               };
             }
           } catch (providerError) {
-            console.warn(`[ai-draft-job-processor] Provider unavailable for ${job.id}; using fallback`,
-              providerError instanceof Error ? providerError.message : 'Unknown provider error');
+            failedAttempts = providerError instanceof AllProvidersFailedError
+              ? providerError.attempts
+              : [{ provider: provider.name, model: provider.model, error: describeProviderError(providerError) }];
+            console.warn(`[ai-draft-job-processor] Provider unavailable for ${job.id}: ${summarizeProviderFailure(failedAttempts)}`);
+            // A passing outage should not be what decides the draft. While attempts remain the
+            // job goes back to the queue (30s, 60s ...); only the last attempt settles for the
+            // no-AI baseline, so the person still gets something they can review.
+            const attemptsLeft = job.attempts + 1 < (job.maxAttempts ?? 3);
+            if (attemptsLeft && isTransientProviderFailure(failedAttempts)) {
+              throw new TransientProviderFailure(summarizeProviderFailure(failedAttempts));
+            }
           }
         }
 
         if (!result) {
           const reason = providerConfigured ? 'PROVIDER_FAILED' as const : 'PROVIDER_NOT_CONFIGURED' as const;
-          const cause = reason === 'PROVIDER_FAILED' ? 'The AI provider was unavailable' : 'No AI provider is configured';
+          const cause = reason === 'PROVIDER_FAILED'
+            ? `The AI provider was unavailable (${summarizeProviderFailure(failedAttempts)})`
+            : 'No AI provider is configured';
           const baseline = documentDerived ? await documentBaselineDraft(job, evidenceIds, manifest) : null;
           if (baseline) {
             result = { draft: baseline, provider: 'document-evidence-baseline', model: 'evidence-baseline-v1', promptHash, validation: validateGeneratedGraph({ workflows: baseline.workflows }) };
             generation = {
-              method: 'DOCUMENT_BASELINE', reason,
+              method: 'DOCUMENT_BASELINE', reason, attempts: failedAttempts,
               message: `${cause}, so these journeys were assembled directly from your documents' headings and sentences in document order. Check every step before approving.${job.source === 'USER_CORRECTION' ? ' Your requested change could not be applied without an AI provider.' : ''}`,
             };
           } else {
@@ -218,13 +278,24 @@ export async function runAiDraftJobProcessor(): Promise<void> {
               validation: validateGeneratedGraph({ workflows: fallbackDraft.workflows }),
             };
             generation = {
-              method: 'RULE_TEMPLATE', reason,
-              message: `${cause}, and no usable document evidence was found, so this draft is Tellann's generic ${job.domainKey} template rather than content from your documents.`,
+              method: 'RULE_TEMPLATE', reason, attempts: failedAttempts,
+              message: `${cause}, and no user journey (the pages a user visits and what they do there) could be read from your documents, so this draft is Tellann's generic ${job.domainKey} template rather than content from your documents.`,
             };
           }
         }
 
-        const generated = result;
+        // Whatever produced the draft, the reviewer sees one language: short state keys,
+        // verb-phrase actions, one start and real endings.
+        // What a draft declares (routes, controls, requests) outranks what the code says, so nothing is kept that the
+        // document does not support; what was left out is listed for the reviewer.
+        const grounded = (Array.isArray(result.draft.workflows) ? result.draft.workflows : [])
+          .map((workflow: any) => groundInDocument(normalizeWorkflowLanguage(workflow), job.productDescription));
+        const workflows = grounded.map((item: { workflow: unknown }) => item.workflow);
+        const languageIssues = workflows.flatMap((workflow: any, index: number) => [
+          ...lintWorkflowLanguage(workflow),
+          ...grounded[index]!.dropped,
+        ].map((issue) => ({ workflow: workflow.key, ...issue })));
+        const generated = { ...result, draft: { ...result.draft, workflows }, validation: validateGeneratedGraph({ workflows }) };
         const sanitized = sanitizeAiInputFull(job.productDescription);
         const parentDraftId = typeof manifest.parentDraftId === 'string' ? manifest.parentDraftId : null;
         const draftRecord = await prisma.$transaction(async (tx) => {
@@ -245,6 +316,7 @@ export async function runAiDraftJobProcessor(): Promise<void> {
               draftJson: {
                 ...generated.draft,
                 generation,
+                languageIssues,
                 sourceManifest: job.sourceManifest ?? null,
                 conflicts: manifest.conflicts ?? [],
                 unresolvedQuestions: manifest.unresolvedQuestions ?? [],

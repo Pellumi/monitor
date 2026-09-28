@@ -15,7 +15,8 @@ import type { FlowState } from './use-flow-editor';
 
 export type StateNodeData = { state: FlowState; unreachable: boolean; proposed: boolean };
 export type StateNodeType = Node<StateNodeData, 'state'>;
-export type TransitionEdgeData = { label: string; proposed: boolean };
+/** `mode` is who does the step (absent or AUTO: the run); `detail` is the short facts a person declared about it. */
+export type TransitionEdgeData = { label: string; proposed: boolean; mode?: string; detail?: string };
 export type TransitionEdgeType = Edge<TransitionEdgeData, 'transition'>;
 
 const NODE_MIN_WIDTH = 168;
@@ -35,11 +36,12 @@ export function stateRoleLabel(state: Pick<FlowState, 'role' | 'terminalKind' | 
 const StateNode = memo(function StateNode({ data, selected, sourcePosition, targetPosition }: NodeProps<StateNodeType>) {
   const { state, unreachable, proposed } = data;
   const role = state.role ?? 'NORMAL';
+  const reuses = Boolean((state as { subFlowId?: string | null }).subFlowId);
   const kicker = proposed
     ? `Proposed · ${stateRoleLabel(state)}`
     : unreachable && role !== 'INITIAL'
       ? `${stateRoleLabel(state)} · Not reachable`
-      : stateRoleLabel(state);
+      : reuses ? `Another flow · ${stateRoleLabel(state)}` : stateRoleLabel(state);
   return (
     <div
       className="flow-node"
@@ -49,6 +51,7 @@ const StateNode = memo(function StateNode({ data, selected, sourcePosition, targ
       data-selected={selected ? 'true' : undefined}
       data-unreachable={unreachable ? 'true' : undefined}
       data-proposed={proposed ? 'true' : undefined}
+      data-reuses={reuses ? 'true' : undefined}
       style={{ maxWidth: NODE_MAX_WIDTH, minWidth: NODE_MIN_WIDTH }}
     >
       <Handle type="target" position={targetPosition ?? Position.Top} />
@@ -89,15 +92,17 @@ function TransitionEdge({
         interactionWidth={18}
         className={data?.proposed ? 'is-proposed' : undefined}
       />
-      {data?.label ? (
+      {data?.label || (data?.mode && data.mode !== 'AUTO') ? (
         <EdgeLabelRenderer>
           <div
             className="flow-edge-label nodrag nopan"
             data-selected={selected ? 'true' : undefined}
+            data-mode={data.mode && data.mode !== 'AUTO' ? data.mode : undefined}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-            title={data.label}
+            title={[data.label, data.detail].filter(Boolean).join(' · ')}
           >
             {data.label}
+            {data.mode === 'CONFIRM' ? <em> · you approve</em> : data.mode === 'MANUAL' ? <em> · you do this</em> : null}
           </div>
         </EdgeLabelRenderer>
       ) : null}

@@ -15,9 +15,11 @@ import { rankControls } from './ranking';
 import type {
   ActionClass,
   ActionOutcome,
+  ApiCondition,
   AutomationAction,
   EnvironmentKind,
   ExecutableContract,
+  ObservedRequest,
   Recognition,
   SemanticSnapshot,
 } from './types';
@@ -58,6 +60,45 @@ export interface AutomationEvent {
 }
 
 export type { ActionOutcome };
+
+/** A step the Flow says needs a person: to approve it (CONFIRM), or to do it themselves (MANUAL). */
+export interface StepHandOver {
+  kind: 'CONFIRM_STEP' | 'MANUAL_STEP';
+  transitionId: string;
+  action: string | null;
+  from: string;
+  to: string;
+  /** Plain language, safe to show: what is about to happen (or what to do), and why a person is asked. */
+  detail: string;
+}
+
+/** What a declared effect of a step turned out to be once the step was done. */
+export interface EffectCheck {
+  transitionId: string;
+  method: string;
+  route: string;
+  expectedStatus: number | null;
+  /** MATCHED: seen, with the status expected. STATUS_MISMATCH: seen, with another. NOT_OBSERVED: never seen. */
+  outcome: 'MATCHED' | 'STATUS_MISMATCH' | 'NOT_OBSERVED';
+  observedStatus: number | null;
+}
+
+/**
+ * Whether the requests a page made after a step include each request a person declared the step causes.
+ * Only declared effects are checked: a request the code analysis merely infers is evidence for recognising
+ * a state, not a promise the application made.
+ */
+export function checkDeclaredEffects(transitionId: string, conditions: ApiCondition[], requests: ObservedRequest[]): EffectCheck[] {
+  return conditions.filter((condition) => condition.declared).map((condition) => {
+    const same = requests.filter((request) => request.completed && request.method.toUpperCase() === condition.method.toUpperCase() && request.route === condition.route);
+    const matched = same.find((request) => condition.expectStatus === null || request.status === condition.expectStatus);
+    return {
+      transitionId, method: condition.method, route: condition.route, expectedStatus: condition.expectStatus,
+      outcome: matched ? 'MATCHED' : same.length > 0 ? 'STATUS_MISMATCH' : 'NOT_OBSERVED',
+      observedStatus: (matched ?? same[0])?.status ?? null,
+    };
+  });
+}
 
 export interface AutomationPorts {
   snapshot(): Promise<SemanticSnapshot>;
@@ -106,6 +147,12 @@ export interface AutomationPorts {
    * Returns the snapshot once there, or null if it could not. Absent means the run starts at the initial state.
    */
   seekInitial?(): Promise<SemanticSnapshot | null>;
+  /**
+   * Asks a person to approve, or to perform, a step the Flow marks CONFIRM or MANUAL, and resolves when they
+   * have answered. Absent means nobody is there to ask, and the run stops before the step instead of doing
+   * something it was told needs a person.
+   */
+  handOver?(request: StepHandOver): Promise<'DONE' | 'CANCELLED' | 'TIMED_OUT'>;
 }
 
 export interface AutomationConfig {
@@ -137,6 +184,8 @@ export interface AutomationResult {
   steps: number;
   replans: number;
   elapsedMs: number;
+  /** What each declared effect of a performed step turned out to be. Empty when no step declared any. */
+  effects?: EffectCheck[];
 }
 
 /** After this many consecutive reads in which no state was recognised, the run stops rather than guessing. */
@@ -158,6 +207,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
   let retrying = false;
 
   const emit = (type: AutomationEventType, data: Record<string, unknown>) => ports.emit({ type, at: ports.now(), data });
+  const effects: EffectCheck[] = [];
   let currentStateKey: string | null = null;
   /** The transition being attempted, so a failure can be explained by what the code does for *that* control. */
   let currentTransitionId: string | null = null;
@@ -197,7 +247,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     await capture({ stopReason });
     await closeChunk();
     emit('QA_AUTOMATION_STOPPED', { stopReason, detail, steps: budget.stepCount, replans: budget.replanCount });
-    return { stopReason, detail, states, steps: budget.stepCount, replans: budget.replanCount, elapsedMs: budget.elapsedMs() };
+    return { stopReason, detail, states, steps: budget.stepCount, replans: budget.replanCount, elapsedMs: budget.elapsedMs(), ...(effects.length ? { effects } : {}) };
   };
 
   const targeting = resolveRunTargets(config);
@@ -345,9 +395,11 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       data: (key: string) => ports.data?.(key),
       label: next.action ?? next.id,
     };
-    let resolved = resolveStep(snapshot, stepInput);
+    const mode = next.mode ?? 'AUTO';
+    // A step a person performs needs no control found and nothing typed: they do it in the browser.
+    let resolved = mode === 'MANUAL' ? null : resolveStep(snapshot, stepInput);
     let controlResolution: { resolver: string; rationale: string; agreement: string[] } | null = null;
-    if (!resolved.ok && resolved.reason === 'CONTROL_AMBIGUOUS' && ports.resolver && next.control) {
+    if (resolved && !resolved.ok && resolved.reason === 'CONTROL_AMBIGUOUS' && ports.resolver && next.control) {
       const tied = tiedControls(rankControls(next.control, snapshot.elements).candidates);
       const proposal = await askResolver(ports.resolver, controlSituation(next, tied));
       if (proposal) {
@@ -360,17 +412,20 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
         }
       }
     }
-    if (!resolved.ok) {
+    if (resolved && !resolved.ok) {
       const stopReason = DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND';
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
       return finish(stopReason, resolved.detail);
     }
 
     // Belt and braces: the planner already excluded blocked classes, but the decision to act is made here.
-    const decision = evaluateAction(next.actionClass, config.environment, config.policy);
-    if (!decision.allowed) {
-      emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: decision.reason, transitionId: next.id, actionClass: next.actionClass, from: next.from, expectedState: next.to, detail: decision.detail });
-      return finish('UNSAFE_ACTION_BLOCKED', decision.detail);
+    // (A person doing a step themselves is not the run acting, so the run's safety policy has nothing to decide.)
+    if (mode !== 'MANUAL') {
+      const decision = evaluateAction(next.actionClass, config.environment, config.policy);
+      if (!decision.allowed) {
+        emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: decision.reason, transitionId: next.id, actionClass: next.actionClass, from: next.from, expectedState: next.to, detail: decision.detail });
+        return finish('UNSAFE_ACTION_BLOCKED', decision.detail);
+      }
     }
 
     emit('QA_AUTOMATION_ACTION_SELECTED', {
@@ -380,21 +435,50 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       expectedState: next.to,
       actionClass: next.actionClass,
       // Why this control: how it was matched and how well, so the run is auditable without replaying it.
-      method: resolved.method,
-      score: resolved.score,
+      method: resolved?.ok ? resolved.method : 'PERSON',
+      score: resolved?.ok ? resolved.score : null,
+      mode,
       derivation: next.derivation,
       codeRefs: next.codeRefs,
       // A choice a resolver made and the contract confirmed is on the record as exactly that.
       ...(controlResolution ? { resolvedBy: controlResolution } : {}),
     });
 
+    if (mode !== 'AUTO') {
+      const label = next.action ?? next.id;
+      if (!ports.handOver) {
+        emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: 'STEP_NEEDS_PERSON', transitionId: next.id, mode, from: next.from, expectedState: next.to });
+        return finish('MANUAL_ACTION_REQUIRED', `${label} is marked ${mode === 'MANUAL' ? 'to be done by a person' : 'to be approved by a person'}, and nobody is here to ask.`);
+      }
+      const answer = await ports.handOver({
+        kind: mode === 'MANUAL' ? 'MANUAL_STEP' : 'CONFIRM_STEP',
+        transitionId: next.id, action: next.action, from: next.from, to: next.to,
+        detail: mode === 'MANUAL'
+          ? `Do "${label}" yourself in the browser (from ${next.from}). Tellann will carry on once ${next.to} shows.`
+          : `Tellann is about to do "${label}" (${next.actionClass.toLowerCase().replace(/_/g, ' ')}), taking the run from ${next.from} to ${next.to}. Approve it to go ahead.`,
+      });
+      if (ports.cancelled?.() || answer === 'CANCELLED') {
+        return finish('CANCELLED_BY_USER', mode === 'CONFIRM' ? `${label} was not approved.` : `The run was stopped while it waited for you to do ${label}.`);
+      }
+      if (answer === 'TIMED_OUT') return finish('MANUAL_ACTION_REQUIRED', `Nobody answered before the wait for ${label} ended, so the run stopped.`);
+      // A person may take a while; the page may have moved on from what was read before asking.
+      if (mode === 'CONFIRM') {
+        snapshot = await ports.snapshot();
+        resolved = resolveStep(snapshot, stepInput);
+        if (!resolved.ok) {
+          emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
+          return finish(DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND', resolved.detail);
+        }
+      }
+    }
+
     budget.recordStep();
     const before = snapshot;
-    const performed = await performStep(ports, resolved);
+    const performed: { ok: true } | { ok: false; stage: 'FILL' | 'CLICK'; error: string } = resolved?.ok ? await performStep(ports, resolved) : { ok: true };
     if (!performed.ok && performed.stage === 'FILL') {
       return finish('AUTOMATION_ENGINE_ERROR', `Could not fill a field: ${performed.error}`);
     }
-    emit('QA_AUTOMATION_ACTION_EXECUTED', { transitionId: next.id, ok: performed.ok, error: performed.ok ? null : performed.error });
+    emit('QA_AUTOMATION_ACTION_EXECUTED', { transitionId: next.id, ok: performed.ok, error: performed.ok ? null : performed.error, by: mode === 'MANUAL' ? 'PERSON' : 'RUN' });
     if (!performed.ok) {
       // The control was there and would not take the action (detached, covered). That is not a Flow finding.
       const tries = (attempts.get(next.id) ?? 0) + 1;
@@ -406,11 +490,15 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       continue;
     }
 
-    states[states.length - 1]!.leftVia = { transitionId: next.id, action: next.action, actionClass: next.actionClass, method: resolved.method };
+    states[states.length - 1]!.leftVia = { transitionId: next.id, action: next.action, actionClass: next.actionClass, method: resolved?.ok ? resolved.method : 'PERSON' };
     snapshot = await ports.settle(next.to);
     recognition = recognizeAmong(snapshot, contract.states);
     const landed = recognition.best;
     const advanced = landed !== null && !recognition.ambiguous && landed.stateKey === next.to;
+    // What the person said the step causes, checked against what the page actually did. Never gates the run: the
+    // state that followed is the verdict on the step, and an effect that did not show is a finding to report.
+    const checked = advanced ? checkDeclaredEffects(next.id, next.expectedApi, snapshot.requests) : [];
+    effects.push(...checked);
     emit('QA_AUTOMATION_ACTION_VERIFIED', {
       transitionId: next.id,
       ok: advanced,
@@ -418,6 +506,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       observedState: landed?.stateKey ?? null,
       confidence: landed?.confidence ?? null,
       errorsSince: Math.max(0, snapshot.errorCount - before.errorCount),
+      ...(checked.length ? { effects: checked } : {}),
     });
     await capture({
       recognition: landed ? { confidence: landed.confidence, ambiguous: recognition.ambiguous } : undefined,

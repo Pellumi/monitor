@@ -381,3 +381,112 @@ test("an application that dies mid-run is reported as the application crashing, 
   const result = await executeAutomatedRun(base(browser, dying, { navigation: null, persona: null, applicationHealth: () => (crashed ? ("APPLICATION_CRASHED" as const) : ("OK" as const)) }));
   assert.equal(result.stopReason, "APPLICATION_CRASHED");
 });
+
+// ── what the Flow declares ────────────────────────────────────────────────────
+
+const withTransition = (id: string, patch: Record<string, unknown>): ExecutableContract => {
+  const base = contract();
+  return { ...base, transitions: base.transitions.map((transition) => (transition.id === id ? { ...transition, ...patch } : transition)) } as ExecutableContract;
+};
+
+test("a Flow that needs an account, an environment or data the run does not have stops before touching the application", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const required = { ...contract(), requires: { actor: "ADMIN", environments: ["DEVELOPMENT" as const], data: ["SEED_TOKEN"] } } as ExecutableContract;
+  const result = await executeAutomatedRun(base(browser, driver, { contract: required }));
+  assert.equal(result.stopReason, "FLOW_REQUIREMENTS_NOT_MET");
+  assert.match(result.detail ?? "", /development, and this run is in staging/);
+  assert.match(result.detail ?? "", /"Teacher" does not have that role/);
+  assert.match(result.detail ?? "", /SEED_TOKEN/);
+  assert.deepEqual(log, [], "nothing was touched, protected or typed");
+  assert.equal(events[0]!.metadata.stopReason, "FLOW_REQUIREMENTS_NOT_MET");
+});
+
+test("a Flow whose requirements are met runs as normal", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const required = { ...contract(), requires: { actor: "TEACHER", environments: ["STAGING" as const], data: [] } } as ExecutableContract;
+  const result = await executeAutomatedRun(base(browser, driver, { contract: required }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+});
+
+test("a generated input needs no run data: the run makes a value for itself", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver, typed } = fakeDriver({}, log);
+  const generated = withTransition("t-submit", { inputs: [{ name: "title", label: "Title", dataKey: "COURSE_TITLE", role: "GENERATED" }] });
+  const result = await executeAutomatedRun(base(browser, driver, { contract: generated, runData: null }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.match(typed["e-title"] ?? "", /^QA title [0-9a-f]{6}$/);
+});
+
+test("a protected input is typed from the persona's sign-in and registered as protected, never recorded", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver, typed } = fakeDriver({}, log);
+  const protectedInput = withTransition("t-submit", { inputs: [{ name: "title", label: "Title", dataKey: "ADMIN_PASSWORD", role: "PROTECTED" }] });
+  const result = await executeAutomatedRun(base(browser, driver, { contract: protectedInput, runData: null }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.equal(typed["e-title"], PASSWORD, "the persona's password, found by the kind of credential the key ends in");
+  assert.ok(!JSON.stringify(events).includes(PASSWORD));
+});
+
+test("a protected input nobody holds a value for is never invented", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const protectedInput = withTransition("t-submit", { inputs: [{ name: "token", label: null, dataKey: "ADMIN_TOKEN", role: "PROTECTED" }] });
+  const result = await executeAutomatedRun(base(browser, driver, { contract: protectedInput, runData: null }));
+  assert.equal(result.stopReason, "TEST_DATA_UNAVAILABLE");
+  assert.match(result.detail ?? "", /ADMIN_TOKEN/);
+  assert.deepEqual(log, []);
+});
+
+// ── steps a person approves or does ─────────────────────────────────────────
+
+test("a step the Flow marks CONFIRM asks the person, and is done once they approve", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const asked: Array<{ kind: string; detail: string }> = [];
+  const confirmed = withTransition("t-submit", { mode: "CONFIRM" });
+  const result = await executeAutomatedRun(base(browser, driver, {
+    contract: confirmed,
+    stepHandOver: { wait: async (challenge: { kind: string; detail: string }) => { asked.push(challenge); return "DONE" as const; } },
+  }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]!.kind, "CONFIRM_STEP");
+  assert.match(asked[0]!.detail, /Save exam/);
+  const required = events.find((event) => event.type === "QA_AUTOMATION_MANUAL_ACTION_REQUIRED")!;
+  assert.equal(required.metadata.kind, "CONFIRM_STEP");
+  assert.equal(required.metadata.transitionId, "t-submit");
+  assert.ok(events.some((event) => event.type === "QA_AUTOMATION_MANUAL_ACTION_COMPLETED" && event.metadata.outcome === "DONE"));
+});
+
+test("a CONFIRM step the person declines is not done", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const confirmed = withTransition("t-submit", { mode: "CONFIRM" });
+  const result = await executeAutomatedRun(base(browser, driver, { contract: confirmed, stepHandOver: { wait: async () => "CANCELLED" as const } }));
+  assert.equal(result.stopReason, "CANCELLED_BY_USER");
+  assert.ok(!log.includes("click:e-save"), "the step they declined was never clicked");
+});
+
+test("with nobody to ask, a step that needs a person is not done, and the reason is not the sign-in one", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const confirmed = withTransition("t-submit", { mode: "CONFIRM" });
+  const result = await executeAutomatedRun(base(browser, driver, { contract: confirmed }));
+  assert.equal(result.stopReason, "MANUAL_ACTION_REQUIRED");
+  assert.ok(!log.includes("click:e-save"));
+});
+
+test("a MANUAL step is performed by the person in the browser, and the run picks up from what they did", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver, go } = fakeDriver({}, log);
+  const manual = withTransition("t-submit", { mode: "MANUAL", control: null });
+  const result = await executeAutomatedRun(base(browser, driver, {
+    contract: manual,
+    stepHandOver: { wait: async (challenge: { kind: string }) => { assert.equal(challenge.kind, "MANUAL_STEP"); go("created"); return "DONE" as const; } },
+  }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.ok(!log.includes("click:e-save"), "the run did not perform the step it handed over");
+  assert.ok(!log.some((entry) => entry === "fill:e-title"), "and typed nothing for it");
+});

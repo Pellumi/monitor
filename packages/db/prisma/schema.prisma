@@ -1796,6 +1796,15 @@ enum FlowLifecycleStatus {
   SUPERSEDED
 }
 
+/// Who performs one step of a flow when a run walks it. AUTO: Tellann does it.
+/// CONFIRM: Tellann does it after a person approves. MANUAL: the person does it
+/// (a code sent to their phone, single sign-on) and Tellann waits and verifies.
+enum StepMode {
+  AUTO
+  CONFIRM
+  MANUAL
+}
+
 enum FlowNodeRole {
   NORMAL
   INITIAL
@@ -1915,6 +1924,9 @@ model BehaviorGraph {
   // document) is awaiting the author's accept/discard decision. Cleared on accept.
   aiDraftStatus      String?
   aiDraftSourceName  String?
+  // What a run needs before it starts: { actor?, environments[], data[] }.
+  // Read by the automated-run preflight; never by the flow's own validation.
+  requires           Json?
   // Number of graph mutations (manual edits, accepted suggestions, restores)
   // applied since the current `version` was opened for drafting. The published
   // `version` stays frozen while drafting; `draftSeq` is the in-progress
@@ -1958,6 +1970,12 @@ model BehaviorGraphNode {
   endpointRef       String?
   expectedInput     Json?
   expectedOutput    Json?
+  // How to tell a user is in this state: { routes[], headings[], texts[] }.
+  // Declared by a person, so it outranks what the code analysis infers.
+  recognizer        Json?
+  // Another flow used here instead of drawing its states again. At publish the
+  // referenced flow's published version is expanded into this flow's snapshot.
+  subFlowId         String?
   evidenceIds       String[]          @default([])
   createdAt         DateTime          @default(now())
 
@@ -1984,8 +2002,13 @@ model BehaviorGraphEdge {
   system         String?
   componentRef   String?
   endpointRef    String?
+  // Inputs the step types: [{ name, label?, dataKey, role: PROTECTED|PROVIDED|GENERATED }].
   expectedInput  Json?
+  // Effects the step causes: [{ method, route, status? }], confirmed by a run.
   expectedOutput Json?
+  // What the user operates: { role?, label, testId? }.
+  control        Json?
+  mode           StepMode          @default(AUTO)
   provenance     StateProvenance   @default(USER_AUTHORED)
   evidenceIds    String[]          @default([])
   createdAt      DateTime          @default(now())

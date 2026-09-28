@@ -291,3 +291,62 @@ test('reports progress per checkpoint and reuses a prebuilt index', () => {
     first.mappings.map((mapping) => [mapping.checkpointId, mapping.status, mapping.selectedCandidateId]),
   );
 });
+
+// ── what a person declared is matched by what they wrote ────────────────────
+
+const declaredFlow = (state: Record<string, unknown> = {}, transition: Record<string, unknown> = {}) => ({
+  id: 'flow-declared',
+  name: 'Wombat',
+  states: [
+    // Named so that nothing in the words would ever lead to the code: only the declared route can.
+    { id: 's1', stateName: 'ZEBRA', role: 'INITIAL', ...state },
+    { id: 's2', stateName: 'GIRAFFE', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+  ],
+  transitions: [{ id: 't1', fromStateId: 's1', toStateId: 's2', action: 'QUUX', ...transition }],
+});
+
+const declaredCode = () => analysis([
+  entity({ id: 'route-a', type: 'ui_route', name: '/sign-in', path: 'app/sign-in/page.tsx', startLine: 1, endLine: 30, metadata: { route: '/sign-in' } }),
+  entity({ id: 'route-b', type: 'ui_route', name: '/courses/[id]', path: 'app/courses/[id]/page.tsx', startLine: 1, endLine: 30, metadata: { route: '/courses/{param}' } }),
+  entity({ id: 'btn-go', type: 'ui_action', name: 'onClick', path: 'app/sign-in/Form.tsx', startLine: 12, endLine: 12, metadata: { element: 'button', labels: ['Continue'], testId: 'go' } }),
+  entity({ id: 'link-go', type: 'ui_action', name: 'href', path: 'app/sign-in/Form.tsx', startLine: 20, endLine: 20, metadata: { element: 'a', labels: ['Continue'] } }),
+  entity({ id: 'btn-other', type: 'ui_action', name: 'onClick', path: 'app/other/Other.tsx', startLine: 3, endLine: 3, metadata: { element: 'button', labels: ['Cancel'] } }),
+]);
+
+test('a declared route finds its page when nothing in the state name would', () => {
+  const without = retrieveFlowMappings({ flow: declaredFlow() as never, analysis: declaredCode() });
+  assert.equal(without.mappings.find((item) => item.checkpointId === 'state:s1')!.status, 'UNRESOLVED', 'the words alone find nothing');
+
+  const result = retrieveFlowMappings({ flow: declaredFlow({ routes: ['/Courses/:id'] }) as never, analysis: declaredCode() });
+  const mapping = result.mappings.find((item) => item.checkpointId === 'state:s1')!;
+  assert.equal(mapping.candidates[0]!.entityId, 'route-b', 'the route entity that declares the same canonical route');
+  assert.equal(mapping.candidates[0]!.scoreBreakdown.declared, 1);
+  assert.equal(mapping.status, 'RESOLVED', 'a declared route that matches exactly one page is not a guess');
+});
+
+test('a declared route that matches no page resolves nothing rather than guessing', () => {
+  const result = retrieveFlowMappings({ flow: declaredFlow({ routes: ['/nowhere'] }) as never, analysis: declaredCode() });
+  assert.equal(result.mappings.find((item) => item.checkpointId === 'state:s1')!.status, 'UNRESOLVED');
+});
+
+test('a declared control finds the control that says the same, by label or by test id', () => {
+  const byLabel = retrieveFlowMappings({ flow: declaredFlow({}, { control: { label: 'cancel' } }) as never, analysis: declaredCode() });
+  assert.equal(byLabel.mappings.find((item) => item.checkpointId === 'transition:t1')!.candidates[0]!.entityId, 'btn-other', 'label matching ignores case and spacing');
+  const byTestId = retrieveFlowMappings({ flow: declaredFlow({}, { control: { testId: 'go' } }) as never, analysis: declaredCode() });
+  assert.equal(byTestId.mappings.find((item) => item.checkpointId === 'transition:t1')!.candidates[0]!.entityId, 'btn-go');
+});
+
+test('the kind of control a person named settles two controls with the same label', () => {
+  const ambiguous = retrieveFlowMappings({ flow: declaredFlow({}, { control: { label: 'Continue' } }) as never, analysis: declaredCode() });
+  assert.equal(ambiguous.mappings.find((item) => item.checkpointId === 'transition:t1')!.status, 'AMBIGUOUS', 'a button and a link share the label');
+  const link = retrieveFlowMappings({ flow: declaredFlow({}, { control: { label: 'Continue', role: 'link' } }) as never, analysis: declaredCode() });
+  const mapping = link.mappings.find((item) => item.checkpointId === 'transition:t1')!;
+  assert.equal(mapping.candidates[0]!.entityId, 'link-go');
+  assert.equal(mapping.status, 'RESOLVED');
+});
+
+test('a checkpoint that declares nothing is retrieved exactly as before', () => {
+  const result = retrieveFlowMappings({ flow: flow(), analysis: analysis([entity({ id: 'route-login', type: 'ui_route', name: '/sign-in', path: 'apps/web/app/sign-in/page.tsx', startLine: 1, endLine: 30 })]) });
+  const mapping = result.mappings.find((item) => item.checkpointId === `state:${STATE_LOGIN}`)!;
+  assert.equal(mapping.candidates[0]!.scoreBreakdown.declared, undefined);
+});

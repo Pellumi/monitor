@@ -117,6 +117,66 @@ export function automatedRunBlockers(input: BlockerInput): Blocker[] {
   return blockers;
 }
 
+/** What a Flow declares a run needs (see `ContractRequirements` in the engine), as the setup screen reads it from the Flow. */
+export interface FlowRequirementsLike {
+  actor?: string;
+  environments?: string[];
+  data?: string[];
+}
+
+const roleKey = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+/** The sign-in kinds a persona's stored credentials can stand in for: `ADMIN_EMAIL` is satisfied by a stored `email`. */
+const CREDENTIAL_KEY = /(?:^|_)(email|username|password)$/i;
+
+/**
+ * What the chosen Flow needs that this run, as set up, does not have. Said before Start rather than after, and every
+ * shortfall at once. Mirrors what the run itself checks (`checkFlowRequirements`), from the setup screen's own view:
+ * the persona's roles and which credential fields it stores, and the keys the chosen data set holds.
+ */
+export function flowRequirementBlockers(
+  requires: FlowRequirementsLike | null | undefined,
+  context: {
+    environmentType: 'DEVELOPMENT' | 'STAGING' | 'PRODUCTION';
+    persona: { name: string; roles: string[]; credentialFields: string[] } | null;
+    dataKeys: string[];
+  },
+): Blocker[] {
+  if (!requires) return [];
+  const blockers: Blocker[] = [];
+  const environments = (requires.environments ?? []).map((environment) => environment.toUpperCase());
+  if (environments.length > 0 && !environments.includes(context.environmentType)) {
+    blockers.push({
+      code: 'FLOW_ENVIRONMENT', title: 'This Flow is not for this environment', fix: 'NONE', tone: 'todo',
+      message: `The Flow may only be run in ${environments.map((environment) => environment.toLowerCase()).join(' or ')}, and this run is in ${context.environmentType.toLowerCase()}. Choose a matching environment.`,
+    });
+  }
+  if (requires.actor) {
+    const actor = roleKey(requires.actor);
+    if (!context.persona) {
+      blockers.push({ code: 'FLOW_ACTOR', title: `The Flow needs someone signed in as ${actor}`, fix: 'NONE', tone: 'todo', message: `Choose a persona that has the ${actor} role.` });
+    } else if (!context.persona.roles.map(roleKey).includes(actor)) {
+      blockers.push({
+        code: 'FLOW_ACTOR', title: `The Flow needs someone signed in as ${actor}`, fix: 'NONE', tone: 'todo',
+        message: `The persona "${context.persona.name}" does not have the ${actor} role. Choose another persona, or add the role to this one.`,
+      });
+    }
+  }
+  const held = new Set(context.dataKeys);
+  const stored = new Set(context.persona?.credentialFields.map((field) => field.toLowerCase()) ?? []);
+  const missing = (requires.data ?? []).filter((key) => {
+    if (held.has(key)) return false;
+    const kind = CREDENTIAL_KEY.exec(key)?.[1]?.toLowerCase();
+    return !(kind && stored.has(kind));
+  });
+  if (missing.length > 0) {
+    blockers.push({
+      code: 'FLOW_DATA', title: 'The Flow needs run data you have not chosen', fix: 'NONE', tone: 'todo',
+      message: `It asks for: ${missing.join(', ')}. Choose a data set that has them, or a persona that stores the sign-in.`,
+    });
+  }
+  return blockers;
+}
+
 export interface StartInputSource {
   applicationId: string;
   environmentId: string;

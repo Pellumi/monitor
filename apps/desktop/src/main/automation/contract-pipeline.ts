@@ -22,6 +22,8 @@ import { localKeyValueStore } from "./persona-store";
 export interface FlowVersionDocument {
   states: Array<Record<string, unknown>>;
   transitions: Array<Record<string, unknown>>;
+  /** What the Flow declares a run needs (an account, an environment, data). Absent on a version published before it existed. */
+  requires?: unknown;
 }
 
 export interface InitializationManifest {
@@ -134,6 +136,8 @@ export async function prepareContract(input: ContractInputs, deps: ContractPipel
         behaviorKey: text(state.behaviorKey),
         role: state.role === "INITIAL" || state.role === "TERMINAL" ? state.role : "NORMAL",
         terminalKind: text(state.terminalKind),
+        // Declared by a person, so it outranks what the code analysis derives for the state.
+        recognizer: state.recognizer,
       })),
       transitions: version.value.transitions.map((transition) => ({
         id: String(transition.id ?? ""),
@@ -143,8 +147,12 @@ export async function prepareContract(input: ContractInputs, deps: ContractPipel
         toNodeId: text(transition.toNodeId) ?? undefined,
         action: text(transition.action),
         expectedInput: transition.expectedInput,
+        control: transition.control,
+        expectedOutput: transition.expectedOutput,
+        mode: transition.mode,
       })),
     },
+    requires: version.value.requires,
     checkpoints,
     code,
     analysisIdentity: analysis.contentHash ?? analysis.id ?? null,

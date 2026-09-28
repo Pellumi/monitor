@@ -8325,3 +8325,25 @@ button:disabled {
 .report-section .run-models {
   margin-top: 16px;
 }
+
+/* Drafted journeys: a graph, then each state with what leaves it. */
+.journey-diagram { margin: 16px 0 4px; }
+.journey-steps li { align-items: start; }
+.journey-steps li > span { margin-top: 8px; }
+.journey-steps li:not(:last-child)::after { top: 38px; bottom: -8px; }
+.journey-step { display: grid; gap: 4px; min-width: 0; padding: 8px 0 10px; }
+.journey-step-head { display: flex; align-items: center; gap: 10px; }
+.journey-step-head input { max-width: 320px; }
+.flow-key { color: var(--text-strong); font: 600 12px var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.flow-role { padding: 1px 7px; border: 1px solid var(--border-strong); color: var(--muted); font: normal 10px var(--font-mono); }
+.flow-role.start { border-color: #256f45; color: #4ade80; }
+.flow-role.end { border-color: #2b5b96; color: #60a5fa; }
+.flow-role.failure { border-color: #8f3535; color: #f87171; }
+.journey-step > small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.journey-transition { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; }
+.journey-transition code { color: var(--text); font: 11px var(--font-mono); letter-spacing: 0.03em; text-transform: uppercase; }
+.journey-transition b { color: var(--text-strong); font: 600 11px var(--font-mono); letter-spacing: 0.03em; text-transform: uppercase; }
+.journey-transition i { color: var(--muted); font-style: normal; }
+.journey-transition input { width: 220px; min-height: 28px; padding: 3px 8px; border: 1px solid var(--border-strong); background: var(--surface-0); color: var(--text-strong); font: 11px var(--font-mono); text-transform: uppercase; }
+
+.journey-facts { flex-basis: 100%; color: var(--muted); font: 10.5px var(--font-mono); letter-spacing: 0.01em; }

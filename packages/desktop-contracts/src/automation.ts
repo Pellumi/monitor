@@ -85,6 +85,10 @@ export const AutomationStopReasonSchema = z.enum([
   'MANUAL_AUTHENTICATION_REQUIRED',
   /** Automated Run does not yet understand this kind of application. Not a finding, and not a failure. */
   'FRAMEWORK_NOT_YET_SUPPORTED',
+  /** The Flow declares what a run needs (an account, an environment, data) and this run does not have it. */
+  'FLOW_REQUIREMENTS_NOT_MET',
+  /** A step the Flow marks as needing a person (to approve it, or to do it) was not answered. */
+  'MANUAL_ACTION_REQUIRED',
 ]);
 export type AutomationStopReason = z.infer<typeof AutomationStopReasonSchema>;
 
@@ -114,6 +118,9 @@ export const AUTOMATION_STOP_REASON_KIND: Record<AutomationStopReason, Automatio
   // something from the person (an authentication only they can complete, a framework we have not built yet).
   MANUAL_AUTHENTICATION_REQUIRED: 'USER',
   FRAMEWORK_NOT_YET_SUPPORTED: 'USER',
+  // Nothing about the application either: the Flow asked for a person or for something the run was not given.
+  FLOW_REQUIREMENTS_NOT_MET: 'USER',
+  MANUAL_ACTION_REQUIRED: 'USER',
 };
 
 export const AutomationLimitsSchema = z.object({

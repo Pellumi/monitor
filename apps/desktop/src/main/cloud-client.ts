@@ -822,6 +822,11 @@ export class DesktopCloudClient {
       category: string;
       role?: string;
       terminalKind?: string | null;
+      /** What a person declared about the state: `recognizer`, `subFlowId`, `description`, `actor`. */
+      recognizer?: unknown;
+      subFlowId?: string | null;
+      description?: string | null;
+      actor?: string | null;
     },
   ): Promise<Json> {
     return this.request(
@@ -859,7 +864,8 @@ export class DesktopCloudClient {
     applicationId: string,
     flowId: string,
     transitionId: string,
-    input: { action: string },
+    /** `control`, `inputs`, `effects` and `mode` are what a person declared about the step. */
+    input: { action: string; control?: unknown; inputs?: unknown; effects?: unknown; mode?: string },
   ): Promise<Json> {
     return this.request<Json>(
       `/applications/${applicationId}/declared-flow/${flowId}/transitions/${transitionId}`,
@@ -886,6 +892,8 @@ export class DesktopCloudClient {
       purpose?: string;
       scopeStatement?: string;
       workflowType?: string;
+      /** What a run needs: `{ actor?, environments[], data[] }`; `null` clears it. */
+      requires?: unknown;
     },
   ): Promise<Json> {
     return this.request<Json>(
@@ -1072,6 +1080,7 @@ export class DesktopCloudClient {
     version: number | null;
     name: string | null;
     purpose: string | null;
+    requires?: unknown;
     states: Array<Record<string, unknown>>;
     transitions: Array<Record<string, unknown>>;
   }> {

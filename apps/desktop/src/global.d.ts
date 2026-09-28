@@ -191,19 +191,19 @@ declare global {
         getDeclaredFlow(applicationId: string, flowId: string): Promise<DeclaredFlowDetail>;
         createDeclaredFlow(applicationId: string, name: string, workflowType: string, purpose: string, scopeStatement: string, template?: string): Promise<DeclaredFlowSummary>;
         addDeclaredState(applicationId: string, flowId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
-        updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null): Promise<Record<string, unknown>>;
+        updateDeclaredState(applicationId: string, flowId: string, stateId: string, stateName: string, category: string, role?: string, terminalKind?: string | null, spec?: Record<string, unknown>): Promise<Record<string, unknown>>;
         deleteDeclaredState(applicationId: string, flowId: string, stateId: string): Promise<Record<string, unknown>>;
         addDeclaredTransition(applicationId: string, flowId: string, fromStateId: string, toStateId: string, action?: string): Promise<Record<string, unknown>>;
         completeDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         reopenDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
         /** Permanently deletes the flow and everything recorded against it. */
         deleteDeclaredFlow(applicationId: string, flowId: string): Promise<Record<string, unknown>>;
-        updateDeclaredTransition(applicationId: string, flowId: string, transitionId: string, action: string): Promise<Record<string, unknown>>;
+        updateDeclaredTransition(applicationId: string, flowId: string, transitionId: string, action: string, spec?: Record<string, unknown>): Promise<Record<string, unknown>>;
         deleteDeclaredTransition(applicationId: string, flowId: string, transitionId: string): Promise<Record<string, unknown>>;
         updateDeclaredFlow(
           applicationId: string,
           flowId: string,
-          input: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string },
+          input: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string; requires?: unknown },
         ): Promise<Record<string, unknown>>;
         getFlowDraftHistory(applicationId: string, flowId: string): Promise<FlowDraftHistory>;
         restoreFlowDraft(applicationId: string, flowId: string, snapshotId: string): Promise<Record<string, unknown>>;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AUTOMATION_IPC, AutomationOptionsSchema, StartGuidedRunInputSchema } from './index';
 import type { AutomationOptions } from './index';
-import { automatedRunBlockers, buildAutomatedStartInput, terminalChoices } from './automation-setup';
+import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, terminalChoices } from './automation-setup';
 import type { BlockerInput } from './automation-setup';
 
 const options = (over: Partial<AutomationOptions> = {}): AutomationOptions => ({
@@ -115,4 +115,31 @@ test('the channel names are unique', () => {
 test('a persona is never described to the renderer with a value in it', () => {
   const parsed = AutomationOptionsSchema.parse(options({ personas: [{ id: 'p', applicationId: uuid(1), name: 'T', roles: [], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x', ...({ credentials: [{ field: 'password', value: 'hunter2' }] } as object) }] }));
   assert.ok(!JSON.stringify(parsed).includes('hunter2'), 'unknown keys are stripped by the schema, so a stray value cannot ride along');
+});
+
+test('a Flow that declares nothing blocks nothing', () => {
+  assert.deepEqual(flowRequirementBlockers(undefined, { environmentType: 'STAGING', persona: null, dataKeys: [] }), []);
+  assert.deepEqual(flowRequirementBlockers({}, { environmentType: 'STAGING', persona: null, dataKeys: [] }), []);
+});
+
+test('every shortfall against what the Flow needs is said before Start, all at once', () => {
+  const blockers = flowRequirementBlockers(
+    { actor: 'admin', environments: ['DEVELOPMENT'], data: ['SEED_TOKEN', 'ADMIN_PASSWORD'] },
+    { environmentType: 'STAGING', persona: { name: 'Student', roles: ['student'], credentialFields: ['email'] }, dataKeys: [] },
+  );
+  assert.deepEqual(blockers.map((blocker) => blocker.code), ['FLOW_ENVIRONMENT', 'FLOW_ACTOR', 'FLOW_DATA']);
+  assert.match(blockers[0]!.message, /development, and this run is in staging/);
+  assert.match(blockers[1]!.message, /"Student" does not have the ADMIN role/);
+  assert.match(blockers[2]!.message, /SEED_TOKEN, ADMIN_PASSWORD/, 'a password the persona does not store is still needed');
+});
+
+test('the persona can stand in for the sign-in data, and a run with no persona is told to choose one', () => {
+  const satisfied = flowRequirementBlockers(
+    { actor: 'ADMIN', data: ['ADMIN_EMAIL', 'ADMIN_PASSWORD', 'COURSE_BUDGET'] },
+    { environmentType: 'STAGING', persona: { name: 'Admin', roles: ['Admin'], credentialFields: ['email', 'password'] }, dataKeys: ['COURSE_BUDGET'] },
+  );
+  assert.deepEqual(satisfied, []);
+  const none = flowRequirementBlockers({ actor: 'ADMIN' }, { environmentType: 'STAGING', persona: null, dataKeys: [] });
+  assert.equal(none[0]!.code, 'FLOW_ACTOR');
+  assert.match(none[0]!.message, /Choose a persona/);
 });

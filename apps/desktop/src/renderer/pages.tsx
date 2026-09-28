@@ -141,9 +141,10 @@ import {
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
-import { automatedRunBlockers, buildAutomatedStartInput, terminalChoices } from "./automation-shared";
+import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
+import { transitionDeclarationSummary } from "@tellann/flow-layout";
 import {
   flowBindingForEnvironment,
   flowInitializationHref,
@@ -4560,6 +4561,198 @@ function humanizeFlowLabel(value: string): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+/** State keys and actions are written LIKE_THIS; shown as words so they read at a glance. */
+function flowLabel(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replaceAll("_", " ")
+    .trim();
+}
+
+function flowKeyOf(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+const TERMINAL_LABELS: Record<string, string> = {
+  SUCCESS: "End · success",
+  FAILURE: "End · failure",
+  CANCELLATION: "End · cancelled",
+  ALTERNATE: "End · alternate",
+};
+
+/**
+ * A Mermaid graph of one drafted journey: GUEST → LOGIN PAGE → DASHBOARD, each arrow
+ * labelled with what the user does. Node ids are positional so a state can never
+ * collide with a Mermaid keyword.
+ */
+function workflowMermaid(workflow: any): string {
+  const states: any[] = Array.isArray(workflow?.states) ? workflow.states : [];
+  const transitions: any[] = Array.isArray(workflow?.transitions)
+    ? workflow.transitions
+    : [];
+  const idOf = new Map<string, string>();
+  states.forEach((state, index) => {
+    idOf.set(String(state.key ?? state.name), `s${index}`);
+    idOf.set(String(state.name), `s${index}`);
+  });
+  const text = (value: unknown) =>
+    flowLabel(String(value ?? "")).replace(/["\n\r<>]/g, " ");
+  const lines = [`flowchart ${states.length > 8 ? "TB" : "LR"}`];
+  states.forEach((state, index) => {
+    const label = text(state.name);
+    lines.push(
+      state.role === "INITIAL"
+        ? `  s${index}(["${label}"])`
+        : state.role === "TERMINAL"
+          ? `  s${index}[["${label}"]]`
+          : `  s${index}["${label}"]`,
+    );
+  });
+  for (const transition of transitions) {
+    const from = idOf.get(String(transition.from));
+    const to = idOf.get(String(transition.to));
+    if (!from || !to) continue;
+    const label = [
+      text(transition.action),
+      transition.condition ? `(${text(transition.condition)})` : "",
+      transition.mode === "MANUAL" ? "[you do this]" : transition.mode === "CONFIRM" ? "[you approve]" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    lines.push(label ? `  ${from} -->|"${label}"| ${to}` : `  ${from} --> ${to}`);
+  }
+  lines.push(
+    "  classDef start stroke:#4ade80,stroke-width:2px",
+    "  classDef finish stroke:#60a5fa,stroke-width:2px",
+    "  classDef problem stroke:#f87171,stroke-width:2px",
+  );
+  states.forEach((state, index) => {
+    if (state.role === "INITIAL") lines.push(`  class s${index} start`);
+    else if (state.role === "TERMINAL" && state.terminalKind !== "FAILURE")
+      lines.push(`  class s${index} finish`);
+    else if (state.category === "ERROR" || state.terminalKind === "FAILURE")
+      lines.push(`  class s${index} problem`);
+  });
+  return lines.join("\n");
+}
+
+/**
+ * One state of a drafted journey: its name, whether it starts or ends the flow, the
+ * person's own words about it, and each thing the user does to leave it. While
+ * editing, names and actions are inputs that commit on blur, because a name is
+ * re-keyed on commit and would swallow spaces if it were re-keyed per keystroke.
+ */
+function JourneyStepRow({
+  workflow,
+  state,
+  stateIndex,
+  editing,
+  onChange,
+}: {
+  workflow: any;
+  state: any;
+  stateIndex: number;
+  editing: boolean;
+  onChange: (change: (workflow: any) => any) => void;
+}) {
+  const stateKey = String(state.key ?? state.name);
+  const leaving = (workflow.transitions ?? [])
+    .map((transition: any, transitionIndex: number) => ({ transition, transitionIndex }))
+    .filter(({ transition }: any) => transition.from === stateKey);
+  return (
+    <li>
+      <span>{stateIndex + 1}</span>
+      <div className="journey-step">
+        <div className="journey-step-head">
+          {editing ? (
+            <input
+              aria-label={`State ${stateIndex + 1} name`}
+              defaultValue={flowLabel(state.name)}
+              onBlur={(event) => {
+                if (flowKeyOf(event.target.value) === stateKey) return;
+                onChange((item) => renameWorkflowState(item, stateIndex, event.target.value));
+              }}
+            />
+          ) : (
+            <strong className="flow-key">{flowLabel(state.name)}</strong>
+          )}
+          {state.role === "INITIAL" ? (
+            <em className="flow-role start">Start</em>
+          ) : state.role === "TERMINAL" ? (
+            <em className={`flow-role ${state.terminalKind === "FAILURE" ? "failure" : "end"}`}>
+              {TERMINAL_LABELS[state.terminalKind] ?? "End"}
+            </em>
+          ) : null}
+        </div>
+        {state.description ? <small>{state.description}</small> : null}
+        {Array.isArray(state.recognizer?.routes) && state.recognizer.routes.length ? (
+          <small className="journey-facts">Recognised by {state.recognizer.routes.join(", ")}{state.recognizer.headings?.length ? ` · heading “${state.recognizer.headings[0]}”` : ""}</small>
+        ) : null}
+        {leaving.map(({ transition, transitionIndex }: any) => (
+          <div className="journey-transition" key={`${transition.to}-${transitionIndex}`}>
+            <ArrowRight size={12} />
+            {editing ? (
+              <input
+                aria-label={`Action from ${flowLabel(state.name)} to ${flowLabel(transition.to)}`}
+                defaultValue={flowLabel(transition.action)}
+                onBlur={(event) => {
+                  const action = flowKeyOf(event.target.value);
+                  if (action === transition.action) return;
+                  onChange((item) => ({
+                    ...item,
+                    transitions: item.transitions.map((candidate: any, index: number) =>
+                      index === transitionIndex ? { ...candidate, action } : candidate,
+                    ),
+                  }));
+                }}
+              />
+            ) : (
+              <code>{flowLabel(transition.action)}</code>
+            )}
+            <ArrowRight size={12} />
+            <b>{flowLabel(transition.to)}</b>
+            {transition.condition ? <i>{flowLabel(transition.condition)}</i> : null}
+            {(() => {
+              // What a person (or the document) declared about how the step is done, shown so it can be checked before it is accepted.
+              const facts = transitionDeclarationSummary({ control: transition.control, expectedInput: transition.inputs, expectedOutput: transition.effects, mode: transition.mode });
+              return facts.length ? <small className="journey-facts">{facts.join(" · ")}</small> : null;
+            })()}
+          </div>
+        ))}
+      </div>
+    </li>
+  );
+}
+
+/** Renames a state and keeps every transition that pointed at it pointing at it. */
+function renameWorkflowState(workflow: any, stateIndex: number, name: string) {
+  const state = workflow.states[stateIndex];
+  const previous = String(state.key ?? state.name);
+  const requested = flowKeyOf(name);
+  const taken = new Set(
+    workflow.states
+      .filter((_: any, index: number) => index !== stateIndex)
+      .map((item: any) => String(item.key ?? item.name)),
+  );
+  let next = requested || previous;
+  for (let counter = 2; taken.has(next); counter += 1)
+    next = `${requested}_${counter}`;
+  return {
+    ...workflow,
+    states: workflow.states.map((item: any, index: number) =>
+      index === stateIndex ? { ...item, key: next, name: next } : item,
+    ),
+    transitions: workflow.transitions.map((transition: any) => ({
+      ...transition,
+      from: transition.from === previous ? next : transition.from,
+      to: transition.to === previous ? next : transition.to,
+    })),
+  };
+}
+
 function summarizeDraftRevision(
   parentDraft: IntentDraft | null,
   revisedDraft: IntentDraft,
@@ -5940,8 +6133,15 @@ export function IntentDetailPage() {
   );
   const pendingReview = draft.status === "PENDING_REVIEW";
   const generation = draftJson?.generation as
-    | { method?: string; reason?: string | null; message?: string | null }
+    | {
+        method?: string;
+        reason?: string | null;
+        message?: string | null;
+        attempts?: Array<{ provider: string; model: string; error: string }>;
+      }
     | undefined;
+  const languageIssues: Array<{ code: string; message: string; severity: string }> =
+    Array.isArray(draftJson?.languageIssues) ? draftJson.languageIssues : [];
   const coverage: Array<{
     filename: string;
     includedSections: number;
@@ -6194,40 +6394,29 @@ export function IntentDetailPage() {
                     </div>
                   </div>
                   {workflow.description ? <p>{workflow.description}</p> : null}
+                  <div className="journey-diagram">
+                    <FlowDiagram
+                      source={workflowMermaid(workflow)}
+                      label={`Journey ${workflowIndex + 1}: ${workflow.name}`}
+                    />
+                  </div>
                   <ol className="journey-steps">
                     {(workflow.states ?? []).map(
                       (state: any, stateIndex: number) => (
-                        <li key={state.key ?? state.name}>
-                          <span>{stateIndex + 1}</span>
-                          {editing ? (
-                            <input
-                              aria-label={`Step ${stateIndex + 1}`}
-                              value={state.name}
-                              onChange={(event) =>
-                                setEditedWorkflows((current) =>
-                                  current.map((item) =>
-                                    item.key !== workflow.key
-                                      ? item
-                                      : {
-                                          ...item,
-                                          states: item.states.map(
-                                            (candidate: any, index: number) =>
-                                              index === stateIndex
-                                                ? {
-                                                    ...candidate,
-                                                    name: event.target.value,
-                                                  }
-                                                : candidate,
-                                          ),
-                                        },
-                                  ),
-                                )
-                              }
-                            />
-                          ) : (
-                            <strong>{humanizeFlowLabel(state.name)}</strong>
-                          )}
-                        </li>
+                        <JourneyStepRow
+                          key={String(state.key ?? state.name)}
+                          workflow={workflow}
+                          state={state}
+                          stateIndex={stateIndex}
+                          editing={editing}
+                          onChange={(change) =>
+                            setEditedWorkflows((current) =>
+                              current.map((item) =>
+                                item.key === workflow.key ? change(item) : item,
+                              ),
+                            )
+                          }
+                        />
                       ),
                     )}
                   </ol>
@@ -6409,6 +6598,30 @@ export function IntentDetailPage() {
                     draft.source.replaceAll("_", " ").toLowerCase()}
                 </dd>
               </div>
+              {generation?.attempts?.length ? (
+                <div>
+                  <dt>AI provider attempts</dt>
+                  <dd>
+                    {generation.attempts
+                      .map(
+                        (attempt) =>
+                          `${attempt.provider}/${attempt.model}: ${attempt.error}`,
+                      )
+                      .join(" · ")}
+                  </dd>
+                </div>
+              ) : null}
+              {languageIssues.length ? (
+                <div>
+                  <dt>Flow checks</dt>
+                  <dd>
+                    {languageIssues
+                      .map((issue) => issue.message)
+                      .slice(0, 6)
+                      .join(" · ")}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Overall confidence</dt>
                 <dd>{Math.round(draft.confidence * 100)}%</dd>
@@ -12325,15 +12538,25 @@ export function NewRunPage() {
     ? flowRunReadiness(selectedFlow, environmentId)
     : null;
   const automatedTerminals = terminalChoices(flowDetail?.states ?? []);
+  const automatedPersona = automation.options?.personas.find((candidate) => candidate.id === automatedSelection.personaId) ?? null;
+  const automatedDataSet = automation.options?.dataSets.find((candidate) => candidate.id === automatedSelection.dataSetId) ?? null;
   const automatedBlockers = mode === "AUTOMATED"
-    ? automatedRunBlockers({
-        options: automation.options,
-        selection: automatedSelection,
-        environmentType: environment?.type ?? "STAGING",
-        flowReady: Boolean(selectedFlow && selectedFlowReadiness?.ready),
-        instrumentationChosen: Boolean(patchSetId),
-        terminals: automatedTerminals,
-      })
+    ? [
+        ...automatedRunBlockers({
+          options: automation.options,
+          selection: automatedSelection,
+          environmentType: environment?.type ?? "STAGING",
+          flowReady: Boolean(selectedFlow && selectedFlowReadiness?.ready),
+          instrumentationChosen: Boolean(patchSetId),
+          terminals: automatedTerminals,
+        }),
+        // What the Flow itself says a run needs (an account, an environment, data), said before Start.
+        ...flowRequirementBlockers((flowDetail as { requires?: { actor?: string; environments?: string[]; data?: string[] } | null } | null)?.requires, {
+          environmentType: environment?.type ?? "STAGING",
+          persona: automatedPersona,
+          dataKeys: automatedDataSet?.values.map((value) => value.key) ?? [],
+        }),
+      ]
     : [];
   const begin = async () => {
     setRunStartFailure(null);

@@ -107,12 +107,24 @@ export interface ControlDescriptor {
   href: string | null;
 }
 
+/**
+ * Where a typed value comes from, and what that means for how it is treated:
+ *   PROTECTED  a credential or secret. Read from the run data (marked secret) or the persona's stored sign-in,
+ *              typed but never recorded, and never invented.
+ *   PROVIDED   an ordinary value the run data must supply. A run stops before it starts if it is missing.
+ *   GENERATED  any unique value will do (a title, a name). The run data's value is used when there is one;
+ *              otherwise one is made for this run, so the flow needs no data set.
+ * Absent (a Flow declared before roles existed) behaves as PROVIDED.
+ */
+export type InputRole = 'PROTECTED' | 'PROVIDED' | 'GENERATED';
+
 export interface FormInput {
   /** Human/field name to look for. */
   name: string;
   label: string | null;
   /** Key resolved against the run's data set. */
   dataKey: string;
+  role?: InputRole;
 }
 
 export interface ApiCondition {
@@ -120,6 +132,24 @@ export interface ApiCondition {
   route: string;
   /** A status the completed request is expected to carry, when declared. */
   expectStatus: number | null;
+  /**
+   * Declared by a person rather than derived from the code. Only a declared effect is checked after the
+   * step: a request the code analysis merely thinks is made is evidence for recognition, not a promise.
+   */
+  declared?: boolean;
+}
+
+/** Who performs a step. AUTO: the run. CONFIRM: the run, after a person approves. MANUAL: the person, then the run verifies. */
+export type StepMode = 'AUTO' | 'CONFIRM' | 'MANUAL';
+
+/** What a run needs before it starts, as declared on the Flow. */
+export interface ContractRequirements {
+  /** The role the signed-in persona must have. */
+  actor?: string;
+  /** Environments the Flow may be run in. Empty means any environment automated runs are allowed in. */
+  environments: EnvironmentKind[];
+  /** Run-data keys the Flow needs. */
+  data: string[];
 }
 
 export interface CodeRef {
@@ -136,8 +166,12 @@ export interface ExecutableState {
   name: string;
   role: 'INITIAL' | 'NORMAL' | 'TERMINAL';
   terminalKind: string | null;
-  /** Canonical route patterns (`/courses/{param}`) that identify the state. Empty when the code gave none. */
+  /** Canonical route patterns (`/courses/{param}`) that identify the state. Declared ones win; else derived; else empty. */
   routePatterns: string[];
+  /** Headings (or the page title) a person declared for the state. Absent on a contract compiled before they existed. */
+  headings?: string[];
+  /** Visible text a person declared for the state. */
+  texts?: string[];
   /** Elements that must be present for the state to be recognised. */
   requiredElements: ControlDescriptor[];
   /** Elements that raise confidence when present but never veto. */
@@ -157,8 +191,12 @@ export interface ExecutableTransition {
   /** The control to act on. `null` when the code gave no evidence: the executor stops rather than guessing. */
   control: ControlDescriptor | null;
   inputs: FormInput[];
-  /** How dangerous performing it is. Derived from the handler's evidence, conservatively. */
+  /** How dangerous performing it is. Derived from the handler's evidence and any declared effects, conservatively. */
   actionClass: ActionClass;
+  /** Who performs it. Absent on a contract compiled before modes existed, which means AUTO. */
+  mode?: StepMode;
+  /** Where `control` came from: the code analysis, a person's declaration, or both agreeing. */
+  controlOrigin?: 'CODE' | 'DECLARED' | 'BOTH' | null;
   expectedApi: ApiCondition[];
   codeRefs: CodeRef[];
   derivation: DerivationStatus;
@@ -176,6 +214,8 @@ export interface ExecutableContract {
   /** Identity of the code analysis it was derived from. */
   analysisIdentity: string | null;
   initialStateKey: string;
+  /** What a run needs before it starts. Absent when nothing was declared. */
+  requires?: ContractRequirements;
   /**
    * Every normalised name a state answers to (its key, name, id...), mapped to its key. How a marker
    * that names a state by id is understood as the state the contract knows by key. Absent on a
@@ -192,6 +232,8 @@ export interface ExecutableContract {
 
 export interface RecognitionEvidence {
   route: 'MATCH' | 'MISMATCH' | 'NOT_APPLICABLE';
+  /** A declared heading or text against the page. Absent on evidence recorded before declarations existed. */
+  heading?: 'MATCH' | 'MISMATCH' | 'NOT_APPLICABLE';
   sdk: 'MATCH' | 'CONFLICT' | 'ABSENT';
   requiredPresent: number;
   requiredTotal: number;

@@ -96,12 +96,16 @@ const STOP_REASON_LABELS: Record<string, string> = {
   AUTOMATION_ENGINE_ERROR: "Tellann's own automation failed",
   MANUAL_AUTHENTICATION_REQUIRED: "Signing in needed a person",
   FRAMEWORK_NOT_YET_SUPPORTED: "This kind of application is not supported yet",
+  FLOW_REQUIREMENTS_NOT_MET: "The run did not meet what the Flow needs",
+  MANUAL_ACTION_REQUIRED: "A step needed a person",
 };
 
 /** For the two stops that are neither a finding nor a fault of ours, what actually happened, in words that do not blame anyone. */
 const USER_STOP_EXPLANATIONS: Record<string, string> = {
   MANUAL_AUTHENTICATION_REQUIRED: "Signing in needed a person (single sign-on, a one-time code or a CAPTCHA) and it was not completed. Nothing here says anything about the application.",
   FRAMEWORK_NOT_YET_SUPPORTED: "Automated Run does not yet read this kind of application. It is coming soon, and Guided or Assisted runs work in the meantime. Nothing here says anything about the application.",
+  FLOW_REQUIREMENTS_NOT_MET: "The Flow declares an account, an environment or data that this run was not given, so nothing was done. Nothing here says anything about the application.",
+  MANUAL_ACTION_REQUIRED: "The Flow marks a step as needing a person, and it was not answered. Nothing here says anything about the application.",
 };
 
 export type OutcomeTone = "success" | "application" | "infrastructure" | "neutral";

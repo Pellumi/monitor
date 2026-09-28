@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { sanitizeAiInputFull } from './privacy/sanitize-ai-input';
+import { normalizeWorkflowLanguage } from './flow-language';
+import { groundInDocument } from './flow-grounding';
+import type { FlowLanguageIssue } from './flow-language';
+import { sanitizeControl, sanitizeEffects, sanitizeInputs, sanitizeMode, sanitizeRecognizer, sanitizeRequires, sanitizeSubFlow } from './flow-spec';
+import type { FlowRequires, StateRecognizer, StepMode, SubFlowRef, TransitionControl, TransitionEffect, TransitionInput } from './flow-spec';
+import { FLOW_LANGUAGE_PROMPT } from './prompts/flow-language.prompt';
 
 // ─────────────────────────────────────────────────────────────
 // Document → flow inference (Gemini multimodal)
@@ -19,12 +25,21 @@ export const DocumentFlowStateSchema = z.object({
   terminalKind: z
     .enum(['SUCCESS', 'FAILURE', 'CANCELLATION', 'ALTERNATE'])
     .nullish(),
+  description: z.string().nullish().transform((value) => value ?? undefined),
+  actor: z.string().nullish().transform((value) => value ?? undefined),
+  recognizer: z.unknown().transform(sanitizeRecognizer),
+  subFlow: z.unknown().transform(sanitizeSubFlow),
 });
 
 export const DocumentFlowTransitionSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
-  action: z.string().optional(),
+  action: z.string().nullish().transform((value) => value ?? undefined),
+  condition: z.string().nullish().transform((value) => value ?? undefined),
+  control: z.unknown().transform(sanitizeControl),
+  inputs: z.unknown().transform((value) => { const inputs = sanitizeInputs(value); return inputs.length ? inputs : undefined; }),
+  effects: z.unknown().transform((value) => { const effects = sanitizeEffects(value); return effects.length ? effects : undefined; }),
+  mode: z.unknown().transform(sanitizeMode),
 });
 
 export const DocumentFlowSchema = z.object({
@@ -43,6 +58,7 @@ export const DocumentFlowSchema = z.object({
     .default('CUSTOM'),
   states: z.array(DocumentFlowStateSchema).min(1),
   transitions: z.array(DocumentFlowTransitionSchema).default([]),
+  requires: z.unknown().transform((value) => sanitizeRequires(value)),
 });
 
 export type DocumentFlow = z.infer<typeof DocumentFlowSchema>;
@@ -51,6 +67,8 @@ export interface DocumentFlowResult extends DocumentFlow {
   provider: string;
   model: string;
   promptHash: string;
+  /** Details the model declared that the document does not support, and so were left out. */
+  leftOut?: FlowLanguageIssue[];
 }
 
 export interface GenerateFlowFromDocumentOptions {
@@ -97,6 +115,17 @@ const RESPONSE_SCHEMA = {
             type: 'string',
             enum: ['SUCCESS', 'FAILURE', 'CANCELLATION', 'ALTERNATE'],
           },
+          description: { type: 'string' },
+          actor: { type: 'string' },
+          recognizer: {
+            type: 'object',
+            properties: {
+              routes: { type: 'array', items: { type: 'string' } },
+              headings: { type: 'array', items: { type: 'string' } },
+              texts: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          subFlow: { type: 'object', properties: { name: { type: 'string' } } },
         },
         required: ['name', 'category', 'role'],
       },
@@ -109,6 +138,35 @@ const RESPONSE_SCHEMA = {
           from: { type: 'string' },
           to: { type: 'string' },
           action: { type: 'string' },
+          condition: { type: 'string' },
+          control: {
+            type: 'object',
+            properties: {
+              role: { type: 'string', enum: ['link', 'button', 'tab', 'menuitem', 'checkbox', 'radio', 'field', 'select'] },
+              label: { type: 'string' },
+            },
+          },
+          inputs: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                dataKey: { type: 'string' },
+                role: { type: 'string', enum: ['PROTECTED', 'PROVIDED', 'GENERATED'] },
+              },
+              required: ['name'],
+            },
+          },
+          effects: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { method: { type: 'string' }, route: { type: 'string' }, status: { type: 'integer' } },
+              required: ['method', 'route'],
+            },
+          },
+          mode: { type: 'string', enum: ['AUTO', 'CONFIRM', 'MANUAL'] },
         },
         required: ['from', 'to'],
       },
@@ -116,6 +174,8 @@ const RESPONSE_SCHEMA = {
   },
   required: ['name', 'states', 'transitions'],
 } as const;
+// `requires` is left out of the response schema on purpose: the document rarely says it, and a schema
+// that lists it invites a model to fill it in.
 
 function buildPrompt(filename: string): string {
   return [
@@ -124,13 +184,10 @@ function buildPrompt(filename: string): string {
     '',
     'Extract ONE focused user-facing flow (a bounded capability such as checkout, sign-up, password reset, course enrolment — not the entire product) as a finite state machine.',
     '',
-    'Rules:',
-    '- STATE names: SCREAMING_SNAKE_CASE, concise, describe a stable situation the user/system is in (e.g. CART_REVIEW, PAYMENT_PENDING, ORDER_CONFIRMED).',
-    '- Exactly one state has role "INITIAL". At least one state has role "TERMINAL" with a terminalKind.',
-    '- category: NAVIGATION | UI | BUSINESS | ERROR | SYSTEM.',
-    '- TRANSITIONS connect state names that appear in "states". "action" is an optional short verb phrase (e.g. SUBMIT_PAYMENT).',
-    '- Include the obvious error/failure branch if the document implies one.',
-    '- 4–14 states is typical. Do not invent requirements that are not supported by the document.',
+    ...FLOW_LANGUAGE_PROMPT,
+    '',
+    'EXISTING FLOWS you may reuse as a subFlow: none. Do not use subFlow.',
+    '- Do not invent requirements that are not supported by the document.',
     '- "name" is a short human title for the flow. "purpose" is one sentence. "scopeStatement" states the boundary (first state → last state).',
     '',
     'Respond ONLY with JSON matching the provided schema.',
@@ -142,12 +199,23 @@ function resolveGemini(env: NodeJS.ProcessEnv) {
   if (!apiKey) return null;
   // A dedicated multimodal model override — NOT GEMINI_MODEL, which elsewhere
   // points at a lightweight text model that may not accept file inputs.
-  const model = env.GEMINI_MULTIMODAL_MODEL || 'gemini-2.5-flash';
   const base =
     env.GEMINI_GENERATE_CONTENT_URL ||
     'https://generativelanguage.googleapis.com/v1beta/models';
-  return { apiKey, model, url: `${base}/${model}:generateContent` };
+  const models = [
+    ...new Set([
+      env.GEMINI_MULTIMODAL_MODEL || 'gemini-2.5-flash',
+      ...(env.GEMINI_MULTIMODAL_FALLBACK_MODELS ?? 'gemini-2.5-flash-lite,gemini-3.5-flash-lite')
+        .split(',')
+        .map((model) => model.trim())
+        .filter(Boolean),
+    ]),
+  ];
+  return { apiKey, models, url: (model: string) => `${base}/${model}:generateContent` };
 }
+
+/** Load or availability problems that another model may not share. */
+const RETRY_WITH_NEXT_MODEL = new Set([404, 408, 429, 500, 502, 503, 504]);
 
 /**
  * Sends the raw file to Gemini and returns a validated single-flow graph.
@@ -168,50 +236,56 @@ export async function generateFlowFromDocument(
     .update(`${prompt}:${input.mimeType}:${input.fileBase64.length}`)
     .digest('hex');
 
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    input.timeoutMs ?? 60_000,
-  );
-
-  let payload: any;
-  try {
-    const res = await fetch(`${gemini.url}?key=${gemini.apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inline_data: {
-                  mime_type: input.mimeType,
-                  data: input.fileBase64,
-                },
-              },
-              { text: prompt },
-            ],
-          },
+  const body = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inline_data: { mime_type: input.mimeType, data: input.fileBase64 } },
+          { text: prompt },
         ],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-        },
-      }),
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(
-        `DOCUMENT_FLOW_PROVIDER_ERROR:${res.status}:${detail.slice(0, 300)}`,
-      );
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+    },
+  });
+
+  // A model that is overloaded or gone should not fail the upload while the next
+  // one is up. Each model gets the full timeout; the last failure is what is reported.
+  let payload: any;
+  let usedModel = gemini.models[0];
+  let lastError: Error | undefined;
+  for (const model of gemini.models) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 60_000);
+    try {
+      const res = await fetch(`${gemini.url(model)}?key=${gemini.apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body,
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        lastError = new Error(`DOCUMENT_FLOW_PROVIDER_ERROR:${res.status}:${model}:${detail.slice(0, 300)}`);
+        if (RETRY_WITH_NEXT_MODEL.has(res.status)) continue;
+        throw lastError;
+      }
+      payload = await res.json();
+      usedModel = model;
+      break;
+    } catch (error) {
+      if (error === lastError) throw error;
+      // A timeout or a dropped connection is worth one try on the next model.
+      lastError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      clearTimeout(timeout);
     }
-    payload = await res.json();
-  } finally {
-    clearTimeout(timeout);
   }
+  if (!payload) throw lastError ?? new Error('DOCUMENT_FLOW_PROVIDER_ERROR');
 
   const text: string | undefined =
     payload?.candidates?.[0]?.content?.parts
@@ -229,28 +303,23 @@ export async function generateFlowFromDocument(
     parsed = JSON.parse(match[0]);
   }
 
-  const flow = DocumentFlowSchema.parse(parsed);
+  const parsedFlow = DocumentFlowSchema.parse(parsed);
 
-  // Guardrail: strip transitions that reference unknown states, and make sure
-  // there is exactly one INITIAL state.
-  const names = new Set(flow.states.map((s) => s.name));
-  flow.transitions = flow.transitions.filter(
-    (t) => names.has(t.from) && names.has(t.to),
-  );
-  const initials = flow.states.filter((s) => s.role === 'INITIAL');
-  if (initials.length === 0 && flow.states[0]) flow.states[0].role = 'INITIAL';
-  if (initials.length > 1) {
-    let seen = false;
-    for (const s of flow.states) {
-      if (s.role !== 'INITIAL') continue;
-      if (seen) s.role = 'NORMAL';
-      seen = true;
-    }
-  }
-  for (const s of flow.states) {
-    if (s.role === 'TERMINAL' && !s.terminalKind) s.terminalKind = 'SUCCESS';
-    if (s.role !== 'TERMINAL') s.terminalKind = null;
-  }
+  // Whatever the model wrote, the flow the rest of Tellann sees is in the flow
+  // language: compact state keys, verb-phrase actions, one INITIAL, real endings,
+  // and no transition pointing at a state that does not exist.
+  const language = normalizeWorkflowLanguage({
+    key: 'DOCUMENT_FLOW',
+    name: parsedFlow.name,
+    states: parsedFlow.states,
+    transitions: parsedFlow.transitions,
+    requires: parsedFlow.requires,
+  });
+  // What a model declares outranks what the code says, so nothing is kept that the document does not support. A file
+  // read as text can be checked; one the model read directly (a PDF) cannot, so what would silently override the code
+  // when wrong (routes, headings, requests, environments) is left out and the rest is kept for the reviewer to see.
+  const readable = /^(text\/|application\/(json|xml|x-yaml|yaml))/.test(input.mimeType);
+  const { workflow: normalized, dropped } = groundInDocument(language, readable ? Buffer.from(input.fileBase64, 'base64').toString('utf8') : null);
 
   // Privacy: the derived name/purpose/scope come back into our system, so scrub
   // them the same way free-text description input is scrubbed.
@@ -258,12 +327,34 @@ export async function generateFlowFromDocument(
     value ? sanitizeAiInputFull(value).sanitizedText : value;
 
   return {
-    ...flow,
-    name: scrub(flow.name) || 'New Flow',
-    purpose: scrub(flow.purpose),
-    scopeStatement: scrub(flow.scopeStatement),
+    ...parsedFlow,
+    states: normalized.states.map((state) => ({
+      name: state.name,
+      category: state.category as DocumentFlow['states'][number]['category'],
+      role: state.role as DocumentFlow['states'][number]['role'],
+      terminalKind: state.role === 'TERMINAL' ? (state.terminalKind as DocumentFlow['states'][number]['terminalKind']) : null,
+      description: state.description ? scrub(state.description) : undefined,
+      actor: state.actor ? scrub(state.actor) : undefined,
+      recognizer: state.recognizer as StateRecognizer | undefined,
+      subFlow: state.subFlow as SubFlowRef | undefined,
+    })),
+    transitions: normalized.transitions.map((transition) => ({
+      from: transition.from,
+      to: transition.to,
+      action: transition.action,
+      condition: transition.condition,
+      control: transition.control as TransitionControl | undefined,
+      inputs: transition.inputs as TransitionInput[] | undefined,
+      effects: transition.effects as TransitionEffect[] | undefined,
+      mode: transition.mode as StepMode | undefined,
+    })),
+    requires: normalized.requires as FlowRequires | undefined,
+    name: scrub(parsedFlow.name) || 'New Flow',
+    purpose: scrub(parsedFlow.purpose),
+    scopeStatement: scrub(parsedFlow.scopeStatement),
     provider: 'gemini',
-    model: gemini.model,
+    model: usedModel,
     promptHash,
+    leftOut: dropped,
   };
 }

@@ -1,9 +1,10 @@
 import {
+  checkFlowRequirements,
   checkRunDataAvailability,
   materializeRunData,
   personaCredentialData,
+  resolveRunData,
   runAutomation,
-  runDataPort,
   seekInitialState,
   selectRenderTimingTargets,
   statesByComponent,
@@ -50,6 +51,12 @@ export interface ManualAuthenticationPort {
   wait(challenge: { kind: string; detail: string }): Promise<"DONE" | "CANCELLED" | "TIMED_OUT">;
 }
 
+/**
+ * The same person, asked about a step instead of a sign-in: to approve a step the Flow marks CONFIRM, or to do one it
+ * marks MANUAL. It is the one way a run pauses for a person, so it is the same port.
+ */
+export type StepHandOverPort = ManualAuthenticationPort;
+
 /** A person may be asked more than once (single sign-on, then a code). Past this it is a loop, not a sign-in. */
 export const MAX_MANUAL_HAND_OVERS = 3;
 
@@ -74,6 +81,8 @@ export interface AutomatedRunInput {
   /** Told where the run is, for the live view and the platform. Must not throw into the run. */
   onPhase?: (phase: AutomationExecutionPhase, detail?: { kind: string; detail: string } | null) => void;
   manualAuthentication?: ManualAuthenticationPort;
+  /** Who is asked about steps the Flow marks CONFIRM or MANUAL. Defaults to whoever is asked to sign in; absent means nobody, and such a step stops the run. */
+  stepHandOver?: StepHandOverPort;
   /** The supervised application's own health, folded into the run's: an application that dies mid-run is APPLICATION_CRASHED. */
   applicationHealth?: () => "OK" | "APPLICATION_CRASHED";
   now?: () => number;
@@ -114,19 +123,29 @@ async function execute(
   record: (type: EventType, data: Record<string, unknown>) => void,
 ): Promise<AutomationResult> {
 
-  // A run that cannot finish for want of data should say so before it touches the application.
+  // A run that cannot finish for want of what the Flow says it needs should say so before it touches the application:
+  // first what the Flow declared (account, environment, data), then the data its inputs will type.
   const materialized = materializeRunData(input.runData, now);
-  const available = checkRunDataAvailability(input.contract, materialized);
+  const requirements = checkFlowRequirements(input.contract, { environment: input.environment, persona: input.persona, materialized });
+  if (!requirements.ok) {
+    record("QA_AUTOMATION_STOPPED", { stopReason: requirements.stopReason, detail: requirements.detail, steps: 0, replans: 0 });
+    return { stopReason: requirements.stopReason, detail: requirements.detail, states: [], steps: 0, replans: 0, elapsedMs: now() - started };
+  }
+  const available = checkRunDataAvailability(input.contract, materialized, input.persona);
   if (!available.ok) {
     record("QA_AUTOMATION_STOPPED", { stopReason: available.stopReason, detail: available.detail, steps: 0, replans: 0 });
     return { stopReason: available.stopReason, detail: available.detail, states: [], steps: 0, replans: 0, elapsedMs: now() - started };
   }
+  // One resolver says where every typed value comes from (run data, made for this run, or the persona's sign-in),
+  // and so which of them must never be recorded.
+  const data = resolveRunData(input.contract, materialized, input.persona);
 
   // Everything this run will type is registered before anything is typed, so nothing it types is recorded.
   const credentials = personaCredentialDataValues(input.persona);
   input.browser.protectAutomationValues([
     ...credentials,
     ...[...materialized.values()].filter((value) => value.secret).map((value) => value.value),
+    ...data.protectedValues,
   ]);
 
   const stop = (stopReason: AutomationResult["stopReason"], detail: string): AutomationResult => {
@@ -178,6 +197,7 @@ async function execute(
     renderTiming: timing,
   });
 
+  const stepHandOver = input.stepHandOver ?? input.manualAuthentication;
   const ports: AutomationPorts = {
     snapshot: () => input.driver.snapshot(),
     act: (action) => input.driver.act(action),
@@ -191,7 +211,18 @@ async function execute(
           return (await input.driver.health?.()) ?? "OK";
         }
       : undefined,
-    data: runDataPort(materialized),
+    data: data.port,
+    handOver: stepHandOver
+      ? async (request) => {
+          const challenge = { kind: request.kind, detail: request.detail };
+          record("QA_AUTOMATION_MANUAL_ACTION_REQUIRED", { kind: challenge.kind, detail: challenge.detail, transitionId: request.transitionId });
+          phase(input, "AWAITING_USER", challenge);
+          const outcome = await waitForPerson(stepHandOver, challenge, input.cancelled);
+          record("QA_AUTOMATION_MANUAL_ACTION_COMPLETED", { kind: challenge.kind, outcome, transitionId: request.transitionId });
+          phase(input, "EXECUTING_FLOW");
+          return outcome;
+        }
+      : undefined,
     cancelled: input.cancelled,
     captureEvidence: diagnostics.captureEvidence,
     traceChunks: diagnostics.traceChunks,

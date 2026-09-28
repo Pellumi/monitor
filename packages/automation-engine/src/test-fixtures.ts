@@ -1,12 +1,13 @@
 import { AutomationLimitsSchema } from '@tellann/desktop-contracts';
 import type { AutomationLimits } from '@tellann/desktop-contracts';
-import type { ActionOutcome, AutomationEvent, AutomationPorts } from './executor';
+import type { ActionOutcome, AutomationEvent, AutomationPorts, StepHandOver } from './executor';
 import type {
   AutomationAction,
   ControlDescriptor,
   ExecutableContract,
   ExecutableState,
   ExecutableTransition,
+  ObservedRequest,
   SemanticElement,
   SemanticSnapshot,
 } from './types';
@@ -96,6 +97,10 @@ export interface FakePage {
   url?: string;
   /** SDK state reported when the page is entered. */
   sdkState?: string;
+  title?: string | null;
+  headings?: string[];
+  /** Requests the page reports having made. */
+  requests?: ObservedRequest[];
   elements: SemanticElement[];
 }
 
@@ -109,6 +114,8 @@ export interface FakeAppOptions {
   data?: Record<string, { value: string; secret: boolean }>;
   health?: () => 'OK' | 'APPLICATION_CRASHED' | 'BROWSER_CRASHED';
   seekInitial?: () => Promise<SemanticSnapshot | null>;
+  /** Answers a step that needs a person. The app is passed so a test can play the person (`app.goto`). */
+  handOver?: (request: StepHandOver, app: FakeApp) => Promise<'DONE' | 'CANCELLED' | 'TIMED_OUT'> | 'DONE' | 'CANCELLED' | 'TIMED_OUT';
   /** Clock advanced by `settle`, so duration budgets are testable without sleeping. */
   clockStepMs?: number;
 }
@@ -124,6 +131,9 @@ export class FakeApp implements AutomationPorts {
   readonly health: AutomationPorts['health'];
   readonly seekInitial: AutomationPorts['seekInitial'];
   readonly data: AutomationPorts['data'];
+  readonly handOver: AutomationPorts['handOver'];
+  /** Every step a person was asked about, in order. */
+  readonly handOvers: StepHandOver[] = [];
 
   constructor(private readonly options: FakeAppOptions) {
     this.page = options.start;
@@ -131,6 +141,17 @@ export class FakeApp implements AutomationPorts {
     this.health = options.health ? async () => options.health!() : undefined;
     this.seekInitial = options.seekInitial;
     this.data = options.data ? (key: string) => options.data![key] : undefined;
+    this.handOver = options.handOver
+      ? async (request) => {
+          this.handOvers.push(request);
+          return options.handOver!(request, this);
+        }
+      : undefined;
+  }
+
+  /** What a person doing something in the browser looks like to the run: the page changes without an action of ours. */
+  goto(key: string): void {
+    this.enter(key);
   }
 
   private enter(key: string): void {
@@ -141,7 +162,10 @@ export class FakeApp implements AutomationPorts {
 
   private view(): SemanticSnapshot {
     const page = this.options.pages[this.page]!;
-    return snapshot({ path: page.path, ...(page.url ? { url: page.url } : {}), elements: page.elements, sdkStates: [...this.sdk] });
+    return snapshot({
+      path: page.path, ...(page.url ? { url: page.url } : {}), elements: page.elements, sdkStates: [...this.sdk],
+      ...(page.title !== undefined ? { title: page.title } : {}), ...(page.headings ? { headings: page.headings } : {}), ...(page.requests ? { requests: page.requests } : {}),
+    });
   }
 
   async snapshot(): Promise<SemanticSnapshot> {

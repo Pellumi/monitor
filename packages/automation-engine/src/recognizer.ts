@@ -34,6 +34,12 @@ const WEIGHT = {
   required: 0.3,
   optional: 0.1,
   api: 0.1,
+  /**
+   * A heading or text a person declared. Corroboration only: it raises the score of the state it names, which is what
+   * tells apart two states that share a route, but its absence costs nothing. Wording changes (a heading that now
+   * carries a name, a rewritten button) must not strand a run whose route and SDK signal still say where it is.
+   */
+  declaredText: 0.25,
 } as const;
 
 /** Whether `descriptor` is satisfied by some visible element. Enabled state is irrelevant to *being in* a state. */
@@ -53,9 +59,33 @@ export function describes(descriptor: ControlDescriptor, element: SemanticElemen
   });
 }
 
+/**
+ * How many of the headings and texts a person declared for a state are on the page. A heading is looked for in the
+ * page title and headings; a text also in what the visible elements say. Either may be a part of what is shown
+ * ("Welcome back, Sam" satisfies "Welcome back"), because a heading that carries a name is still the heading.
+ */
+function declaredTextPresent(snapshot: SemanticSnapshot, state: ExecutableState): { present: number; total: number } {
+  const headings = state.headings ?? [];
+  const texts = state.texts ?? [];
+  const headingSurface = [snapshot.title, ...snapshot.headings].map(normalizeText).filter(Boolean);
+  const textSurface = [
+    ...headingSurface,
+    ...snapshot.elements.filter((element) => element.visible).flatMap((element) => [element.name, element.label]).map(normalizeText).filter(Boolean),
+  ];
+  const found = (wanted: string, surface: string[]) => {
+    const needle = normalizeText(wanted);
+    return Boolean(needle) && surface.some((shown) => shown === needle || shown.includes(needle));
+  };
+  return {
+    present: headings.filter((heading) => found(heading, headingSurface)).length + texts.filter((item) => found(item, textSurface)).length,
+    total: headings.length + texts.length,
+  };
+}
+
 export function recognize(snapshot: SemanticSnapshot, state: ExecutableState): Recognition {
   const evidence: RecognitionEvidence = {
     route: 'NOT_APPLICABLE',
+    heading: 'NOT_APPLICABLE',
     sdk: 'ABSENT',
     requiredPresent: 0,
     requiredTotal: state.requiredElements.length,
@@ -95,6 +125,18 @@ export function recognize(snapshot: SemanticSnapshot, state: ExecutableState): R
     }
   }
 
+  const declaredText = declaredTextPresent(snapshot, state);
+  if (declaredText.total > 0) {
+    if (declaredText.present === declaredText.total) {
+      evidence.heading = 'MATCH';
+      score += WEIGHT.declaredText;
+    } else {
+      // Recorded, so a report can say the wording differs, but not held against the state.
+      evidence.heading = 'MISMATCH';
+      score += WEIGHT.declaredText * (declaredText.present / declaredText.total);
+    }
+  }
+
   if (state.requiredElements.length > 0) {
     evidence.requiredPresent = state.requiredElements.filter((descriptor) => elementPresent(descriptor, snapshot.elements)).length;
     const missing = evidence.requiredTotal - evidence.requiredPresent;
@@ -124,7 +166,7 @@ export function recognize(snapshot: SemanticSnapshot, state: ExecutableState): R
 
 function confidenceFor(score: number, contradicted: boolean, evidence: RecognitionEvidence): Confidence {
   // A state with nothing to check it against cannot be recognised at all.
-  const hadAnyCheck = evidence.sdk !== 'ABSENT' || evidence.route !== 'NOT_APPLICABLE'
+  const hadAnyCheck = evidence.sdk !== 'ABSENT' || evidence.route !== 'NOT_APPLICABLE' || (evidence.heading ?? 'NOT_APPLICABLE') !== 'NOT_APPLICABLE'
     || evidence.requiredTotal > 0 || evidence.optionalTotal > 0 || evidence.apiTotal > 0;
   if (!hadAnyCheck) return 'LOW';
   if (contradicted) return 'LOW';

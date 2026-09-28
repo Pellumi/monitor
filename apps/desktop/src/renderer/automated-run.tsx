@@ -530,10 +530,31 @@ export function AutomatedRunLive({ status }: { status: AutomatedRunStatus }) {
         <section className="automated-handover" role="alert">
           <UserRound size={18} />
           <div>
-            <strong>Tellann needs you to sign in</strong>
-            <p>{status.awaitingUser.detail}</p>
-            <p className="field-hint">The browser Tellann opened is in front of you. Nothing you type there is recorded, and Tellann never tries to get past a CAPTCHA. When you are in, come back here.</p>
-            <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> I have signed in</button>
+            {status.awaitingUser.kind === "CONFIRM_STEP" ? (
+              <>
+                <strong>Approve this step</strong>
+                <p>{status.awaitingUser.detail}</p>
+                <p className="field-hint">The Flow marks this step as one a person approves first. Declining stops the run here; nothing further is done to your application.</p>
+                <div className="automated-inline">
+                  <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> Approve and continue</button>
+                  <button className="button" type="button" disabled={busy || !api} onClick={() => void act(() => api?.cancel())}><Square size={14} /> Decline and stop</button>
+                </div>
+              </>
+            ) : status.awaitingUser.kind === "MANUAL_STEP" ? (
+              <>
+                <strong>Tellann needs you to do a step</strong>
+                <p>{status.awaitingUser.detail}</p>
+                <p className="field-hint">The browser Tellann opened is in front of you. Nothing you type there is recorded. When you have done it, come back here and Tellann will check it worked and carry on.</p>
+                <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> I have done it</button>
+              </>
+            ) : (
+              <>
+                <strong>Tellann needs you to sign in</strong>
+                <p>{status.awaitingUser.detail}</p>
+                <p className="field-hint">The browser Tellann opened is in front of you. Nothing you type there is recorded, and Tellann never tries to get past a CAPTCHA. When you are in, come back here.</p>
+                <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> I have signed in</button>
+              </>
+            )}
           </div>
         </section>
       ) : null}

@@ -57,8 +57,10 @@ import {
   estimateNodeWidth,
   type ArrangeDirection,
 } from "@tellann/flow-layout";
+import { transitionDeclarationSummary } from "@tellann/flow-layout";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSidebarMode } from "@/components/sidebar-mode";
+import { RequiresSection, StateDeclarationSection, TransitionDeclarationSection } from "./declaration-sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -88,6 +90,11 @@ interface EditorState {
   provenance: string;
   role?: "NORMAL" | "INITIAL" | "TERMINAL";
   terminalKind?: "SUCCESS" | "FAILURE" | "CANCELLATION" | "ALTERNATE" | null;
+  // What a person declared about the state.
+  recognizer?: unknown;
+  subFlowId?: string | null;
+  description?: string | null;
+  actor?: string | null;
 }
 
 interface EditorTransition {
@@ -96,6 +103,12 @@ interface EditorTransition {
   toStateId: string;
   action?: string | null;
   provenance: string;
+  // What a person declared about the step: what it operates, what goes in, what the
+  // application does (`expectedInput` / `expectedOutput`), and who does it.
+  control?: unknown;
+  expectedInput?: unknown;
+  expectedOutput?: unknown;
+  mode?: "AUTO" | "CONFIRM" | "MANUAL" | null;
 }
 
 interface EditorFlow {
@@ -117,6 +130,8 @@ interface EditorFlow {
   draftSeq?: number;
   aiDraftStatus?: string | null;
   aiDraftSourceName?: string | null;
+  // What a run needs before it starts: { actor?, environments[], data[] }.
+  requires?: unknown;
 }
 
 interface DraftSnapshotSummary {
@@ -296,6 +311,9 @@ function EditorTransitionEdge({
     targetPosition,
   });
   const label = String(data?.label ?? "");
+  // Who does the step, when it is not the run, and the short facts a person declared about it.
+  const mode = data?.mode === "CONFIRM" || data?.mode === "MANUAL" ? String(data.mode) : null;
+  const detail = String(data?.detail ?? "");
   return (
     <>
       <BaseEdge
@@ -308,16 +326,18 @@ function EditorTransitionEdge({
           stroke: selected ? "#ffffff" : (style?.stroke ?? "#404040"),
         }}
       />
-      {label ? (
+      {label || mode ? (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan absolute rounded border border-[#262626] bg-[#0a0a0a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400"
+            className={`nodrag nopan absolute rounded border bg-[#0a0a0a] px-1.5 py-0.5 font-mono text-[9px] text-neutral-400 ${mode ? "border-amber-600/70" : "border-[#262626]"}`}
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               pointerEvents: "none",
             }}
+            title={[label, detail].filter(Boolean).join(" · ")}
           >
             {label}
+            {mode ? <span className="text-amber-500"> · {mode === "CONFIRM" ? "you approve" : "you do this"}</span> : null}
           </div>
         </EdgeLabelRenderer>
       ) : null}
@@ -609,6 +629,33 @@ export function FlowGraphEditor({
     },
   });
 
+  // What a person declared about a state. Sent with the state's own name and role unchanged, so it can never alter them.
+  const saveStateSpec = useMutation({
+    mutationFn: async (body: { state: EditorState; spec: Record<string, unknown> }) => {
+      const { state, spec } = body;
+      const res = await authenticatedFetch(
+        `${API}/applications/${appId}/declared-flow/${flowId}/states/${state.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stateName: state.stateName,
+            category: state.category,
+            role: state.role ?? "NORMAL",
+            terminalKind: state.role === "TERMINAL" ? state.terminalKind ?? "SUCCESS" : undefined,
+            ...spec,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to save what you declared about this state");
+      }
+      return res.json();
+    },
+    onSuccess: () => invalidateFlow(),
+  });
+
   const deleteState = useMutation({
     mutationFn: async (stateId: string) => {
       const res = await authenticatedFetch(
@@ -662,6 +709,26 @@ export function FlowGraphEditor({
         },
       );
       if (!res.ok) throw new Error("Failed to update transition");
+      return res.json();
+    },
+    onSuccess: () => invalidateFlow(),
+  });
+
+  // What a person declared about a step: its control, inputs, effects and who does it. The action is left as it is.
+  const saveTransitionSpec = useMutation({
+    mutationFn: async (body: { transitionId: string; spec: Record<string, unknown> }) => {
+      const res = await authenticatedFetch(
+        `${API}/applications/${appId}/declared-flow/${flowId}/transitions/${body.transitionId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body.spec),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to save what you declared about this step");
+      }
       return res.json();
     },
     onSuccess: () => invalidateFlow(),
@@ -792,6 +859,8 @@ export function FlowGraphEditor({
       purpose?: string;
       scopeStatement?: string;
       workflowType?: string;
+      /** What a run needs; `null` clears it. */
+      requires?: unknown;
     }) => {
       const res = await authenticatedFetch(
         `${API}/v1/applications/${appId}/flows/${flowId}`,
@@ -974,7 +1043,7 @@ export function FlowGraphEditor({
         source: t.fromStateId,
         target: t.toStateId,
         type: "editorTransition",
-        data: { label: t.action ?? "" },
+        data: { label: t.action ?? "", mode: t.mode ?? undefined, detail: transitionDeclarationSummary(t).join(" · ") },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: proposed ? "#d97706" : "#525252",
@@ -1445,6 +1514,17 @@ export function FlowGraphEditor({
                     onClose={() => setSelectedStateId(null)}
                   />
                 )}
+                {selectedState && (
+                  <StateDeclarationSection
+                    key={`declare-${selectedState.id}`}
+                    appId={appId}
+                    flowId={flowId}
+                    state={selectedState}
+                    disabled={!isDraft}
+                    saving={saveStateSpec.isPending}
+                    onSave={(spec) => saveStateSpec.mutate({ state: selectedState, spec })}
+                  />
+                )}
 
                 {/* Selected transition editor */}
                 {selectedEdge && (
@@ -1466,6 +1546,20 @@ export function FlowGraphEditor({
                     }
                     onDelete={() => deleteTransition.mutate(selectedEdge.id)}
                     onClose={() => setSelectedEdgeId(null)}
+                  />
+                )}
+                {selectedEdge && (
+                  <TransitionDeclarationSection
+                    key={`declare-${selectedEdge.id}`}
+                    transition={selectedEdge}
+                    actor={
+                      ((flow as { requires?: { actor?: string } | null } | undefined)?.requires?.actor) ??
+                      flow?.states.find((state) => state.id === selectedEdge.fromStateId)?.actor ??
+                      undefined
+                    }
+                    disabled={!isDraft}
+                    saving={saveTransitionSpec.isPending}
+                    onSave={(spec) => saveTransitionSpec.mutate({ transitionId: selectedEdge.id, spec })}
                   />
                 )}
 
@@ -1784,6 +1878,17 @@ export function FlowGraphEditor({
                 deleting={deleteFlow.isPending}
                 onDelete={() => deleteFlow.mutateAsync()}
               />
+            )}
+            {panelTab === "settings" && flow && (
+              <div className="mt-4">
+                <RequiresSection
+                  key={`requires-${flow.id}`}
+                  requires={flow.requires}
+                  disabled={!isDraft}
+                  saving={updateFlow.isPending}
+                  onSave={(requires) => updateFlow.mutate({ requires })}
+                />
+              </div>
             )}
           </div>
         </aside>

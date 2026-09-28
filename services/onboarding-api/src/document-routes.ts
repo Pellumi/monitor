@@ -278,6 +278,7 @@ export function createDocumentRouter(input: {
         version: 1,
         aiDraftStatus: 'PENDING_REVIEW',
         aiDraftSourceName: filename,
+        ...(generated.requires ? { requires: generated.requires as any } : {}),
       },
     });
 
@@ -290,6 +291,8 @@ export function createDocumentRouter(input: {
           graphId: graph.id, stateName: name, behaviorKey: name, canonicalBehavior: name,
           category: state.category, role: state.role,
           terminalKind: state.role === 'TERMINAL' ? (state.terminalKind ?? 'SUCCESS') : null,
+          description: state.description || null, actor: state.actor || null,
+          ...(state.recognizer ? { recognizer: state.recognizer as any } : {}),
           provenance: 'SUGGESTED_ACCEPTED', declaredById: req.user!.id,
         },
       });
@@ -301,7 +304,14 @@ export function createDocumentRouter(input: {
       const to = nodeByName.get(normalize(transition.to));
       if (!from || !to) continue;
       await prisma.behaviorGraphEdge.create({
-        data: { graphId: graph.id, fromNodeId: from.id, toNodeId: to.id, action: transition.action || null, provenance: 'SUGGESTED_ACCEPTED' },
+        data: {
+          graphId: graph.id, fromNodeId: from.id, toNodeId: to.id, action: transition.action || null, condition: transition.condition || null,
+          ...(transition.control ? { control: transition.control as any } : {}),
+          ...(transition.inputs ? { expectedInput: transition.inputs as any } : {}),
+          ...(transition.effects ? { expectedOutput: transition.effects as any } : {}),
+          mode: transition.mode ?? 'AUTO',
+          provenance: 'SUGGESTED_ACCEPTED',
+        },
       });
       transitionCount += 1;
     }

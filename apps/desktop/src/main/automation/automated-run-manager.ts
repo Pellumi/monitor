@@ -326,6 +326,7 @@ export class AutomatedRunManager {
           cancelled: () => active.cancelRequested,
           onPhase: (phase, detail) => this.setPhase(active, phase, phase === "AWAITING_USER" ? "AWAITING_USER" : "RUNNING", detail ?? null),
           manualAuthentication: { wait: (challenge) => this.waitForPerson(active, challenge) },
+          stepHandOver: { wait: (challenge) => this.waitForPerson(active, challenge) },
           applicationHealth: () => runner.health(),
         });
         outcome = this.outcomeOf(active, result);
@@ -401,6 +402,10 @@ export class AutomatedRunManager {
   // -- the pieces the executor is given ---------------------------------------
 
   private waitForPerson(active: ActiveRun, challenge: { kind: string; detail: string }): Promise<"DONE" | "CANCELLED" | "TIMED_OUT"> {
+    // Approving a step happens here, in Tellann. Signing in, or doing a step by hand, happens in the browser the run
+    // opened: that is where the person is sent, and what they type there is not recorded.
+    const inBrowser = challenge.kind !== "CONFIRM_STEP";
+    const title = challenge.kind === "CONFIRM_STEP" ? "Tellann needs your approval" : challenge.kind === "MANUAL_STEP" ? "Tellann needs you to do a step" : "Tellann needs you to sign in";
     return new Promise((resolve) => {
       const timer = setTimeout(() => finish("TIMED_OUT"), this.deps.manualWaitMs ?? DEFAULT_MANUAL_WAIT_MS);
       const finish = (outcome: "DONE" | "CANCELLED" | "TIMED_OUT") => {
@@ -409,14 +414,16 @@ export class AutomatedRunManager {
         active.wait = null;
         active.status.awaitingUser = null;
         // Recording resumes only once the person is done: what they typed while it was paused was never captured.
-        void (active.session?.setCapturePaused(false) ?? Promise.resolve()).catch(() => undefined).finally(() => resolve(outcome));
+        void ((inBrowser ? active.session?.setCapturePaused(false) : undefined) ?? Promise.resolve()).catch(() => undefined).finally(() => resolve(outcome));
       };
       active.wait = { resolve: finish };
       active.status.awaitingUser = challenge;
       void (async () => {
-        await active.session?.setCapturePaused(true).catch(() => undefined);
-        await active.session?.bringToFront().catch(() => undefined);
-        this.host.notify({ title: "Tellann needs you to sign in", body: challenge.detail });
+        if (inBrowser) {
+          await active.session?.setCapturePaused(true).catch(() => undefined);
+          await active.session?.bringToFront().catch(() => undefined);
+        }
+        this.host.notify({ title, body: challenge.detail });
         await this.report(active, { executionPhase: "AWAITING_USER", awaitingUser: challenge });
       })();
       // Cancelled or gone between deciding to wait and getting here.

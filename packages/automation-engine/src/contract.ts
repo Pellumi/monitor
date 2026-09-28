@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
-import { canonicalPattern, normalizeStateKey } from './keys';
+import { canonicalPattern, normalizeStateKey, normalizeText } from './keys';
+import {
+  declaredControl, declaredEffects, declaredInputs, declaredMode, declaredRecognizer, declaredRequirements, descriptorFromDeclaration, elementForRole,
+} from './declared';
 import { classifyAction } from './policy';
 import { stateAliasesOf } from './sdk-signals';
 import type {
@@ -44,6 +47,8 @@ export interface FlowSnapshotLike {
     behaviorKey?: string | null;
     role: 'INITIAL' | 'NORMAL' | 'TERMINAL';
     terminalKind?: string | null;
+    /** How to tell the state: `{ routes, headings, texts }`, declared by a person. */
+    recognizer?: unknown;
   }>;
   transitions: Array<{
     id: string;
@@ -53,6 +58,10 @@ export interface FlowSnapshotLike {
     toStateId?: string;
     action?: string | null;
     expectedInput?: unknown;
+    /** What the user operates, what the step causes, and who performs it: declared by a person. */
+    control?: unknown;
+    expectedOutput?: unknown;
+    mode?: unknown;
   }>;
 }
 
@@ -96,6 +105,8 @@ export interface CompileInput {
    * was actually applied belong here: the ranking treats a matching anchor as certain.
    */
   anchors?: Record<string, string>;
+  /** What the Flow declares it needs before a run starts. */
+  requires?: unknown;
 }
 
 const MAX_CALLER_DEPTH = 2;
@@ -121,9 +132,11 @@ export function compileExecutableContract(input: CompileInput): ExecutableContra
   const initial = input.flow.states.find((state) => state.role === 'INITIAL');
   return {
     flowVersionId: input.flowVersionId,
-    flowHash: createHash('sha256').update(JSON.stringify(input.flow)).digest('hex'),
+    // `requires` is part of what was published, so it is part of the hash; a Flow without it hashes as it always did.
+    flowHash: createHash('sha256').update(JSON.stringify(input.requires === undefined ? input.flow : { ...input.flow, requires: input.requires })).digest('hex'),
     analysisIdentity: input.analysisIdentity ?? null,
     initialStateKey: initial ? keyOf.get(initial.id)! : '',
+    ...(declaredRequirements(input.requires) ? { requires: declaredRequirements(input.requires) } : {}),
     stateAliases: stateAliasesOf(input.flow.states),
     states,
     transitions,
@@ -139,7 +152,9 @@ function compileState(
   index: CodeIndex,
 ): ExecutableState {
   const entity = checkpoint?.mapping.entityId ? index.entity(checkpoint.mapping.entityId) : undefined;
-  const routePatterns = entity ? index.routesFor(entity) : [];
+  const declared = declaredRecognizer(state.recognizer);
+  // A route a person declared is the truth about the state; what the code suggests is the fallback for a state that declared none.
+  const routePatterns = declared.routes.length > 0 ? declared.routes : entity ? index.routesFor(entity) : [];
   const optional = entity ? index.controlsInFile(entity).slice(0, MAX_OPTIONAL_ELEMENTS) : [];
   return {
     key,
@@ -147,6 +162,8 @@ function compileState(
     role: state.role,
     terminalKind: state.terminalKind ?? null,
     routePatterns,
+    headings: declared.headings,
+    texts: declared.texts,
     requiredElements: [],
     optionalElements: optional,
     // The application's own SDK marker is the strongest evidence and is required by the
@@ -170,19 +187,48 @@ function compileTransition(
 ): ExecutableTransition {
   const entity = checkpoint?.mapping.entityId ? index.entity(checkpoint.mapping.entityId) : undefined;
   const found = entity ? index.controlsFor(entity) : { controls: [], endpoints: [], traced: false };
-  const control = mergeControls(found.controls.map((item) => item.descriptor));
-  if (anchor && found.controls.length > 0) control.actionAnchor = anchor;
+  const derived = mergeControls(found.controls.map((item) => item.descriptor));
   const only = found.controls.length === 1 ? found.controls[0]!.entity : null;
   const distinct = new Set(found.controls.map((item) => descriptorIdentity(item.descriptor)));
 
-  const methods = found.endpoints.map((endpoint) => endpoint.method);
-  const isNavigation = found.controls.some((item) => item.descriptor.element?.toLowerCase() === 'a' || item.descriptor.href !== null);
+  // The control a person declared is what the step operates. When the code analysis found the same control
+  // (by its label or test id) the two are merged, so the page is matched on everything either knows; when it
+  // found others, or none, the declaration stands alone. It is never guessed from the action name.
+  const declaredCtl = declaredControl(transition.control);
+  const agreeing = declaredCtl
+    ? found.controls.find((item) => item.descriptor.labels.some((label) => normalizeText(label) === normalizeText(declaredCtl.label)) || (declaredCtl.testId !== null && item.descriptor.testId === declaredCtl.testId))
+    : undefined;
+  let control: ControlDescriptor;
+  let controlOrigin: ExecutableTransition['controlOrigin'] = null;
+  if (declaredCtl) {
+    const base = agreeing?.descriptor;
+    control = {
+      ...descriptorFromDeclaration(declaredCtl),
+      labels: [...new Set([declaredCtl.label, ...(base?.labels ?? [])])],
+      testId: declaredCtl.testId ?? base?.testId ?? null,
+      domId: base?.domId ?? null,
+      element: elementForRole(declaredCtl.role) ?? base?.element ?? null,
+      event: base?.event ?? null,
+      href: base?.href ?? null,
+    };
+    controlOrigin = agreeing ? 'BOTH' : 'DECLARED';
+  } else {
+    control = derived;
+    controlOrigin = found.controls.length > 0 ? 'CODE' : null;
+  }
+  if (anchor && (agreeing || (!declaredCtl && found.controls.length > 0))) control.actionAnchor = anchor;
+
+  const effects = declaredEffects(transition.expectedOutput);
+  const methods = [...found.endpoints.map((endpoint) => endpoint.method), ...effects.map((effect) => effect.method)];
+  const isNavigation = found.controls.some((item) => item.descriptor.element?.toLowerCase() === 'a' || item.descriptor.href !== null)
+    || declaredCtl?.role === 'link';
   const submitsForm = found.controls.some((item) => item.descriptor.event === 'onSubmit');
 
   let derivation: DerivationStatus = derivationFor(checkpoint);
   if (derivation === 'RESOLVED') {
-    if (found.controls.length === 0) derivation = 'UNRESOLVED';
-    else if (distinct.size > 1) derivation = 'AMBIGUOUS';
+    if (found.controls.length === 0) derivation = declaredCtl ? 'RESOLVED' : 'UNRESOLVED';
+    // Several derived controls are only ambiguous if nobody said which one; a declaration that names one settles it.
+    else if (distinct.size > 1 && !declaredCtl) derivation = 'AMBIGUOUS';
   }
 
   return {
@@ -190,8 +236,10 @@ function compileTransition(
     from,
     to,
     action: transition.action ?? null,
-    control: found.controls.length > 0 ? control : null,
-    inputs: inputsFrom(transition.expectedInput),
+    control: found.controls.length > 0 || declaredCtl ? control : null,
+    controlOrigin,
+    mode: declaredMode(transition.mode),
+    inputs: declaredInputs(transition.expectedInput),
     // No evidence about the handler classifies as CLIENT_STATE_MUTATION, never READ; see classifyAction.
     actionClass: classifyAction({
       methods,
@@ -200,7 +248,7 @@ function compileTransition(
       handlerTraced: found.traced,
       submitsForm,
     }),
-    expectedApi: found.endpoints.map((endpoint): ApiCondition => ({ method: endpoint.method, route: endpoint.route, expectStatus: null })),
+    expectedApi: mergeApi(found.endpoints.map((endpoint): ApiCondition => ({ method: endpoint.method, route: endpoint.route, expectStatus: null })), effects),
     codeRefs: codeRefs(checkpoint, entity),
     derivation,
     controlSource: only && only.path && only.startLine
@@ -222,25 +270,12 @@ function codeRefs(checkpoint: CheckpointLike | undefined, entity: CodeEntityLike
   return [{ file, symbol: checkpoint?.mapping.symbol ?? entity?.name ?? null, entityId: entity?.id ?? checkpoint?.mapping.entityId ?? null }];
 }
 
-function inputsFrom(expected: unknown): FormInput[] {
-  if (!expected) return [];
-  const raw: unknown[] = Array.isArray(expected)
-    ? expected
-    : typeof expected === 'object' ? Object.keys(expected as object) : [];
-  return raw.flatMap((item): FormInput[] => {
-    if (typeof item === 'string' && item.trim()) return [{ name: item, label: null, dataKey: item }];
-    if (item && typeof item === 'object') {
-      const record = item as Record<string, unknown>;
-      const name = typeof record.name === 'string' ? record.name : typeof record.field === 'string' ? record.field : null;
-      if (!name) return [];
-      return [{
-        name,
-        label: typeof record.label === 'string' ? record.label : null,
-        dataKey: typeof record.dataKey === 'string' ? record.dataKey : name,
-      }];
-    }
-    return [];
-  });
+/** Derived and declared requests together. A declared one replaces a derived one for the same request, keeping the status a person expects. */
+function mergeApi(derived: ApiCondition[], declared: ApiCondition[]): ApiCondition[] {
+  const merged = new Map<string, ApiCondition>();
+  for (const condition of derived) merged.set(`${condition.method} ${condition.route}`, condition);
+  for (const condition of declared) merged.set(`${condition.method} ${condition.route}`, condition);
+  return [...merged.values()];
 }
 
 // -- descriptors -------------------------------------------------------------

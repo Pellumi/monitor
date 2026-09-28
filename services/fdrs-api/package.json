@@ -7,7 +7,7 @@
     "build": "tsc",
     "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
-    "test": "tsc && node --test dist/automated-reconciliation.test.js dist/flow-domain.test.js"
+    "test": "tsc && node --test dist/automated-reconciliation.test.js dist/flow-domain.test.js dist/accepted-workflows.test.js dist/sub-flows.test.js dist/flow-spec-data.test.js"
   },
   "dependencies": {
     "@tellann/ai": "workspace:*",

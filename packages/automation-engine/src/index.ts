@@ -14,6 +14,7 @@ export * from './planner';
 export * from './flow-path';
 export * from './targets';
 export * from './support';
+export * from './declared';
 export * from './contract';
 export * from './anchors';
 export * from './sdk-signals';

@@ -18,6 +18,24 @@ class FetchError extends Error {
   }
 }
 
+/** The provider's own explanation of a failed call, kept short enough to show to a person. */
+async function describeProviderFailure(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      const body = Array.isArray(parsed) ? parsed[0] : parsed;
+      message = body?.error?.message ?? body?.message ?? text;
+    } catch {
+      // Not JSON; the raw text is the best explanation there is.
+    }
+    return String(message).replace(/\s+/g, ' ').trim().slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -169,6 +187,12 @@ export class JsonHttpProvider implements AIProvider {
   private readonly enableRepair: boolean;
   private readonly repairTimeoutMs: number;
 
+  /**
+   * The circuit is per model, not per vendor: a demand spike on one Gemini model
+   * must not also shut the door on the fallback model behind it.
+   */
+  private readonly circuitKey: string;
+
   constructor(
     public name: 'gemini' | 'deepseek',
     public model: string,
@@ -176,6 +200,7 @@ export class JsonHttpProvider implements AIProvider {
     private readonly apiKey: string,
     options?: JsonHttpProviderOptions,
   ) {
+    this.circuitKey = `${name}:${model}`;
     this.timeoutMs = options?.timeoutMs ?? 15_000;
     this.enableRepair =
       options?.enableRepair ?? String(process.env.AI_JSON_REPAIR_ENABLED).toLowerCase() !== 'false';
@@ -192,7 +217,7 @@ export class JsonHttpProvider implements AIProvider {
   }
 
   async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<StructuredGenerationResult<T>> {
-    if (isCircuitOpen(this.name)) throw new Error(`CIRCUIT_OPEN:${this.name}`);
+    if (isCircuitOpen(this.circuitKey)) throw new Error(`CIRCUIT_OPEN:${this.circuitKey}`);
     const timeoutMs = input.timeoutMs ?? this.timeoutMs;
     let lastError: unknown;
     let invalidText = '';
@@ -210,7 +235,7 @@ export class JsonHttpProvider implements AIProvider {
       try {
         invalidText = await this.callStructuredPrompt(input.prompt, controller.signal, input.maxOutputTokens);
         const data = input.schema.parse(extractJson(invalidText));
-        recordSuccess(this.name);
+        recordSuccess(this.circuitKey);
         return { data, rawText: invalidText, repaired: false };
       } catch (error) {
         lastError = error;
@@ -219,13 +244,13 @@ export class JsonHttpProvider implements AIProvider {
             const details = error instanceof Error ? error.message : String(error);
             const repairedText = await this.callStructuredPrompt(input.repairPrompt(invalidText, details), controller.signal);
             const data = input.schema.parse(extractJson(repairedText));
-            recordSuccess(this.name);
+            recordSuccess(this.circuitKey);
             return { data, rawText: repairedText, repaired: true };
           } catch (repairError) {
             lastError = repairError;
           }
         }
-        recordFailure(this.name);
+        recordFailure(this.circuitKey);
         // The caller gave up, so there is nothing left to retry for.
         if (input.signal?.aborted) break;
         if (isAbortError(error)) {
@@ -267,16 +292,27 @@ export class JsonHttpProvider implements AIProvider {
   }
 
   /**
+   * A flow draft is a few thousand tokens of JSON. Gemini's default is to think
+   * before answering, which on a long document costs more than the request
+   * timeout allows, so reasoning is kept low and the answer gets explicit room.
+   */
+  private flowDraftOptions(): Record<string, unknown> {
+    return this.name === 'gemini'
+      ? { reasoning_effort: 'low', max_completion_tokens: 8192 }
+      : { max_tokens: 8192 };
+  }
+
+  /**
    * Full result including repair metadata.
    * Used by generateAiFlowDraft() to record repaired/fallbackUsed in AI logs.
    */
   async generateFlowDraftWithMeta(input: GenerateFlowInput): Promise<FlowDraftWithMeta> {
-    if (isCircuitOpen(this.name)) {
-      throw new Error(`CIRCUIT_OPEN:${this.name}`);
+    if (isCircuitOpen(this.circuitKey)) {
+      throw new Error(`CIRCUIT_OPEN:${this.circuitKey}`);
     }
 
-    const maxRetries = 3;
-    const retryDelays = [0, 500, 1500];
+    const maxRetries = 4;
+    const retryDelays = [0, 1000, 3000, 6000];
     let lastError: unknown;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -298,6 +334,7 @@ export class JsonHttpProvider implements AIProvider {
             model: this.model,
             messages: [{ role: 'user', content: input.prompt }],
             response_format: { type: 'json_object' },
+            ...this.flowDraftOptions(),
           }),
           signal: controller.signal,
         });
@@ -305,13 +342,14 @@ export class JsonHttpProvider implements AIProvider {
         clearTimeout(timeout);
 
         if (!res.ok) {
-          const fetchErr = new FetchError(`${this.name} provider failed with ${res.status}`, res.status);
+          const detail = await describeProviderFailure(res);
+          const fetchErr = new FetchError(`${this.name} (${this.model}) failed with ${res.status}${detail ? `: ${detail}` : ''}`, res.status);
           if (RETRYABLE_STATUS_CODES.has(res.status)) {
             lastError = fetchErr;
-            recordFailure(this.name);
+            recordFailure(this.circuitKey);
             continue;
           }
-          recordFailure(this.name);
+          recordFailure(this.circuitKey);
           throw fetchErr;
         }
 
@@ -325,14 +363,14 @@ export class JsonHttpProvider implements AIProvider {
         // Phase 5: Try JSON extraction + validation, repair if needed
         const result = await this.parseWithRepair(rawText, input);
 
-        recordSuccess(this.name);
+        recordSuccess(this.circuitKey);
         return result;
       } catch (err) {
         clearTimeout(timeout);
 
         if (err instanceof DOMException && err.name === 'AbortError') {
           lastError = new Error(`TIMEOUT:${this.name} request timed out after ${this.timeoutMs}ms`);
-          recordFailure(this.name);
+          recordFailure(this.circuitKey);
           continue;
         }
 
@@ -343,16 +381,16 @@ export class JsonHttpProvider implements AIProvider {
 
         // Parse/validation errors are not retried — fail immediately
         if (err instanceof SyntaxError || err instanceof ZodError) {
-          recordFailure(this.name);
+          recordFailure(this.circuitKey);
           throw err;
         }
 
-        recordFailure(this.name);
+        recordFailure(this.circuitKey);
         throw err;
       }
     }
 
-    recordFailure(this.name);
+    recordFailure(this.circuitKey);
     throw lastError ?? new Error(`${this.name} provider failed after ${maxRetries} attempts`);
   }
 

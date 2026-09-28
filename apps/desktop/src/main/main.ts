@@ -1883,10 +1883,34 @@ async function currentFlowCodebaseAnalysis(applicationId: string): Promise<Codeb
  * Flow's purpose and scope. Those are exactly the fields the query builder
  * weights context on, so leaving them null quietly halves the ranking signal.
  */
-function flowInputFromInitialization(initialization: Record<string, any>, detail: DeclaredFlowDetail | null) {
+/** The named fields of an object the renderer sent, and nothing else. */
+function pickDeclared(source: unknown, keys: string[]): Record<string, unknown> {
+  if (!source || typeof source !== 'object') return {};
+  const record = source as Record<string, unknown>;
+  return Object.fromEntries(keys.filter((key) => Object.prototype.hasOwnProperty.call(record, key)).map((key) => [key, record[key]]));
+}
+
+function flowInputFromInitialization(
+  initialization: Record<string, any>,
+  detail: DeclaredFlowDetail | null,
+  /** The pinned published version. Its rows are the ones the checkpoints are ids of, including any expanded from a reused flow. */
+  version: { states: Array<Record<string, unknown>>; transitions: Array<Record<string, unknown>> } | null = null,
+) {
   const report = initialization.codeReviewReport ?? {};
-  const declaredStates = new Map((detail?.states ?? []).map((item) => [String(item.id), item]));
-  const declaredTransitions = new Map((detail?.transitions ?? []).map((item) => [String(item.id), item]));
+  const declaredStates = new Map<string, any>([...(detail?.states ?? []), ...(version?.states ?? [])].map((item: any) => [String(item.id), item]));
+  const declaredTransitions = new Map<string, any>([...(detail?.transitions ?? []), ...(version?.transitions ?? [])].map((item: any) => [String(item.id), item]));
+  const routesOf = (recognizer: unknown): string[] =>
+    recognizer && typeof recognizer === 'object' && Array.isArray((recognizer as { routes?: unknown }).routes)
+      ? (recognizer as { routes: unknown[] }).routes.filter((route): route is string => typeof route === 'string')
+      : [];
+  const controlOf = (control: unknown) =>
+    control && typeof control === 'object'
+      ? {
+          label: typeof (control as { label?: unknown }).label === 'string' ? (control as { label: string }).label : null,
+          testId: typeof (control as { testId?: unknown }).testId === 'string' ? (control as { testId: string }).testId : null,
+          role: typeof (control as { role?: unknown }).role === 'string' ? (control as { role: string }).role : null,
+        }
+      : null;
   return {
     id: String(initialization.flowId),
     name: String(detail?.name ?? initialization.manifest?.flowName ?? initialization.flow?.name ?? 'Flow'),
@@ -1902,6 +1926,8 @@ function flowInputFromInitialization(initialization: Record<string, any>, detail
         role: declared?.role ?? item.role ?? null,
         terminalKind: declared?.terminalKind ?? item.terminalKind ?? null,
         canonicalBehavior: declared?.canonicalBehavior ?? null,
+        // A route a person declared points straight at its page in the code.
+        routes: routesOf(declared?.recognizer),
       };
     }),
     transitions: (report.transitionFindings ?? []).map((item: any) => {
@@ -1912,6 +1938,8 @@ function flowInputFromInitialization(initialization: Record<string, any>, detail
         toStateId: String(item.toStateId),
         action: declared?.action ?? item.action ?? null,
         condition: declared?.condition ?? null,
+        // A control a person named points straight at that control in the code.
+        control: controlOf(declared?.control),
       };
     }),
   } as any;
@@ -2035,6 +2063,11 @@ async function runFlowMappingSubmission(
   // Enrichment only: a Flow that cannot be fetched still maps, just with less
   // context, so this must never be the thing that fails initialization.
   const detail = await cloud.declaredFlow(applicationId, String(initialization.flowId)).catch(() => null);
+  // What was declared lives on the rows of the version the initialization is pinned to; a flow that reuses another
+  // has ids only that version knows. Also enrichment: without it the words alone are matched, as before.
+  const pinned = initialization.flowVersionId
+    ? await cloud.flowVersionGraph(applicationId, String(initialization.flowId), String(initialization.flowVersionId)).catch(() => null)
+    : null;
   const initializationId = String(initialization.id);
   const { retrieval, excerpts: extracted } = await runFlowMappingRetrieval({
     applicationId,
@@ -2047,7 +2080,7 @@ async function runFlowMappingSubmission(
       if (!state?.analysis) throw new Error('FLOW_CURRENT_CODEBASE_ANALYSIS_REQUIRED');
       return state.analysis;
     },
-    flow: flowInputFromInitialization(initialization, detail),
+    flow: flowInputFromInitialization(initialization, detail, pinned),
     workspaceRoot,
     onProgress: throttledCheckpointProgress(
       initializationId,
@@ -2912,9 +2945,13 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.updateDeclaredState, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { applicationId?: unknown; flowId?: unknown; stateId?: unknown; stateName?: unknown; category?: unknown; role?: unknown; terminalKind?: unknown };
+    const value = input as { applicationId?: unknown; flowId?: unknown; stateId?: unknown; stateName?: unknown; category?: unknown; role?: unknown; terminalKind?: unknown; spec?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.stateId !== 'string' || typeof value.stateName !== 'string' || typeof value.category !== 'string') throw new Error('INVALID_DECLARED_STATE_UPDATE_REQUEST');
-    return cloud.updateDeclaredState(value.applicationId, value.flowId, value.stateId, { stateName: value.stateName, category: value.category, role: typeof value.role === 'string' ? value.role : 'NORMAL', terminalKind: typeof value.terminalKind === 'string' ? value.terminalKind : null });
+    return cloud.updateDeclaredState(value.applicationId, value.flowId, value.stateId, {
+      stateName: value.stateName, category: value.category, role: typeof value.role === 'string' ? value.role : 'NORMAL', terminalKind: typeof value.terminalKind === 'string' ? value.terminalKind : null,
+      // Only what a person can declare about a state passes; the platform cleans it again.
+      ...pickDeclared(value.spec, ['recognizer', 'subFlowId', 'description', 'actor']),
+    });
   });
   ipcMain.handle(IPC.deleteDeclaredState, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -2960,9 +2997,12 @@ function registerIpc(): void {
   } as const;
   ipcMain.handle(FLOW_EDITOR_CHANNELS.updateTransition, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { applicationId?: unknown; flowId?: unknown; transitionId?: unknown; action?: unknown };
+    const value = input as { applicationId?: unknown; flowId?: unknown; transitionId?: unknown; action?: unknown; spec?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.transitionId !== 'string' || typeof value.action !== 'string') throw new Error('INVALID_DECLARED_TRANSITION_UPDATE_REQUEST');
-    return cloud.updateDeclaredTransition(value.applicationId, value.flowId, value.transitionId, { action: value.action });
+    return cloud.updateDeclaredTransition(value.applicationId, value.flowId, value.transitionId, {
+      action: value.action,
+      ...pickDeclared(value.spec, ['control', 'inputs', 'effects', 'mode']),
+    });
   });
   ipcMain.handle(FLOW_EDITOR_CHANNELS.deleteTransition, async (event, input: unknown) => {
     assertTrustedSender(event);
@@ -2975,10 +3015,12 @@ function registerIpc(): void {
     const value = input as { applicationId?: unknown; flowId?: unknown; input?: unknown };
     if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || !value.input || typeof value.input !== 'object') throw new Error('INVALID_DECLARED_FLOW_UPDATE_REQUEST');
     const fields = value.input as Record<string, unknown>;
-    const update: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string } = {};
+    const update: { name?: string; purpose?: string; scopeStatement?: string; workflowType?: string; requires?: unknown } = {};
     for (const key of ['name', 'purpose', 'scopeStatement', 'workflowType'] as const) {
       if (typeof fields[key] === 'string') update[key] = fields[key] as string;
     }
+    // What a run needs. `null` clears it; the platform cleans anything else.
+    if (Object.prototype.hasOwnProperty.call(fields, 'requires')) update.requires = fields.requires === null || typeof fields.requires === 'object' ? fields.requires : null;
     return cloud.updateDeclaredFlow(value.applicationId, value.flowId, update);
   });
   ipcMain.handle(FLOW_EDITOR_CHANNELS.draftHistory, async (event, input: unknown) => {

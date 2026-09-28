@@ -1,0 +1,51 @@
+/**
+ * The flow language, as instructions to a model.
+ *
+ * Kept next to the code that enforces it (`flow-language.ts`): whatever a model
+ * returns is normalised to these rules afterwards, so the prompt asks for them and
+ * the normaliser guarantees them.
+ */
+export const FLOW_LANGUAGE_PROMPT: string[] = [
+  'WRITE THE FLOW IN TELLANN\'S FLOW LANGUAGE. It must be readable at a glance, like: GUEST -> LOGIN_PAGE -> DASHBOARD -> COURSES_PAGE.',
+  '',
+  'STATES (a stable place the user is in):',
+  '- "name" is a SCREAMING_SNAKE_CASE key of 1-3 words, at most 32 characters: a noun phrase naming a screen, page, modal, or situation.',
+  '  Good: GUEST, LOGIN_PAGE, DASHBOARD, COURSES_PAGE, CREATE_COURSE_MODAL, PAYMENT_ERROR, ORDER_CONFIRMED.',
+  '  Bad: sentences, verbs, or anything copied from the document ("THE_ADMIN_LANDS_ON_THE_LOGIN_PAGE", "USER_CLICKS_LOGIN").',
+  '- Put what the person actually sees or does in "description": one plain sentence, under 160 characters.',
+  '- "actor" says who is there: GUEST before signing in, then the role (ADMIN, STUDENT, CUSTOMER ...).',
+  '- Exactly one state has role "INITIAL" (usually GUEST or the first page). Every ending has role "TERMINAL" with terminalKind SUCCESS, FAILURE, CANCELLATION or ALTERNATE. All other states are "NORMAL".',
+  '- category: NAVIGATION (a page or route), UI (a modal, drawer, form or panel), BUSINESS (a domain outcome such as ORDER_CONFIRMED), ERROR (a failure the user sees), SYSTEM (something the application does on its own).',
+  '',
+  'TRANSITIONS (one thing the user does to move between two states):',
+  '- "from" and "to" are exact state names from "states".',
+  '- "action" is a SCREAMING_SNAKE_CASE verb phrase of 2-4 words naming the user\'s act: OPEN_APP, SUBMIT_CREDENTIALS, CLICK_COURSES_LINK, CLICK_CREATE_COURSE, SUBMIT_FORM, SELECT_PLAN, CONFIRM_PAYMENT.',
+  '  Name the control as a person would find it. Never "NEXT", "CONTINUE" or a sentence.',
+  '- "condition" (optional) says when this transition applies and its sibling does not: ON_SUCCESS, ON_FAILURE, or a short SCREAMING_SNAKE_CASE phrase such as PAYMENT_DECLINED.',
+  '- Model ONLY what the document says. Add a failure branch (for example LOGIN_PAGE -> LOGIN_ERROR on ON_FAILURE, with a RETRY back) only when the document mentions one. Never add error states, cancel paths, or extra pages the document does not describe: the person reviews this against what they wrote, and missing cases are added later from suggestions.',
+  '',
+  'DETAIL. Fill in each field below WHEN THE DOCUMENT STATES IT, and leave it out when the document is silent. Both halves matter: a control the document names ("the Courses link", the "Create" button) and the fields a user fills in MUST be written down, and a route, endpoint or value the document never mentions MUST NOT be invented. A wrong guess is worse than a missing field; a stated fact that is left out is also a loss.',
+  '',
+  'On a state:',
+  '- "recognizer": { "routes": ["/login"], "headings": ["Sign in"], "texts": [] } — a URL path, page heading, or visible text the document says identifies the state. Use {param} for ids: /courses/{param}.',
+  '- "subFlow": { "name": "<exact name>" } — only for a state that stands for a whole flow listed under EXISTING FLOWS. Then do not repeat the steps of that flow.',
+  '',
+  'On a transition:',
+  '- "control": { "role": "link|button|tab|menuitem|checkbox|radio|field|select", "label": "<the text on the control, exactly as the document writes it>" }.',
+  '- "inputs": [{ "name": "<the field as the page names it>", "dataKey": "ADMIN_EMAIL", "role": "PROTECTED|PROVIDED|GENERATED" }].',
+  '  PROTECTED = sign-in credentials and secrets (email or username, password, codes). PROVIDED = a specific value the tester must supply. GENERATED = free text where any unique value will do (a title, a name).',
+  '  dataKey is SCREAMING_SNAKE, prefixed with the actor for credentials (ADMIN_EMAIL, ADMIN_PASSWORD). Never write an actual value here.',
+  '- "effects": [{ "method": "POST", "route": "/api/courses", "status": 201 }] — requests the document says this step causes.',
+  '- "mode": omit for the normal case (AUTO). "CONFIRM" for what cannot be undone (delete, pay, send, publish). "MANUAL" for what a person must do themselves (a CAPTCHA, a code sent to their phone, single sign-on).',
+  '',
+  'On a workflow:',
+  '- "requires": { "actor": "ADMIN", "environments": ["DEVELOPMENT"], "data": ["ADMIN_EMAIL"] } — who must be signed in and where the flow may be run, if the document says.',
+  '',
+  'EXAMPLE. The sentence: The admin clicks the "Create" button after typing the course title. It becomes the transition:',
+  '  { "from": "CREATE_COURSE_MODAL", "to": "COURSE_OVERVIEW_PAGE", "action": "SUBMIT_FORM", "control": { "role": "button", "label": "Create" }, "inputs": [{ "name": "course title", "dataKey": "COURSE_TITLE", "role": "GENERATED" }] }',
+  '  (No effects, route or mode are written, because that sentence says none.)',
+  '',
+  'SHAPE:',
+  '- Each workflow is ONE journey of roughly 4-12 states (a bounded capability such as checkout, or a story such as "sign in, then create a course"). Steps that follow one another belong in the SAME workflow, in order. Only split the document into several workflows when the journeys are independent (they begin in different places and do not lead into each other).',
+  '- Every state is reachable from the INITIAL state, and every non-terminal state has a way forward.',
+];
