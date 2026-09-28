@@ -9,6 +9,7 @@ import {
   STEP_MODE_OPTIONS,
   requiresForm,
   requiresSpec,
+  runDataHasValues,
   sameRequires,
   sameStateDeclaration,
   sameTransitionDeclaration,
@@ -343,10 +344,17 @@ export function RequiresEditor({
         <small>Leave both unticked to allow any environment automated runs are allowed in. Production is never run automatically.</small>
       </fieldset>
       <label className="flow-field">
-        <span>Run data it needs (one key per line)</span>
-        <textarea rows={2} value={form.data} disabled={!editable} spellCheck={false} placeholder="ADMIN_EMAIL" onChange={(event) => setForm({ ...form, data: event.target.value })} />
+        <span>Run data it needs (names only, one per line)</span>
+        <textarea rows={3} value={form.data} disabled={!editable} spellCheck={false} placeholder={'ADMIN_EMAIL\nADMIN_PASSWORD'} onChange={(event) => setForm({ ...form, data: event.target.value })} />
       </label>
-      <p className="flow-section-hint">The values a step types are added automatically; list only what you need beyond those.</p>
+      {runDataHasValues(form.data) ? (
+        <p className="flow-section-hint is-warning" role="alert">
+          Only the names are saved. This flow is stored on Tellann&apos;s servers, so a value such as a password is dropped when you save. Add the values under Test data instead.
+        </p>
+      ) : null}
+      <p className="flow-section-hint">
+        List what a run must have before it starts, such as ADMIN_EMAIL and ADMIN_PASSWORD. Do not put values here. When you start an automated run, add them under Test data, either by pasting a .env file (ADMIN_PASSWORD=NewPassword, or ADMIN_PASSWORD=&quot;NewPassword&quot;) or through a persona that stores the sign-in. They stay on this computer and are never sent to Tellann. The values a step types are added automatically; list only what you need beyond those.
+      </p>
     </DeclarationSection>
   );
 }

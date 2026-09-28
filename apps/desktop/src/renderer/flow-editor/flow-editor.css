@@ -528,6 +528,9 @@
   font-size: 12px;
   line-height: 1.45;
 }
+.flow-section-hint.is-warning {
+  color: var(--caution);
+}
 .flow-empty-line {
   margin: 0;
   color: var(--text-subtle);

@@ -69,7 +69,8 @@ export function useReusableFlows(projectId: string, flowId: string, enabled: boo
 
 export function flowIsEditable(flow: FlowDetail | null): boolean {
   if (!flow) return false;
-  return flow.status !== 'COMPLETE' && (flow.lifecycleStatus ?? 'DRAFT') === 'DRAFT';
+  // lifecycleStatus is what the server enforces on every edit, publish and revise; `status` can lag behind it.
+  return (flow.lifecycleStatus ?? 'DRAFT') === 'DRAFT';
 }
 
 /**

@@ -745,6 +745,74 @@ button:disabled {
   background: var(--surface-1);
 }
 
+/* Flow checks are prose-heavy. Give each finding its own reading surface so
+   routes, headings and source gaps do not collapse into one long sentence. */
+.detail-list > .flow-checks-detail {
+  align-items: flex-start;
+  gap: 24px;
+}
+.flow-checks-detail dt {
+  flex: 0 0 116px;
+  padding-top: 3px;
+}
+.flow-checks-detail dd {
+  flex: 1;
+  min-width: 0;
+}
+.flow-checks-summary,
+.flow-checks-overflow {
+  margin: 0;
+  color: var(--text-muted);
+  font: 11px var(--font-ui);
+}
+.flow-check-list {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.flow-check-list li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-0);
+  color: var(--text-strong);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.flow-check-index {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--caution) 45%, var(--border-subtle));
+  border-radius: 999px;
+  color: var(--caution);
+  font: 600 10px/1 var(--font-ui);
+}
+.flow-checks-overflow {
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .detail-list > .flow-checks-detail {
+    flex-direction: column;
+    gap: 7px;
+  }
+  .flow-checks-detail dt {
+    flex-basis: auto;
+    padding-top: 0;
+  }
+  .flow-checks-detail dd {
+    width: 100%;
+  }
+}
+
 /* The shared metric group carries no top margin, because elsewhere it opens a
    page; here it follows the card heading. */
 .flow-review-panel .metric-grid {

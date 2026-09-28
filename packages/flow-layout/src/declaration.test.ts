@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isSecretDataKey, parseDotenv, runDataHasValues, runDataKeys,
   requiresForm, requiresSpec, sameRequires, sameStateDeclaration, sameTransitionDeclaration, stateDeclarationForm, stateDeclarationSpec,
   suggestDataKey, transitionDeclarationForm, transitionDeclarationSpec, transitionDeclarationSummary,
 } from './declaration.js';
@@ -85,4 +86,40 @@ test('what a flow requires round-trips, and emptying it clears it', () => {
   assert.deepEqual(requiresSpec(form), { actor: 'ADMIN', environments: ['DEVELOPMENT'], data: ['ADMIN_EMAIL', 'SEED'] });
   assert.equal(requiresSpec({ actor: ' ', environments: [], data: '\n' }), null);
   assert.equal(sameRequires(form, { ...form, data: 'ADMIN_EMAIL, SEED' }), true);
+});
+
+test('a .env file is read line by line, with quotes, exports and comments', () => {
+  const parsed = parseDotenv([
+    '# admin sign-in',
+    'ADMIN_EMAIL=admin@school.test',
+    'ADMIN_PASSWORD="New Pass#word\\"1"',
+    "export SEED='a b'",
+    'PLAIN=value # trailing note',
+    'HASHED=abc#def',
+    'EMPTY=',
+    'not an assignment',
+    'ADMIN_EMAIL=later@school.test',
+    '',
+  ].join('\r\n'));
+  assert.deepEqual(parsed.entries, [
+    { key: 'ADMIN_EMAIL', value: 'later@school.test' },
+    { key: 'ADMIN_PASSWORD', value: 'New Pass#word"1' },
+    { key: 'SEED', value: 'a b' },
+    { key: 'PLAIN', value: 'value' },
+    { key: 'HASHED', value: 'abc#def' },
+    { key: 'EMPTY', value: '' },
+  ]);
+  assert.equal(parsed.skipped, 1);
+});
+
+test('a flow keeps only the key of a pasted KEY=value line, never the value', () => {
+  assert.deepEqual(runDataKeys('ADMIN_EMAIL=a@b.test\nADMIN_PASSWORD="NewPassword"\nSEED, OTHER'), ['ADMIN_EMAIL', 'ADMIN_PASSWORD', 'SEED', 'OTHER']);
+  assert.deepEqual(requiresSpec({ actor: '', environments: [], data: 'ADMIN_PASSWORD=NewPassword' }), { environments: [], data: ['ADMIN_PASSWORD'] });
+  assert.equal(runDataHasValues('ADMIN_PASSWORD=NewPassword'), true);
+  assert.equal(runDataHasValues('ADMIN_PASSWORD=\nADMIN_EMAIL'), false);
+});
+
+test('passwords, tokens and keys are treated as secret without asking', () => {
+  for (const key of ['ADMIN_PASSWORD', 'db_passwd', 'API_KEY', 'authToken', 'CLIENT_SECRET']) assert.equal(isSecretDataKey(key), true, key);
+  for (const key of ['ADMIN_EMAIL', 'COURSE_TITLE', 'SEED']) assert.equal(isSecretDataKey(key), false, key);
 });

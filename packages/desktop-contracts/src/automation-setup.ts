@@ -171,7 +171,7 @@ export function flowRequirementBlockers(
   if (missing.length > 0) {
     blockers.push({
       code: 'FLOW_DATA', title: 'The Flow needs run data you have not chosen', fix: 'NONE', tone: 'todo',
-      message: `It asks for: ${missing.join(', ')}. Choose a data set that has them, or a persona that stores the sign-in.`,
+      message: `It asks for: ${missing.join(', ')}. Choose a data set that has them, or a persona that stores the sign-in. To add them, open Test data, choose Add a data set, then Paste a .env file (for example ADMIN_PASSWORD=NewPassword).`,
     });
   }
   return blockers;

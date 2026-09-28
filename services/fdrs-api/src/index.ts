@@ -711,11 +711,12 @@ async function finalizeAcceptedGraphVersion(graphId: string, evidenceManifest: u
     edges: graph.edges.map((edge) => ({ id: edge.id, from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action, provenance: edge.provenance, evidenceIds: edge.evidenceIds })),
     evidenceManifest,
   };
-  const version = await prisma.$transaction(async (tx) => {
-    await tx.behaviorGraph.update({ where: { id: graph.id }, data: { status: 'COMPLETE', completedAt: new Date() } });
-    return tx.behaviorGraphVersion.create({
-      data: { graphId: graph.id, version: graph.version, snapshot: snapshot as any, isBaseline: true, expectedStateCount: graph.nodes.length, expectedTransitionCount: graph.edges.length },
-    });
+  // An accepted document flow stays a draft until someone reviews and publishes it. Marking the graph COMPLETE
+  // (or its baseline version PUBLISHED) here would leave status and lifecycleStatus disagreeing: the web shows a
+  // draft, the desktop shows a published flow whose "Create revision" the server refuses. Publishing later
+  // upserts this same (graphId, version) row.
+  const version = await prisma.behaviorGraphVersion.create({
+    data: { graphId: graph.id, version: graph.version, snapshot: snapshot as any, lifecycleStatus: 'DRAFT', isBaseline: true, expectedStateCount: graph.nodes.length, expectedTransitionCount: graph.edges.length },
   });
   return { graph, version };
 }

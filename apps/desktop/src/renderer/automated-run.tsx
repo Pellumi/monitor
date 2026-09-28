@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
+import { isSecretDataKey, parseDotenv } from "@tellann/flow-layout";
 import { describeExecutionPhase } from "./automation-shared";
 import type {
   AutomatedRunStatus,
@@ -403,9 +404,31 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
     reader.onload = () => patch(index, { fileName: file.name, fileContent: String(reader.result ?? ""), stored: true });
     reader.readAsText(file);
   };
+  // A pasted .env replaces the value of a key already in the set and adds the rest. Nothing leaves this computer.
+  const [envText, setEnvText] = useState<string | null>(null);
+  const [envNote, setEnvNote] = useState<string | null>(null);
+  const importEnv = () => {
+    if (!draft || envText === null) return;
+    const { entries, skipped } = parseDotenv(envText);
+    if (entries.length === 0) { setEnvNote(skipped > 0 ? "No KEY=value lines were found. Each line should look like ADMIN_PASSWORD=NewPassword." : "Paste at least one KEY=value line."); return; }
+    const incoming = new Map(entries.map((entry) => [entry.key, entry.value]));
+    const kept = draft.values.filter((value) => value.key.trim() && !incoming.has(value.key.trim()));
+    const added = entries.map(({ key, value }): ValueDraft => ({ ...blankValue(), key, text: value, secret: isSecretDataKey(key) }));
+    const values = [...kept, ...added];
+    if (values.length > 50) { setEnvNote("A data set holds up to 50 values. Remove some, or split them across two sets."); return; }
+    setDraft({ ...draft, values });
+    setEnvText(null);
+    setEnvNote(`Added ${entries.length} value${entries.length === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped} line${skipped === 1 ? "" : "s"} that were not KEY=value` : ""}. Review them, then save.`);
+  };
+  const readEnvFile = (file: File | undefined) => {
+    if (!file || file.size > 150_000) return;
+    const reader = new FileReader();
+    reader.onload = () => { setEnvText(String(reader.result ?? "")); setEnvNote(null); };
+    reader.readAsText(file);
+  };
   return (
     <Manager title="Test data" summary={`${dataSets.length} saved`}>
-      <p className="field-hint">The values a Flow's forms need. Each is matched to a form field by its key. Anything marked secret is typed but never shown, reported or kept in evidence.</p>
+      <p className="field-hint">The values a Flow's forms need. Each is matched to a form field by its key. Anything marked secret is typed but never shown, reported or kept in evidence. If the Flow lists names such as ADMIN_EMAIL and ADMIN_PASSWORD, add a data set and use Paste a .env file to fill them in.</p>
       {dataSets.map((set) => (
         <div className="automated-row" key={set.id}>
           <div><strong>{set.name}</strong><small>{set.values.map((value) => value.key).join(", ") || "No values"}</small></div>
@@ -452,10 +475,25 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
               <button className="button" type="button" aria-label="Remove this value" onClick={() => setDraft({ ...draft, values: draft.values.filter((_, position) => position !== index) })}><Trash2 size={14} /></button>
             </div>
           ))}
+          {envText !== null ? (
+            <div className="automated-env">
+              <label>Paste a .env file
+                <textarea rows={5} spellCheck={false} autoComplete="off" value={envText} onChange={(event) => setEnvText(event.target.value)} placeholder={'ADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD="NewPassword"'} />
+              </label>
+              <p className="field-hint">One KEY=value per line. Quotes are optional: ADMIN_PASSWORD=NewPassword and ADMIN_PASSWORD=&quot;NewPassword&quot; both work. Lines starting with # are ignored. Keys with PASSWORD, SECRET, TOKEN or KEY in the name are marked secret. Values are saved on this computer only, never sent to Tellann.</p>
+              <div className="inline-actions">
+                <button className="button primary" type="button" disabled={!envText.trim()} onClick={importEnv}>Add these values</button>
+                <input aria-label="Choose a .env file" type="file" accept=".env,text/plain" onChange={(event) => readEnvFile(event.target.files?.[0])} />
+                <button className="button" type="button" onClick={() => { setEnvText(null); setEnvNote(null); }}>Cancel</button>
+              </div>
+            </div>
+          ) : null}
+          {envNote ? <p className="field-hint" role="status">{envNote}</p> : null}
           <div className="inline-actions">
             <button className="button" type="button" onClick={() => setDraft({ ...draft, values: [...draft.values, blankValue()] })}>Add a value</button>
+            <button className="button" type="button" onClick={() => { setEnvText(envText ?? ""); setEnvNote(null); }}>Paste a .env file</button>
             <button className="button primary" type="button" disabled={busy || !draft.name.trim()} onClick={() => void save()}>Save data set</button>
-            <button className="button" type="button" onClick={() => setDraft(null)}>Cancel</button>
+            <button className="button" type="button" onClick={() => { setDraft(null); setEnvText(null); setEnvNote(null); }}>Cancel</button>
           </div>
         </div>
       ) : (

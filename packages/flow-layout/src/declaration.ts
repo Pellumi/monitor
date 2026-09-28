@@ -215,10 +215,78 @@ export function requiresForm(requires: unknown): RequiresForm {
   return { actor: text(source.actor), environments: textList(source.environments), data: textList(source.data).join('\n') };
 }
 
+export interface DotenvEntry { key: string; value: string }
+
+const DOTENV_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+
+/** One `KEY=value` line, or null for a blank line, a comment, or something that is not an assignment. */
+function dotenvLine(raw: string): DotenvEntry | null {
+  const line = raw.trim().replace(/^export\s+/, '');
+  if (!line || line.startsWith('#')) return null;
+  const equals = line.indexOf('=');
+  if (equals < 1) return null;
+  const key = line.slice(0, equals).trim();
+  if (!DOTENV_KEY.test(key)) return null;
+  const rest = line.slice(equals + 1).trim();
+  const quote = rest[0];
+  if (quote === '"' || quote === "'") {
+    let end = -1;
+    for (let at = 1; at < rest.length; at += 1) {
+      if (quote === '"' && rest[at] === '\\') { at += 1; continue; }
+      if (rest[at] === quote) { end = at; break; }
+    }
+    if (end > 0) {
+      const inner = rest.slice(1, end);
+      // Only double quotes interpret escapes, as in a .env file; single quotes are literal.
+      return { key, value: quote === '"' ? inner.replace(/\\(["\\nrt])/g, (_, c: string) => ({ n: '\n', r: '\r', t: '\t' } as Record<string, string>)[c] ?? c) : inner };
+    }
+  }
+  // Unquoted: an inline comment starts at a space followed by `#`, so a `#` inside a password survives.
+  return { key, value: rest.replace(/\s+#.*$/, '').trim() };
+}
+
+/** Reads `KEY=value`, `KEY="value"`, `KEY='value'` and `export KEY=value` lines. A later line for the same key wins. */
+export function parseDotenv(source: string): { entries: DotenvEntry[]; skipped: number } {
+  const byKey = new Map<string, string>();
+  let skipped = 0;
+  for (const raw of source.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const entry = dotenvLine(raw);
+    if (!entry) { skipped += 1; continue; }
+    byKey.set(entry.key, entry.value);
+  }
+  return { entries: [...byKey].map(([key, value]) => ({ key, value })), skipped };
+}
+
+/** A key whose value should be treated as secret without asking: passwords, tokens, keys. */
+export function isSecretDataKey(key: string): boolean {
+  return /(pass(word|wd)?|pwd|secret|token|api.?key|private.?key|credential)/i.test(key);
+}
+
+/**
+ * The run-data keys a Flow asks for, from what was typed. A line may be a bare key or a pasted `KEY=value`: only
+ * the key is kept, because a flow is stored on the platform and a value never belongs there.
+ */
+export function runDataKeys(value: string): string[] {
+  const keys: string[] = [];
+  for (const line of value.split(/\r?\n/)) {
+    const entry = dotenvLine(line);
+    if (entry) { keys.push(entry.key); continue; }
+    keys.push(...line.split(',').map((item) => item.trim().replace(/^export\s+/, '')).filter((item) => item && !item.startsWith('#')));
+  }
+  return [...new Set(keys)];
+}
+
+/** Whether what was typed includes a value, so the form can say it will not be kept. */
+export function runDataHasValues(value: string): boolean {
+  return value.split(/\r?\n/).some((line) => (dotenvLine(line)?.value ?? '') !== '');
+}
+
 /** `null` clears what the flow requires, so that emptying the form removes the requirement. */
 export function requiresSpec(form: RequiresForm): { actor?: string; environments: string[]; data: string[] } | null {
   const actor = form.actor.trim();
-  const data = lines(form.data);
+  const data = runDataKeys(form.data);
   if (!actor && form.environments.length === 0 && data.length === 0) return null;
   return { ...(actor ? { actor } : {}), environments: [...form.environments], data };
 }

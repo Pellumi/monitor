@@ -828,7 +828,7 @@ export function SettingsPanel({
           <ChevronRight size={13} aria-hidden="true" />
           Danger zone
         </summary>
-        <p className="flow-section-hint">
+        <p className="flow-section-hint pb-2!">
           Deleting this flow also removes its published versions and the QA runs, reports, bindings and scans recorded against it.
         </p>
         <button className="button danger" type="button" onClick={onDelete}>

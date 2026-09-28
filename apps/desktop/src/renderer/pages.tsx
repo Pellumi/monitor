@@ -6612,13 +6612,29 @@ export function IntentDetailPage() {
                 </div>
               ) : null}
               {languageIssues.length ? (
-                <div>
+                <div className="flow-checks-detail">
                   <dt>Flow checks</dt>
                   <dd>
-                    {languageIssues
-                      .map((issue) => issue.message)
-                      .slice(0, 6)
-                      .join(" · ")}
+                    <p className="flow-checks-summary">
+                      {languageIssues.length === 1
+                        ? "1 check needs attention"
+                        : `${languageIssues.length} checks need attention`}
+                    </p>
+                    <ol className="flow-check-list">
+                      {languageIssues.slice(0, 6).map((issue, index) => (
+                        <li key={`${issue.message}-${index}`}>
+                          <span className="flow-check-index" aria-hidden="true">
+                            {index + 1}
+                          </span>
+                          <span>{issue.message}</span>
+                        </li>
+                      ))}
+                    </ol>
+                    {languageIssues.length > 6 ? (
+                      <p className="flow-checks-overflow">
+                        +{languageIssues.length - 6} more checks
+                      </p>
+                    ) : null}
                   </dd>
                 </div>
               ) : null}
