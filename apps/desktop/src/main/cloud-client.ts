@@ -391,6 +391,7 @@ export class DesktopCloudClient {
                 VISUAL_ACCESSIBILITY_ANALYSIS: enabled(
                   "VISUAL_ACCESSIBILITY_ANALYSIS",
                 ),
+                AUTOMATED_QA_RUNS: enabled("AUTOMATED_QA_RUNS"),
               },
             },
           ] as const;

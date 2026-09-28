@@ -3,6 +3,10 @@ import { normalizeIntent } from '@tellann/derivation-engine';
 // Pure scoring over the daily rollups, so it lives with them rather than here.
 import { declarationPriority, type StateTrafficWeight } from '@tellann/session-core';
 import { Services } from '@tellann/shared';
+import {
+  buildObservedDestinations, classifyAutomatedStateGap, classifyAutomatedTransitionGap,
+} from './automated-reconciliation';
+import type { AutomatedRunContext } from './automated-reconciliation';
 
 const prisma = new PrismaClient();
 
@@ -186,6 +190,24 @@ export async function runReconciliation(applicationId: string, environmentId?: s
 
   const observedStateNames = new Set(observedStates.map((s) => s.name));
 
+  // Automated Run context: why a gap in *this run's own target* might be explained by the run
+  // itself rather than by an unrelated absence of evidence. Null for every other mode, and for an
+  // Automated run that simply completed with nothing to explain.
+  let automatedContext: AutomatedRunContext | null = null;
+  if (runId) {
+    const automatedRun = await prisma.qARun.findUnique({ where: { id: runId }, select: { mode: true, automation: true } });
+    if (automatedRun?.mode === 'AUTOMATED') {
+      const automation = (automatedRun.automation ?? {}) as { stopReason?: unknown; targetTerminalStateKey?: unknown };
+      automatedContext = {
+        stopReason: typeof automation.stopReason === 'string' ? automation.stopReason as AutomatedRunContext['stopReason'] : null,
+        targetTerminalStateKey: typeof automation.targetTerminalStateKey === 'string' ? automation.targetTerminalStateKey : null,
+        observedDestinationsByState: buildObservedDestinations(
+          observedTransitions.map((t) => ({ fromStateName: t.fromState.name, toStateName: t.toState.name })),
+        ),
+      };
+    }
+  }
+
   // --- Pattern Learning: Scan Observed Transitions & Record Observations ---
   const activePatterns = await prisma.patternLibraryEntry.findMany({ where: { active: true } });
   
@@ -254,10 +276,14 @@ export async function runReconciliation(applicationId: string, environmentId?: s
       if (observedStateNames.has(node.stateName)) {
         confirmedStates.push(node.stateName);
       } else {
+        // For an Automated run, the run's own stop reason may explain *why* this is missing.
+        // Additive on purpose: `evidenceType` stays TRUE_GAP so every existing reader is unaffected.
+        const automatedClassification = automatedContext ? classifyAutomatedStateGap(node.stateName, automatedContext) : null;
         trueGaps.push({
           stateName: node.stateName,
           provenance: node.provenance,
           declaredById: node.declaredById,
+          ...(automatedClassification ? { automatedClassification } : {}),
         });
 
         // Write TRUE_GAP State evidence
@@ -271,6 +297,7 @@ export async function runReconciliation(applicationId: string, environmentId?: s
             payload: {
               type: 'STATE',
               stateName: node.stateName,
+              ...(automatedClassification ? { automatedClassification } : {}),
             } as any,
           },
         });
@@ -350,12 +377,16 @@ export async function runReconciliation(applicationId: string, environmentId?: s
       if (observedTransSet.has(key)) {
         confirmedTrans++;
       } else {
+        const automatedTransitionClassification = automatedContext
+          ? classifyAutomatedTransitionGap(fromNode.stateName, toNode.stateName, automatedContext)
+          : null;
         trueGapTransitionsList.push({
           fromStateId: dt.fromNodeId,
           toStateId: dt.toNodeId,
           fromStateName: fromNode.stateName,
           toStateName: toNode.stateName,
           action: dt.action ?? null,
+          ...(automatedTransitionClassification ? { automatedClassification: automatedTransitionClassification } : {}),
         });
 
         // Write TRUE_GAP Transition evidence
@@ -371,6 +402,7 @@ export async function runReconciliation(applicationId: string, environmentId?: s
               fromStateName: fromNode.stateName,
               toStateName: toNode.stateName,
               action: dt.action ?? null,
+              ...(automatedTransitionClassification ? { automatedClassification: automatedTransitionClassification } : {}),
             } as any,
           },
         });

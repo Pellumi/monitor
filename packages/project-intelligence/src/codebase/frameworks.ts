@@ -631,7 +631,7 @@ function reactAdapter(context: FileContext, node: ts.Node): void {
   }
 }
 
-function resolveHandler(context: FileContext, expression: ts.Expression): string | undefined {
+export function resolveHandler(context: FileContext, expression: ts.Expression): string | undefined {
   const identifier = ts.isIdentifier(expression) ? expression
     : ts.isPropertyAccessExpression(expression) ? expression.name : null;
   if (!identifier) return undefined;
@@ -654,7 +654,7 @@ const MAX_LABEL_LENGTH = 60;
 const MAX_LABEL_DEPTH = 4;
 
 /** Literal value of a JSX attribute, when it is written as a plain string. */
-function literalAttribute(
+export function literalAttribute(
   context: FileContext,
   element: ts.Node | undefined,
   attribute: string,
@@ -685,7 +685,7 @@ function literalAttribute(
  * text children left icon buttons, wrapped labels and translated labels with no
  * matchable text at all.
  */
-function readableActionLabels(context: FileContext, element: ts.Node | undefined): string[] {
+export function readableActionLabels(context: FileContext, element: ts.Node | undefined): string[] {
   const found: string[] = [];
   const push = (value: string | undefined): void => {
     const text = value?.replace(/\s+/g, ' ').trim();
@@ -725,7 +725,7 @@ function collectJsxText(
   }
 }
 
-function findAncestor(node: ts.Node, predicate: (candidate: ts.Node) => boolean): ts.Node | undefined {
+export function findAncestor(node: ts.Node, predicate: (candidate: ts.Node) => boolean): ts.Node | undefined {
   let current: ts.Node | undefined = node.parent;
   while (current) {
     if (predicate(current)) return current;

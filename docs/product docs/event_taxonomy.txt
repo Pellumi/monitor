@@ -510,6 +510,32 @@ EXPECTED_FLOW_VERSION_SELECTED
 Records which declared flow version the run was measured against, so a report remains interpretable after the flow is revised.
 QA_CLIENT_STATE_MUTATION
 Records a client-side state change observed during the run.
+Category H5 — Automated Run Events
+Emitted by the desktop agent's automation loop during an Automated run. Never emitted by the application under test, and carried on the run's evidence stream (QA taxonomy), not on the SDK event stream. Each action event states why the action was selected, the evidence supporting it, the expected state, the observed state and the recognition confidence, so an automated run is replayable and auditable. The Flow boundary is still decided from the application's own SDK markers; none of these events opens or closes it.
+QA_AUTOMATION_PLAN_CREATED
+The entry plan and target terminal state selected for the run.
+QA_AUTOMATION_PROCESS
+An application process was started, became ready, or stopped; the process name and readiness condition are carried in metadata.
+QA_AUTOMATION_STATE_EVALUATED
+The state the automation recognised, with confidence and evidence.
+QA_AUTOMATION_ACTION_SELECTED
+QA_AUTOMATION_ACTION_EXECUTED
+QA_AUTOMATION_ACTION_VERIFIED
+QA_AUTOMATION_ACTION_BLOCKED
+An action was chosen, performed, checked against the state it should have produced, or refused by the policy engine.
+QA_AUTOMATION_REPLAN
+The observed state differed from the expected one and the plan was recomputed.
+QA_AUTOMATION_INITIAL_STATE_REACHED
+QA_AUTOMATION_TERMINAL_STATE_REACHED
+The automation recognised the flow's initial or target terminal state. Recognition is evidence; acceptance remains with the boundary evaluator.
+QA_AUTOMATION_STOPPED
+The run stopped, with a stop reason.
+QA_AUTOMATION_CODE_EVIDENCE
+Emitted when a transition could not be completed or a state could not be read, so the report can say what the code does at that point: the file, symbol and line range the step maps to, the endpoints its handler calls, the routes it navigates to, the guards on its destination, and a hash of the referenced source range. It never carries source text; the code stays on the developer's machine.
+QA_AUTOMATION_TRACE_RETAINED
+Emitted when the diagnostic trace of one state visit was kept because an anomaly occurred there (the state and the anomaly reasons are carried in metadata). A visit that went as declared records a trace chunk and discards it, so a clean run emits none. Retained traces are sanitised before they are stored: typed text, evaluated code and results, element markup, request and response bodies, cookies and credential headers, screenshots and DOM snapshots are removed.
+QA_AUTOMATION_RENDER_TIMING
+Opt-in. Emitted as a state visit closes, for a run that named specific components of the Flow to watch: for each, the number of first renders and re-renders and the time spent rendering, together with the Flow states the component is the code for. Only the named components are measured, nothing about their props, state or DOM is recorded, and a build of the application that does not time renders (a production build) yields no event rather than zeroes.
 Category H5 — Browser Events
 Emitted by the browser observer during a managed session.
 BROWSER_PAGE_LOADED

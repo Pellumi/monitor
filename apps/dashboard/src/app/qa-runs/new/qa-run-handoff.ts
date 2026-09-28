@@ -20,6 +20,15 @@ export function resolveQARunEnvironment(
   );
 }
 
+/**
+ * The mode a dashboard link may ask the desktop to start.
+ *
+ * `AUTOMATED` is deliberately not one of them. An Automated run drives the application and needs
+ * its own configuration (target state, execution profile, persona), all chosen inside the desktop
+ * after the developer has approved what will run. A link is an untrusted string that can arrive
+ * from anywhere, and a mode that performs actions must not be selectable by one, so it falls
+ * through to the interactive default like any other unrecognised value.
+ */
 export function normalizeQARunMode(
   value?: string | null,
   environmentType?: string | null,

@@ -14,6 +14,8 @@ import { summarizeFrontendEvidence, type FrontendReportSection } from './qa-fron
 import { appendixLimitation, selectAppendixEvents } from './qa-evidence-appendix';
 import { NO_BASELINE, baselineKey, compareToBaseline, fetchEndpointBaselines } from './qa-endpoint-baseline';
 import { NO_RESOLUTIONS, draftBackendFindingResolutions, type ResolutionOutcome } from './qa-finding-resolution';
+import { summarizeAutomationEvidence } from './qa-automation-report';
+import { runConcurrently } from './qa-cold-path';
 
 const AiImprovementSchema = z.object({
   suggestions: z.array(z.object({
@@ -473,11 +475,21 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   const inFlowDeterministic = hasDeclaredFlow ? deterministic.filter(isInFlow) : deterministic;
   const preBoundaryDeterministic = hasDeclaredFlow ? deterministic.filter((item) => !isInFlow(item)) : [];
 
-  let aiSuggestions: any[] = [];
-  let aiStatus = 'NOT_ENTITLED_OR_CONFIGURED';
   const entitlement = new EntitlementChecker(prisma);
   const aiEnabled = process.env.QA_REPORT_AI_ENABLED === 'true'
     && await entitlement.canAccess(run.organizationId, Feature.REPORT_GENERATION);
+  // Re-derived from the persisted evidence rather than carried over from the desktop's live
+  // totals: the run state is trimmed as a run grows, and a report has to be reproducible from
+  // what was actually stored. Pure and cheap, and the baseline lookup below needs the endpoints.
+  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+  const frontendSummary = summarizeFrontendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+
+  // The slow, mutually independent steps of the cold path. They used to be awaited one after
+  // another; each owns its own failure handling, so starting them together changes when they run,
+  // not what they produce.
+  const runAi = async (): Promise<{ aiSuggestions: any[]; aiStatus: string }> => {
+  let aiSuggestions: any[] = [];
+  let aiStatus = 'NOT_ENTITLED_OR_CONFIGURED';
   if (aiEnabled) {
     const provider = resolveAiProvider();
     if (provider.name !== 'mock') {
@@ -530,11 +542,14 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       aiStatus = 'FALLBACK_RULES_ONLY:provider_not_configured';
     }
   }
+  return { aiSuggestions, aiStatus };
+  };
 
   // A resolution summary per backend finding, drafted from the requests the run
   // captured for its endpoint and the code that handles it. It is an extra
   // reading on top of the finding, so it can never fail the report: any error
   // here leaves the findings exactly as the rules produced them.
+  const runResolutions = async (): Promise<ResolutionOutcome> => {
   let resolutions: ResolutionOutcome = NO_RESOLUTIONS;
   if (aiEnabled) {
     try {
@@ -554,6 +569,30 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       resolutions = { ...NO_RESOLUTIONS, status: `FAILED:${safeError(error)}` };
     }
   }
+  return resolutions;
+  };
+
+  const runBaselines = async () => (backendSummary?.endpoints.length
+    ? await fetchEndpointBaselines({
+        applicationId: run.applicationId,
+        environmentId: run.environmentId,
+        runId: run.id,
+        routes: backendSummary.endpoints.map((endpoint) => ({ method: endpoint.method, route: endpoint.route })),
+      }).catch((error) => ({ ...NO_BASELINE, status: `UNAVAILABLE:${safeError(error)}` }))
+    : NO_BASELINE);
+
+  // Only an Automated run has reconciliation attributed to its own stop reason to read back.
+  const runAutomationReconciliation = async () => (run.mode === 'AUTOMATED'
+    ? prisma.reconciliationReport.findMany({ where: { qaRunId: run.id }, select: { trueGaps: true, trueGapTransitionsList: true } }).catch(() => [])
+    : []);
+
+  const { ai, resolutions, baselines, automationReconciliation } = await runConcurrently({
+    ai: runAi,
+    resolutions: runResolutions,
+    baselines: runBaselines,
+    automationReconciliation: runAutomationReconciliation,
+  });
+  const { aiSuggestions, aiStatus } = ai;
   const withResolution = <T extends { id: string }>(item: T) => {
     const resolution = resolutions.byFindingId.get(item.id);
     return resolution ? { ...item, resolution: { ...resolution, generatedAt: new Date().toISOString() } } : item;
@@ -587,21 +626,10 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   // Re-derived from the persisted evidence rather than carried over from the
   // desktop's live totals: the run state is trimmed as a run grows, and a
   // report has to be reproducible from what was actually stored.
-  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
-  const frontendSummary = summarizeFrontendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
-
   // What each endpoint normally does, so the run's own p95 has something to be
   // read against. Strictly additive: the endpoint engine being unreachable,
   // unconfigured or slow leaves every number below exactly as measured, and
   // says so rather than implying the route has no history.
-  const baselines = backendSummary?.endpoints.length
-    ? await fetchEndpointBaselines({
-        applicationId: run.applicationId,
-        environmentId: run.environmentId,
-        runId: run.id,
-        routes: backendSummary.endpoints.map((endpoint) => ({ method: endpoint.method, route: endpoint.route })),
-      }).catch((error) => ({ ...NO_BASELINE, status: `UNAVAILABLE:${safeError(error)}` }))
-    : NO_BASELINE;
   if (backendSummary) {
     for (const endpoint of backendSummary.endpoints) {
       (endpoint as Record<string, unknown>).baseline = compareToBaseline(
@@ -659,6 +687,9 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     schemaVersion: '2.0',
     summaryText,
     status: run.status,
+    // QRS-RUN-003: every report states the mode its evidence was gathered under, because the mode
+    // changes what an absence of evidence means.
+    mode: run.mode,
     reportStatus: 'READY',
     generatedAt: new Date().toISOString(),
     application: run.application,
@@ -706,6 +737,12 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
       backendSummary,
       frontendSummary,
+      automated: summarizeAutomationEvidence(
+        run,
+        run.evidenceEvents.filter((event) => event.eventType.startsWith('QA_AUTOMATION_') || event.eventType === 'QA_RUNTIME_ERROR' || event.eventType === 'QA_PAGE_CRASH'),
+        declaredStates.map((state: any) => state.key),
+        automationReconciliation,
+      ),
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       findingResolutions: {
         status: resolutions.status,

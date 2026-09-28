@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "QARunMode" ADD VALUE IF NOT EXISTS 'AUTOMATED';
+
+-- AlterTable
+ALTER TABLE "QARun" ADD COLUMN "automation" JSONB;

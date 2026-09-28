@@ -1,0 +1,16 @@
+{
+  "name": "@tellann/lms-fixture",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A small LMS-shaped web application, and the Flow declared over it, used to exercise Automated Run end to end.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/index.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

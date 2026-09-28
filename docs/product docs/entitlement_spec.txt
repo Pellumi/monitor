@@ -52,6 +52,7 @@ Category D
 Desktop Agent Entitlements
 Examples:
 * Desktop Guided Runs
+* Automated Runs
 * Automated Instrumentation
 * Codebase Intelligence
 * Document Flow Inference
@@ -264,6 +265,10 @@ Capability
 Capability Definitions
 Desktop Guided Runs
 Drive a demonstration run through the managed browser session. The core Phase 1 loop.
+Automated Runs
+Feature key AUTOMATED_QA_RUNS. Execute one declared flow, from its initial state toward a selected terminal state, without a person driving the browser. Available on Business and Enterprise; No on Free, Local, Solo and Team. Never available for production regardless of plan. Requires validated instrumentation and an approved execution profile. Absence of this entitlement shall not affect any other run mode (see ES-DESK-002).
+ES-DESK-003
+An attempt to start an Automated run without the entitlement shall be refused before any application process or browser is started, and shall state that Business is the lowest plan that provides it (see ES-DESK-001).
 Visual & Accessibility Analysis
 Findings raised during a run. BASIC covers a core rule set; higher tiers widen coverage and add remediation detail.
 Browser Trace Capture

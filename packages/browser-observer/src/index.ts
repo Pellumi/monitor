@@ -12,7 +12,11 @@ import type {
   QAPendingProtectedValue,
   StartGuidedRunInput,
 } from '@tellann/desktop-contracts';
+import { QA_AUTOMATION_EVENT_TYPES } from '@tellann/desktop-contracts';
 import { installQaRecorder } from './injected-recorder';
+import { installRenderTiming, RENDER_TIMING_GLOBAL } from './render-timing';
+import type { RenderTimingSnapshotEntry } from './render-timing';
+import { sanitizeTraceArchive } from './trace-sanitizer';
 import { captureMaskedViewport } from './silent-capture';
 
 export type LiveEvidenceKind =
@@ -120,6 +124,8 @@ export type RunCaptureReason =
  * can label a capture with the state and route it came from rather than
  * falling back to "Capture 3".
  */
+export type { RenderTimingSnapshotEntry } from './render-timing';
+
 export type ArtifactCaptureContext = {
   stateKey: string | null;
   route: string | null;
@@ -226,7 +232,7 @@ export type GuidedRunState = {
   environmentId: string;
   environmentType: StartGuidedRunInput['environmentType'];
   expectedGraphVersionId: string | null;
-  mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY';
+  mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY' | 'AUTOMATED';
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
   phase: 'PRE_BOUNDARY' | 'IN_FLOW' | 'FINALIZING' | 'COMPLETE';
   interactionMode: QAInteractionMode;
@@ -288,8 +294,9 @@ export type GuidedRunState = {
 
 export type LocalAnnotationInput = CreateQARunAnnotation & { screenshotPath: string | null };
 
-export function initialCapturePhase(mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY', expectedGraphVersionId?: string | null): 'PRE_BOUNDARY' | 'IN_FLOW' {
-  return mode === 'GUIDED' && Boolean(expectedGraphVersionId) ? 'PRE_BOUNDARY' : 'IN_FLOW';
+export function initialCapturePhase(mode: 'GUIDED' | 'ASSISTED' | 'OBSERVATION_ONLY' | 'AUTOMATED', expectedGraphVersionId?: string | null): 'PRE_BOUNDARY' | 'IN_FLOW' {
+  // Guided and Automated runs both wait for the Flow's declared initial boundary; everything before it is setup.
+  return (mode === 'GUIDED' || mode === 'AUTOMATED') && Boolean(expectedGraphVersionId) ? 'PRE_BOUNDARY' : 'IN_FLOW';
 }
 
 /** Installed before application code so observation-only runs cannot mutate via clicks, forms, or socket-backed handlers. */
@@ -378,6 +385,13 @@ type RunController = {
   annotationShot?: string | null;
   /** Screenshots taken at the moment a finding was raised. */
   findingArtifacts: Array<{ file: string; context: ArtifactCaptureContext }>;
+  /**
+   * Per-state diagnostic traces of an Automated run. A chunk is recorded for every state visit and
+   * kept only when that visit went wrong, so a clean run leaves nothing behind.
+   */
+  trace: { started: boolean; open: string | null; files: Array<{ file: string; context: ArtifactCaptureContext }>; protectedValues: Set<string> };
+  /** Whether render timing was installed for the run (opt-in, named components only). */
+  renderTiming: boolean;
   /** Finding dedupe keys already given a screenshot. */
   capturedFindingKeys: Set<string>;
   /** Finding dedupe keys already raised this run, checked in O(1) instead of scanning `state.findings`. */
@@ -416,6 +430,9 @@ const PRE_BOUNDARY_TYPES = new Set<QAEvidenceEvent['eventType']>([
   // payload capture on IN_FLOW itself, so what reaches here is route, status,
   // timing and the models touched - the same shape the browser track keeps.
   'QA_BACKEND_REQUEST', 'QA_BACKEND_ERROR', 'QA_BACKEND_DATA_ACCESS',
+  // Automation evidence is mostly *about* getting to the initial boundary (entry, login), so it has to
+  // survive the pre-boundary filter. It is scoped PRE_BOUNDARY there like everything else and stays out of coverage.
+  ...QA_AUTOMATION_EVENT_TYPES,
 ]);
 const PRE_BOUNDARY_INTERACTION_TYPES = new Set<QAEvidenceEvent['eventType']>([
   'QA_CONTROL_CLICKED', 'QA_FORM_SUBMIT_INTENT',
@@ -484,6 +501,8 @@ const MAX_FINDINGS = 200;
 const MAX_STATE_ARTIFACTS = 60;
 /** Separate from the state ceiling so a noisy page cannot crowd out flow evidence. */
 const MAX_FINDING_ARTIFACTS = 20;
+/** Retained traces per run: each one is a per-state diagnostic, and a run that fails everywhere should not upload hundreds. */
+const MAX_TRACE_ARTIFACTS = 8;
 /** Coalescing window for state pushes to the renderer. */
 const STATE_PUSH_INTERVAL_MS = 250;
 const LIVE_EVIDENCE_KINDS: LiveEvidenceKind[] = [
@@ -1324,6 +1343,8 @@ export class BrowserObserver {
        * live on screen.
        */
       skipUpload?: boolean;
+      /** Who observed it. Automation events come from the agent's own loop, not from the page. */
+      source?: 'DESKTOP_BROWSER' | 'DESKTOP_AGENT';
     } = {},
   ): string | null {
     const { state } = controller;
@@ -1352,7 +1373,7 @@ export class BrowserObserver {
       localSequence: ++controller.sequence,
       timestamp: new Date().toISOString(),
       eventType: type,
-      source: 'DESKTOP_BROWSER',
+      source: input.source ?? 'DESKTOP_BROWSER',
       scope: state.phase === 'IN_FLOW' ? 'IN_FLOW' : 'PRE_BOUNDARY',
       privacyClassification: 'INTERNAL',
       pageUrl,
@@ -1650,7 +1671,9 @@ export class BrowserObserver {
     }
     // A route that has finished settling is the point where the page is worth
     // a screenshot: the data has landed and the layout has stopped moving.
-    if (payload.type === 'performance' && payload.metadata?.visuallyStableMs != null) {
+    // An Automated run does not take one of these for every state it passes through: it captures
+    // when something goes wrong (`captureAnomalyArtifacts`), while the page still shows it.
+    if (payload.type === 'performance' && payload.metadata?.visuallyStableMs != null && controller.state.mode !== 'AUTOMATED') {
       void this.captureStateArtifacts(controller).catch(() => undefined);
     }
   }
@@ -1688,7 +1711,7 @@ export class BrowserObserver {
       runId, sessionId, traceId, applicationId: input.applicationId, environmentId: input.environmentId,
       environmentType: input.environmentType,
       expectedGraphVersionId: input.expectedGraphVersionId ?? null,
-      mode: observationOnly ? 'OBSERVATION_ONLY' : input.mode === 'ASSISTED' ? 'ASSISTED' : 'GUIDED',
+      mode: observationOnly ? 'OBSERVATION_ONLY' : input.mode === 'ASSISTED' ? 'ASSISTED' : input.mode === 'AUTOMATED' ? 'AUTOMATED' : 'GUIDED',
       // Session-scoped runs have no declared initial boundary to wait for.
       // Capture is active as soon as the user explicitly starts the run.
       status: 'RUNNING', phase: initialCapturePhase(input.mode, input.expectedGraphVersionId), interactionMode: 'NAVIGATE',
@@ -1715,6 +1738,8 @@ export class BrowserObserver {
       capturedStateKeys: new Set(), snapshotInFlight: false,
       interactionEpoch: 0, lastCaptureSignature: null,
       findingArtifacts: [], capturedFindingKeys: new Set(), findingDedupeKeys: new Set(),
+      trace: { started: false, open: null, files: [], protectedValues: new Set() },
+      renderTiming: false,
       backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
       backendSlowRows: new Map(),
       frontendRuleSpend: new Map(),
@@ -1748,6 +1773,20 @@ export class BrowserObserver {
     }
     controller.browser = browser;
     controller.context = context;
+    if (state.mode === 'AUTOMATED' && input.environmentType !== 'PRODUCTION') {
+      // No screenshots, DOM snapshots or sources: those would show whatever was typed, and a trace
+      // cannot mask them. The action log, timings and request metadata are what a failure needs, and
+      // even those are rewritten before the archive is kept (see `endAutomationTraceChunk`).
+      controller.trace.started = await context.tracing
+        .start({ screenshots: false, snapshots: false, sources: false })
+        .then(() => true, () => false);
+    }
+    const timedComponents = input.automation?.renderTimingComponents ?? [];
+    if (state.mode === 'AUTOMATED' && input.environmentType !== 'PRODUCTION' && timedComponents.length > 0) {
+      // Before the application loads, so React sees the hook when it starts. Named components only.
+      await context.addInitScript(installRenderTiming, timedComponents);
+      controller.renderTiming = true;
+    }
     if (observationOnly) await context.addInitScript(installReadOnlyInteractionGuard);
     if (input.environmentType === 'PRODUCTION') await context.addInitScript(installReadOnlySocketGuard);
     if (input.environmentType === 'PRODUCTION') {
@@ -2894,18 +2933,22 @@ export class BrowserObserver {
    * never changes route is captured step by step — then on page structure, so
    * an interaction that changed nothing does not spend a screenshot.
    */
-  private async captureStateArtifacts(controller: RunController): Promise<void> {
+  private async captureStateArtifacts(controller: RunController, options: { reason?: RunCaptureReason; force?: boolean } = {}): Promise<void> {
     const { state, page } = controller;
     if (state.environmentType === 'PRODUCTION') return;
     if (controller.stopping || controller.paused || controller.snapshotInFlight) return;
-    if (state.phase !== 'IN_FLOW') return;
+    // A forced capture is a deliberate request (an anomaly in an Automated run) and is wanted before
+    // the Flow boundary too: a run that never reaches its initial state is exactly when it matters.
+    if (state.phase !== 'IN_FLOW' && !options.force) return;
     if (!page || page.isClosed()) return;
     if (state.stateArtifacts.length >= MAX_STATE_ARTIFACTS) return;
     const pageUrl = sanitizeCapturedUrl(page.url());
     const route = normalizedRoute(pageUrl) ?? pageUrl;
     const dedupeKey = `${state.currentFlowStateKey ?? ''}|${route}|${controller.interactionEpoch}`;
-    if (controller.capturedStateKeys.has(dedupeKey)) return;
-    controller.capturedStateKeys.add(dedupeKey);
+    if (!options.force) {
+      if (controller.capturedStateKeys.has(dedupeKey)) return;
+      controller.capturedStateKeys.add(dedupeKey);
+    }
     controller.snapshotInFlight = true;
     try {
       // The aria snapshot comes first: it doubles as the change test, and a
@@ -2913,7 +2956,8 @@ export class BrowserObserver {
       const aria = await page.locator('body').ariaSnapshot().catch(() => null);
       const redactedAria = aria === null ? '' : redactAriaSnapshot(aria).trim();
       const signature = crypto.createHash('sha1').update(`${route}\n${redactedAria}`).digest('hex');
-      if (signature === controller.lastCaptureSignature) return;
+      // An unchanged page is not worth a second copy, unless the capture was asked for by name.
+      if (!options.force && signature === controller.lastCaptureSignature) return;
       controller.lastCaptureSignature = signature;
       const base = `state-${String(state.stateArtifacts.length + 1).padStart(3, '0')}-${Date.now()}`;
       const screenshotPath = path.join(state.artifactDirectory, `${base}.png`);
@@ -2935,7 +2979,7 @@ export class BrowserObserver {
         accessibilityFile: hasContent(ariaPath) ? path.basename(ariaPath) : null,
         accessibilityViolations: violations === null ? null : violations.length,
         sequence: state.stateArtifacts.length + 1,
-        captureReason: 'STATE_SETTLED',
+        captureReason: options.reason ?? 'STATE_SETTLED',
       };
       state.stateArtifacts.push(artifact);
       this.emit(controller, 'QA_STATE_SNAPSHOT', {
@@ -3170,6 +3214,149 @@ export class BrowserObserver {
 
   getState(): GuidedRunState | null { return this.active ? this.snapshot() : null; }
 
+  /**
+   * The managed page of an active Automated run, for the automation driver to act on. Null for every
+   * other run mode: a human-driven or observation-only run must never be handed to a driver.
+   */
+  getAutomationPage(): Page | null {
+    const controller = this.active;
+    if (!controller || controller.state.mode !== 'AUTOMATED') return null;
+    return controller.page && !controller.page.isClosed() ? controller.page : null;
+  }
+
+  /**
+   * Capture forensic evidence (a masked screenshot and the redacted accessibility tree) now, for an
+   * anomaly the automation loop has just seen. Automated runs only, and never against production.
+   * Recorded as evidence *for a finding*: it exists because something went wrong.
+   */
+  async captureAnomalyArtifacts(): Promise<boolean> {
+    const controller = this.active;
+    if (!controller || controller.state.mode !== 'AUTOMATED') return false;
+    const before = controller.state.stateArtifacts.length;
+    await this.captureStateArtifacts(controller, { reason: 'FINDING', force: true });
+    return controller.state.stateArtifacts.length > before;
+  }
+
+  /**
+   * Start recording a diagnostic trace chunk for one state visit. At most one is open at a time; a new
+   * one replaces (and discards) whatever was open. Automated runs only.
+   */
+  async beginAutomationTraceChunk(label: string): Promise<boolean> {
+    const controller = this.active;
+    const context = controller?.context;
+    if (!controller || !context || controller.state.mode !== 'AUTOMATED' || !controller.trace.started) return false;
+    try {
+      if (controller.trace.open !== null) await context.tracing.stopChunk();
+      await context.tracing.startChunk({ title: label });
+      controller.trace.open = label;
+      return true;
+    } catch {
+      controller.trace.open = null;
+      return false;
+    }
+  }
+
+  /**
+   * Close the open trace chunk. Retained chunks are sanitised and kept for upload; every other chunk
+   * is discarded, so a run that went to plan stores no trace at all.
+   */
+  async endAutomationTraceChunk(options: { retain: boolean; stateKey: string | null; reasons?: string[] }): Promise<boolean> {
+    const controller = this.active;
+    const context = controller?.context;
+    if (!controller || !context || controller.trace.open === null) return false;
+    const label = controller.trace.open;
+    controller.trace.open = null;
+    try {
+      if (!options.retain || controller.trace.files.length >= MAX_TRACE_ARTIFACTS) {
+        await context.tracing.stopChunk();
+        return false;
+      }
+      const raw = path.join(controller.state.artifactDirectory, `trace-raw-${Date.now()}.zip`);
+      await context.tracing.stopChunk({ path: raw });
+      const file = path.join(
+        controller.state.artifactDirectory,
+        `trace-${String(controller.trace.files.length + 1).padStart(3, '0')}-${Date.now()}.zip`,
+      );
+      try {
+        const { archive } = sanitizeTraceArchive(fs.readFileSync(raw), {
+          protectedValues: [...controller.trace.protectedValues],
+          sanitizeUrl: sanitizeCapturedUrl,
+        });
+        fs.writeFileSync(file, archive);
+      } finally {
+        // The unsanitised recording must not outlive this call, whatever happened above.
+        fs.rmSync(raw, { force: true });
+      }
+      const pageUrl = controller.page && !controller.page.isClosed() ? sanitizeCapturedUrl(controller.page.url()) : null;
+      controller.trace.files.push({
+        file,
+        context: {
+          stateKey: options.stateKey,
+          route: pageUrl ? normalizedRoute(pageUrl) ?? pageUrl : null,
+          title: `Trace: ${label}${options.reasons?.length ? ` (${options.reasons.join(', ')})` : ''}`,
+          sequence: null,
+          captureReason: 'FINDING',
+          accessibilityViolations: null,
+          capturedAt: new Date().toISOString(),
+        },
+      });
+      return true;
+    } catch {
+      // A trace is diagnostics, never a reason to lose the run.
+      return false;
+    }
+  }
+
+  /**
+   * What the watched components rendered since the last call: counts and durations, nothing about
+   * their props, state or DOM. Empty unless the run opted in, and empty when the application's React
+   * build does not time renders (a production build) rather than reporting zeroes.
+   */
+  async takeRenderTiming(): Promise<RenderTimingSnapshotEntry[]> {
+    const controller = this.active;
+    const page = controller?.page;
+    if (!controller || !controller.renderTiming || !page || page.isClosed()) return [];
+    try {
+      const raw = await page.evaluate((key) => {
+        const handle = (window as unknown as Record<string, { snapshot?: () => unknown } | undefined>)[key];
+        return handle?.snapshot ? handle.snapshot() : [];
+      }, RENDER_TIMING_GLOBAL);
+      if (!Array.isArray(raw)) return [];
+      const round = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value * 10) / 10 : 0);
+      return raw.flatMap((entry): RenderTimingSnapshotEntry[] => {
+        const item = entry as Partial<RenderTimingSnapshotEntry>;
+        if (typeof item.component !== 'string') return [];
+        return [{
+          component: item.component,
+          mounts: Math.max(0, Math.trunc(Number(item.mounts) || 0)),
+          updates: Math.max(0, Math.trunc(Number(item.updates) || 0)),
+          totalMs: round(item.totalMs),
+          maxMs: round(item.maxMs),
+        }];
+      });
+    } catch {
+      // The page navigated or closed under us: nothing to report.
+      return [];
+    }
+  }
+
+  /** Values typed by the automation that must never appear in a trace (passwords, tokens). */
+  protectAutomationValues(values: string[]): void {
+    const controller = this.active;
+    if (!controller || controller.state.mode !== 'AUTOMATED') return;
+    for (const value of values) if (value) controller.trace.protectedValues.add(value);
+  }
+
+  /**
+   * Record an event from the automation loop through the same pipeline as every other piece of evidence, so it
+   * is spooled, uploaded and scoped identically. Only an Automated run may record these.
+   */
+  recordAutomationEvent(type: (typeof QA_AUTOMATION_EVENT_TYPES)[number], metadata: Record<string, unknown>): string | null {
+    const controller = this.active;
+    if (!controller || controller.state.mode !== 'AUTOMATED') return null;
+    return this.emit(controller, type, metadata, { source: 'DESKTOP_AGENT' });
+  }
+
   private snapshot(): GuidedRunState {
     if (!this.active) throw new Error('NO_ACTIVE_RUN');
     return JSON.parse(JSON.stringify(this.active.state)) as GuidedRunState;
@@ -3197,6 +3384,13 @@ export class BrowserObserver {
       const redactedAria = redactAriaSnapshot(aria).trim();
       fs.writeFileSync(accessibility, redactedAria || 'Accessibility snapshot unavailable', 'utf8');
     }
+    if (controller.trace.started && context) {
+      // A run that ends inside a chunk has stopped short of something; keep that last stretch.
+      if (controller.trace.open !== null) {
+        await this.endAutomationTraceChunk({ retain: state.status === 'FAILED', stateKey: state.currentFlowStateKey ?? null, reasons: ['RUN_ENDED'] });
+      }
+      await context.tracing.stop().catch(() => undefined);
+    }
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
     if (state.browserStatus === 'ACTIVE') state.browserStatus = 'CLOSED';
@@ -3208,7 +3402,8 @@ export class BrowserObserver {
       artifact.accessibilityFile ? path.join(state.artifactDirectory, artifact.accessibilityFile) : null,
     ]).filter((file): file is string => Boolean(file));
     const findingArtifactFiles = controller.findingArtifacts.map((artifact) => artifact.file);
-    const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles, ...findingArtifactFiles]
+    const traceFiles = controller.trace.files.map((artifact) => artifact.file);
+    const artifactFiles = [screenshot, accessibility, ...stateArtifactFiles, ...findingArtifactFiles, ...traceFiles]
       .filter(hasContent);
     // What each file depicts, keyed by basename. Uploaded with the bytes so a
     // report card can name the state and route instead of a bare filename.
@@ -3246,7 +3441,7 @@ export class BrowserObserver {
       if (artifact.screenshotFile) captureContext.set(artifact.screenshotFile, context);
       if (artifact.accessibilityFile) captureContext.set(artifact.accessibilityFile, context);
     }
-    for (const artifact of controller.findingArtifacts) {
+    for (const artifact of [...controller.findingArtifacts, ...controller.trace.files]) {
       captureContext.set(path.basename(artifact.file), artifact.context);
     }
     fs.writeFileSync(manifest, JSON.stringify({

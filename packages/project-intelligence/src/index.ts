@@ -17,6 +17,8 @@ import { extendGitIgnoreContext, isGitIgnored, type GitIgnoreContext } from './g
 export * from './codebase';
 export * from './flow-mapping';
 export * from './annotation-source';
+export * from './flow-slice';
+export * from './navigation-graph';
 
 const IGNORED = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache',

@@ -1,4 +1,13 @@
 import { z } from 'zod';
+import {
+  AutomationConfigSchema,
+  AutomationRunStateSchema,
+  automationTargetsConsistent,
+  QARunModeSchema,
+  QA_AUTOMATION_EVENT_TYPES,
+} from './automation';
+
+export * from './automation';
 
 export const DESKTOP_CONTRACT_VERSION = '1.0';
 
@@ -80,6 +89,7 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_BACKEND_REQUEST',
   'QA_BACKEND_ERROR',
   'QA_BACKEND_DATA_ACCESS',
+  ...QA_AUTOMATION_EVENT_TYPES,
 ]);
 
 export const QAPendingProtectedValueSchema = z.object({
@@ -295,6 +305,9 @@ export const CodeEntityTypeSchema = z.enum([
   'class', 'interface', 'function', 'method', 'test', 'ui_route', 'ui_action',
   'endpoint', 'database_model', 'database_table', 'event', 'queue', 'job',
   'external_service', 'domain', 'feature', 'workflow',
+  // Navigation-graph entities (Automated Run). A guard is a route-protecting condition
+  // (middleware, a layout's redirect check); a form is a `<form>`'s field structure.
+  'ui_guard', 'ui_form',
 ]);
 
 export const CodeRelationshipTypeSchema = z.enum([
@@ -302,6 +315,9 @@ export const CodeRelationshipTypeSchema = z.enum([
   'EXTENDS', 'ROUTES_TO', 'READS', 'WRITES', 'PUBLISHES', 'SUBSCRIBES_TO',
   'HANDLED_BY', 'DEPENDS_ON', 'TESTS', 'CONFIGURES', 'BELONGS_TO_DOMAIN',
   'IMPLEMENTS_FEATURE', 'CALLS_EXTERNAL',
+  // Navigation-graph edges. NAVIGATES_TO: a ui_action (a link, or a programmatic
+  // navigation call) leads to a ui_route. GUARDED_BY: a ui_route is protected by a ui_guard.
+  'NAVIGATES_TO', 'GUARDED_BY',
 ]);
 
 export const CodeEvidenceSchema = z.object({
@@ -699,7 +715,8 @@ export const QARunSchema = z.object({
   boundaryStartedAt: z.string().datetime().nullable().optional(),
   boundaryCompletedAt: z.string().datetime().nullable().optional(),
   completionReason: z.string().nullable().optional(),
-  mode: z.enum(['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY']),
+  mode: QARunModeSchema,
+  automation: AutomationRunStateSchema.nullable().optional(),
   status: RunStatusSchema,
   targetUrl: z.string().url(),
   startedAt: z.string().datetime().nullable(),
@@ -731,6 +748,8 @@ export const QualityReportSchema = z.object({
   id: z.string(),
   runId: z.string().uuid(),
   status: RunStatusSchema,
+  /** The mode the evidence was gathered under (QRS-RUN-003): it changes what an absence of evidence means. Optional so a report generated before this existed still parses. */
+  mode: QARunModeSchema.optional(),
   generatedAt: z.string().datetime(),
   /** One plain-English sentence summarizing the run, ahead of every structured field. */
   summaryText: z.string().optional(),
@@ -1297,7 +1316,8 @@ const StartRunFlowContextSchema = z.object({
   timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   patchSetId: z.string().uuid().nullable().optional(),
   environmentType: EnvironmentTypeSchema,
-  mode: z.enum(['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY']).default('GUIDED'),
+  mode: QARunModeSchema.default('GUIDED'),
+  automation: AutomationConfigSchema.optional(),
   targetUrl: z.string().url(),
   productionObservationApproved: z.boolean().optional(),
   launchCommandId: z.string().optional(),
@@ -1318,12 +1338,23 @@ const GUIDED_FLOW_CONTEXT_FIELDS = [
  */
 export const StartGuidedRunInputSchema = StartRunFlowContextSchema
   .superRefine((input, context) => {
-    if (input.mode === 'GUIDED') {
+    if (input.mode === 'GUIDED' || input.mode === 'AUTOMATED') {
+      const label = input.mode === 'AUTOMATED' ? 'automated' : 'guided';
       for (const field of GUIDED_FLOW_CONTEXT_FIELDS) {
-        if (!input[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for guided runs` });
+        if (!input[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for ${label} runs` });
       }
+    }
+    if (input.mode === 'AUTOMATED') {
+      // Active control is never permitted against production, and Tellann only spawns the
+      // application from an approved execution profile, not a loose launch command.
+      if (input.environmentType === 'PRODUCTION') context.addIssue({ code: z.ZodIssueCode.custom, path: ['environmentType'], message: 'Automated runs are not permitted against production' });
+      if (!input.automation) context.addIssue({ code: z.ZodIssueCode.custom, path: ['automation'], message: 'automation is required for automated runs' });
+      else if (!automationTargetsConsistent(input.automation)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['automation', 'targetTerminalStateKeys'], message: 'targetTerminalStateKeys must start with targetTerminalStateKey' });
+      if (input.launchCommandId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['launchCommandId'], message: 'Automated runs start the application from their execution profile' });
       return;
     }
+    if (input.automation) context.addIssue({ code: z.ZodIssueCode.custom, path: ['automation'], message: 'automation is only valid for automated runs' });
+    if (input.mode === 'GUIDED') return;
     if (input.mode === 'ASSISTED') {
       const hasCandidate = Boolean(input.flowId && input.expectedGraphVersionId);
       const lifecycleValues = [input.flowBindingId, input.flowInitializationId, input.flowScanId];
@@ -1568,6 +1599,8 @@ export const DesktopEntitlementsSchema = z.object({
     SHARED_RUN_GOVERNANCE: z.boolean(),
     BROWSER_TRACE_CAPTURE: z.boolean(),
     VISUAL_ACCESSIBILITY_ANALYSIS: z.boolean(),
+    // Defaulted so entitlements cached by an older desktop build still parse.
+    AUTOMATED_QA_RUNS: z.boolean().default(false),
   }),
 });
 

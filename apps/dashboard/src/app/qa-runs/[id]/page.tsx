@@ -13,6 +13,19 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import {
+  durationText,
+  modeLabel,
+  MODE_MEANINGS,
+  outcomeSummary,
+  pinnedRows,
+  reconciliationRows,
+  codeEvidenceEntries,
+  retainedTraceRows,
+  renderTimingRows,
+  unreachedLabel,
+} from "./automated-report";
+import type { AutomatedSection, OutcomeTone } from "./automated-report";
 
 type RunDetail = {
   id: string;
@@ -41,6 +54,9 @@ type RunDetail = {
 type Report = {
   id: string;
   generatedAt: string;
+  /** The mode the evidence was gathered under. Absent on a report generated before modes were recorded. */
+  mode?: string;
+  sections?: { automated?: AutomatedSection | null };
   coverage: { expected: number | null; reconciledFlows: number };
   correlation: {
     runId: string;
@@ -167,6 +183,14 @@ export default function QARunDetailPage() {
           {detail.environment.name} · {detail.targetUrl}
         </p>
         <p className="mt-2 font-mono text-xs text-neutral-600">{detail.id}</p>
+        {report.data ? (
+          <p className="mt-3 max-w-2xl text-sm text-neutral-400">
+            <span className="mr-2 rounded-full border border-neutral-700 px-2.5 py-0.5 text-xs text-neutral-200">
+              {modeLabel(report.data.mode)}
+            </span>
+            {report.data.mode ? MODE_MEANINGS[report.data.mode] : null}
+          </p>
+        ) : null}
       </div>
       {report.data ? (
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -198,6 +222,9 @@ export default function QARunDetailPage() {
             </div>
           ))}
         </section>
+      ) : null}
+      {report.data?.sections?.automated ? (
+        <AutomatedRunSection section={report.data.sections.automated} />
       ) : null}
       {report.data?.instrumentation ? (
         <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
@@ -353,5 +380,174 @@ export default function QARunDetailPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+const TONE_STYLES: Record<OutcomeTone, string> = {
+  success: "border-emerald-800 text-emerald-400",
+  application: "border-amber-800 text-amber-400",
+  infrastructure: "border-neutral-700 text-neutral-300",
+  neutral: "border-neutral-700 text-neutral-300",
+};
+
+/** The state-by-state account of an Automated run, and how it ended. */
+function AutomatedRunSection({ section }: { section: AutomatedSection }) {
+  const summary = outcomeSummary(section);
+  const reconciliation = reconciliationRows(section);
+  const evidence = codeEvidenceEntries(section);
+  const traces = retainedTraceRows(section);
+  const timing = renderTimingRows(section);
+  return (
+    <section className="space-y-5 rounded-xl border border-neutral-800 bg-neutral-900 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Automated run</div>
+          <h2 className="mt-2 text-lg font-semibold">{summary.headline}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-neutral-400">{summary.explanation}</p>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs ${TONE_STYLES[summary.tone]}`}>
+          {section.outcome.steps ?? 0} steps · {section.outcome.replans ?? 0} replans
+        </span>
+      </div>
+
+      <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        {pinnedRows(section).map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-neutral-500">{label}</dt>
+            <dd className="mt-1 break-all font-mono text-xs">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div>
+        <h3 className="text-sm font-semibold">
+          States visited{" "}
+          <span className="font-normal text-neutral-500">
+            ({section.preBoundaryStateCount} before the Flow began, {section.inFlowStateCount} in the Flow)
+          </span>
+        </h3>
+        <ol className="mt-3 divide-y divide-neutral-800 text-sm">
+          {section.states.map((state) => (
+            <li key={state.sequence} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
+              <span>
+                <span className="font-mono">{state.stateKey}</span>
+                {state.scope === "PRE_BOUNDARY" ? (
+                  <span className="ml-2 text-xs text-neutral-500">setup</span>
+                ) : null}
+                {state.route ? <span className="ml-2 text-xs text-neutral-500">{state.route}</span> : null}
+              </span>
+              <span className="text-xs text-neutral-400">
+                {state.action
+                  ? `${state.action.label ?? "action"} → ${
+                      state.action.verified === false
+                        ? "did not advance"
+                        : state.action.verified
+                          ? "advanced"
+                          : "not verified"
+                    }${state.action.error ? ` (${state.action.error})` : ""}`
+                  : "end of run"}
+                {" · "}
+                {durationText(state.durationMs)}
+                {state.errorCount > 0 ? ` · ${state.errorCount} error${state.errorCount === 1 ? "" : "s"}` : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      {section.unreachedStates.length > 0 ? (
+        <div>
+          <h3 className="text-sm font-semibold">Declared states not reached</h3>
+          <ul className="mt-3 space-y-2 text-sm">
+            {section.unreachedStates.map((state) => (
+              <li key={state.stateKey} className="flex flex-wrap justify-between gap-2">
+                <span className="font-mono">{state.stateKey}</span>
+                <span
+                  className={
+                    state.status === "BLOCKED_BY_APPLICATION" ? "text-amber-400" : "text-neutral-500"
+                  }
+                >
+                  {unreachedLabel(state.status)}
+                  {state.detail ? ` — ${state.detail}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {evidence.length > 0 ? (
+        <div>
+          <h3 className="text-sm font-semibold">What the code says about the step that failed</h3>
+          <p className="mt-1 text-xs text-neutral-500">
+            Locations and a summary only. The source stays on the machine that ran the test.
+          </p>
+          <ul className="mt-3 space-y-3 text-sm">
+            {evidence.map((entry) => (
+              <li key={entry.key}>
+                <div className="font-mono text-xs text-neutral-400">{entry.heading}</div>
+                <p className="mt-1 text-neutral-300">{entry.summary}</p>
+                {entry.locations.map((location) => (
+                  <div key={location} className="font-mono text-xs text-neutral-500">{location}</div>
+                ))}
+                {entry.caveat ? <p className="mt-1 text-xs text-amber-400">{entry.caveat}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {traces.length > 0 ? (
+        <div>
+          <h3 className="text-sm font-semibold">Diagnostic traces kept</h3>
+          <p className="mt-1 text-xs text-neutral-500">
+            A trace is recorded for every state and kept only where something went wrong. It holds the
+            action log and console output, with typed text, page content and credentials removed.
+          </p>
+          <ul className="mt-3 space-y-1 text-sm text-neutral-300">
+            {traces.map(([where, why]) => (
+              <li key={`${where}:${why}`}>
+                <span className="font-mono">{where}</span> — {why}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {timing.length > 0 ? (
+        <div>
+          <h3 className="text-sm font-semibold">Render time of the Flow&apos;s components</h3>
+          <p className="mt-1 text-xs text-neutral-500">
+            Measured for the components this run was asked to watch, in a development build. Each is
+            listed with the states it is the code for.
+          </p>
+          <table className="mt-3 w-full text-left text-sm">
+            <tbody className="divide-y divide-neutral-800">
+              {timing.map((row) => (
+                <tr key={row.component}>
+                  <td className="py-2 font-mono">{row.component}</td>
+                  <td className="py-2 text-xs text-neutral-500">{row.states}</td>
+                  <td className="py-2 text-xs text-neutral-400">{row.renders}</td>
+                  <td className="py-2 text-right text-xs">{row.total} total · {row.worst} worst</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {reconciliation.length > 0 ? (
+        <div>
+          <h3 className="text-sm font-semibold">What reconciliation attributes the gaps to</h3>
+          <ul className="mt-3 space-y-1 text-sm text-neutral-300">
+            {reconciliation.map(([label, count]) => (
+              <li key={label}>
+                {count} × {label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }

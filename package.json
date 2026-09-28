@@ -33,6 +33,7 @@
     "verify:desktop:phase2": "node scripts/verify-desktop-phase2.mjs",
     "verify:desktop:intent": "node scripts/verify-desktop-phase2.mjs",
     "verify:desktop:phase3": "node scripts/verify-desktop-phase3.mjs",
+    "verify:desktop:automated": "node scripts/verify-desktop-automated.mjs",
     "verify:desktop:packaged-phase3": "node scripts/verify-packaged-desktop-phase3.mjs",
     "verify:billing:lifecycle": "node scripts/verify-billing-lifecycle-features.mjs",
     "verify:billing:scope": "node scripts/verify-user-scoped-billing.mjs",

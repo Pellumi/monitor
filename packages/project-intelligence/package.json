@@ -6,9 +6,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/index.test.js dist/codebase/codebase.test.js dist/flow-mapping.test.js dist/annotation-source.test.js dist/gitignore.test.js"
+    "test": "node --test dist/index.test.js dist/codebase/codebase.test.js dist/codebase/navigation.test.js dist/navigation-graph.test.js dist/flow-slice.test.js dist/flow-mapping.test.js dist/annotation-source.test.js dist/gitignore.test.js"
   },
   "dependencies": {
+    "@tellann/automation-engine": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
     "@tellann/python-project": "workspace:*",
     "ignore": "5.3.2",

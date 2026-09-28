@@ -6,7 +6,7 @@ import type { Inventory } from './inventory';
 
 const DOC_ANALYZER = 'documentation';
 
-function readIfPresent(root: string, relative: string): string | null {
+export function readIfPresent(root: string, relative: string): string | null {
   try {
     return fs.readFileSync(path.join(root, ...relative.split('/')), 'utf8');
   } catch {

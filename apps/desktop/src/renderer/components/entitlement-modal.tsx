@@ -43,6 +43,11 @@ export function getNextPlanTier(
     nextPlan = "Enterprise";
   }
 
+  // Automated Run is offered from Business up, so every lower plan is pointed at Business rather than the next rung.
+  if (featureRequired?.toUpperCase() === "AUTOMATED_QA_RUNS" && !["BUSINESS", "ENTERPRISE"].includes(norm)) {
+    nextPlan = "Business";
+  }
+
   return { currentPlan, nextPlan };
 }
 
@@ -59,7 +64,9 @@ export function EntitlementModal({
 
   const featureName =
     customFeatureName ??
-    (feature === "AUTOMATED_INSTRUMENTATION"
+    (feature === "AUTOMATED_QA_RUNS"
+      ? "Automated Runs"
+      : feature === "AUTOMATED_INSTRUMENTATION"
       ? "Automated Instrumentation"
       : feature === "DOCUMENT_FLOW_INFERENCE"
         ? "Document Flow Inference"

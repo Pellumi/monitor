@@ -215,6 +215,12 @@ Use when: intent is partially declared, or the developer is exploring.
 Observation Only
 The platform records without prompting or directing, and restricts itself to read-safe interactions.
 Use when: the target is sensitive, shared, or must not be altered.
+Automated
+The platform starts the application from an approved execution profile, drives a managed browser through one declared flow from its initial state toward a terminal state the developer selected, and records what it observes at every state. It executes the flow the developer declared; it does not invent flows, generate tests, or decide what the application should do.
+Use when: a declared flow exists, the target is a development or staging environment, and the developer wants the platform to perform the demonstration rather than walk it by hand.
+Never available for production.
+DDM-MODE-002
+An Automated run reaching only part of its flow proves nothing about the unreached part. Reports shall state the stop reason and shall distinguish a state the application prevented the platform from reaching from a state that was reached and found absent.
 DDM-MODE-001
 Every run shall record its mode. Reports shall state the mode under which evidence was gathered, because the mode affects what absence of evidence means.
 7.2 Capture Tracks

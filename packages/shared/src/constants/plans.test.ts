@@ -55,6 +55,12 @@ describe('pricing catalog contract', () => {
     for (const plan of ['TEAM', 'BUSINESS', 'ENTERPRISE'] as const) {
       expect(enabled(plan, Feature.SHARED_RUN_GOVERNANCE)).toBe(true);
     }
+    for (const plan of ['FREE', 'LOCAL', 'SOLO', 'TEAM'] as const) {
+      expect(enabled(plan, Feature.AUTOMATED_QA_RUNS)).toBe(false);
+    }
+    for (const plan of ['BUSINESS', 'ENTERPRISE'] as const) {
+      expect(enabled(plan, Feature.AUTOMATED_QA_RUNS)).toBe(true);
+    }
   });
 
   it('does not expose placeholder enterprise limits as public contract values', () => {

@@ -534,6 +534,20 @@ SEAD-AGENT-019
 Values classified as protected during a run shall be stored protected and revealed only on an authorized, audited request.
 SEAD-AGENT-020
 In Observation Only mode, the agent shall restrict itself to read-safe interactions.
+SEAD-AGENT-020A
+Automated mode performs active control of the application. It shall be refused for production environments by the platform and again by the agent, independently.
+SEAD-AGENT-020B
+In Automated mode the agent shall start application processes only from an execution profile the developer has approved. A change to an approved command, working directory or environment reference shall invalidate the approval. Commands shall not be run through a shell.
+SEAD-AGENT-020C
+Every action in Automated mode shall be classified (read, client state mutation, server state mutation, external side effect, destructive) and checked against the environment's policy before it is performed. An action that leaves the application's origin, or whose class the environment does not permit, shall be blocked and recorded.
+SEAD-AGENT-020D
+Test persona credentials and run data shall be held in OS-protected storage on the developer's machine, shall never be transmitted to the platform, and values the agent types into the application shall be treated as protected values and shall not appear in evidence, artifacts or logs.
+SEAD-AGENT-020E
+A browser trace recorded in Automated mode shall be retained only for a state in which something went wrong, and shall be sanitised on the developer's machine before it is stored or uploaded: typed text, evaluated code and results, element markup, request and response bodies, cookies, credential headers, screenshots and DOM snapshots shall not be present in it. Nothing forensic shall be retained for a run that went as declared.
+SEAD-AGENT-020F
+Explaining a failed step from the code shall be done locally. What is transmitted shall be locations and a hash of the referenced source range, never source text.
+SEAD-AGENT-020G
+An optional local ambiguity resolver, where one is configured, shall run entirely on the developer's machine, shall be given page metadata only, shall be able to choose only among candidates the deterministic engine already produced, and shall have its choice acted on only if the code-derived contract independently agrees. The agent shall work identically with none configured.
 10.5.7 Update Integrity
 SEAD-AGENT-021
 Agent binaries shall be signed, and updates shall be verified against that signature before application.

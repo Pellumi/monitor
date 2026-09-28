@@ -355,7 +355,7 @@ Included
 * Repository binding and snapshots
 * Branch policy enforcement and time-boxed checkout grants
 * Managed browser guided runs
-* Run modes: Guided, Assisted, Observation Only
+* Run modes: Guided, Assisted, Observation Only, Automated (Business and Enterprise; see the Autonomous Testing carve-out)
 * Frontend and backend capture tracks
 * Flow boundary detection and evidence scoping
 * Protected value capture with audited reveal
@@ -460,10 +460,11 @@ Belongs to Phase 2.
 Autonomous Testing
 Excluded
 * Test generation
-* Test execution
 * Validation suites
 * Regression suites
+* Executing tests the platform has itself generated
 Belongs to Phase 3.
+Carve-out: Automated Run. Executing one human-declared Flow, from its declared initial state toward one terminal state the developer selected, against a non-production environment, is not autonomous testing. The platform generates no test and decides no intent; it realises transitions the developer declared and records the difference. Automated Run remains outside the Phase 1 default plan (Business and Enterprise) and shall not be extended into test generation, branch exploration or regression suites without a scope change.
 Regression Detection
 Excluded
 * Release comparisons

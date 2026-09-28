@@ -2380,6 +2380,7 @@ enum QARunMode {
   GUIDED
   ASSISTED
   OBSERVATION_ONLY
+  AUTOMATED
 }
 
 enum QACaptureTrack {
@@ -3208,6 +3209,8 @@ model QARun {
   timeoutAt              DateTime?
   targetUrl              String
   browserMetadata        Json?
+  /// AUTOMATED runs only: the pinned execution config (flow version, target terminal, profile, persona, limits), current executionPhase and stopReason.
+  automation             Json?
   artifactManifest       Json?
   reconciliationReportId String?
   reportId               String?

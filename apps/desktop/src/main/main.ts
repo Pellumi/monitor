@@ -35,6 +35,7 @@ import { DesktopCloudClient, cloudApiUrl } from './cloud-client';
 import { loadDesktopSession } from './secure-store';
 import { checkSdkVersions } from './sdk-version-check';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
+import { boundaryRequestFor } from './flow-boundary-input';
 import { initializeUpdater } from './update-manager';
 import { closeLocalStore, deleteLocalState, listLocalStateKeys, readLocalState, writeLocalState } from './local-store';
 import { extractDocument } from '@tellann/document-intelligence';
@@ -725,24 +726,12 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
       }
     }
     if (!supported.has(eventType)) continue;
-    const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {};
     await observer.recordFlowEvent(event);
-    // A marker from the instrumentation snippet names its state in
-    // `metadata.state`. Without it here the desktop forwards an empty stateKey
-    // and the event is refused before the boundary ever sees the marker.
-    const stateKey = [metadata.stateKey, metadata.toStateKey, metadata.state, metadata.stateId]
-      .map((value) => (value == null ? '' : String(value).trim()))
-      .find((value) => value !== '') ?? '';
-    const boundary = await cloud.boundaryEvent(active.runId, {
-      eventId: event.eventId,
-      eventType,
-      timestamp: event.timestamp,
-      flowVersionId: metadata.flowVersionId,
-      stateKey,
-      fromStateKey: metadata.fromStateKey,
-      toStateKey: metadata.toStateKey,
-      metadata,
-    }) as { accepted?: boolean; shouldStop?: boolean; phase?: 'PRE_BOUNDARY' | 'IN_FLOW'; reason?: string };
+    // A marker from the instrumentation snippet names its state in `metadata.state` or, when the
+    // instrumentation adapter wrote it, `metadata.stateId`, and an adapter marker names no Flow at all.
+    // The request is built in one tested place so that neither is refused before the boundary ever sees it.
+    const { stateKey, request } = boundaryRequestFor(event, active);
+    const boundary = await cloud.boundaryEvent(active.runId, request as unknown as Record<string, unknown>) as { accepted?: boolean; shouldStop?: boolean; phase?: 'PRE_BOUNDARY' | 'IN_FLOW'; reason?: string };
     await observer.acceptBoundaryOutcome({
       accepted: Boolean(boundary.accepted), phase: boundary.phase, stateKey,
       eventType, reason: boundary.reason ?? null,
@@ -3930,6 +3919,9 @@ function registerIpc(): void {
     // already recording is the one using.
     if (observer.getState()) throw new Error('RUN_ALREADY_ACTIVE');
     const parsed = StartGuidedRunInputSchema.parse(input);
+    // Automated runs are executed by the automation manager, not by this human-driven path. Until it is
+    // wired in, refuse rather than let a run the server recorded as automated silently wait for a person.
+    if (parsed.mode === 'AUTOMATED') throw new Error('AUTOMATED_RUN_ENGINE_UNAVAILABLE');
     if (parsed.environmentType === 'PRODUCTION' && (parsed.mode !== 'OBSERVATION_ONLY' || !parsed.productionObservationApproved)) {
       throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
     }

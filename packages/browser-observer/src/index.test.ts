@@ -53,6 +53,8 @@ test('production observation permits only read HTTP methods', () => {
 
 test('only strict guided runs wait for a declared initial boundary', () => {
   assert.equal(initialCapturePhase('GUIDED', 'version-1'), 'PRE_BOUNDARY');
+  assert.equal(initialCapturePhase('AUTOMATED', 'version-1'), 'PRE_BOUNDARY');
+  assert.equal(initialCapturePhase('AUTOMATED', null), 'IN_FLOW');
   assert.equal(initialCapturePhase('ASSISTED', 'version-1'), 'IN_FLOW');
   assert.equal(initialCapturePhase('ASSISTED', null), 'IN_FLOW');
   assert.equal(initialCapturePhase('OBSERVATION_ONLY', null), 'IN_FLOW');
@@ -697,4 +699,110 @@ test('one dead favicon is noise; several empty resources are a finding', () => {
   assert.equal(classifyFailedResources({ failedResourceCount: 2, resourceCount: 40 }), null);
   assert.equal(classifyFailedResources({ failedResourceCount: null, resourceCount: 40 }), null);
   assert.deepEqual(classifyFailedResources({ failedResourceCount: 3, resourceCount: 40 }), { failed: 3, total: 40 });
+});
+
+const AUTOMATED_RUN = {
+  applicationId: '11111111-1111-4111-8111-111111111111',
+  environmentId: '22222222-2222-4222-8222-222222222222',
+  workspaceId: null,
+  environmentType: 'DEVELOPMENT' as const,
+  captureTracks: ['FRONTEND' as const],
+  expectedGraphVersionId: '33333333-3333-4333-8333-333333333333',
+};
+
+async function withLocalPage<T>(run: (url: string) => Promise<T>): Promise<T> {
+  const http = await import('node:http');
+  const server = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<h1>app</h1>'); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    return await run(`http://127.0.0.1:${(server.address() as { port: number }).port}/`);
+  } finally {
+    await new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); });
+  }
+}
+
+test('an automated run exposes its page to the driver and records automation evidence from the agent, before the boundary', async () => {
+  await withLocalPage(async (targetUrl) => {
+    const events: QAEvidenceEvent[] = [];
+    const observer = new BrowserObserver({ headless: true, onEvidenceEvent: (event) => { events.push(event); } });
+    const state = await observer.start({ ...AUTOMATED_RUN, mode: 'AUTOMATED', targetUrl }, await mkdtemp());
+    try {
+      assert.equal(state.mode, 'AUTOMATED');
+      assert.equal(state.phase, 'PRE_BOUNDARY');
+      const page = observer.getAutomationPage();
+      assert.ok(page, 'the managed page is handed over');
+      assert.equal(new URL(page.url()).origin, new URL(targetUrl).origin);
+
+      const eventId = observer.recordAutomationEvent('QA_AUTOMATION_PLAN_CREATED', { targetStateKey: 'exam_created' });
+      assert.ok(eventId, 'automation evidence survives the pre-boundary filter');
+      const recorded = events.find((event) => event.eventType === 'QA_AUTOMATION_PLAN_CREATED')!;
+      assert.equal(recorded.source, 'DESKTOP_AGENT', 'it is the agent speaking, not the page');
+      assert.equal(recorded.scope, 'PRE_BOUNDARY', 'and it stays out of in-flow coverage');
+      assert.equal(recorded.metadata.targetStateKey, 'exam_created');
+    } finally {
+      await observer.end();
+    }
+    assert.equal(observer.getAutomationPage(), null, 'nothing to drive once the run has ended');
+  });
+});
+
+test('a human-driven run is never handed to the automation driver, and cannot record automation evidence', async () => {
+  await withLocalPage(async (targetUrl) => {
+    for (const mode of ['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY'] as const) {
+      const observer = new BrowserObserver({ headless: true });
+      await observer.start(
+        { ...AUTOMATED_RUN, mode, targetUrl, ...(mode === 'OBSERVATION_ONLY' ? { expectedGraphVersionId: null } : {}) },
+        await mkdtemp(),
+      );
+      try {
+        assert.equal(observer.getAutomationPage(), null, mode);
+        assert.equal(observer.recordAutomationEvent('QA_AUTOMATION_STOPPED', {}), null, mode);
+      } finally {
+        await observer.end();
+      }
+    }
+  });
+});
+
+test('with no run, there is no page to drive', () => {
+  const observer = new BrowserObserver({});
+  assert.equal(observer.getAutomationPage(), null);
+  assert.equal(observer.recordAutomationEvent('QA_AUTOMATION_STOPPED', {}), null);
+});
+
+test('an automated run captures forensic artifacts on demand, before the boundary, and not on its own', async () => {
+  await withLocalPage(async (targetUrl) => {
+    const observer = new BrowserObserver({ headless: true });
+    await observer.start({ ...AUTOMATED_RUN, mode: 'AUTOMATED', targetUrl }, await mkdtemp());
+    try {
+      // Nothing is taken just because a page settled.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(observer.getState()!.stateArtifacts.length, 0);
+
+      assert.equal(await observer.captureAnomalyArtifacts(), true);
+      const [artifact] = observer.getState()!.stateArtifacts;
+      assert.ok(artifact, 'the requested capture was taken');
+      assert.equal(artifact!.captureReason, 'FINDING', 'recorded as evidence for a finding');
+      assert.ok(artifact!.screenshotFile);
+      // Asking again for the same unchanged page is a deliberate request, so it is honoured.
+      assert.equal(await observer.captureAnomalyArtifacts(), true);
+      assert.equal(observer.getState()!.stateArtifacts.length, 2);
+    } finally {
+      await observer.end();
+    }
+  });
+});
+
+test('anomaly capture is refused for every mode that is not an automated run', async () => {
+  await withLocalPage(async (targetUrl) => {
+    const observer = new BrowserObserver({ headless: true });
+    await observer.start({ ...AUTOMATED_RUN, mode: 'ASSISTED', targetUrl }, await mkdtemp());
+    try {
+      assert.equal(await observer.captureAnomalyArtifacts(), false);
+      assert.equal(observer.getState()!.stateArtifacts.length, 0);
+    } finally {
+      await observer.end();
+    }
+    assert.equal(await new BrowserObserver({}).captureAnomalyArtifacts(), false, 'no run at all');
+  });
 });

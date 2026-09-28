@@ -9,8 +9,9 @@ import { buildInventory, planArchive, packageOwnerIndex } from './inventory';
 import type { Inventory } from './inventory';
 import { Budget, collectDeclarations, createAnalysisProgram, resolveReferences } from './program';
 import { applyFrameworkAdapters, detectFileScopedRoutes, linkTestSubjects } from './frameworks';
+import { applyNavigationAdapters, detectGuards } from './navigation';
 import { analyzePythonSources } from './python';
-import { analyzeDocumentation } from './docs';
+import { analyzeDocumentation, readIfPresent } from './docs';
 import { discoverFeatures } from './features';
 import { analyzeArchitecture, blastRadius } from './architecture';
 import { buildCache, hashFile, planIncremental } from './incremental';
@@ -23,11 +24,12 @@ export * from './architecture';
 export * from './evidence-bundle';
 export * from './query';
 export { canonicalRoute, endpointId } from './frameworks';
+export * from './navigation';
 export { analyzePythonSources, pythonModuleName } from './python';
 export { blastRadius };
 
 /** Bumped whenever a change would make cached fragments wrong. */
-export const CODEBASE_ANALYZER_VERSION = '2.1.0';
+export const CODEBASE_ANALYZER_VERSION = '2.2.0';
 
 export type AnalysisProgress = (
   status: CodebaseAnalysis['status'],
@@ -210,7 +212,8 @@ export function analyzeCodebase(
     onProgress?.('LINKING', 45, 'Resolving references with the TypeScript checker');
     stats = resolveReferences(
       program, inventory, graph, declarations, budget,
-      applyFrameworkAdapters, environmentKeys, emitFor, fileHashes,
+      (context, node) => { applyFrameworkAdapters(context, node); applyNavigationAdapters(context, node); },
+      environmentKeys, emitFor, fileHashes,
     );
     analyzedFiles = emitFor ? emitFor.size + plan.reusable.length : program.sourceFiles.length;
   }
@@ -240,6 +243,7 @@ export function analyzeCodebase(
 
   onProgress?.('GRAPHING', 62, 'Applying framework and documentation analyzers');
   detectFileScopedRoutes(inventory, graph);
+  detectGuards((relative) => readIfPresent(root, relative), inventory, graph);
   const documentation = analyzeDocumentation(root, inventory, graph);
   linkTestSubjects(graph);
 

@@ -273,6 +273,7 @@ Report Exports | JSON | JSON/PDF | All | All | All | All
 Desktop Agent
 Capability | Free | Local | Solo | Team | Business | Enterprise
 Guided QA Runs | Yes | Yes | Yes | Yes | Yes | Yes
+Automated QA Runs | No | No | No | No | Yes | Yes
 Visual & Accessibility Analysis | Basic | Standard | Advanced | Advanced | Advanced | Advanced
 Browser Trace Capture | No | Basic | Advanced | Advanced | Advanced | Advanced
 Codebase Intelligence | No | Basic | Standard | Advanced | Advanced | Advanced

@@ -85,6 +85,7 @@ function readReport(report: Record<string, unknown>) {
   const runSummary = asRecord(sections.runSummary);
   const backend = asRecord(sections.backendSummary);
   const frontend = asRecord(sections.frontendSummary);
+  const automated = asRecord(sections.automated);
   const viewportHistory = records(runSummary.viewportHistory);
   return {
     // Payloads before session-scoped QA existed were all Flow reports and did
@@ -93,6 +94,11 @@ function readReport(report: Record<string, unknown>) {
     hasFlow: report.scopeKind !== "SESSION",
     // The run's own name, which the report is filed under.
     runTitle: text(report.title, ""),
+    // QRS-RUN-003: the mode changes what an absence of evidence means, so the document states it.
+    mode: typeof report.mode === "string" ? report.mode : null,
+    // Only an Automated run carries this section.
+    automated,
+    hasAutomated: Object.keys(automated).length > 0,
     application: asRecord(report.application),
     environment: asRecord(report.environment),
     summary: asRecord(report.summary),
@@ -742,6 +748,150 @@ function renderAnnotations(data: ReadReport): string {
     <table class="index annotations">${rows}</table></section>`;
 }
 
+const MODE_TEXT: Record<string, string> = {
+  GUIDED: "Guided",
+  ASSISTED: "Assisted",
+  OBSERVATION_ONLY: "Observation only",
+  AUTOMATED: "Automated",
+};
+
+const OUTCOME_KIND_TEXT: Record<string, string> = {
+  SUCCESS: "Every declared step to the target was performed and the expected state followed.",
+  APPLICATION: "The application did not behave as the declared Flow describes, so the run could not continue.",
+  INFRASTRUCTURE: "A failure of the run itself, not a finding about the application. Nothing here shows the Flow is broken.",
+  USER: "The run was stopped before it finished; states it did not reach say nothing about the application.",
+};
+
+/**
+ * The Automated Run chapter (QRS-RUN-005..008): what the run was pinned to, how each state went,
+ * and how it ended. It keeps "the application prevented this" apart from "the run never got
+ * there", and it never presents an execution failure as a missing Flow step.
+ */
+function renderAutomated(data: ReadReport): string {
+  if (!data.hasAutomated) return "";
+  const automated = data.automated;
+  const pinned = asRecord(automated.pinned);
+  const outcome = asRecord(automated.outcome);
+  const states = records(automated.states);
+  const unreached = records(automated.unreachedStates);
+  const reconciliation = Object.entries(asRecord(automated.reconciliation)).filter(([, count]) => Number(count) > 0);
+  const kind = typeof outcome.kind === "string" ? outcome.kind : "";
+  const codeEvidence = records(automated.codeEvidence);
+  const retainedTraces = records(automated.retainedTraces);
+  const renderTiming = records(automated.renderTiming)
+    .map((sample) => ({ sample, total: Number(sample.totalMs) || 0 }))
+    .sort((a, b) => b.total - a.total)
+    .map(({ sample }) => {
+      const states = Array.isArray(sample.states) ? sample.states.map((state) => text(state)).join(", ") : "";
+      return `<tr><td>${escapeHtml(text(sample.component))}<small>${escapeHtml(states || "not mapped to a state")}</small></td><td>${escapeHtml(
+        `${text(sample.mounts, "0")} mounts, ${text(sample.updates, "0")} updates`,
+      )}</td><td>${escapeHtml(`${text(sample.totalMs, "0")} ms total, ${text(sample.maxMs, "0")} ms worst`)}</td></tr>`;
+    })
+    .join("");
+
+  const stateRows = states
+    .map((state) => {
+      const action = asRecord(state.action);
+      const acted = Object.keys(action).length > 0;
+      const result = !acted
+        ? "End of run"
+        : `${text(action.label, "Action")} → ${
+            action.verified === false ? "did not advance" : action.verified === true ? "advanced" : "not verified"
+          }${action.error ? ` (${text(action.error)})` : ""}`;
+      return `<tr><td>${escapeHtml(text(state.stateKey))}<small>${escapeHtml(
+        `${state.scope === "PRE_BOUNDARY" ? "setup, before the Flow began" : "in the Flow"} · ${text(state.route, "no route")}`,
+      )}</small></td><td>${escapeHtml(result)}</td><td>${escapeHtml(millisecondText(state.durationMs))}</td></tr>`;
+    })
+    .join("");
+
+  const unreachedRows = unreached
+    .map(
+      (state) =>
+        `<tr><td>${escapeHtml(text(state.stateKey))}</td><td>${escapeHtml(
+          state.status === "BLOCKED_BY_APPLICATION" ? "Prevented by the application" : "Not attempted",
+        )}${state.detail ? `<small>${escapeHtml(text(state.detail))}</small>` : ""}</td></tr>`,
+    )
+    .join("");
+
+  const evidenceBlocks = codeEvidence
+    .map((entry) => {
+      const subject = asRecord(entry.subject);
+      const locations = records(entry.refs).map((ref) => {
+        const start = typeof ref.startLine === "number" ? ref.startLine : null;
+        const end = typeof ref.endLine === "number" ? ref.endLine : null;
+        const range = start ? (end && end !== start ? `:${start}-${end}` : `:${start}`) : "";
+        return `${ref.symbol ? `${text(ref.symbol)} — ` : ""}${text(ref.file)}${range}`;
+      });
+      const doubtful = entry.derivation !== "RESOLVED";
+      return `<h3>${escapeHtml(`${subject.kind === "STATE" ? "State" : "Transition"} ${text(subject.id)}`)}</h3><p>${escapeHtml(
+        text(entry.summary),
+      )}</p>${locations.length ? list(locations) : ""}${
+        doubtful ? `<p class="muted">${escapeHtml(`The mapping to code is ${text(entry.derivation).toLowerCase()}; treat this as a lead.`)}</p>` : ""
+      }`;
+    })
+    .join("");
+
+  const traceRows = retainedTraces
+    .map((trace) => {
+      const reasons = Array.isArray(trace.reasons) ? trace.reasons.map((reason) => text(reason)) : [];
+      return `<tr><td>${escapeHtml(text(trace.stateKey, "Before the first state"))}</td><td>${escapeHtml(
+        reasons.length ? reasons.map((reason) => reason.replaceAll("_", " ").toLowerCase()).join("; ") : "something went wrong here",
+      )}</td></tr>`;
+    })
+    .join("");
+
+  return `<section class="major"><div class="section-label">Section // Automated run</div><h2>What the automated run did</h2>
+    <p><strong>${escapeHtml(text(outcome.stopReason, "Outcome not recorded"))}</strong>. ${escapeHtml(
+      OUTCOME_KIND_TEXT[kind] ?? "The run did not record why it ended.",
+    )}${outcome.detail ? ` ${escapeHtml(text(outcome.detail))}` : ""}</p>
+    <h3>What the run was pinned to</h3>
+    <table class="facts">${factRows([
+      ["FLOW VERSION", text(pinned.flowVersionId)],
+      ["STARTING STATE", text(pinned.initialStateKey)],
+      ["TARGET STATE", text(pinned.targetTerminalStateKey)],
+      ["EXECUTION PROFILE", text(pinned.executionProfileId)],
+      ["TEST PERSONA", text(pinned.testPersonaId)],
+      ["RUN DATA SET", text(pinned.runDataSetId)],
+      ["CODE SNAPSHOT", text(pinned.codeSnapshotId)],
+      ["INSTRUMENTATION", text(pinned.instrumentationManifestVersion)],
+      ["STEPS / REPLANS", `${text(outcome.steps, "0")} / ${text(outcome.replans, "0")}`],
+    ])}</table>
+    <h3>State by state</h3>
+    ${
+      stateRows
+        ? `<table class="facts">${stateRows}</table>`
+        : "<p>No state was recognised before the run ended.</p>"
+    }
+    ${
+      unreachedRows
+        ? `<h3>Declared states not reached</h3><table class="facts">${unreachedRows}</table>`
+        : ""
+    }
+    ${
+      evidenceBlocks
+        ? `<h3>What the code says about the step that failed</h3><p class="muted">Locations and a summary only. The source stays on the machine that ran the test.</p>${evidenceBlocks}`
+        : ""
+    }
+    ${
+      traceRows
+        ? `<h3>Diagnostic traces kept</h3><p class="muted">A trace is recorded for every state and kept only where something went wrong. It holds the action log and console output, with typed text, page content and credentials removed.</p><table class="facts">${traceRows}</table>`
+        : ""
+    }
+    ${
+      renderTiming
+        ? `<h3>Render time of the Flow's components</h3><p class="muted">Measured for the components this run was asked to watch, in a development build.</p><table class="facts">${renderTiming}</table>`
+        : ""
+    }
+    ${
+      reconciliation.length
+        ? `<h3>What reconciliation attributes the gaps to</h3>${list(
+            reconciliation.map(([reason, count]) => `${count} × ${reason.replaceAll("_", " ").toLowerCase()}`),
+          )}`
+        : ""
+    }
+  </section>`;
+}
+
 function renderAppendix(data: ReadReport): string {
   const eventRows = data.events
     .slice(0, EVENT_LIMIT)
@@ -929,6 +1079,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
             asRecord(data.runSummary.environment).type ?? data.environment.type,
           )}`,
         ],
+        ["MODE", data.mode ? MODE_TEXT[data.mode] ?? data.mode : "Not recorded"],
         ["CAPTURE TRACKS", joined(data.runSummary.captureTracks ?? report.captureTracks, "Not recorded")],
         ["DURATION", durationText(data.runSummary.durationMs)],
         ["BOUNDARY OUTCOME", text(data.runSummary.boundaryOutcome ?? report.status)],
@@ -972,6 +1123,8 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
           : ""
       }
     </section>
+
+    ${renderAutomated(data)}
 
     <section class="major"><div class="section-label">Section // Findings index</div><h2>${data.hasFlow ? "Every finding in this Flow" : "Session findings"}</h2>
       ${

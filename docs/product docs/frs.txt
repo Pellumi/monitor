@@ -270,7 +270,23 @@ Every applied instrumentation plan shall be reversible through a recorded rollba
 FR-157
 The desktop agent shall drive a managed browser session for demonstration runs.
 FR-158
-The platform shall support Guided, Assisted and Observation Only run modes.
+The platform shall support Guided, Assisted, Observation Only and Automated run modes.
+FR-158A
+An Automated run shall execute exactly one published Flow version from its declared initial state toward one user-selected terminal state of that version. The declared Flow, the target terminal state, the test data policy and the environment remain human-owned; the platform determines only how to realise the declared transitions.
+FR-158B
+An Automated run shall require a published Flow version, a completed Flow initialization, a successful code scan, a bound workspace, validated instrumentation, an approved execution profile, and a non-production environment. A run that lacks any of these shall be refused before it starts.
+FR-158C
+An Automated run shall record, and reports shall state, the Flow version, initial state, target terminal state, code snapshot, instrumentation manifest, execution profile, test persona and environment it was pinned to, so that a report produced later shows exactly what the platform attempted.
+FR-158D
+Automated runs shall never be permitted against a production environment.
+FR-158E
+The platform shall not decide the next action of an Automated run with a language model. Action selection shall be deterministic, derived from the declared Flow, the codebase model and structured browser state.
+FR-158F
+An Automated run that stops short of its target shall record a stop reason. A stop caused by the application under test shall complete the run as incomplete with its evidence preserved; a stop caused by the platform itself shall fail the run.
+FR-158G
+An Automated run shall enforce step, duration, replan and retry limits, shall detect non-progressing loops, and shall not retry an action that mutates server state.
+FR-158H
+An Automated run shall consume the Automated Runs entitlement. A missing entitlement shall not affect Guided, Assisted or Observation Only runs.
 FR-159
 The platform shall support frontend and backend capture tracks independently.
 FR-160

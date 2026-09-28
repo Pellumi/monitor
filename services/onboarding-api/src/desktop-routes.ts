@@ -20,7 +20,17 @@ import {
   EmailCategory,
 } from '@tellann/db';
 import { NotificationEmailService, NotificationOrchestrator } from '@tellann/email';
-import { CreateQARunAnnotationSchema, QAEvidenceEventSchema } from '@tellann/desktop-contracts';
+import {
+  AUTOMATION_STOP_REASON_KIND,
+  AutomationConfigSchema,
+  automationTargets,
+  automationTargetsConsistent,
+  AutomationStopReasonSchema,
+  CreateQARunAnnotationSchema,
+  QAEvidenceEventSchema,
+  type AutomationRunState,
+  type AutomationStopReason,
+} from '@tellann/desktop-contracts';
 import { Feature } from '@tellann/shared';
 import type { EntitlementChecker } from '@tellann/entitlement-checker';
 import type { StorageClient } from '@tellann/storage';
@@ -62,12 +72,17 @@ export function productionRunModeAllowed(environmentType: EnvironmentType, mode:
   return environmentType !== EnvironmentType.PRODUCTION || mode === QARunMode.OBSERVATION_ONLY;
 }
 
+/** Guided and Automated runs both reconcile against a fully initialized, pinned Flow and wait for its initial boundary. */
+export function isFlowBoundedRunMode(mode: QARunMode): boolean {
+  return mode === QARunMode.GUIDED || mode === QARunMode.AUTOMATED;
+}
+
 export function qaRunCreationPolicy(mode: QARunMode, hasFlowContext: boolean): {
   requiresFlowContext: boolean;
   usesFlowContext: boolean;
   initialStatus: 'CREATED' | 'RECORDING';
 } {
-  if (mode === QARunMode.GUIDED) {
+  if (isFlowBoundedRunMode(mode)) {
     return { requiresFlowContext: true, usesFlowContext: true, initialStatus: 'CREATED' };
   }
   if (mode === QARunMode.ASSISTED) {
@@ -77,13 +92,65 @@ export function qaRunCreationPolicy(mode: QARunMode, hasFlowContext: boolean): {
 }
 
 export function qaRunActiveStatus(mode: QARunMode, boundaryStarted: boolean): QARunStatus {
-  return mode === QARunMode.GUIDED && !boundaryStarted
+  return isFlowBoundedRunMode(mode) && !boundaryStarted
     ? QARunStatus.WAITING_FOR_INITIAL
     : QARunStatus.RECORDING;
 }
 
 export function isSessionScopedQaRun(mode: QARunMode, expectedGraphVersionId: string | null | undefined): boolean {
-  return mode !== QARunMode.GUIDED || !expectedGraphVersionId;
+  return !isFlowBoundedRunMode(mode) || !expectedGraphVersionId;
+}
+
+export function retryAutomationState(automation: unknown): Prisma.InputJsonValue | undefined {
+  if (!automation || typeof automation !== 'object') return undefined;
+  const { stopReason: _stopReason, executionPhase: _executionPhase, ...pinned } = automation as Record<string, unknown>;
+  return { ...pinned, executionPhase: 'PREPARING_WORKSPACE' } as Prisma.InputJsonValue;
+}
+
+/**
+ * The stop reason an Automated Run reports on completion, if it is one we recognise.
+ * An unknown value is dropped rather than stored: it came from the desktop and is untrusted.
+ */
+export function parseAutomationStopReason(value: unknown): AutomationStopReason | null {
+  const parsed = AutomationStopReasonSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Whether the application (not Tellann) prevented an Automated Run from reaching its target. */
+export function isApplicationCausedStop(reason: AutomationStopReason | null): boolean {
+  return reason !== null && AUTOMATION_STOP_REASON_KIND[reason] === 'APPLICATION';
+}
+
+/**
+ * The persisted `QARun.automation` for a new Automated Run: the human-owned config plus what
+ * was pinned at creation, so a report produced months later states exactly what was attempted.
+ * Returns an error code instead when the config cannot be honoured against this Flow version.
+ */
+export function buildAutomationRunState(input: {
+  config: unknown;
+  terminalStateKeys: string[];
+  initialStateKey: string | null;
+  codeSnapshotId: string | null;
+  instrumentationManifestVersion: string | null;
+}): { ok: true; automation: AutomationRunState } | { ok: false; error: 'INVALID_AUTOMATION_CONFIG' | 'TARGET_TERMINAL_STATE_UNKNOWN' } {
+  const parsed = AutomationConfigSchema.safeParse(input.config);
+  if (!parsed.success || !automationTargetsConsistent(parsed.data)) return { ok: false, error: 'INVALID_AUTOMATION_CONFIG' };
+  const targets = automationTargets(parsed.data);
+  if (targets.some((target) => !input.terminalStateKeys.includes(target))) {
+    return { ok: false, error: 'TARGET_TERMINAL_STATE_UNKNOWN' };
+  }
+  return {
+    ok: true,
+    automation: {
+      ...parsed.data,
+      // Stored in both spellings, so a report or a later version of the engine reads either.
+      targetTerminalStateKeys: targets,
+      initialStateKey: input.initialStateKey,
+      codeSnapshotId: input.codeSnapshotId,
+      instrumentationManifestVersion: input.instrumentationManifestVersion,
+      executionPhase: 'PREPARING_WORKSPACE',
+    },
+  };
 }
 
 export function assistedFlowContextShape(input: {
@@ -109,6 +176,8 @@ export function scopeQaRunCompletion(input: {
   terminalBoundaryConfirmed: boolean;
   initialAccepted: boolean;
   timedOut: boolean;
+  /** Automated runs only: why the executor stopped, when it stopped short of the target. */
+  automationStopReason?: AutomationStopReason | null;
 }): {
   observations: any[];
   observedTransitions: any[];
@@ -135,7 +204,9 @@ export function scopeQaRunCompletion(input: {
     observedTransitions,
     completionReason: input.terminalBoundaryConfirmed
       ? 'TERMINAL_STATE_REACHED'
-      : input.timedOut
+      : input.automationStopReason && input.automationStopReason !== 'TERMINAL_STATE_REACHED'
+        ? input.automationStopReason
+        : input.timedOut
         ? 'TIMEOUT'
         : input.initialAccepted ? 'MANUAL_STOP_BEFORE_TERMINAL' : 'MANUAL_STOP_BEFORE_INITIAL',
     completedStatus: input.terminalBoundaryConfirmed ? QARunStatus.COMPLETED : QARunStatus.COMPLETED_INCOMPLETE,
@@ -826,6 +897,12 @@ export function createDesktopRouter(input: {
           feature: Feature.DESKTOP_GUIDED_RUNS,
         });
       }
+      if (mode === QARunMode.AUTOMATED && !await entitlementChecker.canAccess(environment.application.organizationId, Feature.AUTOMATED_QA_RUNS)) {
+        return res.status(403).json({
+          error: 'FEATURE_NOT_ENTITLED',
+          feature: Feature.AUTOMATED_QA_RUNS,
+        });
+      }
 
       const [workspace, snapshot, flow, expectedGraphVersion, patchSet, binding, initialization, flowScan, flowDrift] = await Promise.all([
         workspaceId
@@ -871,10 +948,29 @@ export function createDesktopRouter(input: {
 
       const versionSnapshot = expectedGraphVersion?.snapshot as any;
       const expectedStates = Array.isArray(versionSnapshot?.states) ? versionSnapshot.states : [];
-      const initialState = mode === QARunMode.GUIDED ? expectedStates.find((state: any) => state.role === 'INITIAL') : null;
-      const terminalStates = mode === QARunMode.GUIDED ? expectedStates.filter((state: any) => state.role === 'TERMINAL') : [];
-      if (mode === QARunMode.GUIDED && (!initialState || terminalStates.length === 0)) return res.status(422).json({ error: 'FLOW_BOUNDARIES_INVALID' });
+      const flowBounded = isFlowBoundedRunMode(mode);
+      const initialState = flowBounded ? expectedStates.find((state: any) => state.role === 'INITIAL') : null;
+      const terminalStates = flowBounded ? expectedStates.filter((state: any) => state.role === 'TERMINAL') : [];
+      if (flowBounded && (!initialState || terminalStates.length === 0)) return res.status(422).json({ error: 'FLOW_BOUNDARIES_INVALID' });
       const stateKey = (state: any) => String(state.behaviorKey ?? state.stateName ?? state.name ?? '').trim();
+
+      let automationState: AutomationRunState | undefined;
+      if (mode === QARunMode.AUTOMATED) {
+        // Automated runs execute against the application, so they need everything a Guided run needs
+        // plus a workspace to run from and approved (validated) instrumentation: the SDK markers are
+        // what the Flow boundary is decided from, and the executor never fabricates them.
+        if (!workspace) return res.status(409).json({ error: 'AUTOMATED_RUN_WORKSPACE_REQUIRED' });
+        if (!patchSet) return res.status(409).json({ error: 'AUTOMATED_RUN_INSTRUMENTATION_REQUIRED', message: 'Automated runs require validated instrumentation for this workspace.' });
+        const built = buildAutomationRunState({
+          config: req.body?.automation,
+          terminalStateKeys: terminalStates.map(stateKey),
+          initialStateKey: initialState ? stateKey(initialState) : null,
+          codeSnapshotId: flowScan?.analysisContentHash ?? null,
+          instrumentationManifestVersion: patchSet.id,
+        });
+        if (!built.ok) return res.status(built.error === 'INVALID_AUTOMATION_CONFIG' ? 400 : 422).json({ error: built.error });
+        automationState = built.automation;
+      }
 
       const run = await prisma.qARun.create({
         data: {
@@ -902,6 +998,7 @@ export function createDesktopRouter(input: {
           targetUrl: sanitizedTargetUrl,
           retryOfRunId: retryOfRunId ? String(retryOfRunId) : undefined,
           browserMetadata: { captureVersion: captureVersion === '2.0' ? '2.0' : '1.0' },
+          automation: automationState ? (automationState as unknown as Prisma.InputJsonValue) : undefined,
         },
       });
       res.status(201).json(run);
@@ -1816,6 +1913,16 @@ export function createDesktopRouter(input: {
     const run = await authorizedRun(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
     if (!TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is not terminal' });
+    if (run.mode === QARunMode.AUTOMATED) {
+      // A retry re-enters the same gates as creation: entitlements and plans change between attempts.
+      const environment = await prisma.environment.findUnique({ where: { id: run.environmentId }, select: { type: true } });
+      if (!environment || !productionRunModeAllowed(environment.type, run.mode)) {
+        return res.status(403).json({ error: 'PRODUCTION_ACTIVE_CONTROL_BLOCKED', message: 'Production environments support observation-only runs.' });
+      }
+      if (!await entitlementChecker.canAccess(run.organizationId, Feature.AUTOMATED_QA_RUNS)) {
+        return res.status(403).json({ error: 'FEATURE_NOT_ENTITLED', feature: Feature.AUTOMATED_QA_RUNS });
+      }
+    }
     const retried = await prisma.qARun.create({
       data: {
         organizationId: run.organizationId,
@@ -1838,6 +1945,8 @@ export function createDesktopRouter(input: {
         terminalStateKeys: run.terminalStateKeys,
         targetUrl: run.targetUrl,
         browserMetadata: run.browserMetadata ?? undefined,
+        // Same pinned config, but a fresh attempt: the previous run's phase and stop reason do not carry over.
+        automation: retryAutomationState(run.automation),
         retryOfRunId: run.id,
       },
     });
@@ -2081,6 +2190,7 @@ export function createDesktopRouter(input: {
       terminalBoundaryConfirmed,
       initialAccepted: Boolean(initialAccepted),
       timedOut: req.body?.completionReason === 'TIMEOUT' || Boolean(run.timeoutAt && run.timeoutAt.getTime() <= Date.now()),
+      automationStopReason: run.mode === QARunMode.AUTOMATED ? parseAutomationStopReason(req.body?.automationStopReason) : null,
     });
     const { observations, observedTransitions, completionReason, completedStatus } = completion;
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : crypto.randomUUID();
@@ -2221,6 +2331,9 @@ export function createDesktopRouter(input: {
         completionReason,
         browserMetadata: req.body?.browserMetadata ?? undefined,
         artifactManifest: req.body?.artifactManifest ?? undefined,
+        automation: run.mode === QARunMode.AUTOMATED && run.automation && typeof run.automation === 'object'
+          ? ({ ...(run.automation as Record<string, unknown>), executionPhase: 'SHUTTING_DOWN', stopReason: terminalBoundaryConfirmed ? 'TERMINAL_STATE_REACHED' : (parseAutomationStopReason(req.body?.automationStopReason) ?? 'CANCELLED_BY_USER') } as Prisma.InputJsonValue)
+          : undefined,
         },
       });
       const report = await tx.qAReport.upsert({

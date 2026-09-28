@@ -82,3 +82,11 @@ test("invalid or missing environment falls back to default then first", () => {
     "env-dev",
   );
 });
+
+test("a link can never select the mode that drives the application", () => {
+  for (const value of ["AUTOMATED", "automated", "Automated", " AUTOMATED "]) {
+    assert.equal(normalizeQARunMode(value, "STAGING"), "ASSISTED", value);
+    assert.equal(normalizeQARunMode(value, "DEVELOPMENT"), "ASSISTED", value);
+  }
+  assert.equal(normalizeQARunMode("AUTOMATED", "PRODUCTION"), "OBSERVATION_ONLY");
+});

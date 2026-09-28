@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  AUTOMATION_STOP_REASON_KIND,
+  AutomatedRunSectionSchema,
+  AutomationConfigSchema,
+  AutomationStopReasonSchema,
   FlowAnalysisProgressSchema,
   FlowCodeReviewReportSchema,
   FlowInitializationManifestSchema,
@@ -8,6 +12,8 @@ import {
   FlowReviewPreviewSchema,
   FlowSuggestionsResponseSchema,
   IPC,
+  QAEvidenceEventTypeSchema,
+  QA_AUTOMATION_EVENT_TYPES,
   StartGuidedRunInputSchema,
 } from './index';
 
@@ -161,4 +167,79 @@ test('flow review v2 uses typed findings and rejects malformed findings', () => 
   };
   assert.equal(FlowCodeReviewReportSchema.parse(report).version, '2.0');
   assert.equal(FlowCodeReviewReportSchema.safeParse({ ...report, stateFindings: [{ stateId: 42 }] }).success, false);
+});
+
+const automatedFlow = {
+  flowId: id('3'), flowBindingId: id('4'), flowInitializationId: id('5'), flowScanId: id('6'),
+  expectedGraphVersionId: id('7'),
+};
+const automation = { targetTerminalStateKey: 'exam_created', executionProfileId: 'profile-1' };
+
+test('automated run requires Flow context, an automation block, and never runs against production', () => {
+  const ok = StartGuidedRunInputSchema.safeParse({ ...runBase, ...automatedFlow, mode: 'AUTOMATED', automation });
+  assert.equal(ok.success, true);
+  if (ok.success) {
+    // Limits are defaulted so a run always carries explicit budgets.
+    assert.deepEqual(ok.data.automation?.limits, { maxSteps: 100, maxDurationMs: 600_000, maxReplans: 10, maxActionRetries: 2 });
+  }
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, mode: 'AUTOMATED', automation }).success, false, 'flow context required');
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, ...automatedFlow, mode: 'AUTOMATED' }).success, false, 'automation block required');
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, ...automatedFlow, mode: 'AUTOMATED', automation, environmentType: 'PRODUCTION' }).success, false, 'production is blocked');
+  assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, ...automatedFlow, mode: 'AUTOMATED', automation, launchCommandId: 'npm-dev' }).success, false, 'loose launch commands are not accepted');
+});
+
+test('automation block is rejected on every other mode', () => {
+  for (const mode of ['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY'] as const) {
+    assert.equal(StartGuidedRunInputSchema.safeParse({ ...runBase, ...automatedFlow, mode, automation }).success, false, mode);
+  }
+});
+
+test('every automation stop reason is classified', () => {
+  for (const reason of AutomationStopReasonSchema.options) {
+    assert.ok(AUTOMATION_STOP_REASON_KIND[reason], reason);
+  }
+  // The application refusing to cooperate is evidence, not a Tellann failure.
+  assert.equal(AUTOMATION_STOP_REASON_KIND.EXPECTED_TRANSITION_NOT_FOUND, 'APPLICATION');
+  assert.equal(AUTOMATION_STOP_REASON_KIND.AUTOMATION_ENGINE_ERROR, 'INFRASTRUCTURE');
+});
+
+test('automation events are part of the QA evidence taxonomy', () => {
+  for (const type of QA_AUTOMATION_EVENT_TYPES) assert.ok(QAEvidenceEventTypeSchema.options.includes(type), type);
+});
+
+const baseConfig = { targetTerminalStateKey: 'exam_created', executionProfileId: 'profile-1' };
+
+test('render timing is opt-in, names components only, and is bounded', () => {
+  assert.deepEqual(AutomationConfigSchema.parse(baseConfig).renderTimingComponents, [], 'off unless asked for');
+  assert.deepEqual(AutomationConfigSchema.parse({ ...baseConfig, renderTimingComponents: ['ExamForm', '_Inner$1'] }).renderTimingComponents, ['ExamForm', '_Inner$1']);
+  for (const bad of ['exam form', '1Form', 'a.b', 'a;alert(1)', '', 'x'.repeat(81)]) {
+    assert.equal(AutomationConfigSchema.safeParse({ ...baseConfig, renderTimingComponents: [bad] }).success, false, JSON.stringify(bad));
+  }
+  const many = Array.from({ length: 17 }, (_, index) => `Comp${index}`);
+  assert.equal(AutomationConfigSchema.safeParse({ ...baseConfig, renderTimingComponents: many }).success, false, 'no blanket instrumentation');
+});
+
+test('a report section written before diagnostics existed still parses, with empty diagnostics', () => {
+  const legacy = {
+    pinned: { flowVersionId: null, initialStateKey: null, targetTerminalStateKey: null, executionProfileId: null, testPersonaId: null, runDataSetId: null, codeSnapshotId: null, instrumentationManifestVersion: null, limits: null },
+    outcome: { stopReason: null, kind: null, reachedTarget: false, detail: null, steps: null, replans: null },
+    states: [], preBoundaryStateCount: 0, inFlowStateCount: 0, unreachedStates: [], blockedActions: [], reconciliation: {},
+  };
+  const parsed = AutomatedRunSectionSchema.parse(legacy);
+  assert.deepEqual([parsed.codeEvidence, parsed.retainedTraces, parsed.renderTiming], [[], [], []]);
+});
+
+test('code evidence carries locations and a hash, and drops any source text it is handed', () => {
+  const legacy = {
+    pinned: { flowVersionId: null, initialStateKey: null, targetTerminalStateKey: null, executionProfileId: null, testPersonaId: null, runDataSetId: null, codeSnapshotId: null, instrumentationManifestVersion: null, limits: null },
+    outcome: { stopReason: null, kind: null, reachedTarget: false, detail: null, steps: null, replans: null },
+    states: [], preBoundaryStateCount: 0, inFlowStateCount: 0, unreachedStates: [], blockedActions: [], reconciliation: {},
+    codeEvidence: [{
+      subject: { kind: 'TRANSITION', id: 't' }, stateKey: null, derivation: 'RESOLVED',
+      refs: [{ file: 'a.ts', symbol: null, startLine: 1, endLine: 2, excerptSha256: 'abc', source: 'const secret = 1' }],
+      calls: [], navigatesTo: [], guards: [], expectedApi: [], summary: 's', at: '2026-01-01T00:00:00.000Z', excerpt: 'const secret = 1',
+    }],
+  };
+  const parsed = AutomatedRunSectionSchema.parse(legacy);
+  assert.ok(!JSON.stringify(parsed).includes('const secret'));
 });

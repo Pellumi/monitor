@@ -421,3 +421,123 @@ test('readReport tolerates a malformed frontend section without throwing', () =>
     assert.doesNotThrow(() => qualityReportCsv(broken));
   }
 });
+
+const automatedSection = (overrides: Record<string, unknown> = {}) => ({
+  pinned: {
+    flowVersionId: 'v7', initialStateKey: 'course_details', targetTerminalStateKey: 'exam_created',
+    executionProfileId: 'profile-1', testPersonaId: 'persona-1', runDataSetId: null,
+    codeSnapshotId: 'hash-1', instrumentationManifestVersion: 'patch-1',
+  },
+  outcome: { stopReason: 'EXPECTED_TRANSITION_NOT_FOUND', kind: 'APPLICATION', reachedTarget: false, detail: 'No control for Create Exam is on the page.', steps: 0, replans: 0 },
+  states: [
+    { sequence: 0, stateKey: 'course_details', scope: 'PRE_BOUNDARY', route: '/courses/7', durationMs: 310, action: { label: 'Create Exam', verified: false, error: null }, errorCount: 0 },
+  ],
+  unreachedStates: [
+    { stateKey: 'exam_form', status: 'BLOCKED_BY_APPLICATION', detail: 'No control for Create Exam is on the page.' },
+    { stateKey: 'exam_error', status: 'NOT_ATTEMPTED', detail: null },
+  ],
+  reconciliation: { AUTHORIZATION_MISMATCH: 1 },
+  ...overrides,
+});
+
+function withAutomated(section: Record<string, unknown> | null, mode = 'AUTOMATED'): QualityReportDocumentInput {
+  const base = input();
+  const report = base.report as Record<string, any>;
+  return { ...base, report: { ...report, mode, sections: { ...report.sections, ...(section ? { automated: section } : {}) } } };
+}
+
+test('every report states the mode its evidence was gathered under', () => {
+  for (const [mode, label] of [['GUIDED', 'Guided'], ['ASSISTED', 'Assisted'], ['OBSERVATION_ONLY', 'Observation only'], ['AUTOMATED', 'Automated']]) {
+    assert.ok(qualityReportHtml(withAutomated(null, mode)).includes(label), mode);
+  }
+  // A report generated before modes were recorded says so rather than guessing.
+  const legacy = input();
+  assert.ok(qualityReportHtml(legacy).includes('Not recorded'));
+});
+
+test('an automated run gets its own chapter with what it was pinned to, state by state', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection()));
+  for (const text of ['What the automated run did', 'What the run was pinned to', 'State by state', 'v7', 'exam_created', 'persona-1', 'hash-1', 'course_details', 'Create Exam']) {
+    assert.ok(html.includes(text), `missing: ${text}`);
+  }
+  assert.ok(html.includes('setup, before the Flow began'), 'setup is kept apart from the Flow itself');
+  assert.ok(html.includes('did not advance'));
+});
+
+test('a state the application prevented is kept apart from one the run never attempted', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection()));
+  assert.ok(html.includes('Prevented by the application'));
+  assert.ok(html.includes('Not attempted'));
+  assert.ok(html.includes('No control for Create Exam is on the page.'));
+});
+
+test('an infrastructure failure is never described as a finding about the application', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    outcome: { stopReason: 'APPLICATION_START_FAILED', kind: 'INFRASTRUCTURE', reachedTarget: false, detail: null, steps: 0, replans: 0 },
+  })));
+  assert.ok(html.includes('not a finding about the application'));
+  assert.ok(!html.includes('did not behave as the declared Flow describes'));
+});
+
+test('reconciliation attributions are listed in words', () => {
+  assert.ok(qualityReportHtml(withAutomated(automatedSection())).includes('1 × authorization mismatch'));
+});
+
+test('a run that is not automated has no automated chapter', () => {
+  assert.ok(!qualityReportHtml(withAutomated(null, 'GUIDED')).includes('What the automated run did'));
+  assert.ok(!qualityReportHtml(input()).includes('What the automated run did'));
+});
+
+test('report content is escaped, since evidence text comes from the application under test', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    outcome: { stopReason: 'EXPECTED_TRANSITION_NOT_FOUND', kind: 'APPLICATION', reachedTarget: false, detail: '<script>alert(1)</script>', steps: 0, replans: 0 },
+  })));
+  assert.ok(!html.includes('<script>alert(1)</script>'));
+  assert.ok(html.includes('&lt;script&gt;'));
+});
+
+test('a failed step is explained from the code, by location, and says the source stays local', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    codeEvidence: [{
+      subject: { kind: 'TRANSITION', id: 't-submit' }, stateKey: 'exam_form', derivation: 'AMBIGUOUS',
+      refs: [{ file: 'src/exams/create.tsx', symbol: 'saveExam', startLine: 2, endLine: 4, excerptSha256: 'abc' }],
+      summary: 'Save exam is mapped to saveExam. The handler calls POST /api/exams.', at: '2026-01-01T00:00:00.000Z',
+    }],
+  })));
+  for (const text of ['What the code says about the step that failed', 'Transition t-submit', 'saveExam — src/exams/create.tsx:2-4', 'POST /api/exams', 'stays on the machine', 'treat this as a lead']) {
+    assert.ok(html.includes(text), `missing: ${text}`);
+  }
+});
+
+test('retained traces are listed with the reason, and a run without any prints no such heading', () => {
+  const withTrace = qualityReportHtml(withAutomated(automatedSection({
+    retainedTraces: [{ stateKey: 'exam_form', reasons: ['ACTION_DID_NOT_ADVANCE'], at: '2026-01-01T00:00:00.000Z' }],
+  })));
+  assert.ok(withTrace.includes('Diagnostic traces kept'));
+  assert.ok(withTrace.includes('action did not advance'));
+  const without = qualityReportHtml(withAutomated(automatedSection()));
+  assert.ok(!without.includes('Diagnostic traces kept'));
+  assert.ok(!without.includes('What the code says about the step that failed'));
+});
+
+test('code evidence text is escaped too', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    codeEvidence: [{ subject: { kind: 'STATE', id: '<b>x</b>' }, derivation: 'RESOLVED', refs: [], summary: '<img src=x onerror=1>', at: '2026-01-01T00:00:00.000Z' }],
+  })));
+  assert.ok(!html.includes('<img src=x'));
+  assert.ok(!html.includes('<b>x</b>'));
+});
+
+test('render timing appears only when the run watched components, worst first, and is escaped', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    renderTiming: [
+      { component: 'Layout', states: [], mounts: 1, updates: 0, totalMs: 1, maxMs: 1 },
+      { component: 'ExamForm<script>', states: ['exam_form'], mounts: 1, updates: 3, totalMs: 13.3, maxMs: 5 },
+    ],
+  })));
+  assert.ok(html.includes("Render time of the Flow's components"));
+  assert.ok(html.indexOf('ExamForm&lt;script&gt;') < html.indexOf('Layout'), 'the costliest component comes first');
+  assert.ok(html.includes('1 mounts, 3 updates') && html.includes('13.3 ms total, 5 ms worst'));
+  assert.ok(!html.includes('ExamForm<script>'));
+  assert.ok(!qualityReportHtml(withAutomated(automatedSection())).includes("Render time of the Flow's components"));
+});

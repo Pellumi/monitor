@@ -114,6 +114,9 @@ importers:
       '@tellann/agent-policy':
         specifier: workspace:*
         version: link:../../packages/agent-policy
+      '@tellann/automation-engine':
+        specifier: workspace:*
+        version: link:../../packages/automation-engine
       '@tellann/browser-observer':
         specifier: workspace:*
         version: link:../../packages/browser-observer
@@ -393,6 +396,22 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(vite@8.0.16(@types/node@20.19.43)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
+  packages/automation-engine:
+    dependencies:
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../desktop-contracts
+      '@tellann/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   packages/backend-sdk:
     dependencies:
       fastify-plugin:
@@ -426,6 +445,9 @@ importers:
       '@tellann/agent-policy':
         specifier: workspace:*
         version: link:../agent-policy
+      '@tellann/automation-engine':
+        specifier: workspace:*
+        version: link:../automation-engine
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
@@ -439,6 +461,15 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.43
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      react:
+        specifier: 19.2.4
+        version: 19.2.4
+      react-dom:
+        specifier: 19.2.4
+        version: 19.2.4(react@19.2.4)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -647,6 +678,15 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/lms-fixture:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   packages/local-relay:
     devDependencies:
       '@types/node':
@@ -658,6 +698,9 @@ importers:
 
   packages/project-intelligence:
     dependencies:
+      '@tellann/automation-engine':
+        specifier: workspace:*
+        version: link:../automation-engine
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
@@ -902,6 +945,9 @@ importers:
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contracts
       '@tellann/document-intelligence':
         specifier: workspace:*
         version: link:../../packages/document-intelligence
@@ -1240,6 +1286,9 @@ importers:
       '@tellann/derivation-engine':
         specifier: workspace:*
         version: link:../../packages/derivation-engine
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contracts
       '@tellann/entitlement-checker':
         specifier: workspace:*
         version: link:../../packages/entitlement-checker
