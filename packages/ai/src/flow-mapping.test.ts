@@ -271,7 +271,10 @@ describe('resolveFlowCheckpointMappings batching', () => {
     expect(byId.get('state:cp-0')!.status).toBe('RESOLVED');
     expect(result.mappings.filter((mapping) => mapping.status === 'RESOLVED').length).toBeGreaterThanOrEqual(6);
     expect(result.provenance).toMatchObject({ batchesFailed: 1, failed: true });
-    expect(result.provenance.failureReasonSafe).toContain('TIMEOUT');
+    // The reason shown to the user is a generic explanation, not the
+    // provider's own error text — it must not name a vendor or a status code.
+    expect(result.provenance.failureReasonSafe).toBe('The AI service did not respond in time.');
+    expect(result.provenance.failureReasonSafe).not.toMatch(/gemini|deepseek|TIMEOUT:|\b\d{3}\b/i);
   });
 
   it('does not re-ask about a checkpoint whose evidence has not changed', async () => {

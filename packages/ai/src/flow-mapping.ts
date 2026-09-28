@@ -326,6 +326,18 @@ function acceptMappings(
   return accepted;
 }
 
+/**
+ * What a person is told when every provider tried for a batch failed.
+ *
+ * The real cause — which vendor was hit, its HTTP status, a quota message —
+ * is logged for operators below but never returned here. None of it is
+ * something the user can act on, it is the same "retry" either way, and
+ * naming the vendor or exposing a raw status code leaks infrastructure detail
+ * (which provider is behind this screen, that a rate limit was hit) that
+ * is not this screen's business to reveal.
+ */
+const GENERIC_BATCH_FAILURE_REASON = 'The AI service did not respond in time.';
+
 async function resolveBatch(
   flowName: string,
   analysis: FlowMappingResolutionInput['analysis'],
@@ -362,11 +374,14 @@ async function resolveBatch(
     }
   }
 
+  if (lastError) {
+    const detail = lastError instanceof Error ? lastError.message : String(lastError);
+    console.warn(`[flow-mapping] batch resolution failed after trying every provider: ${detail.slice(0, 300)}`);
+  }
+
   return {
     accepted: new Map(), provider: null, model: null, providerIndex: -1, repaired: false,
-    errorSafe: lastError instanceof Error
-      ? lastError.message.slice(0, 300)
-      : lastError ? String(lastError).slice(0, 300) : null,
+    errorSafe: lastError ? GENERIC_BATCH_FAILURE_REASON : null,
   };
 }
 
