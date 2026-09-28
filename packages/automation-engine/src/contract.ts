@@ -72,6 +72,8 @@ export interface CodeEntityLike {
   type: string;
   name: string;
   path: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
   metadata: Record<string, unknown>;
 }
 
@@ -88,6 +90,12 @@ export interface CompileInput {
   checkpoints: CheckpointLike[];
   code: { entities: CodeEntityLike[]; relationships: CodeRelationshipLike[] };
   analysisIdentity?: string | null;
+  /**
+   * `data-tellann-action` values instrumentation has put on controls, by transition id. A transition with one
+   * gets it as its control's anchor, the strongest thing the ranking can match on. Only transitions whose anchor
+   * was actually applied belong here: the ranking treats a matching anchor as certain.
+   */
+  anchors?: Record<string, string>;
 }
 
 const MAX_CALLER_DEPTH = 2;
@@ -107,7 +115,7 @@ export function compileExecutableContract(input: CompileInput): ExecutableContra
     const from = keyOf.get(transition.fromNodeId ?? transition.fromStateId ?? '');
     const to = keyOf.get(transition.toNodeId ?? transition.toStateId ?? '');
     if (!from || !to) return [];
-    return [compileTransition(transition, from, to, checkpoint.get(`transition:${transition.id}`), index)];
+    return [compileTransition(transition, from, to, checkpoint.get(`transition:${transition.id}`), index, input.anchors?.[transition.id])];
   });
 
   const initial = input.flow.states.find((state) => state.role === 'INITIAL');
@@ -158,10 +166,13 @@ function compileTransition(
   to: string,
   checkpoint: CheckpointLike | undefined,
   index: CodeIndex,
+  anchor?: string,
 ): ExecutableTransition {
   const entity = checkpoint?.mapping.entityId ? index.entity(checkpoint.mapping.entityId) : undefined;
   const found = entity ? index.controlsFor(entity) : { controls: [], endpoints: [], traced: false };
   const control = mergeControls(found.controls.map((item) => item.descriptor));
+  if (anchor && found.controls.length > 0) control.actionAnchor = anchor;
+  const only = found.controls.length === 1 ? found.controls[0]!.entity : null;
   const distinct = new Set(found.controls.map((item) => descriptorIdentity(item.descriptor)));
 
   const methods = found.endpoints.map((endpoint) => endpoint.method);
@@ -192,6 +203,9 @@ function compileTransition(
     expectedApi: found.endpoints.map((endpoint): ApiCondition => ({ method: endpoint.method, route: endpoint.route, expectStatus: null })),
     codeRefs: codeRefs(checkpoint, entity),
     derivation,
+    controlSource: only && only.path && only.startLine
+      ? { file: only.path, startLine: only.startLine, endLine: only.endLine ?? only.startLine, element: descriptorFrom(only).element }
+      : null,
   };
 }
 

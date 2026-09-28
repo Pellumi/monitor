@@ -63,7 +63,7 @@ test('only a teacher may create an exam, and only with a title', async () => {
     const created = await post(app, teacher, { title: 'Midterm' });
     assert.equal(created.status, 201);
     assert.deepEqual(await created.json(), { id: 41 });
-    assert.deepEqual(app.exams, [{ id: 41, title: 'Midterm', by: LMS_USERS.teacher.email }]);
+    assert.deepEqual(app.exams, [{ id: 41, title: 'Midterm', by: LMS_USERS.teacher.email, fields: {} }]);
   });
 });
 
@@ -132,4 +132,20 @@ test('the page is told how to report its states, and the state ids match the Flo
   const flowIds = lmsFlow().flow.states.map((state) => state.id).sort();
   assert.deepEqual(Object.values(LMS_STATE_IDS).sort(), flowIds, 'an adapter marker names a state that exists in the Flow');
   assert.deepEqual(lmsFlow().flow.states.map((state) => state.behaviorKey).sort(), Object.keys(LMS_STATE_IDS).sort());
+});
+
+test('the rich form is refused unless it is complete, and the redesign faults change what the page says', async () => {
+  const app = await startLmsApp({ richForm: true, anchors: true, faults: { renameLabels: true } });
+  try {
+    const login = await fetch(`${app.origin}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: LMS_USERS.teacher.email, password: LMS_USERS.teacher.password }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+    const post = (body: unknown) => fetch(`${app.origin}/api/exams`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
+    assert.equal((await post({ title: 'X', kind: 'final' })).status, 422, 'a form missing its other controls is not accepted');
+    assert.equal((await post({ title: 'X', kind: 'final', visibility: 'public', due: '2030-01-01', syllabus: { name: 's.txt', size: 1, text: 'a' } })).status, 201);
+    assert.equal(app.exams[0]!.fields.kind, 'final');
+    const html = await (await fetch(`${app.origin}/login`)).text();
+    assert.ok(html.includes('window.__anchors = true') && html.includes('window.__richForm = true'));
+  } finally {
+    await app.close();
+  }
 });

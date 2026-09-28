@@ -40,6 +40,16 @@ export interface LmsFaults {
   loginRejects?: boolean;
   /** The "Create Exam" control is not rendered for anyone, so the declared transition has no control on the page. */
   hideCreateExam?: boolean;
+  /**
+   * The two controls say something else ("Add a new exam", "Publish") and the save button loses its test id: the
+   * kind of copy change a redesign makes, which no label the code analysis found can survive.
+   */
+  renameLabels?: boolean;
+  /**
+   * The sign-in page carries a CAPTCHA widget: something that exists to tell software from people. A run must hand this
+   * to a person and never touch the page: not the widget, and not the form beside it.
+   */
+  captchaOnLogin?: boolean;
 }
 
 export interface LmsRequest {
@@ -56,9 +66,18 @@ export interface LmsApp {
   /** Every request the server received, in order. */
   readonly requests: LmsRequest[];
   /** Exams created through the API. */
-  readonly exams: Array<{ id: number; title: string; by: string }>;
+  readonly exams: Array<{ id: number; title: string; by: string; fields: LmsRichFields }>;
   faults: LmsFaults;
   close(): Promise<void>;
+}
+
+/** What the rich form posts, as the server recorded it. */
+export interface LmsRichFields {
+  kind?: string;
+  publish?: boolean;
+  visibility?: string;
+  due?: string;
+  syllabus?: { name: string; size: number; text: string } | null;
 }
 
 export interface LmsOptions {
@@ -66,6 +85,13 @@ export interface LmsOptions {
   faults?: LmsFaults;
   /** How the page reports the Flow states it reaches. Default `typed`: the SDK's own calls. */
   markers?: LmsMarkerStyle;
+  /** Puts a stable `data-tellann-action` anchor on the two controls, as approved instrumentation would. */
+  anchors?: boolean;
+  /**
+   * The exam form also has a select, a checkbox, a radio group, a date and a file upload, so a run has to use every
+   * kind of control a real form has. The exam the server records carries what each one held.
+   */
+  richForm?: boolean;
 }
 
 const COURSE_ID = 7;
@@ -99,7 +125,7 @@ function render() {
   if (protectedPath && !user) { history.replaceState({}, '', '/login'); return render(); }
   if (path === '/' ) { history.replaceState({}, '', user ? '/dashboard' : '/login'); return render(); }
   if (path === '/login') {
-    page('<h1>Sign in</h1><form id="login"><label for="email">Email</label><input id="email" name="email" type="email"/>'
+    page('<h1>Sign in</h1>' + (FAULTS.captchaOnLogin ? '<div class="g-recaptcha" data-sitekey="fixture"><label><input type="checkbox" id="not-robot"/> I am not a robot</label></div>' : '') + '<form id="login"><label for="email">Email</label><input id="email" name="email" type="email"/>'
       + '<label for="password">Password</label><input id="password" name="password" type="password"/>'
       + '<button type="submit">Sign in</button><p id="login-error" role="alert"></p></form>');
     document.getElementById('login').onsubmit = async (event) => {
@@ -120,19 +146,37 @@ function render() {
     sdk('courses');
   } else if (path === '/courses/${COURSE_ID}') {
     const canCreate = user && user.role === 'TEACHER' && !FAULTS.hideCreateExam;
+    const anchor = (id) => window.__anchors ? ' data-tellann-action="tellann:' + id + '"' : '';
     page('<h1>Course Details</h1><button>Students</button>'
-      + (canCreate ? '<button id="create">Create Exam</button>' : '')
+      + (canCreate ? '<button id="create"' + anchor('t-create') + '>' + (FAULTS.renameLabels ? 'Add a new exam' : 'Create Exam') + '</button>' : '')
       + '<button disabled>Archive</button>');
     const create = document.getElementById('create');
     if (create) create.onclick = () => go('/courses/${COURSE_ID}/exams/new');
     sdk('course_details');
   } else if (path === '/courses/${COURSE_ID}/exams/new') {
-    page('<h1>New Exam</h1><label for="title">Title</label><input id="title" name="title"/>'
-      + '<button data-testid="submit-exam" id="save">Save exam</button><p id="save-error" role="alert"></p>');
+    const saveAnchor = window.__anchors ? ' data-tellann-action="tellann:t-submit"' : '';
+    const rich = window.__richForm ? (
+      '<label for="kind">Exam type</label><select id="kind" name="kind"><option value="">Choose a type</option><option value="midterm">Midterm</option><option value="final">Final</option></select>'
+      + '<label><input type="checkbox" id="publish" name="publish"/> Publish immediately</label>'
+      + '<fieldset><legend>Visibility</legend><label><input type="radio" name="visibility" value="class"/> Class only</label><label><input type="radio" name="visibility" value="public"/> Public</label></fieldset>'
+      + '<label for="due">Due date</label><input id="due" name="due" type="date"/>'
+      + '<label for="syllabus">Syllabus</label><input id="syllabus" name="syllabus" type="file"/>'
+    ) : '';
+    page('<h1>New Exam</h1><label for="title">Title</label><input id="title" name="title"/>' + rich
+      + '<button' + (FAULTS.renameLabels ? '' : ' data-testid="submit-exam"') + ' id="save"' + saveAnchor + '>' + (FAULTS.renameLabels ? 'Publish' : 'Save exam') + '</button><p id="save-error" role="alert"></p>');
     document.getElementById('save').onclick = async () => {
       if (FAULTS.saveDoesNothing) return;
       const title = document.getElementById('title').value;
-      const res = await fetch('/api/exams', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+      const payload = { title };
+      if (window.__richForm) {
+        const file = document.getElementById('syllabus').files[0];
+        payload.kind = document.getElementById('kind').value;
+        payload.publish = document.getElementById('publish').checked;
+        payload.visibility = (document.querySelector('input[name=visibility]:checked') || {}).value || '';
+        payload.due = document.getElementById('due').value;
+        payload.syllabus = file ? { name: file.name, size: file.size, text: await file.text() } : null;
+      }
+      const res = await fetch('/api/exams', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) { document.getElementById('save-error').textContent = 'Could not save the exam'; return; }
       const created = await res.json();
       go(FAULTS.saveLoopsBack ? '/courses/${COURSE_ID}' : '/courses/${COURSE_ID}/exams/' + created.id);
@@ -153,9 +197,9 @@ function bindLinks() {
 boot();
 `;
 
-function shell(faults: LmsFaults, markers: LmsMarkerStyle): string {
+function shell(faults: LmsFaults, markers: LmsMarkerStyle, extras: { anchors: boolean; richForm: boolean }): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>LMS</title></head><body><div id="root"></div>`
-    + `<script>window.__faults = ${JSON.stringify(faults)}; window.__markerStyle = ${JSON.stringify(markers)};</script><script>${CLIENT}</script></body></html>`;
+    + `<script>window.__faults = ${JSON.stringify(faults)}; window.__markerStyle = ${JSON.stringify(markers)}; window.__anchors = ${extras.anchors}; window.__richForm = ${extras.richForm};</script><script>${CLIENT}</script></body></html>`;
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -208,16 +252,25 @@ export async function startLmsApp(options: LmsOptions = {}): Promise<LmsApp> {
       if (user.role !== 'TEACHER') return json(res, 403, { error: 'FORBIDDEN' });
       if (app.faults.saveFails) return json(res, 500, { error: 'INTERNAL' });
       let title = '';
-      try { title = String(JSON.parse(body).title ?? '').trim(); } catch { /* empty title */ }
+      let fields: LmsRichFields = {};
+      try {
+        const parsed = JSON.parse(body);
+        title = String(parsed.title ?? '').trim();
+        if (options.richForm) {
+          fields = { kind: String(parsed.kind ?? ''), publish: parsed.publish === true, visibility: String(parsed.visibility ?? ''), due: String(parsed.due ?? ''), syllabus: parsed.syllabus ?? null };
+        }
+      } catch { /* empty title */ }
       if (!title) return json(res, 422, { error: 'TITLE_REQUIRED' });
-      const exam = { id: nextExamId, title, by: user.email };
+      // A rich form is refused unless it is complete, the way a real one would be: a run that skipped a control finds out here.
+      if (options.richForm && (!fields.kind || !fields.visibility || !fields.due || !fields.syllabus)) return json(res, 422, { error: 'FORM_INCOMPLETE' });
+      const exam = { id: nextExamId, title, by: user.email, fields };
       nextExamId += 1;
       exams.push(exam);
       return json(res, 201, { id: exam.id });
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'NOT_FOUND' });
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(shell(app.faults, options.markers ?? 'typed'));
+    res.end(shell(app.faults, options.markers ?? 'typed', { anchors: options.anchors === true, richForm: options.richForm === true }));
   });
 
   await new Promise<void>((resolve) => server.listen(options.port ?? 0, '127.0.0.1', resolve));
@@ -239,7 +292,7 @@ export async function startLmsApp(options: LmsOptions = {}): Promise<LmsApp> {
  * application at run time; it is the declaration a person would have made and the analysis a scan
  * would have produced.
  */
-export function lmsFlow() {
+export function lmsFlow(options: { richForm?: boolean } = {}) {
   const state = (id: string, name: string, role: 'INITIAL' | 'NORMAL' | 'TERMINAL', terminalKind: string | null = null) =>
     ({ id, stateName: name, behaviorKey: name, role, terminalKind });
   const route = (id: string, path: string, file: string) => ({
@@ -259,7 +312,19 @@ export function lmsFlow() {
       ],
       transitions: [
         { id: 't-create', fromStateId: 's-course', toStateId: 's-form', action: 'Create Exam' },
-        { id: 't-submit', fromStateId: 's-form', toStateId: 's-created', action: 'Save exam', expectedInput: [{ name: 'title', label: 'Title', dataKey: 'examTitle' }] },
+        {
+          id: 't-submit', fromStateId: 's-form', toStateId: 's-created', action: 'Save exam',
+          expectedInput: [
+            { name: 'title', label: 'Title', dataKey: 'examTitle' },
+            ...(options.richForm ? [
+              { name: 'kind', label: 'Exam type', dataKey: 'examKind' },
+              { name: 'publish', label: 'Publish immediately', dataKey: 'publishNow' },
+              { name: 'visibility', label: 'Visibility', dataKey: 'visibility' },
+              { name: 'due', label: 'Due date', dataKey: 'dueDate' },
+              { name: 'syllabus', label: 'Syllabus', dataKey: 'syllabus' },
+            ] : []),
+          ],
+        },
       ],
     },
     checkpoints: [

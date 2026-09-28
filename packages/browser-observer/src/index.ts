@@ -3469,3 +3469,6 @@ export class BrowserObserver {
     return result;
   }
 }
+
+export { PageAutomationDriver } from './automation-driver';
+export type { AutomationDriverOptions } from './automation-driver';

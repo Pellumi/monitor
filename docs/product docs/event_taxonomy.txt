@@ -536,6 +536,10 @@ QA_AUTOMATION_TRACE_RETAINED
 Emitted when the diagnostic trace of one state visit was kept because an anomaly occurred there (the state and the anomaly reasons are carried in metadata). A visit that went as declared records a trace chunk and discards it, so a clean run emits none. Retained traces are sanitised before they are stored: typed text, evaluated code and results, element markup, request and response bodies, cookies and credential headers, screenshots and DOM snapshots are removed.
 QA_AUTOMATION_RENDER_TIMING
 Opt-in. Emitted as a state visit closes, for a run that named specific components of the Flow to watch: for each, the number of first renders and re-renders and the time spent rendering, together with the Flow states the component is the code for. Only the named components are measured, nothing about their props, state or DOM is recorded, and a build of the application that does not time renders (a production build) yields no event rather than zeroes.
+QA_AUTOMATION_MANUAL_ACTION_REQUIRED
+Emitted when the run reaches a point only a person can get past and stops to wait for them: single sign-on or another organisation's sign-in page, a one-time code, a magic link or passwordless form, a sign-in that is not a plain email or username and password form, or a persona that is set to sign in by hand. The kind and a plain-language reason are carried in metadata. A CAPTCHA is always handed over and is never attempted, solved or worked around, and nothing is typed into the page that shows one. While the person acts, recording of the browser is paused, so what they type is never captured.
+QA_AUTOMATION_MANUAL_ACTION_COMPLETED
+Emitted when the wait ends: the person said they had signed in (the run carries on from wherever they left the browser), the wait timed out, or the run was cancelled. Carries the kind and the outcome, never anything the person entered.
 Category H5 — Browser Events
 Emitted by the browser observer during a managed session.
 BROWSER_PAGE_LOADED

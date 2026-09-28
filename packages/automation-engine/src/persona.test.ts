@@ -14,7 +14,7 @@ const dataSet = (values: RunDataSet['values']): RunDataSet => ({
 
 const persona = (overrides: Partial<TestPersona> = {}): TestPersona => ({
   id: 'p1', applicationId: '11111111-1111-4111-8111-111111111111', name: 'Teacher',
-  roles: ['TEACHER'], authenticated: true, credentials: [{ field: 'email', value: 'teacher@test.dev' }, { field: 'password', value: 'hunter2' }],
+  roles: ['TEACHER'], authenticated: true, authMethod: 'PASSWORD', credentials: [{ field: 'email', value: 'teacher@test.dev' }, { field: 'password', value: 'hunter2' }],
   createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...overrides,
 });
 

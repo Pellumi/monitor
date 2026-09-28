@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test dist/index.test.js dist/automation-driver.test.js dist/trace-sanitizer.test.js dist/trace-chunks.test.js dist/render-timing.test.js"
+    "test": "tsc && node --test dist/index.test.js dist/automation-driver.test.js dist/trace-sanitizer.test.js dist/trace-chunks.test.js dist/render-timing.test.js dist/input-types.test.js"
   },
   "dependencies": {
     "@tellann/agent-policy": "workspace:*",

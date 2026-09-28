@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { AutomationStopReason, RunDataSet, RunDataValueKind, TestPersona } from '@tellann/desktop-contracts';
 import type { AutomationPorts } from './executor';
-import type { ExecutableContract } from './types';
+import type { AutomationFile, ExecutableContract } from './types';
 import type { Persona } from './planner';
 
 /**
@@ -15,6 +15,8 @@ import type { Persona } from './planner';
 export interface MaterializedValue {
   value: string;
   secret: boolean;
+  /** Present when the value is a file to upload; `value` is then its name. */
+  file?: AutomationFile;
 }
 
 /**
@@ -26,19 +28,38 @@ export function materializeRunData(dataSet: RunDataSet | null | undefined, now: 
   const materialized = new Map<string, MaterializedValue>();
   if (!dataSet) return materialized;
   for (const item of dataSet.values) {
-    materialized.set(item.key, { value: generate(item.generator, now), secret: item.secret });
+    const generated = generate(item.generator, now);
+    materialized.set(item.key, { ...generated, secret: item.secret });
   }
   return materialized;
 }
 
-function generate(generator: RunDataSet['values'][number]['generator'], now: () => number): string {
+function generate(generator: RunDataSet['values'][number]['generator'], now: () => number): { value: string; file?: AutomationFile } {
   switch (generator.kind) {
     case 'LITERAL':
-      return generator.value;
+      return { value: generator.value };
     case 'FUTURE_TIMESTAMP':
-      return new Date(now() + generator.offsetMs).toISOString();
+      return { value: formatTimestamp(new Date(now() + generator.offsetMs), generator.format ?? 'ISO') };
     case 'UNIQUE_SUFFIX':
-      return `${generator.prefix}${randomBytes(4).toString('hex')}`;
+      return { value: `${generator.prefix}${randomBytes(4).toString('hex')}` };
+    case 'FILE':
+      return {
+        value: generator.fileName,
+        file: { name: generator.fileName, mimeType: generator.mimeType ?? 'text/plain', base64: Buffer.from(generator.content, 'utf8').toString('base64') },
+      };
+  }
+}
+
+/** A moment in the shape the form it is going into wants. UTC throughout, so a value means the same on every machine. */
+function formatTimestamp(date: Date, format: 'ISO' | 'DATE' | 'TIME' | 'US' | 'EU'): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const y = date.getUTCFullYear(); const m = pad(date.getUTCMonth() + 1); const d = pad(date.getUTCDate());
+  switch (format) {
+    case 'DATE': return `${y}-${m}-${d}`;
+    case 'TIME': return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+    case 'US': return `${m}/${d}/${y}`;
+    case 'EU': return `${d}/${m}/${y}`;
+    default: return date.toISOString();
   }
 }
 

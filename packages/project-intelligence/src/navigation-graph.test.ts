@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { planPath } from '@tellann/automation-engine';
+import type { CodebaseAnalysis } from '@tellann/desktop-contracts';
 import { analyzeCodebase } from './codebase';
-import { buildLoginEdge, buildNavigationGraph } from './navigation-graph';
+import { buildLoginEdge, buildNavigationGraph, proposeLoginForms } from './navigation-graph';
 
 const WORKSPACE = '00000000-0000-4000-8000-000000000007';
 const FINGERPRINT = 'd'.repeat(64);
@@ -171,11 +172,60 @@ test('a graph with a login edge lets the entry sequence plan through it, end to 
 
   const result = await seekInitialState(app as any, graph, '/dashboard', 'STAGING', {
     persona: {
-      id: 'p1', applicationId: '11111111-1111-4111-8111-111111111111', name: 'Teacher', roles: [], authenticated: true,
+      id: 'p1', applicationId: '11111111-1111-4111-8111-111111111111', name: 'Teacher', roles: [], authenticated: true, authMethod: 'PASSWORD',
       credentials: [{ field: 'email', value: 'teacher@test.dev' }, { field: 'password', value: 'hunter2' }],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     },
   });
   assert.ok(result.ok, !result.ok ? result.detail : undefined);
   assert.deepEqual(filled, { email: 'teacher@test.dev', password: 'hunter2' });
+});
+
+// -- proposing a login -----------------------------------------------------------
+
+
+function analysisWith(entities: Array<Record<string, unknown>>): CodebaseAnalysis {
+  return { entities: entities.map((entity) => ({ language: null, endLine: null, evidence: [], ...entity })), relationships: [] } as unknown as CodebaseAnalysis;
+}
+const page = (id: string, file: string, route: string) => ({ id, type: 'ui_route', name: route, path: file, startLine: 1, confidence: 0.9, metadata: { route } });
+const form = (id: string, file: string, fields: string[]) => ({
+  id, type: 'ui_form', name: id, path: file, startLine: 5, confidence: 0.9,
+  metadata: { hasPasswordField: true, fields: fields.map((name) => ({ name, label: null })) },
+});
+
+test('a sign-in form is proposed with where it was found and why, and nothing is chosen for the person', () => {
+  const proposals = proposeLoginForms(analysisWith([page('r1', 'src/Login.tsx', '/login'), form('f1', 'src/Login.tsx', ['email', 'password'])]));
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0]!.route, '/login');
+  assert.deepEqual(proposals[0]!.fields, ['email', 'password']);
+  assert.match(proposals[0]!.rationale, /src\/Login\.tsx has a form with a password field \(email, password\), on the page served at \/login/);
+});
+
+test('a sign-up form is marked down against a sign-in one, so the likelier answer comes first', () => {
+  const proposals = proposeLoginForms(analysisWith([
+    page('r1', 'src/Register.tsx', '/register'), form('f1', 'src/Register.tsx', ['firstName', 'email', 'password', 'confirmPassword']),
+    page('r2', 'src/Login.tsx', '/login'), form('f2', 'src/Login.tsx', ['email', 'password']),
+  ]));
+  assert.deepEqual(proposals.map((p) => p.route), ['/login', '/register']);
+  assert.ok(proposals[0]!.confidence > proposals[1]!.confidence);
+  assert.match(proposals[1]!.rationale, /may be a sign-up form/);
+});
+
+test('an address that does not look like a sign-in page says so', () => {
+  const [proposal] = proposeLoginForms(analysisWith([page('r1', 'src/Account.tsx', '/settings/security'), form('f1', 'src/Account.tsx', ['currentPassword', 'newPassword'])]));
+  assert.match(proposal!.rationale, /does not look like a sign-in page/);
+  assert.ok(proposal!.confidence < 0.5);
+});
+
+test('a form with no password field, or on no known route, proposes nothing', () => {
+  assert.deepEqual(proposeLoginForms(analysisWith([page('r1', 'src/Contact.tsx', '/contact'), { ...form('f1', 'src/Contact.tsx', ['email']), metadata: { hasPasswordField: false, fields: [] } }])), []);
+  assert.deepEqual(proposeLoginForms(analysisWith([form('f1', 'src/Orphan.tsx', ['email', 'password'])])), []);
+});
+
+test('a proposal is something buildLoginEdge accepts once a person has confirmed it', () => {
+  const analysis = analysisWith([page('r1', 'src/Login.tsx', '/login'), form('f1', 'src/Login.tsx', ['email', 'password'])]);
+  const [proposal] = proposeLoginForms(analysis);
+  const edge = buildLoginEdge(analysis, proposal!.route, '/dashboard');
+  assert.ok(edge);
+  assert.deepEqual(edge!.login!.map((field) => field.dataKey), ['email', 'password']);
 });

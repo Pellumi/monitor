@@ -1,5 +1,6 @@
 import { initTracing } from '@tellann/telemetry';
 import { processQaReportJobs } from './qa-report-worker';
+import { reapAbandonedAutomatedRuns } from './qa-automation-reaper';
 initTracing('background-workers');
 
 import { PrismaClient, aggregateAiUsageDaily, utcDayStart } from '@tellann/db';
@@ -457,6 +458,8 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   // reports on a day that has not been aggregated yet.
   { name: 'friction-detection',              handler: () => runFrictionDetectionJob(prisma).then(() => undefined), pattern: '0 5 * * *' },
   { name: 'qa-report-generation',             handler: () => processQaReportJobs(prisma).then(() => undefined), every: 3_000 },
+  // An Automated Run is driven from the developer's machine; if that machine goes away nothing else ends the run.
+  { name: 'qa-automation-reaper',             handler: () => reapAbandonedAutomatedRuns(prisma as never).then((result) => { if (result.reaped.length) console.log(`[qa-automation-reaper] Ended ${result.reaped.length} abandoned automated run(s)`); }), every: 60_000 },
   { name: 'document-processing',              handler: () => processDocumentJobs(prisma).then(() => undefined), every: 3_000 },
   { name: 'ai-draft-job-processor',           handler: runAiDraftJobProcessor,      every: 5_000 },
   { name: 'ruleset-cache-warmer',             handler: runRulesetCacheWarmer,       every: 600_000 },

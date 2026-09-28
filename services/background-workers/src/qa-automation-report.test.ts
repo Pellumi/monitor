@@ -73,10 +73,18 @@ test('the pinned configuration is reported by identifier, never by credential', 
   assert.deepEqual(section.pinned, {
     flowVersionId: 'v1', initialStateKey: 'course_details', targetTerminalStateKey: 'exam_created',
     executionProfileId: 'profile-1', testPersonaId: 'persona-1', runDataSetId: 'data-1',
-    codeSnapshotId: 'hash-1', instrumentationManifestVersion: 'patch-1', limits: automation.limits,
+    codeSnapshotId: 'hash-1', instrumentationManifestVersion: 'patch-1', limits: automation.limits, contract: null,
   });
   const serialized = JSON.stringify(section);
   assert.ok(!/password|credential|secret/i.test(serialized));
+});
+
+test('the contract a run was compiled into is reported by hash and counts, and only when it is well formed', () => {
+  const contract = { hash: 'a'.repeat(64), flowHash: 'b'.repeat(64), analysisIdentity: null, states: 3, transitions: 2, controlsDerived: 2, controlsMissing: 0, anchored: 1 };
+  const withContract = summarizeAutomationEvidence({ ...run, automation: { ...automation, contract } }, happyPath(), declared)!;
+  assert.deepEqual(withContract.pinned.contract, contract);
+  const malformed = summarizeAutomationEvidence({ ...run, automation: { ...automation, contract: { hash: 'x' } } }, happyPath(), declared)!;
+  assert.equal(malformed.pinned.contract, null, 'a stored value that is not a contract summary is not shown as one');
 });
 
 test('re-evaluating a state with nothing done in it is one visit, not several', () => {

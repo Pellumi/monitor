@@ -387,6 +387,10 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
   addFramework('Nuxt', 'nuxt', ['package.json dependency: nuxt']);
   addFramework('Astro', 'astro', ['package.json dependency: astro']);
   addFramework('Angular', '@angular/core', ['package.json dependency: @angular/core']);
+  // Plain Vue and Svelte projects (without Nuxt / SvelteKit) were not named at all, so a project built with either
+  // looked like an application of unknown kind.
+  addFramework('Vue', 'vue', ['package.json dependency: vue']);
+  addFramework('Svelte', 'svelte', ['package.json dependency: svelte']);
   addFramework('Koa', 'koa', ['package.json dependency: koa']);
   addFramework('Hapi', '@hapi/hapi', ['package.json dependency: @hapi/hapi']);
 

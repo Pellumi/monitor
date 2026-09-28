@@ -1,5 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+// Mirrors AUTOMATION_IPC in desktop-contracts; automation-ipc.test.ts keeps the two in step.
+const AUTOMATION_IPC = {
+  options: 'tellann:automation:options',
+  start: 'tellann:automation:start',
+  cancel: 'tellann:automation:cancel',
+  confirmSignedIn: 'tellann:automation:confirm-signed-in',
+  status: 'tellann:automation:status',
+  statusChanged: 'tellann:automation:status-changed',
+  saveProfile: 'tellann:automation:profile:save',
+  approveProfile: 'tellann:automation:profile:approve',
+  deleteProfile: 'tellann:automation:profile:delete',
+  savePersona: 'tellann:automation:persona:save',
+  deletePersona: 'tellann:automation:persona:delete',
+  saveDataSet: 'tellann:automation:data-set:save',
+  deleteDataSet: 'tellann:automation:data-set:delete',
+  saveLogin: 'tellann:automation:login:save',
+  clearLogin: 'tellann:automation:login:clear',
+} as const;
+
 // Mirrors WINDOW_CHANNELS in main/window-chrome.ts.
 const WINDOW_IPC = {
   state: 'tellann:window:state',
@@ -429,6 +448,27 @@ contextBridge.exposeInMainWorld('tellann', {
       ipcRenderer.on(IPC.notificationOpen, subscription);
       return () => ipcRenderer.removeListener(IPC.notificationOpen, subscription);
     },
+  },
+  automation: {
+    getOptions: (applicationId: string) => ipcRenderer.invoke(AUTOMATION_IPC.options, { applicationId }),
+    start: (input: unknown) => ipcRenderer.invoke(AUTOMATION_IPC.start, input),
+    cancel: () => ipcRenderer.invoke(AUTOMATION_IPC.cancel),
+    confirmSignedIn: () => ipcRenderer.invoke(AUTOMATION_IPC.confirmSignedIn),
+    getStatus: () => ipcRenderer.invoke(AUTOMATION_IPC.status),
+    onStatusChanged: (callback: (status: unknown) => void) => {
+      const subscription = (_: unknown, data: unknown) => callback(data);
+      ipcRenderer.on(AUTOMATION_IPC.statusChanged, subscription);
+      return () => ipcRenderer.removeListener(AUTOMATION_IPC.statusChanged, subscription);
+    },
+    saveProfile: (input: unknown) => ipcRenderer.invoke(AUTOMATION_IPC.saveProfile, input),
+    approveProfile: (applicationId: string, profileId: string) => ipcRenderer.invoke(AUTOMATION_IPC.approveProfile, { applicationId, profileId }),
+    deleteProfile: (applicationId: string, profileId: string) => ipcRenderer.invoke(AUTOMATION_IPC.deleteProfile, { applicationId, profileId }),
+    savePersona: (input: unknown) => ipcRenderer.invoke(AUTOMATION_IPC.savePersona, input),
+    deletePersona: (applicationId: string, personaId: string) => ipcRenderer.invoke(AUTOMATION_IPC.deletePersona, { applicationId, personaId }),
+    saveDataSet: (input: unknown) => ipcRenderer.invoke(AUTOMATION_IPC.saveDataSet, input),
+    deleteDataSet: (applicationId: string, dataSetId: string) => ipcRenderer.invoke(AUTOMATION_IPC.deleteDataSet, { applicationId, dataSetId }),
+    saveLogin: (applicationId: string, loginRoute: string, source: 'CODE_PROPOSAL' | 'MANUAL') => ipcRenderer.invoke(AUTOMATION_IPC.saveLogin, { applicationId, loginRoute, source }),
+    clearLogin: (applicationId: string) => ipcRenderer.invoke(AUTOMATION_IPC.clearLogin, { applicationId }),
   },
   system: {
     getVersion: () => ipcRenderer.invoke(IPC.getVersion),

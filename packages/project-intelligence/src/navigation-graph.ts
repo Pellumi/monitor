@@ -159,3 +159,49 @@ export function buildLoginEdge(analysis: CodebaseAnalysis, loginRoute: string, d
     evidence: { file: formPath, symbol: null, line: form.startLine },
   };
 }
+
+export interface LoginFormProposal {
+  /** The route the sign-in page is served at. */
+  route: string;
+  file: string;
+  /** How sure the extraction is that this is a sign-in form. */
+  confidence: number;
+  /** The fields the form has, by the names the login step would fill them by. */
+  fields: string[];
+  /** Why this was proposed, in plain language, for a person deciding whether it is right. */
+  rationale: string;
+}
+
+/**
+ * The sign-in forms the code contains, as a list for a person to choose from.
+ *
+ * `buildLoginEdge` is given a login route and never guesses one: the code can say a page has a form with a
+ * password field, but whether *that* is the way into the application under test (as opposed to a "change your
+ * password" form, or an admin login) is a fact about intent. So these are proposals, shown with where they came from,
+ * and nothing is used until a person confirms one. A form that also asks for something a login never asks for
+ * (a confirmation field, a name) is marked down: it is far more likely a sign-up.
+ */
+export function proposeLoginForms(analysis: CodebaseAnalysis): LoginFormProposal[] {
+  const byFile = routesByFile(analysis);
+  const proposals: LoginFormProposal[] = [];
+  for (const entity of analysis.entities) {
+    if (entity.type !== 'ui_form' || !entity.metadata.hasPasswordField || !entity.path) continue;
+    const routes = byFile.get(entity.path) ?? [];
+    const fields = (Array.isArray(entity.metadata.fields) ? entity.metadata.fields as Array<{ name: string | null; label: string | null }> : [])
+      .map((field) => field.name ?? field.label)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+    const signUpLike = fields.some((name) => /confirm|repeat|verify|first.?name|last.?name|full.?name|username.*(email)|terms/i.test(name)) || fields.filter((name) => /pass/i.test(name)).length > 1;
+    const routeNames = routes.map((route) => routeOf(route)).filter((route): route is string => route !== null);
+    for (const route of routeNames) {
+      const loginLike = /(login|log-in|signin|sign-in|auth)/i.test(route);
+      proposals.push({
+        route,
+        file: entity.path,
+        confidence: Math.max(0.1, Math.min(1, entity.confidence * (loginLike ? 1 : 0.6) * (signUpLike ? 0.5 : 1))),
+        fields,
+        rationale: `${entity.path} has a form with a password field${fields.length ? ` (${fields.join(', ')})` : ''}, on the page served at ${route}.${loginLike ? '' : ' The address does not look like a sign-in page.'}${signUpLike ? ' It also asks for more than a sign-in usually does, so it may be a sign-up form.' : ''}`,
+      });
+    }
+  }
+  return proposals.sort((a, b) => b.confidence - a.confidence || a.route.localeCompare(b.route));
+}

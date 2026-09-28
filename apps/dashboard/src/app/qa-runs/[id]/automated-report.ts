@@ -16,6 +16,8 @@ export type AutomatedSection = {
     runDataSetId: string | null;
     codeSnapshotId: string | null;
     instrumentationManifestVersion: string | null;
+    /** Which contract the run was compiled into, by hash and counts. Absent on a run from before this was recorded. */
+    contract?: { hash: string; states: number; transitions: number; controlsDerived: number; controlsMissing: number; anchored: number } | null;
   };
   outcome: {
     stopReason: string | null;
@@ -92,6 +94,14 @@ const STOP_REASON_LABELS: Record<string, string> = {
   LOOP_DETECTED: "The run was going in circles",
   CANCELLED_BY_USER: "Stopped by the user",
   AUTOMATION_ENGINE_ERROR: "Tellann's own automation failed",
+  MANUAL_AUTHENTICATION_REQUIRED: "Signing in needed a person",
+  FRAMEWORK_NOT_YET_SUPPORTED: "This kind of application is not supported yet",
+};
+
+/** For the two stops that are neither a finding nor a fault of ours, what actually happened, in words that do not blame anyone. */
+const USER_STOP_EXPLANATIONS: Record<string, string> = {
+  MANUAL_AUTHENTICATION_REQUIRED: "Signing in needed a person (single sign-on, a one-time code or a CAPTCHA) and it was not completed. Nothing here says anything about the application.",
+  FRAMEWORK_NOT_YET_SUPPORTED: "Automated Run does not yet read this kind of application. It is coming soon, and Guided or Assisted runs work in the meantime. Nothing here says anything about the application.",
 };
 
 export type OutcomeTone = "success" | "application" | "infrastructure" | "neutral";
@@ -109,7 +119,7 @@ export function outcomeSummary(section: AutomatedSection): { headline: string; e
     case "INFRASTRUCTURE":
       return { headline, tone: "infrastructure", explanation: "This was a failure of the run itself, not a finding about the application. Nothing here shows the Flow is broken." };
     case "USER":
-      return { headline, tone: "neutral", explanation: "The run was stopped before it finished; states it did not reach say nothing about the application." };
+      return { headline, tone: "neutral", explanation: (outcome.stopReason && USER_STOP_EXPLANATIONS[outcome.stopReason]) ?? "The run was stopped before it finished; states it did not reach say nothing about the application." };
     default:
       return { headline, tone: "neutral", explanation: "The run did not record why it ended." };
   }
@@ -136,6 +146,7 @@ export function pinnedRows(section: AutomatedSection): Array<[string, string]> {
     row("Run data set", pinned.runDataSetId),
     row("Code snapshot", pinned.codeSnapshotId),
     row("Instrumentation", pinned.instrumentationManifestVersion),
+    row("Executable contract", pinned.contract ? `${pinned.contract.hash.slice(0, 12)} · ${pinned.contract.controlsDerived} of ${pinned.contract.transitions} steps had a control derived from the code${pinned.contract.anchored ? `, ${pinned.contract.anchored} anchored` : ""}` : null),
   ];
 }
 

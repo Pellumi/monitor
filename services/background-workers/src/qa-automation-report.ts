@@ -3,6 +3,7 @@ import {
   AutomatedCodeEvidenceSchema,
   AutomationLimitsSchema,
   AutomationStopReasonSchema,
+  ContractSummarySchema,
 } from '@tellann/desktop-contracts';
 import type { AutomatedCodeEvidence, AutomatedRetainedTrace, AutomatedRunSection, RenderTimingSample, AutomatedUnreachedState, StateRunRecord } from '@tellann/desktop-contracts';
 
@@ -215,6 +216,7 @@ export function summarizeAutomationEvidence(
   }
 
   const limits = AutomationLimitsSchema.safeParse(automation.limits);
+  const contract = ContractSummarySchema.safeParse(automation.contract);
   return {
     pinned: {
       flowVersionId: text(automation.flowVersionId),
@@ -226,6 +228,7 @@ export function summarizeAutomationEvidence(
       codeSnapshotId: text(automation.codeSnapshotId),
       instrumentationManifestVersion: text(automation.instrumentationManifestVersion),
       limits: limits.success ? limits.data : null,
+      contract: contract.success ? contract.data : null,
     },
     outcome: {
       stopReason,

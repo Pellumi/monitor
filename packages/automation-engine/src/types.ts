@@ -44,6 +44,22 @@ export interface SemanticElement {
   inputType: string | null;
   visible: boolean;
   enabled: boolean;
+  /** Checkbox, radio or switch: whether it is currently on, when the element reports one. Never read from a text field. */
+  checked?: boolean | null;
+  /** A native `<select>`: the choices it offers, so a value it does not offer is caught before anything is done. */
+  options?: string[] | null;
+  /** The `value` of each of those options, so a data value may name either the label or the value. */
+  optionValues?: string[] | null;
+  /** A `<select multiple>`. */
+  multiple?: boolean;
+  /** The `value` attribute of a radio or checkbox: static markup naming the choice, never something a person typed. */
+  optionValue?: string | null;
+  /** `aria-haspopup`, which marks a custom combobox or listbox. */
+  popup?: string | null;
+  /** The `autocomplete` token (for example `one-time-code`), which marks fields whose value belongs to the person, not to us. */
+  autocomplete?: string | null;
+  /** The name of the radio group, checkbox group or fieldset the element sits in: what a Flow calls the field, as opposed to the choice. */
+  group?: string | null;
 }
 
 export interface ObservedRequest {
@@ -67,6 +83,8 @@ export interface SemanticSnapshot {
   requests: ObservedRequest[];
   /** Console/runtime errors seen since the last snapshot. */
   errorCount: number;
+  /** Hosts of the frames embedded in the page (never their content): how an embedded CAPTCHA or identity widget is recognised. */
+  frameOrigins?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +162,11 @@ export interface ExecutableTransition {
   expectedApi: ApiCondition[];
   codeRefs: CodeRef[];
   derivation: DerivationStatus;
+  /**
+   * Where the one control that performs this transition lives in source, when the analysis found exactly one.
+   * With several (one handler behind two buttons) there is no single element to anchor, so there is none here.
+   */
+  controlSource?: { file: string; startLine: number; endLine: number; element: string | null } | null;
 }
 
 export interface ExecutableContract {
@@ -200,9 +223,22 @@ export interface ControlCandidate {
   score: number;
 }
 
+/** A file to hand to a file input. Carried inline so nothing about it depends on a path on the machine. */
+export interface AutomationFile {
+  name: string;
+  mimeType: string;
+  /** Base64 of the content. */
+  base64: string;
+}
+
 export type AutomationAction =
   | { kind: 'CLICK'; ref: string }
   | { kind: 'FILL'; ref: string; value: string; secret: boolean }
+  /** Choose from a native `<select>` or a custom combobox/listbox: `value` names the option (several, comma-separated, for a multi-select). */
+  | { kind: 'SELECT'; ref: string; value: string }
+  /** Leave a checkbox, radio or switch on or off. */
+  | { kind: 'SET_CHECKED'; ref: string; checked: boolean }
+  | { kind: 'UPLOAD'; ref: string; file: AutomationFile }
   | { kind: 'NAVIGATE'; url: string };
 
 export interface ActionOutcome {

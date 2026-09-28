@@ -49,7 +49,7 @@ test('resolving a form fill matches by field name or label, case- and punctuatio
   const page = snapshot({ elements: [element({ ref: 'a', name: 'Save', testId: 'save' }), element({ ref: 't', fieldName: 'Title', tag: 'input' })] });
   const result = resolveStep(page, { control: control({ testId: 'save' }), inputs: [{ name: 'title', label: null, dataKey: 'title' }], data: (key) => data[key], label: 'Save' });
   assert.ok(result.ok);
-  if (result.ok) assert.deepEqual(result.fills, [{ ref: 't', value: 'Automated QA Exam', secret: false }]);
+  if (result.ok) assert.deepEqual(result.fills, [{ ref: 't', value: 'Automated QA Exam', secret: false, control: 'TEXT' }]);
 });
 
 test('performing a resolved step fills in order, then clicks', async () => {

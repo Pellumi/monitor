@@ -111,3 +111,26 @@ test("render timing lists the costliest component first, and nothing when the ru
   assert.equal(first!.total, "13.3 ms");
   assert.equal(second!.states, "not mapped to a state");
 });
+
+test("a run that needed a person to sign in is not worded as a finding, nor as a fault of Tellann", () => {
+  const summary = outcomeSummary(section({ stopReason: "MANUAL_AUTHENTICATION_REQUIRED", kind: "USER", reachedTarget: false }));
+  assert.equal(summary.tone, "neutral");
+  assert.equal(summary.headline, "Signing in needed a person");
+  assert.match(summary.explanation, /CAPTCHA/);
+  assert.match(summary.explanation, /Nothing here says anything about the application/);
+});
+
+test("an application in a framework not supported yet is a notice, with the way forward", () => {
+  const summary = outcomeSummary(section({ stopReason: "FRAMEWORK_NOT_YET_SUPPORTED", kind: "USER", reachedTarget: false }));
+  assert.equal(summary.tone, "neutral");
+  assert.match(summary.explanation, /coming soon/);
+  assert.match(summary.explanation, /Guided or Assisted/);
+});
+
+test("the contract a run used is shown by hash and how much of it came from the code, and its absence is said", () => {
+  const withContract = section();
+  withContract.pinned.contract = { hash: "abcdef0123456789".repeat(4), states: 3, transitions: 4, controlsDerived: 3, controlsMissing: 1, anchored: 2 };
+  const rows = Object.fromEntries(pinnedRows(withContract));
+  assert.equal(rows["Executable contract"], "abcdef012345 · 3 of 4 steps had a control derived from the code, 2 anchored");
+  assert.equal(Object.fromEntries(pinnedRows(section()))["Executable contract"], "Not recorded", "a run from before this was recorded");
+});

@@ -1,5 +1,6 @@
 import type { AutomationLimits, AutomationStopReason } from '@tellann/desktop-contracts';
-import { performStep, resolveStep } from './act';
+import { DATA_FAILURE_REASONS, performStep, resolveStep } from './act';
+import type { DataValue } from './act';
 import { askResolver, controlSituation, tiedControls, verifyControlProposal, verifyStateProposal } from './ambiguity';
 import type { AmbiguityResolver } from './ambiguity';
 import { LoopDetector, RunBudget, stateFingerprint } from './budget';
@@ -99,7 +100,7 @@ export interface AutomationPorts {
    * Run data for form inputs. `undefined` means the data set has no such value, which stops the
    * run before any action that would need it. `secret` values are typed but never recorded.
    */
-  data?(dataKey: string): { value: string; secret: boolean } | undefined;
+  data?(dataKey: string): DataValue | undefined;
   /**
    * Get from wherever the browser is to the Flow's initial state (login, navigation).
    * Returns the snapshot once there, or null if it could not. Absent means the run starts at the initial state.
@@ -360,7 +361,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       }
     }
     if (!resolved.ok) {
-      const stopReason = resolved.reason === 'DATA_UNAVAILABLE' ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND';
+      const stopReason = DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND';
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
       return finish(stopReason, resolved.detail);
     }

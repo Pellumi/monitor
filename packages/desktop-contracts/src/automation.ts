@@ -32,6 +32,10 @@ export const QA_AUTOMATION_EVENT_TYPES = [
   'QA_AUTOMATION_TRACE_RETAINED',
   /** How long the Flow's own components took to render in a state. Only when the run opted in, and only for the components it named. */
   'QA_AUTOMATION_RENDER_TIMING',
+  /** The run reached a point only a person can get past (a CAPTCHA, an MFA prompt, single sign-on) and is waiting for them. */
+  'QA_AUTOMATION_MANUAL_ACTION_REQUIRED',
+  /** The person finished, or the wait ended; the run carries on or stops. */
+  'QA_AUTOMATION_MANUAL_ACTION_COMPLETED',
 ] as const;
 
 /** Where an Automated Run currently is. A substate carried in `QARun.automation`; the public run lifecycle is unchanged. */
@@ -41,6 +45,8 @@ export const AutomationExecutionPhaseSchema = z.enum([
   'LAUNCHING_BROWSER',
   'BOOTSTRAPPING',
   'SEEKING_INITIAL_STATE',
+  /** Paused for a person: signing in by hand where the run cannot (SSO, MFA, CAPTCHA). */
+  'AWAITING_USER',
   'EXECUTING_FLOW',
   'VERIFYING_TERMINAL_STATE',
   'FLUSHING_EVIDENCE',
@@ -75,6 +81,10 @@ export const AutomationStopReasonSchema = z.enum([
   'LOOP_DETECTED',
   'CANCELLED_BY_USER',
   'AUTOMATION_ENGINE_ERROR',
+  /** The login is not a plain email/username and password form, and nobody signed in by hand. */
+  'MANUAL_AUTHENTICATION_REQUIRED',
+  /** Automated Run does not yet understand this kind of application. Not a finding, and not a failure. */
+  'FRAMEWORK_NOT_YET_SUPPORTED',
 ]);
 export type AutomationStopReason = z.infer<typeof AutomationStopReasonSchema>;
 
@@ -100,6 +110,10 @@ export const AUTOMATION_STOP_REASON_KIND: Record<AutomationStopReason, Automatio
   LOOP_DETECTED: 'APPLICATION',
   CANCELLED_BY_USER: 'USER',
   AUTOMATION_ENGINE_ERROR: 'INFRASTRUCTURE',
+  // Neither says anything about the application, and neither is a fault of Tellann's machinery: each needs
+  // something from the person (an authentication only they can complete, a framework we have not built yet).
+  MANUAL_AUTHENTICATION_REQUIRED: 'USER',
+  FRAMEWORK_NOT_YET_SUPPORTED: 'USER',
 };
 
 export const AutomationLimitsSchema = z.object({
@@ -144,6 +158,34 @@ export const AutomationConfigSchema = z.object({
 });
 export type AutomationConfig = z.infer<typeof AutomationConfigSchema>;
 
+/**
+ * What leaves the machine about the executable contract a run was compiled into: a hash and counts, never the
+ * contract itself. The contract names files, symbols and control labels from the developer's source, and stays local
+ * (invariant 8); this is enough for a report to say *which* contract a run used and how much of it was derivable.
+ */
+export const ContractSummarySchema = z.object({
+  hash: z.string().length(64),
+  flowHash: z.string().length(64),
+  analysisIdentity: z.string().max(200).nullable(),
+  states: z.number().int().nonnegative(),
+  transitions: z.number().int().nonnegative(),
+  /** Transitions whose control could be derived from the code. */
+  controlsDerived: z.number().int().nonnegative(),
+  /** Transitions for which it could not (a mapping that is missing or unclear). */
+  controlsMissing: z.number().int().nonnegative(),
+  /** Transitions whose control carries a stable `data-tellann-action` anchor. */
+  anchored: z.number().int().nonnegative(),
+});
+export type ContractSummary = z.infer<typeof ContractSummarySchema>;
+
+/** What the desktop reports while a run is going: where it is, and (implicitly, by arriving at all) that it is still alive. */
+export const AutomationPhaseUpdateSchema = z.object({
+  executionPhase: AutomationExecutionPhaseSchema.optional(),
+  awaitingUser: z.object({ kind: z.string().min(1).max(40), detail: z.string().max(300) }).nullable().optional(),
+  contract: ContractSummarySchema.optional(),
+});
+export type AutomationPhaseUpdate = z.infer<typeof AutomationPhaseUpdateSchema>;
+
 /** The terminal states a run is pointed at, from whichever spelling its config used. */
 export function automationTargets(config: Pick<AutomationConfig, 'targetTerminalStateKey' | 'targetTerminalStateKeys'>): string[] {
   return config.targetTerminalStateKeys && config.targetTerminalStateKeys.length > 0
@@ -167,8 +209,77 @@ export const AutomationRunStateSchema = AutomationConfigSchema.extend({
   instrumentationManifestVersion: z.string().nullable().optional(),
   executionPhase: AutomationExecutionPhaseSchema.optional(),
   stopReason: AutomationStopReasonSchema.optional(),
+  /** The last time the desktop reported in. A run that stops reporting is one whose desktop is gone. */
+  heartbeatAt: z.string().datetime().optional(),
+  /** Set while the run is paused for a person (signing in by hand), so a viewer can say why it is waiting. */
+  awaitingUser: z.object({ kind: z.string().max(40), detail: z.string().max(300) }).nullable().optional(),
+  /** Which contract the run was compiled into, by hash and counts. */
+  contract: ContractSummarySchema.optional(),
 });
 export type AutomationRunState = z.infer<typeof AutomationRunStateSchema>;
+
+// ---------------------------------------------------------------------------
+// The live view of a run, and what a start can be refused with
+// ---------------------------------------------------------------------------
+
+/** One line of the live view. Local to this machine and never uploaded, so it may name the controls it is using. */
+export const AutomatedRunLiveEventSchema = z.object({
+  at: z.string().datetime(),
+  type: z.string().max(80),
+  text: z.string().max(300),
+  tone: z.enum(['info', 'success', 'notice', 'problem']),
+});
+export type AutomatedRunLiveEvent = z.infer<typeof AutomatedRunLiveEventSchema>;
+
+export const AUTOMATED_RUN_LIVE_EVENT_LIMIT = 100;
+
+/** How a finished run ended, in the words a person reads (see `describeStopReason`). */
+export const AutomatedRunOutcomeSchema = z.object({
+  stopReason: AutomationStopReasonSchema,
+  /** The run as the platform records it. */
+  result: z.enum(['COMPLETED', 'COMPLETED_INCOMPLETE', 'FAILED']),
+  title: z.string(),
+  message: z.string(),
+  tone: z.enum(['success', 'notice', 'finding', 'problem']),
+  nextStep: z.string().nullable(),
+});
+export type AutomatedRunOutcome = z.infer<typeof AutomatedRunOutcomeSchema>;
+
+export const AutomatedRunStatusSchema = z.object({
+  runId: z.string(),
+  applicationId: z.string(),
+  /** PREPARING: before the browser. RUNNING: driving. AWAITING_USER: paused for a person. FINISHING: saving evidence. FINISHED: done. */
+  state: z.enum(['PREPARING', 'RUNNING', 'AWAITING_USER', 'FINISHING', 'FINISHED']),
+  phase: AutomationExecutionPhaseSchema.nullable(),
+  awaitingUser: z.object({ kind: z.string(), detail: z.string() }).nullable(),
+  targetStateKey: z.string(),
+  currentStateKey: z.string().nullable(),
+  steps: z.number().int().nonnegative(),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+  events: z.array(AutomatedRunLiveEventSchema).max(AUTOMATED_RUN_LIVE_EVENT_LIMIT),
+  outcome: AutomatedRunOutcomeSchema.nullable(),
+});
+export type AutomatedRunStatus = z.infer<typeof AutomatedRunStatusSchema>;
+
+/**
+ * A start that was declined before anything was created: no run record, no process, no browser. Not an error
+ * and not a finding: a limit, said in plain words with the modes that do work.
+ */
+export const AutomatedRunRefusalSchema = z.object({
+  code: z.enum([
+    'FRAMEWORK_NOT_YET_SUPPORTED', 'CODE_ANALYSIS_REQUIRED', 'FLOW_MAPPING_REQUIRED', 'FLOW_INVALID', 'CONTROLS_NOT_DERIVED',
+    'TARGET_NOT_IN_FLOW', 'TEST_DATA_UNAVAILABLE', 'PROFILE_NOT_APPROVED', 'WORKSPACE_NOT_SELECTED', 'PERSONA_NOT_FOUND',
+    'RUN_DATA_NOT_FOUND', 'PROFILE_NOT_FOUND',
+  ]),
+  title: z.string(),
+  message: z.string(),
+  tone: z.enum(['notice', 'problem']),
+  alternatives: z.array(z.enum(['GUIDED', 'ASSISTED'])).default([]),
+});
+export type AutomatedRunRefusal = z.infer<typeof AutomatedRunRefusalSchema>;
+
+export type StartAutomatedRunResult = { ok: true; status: AutomatedRunStatus } | { ok: false; refusal: AutomatedRunRefusal };
 
 // ---------------------------------------------------------------------------
 // Execution profiles
@@ -236,6 +347,16 @@ export const ExecutionProfileSchema = z.object({
 });
 export type ExecutionProfile = z.infer<typeof ExecutionProfileSchema>;
 
+/** What the renderer sends to create or change a profile. It cannot send an approval: approving is its own act. */
+export const ExecutionProfileInputSchema = z.object({
+  id: z.string().min(1).max(200).optional(),
+  applicationId: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  processes: z.array(ExecutionProfileProcessSchema).min(1).max(8),
+  applicationUrl: z.string().url(),
+});
+export type ExecutionProfileInput = z.infer<typeof ExecutionProfileInputSchema>;
+
 // ---------------------------------------------------------------------------
 // Test personas and run data
 // ---------------------------------------------------------------------------
@@ -263,6 +384,13 @@ export const TestPersonaSchema = z.object({
   name: z.string().min(1).max(100),
   roles: z.array(z.string().min(1).max(60)).max(20),
   authenticated: z.boolean(),
+  /**
+   * How the run signs this persona in. `PASSWORD` types the stored credentials into an email/username and
+   * password form. `MANUAL` is for anything else (single sign-on, MFA, magic links): the run stops at the login
+   * page and asks the person to sign in themselves in the browser it opened, then carries on from there.
+   * Nothing the person types is recorded.
+   */
+  authMethod: z.enum(['PASSWORD', 'MANUAL']).default('PASSWORD'),
   credentials: z.array(TestPersonaCredentialSchema).max(20),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -276,8 +404,25 @@ export type TestPersona = z.infer<typeof TestPersonaSchema>;
  */
 export const RunDataGeneratorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('LITERAL'), value: z.string().max(4_000) }),
-  /** now() + offsetMs, as an ISO datetime. */
-  z.object({ kind: z.literal('FUTURE_TIMESTAMP'), offsetMs: z.number().int().positive().max(365 * 86_400_000) }),
+  /**
+   * now() + offsetMs. `format` is the shape the form wants: an ISO datetime (default), a date, a time, or a
+   * US (MM/DD/YYYY) or EU (DD/MM/YYYY) date for a plain text field that is not a native date input.
+   */
+  z.object({
+    kind: z.literal('FUTURE_TIMESTAMP'),
+    offsetMs: z.number().int().positive().max(365 * 86_400_000),
+    format: z.enum(['ISO', 'DATE', 'TIME', 'US', 'EU']).optional(),
+  }),
+  /**
+   * A small file to upload into a file field. Its content is held here and handed to the browser directly:
+   * nothing is written to disk and no path is involved. The name is a bare file name, never a path.
+   */
+  z.object({
+    kind: z.literal('FILE'),
+    fileName: z.string().min(1).max(120).regex(/^[^\\/:*?"<>|\u0000-\u001f]+$/, 'A file name, not a path'),
+    mimeType: z.string().min(1).max(100).regex(/^[\w.+-]+\/[\w.+-]+$/).optional(),
+    content: z.string().max(200_000),
+  }),
   /** `prefix` followed by a short value unique to this run, e.g. "qa-exam-7f3a2c1e". */
   z.object({ kind: z.literal('UNIQUE_SUFFIX'), prefix: z.string().max(100) }),
 ]);
@@ -311,6 +456,132 @@ export type RunDataSet = z.infer<typeof RunDataSetSchema>;
 /** How a typed run-data value is classified for privacy, mirroring `QAPendingProtectedValueSchema.kind`. */
 export const RunDataValueKindSchema = z.enum(['ORDINARY', 'DIRECT_IDENTIFIER', 'SECRET']);
 export type RunDataValueKind = z.infer<typeof RunDataValueKindSchema>;
+
+// ---------------------------------------------------------------------------
+// What the renderer may see and send. Secrets only ever travel one way: in.
+// ---------------------------------------------------------------------------
+
+/** A persona as the renderer sees it: what it is called and how it signs in, never what it types. */
+export const PersonaViewSchema = z.object({
+  id: z.string(),
+  applicationId: z.string().uuid(),
+  name: z.string(),
+  roles: z.array(z.string()),
+  authenticated: z.boolean(),
+  authMethod: z.enum(['PASSWORD', 'MANUAL']),
+  /** Which fields hold a stored value. The values themselves stay on this machine and are never sent back. */
+  credentialFields: z.array(z.string()),
+  updatedAt: z.string(),
+});
+export type PersonaView = z.infer<typeof PersonaViewSchema>;
+
+/**
+ * What the renderer sends to create or change a persona. A credential with an empty value on an existing persona
+ * means "keep what is stored", so editing a name never requires typing a password again.
+ */
+export const PersonaInputSchema = z.object({
+  id: z.string().min(1).max(200).optional(),
+  applicationId: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  roles: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  authenticated: z.boolean(),
+  authMethod: z.enum(['PASSWORD', 'MANUAL']).default('PASSWORD'),
+  credentials: z.array(TestPersonaCredentialSchema).max(20).default([]),
+});
+export type PersonaInput = z.infer<typeof PersonaInputSchema>;
+
+/** A run-data value as the renderer sees it: a secret, or a file's content, is withheld and only its presence is said. */
+export const RunDataValueViewSchema = z.object({
+  key: z.string(),
+  secret: z.boolean(),
+  kind: z.enum(['LITERAL', 'FUTURE_TIMESTAMP', 'FILE', 'UNIQUE_SUFFIX']),
+  /** A literal's value, or a generator's setting, when it is safe to show. Null for a secret and for a file. */
+  display: z.string().nullable(),
+  hasStoredValue: z.boolean(),
+});
+export const RunDataSetViewSchema = z.object({
+  id: z.string(),
+  applicationId: z.string().uuid(),
+  name: z.string(),
+  values: z.array(RunDataValueViewSchema),
+  updatedAt: z.string(),
+});
+export type RunDataSetView = z.infer<typeof RunDataSetViewSchema>;
+
+/**
+ * Sent to create or change a data set. A secret literal or a file whose value is empty on an existing set keeps what
+ * is stored under the same key.
+ */
+export const RunDataSetInputSchema = z.object({
+  id: z.string().min(1).max(200).optional(),
+  applicationId: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  values: z.array(RunDataValueSchema).max(50),
+});
+export type RunDataSetInput = z.infer<typeof RunDataSetInputSchema>;
+
+export const ExecutionProfileViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  applicationUrl: z.string(),
+  /** What approving it would let Tellann run: the commands, as they will be typed. */
+  commands: z.array(z.string()),
+  status: z.enum(['APPROVED', 'NEEDS_APPROVAL', 'CHANGED']),
+  approvedAt: z.string().nullable(),
+});
+export type ExecutionProfileView = z.infer<typeof ExecutionProfileViewSchema>;
+
+export const LoginProposalViewSchema = z.object({
+  route: z.string(),
+  file: z.string(),
+  confidence: z.number(),
+  fields: z.array(z.string()),
+  rationale: z.string(),
+});
+export type LoginProposalView = z.infer<typeof LoginProposalViewSchema>;
+
+export const AutomationOptionsSchema = z.object({
+  /** Null until the application's folder has been connected and scanned: nothing can be said about it yet. */
+  support: z.object({
+    level: z.enum(['SUPPORTED', 'PARTIAL', 'NOT_YET_SUPPORTED', 'NOT_APPLICABLE', 'UNKNOWN']),
+    canRun: z.boolean(),
+    title: z.string(),
+    message: z.string(),
+    alternatives: z.array(z.enum(['GUIDED', 'ASSISTED'])),
+  }).nullable(),
+  workspaceConnected: z.boolean(),
+  analysisReady: z.boolean(),
+  profiles: z.array(ExecutionProfileViewSchema),
+  /** Suggested profiles from the scan, offered when none is saved. Nothing runs from a proposal. */
+  proposedProfiles: z.array(z.object({ profile: ExecutionProfileViewSchema, rationale: z.string(), save: ExecutionProfileInputSchema })),
+  personas: z.array(PersonaViewSchema),
+  dataSets: z.array(RunDataSetViewSchema),
+  login: z.object({
+    route: z.string().nullable(),
+    source: z.enum(['CODE_PROPOSAL', 'MANUAL']).nullable(),
+    proposals: z.array(LoginProposalViewSchema),
+  }),
+});
+export type AutomationOptions = z.infer<typeof AutomationOptionsSchema>;
+
+/** Channel names for the automation IPC. The preload repeats these (it cannot import), and a test keeps the two in step. */
+export const AUTOMATION_IPC = {
+  options: 'tellann:automation:options',
+  start: 'tellann:automation:start',
+  cancel: 'tellann:automation:cancel',
+  confirmSignedIn: 'tellann:automation:confirm-signed-in',
+  status: 'tellann:automation:status',
+  statusChanged: 'tellann:automation:status-changed',
+  saveProfile: 'tellann:automation:profile:save',
+  approveProfile: 'tellann:automation:profile:approve',
+  deleteProfile: 'tellann:automation:profile:delete',
+  savePersona: 'tellann:automation:persona:save',
+  deletePersona: 'tellann:automation:persona:delete',
+  saveDataSet: 'tellann:automation:data-set:save',
+  deleteDataSet: 'tellann:automation:data-set:delete',
+  saveLogin: 'tellann:automation:login:save',
+  clearLogin: 'tellann:automation:login:clear',
+} as const;
 
 // ---------------------------------------------------------------------------
 // Report section
@@ -430,6 +701,8 @@ export const AutomatedRunSectionSchema = z.object({
     codeSnapshotId: z.string().nullable(),
     instrumentationManifestVersion: z.string().nullable(),
     limits: AutomationLimitsSchema.nullable(),
+    /** The executable contract the run was compiled into, by hash and counts. The contract itself never leaves the desktop. */
+    contract: ContractSummarySchema.nullable().default(null),
   }),
   outcome: z.object({
     stopReason: AutomationStopReasonSchema.nullable(),

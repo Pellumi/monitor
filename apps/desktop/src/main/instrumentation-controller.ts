@@ -21,6 +21,7 @@ import {
   refreshPatchResult,
   validateInstrumentationPlan,
   type ApprovedInstrumentationTask,
+  type ControlAnchorTarget,
   type FrameworkId,
   type InstrumentationPlan,
   type LocalProjectContext,
@@ -29,6 +30,7 @@ import {
   type ValidationResult,
 } from "@tellann/instrumentation-adapters";
 import type { DesktopCloudClient } from "./cloud-client";
+import { anchorTargetsOfPlan } from "./automation/anchor-plumbing";
 import { readLocalState, writeLocalState } from "./local-store";
 import {
   createInstrumentationCheckpoint,
@@ -441,6 +443,16 @@ export class InstrumentationController {
     private readonly launcher?: LocalApplicationLauncher,
     /** Rescans the attached folder and registers the result as the workspace's current snapshot. */
     private readonly refreshWorkspace?: (applicationId: string) => Promise<void>,
+    /**
+     * The controls a Flow's transitions go through, where the code analysis found them, so a Flow plan can also put a
+     * stable anchor on each. Optional and best effort: without it, or when it cannot say, a plan is exactly what it was.
+     */
+    private readonly controlAnchorTargets?: (input: {
+      applicationId: string;
+      flowId: string;
+      flowVersionId: string;
+      flowInitializationId: string;
+    }) => Promise<ControlAnchorTarget[]>,
   ) {}
 
   private selected(applicationId: string): SelectedWorkspace {
@@ -460,7 +472,7 @@ export class InstrumentationController {
       | "flowId"
       | "flowVersionId"
       | "flowInitializationId"
-    > & { flowManifest?: any; flowCheckpointIds?: string[] },
+    > & { flowManifest?: any; flowCheckpointIds?: string[]; controlAnchors?: ControlAnchorTarget[] },
   ): LocalProjectContext {
     return {
       workspaceRoot: workspace.root,
@@ -472,6 +484,7 @@ export class InstrumentationController {
       flowInitializationId: flow?.flowInitializationId,
       flowManifest: flow?.flowManifest,
       flowCheckpointIds: flow?.flowCheckpointIds,
+      controlAnchors: flow?.controlAnchors,
     };
   }
 
@@ -524,11 +537,26 @@ export class InstrumentationController {
       }
       flowCheckpointIds = assignment.byAdapter[input.adapterId] ?? [];
     }
+    let controlAnchors: ControlAnchorTarget[] | undefined;
+    if (
+      input.instrumentationPurpose === "FLOW" &&
+      this.controlAnchorTargets &&
+      input.flowId && input.flowVersionId && input.flowInitializationId
+    ) {
+      // An anchor is an enhancement to a plan that is complete without it, so failing to work them out is not a failure to plan.
+      controlAnchors = await this.controlAnchorTargets({
+        applicationId: input.applicationId,
+        flowId: input.flowId,
+        flowVersionId: input.flowVersionId,
+        flowInitializationId: input.flowInitializationId,
+      }).catch(() => undefined);
+    }
     const plan = await getAdapter(input.adapterId).propose(
       this.context(workspace, input.environmentType, {
         ...input,
         flowManifest: initialization?.manifest,
         flowCheckpointIds,
+        controlAnchors,
       }),
     );
     const packageManifest =
@@ -1040,7 +1068,8 @@ export class InstrumentationController {
       stored.patch,
     );
     const validation = await getAdapter(plan.adapterId).validate(
-      this.context(workspace, approval.environmentType),
+      // The anchors this plan applied, so validation can check each is present at most once.
+      this.context(workspace, approval.environmentType, { controlAnchors: anchorTargetsOfPlan(plan as never) }),
       patch,
     );
     // `install-sdk` is not re-run here, so the result it recorded when it did

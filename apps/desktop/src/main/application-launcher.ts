@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolveWithinWorkspace } from "@tellann/agent-policy";
+import { killProcessTree } from "./process-tree";
 import {
   discoveryDescription,
   environmentForInterpreter,
@@ -276,6 +277,8 @@ export class LocalApplicationLauncher {
     const child = spawn(resolved.executable, resolved.args, {
       cwd,
       windowsHide: true,
+      // Its own process group on POSIX, so stopping it can end everything it started and not only the shell.
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...launchEnvironment(resolved.interpreter),
@@ -336,6 +339,8 @@ export class LocalApplicationLauncher {
     const child = spawn(resolved.executable, resolved.args, {
       cwd,
       windowsHide: true,
+      // Its own process group on POSIX, so stopping it can end everything it started and not only the shell.
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...launchEnvironment(resolved.interpreter),
@@ -387,21 +392,11 @@ export class LocalApplicationLauncher {
     };
   }
 
+  /** Ends the application and everything it started (see `process-tree.ts`), not only the process that was spawned. */
   async stop(): Promise<void> {
     const child = this.child;
     this.child = null;
     if (!child || child.exitCode !== null || !child.pid) return;
-    if (process.platform === "win32") {
-      await new Promise<void>((resolve) =>
-        execFile(
-          "taskkill.exe",
-          ["/PID", String(child.pid), "/T", "/F"],
-          { windowsHide: true },
-          () => resolve(),
-        ),
-      );
-    } else {
-      child.kill("SIGTERM");
-    }
+    await killProcessTree(child.pid, { group: process.platform !== "win32" });
   }
 }

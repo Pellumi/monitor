@@ -31,6 +31,8 @@ export type RunnerEvent = {
   process: string;
   phase: "STARTED" | "READY" | "STOPPED" | "FAILED";
   detail?: string;
+  /** The operating-system process id, on STARTED and STOPPED, so a crash-safe journal can note it and strike it off. */
+  pid?: number;
 };
 
 export type RunnerStartResult =
@@ -72,6 +74,7 @@ export const defaultProbes: RunnerProbes = {
 interface Running {
   name: string;
   handle: ManagedProcess;
+  pid: number;
 }
 
 export class ProjectRunner {
@@ -115,13 +118,14 @@ export class ProjectRunner {
       if (!command) return fail(`The launch command "${spec.launchCommandId}" is no longer in this workspace.`, spec.name);
 
       const handle = this.deps.createProcess();
+      let pid: number;
       try {
-        await handle.start(command, workspaceRoot, correlation);
+        pid = (await handle.start(command, workspaceRoot, correlation)).pid;
       } catch (error) {
         return fail(errorMessage(error), spec.name);
       }
-      this.running.push({ name: spec.name, handle });
-      emit({ process: spec.name, phase: "STARTED" });
+      this.running.push({ name: spec.name, handle, pid });
+      emit({ process: spec.name, phase: "STARTED", pid });
 
       const ready = await this.waitUntilReady(spec.readyCondition, handle, spec.readyTimeoutMs);
       if (ready !== "READY") {
@@ -160,7 +164,7 @@ export class ProjectRunner {
     this.running = [];
     for (const entry of [...running].reverse()) {
       await entry.handle.stop().catch(() => undefined);
-      onEvent?.({ process: entry.name, phase: "STOPPED" });
+      onEvent?.({ process: entry.name, phase: "STOPPED", pid: entry.pid });
     }
   }
 

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import semver from 'semver';
 import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph';
+import { ANCHOR_ATTRIBUTE, ANCHOR_TRANSFORM_ID, applyControlAnchor, checkAnchorTarget } from './control-anchors';
 import { z } from 'zod';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import { FlowPlacementKindSchema } from '@tellann/desktop-contracts';
@@ -438,6 +439,9 @@ type AdapterDefinition = {
   entryMatchers: RegExp[];
   symbolMatchers: RegExp[];
 };
+
+/** Adapters for frameworks written in JSX, where a control's element can be located in source. */
+const ANCHORING_ADAPTERS: FrameworkId[] = ['react-vite', 'nextjs', 'remix'];
 
 const DEFINITIONS: AdapterDefinition[] = [
   { id: 'react-vite', packageNames: ['react', 'vite'], versionPackage: 'vite', supportedVersionRange: '>=4 <9', sdkPackage: '@tellann/frontend-sdk', generatedFile: 'src/tellann.ts', entryMatchers: [/(^|\/)src\/(main|index)\.[jt]sx?$/], symbolMatchers: [/createRoot\s*\(/, /ReactDOM\.render\s*\(/] },
@@ -1053,6 +1057,40 @@ class TypeScriptAdapter implements InstrumentationAdapter {
     if (input.instrumentationPurpose === 'FLOW' && checkpointOperationCount !== manifestCheckpoints.length) {
       throw new Error(`FLOW_CHECKPOINT_PLAN_INCOMPLETE:${checkpointOperationCount}/${manifestCheckpoints.length}`);
     }
+    const anchorReport: NonNullable<AdapterEvidence['controlAnchors']> = { planned: [], skipped: [] };
+    if (input.controlAnchors?.length && ANCHORING_ADAPTERS.includes(this.id)) {
+      const seen = new Set<string>();
+      for (const target of input.controlAnchors) {
+        if (seen.has(target.transitionId)) continue;
+        seen.add(target.transitionId);
+        // A control in another package belongs to that package's adapter.
+        if (detectedPackage.relativeRoot && !target.file.startsWith(`${detectedPackage.relativeRoot}/`)) {
+          anchorReport.skipped.push({ transitionId: target.transitionId, reason: 'OUTSIDE_FRAMEWORK_PACKAGE' });
+          continue;
+        }
+        let content: string;
+        try {
+          content = fs.readFileSync(resolveWithinWorkspace(input.workspaceRoot, target.file), 'utf8');
+        } catch {
+          anchorReport.skipped.push({ transitionId: target.transitionId, reason: 'UNREADABLE' });
+          continue;
+        }
+        const checked = checkAnchorTarget(target.file, content, target, target.value);
+        if (!checked.ok) {
+          anchorReport.skipped.push({ transitionId: target.transitionId, reason: checked.reason });
+          continue;
+        }
+        operations.push({
+          id: `anchor:${target.transitionId}`, kind: 'UPDATE_SOURCE', relativePath: target.file, symbol: null,
+          transformId: ANCHOR_TRANSFORM_ID, transformVersion: this.version, expectedHash: fileHash(input.workspaceRoot, target.file),
+          description: `Add a stable ${ANCHOR_ATTRIBUTE} anchor to the ${target.label ? `"${target.label}" ` : ''}control so it is found even if its text changes`,
+          eventMappings: [], startLine: target.startLine, endLine: Math.max(target.startLine, target.endLine),
+          anchorAttribute: { name: ANCHOR_ATTRIBUTE, value: target.value, element: target.element },
+        });
+        anchorReport.planned.push(target.transitionId);
+      }
+      evidence.controlAnchors = anchorReport;
+    }
     const lockfile = packageManagerLockfile(input.workspaceRoot, detectedPackage.root, input.snapshot.packageManager);
     if (lockfile) {
       operations.splice(1, 0, {
@@ -1087,6 +1125,7 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       riskReasons: [
         ...(evidence.existingInstrumentation.length ? ['Existing instrumentation requires duplicate-registration checks'] : []),
         ...(operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Resolved Flow checkpoints modify explicitly mapped source locations'] : []),
+        ...(anchorReport.planned.length ? [`${anchorReport.planned.length} control${anchorReport.planned.length === 1 ? '' : 's'} gain a ${ANCHOR_ATTRIBUTE} attribute (markup only, no behaviour change)`] : []),
         ...(!evidence.existingInstrumentation.length && !operations.some((operation) => operation.transformId === 'tellann.semantic.checkpoint') ? ['Changes are limited to one dependency, one generated module, and one framework integration'] : []),
       ],
       evidence, createdAt: new Date().toISOString(),
@@ -1132,6 +1171,16 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       applySemanticCheckpoint(source, operation, isCommonJsEntry(input.workspaceRoot, operation.relativePath));
       source.saveSync();
     }
+    for (const operation of plan.operations.filter((item) => item.transformId === ANCHOR_TRANSFORM_ID)) {
+      if (!operation.anchorAttribute || !operation.startLine) throw new Error(`INVALID_CONTROL_ANCHOR_OPERATION:${operation.id}`);
+      const target = resolveWithinWorkspace(input.workspaceRoot, operation.relativePath);
+      const project = new Project({ manipulationSettings: { quoteKind: QuoteKind.Double }, useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true });
+      const source = project.addSourceFileAtPath(target);
+      applyControlAnchor(source, {
+        file: operation.relativePath, startLine: operation.startLine, endLine: operation.endLine ?? operation.startLine, element: operation.anchorAttribute.element,
+      }, operation.anchorAttribute.value, operation.id);
+      source.saveSync();
+    }
     return finalizePatch(input, task, session);
     } catch (error) {
       restorePatch(input, session);
@@ -1152,6 +1201,14 @@ class TypeScriptAdapter implements InstrumentationAdapter {
       return (content.match(/tellann:generated:start/g) ?? []).length > 1 ? [relativePath] : [];
     });
     checks.push({ name: 'idempotency-markers', passed: duplicated.length === 0, output: duplicated.length ? `Duplicate markers: ${duplicated.join(', ')}` : 'No duplicate generated markers' });
+    if (input.controlAnchors?.length) {
+      const contents = findSourceFiles(input.workspaceRoot).map((relativePath) => fs.readFileSync(resolveWithinWorkspace(input.workspaceRoot, relativePath), 'utf8'));
+      for (const anchor of input.controlAnchors) {
+        const occurrences = contents.reduce((count, text) => count + text.split(`${ANCHOR_ATTRIBUTE}="${anchor.value}"`).length - 1, 0);
+        // Zero is fine: a control that could not be anchored safely is left alone. Two would make the anchor ambiguous.
+        checks.push({ name: `control-anchor:${anchor.transitionId}`, passed: occurrences <= 1, output: occurrences <= 1 ? (occurrences ? 'One anchor present' : 'Not anchored (left alone)') : `The anchor appears ${occurrences} times` });
+      }
+    }
     if (input.instrumentationPurpose === 'FLOW' && input.flowManifest) {
       const sources = findSourceFiles(input.workspaceRoot).map((relativePath) => ({
         relativePath,
@@ -1210,6 +1267,7 @@ export function refreshPatchResult(input: LocalProjectContext, result: PatchResu
 // Both adapter families satisfy one contract, so detection, proposal, approval
 // and rollback are the same code path whichever language a project is written
 // in; only the adapter that is selected differs.
+export * from './control-anchors';
 export const adapters: InstrumentationAdapter[] = [
   ...DEFINITIONS.map((definition) => new TypeScriptAdapter(definition)),
   ...pythonAdapters,

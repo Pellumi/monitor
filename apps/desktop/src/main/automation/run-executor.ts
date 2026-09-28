@@ -18,7 +18,7 @@ import type {
   NavigationGraph,
   PolicyOptions,
 } from "@tellann/automation-engine";
-import type { AutomationLimits, QA_AUTOMATION_EVENT_TYPES, RunDataSet, TestPersona } from "@tellann/desktop-contracts";
+import type { AutomationExecutionPhase, AutomationLimits, QA_AUTOMATION_EVENT_TYPES, RunDataSet, TestPersona } from "@tellann/desktop-contracts";
 import { createDiagnosticsPorts } from "./diagnostics-ports";
 import type { DiagnosticsObserver } from "./diagnostics-ports";
 
@@ -41,6 +41,18 @@ export interface ManagedBrowser extends DiagnosticsObserver {
 /** What drives the page: the browser adapter's half of the engine's ports. */
 export type PageDriver = Pick<AutomationPorts, "snapshot" | "act" | "settle"> & { health?(): "OK" | "BROWSER_CRASHED" | Promise<"OK" | "BROWSER_CRASHED"> };
 
+/**
+ * How a person is asked to do the part of getting in that the run must not do (single sign-on, a code sent to a phone,
+ * a CAPTCHA). The run pauses on `wait` and carries on only when it settles; it never types into, or tries to get past, what
+ * it handed over. Absent means nobody is there to ask, and the run stops with MANUAL_AUTHENTICATION_REQUIRED instead.
+ */
+export interface ManualAuthenticationPort {
+  wait(challenge: { kind: string; detail: string }): Promise<"DONE" | "CANCELLED" | "TIMED_OUT">;
+}
+
+/** A person may be asked more than once (single sign-on, then a code). Past this it is a loop, not a sign-in. */
+export const MAX_MANUAL_HAND_OVERS = 3;
+
 export interface AutomatedRunInput {
   browser: ManagedBrowser;
   driver: PageDriver;
@@ -59,6 +71,11 @@ export interface AutomatedRunInput {
   /** Opt-in: components of the Flow to time. Chosen from the contract, capped, and only installed when the run asked. */
   renderTimingComponents?: string[];
   cancelled?: () => boolean;
+  /** Told where the run is, for the live view and the platform. Must not throw into the run. */
+  onPhase?: (phase: AutomationExecutionPhase, detail?: { kind: string; detail: string } | null) => void;
+  manualAuthentication?: ManualAuthenticationPort;
+  /** The supervised application's own health, folded into the run's: an application that dies mid-run is APPLICATION_CRASHED. */
+  applicationHealth?: () => "OK" | "APPLICATION_CRASHED";
   now?: () => number;
 }
 
@@ -121,14 +138,34 @@ async function execute(
   const initial = input.contract.states.find((state) => state.key === input.contract.initialStateKey);
   const initialRoute = initial?.routePatterns[0];
   if (initialRoute && input.navigation) {
-    const entered = await seekInitialState(
-      { snapshot: () => input.driver.snapshot(), act: (action) => input.driver.act(action), settle: (expected) => input.driver.settle(expected) },
-      input.navigation,
-      initialRoute,
-      input.environment,
-      { persona: input.persona, policy: input.policy },
-    );
-    if (!entered.ok) return stop(entered.stopReason, entered.detail);
+    phase(input, "SEEKING_INITIAL_STATE");
+    const entryPorts = { snapshot: () => input.driver.snapshot(), act: (action: Parameters<PageDriver["act"]>[0]) => input.driver.act(action), settle: (expected: string | null) => input.driver.settle(expected) };
+    let signedInByPerson = false;
+    for (let handOvers = 0; ; handOvers += 1) {
+      const entered = await seekInitialState(entryPorts, input.navigation, initialRoute, input.environment, {
+        persona: input.persona,
+        policy: input.policy,
+        applicationOrigin: input.applicationOrigin,
+        // Once a person has signed in, the session is theirs: the persona's stored credentials are not typed on top of it.
+        ...(signedInByPerson ? { sessionAuthenticated: true, manualAuthentication: false } : {}),
+      });
+      if (entered.ok) break;
+      if (entered.stopReason !== "MANUAL_AUTHENTICATION_REQUIRED" || !entered.challenge) return stop(entered.stopReason, entered.detail);
+      if (!input.manualAuthentication) return stop(entered.stopReason, entered.detail);
+      if (handOvers >= MAX_MANUAL_HAND_OVERS) {
+        return stop("MANUAL_AUTHENTICATION_REQUIRED", "The sign-in kept asking for more than a person's help could clear, so the run stopped rather than wait on it again.");
+      }
+
+      const challenge = { kind: entered.challenge.kind, detail: entered.challenge.detail };
+      record("QA_AUTOMATION_MANUAL_ACTION_REQUIRED", { kind: challenge.kind, detail: challenge.detail });
+      phase(input, "AWAITING_USER", challenge);
+      const outcome = await waitForPerson(input.manualAuthentication, challenge, input.cancelled);
+      record("QA_AUTOMATION_MANUAL_ACTION_COMPLETED", { kind: challenge.kind, outcome });
+      if (outcome === "CANCELLED") return stop("CANCELLED_BY_USER", "The run was cancelled while it waited for you to sign in.");
+      if (outcome === "TIMED_OUT") return stop("MANUAL_AUTHENTICATION_REQUIRED", "Nobody finished signing in before the wait ended, so the run stopped.");
+      signedInByPerson = true;
+      phase(input, "SEEKING_INITIAL_STATE");
+    }
   }
 
   const timing = input.renderTimingComponents && input.renderTimingComponents.length > 0
@@ -147,7 +184,13 @@ async function execute(
     settle: (expected) => input.driver.settle(expected),
     emit: (event) => { record(event.type, { ...event.data, engineAt: event.at }); },
     now,
-    health: input.driver.health ? async () => input.driver.health!() : undefined,
+    health: input.driver.health || input.applicationHealth
+      ? async () => {
+          // The application first: a dead server makes every browser error that follows a symptom, and the reason is the server.
+          if (input.applicationHealth?.() === "APPLICATION_CRASHED") return "APPLICATION_CRASHED" as const;
+          return (await input.driver.health?.()) ?? "OK";
+        }
+      : undefined,
     data: runDataPort(materialized),
     cancelled: input.cancelled,
     captureEvidence: diagnostics.captureEvidence,
@@ -161,7 +204,27 @@ async function execute(
     limits: input.limits,
     policy: input.policy,
   };
+  phase(input, "EXECUTING_FLOW");
   return runAutomation(ports, config);
+}
+
+/** Reporting where the run is never fails the run. */
+function phase(input: AutomatedRunInput, executionPhase: AutomationExecutionPhase, detail: { kind: string; detail: string } | null = null): void {
+  try { input.onPhase?.(executionPhase, detail); } catch { /* the live view is not the run */ }
+}
+
+/** Waits for a person, and stops waiting the moment the run is cancelled. */
+async function waitForPerson(
+  port: ManualAuthenticationPort,
+  challenge: { kind: string; detail: string },
+  cancelled: (() => boolean) | undefined,
+): Promise<"DONE" | "CANCELLED" | "TIMED_OUT"> {
+  try {
+    const outcome = await port.wait(challenge);
+    return cancelled?.() ? "CANCELLED" : outcome;
+  } catch {
+    return "CANCELLED";
+  }
 }
 
 /** The first line of an error's message and never its stack, bounded: it goes into a report. */

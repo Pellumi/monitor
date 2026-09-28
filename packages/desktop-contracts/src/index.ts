@@ -8,6 +8,8 @@ import {
 } from './automation';
 
 export * from './automation';
+export * from './automation-messages';
+export * from './automation-setup';
 
 export const DESKTOP_CONTRACT_VERSION = '1.0';
 

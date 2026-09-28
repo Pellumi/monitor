@@ -71,12 +71,12 @@ const runData = (values) => RunDataSetSchema.parse({ id: 'data-1', applicationId
 const examData = () => runData([{ key: 'examTitle', generator: { kind: 'UNIQUE_SUFFIX', prefix: 'qa-exam-' }, secret: false }]);
 
 async function runScenario(spec) {
-  const app = await startLmsApp({ faults: spec.faults ?? {}, markers: spec.markers ?? 'adapter' });
+  const app = await startLmsApp({ faults: spec.faults ?? {}, markers: spec.markers ?? 'adapter', anchors: spec.anchors === true, richForm: spec.richForm === true });
   const events = [];
   const observer = new BrowserObserver({ headless: true, onEvidenceEvent: (event) => { events.push(event); } });
   const limits = AutomationLimitsSchema.parse({ maxDurationMs: 90_000, ...(spec.limits ?? {}) });
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-automated-'));
-  const contract = compileExecutableContract(lmsFlow());
+  const contract = compileExecutableContract({ ...lmsFlow({ richForm: spec.richForm === true }), ...(spec.contractAnchors ? { anchors: spec.contractAnchors } : {}) });
   let outcome;
   try {
     await observer.start({
@@ -107,7 +107,28 @@ async function runScenario(spec) {
       if (spec.crashAfterActs && acts === spec.crashAfterActs) await page.close();
       return done;
     };
+    const handovers = [];
+    const manualAuthentication = spec.signInByHand ? {
+      wait: async (challenge) => {
+        // What the page looked like at the moment the run stopped and asked, before the person did anything.
+        handovers.push({
+          challenge,
+          loginPosts: app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length,
+          widgetTouched: await page.evaluate(() => Boolean(document.getElementById('not-robot')?.checked)),
+          typed: await page.evaluate(() => `${document.getElementById('email')?.value ?? ''}${document.getElementById('password')?.value ?? ''}`),
+        });
+        // The person signs in, in the browser the run opened.
+        const user = LMS_USERS[spec.signInByHand];
+        await page.evaluate(async (credentials) => {
+          await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(credentials) });
+        }, { email: user.email, password: user.password });
+        // As a person would land after signing in: a real navigation, not a nudge to the page's own script.
+        await page.goto(new URL('/courses/7', page.url()).href);
+        return 'DONE';
+      },
+    } : undefined;
     const result = await executeAutomatedRun({
+      manualAuthentication,
       browser: observer, driver, contract,
       navigation: lmsNavigation({ courseRoles: spec.courseRoles }),
       persona: spec.persona === null ? null : persona(spec.persona ?? 'teacher'),
@@ -117,7 +138,7 @@ async function runScenario(spec) {
     });
     const finalPath = page.isClosed() ? null : new URL(page.url()).pathname;
     const finalState = spec.crashAfterActs ? await observer.abort('browser closed') : await observer.end();
-    outcome = { app, events, result, finalState, finalPath, artifactDirectory: finalState.artifactDirectory };
+    outcome = { app, events, result, finalState, finalPath, artifactDirectory: finalState.artifactDirectory, handovers };
   } catch (error) {
     try { await observer.abort('acceptance failure'); } catch { /* already down */ }
     throw error;
@@ -251,6 +272,70 @@ async function infrastructureFailure() {
   check('the report says so', report.outcome.kind === 'INFRASTRUCTURE');
   check('unreached states are "not attempted", never blamed on the application', report.unreachedStates.length > 0 && report.unreachedStates.every((s) => s.status === 'NOT_ATTEMPTED'), JSON.stringify(report.unreachedStates));
   check('reconciliation draws no conclusion from it', classifyAutomatedStateGap(TARGET, { stopReason: result.stopReason, targetTerminalStateKey: TARGET, observedDestinationsByState: new Map() }) === 'TRUE_GAP');
+}
+
+async function richFormsAndAnchors() {
+  scenario = 'a form with every kind of control, and controls whose labels have changed';
+  console.log(`\n${scenario}`);
+  const complete = runData([
+    { key: 'examTitle', generator: { kind: 'UNIQUE_SUFFIX', prefix: 'qa-exam-' }, secret: false },
+    { key: 'examKind', generator: { kind: 'LITERAL', value: 'final' }, secret: false },
+    { key: 'publishNow', generator: { kind: 'LITERAL', value: 'true' }, secret: false },
+    { key: 'visibility', generator: { kind: 'LITERAL', value: 'public' }, secret: false },
+    { key: 'dueDate', generator: { kind: 'FUTURE_TIMESTAMP', offsetMs: 7 * 86_400_000, format: 'DATE' }, secret: false },
+    { key: 'syllabus', generator: { kind: 'FILE', fileName: 'syllabus.txt', content: 'Week 1: fractions' }, secret: false },
+  ]);
+
+  const rich = await runScenario({ richForm: true, runData: complete });
+  check('a form with a select, a checkbox, a radio group, a date and a file upload is completed', rich.result.stopReason === 'TERMINAL_STATE_REACHED', `${rich.result.stopReason}: ${rich.result.detail}`);
+  const recorded = rich.app.exams[0];
+  check('the select took the option the data named', recorded?.fields.kind === 'final', JSON.stringify(recorded));
+  check('the checkbox was ticked', recorded?.fields.publish === true);
+  check('the radio group took the chosen option', recorded?.fields.visibility === 'public');
+  check('the date is a real date a week ahead, in the form the field wants', /^\d{4}-\d{2}-\d{2}$/.test(recorded?.fields.due ?? '') && new Date(recorded.fields.due).getTime() > Date.now() + 5 * 86_400_000, recorded?.fields.due);
+  check('the file arrived with its name and content', recorded?.fields.syllabus?.name === 'syllabus.txt' && recorded.fields.syllabus.text === 'Week 1: fractions', JSON.stringify(recorded?.fields.syllabus));
+  const storedRich = everythingStored(rich);
+  check('the uploaded file content is not in what was stored', !storedRich.includes('Week 1: fractions'));
+
+  const missing = await runScenario({ richForm: true, runData: runData(complete.values.filter((value) => value.key !== 'syllabus')) });
+  check('a Flow that needs a file the data set does not have stops before touching the application', missing.result.stopReason === 'TEST_DATA_UNAVAILABLE' && missing.app.requests.every((request) => !request.path.startsWith('/api/exams')), `${missing.result.stopReason}: ${missing.result.detail}`);
+  check('that is not a finding about the application', kindOf(missing.result.stopReason) === 'INFRASTRUCTURE');
+
+  // The same application after a redesign: the words on both controls changed and the test id went.
+  const renamed = await runScenario({ faults: { renameLabels: true } });
+  check('without anchors, a control whose label changed is not found, and the run says so rather than guessing', renamed.result.stopReason === 'EXPECTED_TRANSITION_NOT_FOUND', `${renamed.result.stopReason}: ${renamed.result.detail}`);
+  check('nothing was clicked on a guess', renamed.app.exams.length === 0);
+
+  const anchors = { 't-create': 'tellann:t-create', 't-submit': 'tellann:t-submit' };
+  const anchored = await runScenario({ faults: { renameLabels: true }, anchors: true, contractAnchors: anchors });
+  check('with anchors on the controls, the same redesign is still run to the end', anchored.result.stopReason === 'TERMINAL_STATE_REACHED', `${anchored.result.stopReason}: ${anchored.result.detail}`);
+  const selected = automationEvents(anchored.events).filter((event) => event.eventType === 'QA_AUTOMATION_ACTION_SELECTED');
+  check('and each control was found by its anchor, which is what the record says', selected.length === 2 && selected.every((event) => /ANCHOR/i.test(String(event.metadata.method))), JSON.stringify(selected.map((event) => event.metadata.method)));
+  check('the exam was created', anchored.app.exams.length === 1);
+
+  const stale = await runScenario({ faults: { renameLabels: true }, contractAnchors: anchors });
+  check('an anchor the page does not carry is never trusted: the run stops instead of clicking something else', stale.result.stopReason === 'EXPECTED_TRANSITION_NOT_FOUND' && stale.app.exams.length === 0, `${stale.result.stopReason}: ${stale.result.detail}`);
+}
+
+async function handOverToAPerson() {
+  scenario = 'a sign-in with a CAPTCHA is handed to a person';
+  console.log(`\n${scenario}`);
+  const handed = await runScenario({ faults: { captchaOnLogin: true }, signInByHand: 'teacher' });
+  const [first] = handed.handovers;
+  check('the run stopped and asked a person, naming a CAPTCHA', handed.handovers.length === 1 && first.challenge.kind === 'CAPTCHA', JSON.stringify(handed.handovers.map((h) => h.challenge)));
+  check('before asking, it had not tried to sign in', first?.loginPosts === 0);
+  check('it never touched the CAPTCHA widget', first?.widgetTouched === false);
+  check('it typed nothing into the form beside it', first?.typed === '', JSON.stringify(first?.typed));
+  check('after the person signed in, the run carried on and reached the target', handed.result.stopReason === 'TERMINAL_STATE_REACHED', `${handed.result.stopReason}: ${handed.result.detail}`);
+  check('the only sign-in the application ever saw was the person\'s', handed.app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length === 1);
+  const types = automationEvents(handed.events).map((event) => event.eventType);
+  check('the wait is on the record, in order', types.indexOf('QA_AUTOMATION_MANUAL_ACTION_REQUIRED') >= 0 && types.indexOf('QA_AUTOMATION_MANUAL_ACTION_REQUIRED') < types.indexOf('QA_AUTOMATION_MANUAL_ACTION_COMPLETED') && types.indexOf('QA_AUTOMATION_MANUAL_ACTION_COMPLETED') < types.indexOf('QA_AUTOMATION_PLAN_CREATED'), JSON.stringify(types));
+  const stored = everythingStored(handed);
+  check('what the person typed appears nowhere in what was stored', !stored.includes(LMS_USERS.teacher.password) && !stored.includes(LMS_USERS.teacher.email));
+
+  const alone = await runScenario({ faults: { captchaOnLogin: true } });
+  check('with nobody to ask, the run stops as a hand-over, not as a failure of the application', alone.result.stopReason === 'MANUAL_AUTHENTICATION_REQUIRED' && kindOf(alone.result.stopReason) === 'USER', `${alone.result.stopReason}: ${alone.result.detail}`);
+  check('and still touched nothing', alone.app.requests.every((request) => !(request.method === 'POST')));
 }
 
 async function loopsAndBudgets() {
@@ -406,6 +491,8 @@ async function main() {
   await infrastructureFailure();
   await loopsAndBudgets();
   await personasAndAccess();
+  await richFormsAndAnchors();
+  await handOverToAPerson();
   await boundaries();
   await platform();
 

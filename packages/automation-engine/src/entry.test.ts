@@ -58,7 +58,7 @@ const LOGIN_PAGE: Page = {
   path: '/login',
   elements: [
     element({ ref: 'email-field', tag: 'input', role: 'textbox', fieldName: 'email', label: 'Email' }),
-    element({ ref: 'password-field', tag: 'input', role: 'textbox', fieldName: 'password', label: 'Password' }),
+    element({ ref: 'password-field', tag: 'input', role: 'textbox', inputType: 'password', fieldName: 'password', label: 'Password' }),
     element({ ref: 'submit', testId: 'login-submit', name: 'Log in' }),
   ],
 };
@@ -97,7 +97,7 @@ function buildGraph(): { graph: NavigationGraph; site: () => FakeSite } {
 }
 
 const teacher: TestPersona = {
-  id: 'p1', applicationId: '11111111-1111-4111-8111-111111111111', name: 'Teacher', roles: ['TEACHER'], authenticated: true,
+  id: 'p1', applicationId: '11111111-1111-4111-8111-111111111111', name: 'Teacher', roles: ['TEACHER'], authenticated: true, authMethod: 'PASSWORD',
   credentials: [{ field: 'email', value: 'teacher@test.dev' }, { field: 'password', value: 'hunter2' }],
   createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 };

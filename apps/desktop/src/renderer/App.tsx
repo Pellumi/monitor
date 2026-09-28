@@ -13,6 +13,7 @@ import {
   InstrumentationPage,
   IntentDetailPage,
   IntentPage,
+  AutomatedRunPage,
   LiveRunPage,
   NewApplicationPage,
   NewRunPage,
@@ -255,6 +256,7 @@ function AuthenticatedApp() {
 
           <Route path="applications/:projectId/qa-runs" element={<RunsPage />} />
           <Route path="applications/:projectId/qa-runs/new" element={<NewRunPage />} />
+          <Route path="applications/:projectId/qa-runs/automated" element={<AutomatedRunPage />} />
           <Route path="applications/:projectId/qa-runs/:runId" element={<RunDetailPage />} />
           <Route path="applications/:projectId/qa-runs/:runId/live" element={<LiveRunPage />} />
           {['evidence', 'findings', 'replay', 'graph', 'reconciliation', 'artifacts'].map((kind) => (

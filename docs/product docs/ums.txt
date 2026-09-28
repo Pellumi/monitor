@@ -160,6 +160,15 @@ Purpose:
 Customer Cost Impact:
 None on paid plans.
 Free Plan may impose limits.
+Automated Runs
+Definition
+Automated runs that started in the billing period. A run that was created but never started is not counted.
+Purpose:
+* Capacity Forecasting
+* Abuse Detection (a runaway script or loop)
+* Setting a future allowance from real history
+Customer Cost Impact:
+None. Included on the plans that have Automated Run (Business and Enterprise). Recorded with no limit.
 Sessions
 Definition
 Completed reconstructed behavioral sessions.

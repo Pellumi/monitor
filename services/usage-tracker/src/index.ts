@@ -6,6 +6,7 @@ import { MemberRole, PrismaClient, UsageMetric } from '@tellann/db';
 import { Services, useBigIntJson } from '@tellann/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import jwt from 'jsonwebtoken';
+import { countAutomatedRuns } from './automated-usage';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -206,6 +207,18 @@ async function runAggregationForOrg(orgId: string, startDate: Date, endDate: Dat
     periodEnd: subscription.currentPeriodEnd,
   });
 
+  // Automated Runs: counted per billing period, with no limit (included in the plans that have the feature).
+  const automatedRunCount = await countAutomatedRuns(prisma, orgId, { start: subscription.currentPeriodStart, end: subscription.currentPeriodEnd });
+  await prisma.usageRecord.create({
+    data: {
+      subscriptionId: subscription.id, organizationId: orgId, metric: UsageMetric.AUTOMATED_RUNS, value: automatedRunCount, limit: null,
+      periodStart: subscription.currentPeriodStart, periodEnd: subscription.currentPeriodEnd,
+    },
+  });
+  await prisma.usageSnapshot.create({
+    data: { organizationId: orgId, metric: UsageMetric.AUTOMATED_RUNS, value: automatedRunCount, snapshotDate: endDate },
+  });
+
   // Load all applications for organization
   const apps = await prisma.application.findMany({
     where: { organizationId: orgId },
@@ -317,7 +330,7 @@ app.get('/usage/organization/:orgId', requireOrganizationMembership, async (req:
     if (!subscription) return res.status(404).json({ error: 'No subscription found' });
 
     const now = new Date();
-    const [snapshots, applicationCount, memberCount, pendingInvitationCount, storageTotals, demonstrationCount] = await Promise.all([
+    const [snapshots, applicationCount, memberCount, pendingInvitationCount, storageTotals, demonstrationCount, automatedRunCount] = await Promise.all([
       prisma.usageSnapshot.findMany({ where: { organizationId: orgId }, orderBy: { snapshotDate: 'desc' } }),
       prisma.application.count({ where: { organizationId: orgId } }),
       prisma.organizationMembership.count({ where: { organizationId: orgId } }),
@@ -332,6 +345,7 @@ app.get('/usage/organization/:orgId', requireOrganizationMembership, async (req:
           startedAt: { gte: subscription.currentPeriodStart, lt: subscription.currentPeriodEnd },
         },
       }),
+      countAutomatedRuns(prisma, orgId, { start: subscription.currentPeriodStart, end: subscription.currentPeriodEnd }),
     ]);
 
     const latestMetrics: Record<string, any> = {};
@@ -350,6 +364,7 @@ app.get('/usage/organization/:orgId', requireOrganizationMembership, async (req:
         value: Number((storageTotals._sum.bytes ?? 0n) + (storageTotals._sum.reservedBytes ?? 0n)) / 1024 / 1024 / 1024,
       },
       { metric: UsageMetric.DEMONSTRATIONS, value: demonstrationCount },
+      { metric: UsageMetric.AUTOMATED_RUNS, value: automatedRunCount },
     ];
     for (const metric of liveGlobalMetrics) {
       latestMetrics[`global_global_${metric.metric}`] = {

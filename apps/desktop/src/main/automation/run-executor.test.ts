@@ -4,6 +4,7 @@ import type { ExecutableContract, NavigationGraph, SemanticElement, SemanticSnap
 import type { RunDataSet, TestPersona } from "@tellann/desktop-contracts";
 import { executeAutomatedRun } from "./run-executor";
 import type { ManagedBrowser } from "./run-executor";
+import type { AutomationExecutionPhase } from "@tellann/desktop-contracts";
 
 const APP_ID = "11111111-1111-4111-8111-111111111111";
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -14,7 +15,7 @@ const el = (ref: string, over: Partial<SemanticElement>): SemanticElement => ({
   ref, tag: "button", role: "button", name: null, label: null, testId: null, domId: null, href: null, actionAnchor: null,
   fieldName: null, inputType: null, visible: true, enabled: true, ...over,
 });
-const field = (ref: string, name: string, label: string) => el(ref, { tag: "input", role: "textbox", name: label, label, fieldName: name });
+const field = (ref: string, name: string, label: string) => el(ref, { tag: "input", role: "textbox", name: label, label, fieldName: name, inputType: name === "password" ? "password" : "text" });
 const button = (ref: string, name: string, over: Partial<SemanticElement> = {}) => el(ref, { name, ...over });
 
 const control = (labels: string[], over: Record<string, unknown> = {}) => ({ labels, testId: null, domId: null, element: "button", event: null, actionAnchor: null, href: null, ...over });
@@ -51,7 +52,7 @@ const navigation = (): NavigationGraph => ({
 });
 
 const persona = (over: Partial<TestPersona> = {}): TestPersona => ({
-  id: "p1", applicationId: APP_ID, name: "Teacher", roles: ["TEACHER"], authenticated: true,
+  id: "p1", applicationId: APP_ID, name: "Teacher", roles: ["TEACHER"], authenticated: true, authMethod: "PASSWORD",
   credentials: [{ field: "email", value: EMAIL }, { field: "password", value: PASSWORD }],
   createdAt: NOW, updatedAt: NOW, ...over,
 });
@@ -61,7 +62,7 @@ const runData = (over: Partial<RunDataSet> = {}): RunDataSet => ({
   values: [{ key: "examTitle", generator: { kind: "LITERAL", value: "Automated QA Exam" }, secret: false }], ...over,
 });
 
-type PageName = "login" | "dashboard" | "course" | "form" | "created";
+type PageName = "login" | "dashboard" | "course" | "form" | "created" | "captcha";
 interface Behaviour { acceptLogin?: boolean; failSave?: boolean; startAt?: PageName; afterLogin?: PageName }
 
 function fakeBrowser() {
@@ -86,6 +87,7 @@ function fakeDriver(behaviour: Behaviour, log: string[]) {
     course: { path: "/courses/7", sdk: "course_details", elements: [button("e-create", "Create Exam")] },
     form: { path: "/courses/7/exams/new", sdk: "exam_form", elements: [field("e-title", "title", "Title"), button("e-save", "Save exam", { testId: "submit-exam" })] },
     created: { path: "/courses/7/exams/42", sdk: "exam_created", elements: [] },
+    captcha: { path: "/login", elements: [button("e-human", "I'm not a robot")] },
   };
   const view = (): SemanticSnapshot => ({
     url: `http://localhost:3000${views[page]!.path}`, path: views[page]!.path, title: null, headings: [],
@@ -93,6 +95,8 @@ function fakeDriver(behaviour: Behaviour, log: string[]) {
   });
   return {
     typed,
+    /** What a person does in the browser while the run waits. */
+    go: (next: PageName) => { page = next; },
     driver: {
       snapshot: async () => view(),
       settle: async () => view(),
@@ -281,4 +285,99 @@ test("a stop the engine already recorded is not recorded twice when something th
   const result = await executeAutomatedRun(base(browser, tail, { navigation: null, persona: null }));
   assert.ok(["BROWSER_CRASHED", "AUTOMATION_ENGINE_ERROR"].includes(result.stopReason));
   assert.equal(events.filter((event) => event.type === "QA_AUTOMATION_STOPPED").length, 1);
+});
+
+// -- handing over to a person ---------------------------------------------------
+
+test("a persona that signs in by hand pauses the run, tells the person, and carries on once they have", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver, go } = fakeDriver({}, log);
+  const phases: string[] = [];
+  const asked: Array<{ kind: string; detail: string }> = [];
+  const result = await executeAutomatedRun(base(browser, driver, {
+    persona: persona({ authMethod: "MANUAL", credentials: [] }),
+    onPhase: (phase: AutomationExecutionPhase) => phases.push(phase),
+    manualAuthentication: { wait: async (challenge: { kind: string; detail: string }) => { asked.push(challenge); go("course"); return "DONE" as const; } },
+  }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.deepEqual(asked.map((item) => item.kind), ["MANUAL_BY_CHOICE"]);
+  assert.deepEqual(phases, ["SEEKING_INITIAL_STATE", "AWAITING_USER", "SEEKING_INITIAL_STATE", "EXECUTING_FLOW"]);
+  const types = events.map((event) => event.type);
+  assert.ok(types.indexOf("QA_AUTOMATION_MANUAL_ACTION_REQUIRED") < types.indexOf("QA_AUTOMATION_MANUAL_ACTION_COMPLETED"));
+  assert.ok(types.indexOf("QA_AUTOMATION_MANUAL_ACTION_COMPLETED") < types.indexOf("QA_AUTOMATION_PLAN_CREATED"));
+  assert.ok(!log.some((entry) => entry.startsWith("fill:e-email") || entry.startsWith("fill:e-pass")), "nothing was typed for the person");
+});
+
+test("a CAPTCHA is handed over and never touched, and the run resumes only after the person has cleared it", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver, go } = fakeDriver({ startAt: "captcha" }, log);
+  const result = await executeAutomatedRun(base(browser, driver, {
+    manualAuthentication: { wait: async () => { go("course"); return "DONE" as const; } },
+  }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED", result.detail ?? "");
+  assert.ok(!log.includes("click:e-human"), "the CAPTCHA control was never clicked");
+  assert.ok(!log.includes("fill:e-email") && !log.includes("fill:e-pass"), "and no credentials were typed for it");
+});
+
+test("with nobody to ask, a CAPTCHA stops the run as a hand-over, not as a failure of the application", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "captcha" }, log);
+  const result = await executeAutomatedRun(base(browser, driver));
+  assert.equal(result.stopReason, "MANUAL_AUTHENTICATION_REQUIRED");
+  assert.match(result.detail ?? "", /CAPTCHA/);
+  assert.ok(!log.includes("click:e-human"));
+  assert.equal(events[events.length - 1]!.metadata.stopReason, "MANUAL_AUTHENTICATION_REQUIRED");
+});
+
+test("a person who never comes back ends the run as a hand-over that timed out", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "captcha" }, log);
+  const result = await executeAutomatedRun(base(browser, driver, { manualAuthentication: { wait: async () => "TIMED_OUT" as const } }));
+  assert.equal(result.stopReason, "MANUAL_AUTHENTICATION_REQUIRED");
+  assert.match(result.detail ?? "", /before the wait ended/);
+});
+
+test("cancelling while the run waits for a person is a cancellation", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "captcha" }, log);
+  const result = await executeAutomatedRun(base(browser, driver, { manualAuthentication: { wait: async () => "CANCELLED" as const } }));
+  assert.equal(result.stopReason, "CANCELLED_BY_USER");
+  const viaFlag = await executeAutomatedRun(base(browser, fakeDriver({ startAt: "captcha" }, log).driver, { manualAuthentication: { wait: async () => "DONE" as const }, cancelled: () => true }));
+  assert.equal(viaFlag.stopReason, "CANCELLED_BY_USER", "a wait that ended because of a cancel is not treated as a sign-in");
+});
+
+test("a sign-in that keeps asking is stopped after a few hand-overs rather than waited on forever", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "captcha" }, log);
+  let waits = 0;
+  const result = await executeAutomatedRun(base(browser, driver, { manualAuthentication: { wait: async () => { waits += 1; return "DONE" as const; } } }));
+  assert.equal(result.stopReason, "MANUAL_AUTHENTICATION_REQUIRED");
+  assert.equal(waits, 3);
+});
+
+test("a wait that throws ends the run instead of escaping", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "captcha" }, log);
+  const result = await executeAutomatedRun(base(browser, driver, { manualAuthentication: { wait: async () => { throw new Error("window closed"); } } }));
+  assert.equal(result.stopReason, "CANCELLED_BY_USER");
+});
+
+// -- phases and health -----------------------------------------------------------
+
+test("the run reports where it is, and a listener that throws does not stop it", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const phases: string[] = [];
+  const result = await executeAutomatedRun(base(browser, driver, { onPhase: (phase: string) => { phases.push(phase); throw new Error("renderer gone"); } }));
+  assert.equal(result.stopReason, "TERMINAL_STATE_REACHED");
+  assert.deepEqual(phases, ["SEEKING_INITIAL_STATE", "EXECUTING_FLOW"]);
+});
+
+test("an application that dies mid-run is reported as the application crashing, not as a browser fault", async () => {
+  const { browser, log } = fakeBrowser();
+  const { driver } = fakeDriver({ startAt: "course" }, log);
+  let crashed = false;
+  const dying = { ...driver, act: async (action: Parameters<typeof driver.act>[0]) => { const done = await driver.act(action); crashed = true; return done; } };
+  const result = await executeAutomatedRun(base(browser, dying, { navigation: null, persona: null, applicationHealth: () => (crashed ? ("APPLICATION_CRASHED" as const) : ("OK" as const)) }));
+  assert.equal(result.stopReason, "APPLICATION_CRASHED");
 });

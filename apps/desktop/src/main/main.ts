@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, screen, session, shell } from 'electron';
-import { CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { AUTOMATION_IPC, CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -49,7 +49,16 @@ import {
   type QaBranchCheckpoint,
 } from './qa-branch';
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
-import { LocalApplicationLauncher } from './application-launcher';
+import { LocalApplicationLauncher, type LocalLaunchCommand } from './application-launcher';
+import { AutomatedRunManager } from './automation/automated-run-manager';
+import { createAutomatedRunHost } from './automation/automated-run-host';
+import { prepareContract } from './automation/contract-pipeline';
+import { verifiedAnchors } from './automation/anchor-plumbing';
+import { controlAnchorTargets } from '@tellann/automation-engine';
+import { automationOptions, removeDataSet, removePersona, saveDataSetInput, savePersonaInput, saveProfileInput } from './automation/automation-service';
+import { approveStoredProfile, clearLoginConfig, deleteProfile, getLoginConfig, getProfile, saveLoginConfig } from './automation/execution-profile-store';
+import { getPersona, getRunDataSet } from './automation/persona-store';
+import { OrphanJournal } from './automation/orphan-journal';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
 import { renderQualityReport, qualityReportFileBase, type QualityReportFormat } from './quality-report-document';
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
@@ -189,6 +198,21 @@ const instrumentation = new InstrumentationController(
       }
     }
     await registerSelectedWorkspace(applicationId, stored.path);
+  },
+  // Which controls a Flow's steps go through, so a Flow plan can anchor them. Compiled from the same three inputs a run uses.
+  async ({ applicationId, flowId, flowVersionId, flowInitializationId }) => {
+    const prepared = await prepareContract(
+      { applicationId, flowId, flowVersionId, flowInitializationId, loginRoute: null },
+      {
+        fetchFlowVersion: async () => cloud.flowVersionGraph(applicationId, flowId, flowVersionId),
+        fetchManifest: async () => {
+          const initialization = await cloud.flowInitialization(flowInitializationId) as { manifest?: { checkpoints?: Array<{ id: string; mapping: Record<string, unknown> }> } };
+          return initialization.manifest?.checkpoints ? { checkpoints: initialization.manifest.checkpoints } : null;
+        },
+        loadAnalysis: () => readAnalysisState(applicationId)?.analysis ?? null,
+      },
+    );
+    return controlAnchorTargets(prepared.contract);
   },
 );
 
@@ -482,7 +506,8 @@ function startRunMaintenance(runId: string): void {
     } else {
       pollDelay = Math.min(MAX_POLL_MS, Math.round(pollDelay * 1.5));
     }
-    if (completed) await completeActiveRun('TERMINAL_STATE_REACHED');
+    // An Automated run is completed by its own manager, which is the one that knows how it ended.
+    if (completed && !automatedRuns.ownsRun(runId)) await completeActiveRun('TERMINAL_STATE_REACHED');
   };
   const schedule = () => {
     boundaryPollTimer = setTimeout(() => {
@@ -539,11 +564,11 @@ async function resumeInterruptedRunSynchronization(): Promise<void> {
     const runId = key.slice(RECOVERY_KEY_PREFIX.length);
     if (!runId) continue;
     try {
-      const recovery = readLocalState<{ state: GuidedRunState; completionReason: string }>(key);
+      const recovery = readLocalState<{ state: GuidedRunState; completionReason: string; automationStopReason?: string }>(key);
       if (!recovery) { deleteLocalState(key); continue; }
       evidenceQueues.set(runId, readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? []);
       await flushEvidence(runId, true);
-      await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason });
+      await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason, automationStopReason: recovery.automationStopReason });
       deleteLocalState(key);
       evidenceQueues.delete(runId);
       emitRunLifecycle(recovery.state, {
@@ -727,6 +752,8 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
     }
     if (!supported.has(eventType)) continue;
     await observer.recordFlowEvent(event);
+    // The engine reads the application's own markers, in the contract's words, to know where the application says it is.
+    if (automatedRuns.ownsRun(active.runId)) automatedRuns.observeMarker(active.runId, (event.metadata ?? {}) as Record<string, unknown>);
     // A marker from the instrumentation snippet names its state in `metadata.state` or, when the
     // instrumentation adapter wrote it, `metadata.stateId`, and an adapter marker names no Flow at all.
     // The request is built in one tested place so that neither is refused before the boundary ever sees it.
@@ -738,7 +765,7 @@ async function handleRelayedEvents(events: Array<Record<string, unknown>>): Prom
     });
     const updated = observer.getState();
     if (updated) emitRunLifecycle(updated, { cloudStatus: boundary.accepted ? 'ACCEPTED' : `QUARANTINED:${boundary.reason ?? 'unknown'}` });
-    if (boundary.shouldStop) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
+    if (boundary.shouldStop && !automatedRuns.ownsRun(active.runId)) setTimeout(() => void completeActiveRun('TERMINAL_STATE_REACHED'), 0);
   }
 }
 
@@ -748,6 +775,12 @@ const observer = new BrowserObserver({
   // acceptance. Normal desktop runs always show the managed browser.
   headless: process.env.TELLANN_BROWSER_HEADLESS === 'true',
   onUnexpectedTermination: async (state) => {
+    if (automatedRuns.ownsRun(state.runId)) {
+      // The manager finishes the run: it knows whether the application is still up, and it stops it either way.
+      automatedHost.browserTerminated(state);
+      automatedRuns.browserTerminated(state.runId);
+      return;
+    }
     stopRunMaintenance();
     emitRunLifecycle(state, { localStatus: 'FAILED', safeError: 'Managed Chromium closed unexpectedly.' });
     await relay.emit('QA_RUN_FAILED', { reason: 'managed_browser_terminated' }).catch(() => undefined);
@@ -768,6 +801,71 @@ const observer = new BrowserObserver({
   // of evidence rows across the IPC boundary for no new information.
   onStateChanged: (state) => sendRunState(state),
 });
+
+// -- Automated Run ---------------------------------------------------------------------------------
+
+function sendAutomationStatus(status: import('@tellann/desktop-contracts').AutomatedRunStatus): void {
+  setRunIndicator(status.state === 'FINISHED' ? 'idle' : status.state === 'AWAITING_USER' ? 'paused' : 'running');
+  if (status.state === 'AWAITING_USER') requestAttention();
+  for (const target of [mainWindow, ...runPanelWindows.values()]) {
+    if (!target || target.isDestroyed()) continue;
+    target.webContents.send(AUTOMATION_IPC.statusChanged, status);
+  }
+}
+
+const orphanJournal = new OrphanJournal();
+const automatedHost = createAutomatedRunHost({
+  cloud,
+  relay,
+  observer,
+  artifactRoot: () => path.join(app.getPath('userData'), 'qa-runs'),
+  agentVersion: app.getVersion(),
+  collectorBaseUrl: () => (process.env.TELLANN_API_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, ''),
+  captureVersion: QA_CAPTURE_V2_ENABLED ? '2.0' : '1.0',
+  selectedWorkspace: (applicationId) => {
+    const workspace = selectedWorkspaces.get(applicationId);
+    return workspace ? { cloudId: workspace.cloudId, snapshotId: workspace.snapshotId } : null;
+  },
+  onRelayedEvents: handleRelayedEvents,
+  readRelayQueue: (runId) => readLocalState<BufferedRelayRequest[]>(`run-relay-queue:${runId}`) ?? [],
+  writeRelayQueue: (runId, queue) => writeLocalState(`run-relay-queue:${runId}`, queue),
+  setActiveRelay: (connection) => { activeRelayConnection = connection; },
+  evidence: {
+    open: (runId) => { evidenceQueues.set(runId, readLocalState<QAEvidenceEvent[]>(evidenceQueueKey(runId)) ?? []); void flushEvidence(runId).catch(() => undefined); },
+    flush: flushEvidence,
+    persist: persistSpoolNow,
+    forget: (runId) => { evidenceQueues.delete(runId); },
+  },
+  maintenance: { start: startRunMaintenance, stop: stopRunMaintenance },
+  backendStream: { start: startQaRunEventsStream, stop: stopQaRunEventsStream },
+  recovery: {
+    write: (runId, record) => writeLocalState(`qa-run-recovery:${runId}`, record),
+    delete: (runId) => deleteLocalState(`qa-run-recovery:${runId}`),
+  },
+  lifecycle: emitRunLifecycle,
+  afterBrowserOpened: (state, start) => {
+    // Resolved after the browser is up so a slow graph read never delays the run itself.
+    if (!start.flowId || !start.expectedGraphVersionId) return;
+    void resolveRunFlowPlan({ applicationId: start.applicationId, flowId: start.flowId, expectedGraphVersionId: start.expectedGraphVersionId }).then((plan) => {
+      if (observer.getState()?.runId !== state.runId) return;
+      sendRunState(observer.setFlowPlan(plan));
+    }).catch(() => undefined);
+  },
+  notify: (note) => { if (ElectronNotification.isSupported()) new ElectronNotification(note).show(); },
+  publish: sendAutomationStatus,
+});
+const automatedRuns = new AutomatedRunManager(automatedHost.host, { journal: orphanJournal, agentVersion: app.getVersion() });
+
+function automationWorkspace(applicationId: string) {
+  const workspace = selectedWorkspaces.get(applicationId);
+  if (!workspace) return null;
+  return {
+    root: workspace.root,
+    launchCommands: (workspace.snapshot.launchCommands ?? []) as LocalLaunchCommand[],
+    suggestedApplicationUrls: workspace.snapshot.suggestedApplicationUrls ?? [],
+    frameworks: workspace.snapshot.frameworks.map((framework) => framework.framework),
+  };
+}
 
 function attachAnnotationSource<T extends CreateQARunAnnotation>(applicationId: string | undefined, annotation: T): T {
   const unavailable = (
@@ -3919,9 +4017,9 @@ function registerIpc(): void {
     // already recording is the one using.
     if (observer.getState()) throw new Error('RUN_ALREADY_ACTIVE');
     const parsed = StartGuidedRunInputSchema.parse(input);
-    // Automated runs are executed by the automation manager, not by this human-driven path. Until it is
-    // wired in, refuse rather than let a run the server recorded as automated silently wait for a person.
-    if (parsed.mode === 'AUTOMATED') throw new Error('AUTOMATED_RUN_ENGINE_UNAVAILABLE');
+    // Automated runs are owned by the automation manager (`AUTOMATION_IPC.start`), not by this human-driven path,
+    // which would leave a run the server recorded as automated waiting for a person.
+    if (parsed.mode === 'AUTOMATED') throw new Error('AUTOMATED_RUN_USES_AUTOMATION_START');
     if (parsed.environmentType === 'PRODUCTION' && (parsed.mode !== 'OBSERVATION_ONLY' || !parsed.productionObservationApproved)) {
       throw new Error('PRODUCTION_OBSERVATION_APPROVAL_REQUIRED');
     }
@@ -4024,6 +4122,117 @@ function registerIpc(): void {
       throw error;
     }
   });
+  // -- Automated Run: start, watch, hand over to a person, and the local things a run is set up with ----------
+  const refuse = (code: import('@tellann/desktop-contracts').AutomatedRunRefusal['code'], title: string, message: string) =>
+    ({ ok: false as const, refusal: { code, title, message, tone: 'problem' as const, alternatives: [] as Array<'GUIDED' | 'ASSISTED'> } });
+  const applicationIdOf = (input: unknown): string => {
+    const value = (input as { applicationId?: unknown } | null)?.applicationId ?? input;
+    if (typeof value !== 'string' || !/^[0-9a-f-]{36}$/i.test(value)) throw new Error('APPLICATION_ID_REQUIRED');
+    return value;
+  };
+  ipcMain.handle(AUTOMATION_IPC.options, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const applicationId = applicationIdOf(input);
+    return automationOptions({
+      applicationId,
+      workspace: automationWorkspace(applicationId),
+      analysis: readAnalysisState(applicationId)?.analysis ?? null,
+    });
+  });
+  ipcMain.handle(AUTOMATION_IPC.start, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    if (observer.getState() || automatedRuns.busy) throw new Error('RUN_ALREADY_ACTIVE');
+    const parsed = StartGuidedRunInputSchema.parse(input);
+    if (parsed.mode !== 'AUTOMATED' || !parsed.automation || !parsed.flowId || !parsed.flowInitializationId || !parsed.expectedGraphVersionId) throw new Error('INVALID_AUTOMATED_RUN_REQUEST');
+    const { applicationId, automation } = parsed;
+    const workspace = selectedWorkspaces.get(applicationId);
+    if (!workspace) return refuse('WORKSPACE_NOT_SELECTED', "Connect your application's folder first", 'Automated Run starts your application from its folder on this computer, and reads its code to know what to click. Connect the folder from the Applications page.');
+    const profile = getProfile(applicationId, automation.executionProfileId);
+    if (!profile) return refuse('PROFILE_NOT_FOUND', 'Choose how to start the application', 'The way of starting the application you chose is no longer saved. Pick or create one.');
+    const persona = automation.testPersonaId ? getPersona(applicationId, automation.testPersonaId) : null;
+    if (automation.testPersonaId && !persona) return refuse('PERSONA_NOT_FOUND', 'That persona is no longer saved', 'Pick a persona again, or run without one.');
+    const runData = automation.runDataSetId ? getRunDataSet(applicationId, automation.runDataSetId) : null;
+    if (automation.runDataSetId && !runData) return refuse('RUN_DATA_NOT_FOUND', 'That data set is no longer saved', 'Pick a data set again, or run without one.');
+    const analysis = () => readAnalysisState(applicationId)?.analysis ?? null;
+    const flowId = parsed.flowId;
+    const versionId = parsed.expectedGraphVersionId;
+    const initializationId = parsed.flowInitializationId;
+    return automatedRuns.start({
+      start: parsed,
+      profile,
+      commands: (workspace.snapshot.launchCommands ?? []) as LocalLaunchCommand[],
+      workspaceRoot: workspace.root,
+      frameworks: workspace.snapshot.frameworks.map((framework) => framework.framework),
+      persona,
+      runData,
+      code: (() => {
+        const loaded = analysis();
+        return loaded ? { graph: { entities: loaded.entities.map((entity) => ({ ...entity, startLine: entity.startLine ?? null, endLine: entity.endLine ?? null })), relationships: loaded.relationships } } as never : null;
+      })(),
+      prepare: () => prepareContract(
+        {
+          applicationId, flowId, flowVersionId: versionId, flowInitializationId: initializationId,
+          loginRoute: getLoginConfig(applicationId)?.loginRoute ?? null,
+          // Only anchors that are in the source right now: a control matched by anchor is treated as certain.
+          anchors: verifiedAnchors(
+            listLocalStateKeys('instrumentation-plan:').flatMap((key) => readLocalState<{ operations: Array<{ transformId: string; id: string; relativePath: string; anchorAttribute?: { value: string } | null }> }>(key) ?? []),
+            (relativePath) => { try { return readFileSync(resolveWithinWorkspace(workspace.root, relativePath), 'utf8'); } catch { return null; } },
+          ),
+        },
+        {
+          fetchFlowVersion: async () => cloud.flowVersionGraph(applicationId, flowId, versionId),
+          fetchManifest: async () => {
+            const initialization = await cloud.flowInitialization(initializationId) as { manifest?: { checkpoints?: Array<{ id: string; mapping: Record<string, unknown> }> } };
+            return initialization.manifest?.checkpoints ? { checkpoints: initialization.manifest.checkpoints } : null;
+          },
+          loadAnalysis: analysis,
+        },
+      ),
+    });
+  });
+  ipcMain.handle(AUTOMATION_IPC.cancel, (event) => { assertTrustedSender(event); return automatedRuns.cancel(); });
+  ipcMain.handle(AUTOMATION_IPC.confirmSignedIn, (event) => { assertTrustedSender(event); return automatedRuns.confirmSignedIn(); });
+  ipcMain.handle(AUTOMATION_IPC.status, (event) => { assertTrustedSender(event); return automatedRuns.status(); });
+  ipcMain.handle(AUTOMATION_IPC.saveProfile, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const applicationId = applicationIdOf(input);
+    return saveProfileInput(input, automationWorkspace(applicationId)?.launchCommands ?? []);
+  });
+  ipcMain.handle(AUTOMATION_IPC.approveProfile, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const { profileId } = input as { profileId?: unknown };
+    const applicationId = applicationIdOf(input);
+    const workspace = automationWorkspace(applicationId);
+    if (!workspace || typeof profileId !== 'string') throw new Error('WORKSPACE_NOT_SELECTED');
+    return approveStoredProfile(applicationId, profileId, workspace.launchCommands, workspace.root);
+  });
+  ipcMain.handle(AUTOMATION_IPC.deleteProfile, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const { profileId } = input as { profileId?: unknown };
+    if (typeof profileId !== 'string') throw new Error('PROFILE_ID_REQUIRED');
+    deleteProfile(applicationIdOf(input), profileId);
+  });
+  ipcMain.handle(AUTOMATION_IPC.savePersona, (event, input: unknown) => { assertTrustedSender(event); return savePersonaInput(input); });
+  ipcMain.handle(AUTOMATION_IPC.deletePersona, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const { personaId } = input as { personaId?: unknown };
+    if (typeof personaId !== 'string') throw new Error('PERSONA_ID_REQUIRED');
+    removePersona(applicationIdOf(input), personaId);
+  });
+  ipcMain.handle(AUTOMATION_IPC.saveDataSet, (event, input: unknown) => { assertTrustedSender(event); return saveDataSetInput(input); });
+  ipcMain.handle(AUTOMATION_IPC.deleteDataSet, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const { dataSetId } = input as { dataSetId?: unknown };
+    if (typeof dataSetId !== 'string') throw new Error('DATA_SET_ID_REQUIRED');
+    removeDataSet(applicationIdOf(input), dataSetId);
+  });
+  ipcMain.handle(AUTOMATION_IPC.saveLogin, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { loginRoute?: unknown; source?: unknown };
+    if (typeof value.loginRoute !== 'string' || (value.source !== 'CODE_PROPOSAL' && value.source !== 'MANUAL')) throw new Error('INVALID_LOGIN_CONFIG');
+    return saveLoginConfig({ applicationId: applicationIdOf(input), loginRoute: value.loginRoute, source: value.source });
+  });
+  ipcMain.handle(AUTOMATION_IPC.clearLogin, (event, input: unknown) => { assertTrustedSender(event); clearLoginConfig(applicationIdOf(input)); });
   ipcMain.handle(IPC.pauseGuidedRun, async (event) => {
     assertTrustedSender(event);
     const state = observer.getState();
@@ -4059,10 +4268,10 @@ function registerIpc(): void {
   ipcMain.handle(IPC.retryRunSynchronization, async (event, runId: unknown) => {
     assertTrustedSender(event);
     if (typeof runId !== 'string') throw new Error('RUN_ID_REQUIRED');
-    const recovery = readLocalState<{ state: GuidedRunState; completionReason: string }>(`qa-run-recovery:${runId}`);
+    const recovery = readLocalState<{ state: GuidedRunState; completionReason: string; automationStopReason?: string }>(`qa-run-recovery:${runId}`);
     if (recovery) {
       await flushEvidence(runId, true);
-      const completed = await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason });
+      const completed = await cloud.completeRun({ ...recovery.state, completionReason: recovery.completionReason, automationStopReason: recovery.automationStopReason });
       deleteLocalState(`qa-run-recovery:${runId}`);
       evidenceQueues.delete(runId);
       return completed;
@@ -4183,6 +4392,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   void syncNotificationOrganization();
   mainWindow?.on('focus', () => void syncNotificationOrganization());
   void resumeInterruptedRunSynchronization();
+  // A previous session may have died with an application still running for an Automated run. End what it left, and only that.
+  void orphanJournal.sweep().then((swept) => {
+    if (swept.ended.length > 0) console.warn(`[AutomatedRun] Ended ${swept.ended.length} application process(es) left behind by an earlier session.`);
+  }).catch(() => undefined);
   // Continue document imports the previous session left mid-way.
   documentImports.resumeAll();
   await initializeUpdater().catch((error) => {
@@ -4201,6 +4414,13 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+  if (!quittingAfterRunCleanup && automatedRuns.busy) {
+    // Closes the browser and the application's whole process tree, and tells the platform, before the desktop goes.
+    event.preventDefault();
+    quittingAfterRunCleanup = true;
+    void automatedRuns.shutdown().catch(() => undefined).finally(() => app.quit());
+    return;
+  }
   if (quittingAfterRunCleanup || !observer.getState()) return;
   event.preventDefault();
   quittingAfterRunCleanup = true;

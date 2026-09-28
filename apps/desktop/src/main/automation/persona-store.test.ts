@@ -21,7 +21,7 @@ function memoryStore(): KeyValueStore {
 
 const TIMESTAMP = '2026-01-01T00:00:00.000Z';
 const persona = (overrides: Partial<TestPersona> = {}): TestPersona => ({
-  id: 'p1', applicationId: APP_A, name: 'Teacher', roles: ['TEACHER'], authenticated: true,
+  id: 'p1', applicationId: APP_A, name: 'Teacher', roles: ['TEACHER'], authenticated: true, authMethod: 'PASSWORD',
   credentials: [{ field: 'email', value: 'teacher@test.dev' }, { field: 'password', value: 'hunter2' }],
   createdAt: TIMESTAMP, updatedAt: TIMESTAMP, ...overrides,
 });

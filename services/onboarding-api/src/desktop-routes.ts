@@ -23,6 +23,7 @@ import { NotificationEmailService, NotificationOrchestrator } from '@tellann/ema
 import {
   AUTOMATION_STOP_REASON_KIND,
   AutomationConfigSchema,
+  AutomationPhaseUpdateSchema,
   automationTargets,
   automationTargetsConsistent,
   AutomationStopReasonSchema,
@@ -151,6 +152,30 @@ export function buildAutomationRunState(input: {
       executionPhase: 'PREPARING_WORKSPACE',
     },
   };
+}
+
+/**
+ * The new `QARun.automation` after the desktop reports its phase. Also the run's heartbeat: every report stamps
+ * `heartbeatAt`, and a run whose heartbeat stops is one the reaper ends. Returns null when there is nothing
+ * sensible to update (the run is not an Automated one), and never touches what was pinned at creation.
+ */
+export function applyAutomationPhaseUpdate(
+  current: unknown,
+  update: unknown,
+  now: Date,
+): { ok: true; automation: Prisma.InputJsonValue } | { ok: false; error: 'NOT_AN_AUTOMATED_RUN' | 'INVALID_AUTOMATION_PHASE' } {
+  if (!current || typeof current !== 'object' || Array.isArray(current)) return { ok: false, error: 'NOT_AN_AUTOMATED_RUN' };
+  const parsed = AutomationPhaseUpdateSchema.safeParse(update ?? {});
+  if (!parsed.success) return { ok: false, error: 'INVALID_AUTOMATION_PHASE' };
+  const next: Record<string, unknown> = { ...(current as Record<string, unknown>), heartbeatAt: now.toISOString() };
+  if (parsed.data.executionPhase) next.executionPhase = parsed.data.executionPhase;
+  // Which contract the run was compiled into is a fact about its start, so it is kept the first time it is reported
+  // and a later report cannot rewrite it: a report months from now must say what this run actually used.
+  if (parsed.data.contract && !(current as Record<string, unknown>).contract) next.contract = parsed.data.contract;
+  // Leaving the waiting phase clears the reason for waiting, so a viewer never sees a stale "waiting for you".
+  if (parsed.data.awaitingUser !== undefined) next.awaitingUser = parsed.data.awaitingUser;
+  else if (parsed.data.executionPhase && parsed.data.executionPhase !== 'AWAITING_USER') next.awaitingUser = null;
+  return { ok: true, automation: next as Prisma.InputJsonValue };
 }
 
 export function assistedFlowContextShape(input: {
@@ -1833,6 +1858,19 @@ export function createDesktopRouter(input: {
       data: { status: qaRunActiveStatus(run.mode, Boolean(run.boundaryStartedAt)), startedAt: run.startedAt ?? new Date() },
     });
     res.json(updated);
+  });
+
+  router.post('/qa-runs/:runId/automation-phase', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.mode !== QARunMode.AUTOMATED) return res.status(409).json({ error: 'NOT_AN_AUTOMATED_RUN' });
+    if (TERMINAL_STATUSES.has(run.status)) return res.status(409).json({ error: 'QA run is terminal' });
+    const next = applyAutomationPhaseUpdate(run.automation, req.body, new Date());
+    if (!next.ok) return res.status(next.error === 'INVALID_AUTOMATION_PHASE' ? 400 : 409).json({ error: next.error });
+    // Guarded on the status it was read with, so a phase report that races the run's completion cannot reopen it.
+    const written = await prisma.qARun.updateMany({ where: { id: run.id, status: run.status }, data: { automation: next.automation } });
+    if (written.count === 0) return res.status(409).json({ error: 'QA run is terminal' });
+    res.json({ executionPhase: (next.automation as Record<string, unknown>).executionPhase ?? null });
   });
 
   router.post('/qa-runs/:runId/boundary-events', verifyJwt, async (req: DesktopRequest, res: Response) => {

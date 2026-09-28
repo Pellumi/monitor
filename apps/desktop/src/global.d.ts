@@ -1,4 +1,13 @@
 import type {
+  AutomatedRunStatus,
+  AutomationOptions,
+  ExecutionProfile,
+  ExecutionProfileInput,
+  PersonaInput,
+  PersonaView,
+  RunDataSetInput,
+  RunDataSetView,
+  StartAutomatedRunResult,
   BackendEvidencePage,
   BackendEvidenceQuery,
   ProtectedValuePage,
@@ -235,6 +244,25 @@ declare global {
         deleteDraft(applicationId: string, draftId: string): Promise<void>;
         correctDraft(applicationId: string, draftId: string, correction: string): Promise<IntentDraftJobCreated>;
         applyConflictAnswers(applicationId: string, draftId: string, conflictResolutions: Record<string, string>): Promise<IntentDraftJobCreated>;
+      };
+      automation: {
+        getOptions(applicationId: string): Promise<AutomationOptions>;
+        /** Starts an Automated run, or says why it was not started. A refusal is not an error: nothing was created. */
+        start(input: StartGuidedRunInput): Promise<StartAutomatedRunResult>;
+        cancel(): Promise<boolean>;
+        /** The person says they have signed in by hand in the browser Tellann opened. */
+        confirmSignedIn(): Promise<boolean>;
+        getStatus(): Promise<AutomatedRunStatus | null>;
+        onStatusChanged(callback: (status: AutomatedRunStatus) => void): () => void;
+        saveProfile(input: ExecutionProfileInput): Promise<ExecutionProfile>;
+        approveProfile(applicationId: string, profileId: string): Promise<ExecutionProfile>;
+        deleteProfile(applicationId: string, profileId: string): Promise<void>;
+        savePersona(input: PersonaInput): Promise<PersonaView>;
+        deletePersona(applicationId: string, personaId: string): Promise<void>;
+        saveDataSet(input: RunDataSetInput): Promise<RunDataSetView>;
+        deleteDataSet(applicationId: string, dataSetId: string): Promise<void>;
+        saveLogin(applicationId: string, loginRoute: string, source: 'CODE_PROPOSAL' | 'MANUAL'): Promise<unknown>;
+        clearLogin(applicationId: string): Promise<void>;
       };
       documents: {
         list(applicationId: string): Promise<DocumentAccess>;

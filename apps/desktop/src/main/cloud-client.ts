@@ -2022,7 +2022,7 @@ export class DesktopCloudClient {
     return { run, credential };
   }
 
-  async completeRun(state: GuidedRunState & { completionReason?: string }) {
+  async completeRun(state: GuidedRunState & { completionReason?: string; automationStopReason?: string }) {
     const artifacts = await this.readManifest(state);
     const uploadedArtifacts: Json[] = [];
     for (const artifact of artifacts) {
@@ -2057,6 +2057,8 @@ export class DesktopCloudClient {
           observations: state.observations,
           observedTransitions: state.observedTransitions,
           completionReason: state.completionReason,
+          // Only read by the server for an Automated run, where it says why the run stopped.
+          ...(state.automationStopReason ? { automationStopReason: state.automationStopReason } : {}),
         }),
       },
     );
@@ -2074,6 +2076,32 @@ export class DesktopCloudClient {
       ).catch(() => undefined);
     }
     return completed;
+  }
+
+  /**
+   * Completing a run that never got as far as opening a browser (cancelled while its application was still
+   * starting), so there is no evidence folder to read and nothing to upload.
+   */
+  async completeRunWithoutEvidence(input: { runId: string; sessionId: string; traceId: string; completionReason: string; automationStopReason: string }) {
+    return this.request<Json>(`/qa-runs/${input.runId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: input.sessionId,
+        traceId: input.traceId,
+        observations: [],
+        observedTransitions: [],
+        completionReason: input.completionReason,
+        automationStopReason: input.automationStopReason,
+      }),
+    });
+  }
+
+  /** Where an Automated run is, which the platform also takes as proof that this desktop is still alive. */
+  async reportAutomationPhase(runId: string, update: Json) {
+    return this.request<Json>(`/qa-runs/${runId}/automation-phase`, {
+      method: "POST",
+      body: JSON.stringify(update),
+    });
   }
 
   async failRun(runId: string, reason: string) {

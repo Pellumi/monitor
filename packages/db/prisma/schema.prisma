@@ -835,6 +835,7 @@ enum UsageMetric {
   REPORTS
   EXPORTS
   API_CALLS
+  AUTOMATED_RUNS
 }
 
 model UsageRecord {

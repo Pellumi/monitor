@@ -2755,3 +2755,241 @@ button.statusbar-item:disabled {
 .protected-values .run-history-pager {
   margin-top: 12px;
 }
+
+/* ---- Automated Run: setup, hand-over and the live view ---------------------------------------------------------- */
+.automated-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.automated-notice,
+.automated-handover {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-0));
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.automated-notice[data-tone="problem"] {
+  border-color: color-mix(in srgb, var(--caution) 40%, transparent);
+  background: color-mix(in srgb, var(--caution) 9%, var(--surface-0));
+}
+.automated-notice > svg,
+.automated-handover > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+.automated-notice p,
+.automated-handover p {
+  margin: 4px 0 0;
+}
+.automated-notice .inline-actions,
+.automated-handover .button {
+  margin-top: 10px;
+}
+.automated-blockers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.automated-blockers li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.automated-blockers svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--caution);
+}
+.automated-managers {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.automated-manager + .automated-manager {
+  border-top: 1px solid var(--border);
+}
+.automated-manager > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.automated-manager > summary span {
+  color: var(--text-muted);
+}
+.automated-manager-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 12px 12px;
+}
+.automated-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+.automated-row > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.automated-row small {
+  color: var(--text-muted);
+}
+.automated-commands {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.automated-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.automated-chip[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+}
+.automated-chip[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--caution) 45%, transparent);
+  color: var(--caution);
+}
+.automated-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.automated-value {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(150px, 1fr) minmax(160px, 2fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.automated-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.automated-secret {
+  margin: 0;
+}
+.automated-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+.automated-live {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 820px;
+}
+.automated-live-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.automated-live-head > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.automated-live-head small {
+  color: var(--text-muted);
+}
+.automated-ok {
+  color: var(--success);
+}
+.automated-outcome {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.automated-outcome[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+}
+.automated-outcome[data-tone="finding"],
+.automated-outcome[data-tone="problem"] {
+  border-color: color-mix(in srgb, var(--caution) 40%, transparent);
+}
+.automated-outcome p {
+  margin: 0 0 8px;
+}
+.automated-events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.automated-events li {
+  display: flex;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.automated-events li:last-child {
+  border-bottom: 0;
+  padding: 0;
+}
+.automated-events time {
+  flex: none;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.automated-events li[data-tone="success"] span { color: var(--success); }
+.automated-events li[data-tone="problem"] span { color: var(--danger); }
+.automated-events li[data-tone="notice"] span { color: var(--caution); }
+.automated-setup .inline-actions,
+.automated-manager-body .inline-actions,
+.automated-notice .inline-actions,
+.automated-editor .inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}

@@ -140,6 +140,9 @@ import {
 } from "./components/desktop-ui";
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
+import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
+import { automatedRunBlockers, buildAutomatedStartInput, terminalChoices } from "./automation-shared";
+import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import {
   flowBindingForEnvironment,
@@ -12144,6 +12147,26 @@ function RunTable({
   );
 }
 
+/** The live view of an Automated run. Reachable from the start form and from anywhere the run's notification leads. */
+export function AutomatedRunPage() {
+  const status = useAutomatedRunStatus();
+  const { projectId } = useProject();
+  return (
+    <Page
+      title="Automated run"
+      description={status ? "Tellann is running the Flow for you." : "No Automated run is in progress."}
+    >
+      {status ? (
+        <AutomatedRunLive status={status} />
+      ) : (
+        <div className="context-banner">
+          Nothing is running. <Link className="text-link" to={projectId ? `/applications/${projectId}/qa-runs/new?mode=AUTOMATED` : "/"}>Start an Automated run</Link>
+        </div>
+      )}
+    </Page>
+  );
+}
+
 export function NewRunPage() {
   const {
     projectId,
@@ -12154,6 +12177,7 @@ export function NewRunPage() {
     busy,
     clearError,
     getDeclaredFlows,
+    getDeclaredFlow,
     listInstrumentationPlans,
   } = useProject();
   const navigate = useNavigate();
@@ -12182,13 +12206,21 @@ export function NewRunPage() {
       environment?.baseUrl ||
       "http://localhost:3000",
   );
-  const [mode, setMode] = useState<"GUIDED" | "ASSISTED" | "OBSERVATION_ONLY">(
+  // Hidden entirely without the entitlement: an option the plan does not include is not offered and then refused.
+  const automatedEntitled = application?.entitlements?.features.AUTOMATED_QA_RUNS === true;
+  const [mode, setMode] = useState<"GUIDED" | "ASSISTED" | "OBSERVATION_ONLY" | "AUTOMATED">(
     environment?.type === "PRODUCTION"
       ? "OBSERVATION_ONLY"
-      : requestedMode === "GUIDED" || requestedMode === "ASSISTED" || requestedMode === "OBSERVATION_ONLY"
+      : requestedMode === "GUIDED" || requestedMode === "ASSISTED" || requestedMode === "OBSERVATION_ONLY" || (requestedMode === "AUTOMATED" && automatedEntitled)
         ? requestedMode
         : "ASSISTED",
   );
+  const automatedStatus = useAutomatedRunStatus();
+  const automatedInProgress = isAutomatedRunActive(automatedStatus);
+  const [automatedSelection, setAutomatedSelection] = useState<AutomatedSelection>({ targetStateKey: "", profileId: "", personaId: "", dataSetId: "" });
+  const [automatedRefusal, setAutomatedRefusal] = useState<AutomatedRunRefusal | null>(null);
+  const [flowDetail, setFlowDetail] = useState<DeclaredFlowDetail | null>(null);
+  const automation = useAutomationOptions(projectId, mode === "AUTOMATED" && automatedEntitled);
   const [productionObservationApproved, setProductionObservationApproved] =
     useState(false);
   const [flows, setFlows] = useState<DeclaredFlowSummary[]>([]);
@@ -12247,6 +12279,21 @@ export function NewRunPage() {
     });
   }, [environmentId, getDeclaredFlows, projectId, requestedFlowId]);
   useEffect(() => {
+    if (mode !== "AUTOMATED" || !projectId || !selectedFlowId) { setFlowDetail(null); return; }
+    let live = true;
+    void getDeclaredFlow(projectId, selectedFlowId).then((detail) => { if (live) setFlowDetail(detail); }).catch(() => { if (live) setFlowDetail(null); });
+    return () => { live = false; };
+  }, [getDeclaredFlow, mode, projectId, selectedFlowId]);
+  // The default ending is the first one offered (a success), so the common case is one fewer choice to make.
+  useEffect(() => {
+    const choices = terminalChoices(flowDetail?.states ?? []);
+    setAutomatedSelection((current) => (choices.some((choice) => choice.key === current.targetStateKey) ? current : { ...current, targetStateKey: choices[0]?.key ?? "" }));
+  }, [flowDetail]);
+  useEffect(() => {
+    const first = automation.options?.profiles.find((profile) => profile.status === "APPROVED") ?? automation.options?.profiles[0];
+    setAutomatedSelection((current) => (current.profileId && automation.options?.profiles.some((profile) => profile.id === current.profileId) ? current : { ...current, profileId: first?.id ?? "" }));
+  }, [automation.options]);
+  useEffect(() => {
     if (!projectId) return;
     // `archived: false` is the default, and it is what keeps a task the operator
     // filed away out of the manifests a run can be started against.
@@ -12277,13 +12324,24 @@ export function NewRunPage() {
   const selectedFlowReadiness = selectedFlow
     ? flowRunReadiness(selectedFlow, environmentId)
     : null;
+  const automatedTerminals = terminalChoices(flowDetail?.states ?? []);
+  const automatedBlockers = mode === "AUTOMATED"
+    ? automatedRunBlockers({
+        options: automation.options,
+        selection: automatedSelection,
+        environmentType: environment?.type ?? "STAGING",
+        flowReady: Boolean(selectedFlow && selectedFlowReadiness?.ready),
+        instrumentationChosen: Boolean(patchSetId),
+        terminals: automatedTerminals,
+      })
+    : [];
   const begin = async () => {
     setRunStartFailure(null);
     try {
       const binding = flowBindingForEnvironment(selectedFlow, environmentId) as any;
       const initialization = binding?.initializations?.[0];
       const scan = binding?.scans?.[0];
-      const flowRequired = mode === "GUIDED";
+      const flowRequired = mode === "GUIDED" || mode === "AUTOMATED";
       const attachFlow = Boolean(selectedFlow && isFlowReadyToRun(selectedFlow, environmentId));
       if (flowRequired && (
         !selectedFlow ||
@@ -12295,6 +12353,31 @@ export function NewRunPage() {
         throw new Error(
           "Initialize this published Flow in the selected application and environment before starting a QA run.",
         );
+      }
+      if (mode === "AUTOMATED") {
+        setAutomatedRefusal(null);
+        const result = await window.tellann!.automation.start(buildAutomatedStartInput({
+          applicationId: projectId,
+          environmentId,
+          workspaceId: workspace?.id ?? null,
+          flowId: selectedFlow!.id,
+          flowBindingId: binding.id,
+          flowInitializationId: initialization.id,
+          flowScanId: scan.id,
+          flowDriftId: binding.latestDriftId ?? null,
+          expectedGraphVersionId,
+          patchSetId,
+          environmentType: environment?.type === "STAGING" ? "STAGING" : "DEVELOPMENT",
+          targetUrl,
+          selection: automatedSelection,
+        }) as never);
+        if (!result.ok) {
+          // Declined before anything was created. Said in the page, in words, not raised as an error.
+          setAutomatedRefusal(result.refusal);
+          return;
+        }
+        navigate(`/applications/${projectId}/qa-runs/automated`);
+        return;
       }
       const run = await startRun({
         applicationId: projectId,
@@ -12381,15 +12464,17 @@ export function NewRunPage() {
               onValueChange={(value) => {
                 const next = value as typeof mode;
                 setMode(next);
-                if (next === "OBSERVATION_ONLY") {
+                if (next === "OBSERVATION_ONLY" || next === "AUTOMATED") {
                   setLaunchCommandId("");
                   setLaunchApproved(false);
                 }
+                setAutomatedRefusal(null);
               }}
               options={[
                 { value: "GUIDED", label: "Guided" },
                 { value: "ASSISTED", label: "Assisted (recommended)" },
                 { value: "OBSERVATION_ONLY", label: "Observation only (read-only)" },
+                ...(automatedEntitled && environment?.type !== "PRODUCTION" ? [{ value: "AUTOMATED", label: "Automated (Tellann runs the Flow for you)" }] : []),
               ]}
             />
           </label>
@@ -12410,7 +12495,7 @@ export function NewRunPage() {
             ) : null}
           </label>
           <label className="full">
-            Expected Flow {mode === "GUIDED" ? "(required)" : "(optional)"}
+            Expected Flow {mode === "GUIDED" || mode === "AUTOMATED" ? "(required)" : "(optional)"}
             <SelectField
               value={selectedFlowId}
               onValueChange={(flowId) => {
@@ -12423,7 +12508,7 @@ export function NewRunPage() {
                 );
               }}
               options={[
-                { value: "", label: mode === "GUIDED" ? "Select a Flow" : "Start without a Flow" },
+                { value: "", label: mode === "GUIDED" || mode === "AUTOMATED" ? "Select a Flow" : "Start without a Flow" },
                 ...flows.flatMap((flow) =>
                   flow.versions?.[0]
                     ? [
@@ -12455,7 +12540,7 @@ export function NewRunPage() {
               </span>
             ) : null}
           </label>
-          <label className="full">
+          {mode !== "AUTOMATED" ? <label className="full">
             Capture tracks
             <SelectField
               value={captureMode}
@@ -12475,7 +12560,7 @@ export function NewRunPage() {
                   ? "Opens the managed browser and records your server's own requests alongside it, so a journey through the UI and the work it caused behind it appear in one run."
                   : "Opens the managed browser and records what happens on screen: routes, clicks, forms, requests the page makes, performance and screenshots."}
             </span>
-          </label>
+          </label> : null}
           <label className="full">
             <span className="field-label-with-tooltip">
               Instrumentation evidence
@@ -12513,7 +12598,7 @@ export function NewRunPage() {
               ]}
             />
           </label>
-          {launchCommands.length && mode !== "OBSERVATION_ONLY" ? (
+          {launchCommands.length && mode !== "OBSERVATION_ONLY" && mode !== "AUTOMATED" ? (
             <label className="full">
               Local application process
               <SelectField
@@ -12536,6 +12621,37 @@ export function NewRunPage() {
             </label>
           ) : null}
         </div>
+        {mode === "AUTOMATED" && automatedEntitled && environment?.type !== "PRODUCTION" ? (
+          <AutomatedRunSetup
+            applicationId={projectId}
+            options={automation.options}
+            loadFailure={automation.failure}
+            blockers={automatedBlockers}
+            terminals={automatedTerminals}
+            selection={automatedSelection}
+            onSelection={setAutomatedSelection}
+            reload={automation.reload}
+            onUseMode={(next) => setMode(next)}
+          />
+        ) : null}
+        {automatedRefusal ? (
+          <div className="automated-notice" role="status" data-tone={automatedRefusal.tone}>
+            <Info size={18} />
+            <div>
+              <strong>{automatedRefusal.title}</strong>
+              <p>{automatedRefusal.message}</p>
+              {automatedRefusal.alternatives.length ? (
+                <div className="inline-actions">
+                  {automatedRefusal.alternatives.map((alternative) => (
+                    <button key={alternative} className="button" type="button" onClick={() => { setAutomatedRefusal(null); setMode(alternative); }}>
+                      Use {alternative === "GUIDED" ? "Guided" : "Assisted"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {launchCommandId ? (
           <label className="check-row">
             <input
@@ -12597,7 +12713,19 @@ export function NewRunPage() {
             </label>
           </>
         ) : null}
-        {runInProgress ? (
+        {automatedInProgress ? (
+          <>
+            <div className="infobar" data-tone="warning" role="status">
+              <TriangleAlert size={16} />
+              <span>An Automated run is going on this device. Tellann runs one at a time.</span>
+            </div>
+            <button className="button primary" type="button" onClick={() => navigate(`/applications/${projectId}/qa-runs/automated`)}>
+              <Activity size={16} />
+              Watch the run
+            </button>
+          </>
+        ) : null}
+        {runInProgress && !automatedInProgress ? (
           <div className="infobar" data-tone="warning" role="status">
             <TriangleAlert size={16} />
             <span>
@@ -12607,7 +12735,7 @@ export function NewRunPage() {
             </span>
           </div>
         ) : null}
-        {runInProgress ? (
+        {automatedInProgress ? null : runInProgress ? (
           <button
             className="button primary"
             type="button"
@@ -12628,6 +12756,7 @@ export function NewRunPage() {
             !targetUrl ||
             !environmentId ||
             Boolean(mode === "GUIDED" && (!selectedFlow || !expectedGraphVersionId || !selectedFlowReadiness?.ready)) ||
+            Boolean(mode === "AUTOMATED" && (automatedBlockers.length > 0 || !expectedGraphVersionId)) ||
             Boolean(launchCommandId && !launchApproved) ||
             Boolean(
               environment?.type === "PRODUCTION" &&
@@ -12639,7 +12768,7 @@ export function NewRunPage() {
           <Play size={16} />
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : "Start read-only observation"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : mode === "AUTOMATED" ? "Start automated run" : "Start read-only observation"}
         </button>
         )}
       </section>

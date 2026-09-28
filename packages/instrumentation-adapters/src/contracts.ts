@@ -83,6 +83,23 @@ export type LocalProjectContext = {
    * case and stays exactly as strict as before.
    */
   flowCheckpointIds?: string[];
+  /**
+   * The controls Flow transitions go through, where the code analysis found them. When present, the plan also
+   * proposes a stable `data-tellann-action` anchor on each one it can identify safely (see `control-anchors.ts`).
+   */
+  controlAnchors?: ControlAnchorTarget[];
+};
+
+/** A control the code analysis located, and the anchor it should carry. */
+export type ControlAnchorTarget = {
+  transitionId: string;
+  /** The `data-tellann-action` value: stable, made from the transition id, never from what the control says. */
+  value: string;
+  file: string;
+  startLine: number;
+  endLine: number;
+  element: string | null;
+  label: string | null;
 };
 
 export type DetectionResult = {
@@ -97,6 +114,8 @@ export type DetectionResult = {
 };
 
 export type AdapterEvidence = {
+  /** Anchors proposed on controls, and the ones left alone with the reason. Absent when none were asked for. */
+  controlAnchors?: { planned: string[]; skipped: Array<{ transitionId: string; reason: string }> };
   entryPoints: Array<{ file: string; symbol: string | null; confidence: number }>;
   existingInstrumentation: Array<{ file: string; marker: string }>;
   semanticBoundaries: Array<{
@@ -127,6 +146,8 @@ export type PatchOperation = {
   startLine?: number;
   endLine?: number;
   branch?: 'THEN' | 'ELSE';
+  /** For `tellann.action.anchor`: the attribute to put on the control found at `startLine`-`endLine`. */
+  anchorAttribute?: { name: 'data-tellann-action'; value: string; element: string | null };
 };
 
 // Re-exported from the contracts package rather than redeclared: a placement the
@@ -236,6 +257,7 @@ const PLAN_SCHEMA = z.object({
     content: z.string().optional(), importModule: z.string().optional(), flowInitializationId: z.string().uuid().optional(),
     placementKind: FlowPlacementKindSchema.optional(), anchorText: z.string().optional(), anchorHash: z.string().optional(),
     startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional(), branch: z.enum(['THEN', 'ELSE']).optional(),
+    anchorAttribute: z.object({ name: z.literal('data-tellann-action'), value: z.string().regex(/^[A-Za-z0-9:_.-]{1,120}$/), element: z.string().nullable() }).optional(),
   })),
   validationCommands: z.array(z.object({
     id: z.string(), executable: z.string(), args: z.array(z.string()), cwd: z.string(), timeoutMs: z.number(),
