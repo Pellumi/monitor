@@ -273,7 +273,7 @@ describe('resolveFlowCheckpointMappings batching', () => {
     expect(result.provenance).toMatchObject({ batchesFailed: 1, failed: true });
     // The reason shown to the user is a generic explanation, not the
     // provider's own error text — it must not name a vendor or a status code.
-    expect(result.provenance.failureReasonSafe).toBe('The AI service did not respond in time.');
+    expect(result.provenance.failureReasonSafe).toBe('The service did not respond in time.');
     expect(result.provenance.failureReasonSafe).not.toMatch(/gemini|deepseek|TIMEOUT:|\b\d{3}\b/i);
   });
 

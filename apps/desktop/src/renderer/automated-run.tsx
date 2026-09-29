@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
 import { isSecretDataKey, parseDotenv } from "@tellann/flow-layout";
 import { describeExecutionPhase } from "./automation-shared";
 import type {
@@ -142,7 +142,7 @@ export function AutomatedRunSetup(props: SetupProps) {
           <SelectField
             value={selection.personaId}
             onValueChange={(personaId) => set({ personaId })}
-            options={[{ value: "", label: "Nobody (the Flow needs no sign-in)" }, ...(options?.personas ?? []).map((persona) => ({ value: persona.id, label: `${persona.name}${persona.roles.length ? ` · ${persona.roles.join(", ")}` : ""}` }))]}
+            options={[{ value: "", label: "No persona selected" }, ...(options?.personas ?? []).map((persona) => ({ value: persona.id, label: `${persona.name}${persona.roles.length ? ` · ${persona.roles.join(", ")}` : ""}` }))]}
           />
         </label>
         <label>
@@ -150,7 +150,7 @@ export function AutomatedRunSetup(props: SetupProps) {
           <SelectField
             value={selection.dataSetId}
             onValueChange={(dataSetId) => set({ dataSetId })}
-            options={[{ value: "", label: "None (the Flow types nothing)" }, ...(options?.dataSets ?? []).map((set_) => ({ value: set_.id, label: set_.name }))]}
+            options={[{ value: "", label: "No data set selected" }, ...(options?.dataSets ?? []).map((set_) => ({ value: set_.id, label: set_.name }))]}
           />
         </label>
       </div>
@@ -275,12 +275,16 @@ const blankPersona = (): PersonaDraft => ({ name: "", roles: "", how: "PASSWORD"
 function PersonaManager({ applicationId, personas, reload, onCreated }: { applicationId: string; personas: PersonaView[]; reload(): Promise<void>; onCreated(id: string): void }) {
   const { run, error, busy } = useAction(reload);
   const [draft, setDraft] = useState<PersonaDraft | null>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const api = bridge()!;
-  const edit = (persona: PersonaView) => setDraft({
-    id: persona.id, name: persona.name, roles: persona.roles.join(", "), identity: "", secret: "",
-    how: !persona.authenticated ? "GUEST" : persona.authMethod === "MANUAL" ? "MANUAL" : "PASSWORD",
-    identityField: persona.credentialFields.find((field) => field !== "password") ?? "email",
-  });
+  const edit = (persona: PersonaView) => {
+    setPasswordVisible(false);
+    setDraft({
+      id: persona.id, name: persona.name, roles: persona.roles.join(", "), identity: "", secret: "",
+      how: !persona.authenticated ? "GUEST" : persona.authMethod === "MANUAL" ? "MANUAL" : "PASSWORD",
+      identityField: persona.credentialFields.find((field) => field !== "password") ?? "email",
+    });
+  };
   const save = async () => {
     if (!draft) return;
     const input: PersonaInput = {
@@ -294,7 +298,7 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
     };
     let savedId: string | null = null;
     const ok = await run(async () => { savedId = (await api.savePersona(input)).id; });
-    if (ok) { setDraft(null); if (savedId && !draft.id) onCreated(savedId); }
+    if (ok) { setDraft(null); setPasswordVisible(false); if (savedId && !draft.id) onCreated(savedId); }
   };
   return (
     <Manager title="Personas" summary={`${personas.length} saved`}>
@@ -334,7 +338,21 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
             {draft.how === "PASSWORD" ? (
               <>
                 <label>Email or username<input autoComplete="off" value={draft.identity} onChange={(event) => setDraft({ ...draft, identity: event.target.value })} placeholder={draft.id ? "Leave blank to keep the saved one" : ""} /></label>
-                <label>Password<input type="password" autoComplete="new-password" value={draft.secret} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} placeholder={draft.id ? "Leave blank to keep the saved one" : ""} /></label>
+                <label>
+                  Password
+                  <span className="password-input">
+                    <input type={passwordVisible ? "text" : "password"} autoComplete="new-password" value={draft.secret} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} placeholder={draft.id ? "Leave blank to keep the saved one" : ""} />
+                    <button
+                      type="button"
+                      aria-label={passwordVisible ? "Hide password" : "Show password"}
+                      aria-pressed={passwordVisible}
+                      title={passwordVisible ? "Hide password" : "Show password"}
+                      onClick={() => setPasswordVisible((visible) => !visible)}
+                    >
+                      {passwordVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </span>
+                </label>
               </>
             ) : null}
             {draft.how === "MANUAL" ? (
@@ -343,11 +361,11 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
           </div>
           <div className="inline-actions">
             <button className="button primary" type="button" disabled={busy || !draft.name.trim()} onClick={() => void save()}>Save persona</button>
-            <button className="button" type="button" onClick={() => setDraft(null)}>Cancel</button>
+            <button className="button" type="button" onClick={() => { setDraft(null); setPasswordVisible(false); }}>Cancel</button>
           </div>
         </div>
       ) : (
-        <button className="button" type="button" onClick={() => setDraft(blankPersona())}>Add a persona</button>
+        <button className="button" type="button" onClick={() => { setPasswordVisible(false); setDraft(blankPersona()); }}>Add a persona</button>
       )}
       {error ? <p className="automated-error" role="alert">{error}</p> : null}
     </Manager>
@@ -391,6 +409,8 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
   const [draft, setDraft] = useState<SetDraft | null>(null);
   const api = bridge()!;
   const patch = (index: number, change: Partial<ValueDraft>) => draft && setDraft({ ...draft, values: draft.values.map((value, position) => (position === index ? { ...value, ...change } : value)) });
+  const hasName = Boolean(draft?.name.trim());
+  const hasKeyedValue = Boolean(draft?.values.some((value) => value.key.trim()));
   const save = async () => {
     if (!draft) return;
     let savedId: string | null = null;
@@ -440,7 +460,7 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
       ))}
       {draft ? (
         <div className="automated-editor">
-          <label>Name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Exam data" /></label>
+          <label>Name (required)<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="e.g. Admin login data" /></label>
           {draft.values.map((value, index) => (
             <div className="automated-value" key={index}>
               <input aria-label="Key" placeholder="Key (e.g. examTitle)" value={value.key} onChange={(event) => patch(index, { key: event.target.value })} />
@@ -489,10 +509,12 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
             </div>
           ) : null}
           {envNote ? <p className="field-hint" role="status">{envNote}</p> : null}
+          {!hasName ? <p className="field-hint" role="status">Enter a name for this data set before saving.</p> : null}
+          {hasName && !hasKeyedValue ? <p className="field-hint" role="status">Add at least one value with a key before saving.</p> : null}
           <div className="inline-actions">
             <button className="button" type="button" onClick={() => setDraft({ ...draft, values: [...draft.values, blankValue()] })}>Add a value</button>
             <button className="button" type="button" onClick={() => { setEnvText(envText ?? ""); setEnvNote(null); }}>Paste a .env file</button>
-            <button className="button primary" type="button" disabled={busy || !draft.name.trim()} onClick={() => void save()}>Save data set</button>
+            <button className="button primary" type="button" disabled={busy || !hasName || !hasKeyedValue} onClick={() => void save()}>Save data set</button>
             <button className="button" type="button" onClick={() => { setDraft(null); setEnvText(null); setEnvNote(null); }}>Cancel</button>
           </div>
         </div>

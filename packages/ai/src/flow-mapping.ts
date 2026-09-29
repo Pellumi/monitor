@@ -336,7 +336,7 @@ function acceptMappings(
  * (which provider is behind this screen, that a rate limit was hit) that
  * is not this screen's business to reveal.
  */
-const GENERIC_BATCH_FAILURE_REASON = 'The AI service did not respond in time.';
+const GENERIC_BATCH_FAILURE_REASON = 'The service did not respond in time.';
 
 async function resolveBatch(
   flowName: string,

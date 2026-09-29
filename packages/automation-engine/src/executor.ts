@@ -11,6 +11,7 @@ import { resolveRunTargets } from './targets';
 import { evaluateAction, evaluateNavigation } from './policy';
 import type { PolicyOptions } from './policy';
 import { AMBIGUITY_MARGIN, recognizeAmong } from './recognizer';
+import { isEntryStep } from './support';
 import { rankControls } from './ranking';
 import type {
   ActionClass,
@@ -201,6 +202,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
   let unrecognised = 0;
   /** Ambiguities a resolver has already been asked about, so a retry of the same read does not ask again. */
   const resolverAsked = new Set<string>();
+  const entrySkipped = new Set<string>();
   let initialReported = false;
   // Set when the next pass is a deliberate retry of the same transition. Retries are bounded on their own;
   // counting them as revisits would report a loop before the retry budget was ever spent.
@@ -396,6 +398,13 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       label: next.action ?? next.id,
     };
     const mode = next.mode ?? 'AUTO';
+    // Opening the application has no control: the run did that itself. Look again, once, without the starting state.
+    if (mode === 'AUTO' && isEntryStep(contract, next) && !entrySkipped.has(next.id)) {
+      entrySkipped.add(next.id);
+      snapshot = await ports.settle(null);
+      recognition = recognizeAmong(snapshot, contract.states.filter((state) => state.key !== next.from));
+      continue;
+    }
     // A step a person performs needs no control found and nothing typed: they do it in the browser.
     let resolved = mode === 'MANUAL' ? null : resolveStep(snapshot, stepInput);
     let controlResolution: { resolver: string; rationale: string; agreement: string[] } | null = null;

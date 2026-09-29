@@ -127,6 +127,47 @@ export interface FlowRequirementsLike {
 const roleKey = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 /** The sign-in kinds a persona's stored credentials can stand in for: `ADMIN_EMAIL` is satisfied by a stored `email`. */
 const CREDENTIAL_KEY = /(?:^|_)(email|username|password)$/i;
+const credentialKindForDataKey = (key: string) => CREDENTIAL_KEY.exec(key)?.[1]?.toLowerCase() ?? null;
+
+/**
+ * Keeps explicit valid choices, and fills only choices that are unambiguous from the Flow.
+ * This avoids reopening the form on "Nobody" when exactly one saved persona can satisfy its actor,
+ * without silently choosing between multiple accounts or data sets.
+ */
+export function reconcileAutomatedResourceSelection(
+  options: Pick<AutomationOptions, 'personas' | 'dataSets'> | null,
+  selection: AutomatedSelection,
+  requires: FlowRequirementsLike | null | undefined,
+): AutomatedSelection {
+  if (!options) return selection;
+
+  const personaStillExists = options.personas.some((persona) => persona.id === selection.personaId);
+  let personaId = personaStillExists ? selection.personaId : '';
+  if (!personaId && requires?.actor) {
+    const actor = roleKey(requires.actor);
+    const compatible = options.personas.filter((persona) => persona.roles.map(roleKey).includes(actor));
+    if (compatible.length === 1) personaId = compatible[0]!.id;
+  }
+
+  const persona = options.personas.find((candidate) => candidate.id === personaId) ?? null;
+  const storedCredentials = new Set(persona?.credentialFields.map((field) => field.toLowerCase()) ?? []);
+  const dataStillExists = options.dataSets.some((dataSet) => dataSet.id === selection.dataSetId);
+  let dataSetId = dataStillExists ? selection.dataSetId : '';
+  const missingDataKeys = (requires?.data ?? []).filter((key) => {
+    const credentialKind = credentialKindForDataKey(key);
+    return !(credentialKind && storedCredentials.has(credentialKind));
+  });
+  if (!dataSetId && missingDataKeys.length > 0) {
+    const compatible = options.dataSets.filter((dataSet) => {
+      const held = new Set(dataSet.values.map((value) => value.key));
+      return missingDataKeys.every((key) => held.has(key));
+    });
+    if (compatible.length === 1) dataSetId = compatible[0]!.id;
+  }
+
+  if (personaId === selection.personaId && dataSetId === selection.dataSetId) return selection;
+  return { ...selection, personaId, dataSetId };
+}
 
 /**
  * What the chosen Flow needs that this run, as set up, does not have. Said before Start rather than after, and every
@@ -165,7 +206,7 @@ export function flowRequirementBlockers(
   const stored = new Set(context.persona?.credentialFields.map((field) => field.toLowerCase()) ?? []);
   const missing = (requires.data ?? []).filter((key) => {
     if (held.has(key)) return false;
-    const kind = CREDENTIAL_KEY.exec(key)?.[1]?.toLowerCase();
+    const kind = credentialKindForDataKey(key);
     return !(kind && stored.has(kind));
   });
   if (missing.length > 0) {

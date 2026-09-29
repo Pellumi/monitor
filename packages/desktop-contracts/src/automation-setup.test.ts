@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AUTOMATION_IPC, AutomationOptionsSchema, StartGuidedRunInputSchema } from './index';
+import { AUTOMATION_IPC, AutomationOptionsSchema, RunDataSetInputSchema, StartGuidedRunInputSchema } from './index';
 import type { AutomationOptions } from './index';
-import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, terminalChoices } from './automation-setup';
+import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from './automation-setup';
 import type { BlockerInput } from './automation-setup';
 
 const options = (over: Partial<AutomationOptions> = {}): AutomationOptions => ({
@@ -117,6 +117,10 @@ test('a persona is never described to the renderer with a value in it', () => {
   assert.ok(!JSON.stringify(parsed).includes('hunter2'), 'unknown keys are stripped by the schema, so a stray value cannot ride along');
 });
 
+test('an empty data set cannot cross the IPC boundary', () => {
+  assert.throws(() => RunDataSetInputSchema.parse({ applicationId: uuid(1), name: 'Empty data', values: [] }), /Add at least one value/);
+});
+
 test('a Flow that declares nothing blocks nothing', () => {
   assert.deepEqual(flowRequirementBlockers(undefined, { environmentType: 'STAGING', persona: null, dataKeys: [] }), []);
   assert.deepEqual(flowRequirementBlockers({}, { environmentType: 'STAGING', persona: null, dataKeys: [] }), []);
@@ -142,4 +146,39 @@ test('the persona can stand in for the sign-in data, and a run with no persona i
   const none = flowRequirementBlockers({ actor: 'ADMIN' }, { environmentType: 'STAGING', persona: null, dataKeys: [] });
   assert.equal(none[0]!.code, 'FLOW_ACTOR');
   assert.match(none[0]!.message, /Choose a persona/);
+});
+
+test('a single compatible saved persona is selected and supplies its sign-in data', () => {
+  const selection = reconcileAutomatedResourceSelection(
+    options({
+      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x' }],
+    }),
+    { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
+    { actor: 'ADMIN', data: ['ADMIN_EMAIL', 'ADMIN_PASSWORD'] },
+  );
+  assert.equal(selection.personaId, 'admin-1');
+  assert.equal(selection.dataSetId, '', 'the persona already supplies both required values');
+});
+
+test('resource selection never guesses between multiple compatible saved choices', () => {
+  const persona = (id: string) => ({ id, applicationId: uuid(1), name: id, roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD' as const, credentialFields: ['email'], updatedAt: 'x' });
+  const selection = reconcileAutomatedResourceSelection(
+    options({ personas: [persona('admin-1'), persona('admin-2')] }),
+    { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
+    { actor: 'ADMIN' },
+  );
+  assert.equal(selection.personaId, '');
+});
+
+test('a single data set covering the remaining required keys is selected', () => {
+  const selection = reconcileAutomatedResourceSelection(
+    options({
+      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x' }],
+      dataSets: [{ id: 'data-1', applicationId: uuid(1), name: 'Course data', values: [{ key: 'COURSE_TITLE', secret: false, kind: 'LITERAL', display: 'QA course', hasStoredValue: true }], updatedAt: 'x' }],
+    }),
+    { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
+    { actor: 'ADMIN', data: ['ADMIN_EMAIL', 'ADMIN_PASSWORD', 'COURSE_TITLE'] },
+  );
+  assert.equal(selection.personaId, 'admin-1');
+  assert.equal(selection.dataSetId, 'data-1');
 });

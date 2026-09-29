@@ -141,7 +141,7 @@ import {
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
-import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, terminalChoices } from "./automation-shared";
+import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import { transitionDeclarationSummary } from "@tellann/flow-layout";
@@ -12522,6 +12522,10 @@ export function NewRunPage() {
     const first = automation.options?.profiles.find((profile) => profile.status === "APPROVED") ?? automation.options?.profiles[0];
     setAutomatedSelection((current) => (current.profileId && automation.options?.profiles.some((profile) => profile.id === current.profileId) ? current : { ...current, profileId: first?.id ?? "" }));
   }, [automation.options]);
+  useEffect(() => {
+    const requires = (flowDetail as { requires?: { actor?: string; environments?: string[]; data?: string[] } | null } | null)?.requires;
+    setAutomatedSelection((current) => reconcileAutomatedResourceSelection(automation.options, current, requires));
+  }, [automation.options, flowDetail]);
   useEffect(() => {
     if (!projectId) return;
     // `archived: false` is the default, and it is what keeps a task the operator

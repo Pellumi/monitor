@@ -523,7 +523,7 @@ export const RunDataSetInputSchema = z.object({
   id: z.string().min(1).max(200).optional(),
   applicationId: z.string().uuid(),
   name: z.string().trim().min(1).max(100),
-  values: z.array(RunDataValueSchema).max(50),
+  values: z.array(RunDataValueSchema).min(1, 'Add at least one value').max(50),
 });
 export type RunDataSetInput = z.infer<typeof RunDataSetInputSchema>;
 

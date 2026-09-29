@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assessAutomationSupport, describeMissingControls, unresolvedOnPath } from './support';
+import { assessAutomationSupport, describeMissingControls, isEntryStep, unresolvedOnPath } from './support';
 import { lmsContract } from './test-fixtures';
 
 const assess = (...names: string[]) => assessAutomationSupport(names);
@@ -98,4 +98,16 @@ test('a target with no route to it is a different problem and is not confused wi
   const contract = lmsContract();
   contract.transitions = [];
   assert.equal(unresolvedOnPath(contract, 'exam_created', 'STAGING'), null);
+});
+
+test('opening the application is the run\'s own setup, so it never needs a derived control', () => {
+  const contract = lmsContract();
+  const first = contract.transitions.find((transition) => transition.from === contract.initialStateKey)!;
+  first.action = 'OPEN_APP';
+  first.control = null;
+  assert.equal(isEntryStep(contract, first), true);
+  assert.deepEqual(unresolvedOnPath(contract, 'exam_created', 'STAGING')!.map((step) => step.id), []);
+  first.action = 'Click Start';
+  assert.equal(isEntryStep(contract, first), false);
+  assert.deepEqual(unresolvedOnPath(contract, 'exam_created', 'STAGING')!.map((step) => step.id), [first.id]);
 });

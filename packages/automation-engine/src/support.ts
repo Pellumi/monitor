@@ -137,6 +137,18 @@ export function describeMissingControls(missing: Array<{ action: string | null; 
  * with "no control found", so they are worth knowing about *before* it starts anything. Returns null when there is no
  * permitted route to the target at all (a different problem, reported as such by the planner).
  */
+const ENTRY_ACTION = /^(open|launch|visit|start|go[\s_-]?to|navigate|load)\b/i;
+
+/**
+ * The step out of the Flow's starting state that only opens the application ("OPEN_APP"). There is no control to click:
+ * the run opens the application itself before it begins, so this step never needs one derived from the code.
+ */
+export function isEntryStep(contract: ExecutableContract, transition: { from: string; action: string | null; control: unknown }): boolean {
+  if (transition.control !== null || !transition.action) return false;
+  if (transition.from !== contract.initialStateKey) return false;
+  return ENTRY_ACTION.test(transition.action.replace(/_/g, ' ').trim());
+}
+
 export function unresolvedOnPath(
   contract: ExecutableContract,
   targetStateKey: string,
@@ -145,5 +157,5 @@ export function unresolvedOnPath(
 ): Array<{ id: string; action: string | null; from: string }> | null {
   const plan = planFlowPath(contract, contract.initialStateKey, targetStateKey, environment, policy);
   if (!plan.ok) return null;
-  return plan.transitions.filter((transition) => transition.control === null).map((transition) => ({ id: transition.id, action: transition.action, from: transition.from }));
+  return plan.transitions.filter((transition) => transition.control === null && !isEntryStep(contract, transition)).map((transition) => ({ id: transition.id, action: transition.action, from: transition.from }));
 }

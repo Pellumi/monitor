@@ -2959,6 +2959,38 @@ button.statusbar-item:disabled {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
 }
+.password-input {
+  position: relative;
+  display: block;
+}
+.password-input input {
+  width: 100%;
+  padding-right: 36px;
+}
+.password-input button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  place-items: center;
+  transform: translateY(-50%);
+}
+.password-input button:hover {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+.password-input button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .automated-value {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(150px, 1fr) minmax(160px, 2fr) auto auto;
