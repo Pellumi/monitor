@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tellann/ai": "workspace:*",
+    "@tellann/capabilities": "workspace:*",
     "@tellann/code-graph": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",

@@ -106,7 +106,7 @@ export default function AdminAiUsagePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">System Admin</span>
@@ -114,7 +114,7 @@ export default function AdminAiUsagePage() {
           <h1 className="text-3xl font-bold text-white">AI Usage</h1>
           <p className="mt-1 text-sm text-neutral-400">Monitor AI provider costs, token consumption, and usage trends.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-neutral-400">Period:</label>
           <Select
             value={String(days)}
@@ -164,7 +164,7 @@ export default function AdminAiUsagePage() {
 
       {summary && (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Total AI Calls" value={summary.totalCalls.toLocaleString()} sub={`${summary.avgCallsPerDay.toFixed(1)}/day avg`} />
             <StatCard label="Input Tokens" value={(summary.totalInputTokens / 1000).toFixed(1) + 'K'} />
             <StatCard label="Output Tokens" value={(summary.totalOutputTokens / 1000).toFixed(1) + 'K'} />
@@ -176,7 +176,8 @@ export default function AdminAiUsagePage() {
               <Brain className="h-4 w-4 text-indigo-400" />
               <span className="text-sm font-semibold text-white">By Provider</span>
             </div>
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[38rem] text-sm">
               <thead>
                 <tr className="border-b border-neutral-800 text-neutral-500 text-xs uppercase tracking-wider">
                   <th className="text-left px-5 py-3">Provider</th>
@@ -197,7 +198,8 @@ export default function AdminAiUsagePage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </section>
 
           <section className="rounded-lg border border-neutral-800 bg-neutral-900 overflow-hidden">
@@ -206,7 +208,7 @@ export default function AdminAiUsagePage() {
               <span className="text-sm font-semibold text-white">Daily Breakdown</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[34rem] text-sm">
                 <thead>
                   <tr className="border-b border-neutral-800 text-neutral-500 text-xs uppercase tracking-wider">
                     <th className="text-left px-5 py-3">Date</th>

@@ -19,7 +19,7 @@ export function NotificationToaster() {
     <div
       aria-live="polite"
       aria-relevant="additions"
-      className="pointer-events-none fixed bottom-4 right-4 z-[1100] flex w-80 flex-col gap-2"
+      className="pointer-events-none fixed bottom-4 right-4 z-[1100] flex w-[calc(100vw-2rem)] max-w-80 flex-col gap-2"
     >
       {toasts.map((toast) => (
         <div

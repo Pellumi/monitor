@@ -632,6 +632,16 @@ function reactAdapter(context: FileContext, node: ts.Node): void {
 }
 
 export function resolveHandler(context: FileContext, expression: ts.Expression): string | undefined {
+  // A handler wrapped by a library call: `onSubmit={handleSubmit(onLogin)}` (react-hook-form),
+  // `onSubmit={form.handleSubmit(onLogin)}`, `onClick={withLoading(save)}`. `handleSubmit` and
+  // `withLoading` are not local declarations and resolve to nothing; what the control actually
+  // does lives in the argument they were handed, so follow that instead of stopping at the call.
+  if (ts.isCallExpression(expression)) {
+    const argument = handlerArgument(expression);
+    if (!argument) return undefined;
+    if (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument)) return context.entityForDeclaration(argument);
+    return resolveHandler(context, argument as ts.Expression);
+  }
   const identifier = ts.isIdentifier(expression) ? expression
     : ts.isPropertyAccessExpression(expression) ? expression.name : null;
   if (!identifier) return undefined;

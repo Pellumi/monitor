@@ -6,6 +6,22 @@ import {
 } from '@tellann/db';
 import { resolveAiProvider } from '@tellann/ai';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
+import { applicationCapabilityBasis, readRolloutFlags } from '@tellann/capabilities';
+async function stampCapabilityBasis(prisma: PrismaClient, applicationId: string) {
+  const entitlements = new EntitlementChecker(prisma);
+  try {
+    return await applicationCapabilityBasis({
+      prisma,
+      canAccess: (organizationId, feature) => entitlements.canAccess(organizationId, feature),
+      flags: readRolloutFlags(process.env),
+      applicationId,
+    });
+  } catch (error) {
+    console.warn('capability basis not stamped', { applicationId, error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
 import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tellann/email';
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
@@ -774,8 +790,10 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       },
     },
   };
+  // Stamp what the report was built from (doc §28, §29). Never blocks the report itself.
+  const capabilityBasis = await stampCapabilityBasis(prisma, run.applicationId);
   await prisma.$transaction([
-    prisma.qAReport.update({ where: { id: report.id }, data: { status: QAReportStatus.READY, payload, generatedAt: new Date(), rulesStatus: 'READY', aiStatus, generatorProvenance: { schemaVersion: '2.0', deterministic: true, aiStatus, resolutionStatus: resolutions.status } } }),
+    prisma.qAReport.update({ where: { id: report.id }, data: { status: QAReportStatus.READY, payload, generatedAt: new Date(), rulesStatus: 'READY', aiStatus, generatorProvenance: { schemaVersion: '2.0', deterministic: true, aiStatus, resolutionStatus: resolutions.status, capabilityBasis: capabilityBasis ? JSON.parse(JSON.stringify(capabilityBasis)) : null } } }),
     prisma.qAReportGenerationJob.update({ where: { reportId: report.id }, data: { status: QAReportJobStatus.COMPLETED, completedAt: new Date(), failureReasonSafe: null } }),
     prisma.qARun.update({ where: { id: run.id }, data: { reportId: report.id } }),
     prisma.auditLog.create({ data: { userId: run.createdByUserId, organizationId: run.organizationId, action: 'REPORT_GENERATED', metadata: { runId: run.id, reportId: report.id, schemaVersion: '2.0', aiStatus } } }),

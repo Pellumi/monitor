@@ -12,17 +12,6 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.domain-name.com";
 const docsUrl =
   process.env.NEXT_PUBLIC_DOCS_URL || "https://docs.domain-name.com";
 
-/**
- * Where the form posts. Defaults to the gateway's public contact route so a
- * deployment only has to set the gateway URL it already needs; the explicit
- * override stays for environments that front the form differently.
- */
-const contactEndpoint =
-  process.env.NEXT_PUBLIC_CONTACT_ENDPOINT ||
-  (process.env.NEXT_PUBLIC_API_GATEWAY_URL
-    ? `${process.env.NEXT_PUBLIC_API_GATEWAY_URL.replace(/\/$/, "")}/contact`
-    : undefined);
-
 export const metadata: Metadata = {
   title: "Contact Tellann | Sales, Support & General Enquiries",
   description:
@@ -93,11 +82,10 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       </section>
 
       <Suspense fallback={<div className="min-h-[600px]" />}>
-        <ContactWorkspace
-          initialReason={initialReason}
-          contactEndpoint={contactEndpoint}
-          appUrl={appUrl}
-          docsUrl={docsUrl}
+          <ContactWorkspace
+            initialReason={initialReason}
+            appUrl={appUrl}
+            docsUrl={docsUrl}
         />
       </Suspense>
 

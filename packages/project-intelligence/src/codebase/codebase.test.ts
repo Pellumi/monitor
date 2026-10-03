@@ -275,6 +275,45 @@ test('records a UI action and the handler it triggers', () => {
 });
 
 /**
+ * react-hook-form's `handleSubmit(onLogin)` is the standard way a credential form wires its
+ * submit: the JSX attribute names a call, not the handler itself. Stopping at that call used to
+ * leave the control with no traceable handler, which is indistinguishable from a page with no
+ * submit control at all once Flow mapping tries to match a checkpoint like "submit credentials"
+ * against it.
+ */
+test('traces a handler through a wrapping call like react-hook-form\'s handleSubmit', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-wrapped-handler-')));
+  write(root, 'package.json', JSON.stringify({
+    name: 'wrapped-handler', private: true, dependencies: { next: '^15.0.0', react: '^19.0.0' },
+  }));
+  write(root, 'app/login/page.tsx', [
+    "declare function useForm(): { handleSubmit: (fn: (data: unknown) => void) => (event: unknown) => void };",
+    'export default function LoginPage() {',
+    '  const { handleSubmit } = useForm();',
+    '  async function onLogin(data: unknown) {',
+    '    await fetch(\'/api/session\', { method: \'POST\' });',
+    '  }',
+    '  return (',
+    '    <form onSubmit={handleSubmit(onLogin)}>',
+    '      <button type="submit">Log in</button>',
+    '    </form>',
+    '  );',
+    '}',
+  ].join('\n'));
+
+  const analysis = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  const action = analysis.entities.find((entity) => entity.type === 'ui_action' && entity.metadata.event === 'onSubmit');
+  const handler = analysis.entities.find((entity) => entity.type === 'function' && entity.name === 'onLogin');
+  assert.ok(action, 'the wrapped onSubmit should still produce a ui_action');
+  assert.ok(handler, 'onLogin should be recorded as its own declaration');
+  assert.ok(
+    analysis.relationships.some((edge) => edge.type === 'ROUTES_TO' && edge.source === action!.id && edge.target === handler!.id),
+    'the control should route through handleSubmit(...) to the function it was actually given',
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+/**
  * A control's accessible name is rarely a direct text child. Every shape here
  * used to collapse to the bare tag name, which left the annotation matcher
  * with no text to work from at all.

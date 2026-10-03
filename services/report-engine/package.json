@@ -10,6 +10,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@tellann/capabilities": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/email": "workspace:*",
     "@tellann/entitlement-checker": "workspace:*",

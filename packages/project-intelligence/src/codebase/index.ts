@@ -21,6 +21,7 @@ export * from './core';
 export * from './inventory';
 export * from './incremental';
 export * from './architecture';
+export * from './application-profile';
 export * from './evidence-bundle';
 export * from './query';
 export { canonicalRoute, endpointId } from './frameworks';

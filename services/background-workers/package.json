@@ -14,6 +14,7 @@
     "@bull-board/api": "^6.0.0",
     "@bull-board/express": "^6.0.0",
     "@tellann/ai": "workspace:*",
+    "@tellann/capabilities": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
     "@tellann/document-intelligence": "workspace:*",

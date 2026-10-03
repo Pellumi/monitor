@@ -80,7 +80,7 @@ function EndUsersContent() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="user id or email"
-            className="w-64 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+            className="w-full sm:w-64 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
           />
         </label>
       </div>
@@ -102,8 +102,8 @@ function EndUsersContent() {
       )}
 
       {users.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
-          <table className="min-w-full divide-y divide-neutral-800">
+        <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-900">
+          <table className="w-full min-w-[38rem] divide-y divide-neutral-800">
             <caption className="sr-only">Identified users, with when they were first and last seen.</caption>
             <thead className="bg-neutral-950">
               <tr>

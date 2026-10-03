@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { ApplicationRequiredState } from '@/components/application-required-state';
 import { EmptyState } from '@/components/empty-state';
 import { useSelectedApplication } from '@/hooks/use-selected-application';
+import { CapabilityGate } from '@/components/capability-gate';
 
 const REPORT_ENGINE = '/api-gateway';
 
@@ -101,7 +102,7 @@ import { Suspense } from 'react';
 function EndpointsSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-2">
           <div className="h-8 w-64 bg-neutral-800 rounded-md" />
           <div className="h-4 w-96 bg-neutral-800/60 rounded-md" />
@@ -109,7 +110,7 @@ function EndpointsSkeleton() {
         <div className="h-4 w-36 bg-neutral-800/60 rounded-md" />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[1, 2, 3].map((i) => (
           <div key={i} className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 space-y-2">
             <div className="h-4 w-28 bg-neutral-800 rounded" />
@@ -238,7 +239,7 @@ function EndpointsContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Endpoint Intelligence</h1>
           <p className="mt-1 text-sm text-neutral-400">
@@ -258,7 +259,7 @@ function EndpointsContent() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[
           { label: 'Total Endpoints', value: data.totalEndpoints, color: 'text-white' },
           { label: 'Slow (p95 > 1s)', value: data.slowEndpoints,  color: 'text-amber-400' },
@@ -272,8 +273,8 @@ function EndpointsContent() {
       </div>
 
       {/* Endpoint table */}
-      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
-        <table className="min-w-full divide-y divide-neutral-800">
+      <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-900">
+        <table className="w-full min-w-[44rem] divide-y divide-neutral-800">
           <thead className="bg-neutral-950">
             <tr>
               {['Endpoint', 'Method', 'Requests', 'Avg', 'P95', 'Error Rate', 'Status'].map((h) => (
@@ -318,7 +319,7 @@ function EndpointsContent() {
                 isExpanded && (
                   <tr key={`${key}-detail`} className="bg-neutral-950">
                     <td colSpan={7} className="px-6 py-4">
-                      <div className="grid grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                         <div>
                           <p className="mb-2 text-xs text-neutral-500 uppercase tracking-wider">Latency Profile</p>
                           <div className="space-y-2">
@@ -357,10 +358,20 @@ function EndpointsContent() {
   );
 }
 
-export default function EndpointsPage() {
+function EndpointsView() {
   return (
     <Suspense fallback={<EndpointsSkeleton />}>
       <EndpointsContent />
     </Suspense>
+  );
+}
+
+/** Explains the page for applications where endpoint intelligence does not apply (doc §26). */
+export default function EndpointsPage() {
+  const { appId } = useSelectedApplication();
+  return (
+    <CapabilityGate appId={appId ?? null} route="/endpoints" name="Endpoint Analysis">
+      <EndpointsView />
+    </CapabilityGate>
   );
 }

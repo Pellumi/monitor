@@ -101,8 +101,8 @@ function UserHistoryContent() {
           identify() call are attributed within a minute of it, so check back shortly.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
-          <table className="min-w-full divide-y divide-neutral-800">
+        <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-900">
+          <table className="w-full min-w-[38rem] divide-y divide-neutral-800">
             <caption className="sr-only">This user&rsquo;s sessions, most recent first.</caption>
             <thead className="bg-neutral-950">
               <tr>

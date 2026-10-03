@@ -280,12 +280,10 @@ const emptyValues: Record<string, string> = {
 
 export function ContactWorkspace({
   initialReason,
-  contactEndpoint,
   appUrl,
   docsUrl,
 }: {
   initialReason: ContactReason;
-  contactEndpoint?: string;
   appUrl: string;
   docsUrl: string;
 }) {
@@ -295,7 +293,7 @@ export function ContactWorkspace({
   const [values, setValues] = useState<Record<string, string>>(emptyValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<
-    "idle" | "submitting" | "success" | "error" | "unavailable"
+    "idle" | "submitting" | "success" | "error"
   >("idle");
   // The server's own wording for a refusal it can explain better than we can
   // — a rate limit, say. Null falls back to the generic message below.
@@ -390,13 +388,9 @@ export function ContactWorkspace({
       setStatus("success");
       return;
     }
-    if (!contactEndpoint) {
-      setStatus("unavailable");
-      return;
-    }
     setStatus("submitting");
     try {
-      const response = await fetch(contactEndpoint, {
+      const response = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: reason.toUpperCase(), ...values }),
@@ -649,15 +643,6 @@ export function ContactWorkspace({
                   <span>
                     {serverError ??
                       "Your message has not been submitted. Please try again."}
-                  </span>
-                </>
-              )}
-              {status === "unavailable" && (
-                <>
-                  <b>Delivery is not connected yet.</b>
-                  <span>
-                    Your message has not been sent or discarded. Configure
-                    NEXT_PUBLIC_CONTACT_ENDPOINT to activate submissions.
                   </span>
                 </>
               )}

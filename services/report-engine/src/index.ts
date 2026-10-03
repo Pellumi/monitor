@@ -3,6 +3,7 @@ initTracing('report-engine');
 
 import express, { Request, Response } from 'express';
 import { PrismaClient, QAReportStatus } from '@tellann/db';
+import { createCapabilityResolver, readRolloutFlags, requireCapability } from '@tellann/capabilities';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import {
   Feature,
@@ -35,6 +36,14 @@ const storage = createStorageClient();
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+
+// Capability enforcement for the behaviour routes (doc §23). Off unless CAPABILITIES_ENFORCE is set.
+const capabilityFlags = readRolloutFlags(process.env);
+const resolveCapability = createCapabilityResolver({
+  prisma,
+  canAccess: (organizationId, feature) => entitlementChecker.canAccess(organizationId, feature),
+  flags: capabilityFlags,
+});
 const { verifyCaller, requireApplicationAccess, assertApplicationAccess } = createCallerGuards(prisma, {
   serviceName: 'ReportEngine',
   internalSecretEnv: 'REPORT_ENGINE_INTERNAL_SECRET',
@@ -344,7 +353,7 @@ app.get('/reports/:applicationId/latest', verifyCaller, requireApplicationAccess
 });
 
 // 2. Behavioral Graph Export
-app.get('/applications/:id/graph', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
+app.get('/applications/:id/graph', verifyCaller, requireApplicationAccess('id'), requireCapability(resolveCapability, 'BEHAVIORAL_GRAPH', capabilityFlags), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
 
   try {
@@ -380,7 +389,7 @@ app.get('/applications/:id/graph', verifyCaller, requireApplicationAccess('id'),
 });
 
 // 3. Workflows List API
-app.get('/applications/:id/workflows', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
+app.get('/applications/:id/workflows', verifyCaller, requireApplicationAccess('id'), requireCapability(resolveCapability, 'WORKFLOW_DISCOVERY', capabilityFlags), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
   try {
     const workflows = await prisma.workflow.findMany({ 
@@ -407,7 +416,7 @@ app.get('/applications/:id/workflows', verifyCaller, requireApplicationAccess('i
 // on -- had nowhere to start. Every filter below reads one row per session from
 // SessionFacet, so the plan is an index scan plus a bitmap AND rather than a set of
 // anti-joins against the largest tables in the schema.
-app.get('/applications/:id/sessions', verifyCaller, requireApplicationAccess('id'), async (req: Request, res: Response) => {
+app.get('/applications/:id/sessions', verifyCaller, requireApplicationAccess('id'), requireCapability(resolveCapability, 'SESSION_TIMELINE', capabilityFlags), async (req: Request, res: Response) => {
   const { id: applicationId } = req.params;
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string ?? '20', 10)));
 

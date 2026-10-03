@@ -990,6 +990,13 @@ model Application {
   endUsers               EndUser[]
   privacySetting         ApplicationPrivacySetting?
   replaySetting          ApplicationReplaySetting?
+
+  // Application-aware capabilities (docs/app/conditional-feature-visibility.md)
+  architectureProfile    ApplicationArchitectureProfile?
+  profileRevisions       ApplicationProfileRevision[]
+  evidenceSummary        ApplicationEvidenceSummary?
+  capabilitySnapshots    ApplicationCapabilitySnapshot[]
+  capabilityStateChanges ApplicationCapabilityStateChange[]
 }
 
 model ApplicationProfile {
@@ -3607,6 +3614,10 @@ enum AuditAction {
   // ─── Admin RBAC ───────────────────────────────────
   SYSTEM_ADMIN_GRANTED
   SYSTEM_ADMIN_REVOKED
+
+  // ─── Application architecture ─────────────────────
+  APPLICATION_ARCHITECTURE_CONFIRMED
+  APPLICATION_ARCHITECTURE_CORRECTED
 }
 
 model User {
@@ -4424,4 +4435,140 @@ model DocsPageFeedback {
   @@unique([feedbackId, pageId, docsVersion])
   @@index([pageId, docsVersion, createdAt])
   @@index([ipHash, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Application architecture and capability state
+// ─────────────────────────────────────────────────────────────
+
+enum ArchitectureType {
+  FRONTEND
+  BACKEND
+  MIXED
+  UNKNOWN
+}
+
+enum ArchitectureConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ApplicationProfileState {
+  DETECTED
+  CONFIRMED
+  DISPUTED
+  STALE
+  UNKNOWN_PENDING
+}
+
+enum ProfileRevisionReason {
+  DETECTED
+  CONFIRMED
+  CORRECTED
+  REANALYZED
+  TRAIT_CHANGED
+}
+
+/// Current detected and confirmed architecture for one application. Detected and
+/// confirmed values are stored separately; a confirmation never overwrites detection.
+model ApplicationArchitectureProfile {
+  id                   String                  @id @default(uuid())
+  applicationId        String                  @unique
+  application          Application             @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  organizationId       String
+  detectedType         ArchitectureType
+  confirmedType        ArchitectureType?
+  effectiveType        ArchitectureType
+  confidence           ArchitectureConfidence
+  state                ApplicationProfileState
+  traits               Json
+  frameworks           Json
+  workspaceRoot        String                  @default(".")
+  workspaceCandidates  Json?
+  analysisSnapshotId   String?
+  repositorySnapshotId String?
+  analyzedCommit       String?
+  detectorVersion      String
+  reviewRequired       Boolean                 @default(false)
+  detectedAt           DateTime
+  confirmedAt          DateTime?
+  confirmedByUserId    String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@index([organizationId])
+}
+
+/// Append-only history of material profile changes. Never updated after insert.
+model ApplicationProfileRevision {
+  id                 String                @id @default(uuid())
+  applicationId      String
+  application        Application           @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  revisionNumber     Int
+  detectedType       ArchitectureType
+  confirmedType      ArchitectureType?
+  traits             Json
+  frameworks         Json
+  analysisSnapshotId String?
+  detectorVersion    String
+  reason             ProfileRevisionReason
+  createdAt          DateTime              @default(now())
+
+  @@unique([applicationId, revisionNumber])
+}
+
+/// Pre-aggregated evidence used by the resolver. Never read from raw event stores at request time.
+model ApplicationEvidenceSummary {
+  applicationId         String      @id
+  application           Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  frontendEventCount    BigInt      @default(0)
+  backendEventCount     BigInt      @default(0)
+  browserEventCount     BigInt      @default(0)
+  frontendLastSeenAt    DateTime?
+  backendLastSeenAt     DateTime?
+  sessionCount          Int         @default(0)
+  runCount              Int         @default(0)
+  inFlowEventCount      BigInt      @default(0)
+  endpointCount         Int         @default(0)
+  observedStateCount    Int         @default(0)
+  observedWorkflowCount Int         @default(0)
+  declaredFlowCount     Int         @default(0)
+  behaviorGraphVersion  String?
+  reviewRequired        Boolean     @default(false)
+  /// ClickHouse ingest time of the newest event already counted. Keeps repeated syncs incremental.
+  evidenceSyncedAt      DateTime?
+  updatedAt             DateTime    @updatedAt
+}
+
+/// Latest resolved state per capability. Recomputed on invalidation, never on every read.
+model ApplicationCapabilitySnapshot {
+  id                String      @id @default(uuid())
+  applicationId     String
+  application       Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  capabilityKey     String
+  state             String
+  reasonCode        String?
+  mode              String?
+  resolverVersion   Int
+  profileRevisionId String?
+  evidenceRevision  Int         @default(0)
+  resolvedAt        DateTime    @default(now())
+
+  @@unique([applicationId, capabilityKey])
+}
+
+/// Append-only log of capability state transitions, for audit and "why did this disappear".
+model ApplicationCapabilityStateChange {
+  id              String      @id @default(uuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  capabilityKey   String
+  previousState   String?
+  newState        String
+  reasonCode      String?
+  resolverVersion Int
+  createdAt       DateTime    @default(now())
+
+  @@index([applicationId, capabilityKey, createdAt])
 }

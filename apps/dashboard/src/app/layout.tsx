@@ -26,7 +26,7 @@ export default function RootLayout({
   return (
     // `suppressHydrationWarning`: the inline script below rewrites the class,
     // `data-theme` and `color-scheme` on <html> before React hydrates.
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" className="dark h-full overflow-hidden" suppressHydrationWarning>
       <head>
         {/*
           Applies the saved theme, density, motion and contrast synchronously
@@ -38,7 +38,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT + DISPLAY_INIT_SCRIPT }}
         />
       </head>
-      <body className={`${inter.className} flex h-screen bg-neutral-950 text-neutral-50`}>
+      <body className={`${inter.className} flex h-screen min-h-0 overflow-hidden bg-neutral-950 text-neutral-50`}>
         <Providers>
           <AppLayout>{children}</AppLayout>
         </Providers>

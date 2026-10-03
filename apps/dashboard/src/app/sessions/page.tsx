@@ -287,8 +287,8 @@ function SessionsContent() {
         </p>
       )}
 
-      <div className={`overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 ${isFetching ? 'opacity-60' : ''}`}>
-        <table className="min-w-full divide-y divide-neutral-800">
+      <div className={`overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-900 ${isFetching ? 'opacity-60' : ''}`}>
+        <table className="w-full min-w-[46rem] divide-y divide-neutral-800">
           <caption className="sr-only">
             Recorded sessions, most recent first, with the user, device, duration and error count of each.
           </caption>

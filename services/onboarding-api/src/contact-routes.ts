@@ -14,9 +14,23 @@ import { buildIdempotencyKey, type NotificationEmailService } from '@tellann/ema
 /** Where submission notifications are sent when nothing is configured. */
 const DEFAULT_NOTIFICATION_EMAIL = 'tellann.technologies@gmail.com';
 
-/** Where submission notifications are sent. */
-function notificationRecipient(): string | null {
-  const configured = process.env.CONTACT_NOTIFICATION_EMAIL?.trim() || DEFAULT_NOTIFICATION_EMAIL;
+const RECIPIENT_ENV_BY_TYPE: Partial<Record<ContactSubmissionType, string>> = {
+  SALES: 'CONTACT_SALES_EMAIL',
+  ENTERPRISE: 'CONTACT_SALES_EMAIL',
+  SUPPORT: 'CONTACT_SUPPORT_EMAIL',
+  PARTNERSHIP: 'CONTACT_PARTNERSHIPS_EMAIL',
+  PRESS: 'CONTACT_PRESS_EMAIL',
+  SECURITY: 'CONTACT_SECURITY_EMAIL',
+  PRIVACY: 'CONTACT_PRIVACY_EMAIL',
+  GENERAL: 'CONTACT_GENERAL_EMAIL',
+};
+
+/** Routes sensitive or specialist enquiries before falling back to the team inbox. */
+function notificationRecipient(type: ContactSubmissionType): string | null {
+  const routeSpecific = RECIPIENT_ENV_BY_TYPE[type]
+    ? process.env[RECIPIENT_ENV_BY_TYPE[type]!]?.trim()
+    : undefined;
+  const configured = routeSpecific || process.env.CONTACT_NOTIFICATION_EMAIL?.trim() || DEFAULT_NOTIFICATION_EMAIL;
   return configured.includes('@') ? configured : null;
 }
 
@@ -173,7 +187,7 @@ export function createContactRouter(deps: {
         },
       });
 
-      const recipient = notificationRecipient();
+      const recipient = notificationRecipient(type);
       if (recipient) {
         // Delivery is not part of the sender's success: the message is already
         // stored, and failing their submission because our own mail provider

@@ -1859,3 +1859,5 @@ export type RepositoryMismatch = {
   /** The repository this application is bound to, when the API knows it. */
   expectedCloneUrl: string | null;
 };
+export * from './application-architecture';
+export * from './sdk-support';

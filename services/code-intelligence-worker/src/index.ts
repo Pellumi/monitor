@@ -8,8 +8,9 @@ import zlib from 'node:zlib';
 import { PrismaClient } from '@tellann/db';
 import { createStorageClient, decryptArchive } from '@tellann/storage';
 import {
-  analyzeCodebase, buildFeatureEvidenceBundle, testNamesForFeature,
+  analyzeCodebase, buildFeatureEvidenceBundle, buildInventory, detectApplicationProfile, testNamesForFeature,
 } from '@tellann/project-intelligence';
+import { createArchitectureStore, recordArchitectureProjection } from '@tellann/capabilities';
 import type { CodebaseAnalysis } from '@tellann/desktop-contracts';
 import { createGraphStore } from '@tellann/code-graph';
 import { explainFeatures } from '@tellann/ai';
@@ -245,6 +246,37 @@ async function processOne(): Promise<boolean> {
       if (analyzerRuns.length) await anyTx.analyzerRun.createMany({ data: analyzerRuns });
       if (analysisWarnings.length) await anyTx.analysisWarning.createMany({ data: analysisWarnings });
     }, { maxWait: PERSIST_MAX_WAIT_MS, timeout: PERSIST_TIMEOUT_MS });
+
+    // Architecture detection runs on the same extracted workspace. It is advisory until the user
+    // confirms it, so a failure here is logged and must never fail the analysis itself.
+    try {
+      // The workspace the user chose for a monorepo, or the repository root when none was chosen.
+      const chosen = await prisma.applicationArchitectureProfile.findUnique({
+        where: { applicationId: queued.applicationId },
+        select: { workspaceRoot: true },
+      });
+      const inventory = buildInventory(root);
+      const routeTemplates = analysis.entities
+        .filter((entity) => entity.type === 'endpoint'
+          && entity.metadata.calledFromClient !== true
+          && typeof entity.metadata.route === 'string')
+        .map((entity) => entity.metadata.route as string);
+      const projection = detectApplicationProfile({
+        workspaceRoot: chosen?.workspaceRoot ?? '.',
+        packages: inventory.packages,
+        files: inventory.analyzable,
+        routeTemplates,
+        analysisSnapshotId: queued.codebaseSnapshotId,
+      });
+      await recordArchitectureProjection(createArchitectureStore(prisma), {
+        applicationId: queued.applicationId,
+        organizationId: queued.organizationId,
+        projection,
+        now: new Date(),
+      });
+    } catch (error) {
+      console.warn('architecture detection skipped', { jobId: queued.id, error: error instanceof Error ? error.message : String(error) });
+    }
 
     let graphStatus: CodebaseAnalysis['status'] = analysis.status;
     if (graph) {

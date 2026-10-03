@@ -5,6 +5,7 @@ import {
   useEntitlement as useOrganizationEntitlement,
   type ResolvedEntitlement,
 } from "@/hooks/use-entitlement";
+import { HIDDEN_CAPABILITY_STATES, useCapabilities } from "@/hooks/use-capabilities";
 import { usePreferences } from '@/components/preferences-provider';
 import {
   getLastApplication,
@@ -77,6 +78,7 @@ import {
   KeyRound,
   Laptop,
   FolderKanban,
+  Menu,
 } from "lucide-react";
 import { useSession, Membership, Organization } from "./providers";
 import { useTheme } from "@/components/theme-provider";
@@ -833,6 +835,16 @@ function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
   const appId = routeParams?.appId || searchParams.get("appId");
   const envId = searchParams.get("envId");
   const { entitlement, isEntitlementLoading } = useEntitlement();
+  // Once the capability rollout is on, the resolver decides which routes exist and which are locked.
+  // Until then the legacy plan-only gating below applies unchanged.
+  const { capabilities, resolvedUi } = useCapabilities(appId);
+  const routeStates = resolvedUi ? capabilities?.routes ?? null : null;
+  const visibleNavigation = routeStates
+    ? navigation.filter((item) => {
+        const route = routeStates[item.href];
+        return !route || !HIDDEN_CAPABILITY_STATES.has(route.state);
+      })
+    : navigation;
 
   const isSettingsMode = pathname.startsWith("/settings");
   const isAdminMode = pathname.startsWith("/admin");
@@ -872,7 +884,9 @@ function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
   }
 
   const renderNavItem = (item: NavItem, hasAppId = true) => {
-    const enabled = isFeatureEnabled(entitlement, item.requiredFeature, isEntitlementLoading);
+    const enabled = routeStates
+      ? !routeStates[item.href]?.locked
+      : isFeatureEnabled(entitlement, item.requiredFeature, isEntitlementLoading);
     const isActive =
       pathname === item.href ||
       (item.href !== "/" && pathname.startsWith(item.href + "/"));
@@ -983,7 +997,7 @@ function NavigationList({ collapsed = false }: { collapsed?: boolean }) {
 
       {/* ── Main App Navigation Mode ─── */}
       {isMainAppMode && (
-        <>{navigation.map((item) => renderNavItem(item, true))}</>
+        <>{visibleNavigation.map((item) => renderNavItem(item, true))}</>
       )}
 
       {/* ── Settings Navigation Mode ─── */}
@@ -1377,6 +1391,71 @@ export function Sidebar() {
 
         <UserProfile collapsed={collapsed} />
       </div>
+    </EntitlementContext.Provider>
+  );
+}
+
+/**
+ * The desktop sidebar deliberately stays mounted at every size, but is hidden
+ * below `md`.  This drawer gives those same application, environment and
+ * feature-gated links a usable home on phones instead of leaving only the
+ * overview and setup link in the compact header.
+ */
+export function MobileSidebar() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const { isLoading: isEntitlementLoading } = useOrganizationEntitlement();
+  const { resolvedTheme } = useTheme();
+  const iconSrc = resolvedTheme === "light" ? "/logo_icon_black.svg" : "/logo_icon.svg";
+
+  return (
+    <EntitlementContext.Provider value={{ entitlement, isEntitlementLoading }}>
+      <button
+        type="button"
+        aria-label="Open navigation"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen(true)}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-[#262626] bg-black text-neutral-300 transition-colors hover:border-neutral-600 hover:text-white"
+      >
+        <Menu className="h-4 w-4" />
+      </button>
+
+      {isOpen ? (
+        <div className="fixed inset-0 z-[120] md:hidden">
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setIsOpen(false)}
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+          />
+          <aside
+            aria-label="Primary navigation"
+            className="relative flex h-full w-[min(20rem,calc(100vw-2.5rem))] flex-col border-r border-[#262626] bg-[#0a0a0a] shadow-2xl"
+          >
+            <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#262626] px-4">
+              <Link href="/" onClick={() => setIsOpen(false)} className="flex items-center gap-2 text-[18px] font-extrabold tracking-tighter text-white uppercase">
+                <img src={iconSrc} alt="" className="h-6 w-6" />
+                Tellann
+              </Link>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="rounded p-2 text-neutral-400 transition-colors hover:bg-[#131313] hover:text-white"
+                aria-label="Close navigation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <Suspense fallback={<div className="h-14 px-4 pt-4 text-[10px] font-mono text-[#444748] animate-pulse">Loading…</div>}>
+              <div className="pt-3"><AppSelector onEntitlementLoaded={setEntitlement} /></div>
+            </Suspense>
+            <Suspense fallback={<div className="px-4 text-[10px] font-mono text-[#444748] animate-pulse">Loading menu…</div>}>
+              <NavigationList />
+            </Suspense>
+            <UserProfile />
+          </aside>
+        </div>
+      ) : null}
     </EntitlementContext.Provider>
   );
 }

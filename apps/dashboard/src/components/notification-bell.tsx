@@ -113,7 +113,7 @@ export function NotificationBell({
       {isOpen ? (
         <div
           className={cn(
-            'absolute z-[1000] mt-2 flex max-h-[32rem] w-96 flex-col overflow-hidden rounded border border-[#262626] bg-[#131313] shadow-lg',
+            'absolute z-[1000] mt-2 flex max-h-[min(32rem,calc(100vh-5rem))] w-[calc(100vw-2rem)] max-w-96 flex-col overflow-hidden rounded border border-[#262626] bg-[#131313] shadow-lg',
             align === 'left' ? 'left-0' : 'right-0',
           )}
         >

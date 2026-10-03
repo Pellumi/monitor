@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Sidebar } from '@/components/sidebar';
+import { MobileSidebar, Sidebar } from '@/components/sidebar';
 import { SidebarModeProvider } from '@/components/sidebar-mode';
 import React, { Suspense } from 'react';
 import Link from 'next/link';
@@ -24,8 +24,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarModeProvider>
       <div className="flex h-full w-full min-w-0 flex-col md:flex-row">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#262626] bg-[#0a0a0a] px-4 md:hidden">
-          <Link href="/" className="text-lg font-extrabold tracking-tight text-white">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[#262626] bg-[#0a0a0a] px-3 sm:px-4 md:hidden">
+          <MobileSidebar />
+          <Link href="/" className="min-w-0 flex-1 truncate text-lg font-extrabold tracking-tight text-white">
             Tellann
           </Link>
           <div className="flex items-center gap-2">
@@ -39,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
         <Sidebar />
-        <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6 md:p-8">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4 sm:p-6 md:p-8">
           {/* useSearchParams inside would otherwise pull the whole layout out
               of prerendering. */}
           <Suspense fallback={null}>

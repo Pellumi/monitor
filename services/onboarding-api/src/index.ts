@@ -26,6 +26,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createDesktopRouter, serializeBranchPolicy } from './desktop-routes';
 import { createCodebaseRouter } from './codebase-routes';
+import { createArchitectureRouter } from './architecture-routes';
 import { createDocumentRouter } from './document-routes';
 import { createInstrumentationRouter } from './instrumentation-routes';
 import { createSdkSetupRouter } from './sdk-setup-routes';
@@ -325,6 +326,7 @@ app.use(createCodebaseRouter({
   entitlementChecker,
   storage: storageClient,
 }));
+app.use(createArchitectureRouter({ prisma, verifyJwt, verifyAppOwnership, entitlementChecker }));
 app.use(createDocumentRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, storage: storageClient }));
 app.use(createInstrumentationRouter({ prisma, entitlementChecker, verifyJwt, verifyAppOwnership, jwtSecret: JWT_SECRET }));
 app.use(createSdkSetupRouter({ prisma, verifyJwt, verifyAppOwnership }));

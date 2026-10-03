@@ -160,6 +160,18 @@ test('falls back to the built-in address when none is configured', async () => {
   assert.equal(sent[0].to, 'tellann.technologies@gmail.com');
 });
 
+test('routes security reports to the security mailbox when configured', async () => {
+  process.env.CONTACT_NOTIFICATION_EMAIL = 'ops@tellann.test';
+  process.env.CONTACT_SECURITY_EMAIL = 'security@tellann.test';
+  const { app, sent } = harness();
+  const result = await post(app, { ...VALID, type: 'SECURITY' });
+
+  assert.equal(result.status, 201);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent[0].to, 'security@tellann.test');
+  delete process.env.CONTACT_SECURITY_EMAIL;
+});
+
 test('storing the message does not depend on the notification going out', async () => {
   process.env.CONTACT_NOTIFICATION_EMAIL = 'ops@tellann.test';
   const { app, created } = harness();
