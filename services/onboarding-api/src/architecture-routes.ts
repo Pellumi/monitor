@@ -6,6 +6,7 @@ import { AuditAction } from '@tellann/db';
 import { writeAuditLog, extractAuditContext } from '@tellann/authz';
 import {
   applyEvidence,
+  capabilityVisibleToAllMembers,
   CAPABILITY_REGISTRY,
   createArchitectureStore,
   confirmArchitecture,
@@ -107,8 +108,8 @@ export function createArchitectureRouter(input: {
     return recomputeCapabilities(store, {
       applicationId,
       planAllows: (feature) => allowed.has(feature),
-      // Membership is enforced by verifyAppOwnership; per-capability RBAC is not yet modelled.
-      canView: (_key: CapabilityKey) => true,
+      // Read access policy lives in access.ts; membership is enforced by verifyAppOwnership.
+      canView: () => capabilityVisibleToAllMembers(),
       flags: readRolloutFlags(process.env),
       resolverVersion: RESOLVER_VERSION,
       now: new Date(),
@@ -148,6 +149,7 @@ export function createArchitectureRouter(input: {
       traits: profile.traits,
       frameworks: profile.frameworks,
       workspaceRoot: profile.workspaceRoot,
+      workspaceCandidates: profile.workspaceCandidates,
       reviewRequired: profile.reviewRequired,
       analysisSnapshotId: profile.analysisSnapshotId,
       detectorVersion: profile.detectorVersion,

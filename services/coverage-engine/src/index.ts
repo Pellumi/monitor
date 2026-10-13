@@ -7,9 +7,17 @@ import { getRuleSet, reconstructRuleSet, ApplicationRuleSet } from '@tellann/rul
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { Feature } from '@tellann/shared';
+import { createCapabilityResolver, enforcementFor, readRolloutFlags } from '@tellann/capabilities';
+
 
 const app = express();
 const prisma = new PrismaClient();
+const capabilityFlags = readRolloutFlags(process.env);
+const resolveCapability = createCapabilityResolver({
+  prisma,
+  canAccess: (organizationId, feature) => new EntitlementChecker(prisma).canAccess(organizationId, feature),
+  flags: capabilityFlags,
+});
 const emailService = new NotificationEmailService(prisma);
 const entitlementChecker = new EntitlementChecker(prisma);
 app.use(express.json());
@@ -85,6 +93,18 @@ app.post('/coverage/generate', async (req: Request, res: Response) => {
     });
     if (!application) {
       return res.status(404).json({ error: 'Application not found' });
+    }
+
+    // Capability enforcement (doc §23): coverage is not scheduled where it does not apply.
+    if (capabilityFlags.enforce) {
+      const resolution = await resolveCapability(applicationId, 'COVERAGE');
+      const decision = enforcementFor(resolution);
+      if (decision.action === 'REJECT') {
+        return res.status(decision.status).json({ error: 'CAPABILITY_UNAVAILABLE', capability: 'COVERAGE', state: resolution.state, reason: decision.reason ?? null });
+      }
+      if (decision.action === 'TYPED_EMPTY') {
+        return res.status(409).json({ error: 'CAPABILITY_NOT_READY', capability: 'COVERAGE', state: resolution.state, reason: decision.reason });
+      }
     }
 
     // ── Entitlement gate: COVERAGE_ANALYSIS ──────────────────────

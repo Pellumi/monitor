@@ -19,6 +19,8 @@ interface Architecture {
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
   traits?: Record<string, boolean>;
   frameworks?: Array<{ id: string; version: string | null; sdkSupport: string }>;
+  workspaceRoot?: string;
+  workspaceCandidates?: string[];
   reviewRequired?: boolean;
   analysisSnapshotId?: string | null;
   detectedAt?: string | null;
@@ -100,6 +102,23 @@ export default function ArchitectureSettingsPage() {
     onError: (failure: Error) => setError(failure.message),
   });
 
+  const workspace = useMutation({
+    mutationFn: async (workspaceRoot: string) => {
+      const response = await authenticatedFetch(`/api-gateway/applications/${appId}/architecture/workspace`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceRoot }),
+      });
+      if (!response.ok) throw new Error("Could not choose that workspace");
+      return response.json();
+    },
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["application-architecture", appId] });
+    },
+    onError: (failure: Error) => setError(failure.message),
+  });
+
   if (!appId) {
     return <p className="p-8 text-sm text-[#737373]">Select an application to review its architecture.</p>;
   }
@@ -121,6 +140,25 @@ export default function ArchitectureSettingsPage() {
           Tellann detects how this application is built and uses that to decide which features apply.
         </p>
       </header>
+
+      {data.workspaceCandidates && data.workspaceCandidates.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium text-[#e5e5e5]">Workspace</h2>
+          <p className="text-xs text-[#737373]">This repository contains several applications. Choose the one this application represents, then re-analyse.</p>
+          <select
+            aria-label="Workspace"
+            value={data.workspaceRoot ?? "."}
+            disabled={workspace.isPending}
+            onChange={(event) => workspace.mutate(event.target.value)}
+            className="rounded-md border border-[#333] bg-[#0a0a0a] px-3 py-1.5 text-sm text-[#e5e5e5]"
+          >
+            <option value=".">Entire repository</option>
+            {data.workspaceCandidates.map((root) => (
+              <option key={root} value={root}>{root}</option>
+            ))}
+          </select>
+        </section>
+      ) : null}
 
       {disputed ? (
         <div className="rounded-md border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-200/90">

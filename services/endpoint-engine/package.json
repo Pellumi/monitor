@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@clickhouse/client": "^1.5.0",
+    "@tellann/capabilities": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/email": "workspace:*",
     "@tellann/entitlement-checker": "workspace:*",

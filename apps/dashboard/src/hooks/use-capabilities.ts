@@ -29,6 +29,8 @@ export interface CapabilitiesResponse {
   /** When false the dashboard keeps its legacy plan-only navigation (rollout kill switch). */
   uiEnabled: boolean;
   enforceEnabled: boolean;
+  /** Every capability by key, including ones with no route. Cards gate on these. */
+  capabilities: Record<string, { state: CapabilityStateName; reason: string | null; mode?: string }>;
   routes: Record<string, RoutedCapability>;
   reviewRequired: boolean;
 }

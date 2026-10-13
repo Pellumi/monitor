@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@tellann/db';
 import {
   CAPABILITY_REGISTRY,
+  capabilityVisibleToAllMembers,
   createArchitectureStore,
   readRolloutFlags,
   RESOLVER_VERSION,
@@ -74,19 +75,21 @@ export function clickHouseEvidenceSource(prisma: PrismaClient): EvidenceSource {
         frontendEventCount: Number(row?.frontend ?? 0),
         backendEventCount: Number(row?.backend ?? 0),
         browserEventCount: Number(row?.browser ?? 0),
-        // In-flow attribution is not yet carried in the event envelope; reported as zero, not inferred.
-        inFlowEventCount: 0,
         endpointCount: Number(row?.endpoints ?? 0),
         latestIngestedAt: total > 0 && row?.latest ? new Date(`${row.latest.replace(' ', 'T')}Z`) : null,
       };
     },
 
     async absoluteCounts(applicationId: string): Promise<AbsoluteCounts> {
-      const [sessionCount, runCount, observedStateCount, observedWorkflowCount, graph] = await Promise.all([
+      const [sessionCount, runCount, observedStateCount, observedWorkflowCount, declaredFlowCount, inFlowEventCount, graph] = await Promise.all([
         prisma.session.count({ where: { applicationId } }),
         prisma.qARun.count({ where: { applicationId } }),
         prisma.state.count({ where: { applicationId } }),
         prisma.workflow.count({ where: { applicationId } }),
+        // Declared flows are graphs the user authored, as opposed to ones inferred from telemetry.
+        prisma.behaviorGraph.count({ where: { applicationId, sourceType: 'USER_DECLARATION' } }),
+        // Accepted flow-progress events from QA runs: the same predicate the QA report uses.
+        prisma.qARunProgressEvent.count({ where: { accepted: true, run: { applicationId } } }),
         prisma.behaviorGraph.findFirst({
           where: { applicationId, isActive: true },
           orderBy: { version: 'desc' },
@@ -98,8 +101,8 @@ export function clickHouseEvidenceSource(prisma: PrismaClient): EvidenceSource {
         runCount,
         observedStateCount,
         observedWorkflowCount,
-        // Declared flows are stored by the FDRS service and are not read here yet.
-        declaredFlowCount: 0,
+        declaredFlowCount,
+        inFlowEventCount,
         behaviorGraphVersion: graph ? `${graph.id}:${graph.version}` : null,
       };
     },
@@ -132,7 +135,7 @@ export async function runArchitectureEvidenceSync(prisma: PrismaClient): Promise
       await syncEvidence(store, source, {
         applicationId: application.id,
         planAllows: (feature) => allowed.has(feature),
-        canView: () => true,
+        canView: () => capabilityVisibleToAllMembers(),
         flags,
         resolverVersion: RESOLVER_VERSION,
         now: new Date(),

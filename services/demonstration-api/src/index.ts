@@ -5,12 +5,20 @@ import express, { Request, Response } from 'express';
 import { MemberRole, PrismaClient } from '@tellann/db';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { Feature, Services } from '@tellann/shared';
+import { createCapabilityResolver, enforcementFor, readRolloutFlags } from '@tellann/capabilities';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import crypto from 'crypto';
 
 const app = express();
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+
+const capabilityFlags = readRolloutFlags(process.env);
+const resolveCapability = createCapabilityResolver({
+  prisma,
+  canAccess: (organizationId, feature) => entitlementChecker.canAccess(organizationId, feature),
+  flags: capabilityFlags,
+});
 const emailService = new NotificationEmailService(prisma);
 const REPORT_ENGINE_URL = (process.env.REPORT_ENGINE_URL || `http://localhost:${Services.REPORT_ENGINE}`).replace(/\/$/, '');
 
@@ -139,6 +147,17 @@ app.post('/demonstrations/start', async (req: Request, res: Response) => {
       create: { id: applicationId, name: 'Demo Application' }
     });
     const resolvedOrgId = orgId || application.organizationId;
+    // Capability enforcement (doc §23): a demonstration is not run where guided browser analysis does not apply.
+    if (capabilityFlags.enforce && application.organizationId) {
+      const resolution = await resolveCapability(applicationId, 'GUIDED_BROWSER_DEMONSTRATION');
+      const decision = enforcementFor(resolution);
+      if (decision.action === 'REJECT') {
+        return res.status(decision.status).json({ error: 'CAPABILITY_UNAVAILABLE', capability: 'GUIDED_BROWSER_DEMONSTRATION', state: resolution.state, reason: decision.reason ?? null });
+      }
+      if (decision.action === 'TYPED_EMPTY') {
+        return res.status(409).json({ error: 'CAPABILITY_NOT_READY', capability: 'GUIDED_BROWSER_DEMONSTRATION', state: resolution.state, reason: decision.reason });
+      }
+    }
     if (resolvedOrgId) {
       const allowed = await entitlementChecker.canAccess(resolvedOrgId, Feature.DEMONSTRATION_MODE);
       if (!allowed) {

@@ -10,12 +10,13 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
   },
   "dependencies": {
+    "@tellann/capabilities": "workspace:*",
     "@tellann/db": "workspace:*",
     "@tellann/email": "workspace:*",
+    "@tellann/entitlement-checker": "workspace:*",
+    "@tellann/rules": "workspace:*",
     "@tellann/shared": "workspace:*",
     "@tellann/telemetry": "workspace:*",
-    "@tellann/rules": "workspace:*",
-    "@tellann/entitlement-checker": "workspace:*",
     "express": "^4.18.2"
   },
   "devDependencies": {

@@ -20,3 +20,4 @@ export { createArchitectureStore } from './prisma-store';
 export * from './evidence-sync';
 export * from './gate';
 export * from './basis';
+export * from './access';

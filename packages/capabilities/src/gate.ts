@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@tellann/db';
 import type { Feature } from '@tellann/shared';
 import { CAPABILITY_REGISTRY } from './registry';
+import { capabilityVisibleToAllMembers } from './access';
 import { enforcementFor } from './enforce';
 import type { RolloutFlags } from './flags';
 import { createArchitectureStore } from './prisma-store';
@@ -47,7 +48,7 @@ export function createCapabilityResolver(input: {
       applicationId,
       planAllows: (feature) => allowed.has(feature),
       // Owner membership is enforced by the route guard; per-capability RBAC is not modelled yet.
-      canView: () => true,
+      canView: () => capabilityVisibleToAllMembers(),
       flags: input.flags,
       resolverVersion: RESOLVER_VERSION,
       now: input.now?.() ?? new Date(),
@@ -132,7 +133,7 @@ export async function applicationCapabilityBasis(input: {
   const result = await recomputeCapabilities(store, {
     applicationId: input.applicationId,
     planAllows: (feature) => allowed.has(feature),
-    canView: () => true,
+    canView: () => capabilityVisibleToAllMembers(),
     flags: input.flags,
     resolverVersion: RESOLVER_VERSION,
     now,

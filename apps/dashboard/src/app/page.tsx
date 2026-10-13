@@ -20,6 +20,7 @@ import { DashboardOverviewResponse } from "@/components/dashboard/core/types";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { HealthOverlays } from "@/components/dashboard/status/health-overlays";
 import { LifecycleHero } from "@/components/dashboard/onboarding/lifecycle-hero";
+import { CapabilityVisible } from "@/components/capability-gate";
 import { SetupProgressCard } from "@/components/dashboard/onboarding/setup-progress";
 import { FirstAnalysisReady } from "@/components/dashboard/onboarding/first-analysis-ready";
 import { QualitySummary } from "@/components/dashboard/overview/quality-summary";
@@ -109,26 +110,26 @@ function MainDashboardLayout() {
       case "DEVELOPER":
         return (
           <div className="space-y-6">
-            <QualitySummary />
-            <EndpointHealth />
-            <RecentSessions />
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="ENDPOINT_INTELLIGENCE"><GatedCard capability="ENDPOINT_INTELLIGENCE"><EndpointHealth /></GatedCard></GatedCard>
+            <GatedCard capability="SESSION_TIMELINE"><GatedCard capability="SESSION_TIMELINE"><RecentSessions /></GatedCard></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <GraphPreview />
-              <WorkflowCoverageList />
+              <GatedCard capability="BEHAVIORAL_GRAPH"><GatedCard capability="BEHAVIORAL_GRAPH"><GraphPreview /></GatedCard></GatedCard>
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowCoverageList /></GatedCard></GatedCard>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MissingStatesCard />
-              <MissingFlowsCard />
+              <GatedCard capability="MISSING_STATES"><GatedCard capability="MISSING_STATES"><MissingStatesCard /></GatedCard></GatedCard>
+              <GatedCard capability="MISSING_FLOWS"><GatedCard capability="MISSING_FLOWS"><MissingFlowsCard /></GatedCard></GatedCard>
             </div>
-            <ObservedFindingsCard />
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <CoverageTrend />
-            <RecentReports />
+            <GatedCard capability="BEHAVIORAL_GRAPH"><ObservedFindingsCard /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageTrend /></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <WorkflowAttention />
-              <BehaviorSummaryCard />
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowAttention /></GatedCard></GatedCard>
+              <GatedCard capability="BEHAVIORAL_GRAPH"><BehaviorSummaryCard /></GatedCard>
             </div>
             <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -142,23 +143,23 @@ function MainDashboardLayout() {
       case "QA_ENGINEER":
         return (
           <div className="space-y-6">
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <SuggestedDemonstrationsCard />
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="GUIDED_BROWSER_DEMONSTRATION"><SuggestedDemonstrationsCard /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MissingStatesCard />
-              <MissingFlowsCard />
+              <GatedCard capability="MISSING_STATES"><GatedCard capability="MISSING_STATES"><MissingStatesCard /></GatedCard></GatedCard>
+              <GatedCard capability="MISSING_FLOWS"><GatedCard capability="MISSING_FLOWS"><MissingFlowsCard /></GatedCard></GatedCard>
             </div>
-            <ObservedFindingsCard />
-            <WorkflowCoverageList />
-            <QualitySummary />
-            <RecentSessions />
-            <CoverageTrend />
-            <RecentReports />
+            <GatedCard capability="BEHAVIORAL_GRAPH"><ObservedFindingsCard /></GatedCard>
+            <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowCoverageList /></GatedCard></GatedCard>
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="SESSION_TIMELINE"><GatedCard capability="SESSION_TIMELINE"><RecentSessions /></GatedCard></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageTrend /></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <WorkflowAttention />
-              <BehaviorSummaryCard />
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowAttention /></GatedCard></GatedCard>
+              <GatedCard capability="BEHAVIORAL_GRAPH"><BehaviorSummaryCard /></GatedCard>
             </div>
             <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -172,21 +173,21 @@ function MainDashboardLayout() {
       case "ENGINEERING_MANAGER":
         return (
           <div className="space-y-6">
-            <QualitySummary />
-            <CoverageTrend />
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <RecentReports />
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageTrend /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MissingStatesCard />
-              <MissingFlowsCard />
+              <GatedCard capability="MISSING_STATES"><GatedCard capability="MISSING_STATES"><MissingStatesCard /></GatedCard></GatedCard>
+              <GatedCard capability="MISSING_FLOWS"><GatedCard capability="MISSING_FLOWS"><MissingFlowsCard /></GatedCard></GatedCard>
             </div>
-            <ObservedFindingsCard />
-            <EndpointHealth />
+            <GatedCard capability="BEHAVIORAL_GRAPH"><ObservedFindingsCard /></GatedCard>
+            <GatedCard capability="ENDPOINT_INTELLIGENCE"><GatedCard capability="ENDPOINT_INTELLIGENCE"><EndpointHealth /></GatedCard></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <WorkflowAttention />
-              <BehaviorSummaryCard />
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowAttention /></GatedCard></GatedCard>
+              <GatedCard capability="BEHAVIORAL_GRAPH"><BehaviorSummaryCard /></GatedCard>
             </div>
             <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -201,23 +202,23 @@ function MainDashboardLayout() {
         return (
           <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <GraphPreview />
-              <WorkflowCoverageList />
+              <GatedCard capability="BEHAVIORAL_GRAPH"><GatedCard capability="BEHAVIORAL_GRAPH"><GraphPreview /></GatedCard></GatedCard>
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowCoverageList /></GatedCard></GatedCard>
             </div>
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <QualitySummary />
-            <SuggestedDemonstrationsCard />
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="GUIDED_BROWSER_DEMONSTRATION"><SuggestedDemonstrationsCard /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MissingStatesCard />
-              <MissingFlowsCard />
+              <GatedCard capability="MISSING_STATES"><GatedCard capability="MISSING_STATES"><MissingStatesCard /></GatedCard></GatedCard>
+              <GatedCard capability="MISSING_FLOWS"><GatedCard capability="MISSING_FLOWS"><MissingFlowsCard /></GatedCard></GatedCard>
             </div>
-            <ObservedFindingsCard />
-            <RecentReports />
+            <GatedCard capability="BEHAVIORAL_GRAPH"><ObservedFindingsCard /></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <WorkflowAttention />
-              <BehaviorSummaryCard />
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowAttention /></GatedCard></GatedCard>
+              <GatedCard capability="BEHAVIORAL_GRAPH"><BehaviorSummaryCard /></GatedCard>
             </div>
             <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -236,40 +237,40 @@ function MainDashboardLayout() {
               <PrivacyStatusCard />
               <ObservationStatusCard />
             </div>
-            <QualitySummary />
-            <RecentReports />
-            <EndpointHealth />
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <RecentSessions />
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
+            <GatedCard capability="ENDPOINT_INTELLIGENCE"><GatedCard capability="ENDPOINT_INTELLIGENCE"><EndpointHealth /></GatedCard></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="SESSION_TIMELINE"><GatedCard capability="SESSION_TIMELINE"><RecentSessions /></GatedCard></GatedCard>
           </div>
         );
 
       default:
         return (
           <div className="space-y-6">
-            <QualitySummary />
-            <CoverageSummary />
-            <ExpectedVsObserved />
-            <FlowChangeFeed />
-            <CoverageTrend />
+            <GatedCard capability="RECONCILIATION"><QualitySummary /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageSummary /></GatedCard>
+            <GatedCard capability="RECONCILIATION"><ExpectedVsObserved /></GatedCard>
+            <GatedCard capability="GRAPH_DRIFT"><FlowChangeFeed /></GatedCard>
+            <GatedCard capability="COVERAGE"><CoverageTrend /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <GraphPreview />
-              <WorkflowCoverageList />
+              <GatedCard capability="BEHAVIORAL_GRAPH"><GatedCard capability="BEHAVIORAL_GRAPH"><GraphPreview /></GatedCard></GatedCard>
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowCoverageList /></GatedCard></GatedCard>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MissingStatesCard />
-              <MissingFlowsCard />
+              <GatedCard capability="MISSING_STATES"><GatedCard capability="MISSING_STATES"><MissingStatesCard /></GatedCard></GatedCard>
+              <GatedCard capability="MISSING_FLOWS"><GatedCard capability="MISSING_FLOWS"><MissingFlowsCard /></GatedCard></GatedCard>
             </div>
-            <ObservedFindingsCard />
-            <SuggestedDemonstrationsCard />
-            <RecentSessions />
-            <EndpointHealth />
-            <RecentReports />
+            <GatedCard capability="BEHAVIORAL_GRAPH"><ObservedFindingsCard /></GatedCard>
+            <GatedCard capability="GUIDED_BROWSER_DEMONSTRATION"><SuggestedDemonstrationsCard /></GatedCard>
+            <GatedCard capability="SESSION_TIMELINE"><GatedCard capability="SESSION_TIMELINE"><RecentSessions /></GatedCard></GatedCard>
+            <GatedCard capability="ENDPOINT_INTELLIGENCE"><GatedCard capability="ENDPOINT_INTELLIGENCE"><EndpointHealth /></GatedCard></GatedCard>
+            <GatedCard capability="REPORTS"><RecentReports /></GatedCard>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <WorkflowAttention />
-              <BehaviorSummaryCard />
+              <GatedCard capability="WORKFLOW_DISCOVERY"><GatedCard capability="WORKFLOW_DISCOVERY"><WorkflowAttention /></GatedCard></GatedCard>
+              <GatedCard capability="BEHAVIORAL_GRAPH"><BehaviorSummaryCard /></GatedCard>
             </div>
             <ActivityFeed />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[#262626]">
@@ -378,6 +379,13 @@ function OverviewContent() {
       <MainDashboardLayout />
     </DashboardProvider>
   );
+}
+
+
+/** Hides an overview card when its capability does not apply to the selected application. */
+function GatedCard({ capability, children }: { capability: string; children: React.ReactNode }) {
+  const { appId } = useSelectedApplication();
+  return <CapabilityVisible appId={appId ?? null} capability={capability}>{children}</CapabilityVisible>;
 }
 
 export default function OverviewPage() {

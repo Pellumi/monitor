@@ -17,7 +17,6 @@ export interface EventCounts {
   frontendEventCount: number;
   backendEventCount: number;
   browserEventCount: number;
-  inFlowEventCount: number;
   endpointCount: number;
   /** Newest ingest time among the counted events, or null when none were found. */
   latestIngestedAt: Date | null;
@@ -29,6 +28,8 @@ export interface AbsoluteCounts {
   observedStateCount: number;
   observedWorkflowCount: number;
   declaredFlowCount: number;
+  /** Accepted flow-progress events. Relational, so counted absolutely like the other totals. */
+  inFlowEventCount: number;
   behaviorGraphVersion: string | null;
 }
 
@@ -51,6 +52,7 @@ const ABSOLUTE_KEYS = [
   'observedStateCount',
   'observedWorkflowCount',
   'declaredFlowCount',
+  'inFlowEventCount',
 ] as const satisfies readonly EvidenceCountKey[];
 
 export interface SyncResult {
@@ -86,7 +88,6 @@ export async function syncEvidence(
     frontendEventCount: events.frontendEventCount,
     backendEventCount: events.backendEventCount,
     browserEventCount: events.browserEventCount,
-    inFlowEventCount: events.inFlowEventCount,
     endpointCount: events.endpointCount,
   };
   for (const key of ABSOLUTE_KEYS) {

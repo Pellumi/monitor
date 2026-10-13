@@ -242,6 +242,7 @@ const settingsNavigation: SettingsNavSection[] = [
         href: "/settings/applications",
         icon: FolderKanban,
       },
+      { name: "Architecture", href: "/settings/architecture", icon: FolderKanban },
       { name: "Members & Access", href: "/settings/members", icon: Users },
       { name: "Audit Logs", href: "/settings/audit-logs", icon: ScrollText },
     ],

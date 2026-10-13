@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useCapabilities, type CapabilityStateName } from "@/hooks/use-capabilities";
+import { HIDDEN_CAPABILITY_STATES, useCapabilities, type CapabilityStateName } from "@/hooks/use-capabilities";
 
 /**
  * Explains a feature page's state before it shows data (doc §26). A page never returns 404 for an
@@ -117,4 +117,25 @@ export function CapabilityGate({
     case "UNAVAILABLE":
       return <Card title={`${name} is not available`}>{reason}</Card>;
   }
+}
+
+/**
+ * Hides a card or section when its capability does not apply (doc §27). Cards for states the user
+ * can act on (setup, waiting, plan-locked) stay visible, so the value they offer is not hidden.
+ */
+export function CapabilityVisible({
+  appId,
+  capability,
+  children,
+}: {
+  appId: string | null;
+  /** Capability key from the registry, for example ENDPOINT_INTELLIGENCE. */
+  capability: string;
+  children: ReactNode;
+}) {
+  const { capabilities, resolvedUi } = useCapabilities(appId);
+  if (!appId || !resolvedUi || !capabilities) return <>{children}</>;
+  const entry = capabilities.capabilities[capability];
+  if (entry && HIDDEN_CAPABILITY_STATES.has(entry.state)) return null;
+  return <>{children}</>;
 }

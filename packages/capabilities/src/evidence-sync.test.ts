@@ -53,7 +53,6 @@ function fakeSource(log: Array<{ at: Date; source: 'frontend-sdk' | 'backend-sdk
         frontendEventCount: rows.filter((r) => r.source === 'frontend-sdk').length,
         backendEventCount: rows.filter((r) => r.source === 'backend-sdk').length,
         browserEventCount: 0,
-        inFlowEventCount: 0,
         endpointCount: rows.filter((r) => r.endpoint).length,
         latestIngestedAt: rows.length ? new Date(Math.max(...rows.map((r) => r.at.getTime()))) : null,
       };
@@ -65,7 +64,7 @@ function fakeSource(log: Array<{ at: Date; source: 'frontend-sdk' | 'backend-sdk
 }
 
 const NOTHING: AbsoluteCounts = {
-  sessionCount: 0, runCount: 0, observedStateCount: 0, observedWorkflowCount: 0, declaredFlowCount: 0, behaviorGraphVersion: null,
+  sessionCount: 0, runCount: 0, observedStateCount: 0, observedWorkflowCount: 0, declaredFlowCount: 0, inFlowEventCount: 0, behaviorGraphVersion: null,
 };
 const T0 = new Date('2026-10-03T10:00:00Z');
 const input = {

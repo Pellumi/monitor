@@ -5,6 +5,7 @@ import express, { Request, Response } from 'express';
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { Kafka, EachMessagePayload } from 'kafkajs';
 import { MemberRole, PrismaClient } from '@tellann/db';
+import { createCapabilityResolver, readRolloutFlags, requireCapability } from '@tellann/capabilities';
 import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { Feature, TellannEvent, Topics, Services, canonicalRoute, canonicalRouteFromPath, kafkaEnabled } from '@tellann/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
@@ -22,6 +23,14 @@ const ch: ClickHouseClient = createClient({
 });
 const prisma = new PrismaClient();
 const entitlementChecker = new EntitlementChecker(prisma);
+
+// Capability enforcement for endpoint intelligence (doc §23). Off unless CAPABILITIES_ENFORCE is set.
+const capabilityFlags = readRolloutFlags(process.env);
+const resolveCapability = createCapabilityResolver({
+  prisma,
+  canAccess: (organizationId, feature) => entitlementChecker.canAccess(organizationId, feature),
+  flags: capabilityFlags,
+});
 const emailService = new NotificationEmailService(prisma);
 const { verifyCaller, requireApplicationAccess } = createCallerGuards(prisma, {
   serviceName: 'EndpointEngine',
@@ -320,6 +329,7 @@ app.get(
   '/endpoints/:applicationId/analysis',
   verifyCaller,
   requireApplicationAccess('applicationId'),
+  requireCapability(resolveCapability, 'ENDPOINT_INTELLIGENCE', capabilityFlags, { applicationIdParam: 'applicationId' }),
   async (req: CallerRequest, res: Response) => {
     const { applicationId } = req.params;
 
@@ -399,6 +409,7 @@ app.get(
   '/endpoints/:applicationId/baseline',
   verifyCaller,
   requireApplicationAccess('applicationId'),
+  requireCapability(resolveCapability, 'ENDPOINT_INTELLIGENCE', capabilityFlags, { applicationIdParam: 'applicationId' }),
   async (req: CallerRequest, res: Response) => {
     const { applicationId } = req.params;
     try {

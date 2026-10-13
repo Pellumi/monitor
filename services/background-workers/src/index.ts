@@ -29,6 +29,7 @@ import {
 } from './session-completion-worker';
 import { runEndUserBacklink, runEndUserPrune } from './end-user-worker';
 import { runArchitectureEvidenceSync } from './architecture-evidence-sync';
+import { runCapabilitySetupNudges } from './capability-notifications';
 import {
   runBehaviorRollupJob,
   runFrictionDetectionJob,
@@ -521,6 +522,8 @@ const JOB_DEFINITIONS: JobDefinition[] = [
   // Enqueued because a kiosk anonymousId can have thousands of prior sessions.
   { name: 'end-user-backlink',               handler: () => runEndUserBacklink(prisma).then(() => undefined), every: 30_000 },
   // Feeds the application-capability evidence summary from telemetry and relational state.
+  // Setup nudges for applications whose capability just moved into NEEDS_SETUP (doc Phase K).
+  { name: 'capability-setup-nudges', handler: () => runCapabilitySetupNudges(prisma).then(() => undefined), every: 60_000 },
   { name: 'architecture-evidence-sync', handler: () => runArchitectureEvidenceSync(prisma).then(() => undefined), every: 60_000 },
   { name: 'end-user-prune',                  handler: () => runEndUserPrune(prisma).then(() => undefined), pattern: '0 4 * * 0' },
   // Facets for sessions that completed before SessionFacet existed, and rebuilds after
