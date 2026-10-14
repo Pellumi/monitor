@@ -164,7 +164,7 @@ export const solutionGroups: RouteGroup[] = [
   {
     label: 'Build & test',
     routes: [
-      route('/solutions', 'Solutions overview', 'Find the right Tellann workflow.'),
+      live('/solutions', 'Solutions overview', 'Find the right Tellann workflow.'),
       route('/solutions/developers', 'Developers', 'Debug with behavioral context.'),
       route('/solutions/qa-engineers', 'QA engineers', 'See what is covered and what is not.'),
     ],
