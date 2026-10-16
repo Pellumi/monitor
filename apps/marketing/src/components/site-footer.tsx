@@ -79,7 +79,7 @@ const siteColumns: FooterGroup[] = [
   },
   {
     title: "Resources",
-    links: selectRoutes(allResourceRoutes, ["/blog", "/case-studies", "/changelog", "/roadmap"]),
+    links: selectRoutes(allResourceRoutes, ["/resources", "/blog", "/case-studies", "/changelog"]),
   },
   {
     title: "Company",

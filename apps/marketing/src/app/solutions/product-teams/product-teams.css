@@ -1,0 +1,48 @@
+/*
+ * Product Teams solution page.
+ *
+ * Structural classes (dev-shell, dev-section, dev-hero, dev-split,
+ * dev-findings, dev-report, dev-faq, dev-final, etc.) are shared with
+ * /solutions/developers — see developers.css, imported alongside this file.
+ * This file only adds the handful of rules specific to this page.
+ */
+
+.pt-coverage-stat {
+  margin: 0 0 20px;
+}
+
+.pt-coverage-stat b {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 40px;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+
+.pt-coverage-stat small {
+  color: var(--muted);
+  font: 9px ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.pt-role-panel h3 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.pt-role-panel > p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pt-role-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.9;
+}

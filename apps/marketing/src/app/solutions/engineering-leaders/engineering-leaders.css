@@ -1,0 +1,431 @@
+/*
+ * Engineering Leaders solution page.
+ *
+ * Structural classes (dev-shell, dev-section, dev-hero, dev-split,
+ * dev-findings, dev-report, dev-faq, dev-final, etc.) are shared with
+ * /solutions/developers — see developers.css, imported alongside this file.
+ * This file only adds the handful of rules specific to this page.
+ */
+
+/* Leadership challenges — cards with icon placeholders */
+
+.el-challenge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.el-challenge-grid article {
+  padding: 26px;
+  border: 1px solid var(--line);
+  transition: border-color 180ms ease;
+}
+
+.el-challenge-grid article:hover {
+  border-color: var(--foreground);
+}
+
+.el-icon-placeholder {
+  display: grid;
+  place-content: center;
+  width: 96px;
+  height: 96px;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: 700 9px ui-monospace, monospace;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.el-challenge-grid b {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 17px;
+  font-weight: 550;
+  line-height: 1.25;
+}
+
+.el-challenge-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Evidence status list (static, non-interactive) */
+
+.el-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.el-status-list li {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.el-status-list li i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.el-status-list li b {
+  font-weight: 650;
+}
+
+.el-status-list li span {
+  color: var(--muted);
+  font: 9px ui-monospace, monospace;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+.el-status-list li.is-partially-observed {
+  border-style: dashed;
+}
+
+.el-status-list li.is-not-observed i,
+.el-status-list li.is-partially-observed i {
+  color: var(--foreground);
+}
+
+/* Outstanding validation items board */
+
+.el-gaps-board {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+}
+
+.el-gaps-board > div {
+  display: grid;
+  grid-template-columns: 0.8fr 1.3fr 1.1fr;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.el-gaps-board > div:last-child {
+  border-bottom: 0;
+}
+
+.el-gaps-board b {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.el-gaps-board p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.el-gaps-board span {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* Shared evidence / role alignment */
+
+.el-shared-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+}
+
+.el-shared-grid > div {
+  padding: 24px 22px;
+  border-right: 1px solid var(--line);
+}
+
+.el-shared-grid > div:last-child {
+  border-right: 0;
+}
+
+.el-shared-grid b {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.el-shared-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.el-shared-report {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: -1px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-top: 1px dashed var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: 10px ui-monospace, monospace;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+/* Release review table */
+
+.el-release-table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-collapse: collapse;
+}
+
+.el-release-table th,
+.el-release-table td {
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.el-release-table th {
+  color: var(--muted);
+  font: 700 10px ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.el-release-table td {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.el-release-table td:first-child {
+  font-weight: 650;
+}
+
+.el-open-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.el-open-question span {
+  color: var(--muted);
+  font: 9px ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.el-open-question p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* Investigation levels */
+
+.el-investigation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.el-investigation-grid > div {
+  position: relative;
+  padding: 20px;
+  border: 1px solid var(--line);
+}
+
+.el-investigation-grid span {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font: 9px ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.el-investigation-grid b {
+  display: block;
+  margin: 14px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.el-investigation-grid p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.el-investigation-grid i {
+  position: absolute;
+  top: 50%;
+  right: -11px;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  background: var(--background);
+  color: var(--muted);
+  font-style: normal;
+  transform: translateY(-50%);
+}
+
+.el-investigation-grid > div:last-child i {
+  display: none;
+}
+
+/* Leadership role tabs */
+
+.el-role-tabs-bar {
+  display: inline-flex;
+  margin-bottom: 24px;
+  border: 1px solid var(--line);
+}
+
+.el-role-tabs-bar button {
+  padding: 11px 18px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.el-role-tabs-bar button:last-child {
+  border-right: 0;
+}
+
+.el-role-tabs-bar button.is-active {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.el-role-panel {
+  max-width: 720px;
+  padding: 28px;
+  border: 1px solid var(--line);
+}
+
+.el-role-panel h3 {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 550;
+}
+
+.el-role-panel > p {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.el-role-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.el-role-panel li {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.el-role-panel li:first-child {
+  border-top: 0;
+}
+
+.el-role-panel li i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+/* Responsive */
+
+@media (max-width: 1100px) {
+  .el-gaps-board > div {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .el-shared-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .el-shared-grid > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .el-shared-grid > div:last-child {
+    border-bottom: 0;
+  }
+
+  .el-investigation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .el-investigation-grid i {
+    display: none;
+  }
+
+  .el-release-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 650px) {
+  .el-challenge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .el-status-list li {
+    grid-template-columns: 20px 1fr;
+  }
+
+  .el-status-list li span {
+    grid-column: 2;
+    text-align: left;
+  }
+
+  .el-role-panel {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-challenge-grid article {
+    transition-duration: 0.01ms;
+  }
+}

@@ -1,0 +1,26 @@
+/*
+ * QA Engineers solution page.
+ *
+ * Structural classes (dev-shell, dev-section, dev-hero, dev-split,
+ * dev-findings, dev-report, dev-faq, dev-final, etc.) are shared with
+ * /solutions/developers — see developers.css, imported alongside this file.
+ * This file only adds the handful of rules specific to this page.
+ */
+
+.qa-coverage-stat {
+  margin: 0 0 20px;
+}
+
+.qa-coverage-stat b {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 40px;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+
+.qa-coverage-stat small {
+  color: var(--muted);
+  font: 9px ui-monospace, monospace;
+  text-transform: uppercase;
+}

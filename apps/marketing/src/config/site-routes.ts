@@ -165,15 +165,15 @@ export const solutionGroups: RouteGroup[] = [
     label: 'Build & test',
     routes: [
       live('/solutions', 'Solutions overview', 'Find the right Tellann workflow.'),
-      route('/solutions/developers', 'Developers', 'Debug with behavioral context.'),
-      route('/solutions/qa-engineers', 'QA engineers', 'See what is covered and what is not.'),
+      live('/solutions/developers', 'Developers', 'Debug with behavioral context.'),
+      live('/solutions/qa-engineers', 'QA engineers', 'See what is covered and what is not.'),
     ],
   },
   {
     label: 'Lead & plan',
     routes: [
-      route('/solutions/engineering-leaders', 'Engineering leaders', 'Review quality and release risk.'),
-      route('/solutions/product-teams', 'Product teams', 'Understand the journeys users take.'),
+      live('/solutions/engineering-leaders', 'Engineering leaders', 'Review quality and release risk.'),
+      live('/solutions/product-teams', 'Product teams', 'Connect product expectations to demonstrated behavior.'),
     ],
   },
 ];
@@ -204,19 +204,47 @@ export const resourceGroups: RouteGroup[] = [
   {
     label: 'Learn',
     routes: [
-      route('/resources', 'Resource hub', 'Learn about behavioral QA.'),
-      route('/blog', 'Blog', 'Ideas and practices from Tellann.'),
-      route('/research', 'Research', 'Behavioral quality research.'),
+      live('/resources', 'Resource hub', 'Learn about behavioral QA.'),
+      live('/blog', 'Blog', 'Ideas and practices from Tellann.'),
+      live('/research', 'Research', 'Behavioral quality research.'),
     ],
   },
   {
     label: 'Explore',
     routes: [
-      route('/case-studies', 'Case studies', 'See Tellann in practice.'),
-      route('/changelog', 'Changelog', 'Follow product improvements.'),
-      live('/roadmap', 'Roadmap', 'See what is now, next, and later.'),
+      live('/case-studies', 'Case studies', 'See Tellann in practice.'),
+      live('/changelog', 'Changelog', 'Follow product improvements.'),
     ],
   },
+];
+
+/**
+ * Illustrative case-study scenarios linked from the /case-studies hub. Each
+ * resolves to the coming-soon stub until a real detail page exists under this
+ * slug. "example" stays in every slug: these are synthetic scenarios, not
+ * customer stories, and the URL should say so.
+ */
+export const caseStudyRoutes: SiteRoute[] = [
+  route(
+    '/case-studies/checkout-workflow-validation-example',
+    'Investigating a checkout flow with incomplete execution evidence',
+    'An illustrative scenario following a declared checkout journey against what was actually demonstrated.',
+  ),
+  route(
+    '/case-studies/onboarding-journey-validation-example',
+    'Understanding missing steps in a new-user onboarding journey',
+    'An illustrative scenario comparing an intended onboarding flow with a captured demonstration.',
+  ),
+  route(
+    '/case-studies/payment-transfer-workflow-example',
+    'Examining alternative states in a payment-transfer workflow',
+    'An illustrative scenario reviewing declared payment states against observed behavior.',
+  ),
+  route(
+    '/case-studies/assessment-submission-workflow-example',
+    'Validating an assessment submission journey',
+    'An illustrative scenario checking a declared assessment flow against demonstrated execution.',
+  ),
 ];
 
 /**
@@ -233,6 +261,68 @@ export const blogCategoryRoutes: SiteRoute[] = [
   route('/blog/release-quality', 'Release quality', 'Shipping with evidence rather than hope.'),
 ];
 
+/**
+ * Illustrative first articles linked from the /blog hub. Each resolves to the
+ * coming-soon stub until the editorial team publishes the real article under
+ * this slug — kept here so hub links never 404.
+ */
+export const blogArticleRoutes: SiteRoute[] = [
+  route(
+    '/blog/your-tests-pass-but-what-have-you-actually-proven',
+    'Your Tests Pass. But What Have You Actually Proven?',
+    'Code execution and workflow validation answer different questions.',
+  ),
+  route(
+    '/blog/code-coverage-vs-workflow-coverage',
+    "Code Coverage vs Workflow Coverage: What's the Difference?",
+    'Understanding what different forms of coverage actually prove.',
+  ),
+  route(
+    '/blog/hidden-cost-of-untested-failure-paths',
+    'The Hidden Cost of Untested Failure Paths',
+    'Why validating the happy path is rarely enough.',
+  ),
+  route(
+    '/blog/from-requirements-to-observable-behavior',
+    'From Product Requirements to Observable Behavior',
+    'Why intended product behavior deserves explicit validation.',
+  ),
+  route(
+    '/blog/qa-strategy-for-small-teams',
+    'A Practical QA Strategy for Small Teams',
+    'Building useful quality checks with limited resources.',
+  ),
+  route(
+    '/blog/what-is-behavioral-qa',
+    'What Is Behavioral QA, and Why Does It Matter?',
+    'An introduction to validating demonstrated behavior, not just code.',
+  ),
+  route(
+    '/blog/why-tellann-is-built-around-declared-intent',
+    'Why We Are Building Tellann Around Declared Intent',
+    'Engineering notes from the team building Tellann.',
+  ),
+];
+
+/** Curated editorial series linked from the /blog hub. */
+export const blogSeriesRoutes: SiteRoute[] = [
+  route(
+    '/blog/series/understanding-software-behavior',
+    'Understanding Software Behavior',
+    'States, transitions, workflows and observable evidence.',
+  ),
+  route(
+    '/blog/series/the-gaps-we-dont-test',
+    "The Gaps We Don't Test",
+    'Missing states, alternative paths, and the limits of coverage metrics.',
+  ),
+  route(
+    '/blog/series/intent-vs-reality',
+    'Intent vs Reality',
+    'What requirements and evidence can tell teams about implementation quality.',
+  ),
+];
+
 // ─────────────────────────────────────────────────────────────
 // Company, comparisons, trust, legal
 // ─────────────────────────────────────────────────────────────
@@ -247,8 +337,6 @@ export const companyRoutes: SiteRoute[] = [
   live('/brand', 'Brand', 'Logos, identity, and brand resources.'),
   live('/roadmap', 'Roadmap', "See what we're building next."),
   route('/demo', 'Book a demo', 'See Tellann walked through by our team.'),
-  route('/press', 'Press', 'Media resources and company news.'),
-  route('/partners', 'Partners', 'Build and deliver with Tellann.'),
 ];
 
 export const comparisonRoutes: SiteRoute[] = [
@@ -304,6 +392,9 @@ const dedupe = (routes: SiteRoute[]) =>
 export const allRoutes: SiteRoute[] = dedupe([
   ...routeGroups.flatMap((groups) => groups.flatMap((group) => group.routes)),
   ...blogCategoryRoutes,
+  ...blogArticleRoutes,
+  ...blogSeriesRoutes,
+  ...caseStudyRoutes,
   ...companyRoutes,
   ...comparisonRoutes,
   ...securityRoutes,
