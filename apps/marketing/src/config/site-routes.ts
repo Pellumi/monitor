@@ -366,7 +366,7 @@ export const legalRoutes: SiteRoute[] = [
   route('/legal', 'Legal', 'Tellann legal information.'),
   live('/privacy', 'Privacy policy', 'How Tellann handles personal data.'),
   live('/terms', 'Terms', 'Terms for using Tellann.'),
-  route('/cookies', 'Cookies', 'How Tellann uses cookies.'),
+  live('/cookies', 'Cookies', 'How Tellann uses cookies.'),
   route('/dpa', 'DPA', 'Data processing terms.'),
   route('/subprocessors', 'Subprocessors', 'Vendors supporting Tellann.'),
   route('/acceptable-use', 'Acceptable use', 'Rules for responsible use.'),

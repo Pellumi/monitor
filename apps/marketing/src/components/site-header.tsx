@@ -165,7 +165,7 @@ function DesktopNavigation({
 
       {/* Developer material lives on the documentation site, which has its own
           navigation, so the header links there instead of mirroring it. */}
-      <a href={docsUrl} onClick={onClose}>
+      <a href={docsUrl} target='_blank' onClick={onClose}>
         Docs <span aria-hidden="true">↗</span>
       </a>
     </nav>
