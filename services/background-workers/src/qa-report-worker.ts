@@ -697,6 +697,13 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     appendixTruncated: appendixTruncated > 0,
     quarantinedEvents: quarantined.length,
   });
+  const automatedSummary = summarizeAutomationEvidence(
+        run,
+        run.evidenceEvents.filter((event) => event.eventType.startsWith('QA_AUTOMATION_') || event.eventType === 'QA_RUNTIME_ERROR' || event.eventType === 'QA_PAGE_CRASH'),
+        declaredStates.map((state: any) => state.key),
+        automationReconciliation,
+  );
+
   const payload = {
     id: report.id,
     runId: run.id,
@@ -753,12 +760,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       flowSummary: hasDeclaredFlow ? { name: run.expectedGraphVersion!.graph.name, purpose: run.expectedGraphVersion!.graph.purpose, scope: run.expectedGraphVersion!.graph.scopeStatement, initialState: run.initialStateKey, terminalStates: run.terminalStateKeys, declaredStateCount: declaredStates.length, declaredTransitionCount: declaredTransitions.length, version: run.expectedGraphVersion!.version, provenance: run.expectedGraphVersion!.graph.sourceType } : null,
       backendSummary,
       frontendSummary,
-      automated: summarizeAutomationEvidence(
-        run,
-        run.evidenceEvents.filter((event) => event.eventType.startsWith('QA_AUTOMATION_') || event.eventType === 'QA_RUNTIME_ERROR' || event.eventType === 'QA_PAGE_CRASH'),
-        declaredStates.map((state: any) => state.key),
-        automationReconciliation,
-      ),
+      automated: automatedSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
       findingResolutions: {
         status: resolutions.status,
@@ -786,6 +788,8 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
           ...(appendixTruncated > 0 ? [appendixLimitation(appendixEvents.length, run.evidenceEvents.length)] : []),
           ...(frontendSummary?.limitations ?? []),
           ...(backendSummary?.limitations ?? []),
+          // The automated section used to be the one section that could not say what it had not measured.
+          ...(automatedSummary?.limitations ?? []),
         ],
       },
     },

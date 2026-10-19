@@ -1,4 +1,5 @@
 import { rankControls } from './ranking';
+import { describeObscured, verifyVisually, visualTieBreak } from './visual';
 import type {
   ActionOutcome,
   AutomationAction,
@@ -31,6 +32,8 @@ export type StepFailureReason =
   | 'NO_DERIVED_CONTROL'
   | 'CONTROL_NOT_FOUND'
   | 'CONTROL_AMBIGUOUS'
+  /** The control is on the page and no person could act on it: no size, or something drawn on top of it. */
+  | 'CONTROL_OBSCURED'
   | 'DATA_UNAVAILABLE'
   | 'FIELD_NOT_FOUND'
   /** The field offers a fixed set of choices and the data set's value is not one of them. */
@@ -67,6 +70,8 @@ export interface ResolvedStep {
   method: string;
   score: number;
   fills: PlannedFill[];
+  /** Set when a tie the code could not break was settled by how the page is drawn, for the record. */
+  resolvedBy?: { by: 'RENDERED_PAGE'; because: string[] };
 }
 
 export interface DataValue {
@@ -97,19 +102,30 @@ export function resolveStep(snapshot: SemanticSnapshot, input: StepInput): Resol
     return { ok: false, reason: 'NO_DERIVED_CONTROL', detail: `The code gives no control for ${input.label}, so the run will not guess one.` };
   }
   const ranked = rankControls(input.control, snapshot.elements);
+  let resolvedBy: ResolvedStep['resolvedBy'];
   if (ranked.ambiguous) {
     const topScore = ranked.candidates[0]?.score;
     const tied = ranked.candidates.filter((candidate) => candidate.score === topScore);
-    const picked = input.tieBreak?.(tied.map((candidate) => candidate.element.ref)) ?? null;
+    // What the browser actually drew is the next evidence after the code and the DOM, and it settles the
+    // commonest tie of all: two controls the markup describes identically, one of which is on screen.
+    const seen = visualTieBreak(tied);
+    const picked = seen?.ref ?? input.tieBreak?.(tied.map((candidate) => candidate.element.ref)) ?? null;
     const chosen = picked ? tied.find((candidate) => candidate.element.ref === picked) : undefined;
     if (!chosen) {
       return { ok: false, reason: 'CONTROL_AMBIGUOUS', detail: `More than one control matches ${input.label} equally well.` };
     }
+    if (seen) resolvedBy = { by: 'RENDERED_PAGE', because: seen.because };
     ranked.best = chosen;
   }
   if (!ranked.best) {
     const hidden = ranked.unusable.length > 0 ? ' A matching control exists but is hidden or disabled.' : '';
     return { ok: false, reason: 'CONTROL_NOT_FOUND', detail: `No control for ${input.label} is on the page.${hidden}` };
+  }
+  // The code named the right control and no person could use it. That is a finding about the application, and a
+  // different one from "it was not there" — so it is reported as itself rather than clicked at and hoped for.
+  const visible = verifyVisually(ranked.best.element);
+  if (!visible.usable) {
+    return { ok: false, reason: 'CONTROL_OBSCURED', detail: describeObscured(visible.reason, input.label) };
   }
 
   const fills: PlannedFill[] = [];
@@ -121,7 +137,7 @@ export function resolveStep(snapshot: SemanticSnapshot, input: StepInput): Resol
     fills.push(planned.fill);
   }
 
-  return { ok: true, controlRef: ranked.best.element.ref, method: ranked.best.method, score: ranked.best.score, fills };
+  return { ok: true, controlRef: ranked.best.element.ref, method: ranked.best.method, score: ranked.best.score, fills, ...(resolvedBy ? { resolvedBy } : {}) };
 }
 
 export type PerformResult =

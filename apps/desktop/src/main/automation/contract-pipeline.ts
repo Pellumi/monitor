@@ -46,6 +46,13 @@ export interface ContractPipelineDeps {
   fetchManifest(): Promise<InitializationManifest | null>;
   /** The local analysis of this workspace, or null when there is none yet. */
   loadAnalysis(): CodebaseAnalysis | null;
+  /**
+   * Whether that analysis still describes the folder as it is on disk right now. A run compiled from a stale
+   * analysis derives controls from code that has since moved, and then reports the mismatch as though the
+   * application were at fault — so it is refused instead. Absent means the question cannot be asked, and is
+   * treated as current rather than blocking a run over something unknowable.
+   */
+  isAnalysisCurrent?(): boolean;
   cache?: KeyValueStore;
 }
 
@@ -62,7 +69,7 @@ export interface PreparedContract {
 
 export class ContractPipelineError extends Error {
   constructor(
-    readonly code: "CODE_ANALYSIS_REQUIRED" | "FLOW_MAPPING_REQUIRED" | "FLOW_INVALID",
+    readonly code: "CODE_ANALYSIS_REQUIRED" | "FLOW_MAPPING_REQUIRED" | "FLOW_INVALID" | "ANALYSIS_STALE",
     message: string,
   ) {
     super(message);
@@ -93,6 +100,15 @@ export async function prepareContract(input: ContractInputs, deps: ContractPipel
     throw new ContractPipelineError(
       "CODE_ANALYSIS_REQUIRED",
       "Automated Run reads your code to work out what to click, and this application has not been analysed yet. Analyse it from the Applications page, then start the run again.",
+    );
+  }
+  // Asked before anything is compiled, because every control in the contract comes from this analysis. Running
+  // against a folder that has moved on produces a contract that points at code which is no longer there, and the
+  // run then reports "the control was not on the page" — which reads as a fault in the person's application.
+  if (deps.isAnalysisCurrent && !deps.isAnalysisCurrent()) {
+    throw new ContractPipelineError(
+      "ANALYSIS_STALE",
+      "Your code has changed since it was last analysed, so Tellann would be looking for controls that may have moved. Analyse it again, then start the run.",
     );
   }
 

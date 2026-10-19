@@ -129,7 +129,7 @@ export class ProjectRunner {
 
       const ready = await this.waitUntilReady(spec.readyCondition, handle, spec.readyTimeoutMs);
       if (ready !== "READY") {
-        const tail = handle.sanitizedOutput.slice(-2_000).trim();
+        const tail = outputTail(handle);
         return fail(
           `${spec.name} ${ready === "EXITED" ? "exited before it was ready" : "did not become ready in time"}.${tail ? `\n${tail}` : ""}`,
           spec.name,
@@ -144,7 +144,20 @@ export class ProjectRunner {
       this.deps.applicationReadyTimeoutMs,
       null,
     );
-    if (answering !== "READY") return fail(`${profile.applicationUrl} did not answer.`);
+    if (answering !== "READY") {
+      // Every process said it was ready and the address still does not answer. What each one last printed is
+      // the only thing that explains that, so it goes in the reason rather than being left on this machine.
+      const said = this.running
+        .map((entry) => ({ name: entry.name, tail: outputTail(entry.handle) }))
+        .filter((entry) => entry.tail.length > 0)
+        .map((entry) => `${entry.name}:\n${entry.tail}`)
+        .join("\n\n");
+      return fail(
+        this.running.length === 0
+          ? `${profile.applicationUrl} did not answer. This profile starts nothing, so your application has to already be running there — start it, or pick a profile that starts it for you.`
+          : `${profile.applicationUrl} did not answer, although every process started.${said ? `\n${said}` : ""}`,
+      );
+    }
     return { ok: true, started: this.running.map((entry) => entry.name) };
   }
 
@@ -200,6 +213,19 @@ export class ProjectRunner {
       await this.deps.sleep(this.deps.pollMs);
     }
   }
+}
+
+/** How long a failure reason may be. It goes into a report and a notification, not a log file. */
+const TAIL_LINES = 40;
+const TAIL_CHARS = 2_000;
+
+/**
+ * The last of what a process printed, already redacted by the launcher. Lines rather than characters, so the
+ * reason ends at something readable instead of halfway through a stack frame.
+ */
+function outputTail(handle: ManagedProcess): string {
+  const lines = handle.sanitizedOutput.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  return lines.slice(-TAIL_LINES).join("\n").slice(-TAIL_CHARS).trim();
 }
 
 function errorMessage(error: unknown): string {

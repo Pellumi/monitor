@@ -27,10 +27,13 @@ import type {
  *    this step leads) and the *code mapping* (the choice is the kind of control, carrying the kind of
  *    label, that the handler in the code describes). A suggestion that fails either is discarded and
  *    the run stops exactly as it would have with no resolver at all.
- *  - It is **local and optional**. There is no default resolver (`NO_AMBIGUITY_RESOLVER` returns
- *    nothing), the run works with model providers disabled, and a resolver is handed page-level
- *    metadata about the candidates — never source code, typed values or credentials — and is declared
- *    `local`: it must not send anything off the machine.
+ *  - It is **optional, and says where it ran**. There is no default resolver (`NO_AMBIGUITY_RESOLVER`
+ *    returns nothing) and the run works with model providers disabled. A resolver is handed page-level
+ *    metadata about the candidates — never source code, typed values or credentials. What it does with the
+ *    refs it is given is its own business: a resolver that wants to look at how a control is drawn asks the
+ *    browser itself, which is why nothing about pictures appears here. Its `locality` is recorded in the
+ *    provenance of every decision it influences, so a report can say honestly whether a suggestion came
+ *    from this machine or from somewhere else.
  *  - It is bounded: a timeout, and a malformed or throwing resolver is the same as no resolver.
  *  - A mutating step is never left to a coin toss: when the verifier cannot tell the candidates apart
  *    by the code, a resolver's preference is honoured only for steps that cannot change server state.
@@ -38,7 +41,7 @@ import type {
  * Nothing here ships behaviour by itself: with no resolver configured the executor never calls in.
  */
 
-/** What a resolver is told about one candidate. Page metadata only. */
+/** What a resolver is told about one candidate. Page metadata, and optionally a picture of it. */
 export interface CandidateView {
   /** Opaque handle; what a proposal must return to choose this candidate. */
   ref: string;
@@ -75,20 +78,27 @@ export interface AmbiguityProposal {
   rationale: string;
 }
 
+/**
+ * Where a resolver's answer comes from.
+ *
+ * This was `local: true` — a statement of intent that nothing could check and that, being always true, said
+ * nothing. What a report actually needs to be able to say is where the suggestion came from, because "a model
+ * on this machine chose between two buttons" and "a model somewhere else did" are different facts about a run
+ * and a person may reasonably accept one and refuse the other. So it is recorded rather than asserted.
+ */
+export type ResolverLocality = 'LOCAL' | 'CLOUD';
+
 export interface AmbiguityResolver {
   readonly id: string;
-  /**
-   * A resolver must run entirely on this machine. The literal type is a statement of intent that is
-   * checked in review and by the desktop when it constructs one, not something a type can enforce.
-   */
-  readonly local: true;
+  /** Where this resolver runs. Carried into the provenance of every decision it influences. */
+  readonly locality: ResolverLocality;
   resolve(situation: AmbiguitySituation): Promise<AmbiguityProposal | null>;
 }
 
 /** The default: no opinion, so the engine behaves exactly as it did before resolvers existed. */
 export const NO_AMBIGUITY_RESOLVER: AmbiguityResolver = {
   id: 'none',
-  local: true,
+  locality: 'LOCAL',
   async resolve() {
     return null;
   },

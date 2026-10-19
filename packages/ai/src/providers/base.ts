@@ -22,6 +22,14 @@ export interface GenerateStructuredInput<T> {
    * model being unable to answer rather than never having been allowed to.
    */
   maxOutputTokens?: number;
+  /**
+   * Images to send alongside the prompt.
+   *
+   * Only for the handful of questions a picture genuinely answers better than words — which control a person
+   * would press when two are described identically in the markup. A provider that cannot take images ignores
+   * them and answers from the prompt alone, so a caller is never left with no answer because of them.
+   */
+  images?: Array<{ mimeType: string; base64: string }>;
   repairPrompt?: (invalidText: string, validationErrors: string) => string;
 }
 

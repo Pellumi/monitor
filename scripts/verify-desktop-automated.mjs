@@ -71,7 +71,10 @@ const runData = (values) => RunDataSetSchema.parse({ id: 'data-1', applicationId
 const examData = () => runData([{ key: 'examTitle', generator: { kind: 'UNIQUE_SUFFIX', prefix: 'qa-exam-' }, secret: false }]);
 
 async function runScenario(spec) {
-  const app = await startLmsApp({ faults: spec.faults ?? {}, markers: spec.markers ?? 'adapter', anchors: spec.anchors === true, richForm: spec.richForm === true });
+  // Normally a scenario gets its own application. `spec.app` reuses one that is already up, which is the only
+  // way to prove anything about a session kept between runs: the fixture holds its sessions in memory, so a
+  // cookie from one instance means nothing to the next — exactly as a restarted server would behave.
+  const app = spec.app ?? await startLmsApp({ faults: spec.faults ?? {}, markers: spec.markers ?? 'adapter', anchors: spec.anchors === true, richForm: spec.richForm === true });
   const events = [];
   const observer = new BrowserObserver({ headless: true, onEvidenceEvent: (event) => { events.push(event); } });
   const limits = AutomationLimitsSchema.parse({ maxDurationMs: 90_000, ...(spec.limits ?? {}) });
@@ -84,7 +87,7 @@ async function runScenario(spec) {
       environmentType: 'DEVELOPMENT', captureTracks: ['FRONTEND'], expectedGraphVersionId: '33333333-3333-4333-8333-333333333333',
       mode: 'AUTOMATED', targetUrl: app.url,
       automation: { targetTerminalStateKey: TARGET, executionProfileId: 'acceptance', limits, renderTimingComponents: [] },
-    }, artifactRoot);
+    }, artifactRoot, spec.seededSession ? { storageState: spec.seededSession } : {});
     const page = observer.getAutomationPage();
     // The page reports its states the way an application really does, in one of the three marker shapes, and
     // they are read the way the boundary evaluator reads them: by every name a state answers to.
@@ -127,8 +130,19 @@ async function runScenario(spec) {
         return 'DONE';
       },
     } : undefined;
+    // What a kept sign-in does to a run, through the real ports rather than a fake of them.
+    const sessionLog = [];
+    const session = spec.session
+      ? {
+        seeded: spec.session.seeded === true,
+        keep: async () => { sessionLog.push({ kept: await observer.captureStorageState() }); },
+        discard: async () => { sessionLog.push({ discarded: true }); await observer.clearBrowserSession(); },
+      }
+      : undefined;
     const result = await executeAutomatedRun({
       manualAuthentication,
+      ...(session ? { session } : {}),
+      ...(spec.responsiveBreakpoints ? { responsiveBreakpoints: spec.responsiveBreakpoints } : {}),
       browser: observer, driver, contract,
       navigation: lmsNavigation({ courseRoles: spec.courseRoles }),
       persona: spec.persona === null ? null : persona(spec.persona ?? 'teacher'),
@@ -138,12 +152,12 @@ async function runScenario(spec) {
     });
     const finalPath = page.isClosed() ? null : new URL(page.url()).pathname;
     const finalState = spec.crashAfterActs ? await observer.abort('browser closed') : await observer.end();
-    outcome = { app, events, result, finalState, finalPath, artifactDirectory: finalState.artifactDirectory, handovers };
+    outcome = { app, events, result, finalState, finalPath, artifactDirectory: finalState.artifactDirectory, handovers, sessionLog, viewportAfter: page.isClosed() ? null : page.viewportSize() };
   } catch (error) {
     try { await observer.abort('acceptance failure'); } catch { /* already down */ }
     throw error;
   } finally {
-    await app.close();
+    if (!spec.app) await app.close();
   }
   return outcome;
 }
@@ -374,7 +388,119 @@ async function personasAndAccess() {
 }
 
 async function boundaries() {
-  scenario = 'what an Automated Run is never allowed to be';
+  // ---------------------------------------------------------------------------
+// How the Flow is drawn, and the sizes it has to work at
+// ---------------------------------------------------------------------------
+
+scenario = 'the page is measured as it is drawn, and at other window sizes';
+console.log(`\n${scenario}`);
+{
+  const sizes = [
+    { name: 'mobile', width: 390, height: 844 },
+    { name: 'laptop', width: 1280, height: 800 },
+  ];
+  const outcome = await runScenario({ responsiveBreakpoints: sizes });
+  const report = section(outcome);
+  const samples = automationEvents(outcome.events).filter((event) => event.eventType === 'QA_AUTOMATION_RESPONSIVE_SAMPLE');
+
+  check('the run still reaches the target with the sweep on', outcome.result.stopReason === 'TERMINAL_STATE_REACHED', outcome.result.detail);
+  check('every state the run reached was measured at every size', samples.length === report.states.length
+    && samples.every((event) => (event.metadata.samples ?? []).length === sizes.length),
+    `${samples.length} sweeps for ${report.states.length} states`);
+  check('each sample names the size it describes and what it found there',
+    report.responsive.length > 0
+    && report.responsive.every((entry) => entry.samples.map((sample) => sample.name).join() === 'mobile,laptop')
+    // The state the run started in has controls to measure; the one it ends in is a page with nothing on it.
+    && report.responsive.some((entry) => entry.samples.some((sample) => sample.controlsChecked > 0)),
+    JSON.stringify(report.responsive));
+  check('the run carries on at the size it was walking at, not the last one measured',
+    outcome.viewportAfter === null || outcome.viewportAfter.width === 1280 || outcome.viewportAfter.width > 390,
+    JSON.stringify(outcome.viewportAfter));
+  check('a clean page is not given findings it does not deserve',
+    report.uiQuality.every((finding) => finding.severity === 'LOW' || finding.rule !== 'HORIZONTAL_OVERFLOW'),
+    JSON.stringify(report.uiQuality.filter((finding) => finding.rule === 'HORIZONTAL_OVERFLOW')));
+  check('the report says the sizes were checked rather than claiming nothing about them',
+    !report.limitations.some((line) => /No window sizes were checked/.test(line)), JSON.stringify(report.limitations));
+  check('and the section still validates', AutomatedRunSectionSchema.safeParse(report).success);
+}
+
+scenario = 'a run that measured nothing says so';
+console.log(`\n${scenario}`);
+{
+  const report = section(await runScenario({}));
+  check('with no sizes asked for, the report says so rather than leaving a silent absence',
+    report.limitations.some((line) => /No window sizes were checked/.test(line)), JSON.stringify(report.limitations));
+  check('and nothing claims to know how the pages were drawn', report.responsive.length === 0);
+}
+
+scenario = 'each step says how hard it was to get at';
+console.log(`\n${scenario}`);
+{
+  const report = section(await runScenario({}));
+  const acted = report.states.filter((state) => state.action);
+  check('every step that was performed carries how its control was found',
+    acted.length > 0 && acted.every((state) => typeof state.action.candidates === 'number' && typeof state.action.attempt === 'number'),
+    JSON.stringify(acted.map((state) => state.action)));
+  check('and how long a person would have waited for the result',
+    acted.every((state) => typeof state.action.settledMs === 'number'),
+    JSON.stringify(acted.map((state) => state.action.settledMs)));
+  check('an unremarkable step is called easy rather than flagged',
+    acted.some((state) => state.action.ease === 'EASY'),
+    JSON.stringify(acted.map((state) => state.action.ease)));
+  check('the report leads with how far it got', report.summary && /Reached exam_created/.test(report.summary.headline), JSON.stringify(report.summary));
+}
+
+// ---------------------------------------------------------------------------
+// The signed-in session, kept between runs
+// ---------------------------------------------------------------------------
+
+scenario = 'a signed-in session is kept, and the next run starts from it';
+console.log(`\n${scenario}`);
+{
+  // One application for both runs, because that is the situation the feature exists for: the same deployment,
+  // run against twice, where the second run should not have to sign in again.
+  const app = await startLmsApp({ markers: 'adapter' });
+  try {
+    const first = await runScenario({ app, session: { seeded: false } });
+    check('the first run signs in and reaches the target', first.result.stopReason === 'TERMINAL_STATE_REACHED', first.result.detail);
+    const firstLogins = app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length;
+    check('it signed in exactly once', firstLogins === 1, String(firstLogins));
+    const kept = first.sessionLog.find((entry) => entry.kept)?.kept ?? null;
+    check('and what it signed in as was captured for the next run', typeof kept === 'string' && kept.includes('cookies'),
+      typeof kept === 'string' ? `${kept.slice(0, 60)}…` : String(kept));
+
+    if (typeof kept === 'string') {
+      const second = await runScenario({ app, seededSession: kept, session: { seeded: true } });
+      check('the next run reaches the target too', second.result.stopReason === 'TERMINAL_STATE_REACHED', second.result.detail);
+      check('having signed in no times at all, because the session it was given was already good',
+        app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length === firstLogins,
+        JSON.stringify(app.requests.filter((request) => request.path === '/api/login').map((request) => request.at)));
+      check('and nothing was thrown away, because nothing needed to be',
+        !second.sessionLog.some((entry) => entry.discarded));
+      check('which is the whole point: a sign-in only a person could do would have been done once, not twice',
+        second.result.stopReason === 'TERMINAL_STATE_REACHED');
+    }
+  } finally {
+    await app.close();
+  }
+}
+
+scenario = 'a kept session that no longer works is thrown away, and the run signs in again';
+console.log(`\n${scenario}`);
+{
+  // A session for the right origin that the application will not accept: the shape is valid, the value is not.
+  const stale = JSON.stringify({ cookies: [{ name: 'tellann_lms_user', value: 'not-a-real-session', domain: '127.0.0.1', path: '/', expires: -1, httpOnly: false, secure: false, sameSite: 'Lax' }], origins: [] });
+  const outcome = await runScenario({ seededSession: stale, session: { seeded: true } });
+
+  check('the run still reaches the target', outcome.result.stopReason === 'TERMINAL_STATE_REACHED', outcome.result.detail);
+  check('the session that did not work was thrown away', outcome.sessionLog.some((entry) => entry.discarded)
+    || outcome.app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length === 1,
+    JSON.stringify(outcome.sessionLog));
+  check('and the run signed in properly instead',
+    outcome.app.requests.filter((request) => request.method === 'POST' && request.path === '/api/login').length >= 1);
+}
+
+scenario = 'what an Automated Run is never allowed to be';
   console.log(`\n${scenario}`);
   const production = StartGuidedRunInputSchema.safeParse({
     applicationId: APP_ID, environmentId: '22222222-2222-4222-8222-222222222222', environmentType: 'PRODUCTION', captureTracks: ['FRONTEND'],

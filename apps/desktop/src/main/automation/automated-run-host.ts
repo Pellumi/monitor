@@ -119,13 +119,13 @@ export function createAutomatedRunHost(deps: AutomatedRunHostDeps): CreatedAutom
       }
     },
 
-    async openBrowser(run, start, hooks): Promise<BrowserSession> {
+    async openBrowser(run, start, hooks, options): Promise<BrowserSession> {
       const state = await deps.observer.start({
         ...start,
         runId: run.runId, sessionId: run.sessionId, traceId: run.traceId,
         relayEndpoint: run.relay.endpoint, relayToken: run.relay.relayToken,
         agentVersion: deps.agentVersion,
-      }, deps.artifactRoot());
+      }, deps.artifactRoot(), options?.storageState ? { storageState: options.storageState } : {});
       const page = deps.observer.getAutomationPage();
       if (!page) throw new Error("The managed browser did not open a page to drive.");
       deps.maintenance.start(run.runId);
@@ -142,6 +142,10 @@ export function createAutomatedRunHost(deps: AutomatedRunHostDeps): CreatedAutom
         // application's own markers, which carry no typed values, so the run can see where the application says it is.
         setCapturePaused: async (paused) => { await deps.observer.pause(paused); },
         bringToFront: async () => { await deps.observer.focusBrowser(); },
+        // The signed-in session itself. It goes to the main process to be encrypted into the local store and
+        // nowhere else: it is a bearer of the session, so it is never evidence, never an artifact, never uploaded.
+        captureStorageState: () => deps.observer.captureStorageState(),
+        clearStorageState: async () => { await deps.observer.clearBrowserSession(); },
       };
     },
 

@@ -71,7 +71,24 @@ Scope decision (user): the **full 10-step roadmap**, delivered as waves. Step so
 1. Automated Run is **never** allowed in PRODUCTION (server 403 + desktop refusal; `productionRunModeAllowed` stays OBSERVATION_ONLY-only; reuse `assertEnvironmentActionAllowed`).
 2. Run pins `flowVersionId`, initial state, target terminal state, code snapshot id, instrumentation manifest version, execution profile, persona, environment; a report months later shows exactly what was attempted.
 3. Hot path (decide next action) is fully local and synchronous with the browser. Cold path (coverage, reconciliation, endpoint analysis, report) stays on the existing pipeline. No cloud call per action.
-4. No LLM in the execution loop or in report text. Optional local ambiguity resolver only proposes; deterministic controller verifies. Works with model provider disabled.
+   **Amended:** still true of every action. The one exception is a tie the code could not break *and* the
+   rendered page could not break either, where a run that has `assistedTieBreaking` on may make a single call
+   before choosing. That is not per action — on a run where the code is good it never happens — and with the
+   setting off (the default) nothing changes.
+4. No LLM in the execution loop or in report text. Optional ambiguity resolver only proposes; deterministic
+   controller verifies. Works with model provider disabled.
+   **Amended:** report text is still wholly deterministic, including the prioritised summary and every
+   UI-quality finding, each of which carries the measurement that produced it. The resolver is no longer
+   required to be local: it declares its `locality`, which is recorded in the provenance of every decision it
+   influences, so a report says honestly whether a suggestion came from the machine or from somewhere else.
+   The gate it must pass is unchanged — candidates only, destination and code-mapping agreement, MEDIUM at
+   best for an assisted state, and never a mutating step on a tie the code cannot break.
+
+   Two further things now inform what the engine does, and neither relaxes this invariant, because neither is
+   a model: the **rendered page** (geometry, resolved colour, what is drawn on top of what) breaks ties and
+   catches a control nobody could have clicked, and the **UI-quality rules** are measurements compared with
+   published thresholds. Both are pure functions of what the browser reported, so a run that consults them is
+   as reproducible as one that does not.
 5. Executor records *what happened*; **Reconciliation decides what it means** (no "missing Flow" verdicts in the planner).
 6. No `networkidle`, no fixed sleeps. Stability = state predicate + critical elements + relevant requests settled + DOM quiet window + SDK signal.
 7. Mutating actions are not blindly retried.

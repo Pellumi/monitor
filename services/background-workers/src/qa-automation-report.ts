@@ -48,6 +48,13 @@ const iso = (value: Date | string): string => new Date(value).toISOString();
 const RUNTIME_ERROR_TYPES = new Set(['QA_RUNTIME_ERROR', 'QA_PAGE_CRASH']);
 /** A run that fails everywhere should not turn its report into a wall of diagnostics. */
 const MAX_DIAGNOSTICS = 20;
+/** Enough to act on. Past this it is a list nobody reads, and the per-rule cap already bounds each kind. */
+const MAX_UI_QUALITY = 60;
+/** The lead is a lead. Four things to look at is a plan; twenty is the rest of the report again. */
+const MAX_PRIORITIES = 5;
+const MAX_SUMMARY_FINDINGS = 2;
+/** Past this, a person waiting for a step to take effect notices the wait. */
+const SLOW_TRANSITION_MS = 1_000;
 
 export function summarizeAutomationEvidence(
   run: AutomationRunInput,
@@ -66,6 +73,9 @@ export function summarizeAutomationEvidence(
   const codeEvidence: AutomatedCodeEvidence[] = [];
   const retainedTraces: AutomatedRetainedTrace[] = [];
   const renderTiming = new Map<string, RenderTimingSample>();
+  const uiQuality: AutomatedRunSection['uiQuality'] = [];
+  const responsive: AutomatedRunSection['responsive'] = [];
+  const notes: string[] = [];
   /** Declared state -> why an attempt to reach it failed, from the application's side. */
   const blockedTargets = new Map<string, string | null>();
   let current: StateRunRecord | null = null;
@@ -116,6 +126,13 @@ export function summarizeAutomationEvidence(
           observedState: null,
           verified: null,
           error: null,
+          candidates: count(meta.candidates),
+          unusable: count(meta.unusable),
+          attempt: count(meta.attempt),
+          settledMs: null,
+          busyIndicator: null,
+          ease: null,
+          effects: [],
         };
         break;
       }
@@ -129,6 +146,23 @@ export function summarizeAutomationEvidence(
         if (action) {
           action.verified = meta.ok === true;
           action.observedState = text(meta.observedState) ? normalizeKey(meta.observedState) : null;
+          action.settledMs = count(meta.settledMs);
+          action.busyIndicator = typeof meta.busyIndicator === 'boolean' ? meta.busyIndicator : null;
+          // What the Flow said this step causes, against what the page actually did. The run has always
+          // checked this and recorded the answer; until now nothing read it, so a declared contract the
+          // application had quietly stopped honouring was detected and then thrown away.
+          for (const raw of Array.isArray(meta.effects) ? meta.effects : []) {
+            const effect = record(raw);
+            const outcome = text(effect.outcome);
+            if (outcome !== 'MATCHED' && outcome !== 'STATUS_MISMATCH' && outcome !== 'NOT_OBSERVED') continue;
+            action.effects.push({
+              method: (text(effect.method) ?? 'GET').toUpperCase(),
+              route: text(effect.route) ?? 'unknown',
+              expectedStatus: count(effect.expectedStatus),
+              outcome,
+              observedStatus: count(effect.observedStatus),
+            });
+          }
         }
         if (meta.ok === false && text(meta.expectedState)) {
           blockedTargets.set(normalizeKey(meta.expectedState), 'The action was performed but the expected state did not follow.');
@@ -173,6 +207,52 @@ export function summarizeAutomationEvidence(
         }
         break;
       }
+      case 'QA_AUTOMATION_UI_QUALITY': {
+        const stateKey = text(meta.stateKey) ? normalizeKey(meta.stateKey) : null;
+        for (const raw of Array.isArray(meta.findings) ? meta.findings : []) {
+          const finding = record(raw);
+          const rule = text(finding.rule);
+          const detail = text(finding.detail);
+          if (!rule || !detail || uiQuality.length >= MAX_UI_QUALITY) continue;
+          uiQuality.push({
+            rule,
+            severity: finding.severity === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+            stateKey: text(finding.stateKey) ? normalizeKey(finding.stateKey) : stateKey,
+            breakpoint: text(finding.breakpoint),
+            detail,
+            recommendation: text(finding.recommendation),
+          });
+        }
+        break;
+      }
+      case 'QA_AUTOMATION_RESPONSIVE_SAMPLE': {
+        const stateKey = text(meta.stateKey) ? normalizeKey(meta.stateKey) : null;
+        if (!stateKey || responsive.length >= MAX_DIAGNOSTICS) break;
+        const samples = (Array.isArray(meta.samples) ? meta.samples : []).flatMap((raw) => {
+          const sample = record(raw);
+          const name = text(sample.name);
+          const width = count(sample.width);
+          const height = count(sample.height);
+          if (!name || !width || !height) return [];
+          return [{
+            name, width, height,
+            horizontalOverflowPx: count(sample.horizontalOverflowPx) ?? 0,
+            smallestTextPx: Number.isFinite(Number(sample.smallestTextPx)) ? Number(sample.smallestTextPx) : null,
+            smallestTapTargetPx: Number.isFinite(Number(sample.smallestTapTargetPx)) ? Number(sample.smallestTapTargetPx) : null,
+            controlsChecked: count(sample.controlsChecked) ?? 0,
+          }];
+        });
+        // One row per state, even if the state was somehow swept twice.
+        const existing = responsive.find((entry) => entry.stateKey === stateKey);
+        if (existing) existing.samples = samples;
+        else if (samples.length > 0) responsive.push({ stateKey, samples });
+        break;
+      }
+      case 'QA_AUTOMATION_SESSION_DISCARDED': {
+        // Worth a line: it explains a run that took longer, or asked for a person, when nothing was wrong.
+        notes.push('A saved sign-in for this persona was no longer accepted, so the run signed in again.');
+        break;
+      }
       case 'QA_AUTOMATION_TRACE_RETAINED': {
         if (retainedTraces.length < MAX_DIAGNOSTICS) {
           retainedTraces.push({
@@ -215,8 +295,21 @@ export function summarizeAutomationEvidence(
     }
   }
 
+  // How easy each step was to get at, from what was recorded while it happened.
+  for (const state of states) {
+    if (state.action) state.action.ease = easeOf(state.action);
+  }
+
   const limits = AutomationLimitsSchema.safeParse(automation.limits);
   const contract = ContractSummarySchema.safeParse(automation.contract);
+  const declared = new Set(declaredStateKeys.map(normalizeKey)).size;
+  const inFlow = states.filter((state) => state.scope === 'IN_FLOW');
+  const limitations = [
+    ...notes,
+    ...(responsive.length === 0 ? ['No window sizes were checked, so nothing here says how this Flow behaves on a phone or a tablet.'] : []),
+    // A state with no action at all has no settle time either, so the question is whether any action has one.
+    ...(states.some((state) => typeof state.action?.settledMs === 'number') ? [] : ['How the pages were drawn was not measured, so nothing here says anything about legibility, tap targets or contrast.']),
+  ];
   return {
     pinned: {
       flowVersionId: text(automation.flowVersionId),
@@ -247,7 +340,122 @@ export function summarizeAutomationEvidence(
     codeEvidence,
     retainedTraces,
     renderTiming: [...renderTiming.values()],
+    uiQuality: rankUiQuality(uiQuality),
+    responsive,
+    limitations,
+    summary: buildSummary({
+      stopReason, kind, reachedTarget, detail: stopped?.detail ?? null,
+      target, reached: new Set(inFlow.map((state) => state.stateKey)).size, declared,
+      furthestStateKey: states[states.length - 1]?.stateKey ?? null,
+      states, uiQuality, blockedActions, unreachedStates,
+    }),
   };
+}
+
+/**
+ * How easy a step was to get at, from how its control was found.
+ *
+ * Each of these is something a person would also have struggled with: a control with no stable identity is one
+ * whose only distinguishing feature is its visible text, a control among lookalikes is one of several that read
+ * the same, and a step that needed a second attempt is one that did not respond the first time.
+ */
+export function easeOf(action: NonNullable<StateRunRecord['action']>): NonNullable<StateRunRecord['action']>['ease'] {
+  if ((action.unusable ?? 0) > 0) return 'HIDDEN_OR_DISABLED';
+  if ((action.attempt ?? 1) > 1) return 'NEEDED_RETRY';
+  if (action.method === 'TEXT' || action.method === 'STRUCTURAL') return 'NO_STABLE_IDENTITY';
+  if ((action.candidates ?? 0) > 1) return 'AMONG_LOOKALIKES';
+  if ((action.settledMs ?? 0) > SLOW_TRANSITION_MS) return 'SLOW_TRANSITION';
+  return 'EASY';
+}
+
+/** Worst first, then by rule, so the order of a report is the order to work in. */
+function rankUiQuality(findings: AutomatedRunSection['uiQuality']): AutomatedRunSection['uiQuality'] {
+  return [...findings].sort((a, b) =>
+    (a.severity === b.severity ? 0 : a.severity === 'MEDIUM' ? -1 : 1)
+    || a.rule.localeCompare(b.rule)
+    || (a.stateKey ?? '').localeCompare(b.stateKey ?? ''));
+}
+
+interface SummaryInput {
+  stopReason: AutomatedRunSection['outcome']['stopReason'];
+  kind: AutomatedRunSection['outcome']['kind'];
+  reachedTarget: boolean;
+  detail: string | null;
+  target: string | null;
+  reached: number;
+  declared: number;
+  furthestStateKey: string | null;
+  states: StateRunRecord[];
+  uiQuality: AutomatedRunSection['uiQuality'];
+  blockedActions: AutomatedRunSection['blockedActions'];
+  unreachedStates: AutomatedUnreachedState[];
+}
+
+/**
+ * The report's own lead.
+ *
+ * A faithful record in chronological order is what the rest of this section is. What somebody opening it
+ * actually wants is four things: did it get there, what stopped it, what is worth fixing, and where to start.
+ * Every sentence here is assembled from a number computed above — none of it is written by a model, which is
+ * the same rule the rest of the report follows (QRS-RUN-008).
+ */
+function buildSummary(input: SummaryInput): AutomatedRunSection['summary'] {
+  const { reached, declared, target } = input;
+  const progress = declared > 0 ? `${reached} of ${declared} declared states` : `${reached} states`;
+  const headline = input.reachedTarget
+    ? `Reached ${target ?? 'the target'}, performing every declared step on the way.`
+    : input.kind === 'INFRASTRUCTURE'
+      ? `Stopped after ${progress} because Tellann's own machinery failed. Nothing here is a finding about the application.`
+      : input.kind === 'USER'
+        ? `Stopped after ${progress} because the run needed something it was not given. Nothing here is a finding about the application.`
+        : `Reached ${progress} and stopped short of ${target ?? 'the target'}.`;
+
+  const priorities: string[] = [];
+  if (!input.reachedTarget && input.kind === 'APPLICATION') {
+    const blocked = input.unreachedStates.find((state) => state.status === 'BLOCKED_BY_APPLICATION');
+    priorities.push(input.detail ?? blocked?.detail ?? `The run could not get past ${input.furthestStateKey ?? 'where it stopped'}.`);
+  }
+  // A declared effect that did not happen is the application quietly not doing what the Flow says it does.
+  const brokenEffects = input.states.flatMap((state) => (state.action?.effects ?? []).filter((effect) => effect.outcome !== 'MATCHED'));
+  if (brokenEffects.length > 0) {
+    const first = brokenEffects[0]!;
+    priorities.push(brokenEffects.length === 1
+      ? `${first.method} ${first.route} ${first.outcome === 'NOT_OBSERVED' ? 'was declared for a step and never happened' : `answered ${first.observedStatus ?? 'differently'} rather than ${first.expectedStatus}`}.`
+      : `${brokenEffects.length} requests the Flow declares did not happen as declared, starting with ${first.method} ${first.route}.`);
+  }
+  const errorStates = input.states.filter((state) => state.errorCount > 0);
+  if (errorStates.length > 0) {
+    priorities.push(`${errorStates.length} state${errorStates.length === 1 ? '' : 's'} raised errors in the page, starting with ${errorStates[0]!.stateKey}.`);
+  }
+  const awkward = input.states.filter((state) => state.action?.ease && state.action.ease !== 'EASY');
+  if (awkward.length > 0) {
+    priorities.push(`${awkward.length} step${awkward.length === 1 ? '' : 's'} were harder to get at than they should be (${describeEase(awkward[0]!.action!.ease!)}).`);
+  }
+  for (const finding of input.uiQuality.filter((candidate) => candidate.severity === 'MEDIUM').slice(0, MAX_SUMMARY_FINDINGS)) {
+    priorities.push(finding.detail);
+  }
+  if (input.blockedActions.length > 0 && priorities.length === 0) {
+    priorities.push(`${input.blockedActions.length} action${input.blockedActions.length === 1 ? '' : 's'} could not be performed; see the blocked actions below.`);
+  }
+
+  return {
+    headline,
+    reached,
+    declared,
+    furthestStateKey: input.furthestStateKey,
+    priorities: priorities.slice(0, MAX_PRIORITIES),
+  };
+}
+
+function describeEase(ease: NonNullable<NonNullable<StateRunRecord['action']>['ease']>): string {
+  switch (ease) {
+    case 'HIDDEN_OR_DISABLED': return 'a control that matched but was hidden or disabled';
+    case 'NEEDED_RETRY': return 'a control that did not respond the first time';
+    case 'NO_STABLE_IDENTITY': return 'a control with nothing but its visible text to identify it';
+    case 'AMONG_LOOKALIKES': return 'a control among several that read the same';
+    case 'SLOW_TRANSITION': return 'a step that took a visible while to take effect';
+    default: return 'it was straightforward';
+  }
 }
 
 /** How many gaps the reconciliation engine attributed to each reason, across a run's reports. */

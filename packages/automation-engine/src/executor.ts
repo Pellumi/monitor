@@ -7,6 +7,7 @@ import { LoopDetector, RunBudget, stateFingerprint } from './budget';
 import { decideCapture } from './capture-policy';
 import type { AnomalyReason, CaptureDecision, CaptureInput } from './capture-policy';
 import { planFlowPath } from './flow-path';
+import { dedupe, flowShapeFindings, rankFindings, responsiveFindings, statePageFindings } from './ui-quality';
 import { resolveRunTargets } from './targets';
 import { evaluateAction, evaluateNavigation } from './policy';
 import type { PolicyOptions } from './policy';
@@ -18,11 +19,13 @@ import type {
   ActionOutcome,
   ApiCondition,
   AutomationAction,
+  Breakpoint,
   EnvironmentKind,
   ExecutableContract,
   ObservedRequest,
   Recognition,
   SemanticSnapshot,
+  ViewportSample,
 } from './types';
 
 /**
@@ -52,7 +55,9 @@ export type AutomationEventType =
   | 'QA_AUTOMATION_REPLAN'
   | 'QA_AUTOMATION_INITIAL_STATE_REACHED'
   | 'QA_AUTOMATION_TERMINAL_STATE_REACHED'
-  | 'QA_AUTOMATION_STOPPED';
+  | 'QA_AUTOMATION_STOPPED'
+  | 'QA_AUTOMATION_RESPONSIVE_SAMPLE'
+  | 'QA_AUTOMATION_UI_QUALITY';
 
 export interface AutomationEvent {
   type: AutomationEventType;
@@ -132,6 +137,17 @@ export interface AutomationPorts {
     end(result: { stateKey: string | null; retain: boolean; reasons: AnomalyReason[] }): Promise<void> | void;
   };
   /**
+   * The adapter's own per-state checks — an accessibility scan — on the first visit to a state. Best-effort and
+   * never consulted: nothing found here changes what the run does, so a failure is a missing report row.
+   */
+  inspectPage?(stateKey: string): Promise<void> | void;
+  /**
+   * Re-measure the state the run has just reached at other window sizes. Called once per state, on the first
+   * visit, after it has been recognised and before anything is done in it — so a sweep can never change what
+   * the run does. The adapter restores the original size before returning. Absent means no sweep.
+   */
+  measureViewports?(breakpoints: Breakpoint[]): Promise<ViewportSample[]>;
+  /**
    * Optional tie-breaker for the two things the engine refuses to guess: which of several equally
    * good controls to act on, and which of several equally good states the page is. It can only
    * choose among the candidates the engine already found, and its choice is acted on only if the
@@ -165,6 +181,11 @@ export interface AutomationConfig {
   applicationOrigin: string;
   limits: AutomationLimits;
   policy?: PolicyOptions;
+  /**
+   * The window sizes each state is re-measured at, the first time it is reached. Empty (or no `measureViewports`
+   * port) means the Flow is only ever judged at the size it was walked at.
+   */
+  responsiveBreakpoints?: Breakpoint[];
 }
 
 export interface StateRunRecord {
@@ -235,6 +256,57 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       chunk = null;
     }
   };
+  /** How long the run waited for each state to arrive, so a slow page can be told from a quick one. */
+  const settleTimes = new Map<string, number>();
+  /**
+   * Everything about how one state is drawn: at the size the run is walking it, and at every other size the run
+   * was asked about. Findings carry the measurement behind them; the samples are recorded whether or not
+   * anything was wrong with them, because "checked at five sizes, all clear" is worth saying too.
+   *
+   * Entirely best-effort. Nothing here decides anything about the run, so a measurement that fails is a row
+   * missing from a report, never a run that stops.
+   */
+  const inspectState = async (stateKey: string, snapshot: SemanticSnapshot, settledMs: number | null): Promise<void> => {
+    try {
+      await ports.inspectPage?.(stateKey);
+    } catch {
+      // The adapter's own checks are its business, and losing one is never a reason to stop.
+    }
+    const state = contract.states.find((candidate) => candidate.key === stateKey);
+    const outgoing = contract.transitions.filter((transition) => transition.from === stateKey);
+    const findings = statePageFindings({
+      stateKey, state, outgoing, elements: snapshot.elements, page: snapshot.page,
+      settledMs, busyIndicator: snapshot.page?.busyIndicator,
+    });
+
+    const breakpoints = config.responsiveBreakpoints ?? [];
+    if (ports.measureViewports && breakpoints.length > 0) {
+      try {
+        const samples = await ports.measureViewports(breakpoints);
+        if (samples.length > 0) {
+          emit('QA_AUTOMATION_RESPONSIVE_SAMPLE', {
+            stateKey,
+            samples: samples.map((sample) => ({
+              name: sample.breakpoint.name,
+              width: sample.breakpoint.width,
+              height: sample.breakpoint.height,
+              horizontalOverflowPx: Math.round(sample.page.horizontalOverflowPx),
+              smallestTextPx: sample.page.smallestTextPx === null ? null : Math.round(sample.page.smallestTextPx * 10) / 10,
+              smallestTapTargetPx: smallestTapTarget(sample, outgoing),
+              controlsChecked: sample.elements.filter((element) => element.visible && element.enabled).length,
+            })),
+          });
+          findings.push(...responsiveFindings(stateKey, state, outgoing, samples));
+        }
+      } catch {
+        // A size that could not be measured is a row missing from a report, not a failed run.
+      }
+    }
+
+    const ranked = rankFindings(dedupe(findings));
+    if (ranked.length > 0) emit('QA_AUTOMATION_UI_QUALITY', { stateKey, findings: ranked });
+  };
+
   const capture = async (input: CaptureInput): Promise<void> => {
     const decision = decideCapture(input);
     if (decision.tier !== 'DEEP') return;
@@ -261,6 +333,12 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     flowHash: contract.flowHash,
     unresolvedTransitions: contract.transitions.filter((transition) => transition.derivation === 'UNRESOLVED').map((transition) => transition.id),
   });
+
+  // What is wrong with the shape of the declared Flow — a state nothing leads out of, a step that asks for
+  // nothing, a state nothing can reach. All facts about what somebody declared, so they hold before the run
+  // touches anything, and they are said once rather than once per visit.
+  const shape = rankFindings(flowShapeFindings(contract, config.environment, config.policy));
+  if (shape.length > 0) emit('QA_AUTOMATION_UI_QUALITY', { stateKey: null, findings: shape });
 
   // Refused before anything is touched: a run is never reported against a target it was not pointed at.
   if (!targeting.ok) return finish('AUTOMATION_ENGINE_ERROR', targeting.detail);
@@ -297,7 +375,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
 
     // Two states fit the page equally well. If a resolver is configured it may suggest one of *those two*,
     // and the suggestion stands only if the contract agrees; otherwise the read stays ambiguous.
-    let stateResolution: { resolver: string; rationale: string; agreement: string[] } | { rejected: string } | null = null;
+    let stateResolution: { resolver: string; locality: string; rationale: string; agreement: string[] } | { rejected: string } | null = null;
     if (recognition.best && recognition.ambiguous && ports.resolver) {
       const top = recognition.best;
       const tied = recognition.candidates.filter((candidate) => Math.abs(candidate.score - top.score) <= AMBIGUITY_MARGIN);
@@ -317,7 +395,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
             const chosen = tied.find((candidate) => candidate.stateKey === verdict.choice)!;
             // Assisted, so never better than MEDIUM: a suggestion is not the same strength of evidence as a match.
             recognition = { ...recognition, best: { ...chosen, confidence: chosen.confidence === 'HIGH' ? 'MEDIUM' : chosen.confidence }, ambiguous: false };
-            stateResolution = { resolver: ports.resolver.id, rationale: proposal.rationale, agreement: verdict.agreement };
+            stateResolution = { resolver: ports.resolver.id, locality: ports.resolver.locality, rationale: proposal.rationale, agreement: verdict.agreement };
           } else {
             stateResolution = { rejected: `${verdict.reason}: ${verdict.detail}` };
           }
@@ -358,6 +436,10 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     if (recordState(states, best, snapshot, ports.now())) {
       currentTransitionId = null;
       await openChunk(best.stateKey, states.length);
+      // The first time this state is reached, and only then: judge how it is drawn, and re-measure it at the
+      // other window sizes. Before planning and before acting, so a sweep can never change what the run does —
+      // which is the only basis on which it could be on by default.
+      await inspectState(best.stateKey, snapshot, settleTimes.get(best.stateKey) ?? null);
     }
     if (!initialReported) {
       initialReported = true;
@@ -398,6 +480,10 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       label: next.action ?? next.id,
     };
     const mode = next.mode ?? 'AUTO';
+    // Counted before anything is attempted, so a step that could not be resolved still says how close it came.
+    const ranking = next.control ? rankControls(next.control, snapshot.elements) : null;
+    const candidateCount = ranking?.candidates.length ?? 0;
+    const unusableCount = ranking?.unusable.length ?? 0;
     // Opening the application has no control: the run did that itself. Look again, once, without the starting state.
     if (mode === 'AUTO' && isEntryStep(contract, next) && !entrySkipped.has(next.id)) {
       entrySkipped.add(next.id);
@@ -407,7 +493,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     }
     // A step a person performs needs no control found and nothing typed: they do it in the browser.
     let resolved = mode === 'MANUAL' ? null : resolveStep(snapshot, stepInput);
-    let controlResolution: { resolver: string; rationale: string; agreement: string[] } | null = null;
+    let controlResolution: { resolver: string; locality: string; rationale: string; agreement: string[] } | null = null;
     if (resolved && !resolved.ok && resolved.reason === 'CONTROL_AMBIGUOUS' && ports.resolver && next.control) {
       const tied = tiedControls(rankControls(next.control, snapshot.elements).candidates);
       const proposal = await askResolver(ports.resolver, controlSituation(next, tied));
@@ -415,14 +501,18 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
         const verdict = verifyControlProposal({ transition: next, destination: contract.states.find((candidate) => candidate.key === next.to), candidates: tied, proposal });
         if (verdict.accepted) {
           resolved = resolveStep(snapshot, { ...stepInput, tieBreak: () => verdict.choice });
-          controlResolution = { resolver: ports.resolver.id, rationale: proposal.rationale, agreement: verdict.agreement };
+          controlResolution = { resolver: ports.resolver.id, locality: ports.resolver.locality, rationale: proposal.rationale, agreement: verdict.agreement };
         } else {
           emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: 'RESOLVER_PROPOSAL_REJECTED', transitionId: next.id, resolver: ports.resolver.id, detail: `${verdict.reason}: ${verdict.detail}` });
         }
       }
     }
     if (resolved && !resolved.ok) {
-      const stopReason = DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND';
+      // "It was not there" and "it was there and unusable" are different findings about the application, and the
+      // second one is the more actionable: something is covering the control a person is meant to press.
+      const stopReason = DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE'
+        : resolved.reason === 'CONTROL_OBSCURED' ? 'CONTROL_OBSCURED'
+        : 'EXPECTED_TRANSITION_NOT_FOUND';
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
       return finish(stopReason, resolved.detail);
     }
@@ -449,8 +539,16 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       mode,
       derivation: next.derivation,
       codeRefs: next.codeRefs,
+      // How hard it was to find, which is what "how easy is this to get at" is actually measured from. A
+      // control matched only by its visible text, or found among four identical ones, or present but hidden,
+      // is harder for a person to pick out too — and all of it was already known here and thrown away.
+      candidates: candidateCount,
+      unusable: unusableCount,
+      attempt: (attempts.get(next.id) ?? 0) + 1,
       // A choice a resolver made and the contract confirmed is on the record as exactly that.
       ...(controlResolution ? { resolvedBy: controlResolution } : {}),
+      // So is one the rendered page made, which is a different kind of evidence and should read as one.
+      ...(resolved?.ok && resolved.resolvedBy ? { resolvedByRendering: resolved.resolvedBy } : {}),
     });
 
     if (mode !== 'AUTO') {
@@ -476,7 +574,12 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
         resolved = resolveStep(snapshot, stepInput);
         if (!resolved.ok) {
           emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
-          return finish(DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE' : 'EXPECTED_TRANSITION_NOT_FOUND', resolved.detail);
+          return finish(
+            DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE'
+              : resolved.reason === 'CONTROL_OBSCURED' ? 'CONTROL_OBSCURED'
+              : 'EXPECTED_TRANSITION_NOT_FOUND',
+            resolved.detail,
+          );
         }
       }
     }
@@ -500,7 +603,11 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     }
 
     states[states.length - 1]!.leftVia = { transitionId: next.id, action: next.action, actionClass: next.actionClass, method: resolved?.ok ? resolved.method : 'PERSON' };
+    const settleStartedAt = ports.now();
     snapshot = await ports.settle(next.to);
+    // How long the page the action led to took to arrive, kept against the state it led to, so a finding about
+    // a slow page names the state that was slow.
+    settleTimes.set(next.to, ports.now() - settleStartedAt);
     recognition = recognizeAmong(snapshot, contract.states);
     const landed = recognition.best;
     const advanced = landed !== null && !recognition.ambiguous && landed.stateKey === next.to;
@@ -515,6 +622,9 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       observedState: landed?.stateKey ?? null,
       confidence: landed?.confidence ?? null,
       errorsSince: Math.max(0, snapshot.errorCount - before.errorCount),
+      // How long a person would have waited for this, and whether the page said anything while they did.
+      settledMs: settleTimes.get(next.to) ?? null,
+      busyIndicator: snapshot.page?.busyIndicator ?? null,
       ...(checked.length ? { effects: checked } : {}),
     });
     await capture({
@@ -560,6 +670,30 @@ function recordState(states: StateRunRecord[], recognition: Recognition, snapsho
     leftVia: null,
   });
   return true;
+}
+
+/**
+ * The smallest of the controls this state's own steps act on, at this size. Null when none of them could be
+ * found or measured, which `responsiveFindings` reports in its own right.
+ */
+function smallestTapTarget(sample: ViewportSample, outgoing: ExecutableContract['transitions']): number | null {
+  let smallest: number | null = null;
+  for (const transition of outgoing) {
+    const labels = transition.control?.labels ?? [];
+    const match = sample.elements.find((element) =>
+      (transition.control?.testId !== null && transition.control?.testId !== undefined && element.testId === transition.control.testId)
+      || labels.some((label) => sameText(label, element.name) || sameText(label, element.label)));
+    const rect = match?.geometry?.rect;
+    if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+    const side = Math.min(rect.width, rect.height);
+    if (smallest === null || side < smallest) smallest = side;
+  }
+  return smallest === null ? null : Math.round(smallest);
+}
+
+function sameText(a: string | null | undefined, b: string | null | undefined): boolean {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return Boolean(a) && Boolean(b) && normalize(a as string) === normalize(b as string);
 }
 
 function originOf(url: string): string {

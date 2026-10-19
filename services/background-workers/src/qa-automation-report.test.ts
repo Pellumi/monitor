@@ -296,3 +296,186 @@ test('malformed render timing is ignored, not fatal', () => {
 test('a run that did not opt in to render timing reports none', () => {
   assert.deepEqual(summarizeAutomationEvidence(run, happyPath(), declared)!.renderTiming, []);
 });
+
+// -- what the run measured, carried through to the report ------------------------------------------
+
+test('what the Flow declared a step causes is read, against what the page actually did', () => {
+  const events = [
+    evaluated(0, 'exam_form', '/courses/7/exams/new'),
+    selected(100, 't-submit', 'Save exam', 'exam_created', 'SERVER_MUTATION'),
+    event('QA_AUTOMATION_ACTION_VERIFIED', 400, {
+      ok: true, expectedState: 'exam_created', observedState: 'exam_created',
+      effects: [
+        { method: 'post', route: '/api/exams', expectedStatus: 201, outcome: 'STATUS_MISMATCH', observedStatus: 200 },
+        { method: 'POST', route: '/api/audit', expectedStatus: null, outcome: 'NOT_OBSERVED', observedStatus: null },
+        { method: 'GET', route: '/api/exams/{param}', expectedStatus: 200, outcome: 'MATCHED', observedStatus: 200 },
+      ],
+    }),
+    evaluated(410, 'exam_created', '/courses/7/exams/42'),
+    stopped(420, 'TERMINAL_STATE_REACHED'),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  const effects = section.states.find((state) => state.stateKey === 'exam_form')!.action!.effects;
+
+  assert.equal(effects.length, 3, 'a contract the application quietly stopped honouring used to be thrown away here');
+  assert.equal(effects[0]!.method, 'POST', 'the method is normalised, so a report does not mix post and POST');
+  assert.deepEqual(effects.map((effect) => effect.outcome), ['STATUS_MISMATCH', 'NOT_OBSERVED', 'MATCHED']);
+  // And the one that did not happen leads the summary, because that is the application not doing what it says.
+  assert.ok(section.summary!.priorities.some((line) => line.includes('/api/exams')));
+  assert.equal(AutomatedRunSectionSchema.safeParse(section).success, true);
+});
+
+test('how hard each control was to find becomes a verdict a person can read', () => {
+  const cases: Array<[Record<string, unknown>, string]> = [
+    [{ method: 'ROLE_NAME', candidates: 1, unusable: 0, attempt: 1 }, 'EASY'],
+    [{ method: 'TEXT', candidates: 1, unusable: 0, attempt: 1 }, 'NO_STABLE_IDENTITY'],
+    [{ method: 'ROLE_NAME', candidates: 4, unusable: 0, attempt: 1 }, 'AMONG_LOOKALIKES'],
+    [{ method: 'ROLE_NAME', candidates: 1, unusable: 2, attempt: 1 }, 'HIDDEN_OR_DISABLED'],
+    [{ method: 'ROLE_NAME', candidates: 1, unusable: 0, attempt: 2 }, 'NEEDED_RETRY'],
+  ];
+  for (const [meta, expected] of cases) {
+    const events = [
+      evaluated(0, 'exam_form', '/x'),
+      event('QA_AUTOMATION_ACTION_SELECTED', 100, { transitionId: 't', action: 'Save', expectedState: 'exam_created', actionClass: 'READ', ...meta }),
+      verified(200, true, 'exam_created', 'exam_created'),
+      evaluated(210, 'exam_created', '/y'),
+      stopped(220, 'TERMINAL_STATE_REACHED'),
+    ];
+    const section = summarizeAutomationEvidence(run, events, declared)!;
+    assert.equal(section.states[0]!.action!.ease, expected, JSON.stringify(meta));
+  }
+});
+
+test('a step that took a visible while to take effect is reported as slow', () => {
+  const events = [
+    evaluated(0, 'exam_form', '/x'),
+    selected(100, 't', 'Save', 'exam_created'),
+    event('QA_AUTOMATION_ACTION_VERIFIED', 100, { ok: true, expectedState: 'exam_created', observedState: 'exam_created', settledMs: 3_200, busyIndicator: false }),
+    evaluated(110, 'exam_created', '/y'),
+    stopped(120, 'TERMINAL_STATE_REACHED'),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.equal(section.states[0]!.action!.ease, 'SLOW_TRANSITION');
+  assert.equal(section.states[0]!.action!.settledMs, 3_200);
+  assert.equal(section.states[0]!.action!.busyIndicator, false);
+});
+
+test('what is wrong with the Flow as a person would meet it is carried through, worst first', () => {
+  const events = [
+    event('QA_AUTOMATION_UI_QUALITY', 0, {
+      stateKey: null,
+      findings: [{ rule: 'REDUNDANT_STEP', severity: 'LOW', stateKey: 'exam_form', breakpoint: null, detail: 'A page people click through.', recommendation: 'Remove it.' }],
+    }),
+    ...happyPath(),
+    event('QA_AUTOMATION_UI_QUALITY', 930, {
+      stateKey: 'exam_form',
+      findings: [{ rule: 'TAP_TARGET_TOO_SMALL', severity: 'MEDIUM', stateKey: 'exam_form', breakpoint: 'mobile (390x844)', detail: 'Close is 18x18px, below 44x44.', recommendation: 'More padding.' }],
+    }),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+
+  assert.deepEqual(section.uiQuality.map((finding) => finding.rule), ['TAP_TARGET_TOO_SMALL', 'REDUNDANT_STEP'], 'worst first');
+  assert.equal(section.uiQuality[0]!.breakpoint, 'mobile (390x844)');
+  assert.ok(section.summary!.priorities.some((line) => line.includes('18x18px')), 'and the worst of it leads the summary');
+  assert.equal(AutomatedRunSectionSchema.safeParse(section).success, true);
+});
+
+test('every size each state was checked at is recorded, whether or not anything was wrong', () => {
+  const events = [
+    ...happyPath(),
+    event('QA_AUTOMATION_RESPONSIVE_SAMPLE', 930, {
+      stateKey: 'exam_form',
+      samples: [
+        { name: 'mobile', width: 390, height: 844, horizontalOverflowPx: 180, smallestTextPx: 11.5, smallestTapTargetPx: 18, controlsChecked: 4 },
+        { name: 'laptop', width: 1280, height: 800, horizontalOverflowPx: 0, smallestTextPx: 14, smallestTapTargetPx: 44, controlsChecked: 4 },
+      ],
+    }),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.equal(section.responsive.length, 1);
+  assert.equal(section.responsive[0]!.stateKey, 'exam_form');
+  assert.deepEqual(section.responsive[0]!.samples.map((sample) => sample.name), ['mobile', 'laptop']);
+  assert.equal(section.responsive[0]!.samples[0]!.horizontalOverflowPx, 180);
+  assert.equal(section.responsive[0]!.samples[1]!.smallestTapTargetPx, 44, 'all clear at this size is worth saying too');
+  assert.ok(!section.limitations.some((line) => line.includes('No window sizes were checked')));
+});
+
+test('a run that measured nothing says so, rather than leaving a silent absence', () => {
+  const section = summarizeAutomationEvidence(run, happyPath(), declared)!;
+  assert.ok(section.limitations.some((line) => line.includes('No window sizes were checked')));
+  assert.ok(section.limitations.some((line) => line.includes('not measured')));
+});
+
+test('a saved sign-in that had to be thrown away is explained, because it changes how a run read', () => {
+  const events = [event('QA_AUTOMATION_SESSION_DISCARDED', 0, { stopReason: 'AUTHENTICATION_FAILED', detail: 'x' }), ...happyPath()];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(section.limitations.some((line) => line.includes('saved sign-in')));
+});
+
+// -- the lead ---------------------------------------------------------------------------------------
+
+test('a run that got there says so, and has nothing to prioritise', () => {
+  const section = summarizeAutomationEvidence(run, happyPath(), declared)!;
+  assert.match(section.summary!.headline, /Reached exam_created/);
+  assert.equal(section.summary!.reached, 2, 'the two in-flow states; the first was setup');
+  assert.equal(section.summary!.declared, 4);
+  assert.equal(section.summary!.furthestStateKey, 'exam_created');
+  assert.deepEqual(section.summary!.priorities, []);
+});
+
+test('a run the application stopped leads with what stopped it, and how far it got', () => {
+  const events = [
+    evaluated(0, 'course_details', '/courses/7', 'PRE_BOUNDARY'),
+    selected(100, 't-create', 'Create Exam', 'exam_form'),
+    verified(300, true, 'exam_form', 'exam_form'),
+    evaluated(310, 'exam_form', '/courses/7/exams/new'),
+    selected(400, 't-submit', 'Save exam', 'exam_created', 'SERVER_MUTATION'),
+    verified(900, false, 'exam_created', 'exam_form'),
+    stopped(920, 'TRANSITION_DID_NOT_ADVANCE', { detail: 'Save exam was performed but exam_created did not follow.' }),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.match(section.summary!.headline, /stopped short of exam_created/);
+  assert.match(section.summary!.headline, /1 of 4 declared states/);
+  assert.equal(section.summary!.priorities[0], 'Save exam was performed but exam_created did not follow.');
+});
+
+test('a failure of our own machinery never leads as a finding about the application', () => {
+  const events = [...happyPath().slice(0, 3), stopped(400, 'BROWSER_CRASHED', { detail: 'The managed browser closed.' })];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.match(section.summary!.headline, /own machinery failed/);
+  assert.match(section.summary!.headline, /Nothing here is a finding about the application/);
+  assert.deepEqual(section.summary!.priorities, []);
+});
+
+test('a run that needed something it was not given says that, not that the application is wrong', () => {
+  const events = [...happyPath().slice(0, 1), stopped(100, 'SUPPLIED_SESSION_REJECTED', { detail: 'The session was not accepted.' })];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.match(section.summary!.headline, /needed something it was not given/);
+  assert.match(section.summary!.headline, /Nothing here is a finding about the application/);
+});
+
+test('errors raised in the page reach the lead, with the state they started in', () => {
+  const events = [
+    evaluated(0, 'exam_form', '/x'),
+    event('QA_RUNTIME_ERROR', 50, {}),
+    event('QA_RUNTIME_ERROR', 60, {}),
+    selected(100, 't', 'Save', 'exam_created'),
+    verified(200, true, 'exam_created', 'exam_created'),
+    evaluated(210, 'exam_created', '/y'),
+    stopped(220, 'TERMINAL_STATE_REACHED'),
+  ];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(section.summary!.priorities.some((line) => line.includes('raised errors in the page')));
+  assert.ok(section.summary!.priorities.some((line) => line.includes('exam_form')));
+});
+
+test('the lead stays a lead, and is never the rest of the report again', () => {
+  const findings = Array.from({ length: 30 }, (_, index) => ({
+    rule: 'LOW_CONTRAST', severity: 'MEDIUM', stateKey: 'exam_form', breakpoint: null,
+    detail: `Finding ${index}`, recommendation: null,
+  }));
+  const events = [...happyPath(), event('QA_AUTOMATION_UI_QUALITY', 930, { stateKey: 'exam_form', findings })];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(section.summary!.priorities.length <= 5);
+  assert.equal(section.uiQuality.length, 30, 'all of it is still in the section below');
+});

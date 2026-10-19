@@ -11916,6 +11916,13 @@ function reportHrefFor(projectId: string, run: QARunSummary) {
     : null;
 }
 
+/** Only a run that captured the browser (not a backend-only run) has anything to replay. */
+function replayHrefFor(projectId: string, run: QARunSummary) {
+  return run.captureTracks.includes("FRONTEND")
+    ? `/applications/${projectId}/qa-runs/${run.id}?tab=replay`
+    : null;
+}
+
 function formatRunTime(value: string | null | undefined, fallback: string) {
   return value ? new Date(value).toLocaleString() : fallback;
 }
@@ -11986,8 +11993,10 @@ export function RunsPage() {
     onOpen: openRun,
     onContextMenu: (run, event) => {
       const report = projectId ? reportHrefFor(projectId, run) : null;
+      const replay = projectId ? replayHrefFor(projectId, run) : null;
       void showMenu(event, [
         { id: "open", label: "Open run", accelerator: "Enter" },
+        { id: "replay", label: "Replay run", enabled: Boolean(replay) },
         { id: "report", label: "View report", enabled: Boolean(report) },
         { type: "separator" },
         { id: "rename", label: "Rename…" },
@@ -11999,6 +12008,7 @@ export function RunsPage() {
         { id: "copy", label: "Copy run ID" },
       ]).then((choice) => {
         if (choice === "open") openRun(run);
+        if (choice === "replay" && replay) navigate(replay);
         if (choice === "report" && report) navigate(report);
         if (choice === "rename") setRenameTarget(run);
         if (choice === "archive") setArchiveTarget(run);
@@ -12018,6 +12028,7 @@ export function RunsPage() {
     );
   const selected = list.selected;
   const selectedReport = selected ? reportHrefFor(projectId, selected) : null;
+  const selectedReplay = selected ? replayHrefFor(projectId, selected) : null;
   return (
     <Page
       title="QA Runs"
@@ -12115,6 +12126,12 @@ export function RunsPage() {
                   <button className="button primary" type="button" onClick={() => openRun(selected)}>
                     Open run
                   </button>
+                  {selectedReplay ? (
+                    <Link className="button" to={selectedReplay}>
+                      <Play size={15} />
+                      Replay
+                    </Link>
+                  ) : null}
                   {selectedReport ? (
                     <Link className="button" to={selectedReport}>
                       <BarChart3 size={15} />
@@ -14839,13 +14856,13 @@ function EvidenceDetailModal({
 }
 
 const RUN_TABS = [
-  { value: "evidence", label: "Evidence" },
-  { value: "findings", label: "Findings" },
-  { value: "annotations", label: "Annotations" },
-  { value: "replay", label: "Replay" },
-  { value: "graph", label: "Graph" },
-  { value: "reconciliation", label: "Reconciliation" },
-  { value: "artifacts", label: "Artifacts" },
+  { value: "evidence", label: "Evidence", icon: FileSearch },
+  { value: "findings", label: "Findings", icon: TriangleAlert },
+  { value: "annotations", label: "Annotations", icon: MessageSquare },
+  { value: "replay", label: "Replay", icon: Play },
+  { value: "graph", label: "Graph", icon: GitBranch },
+  { value: "reconciliation", label: "Reconciliation", icon: GitCompareArrows },
+  { value: "artifacts", label: "Artifacts", icon: Archive },
 ] as const;
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -15664,6 +15681,7 @@ export function RunDetailPage() {
         <TabsList aria-label="QA run details">
           {runTabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
+              <tab.icon size={13} aria-hidden="true" />
               {tab.label}
               <span>
                 {tab.value === "findings"

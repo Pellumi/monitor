@@ -3969,6 +3969,10 @@ button:disabled {
 }
 .desktop-tabs-trigger {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 42px;
   flex: 1 0 auto;
   padding: 0 15px;
@@ -3979,6 +3983,13 @@ button:disabled {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
+}
+.desktop-tabs-trigger > svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+.desktop-tabs-trigger[aria-selected="true"] > svg {
+  opacity: 1;
 }
 .desktop-tabs-trigger:last-child {
   border-right: 0;

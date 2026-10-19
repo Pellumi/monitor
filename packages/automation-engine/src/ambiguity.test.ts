@@ -8,7 +8,7 @@ import { rankControls } from './ranking';
 import type { ControlCandidate, ExecutableContract, ExecutableTransition } from './types';
 import { FakeApp, ORIGIN, control, element, limits, state, transition } from './test-fixtures';
 
-const resolverReturning = (proposal: AmbiguityProposal | null): AmbiguityResolver => ({ id: 'test-resolver', local: true, resolve: async () => proposal });
+const resolverReturning = (proposal: AmbiguityProposal | null): AmbiguityResolver => ({ id: 'test-resolver', locality: 'LOCAL', resolve: async () => proposal });
 
 // -- a step with two equally good controls ------------------------------------
 
@@ -159,7 +159,7 @@ const situation = controlSituation(openExam(), tiedPair());
 
 test('the default resolver has no opinion', async () => {
   assert.equal(await askResolver(NO_AMBIGUITY_RESOLVER, situation), null);
-  assert.equal(NO_AMBIGUITY_RESOLVER.local, true);
+  assert.equal(NO_AMBIGUITY_RESOLVER.locality, 'LOCAL');
 });
 
 test('a resolver is told about page metadata only', () => {
@@ -171,9 +171,9 @@ test('a resolver is told about page metadata only', () => {
 });
 
 test('a resolver that throws, times out or answers nonsense is the same as none', async () => {
-  const throwing: AmbiguityResolver = { id: 't', local: true, resolve: async () => { throw new Error('model crashed'); } };
+  const throwing: AmbiguityResolver = { id: 't', locality: 'LOCAL', resolve: async () => { throw new Error('model crashed'); } };
   assert.equal(await askResolver(throwing, situation), null);
-  const slow: AmbiguityResolver = { id: 's', local: true, resolve: () => new Promise(() => undefined) };
+  const slow: AmbiguityResolver = { id: 's', locality: 'LOCAL', resolve: () => new Promise(() => undefined) };
   assert.equal(await askResolver(slow, situation, 20), null);
   for (const bad of [{ choice: 42 }, { choice: '' }, {}, 'text', []]) {
     assert.equal(await askResolver(resolverReturning(bad as never), situation), null, JSON.stringify(bad));
@@ -248,7 +248,7 @@ test('a broken resolver does not end a run that never needed it', async () => {
     clicks: { real: 'exam' },
   });
   let asked = 0;
-  Object.assign(app, { resolver: { id: 'r', local: true, resolve: async () => { asked += 1; throw new Error('boom'); } } });
+  Object.assign(app, { resolver: { id: 'r', locality: 'LOCAL', resolve: async () => { asked += 1; throw new Error('boom'); } } });
   const result = await runAutomation(app, config(examContract(), 'exam_page'));
   assert.equal(result.stopReason, 'TERMINAL_STATE_REACHED');
   assert.equal(asked, 0, 'a resolver is only consulted when the engine could not decide');
@@ -279,7 +279,7 @@ test('a tie between states the contract cannot confirm still ends the run as amb
     clicks: {},
   });
   let asked = 0;
-  Object.assign(app, { resolver: { id: 'r', local: true, resolve: async () => { asked += 1; return { choice: 'x', rationale: 'a hunch' }; } } });
+  Object.assign(app, { resolver: { id: 'r', locality: 'LOCAL', resolve: async () => { asked += 1; return { choice: 'x', rationale: 'a hunch' }; } } });
   const result = await runAutomation(app, config(stateContract(), 'z'));
   assert.equal(result.stopReason, 'STATE_RECOGNITION_AMBIGUOUS');
   assert.equal(asked, 1, 'the same ambiguity is not put to the resolver again on a retry');

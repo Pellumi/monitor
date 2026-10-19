@@ -32,6 +32,22 @@ const SAMPLES: Record<(typeof QA_AUTOMATION_EVENT_TYPES)[number], Record<string,
   QA_AUTOMATION_RENDER_TIMING: { stateKey: 'exam_form', samples: [{ component: 'ExamForm', states: ['exam_form'], mounts: 1, updates: 3, totalMs: 13.3, maxMs: 5 }] },
   QA_AUTOMATION_MANUAL_ACTION_REQUIRED: { kind: 'MFA', detail: 'This page asks for a one-time verification code. That code belongs to the person signing in, so Tellann needs you to enter it.', location: 'app.example.test/login' },
   QA_AUTOMATION_MANUAL_ACTION_COMPLETED: { outcome: 'COMPLETED', waitedMs: 41_000 },
+  QA_AUTOMATION_SESSION_DISCARDED: { stopReason: 'AUTHENTICATION_FAILED', detail: "Submitting the persona's credentials did not leave /login." },
+  QA_AUTOMATION_RESPONSIVE_SAMPLE: {
+    stateKey: 'exam_form',
+    samples: [
+      { name: 'mobile', width: 390, height: 844, horizontalOverflowPx: 210, smallestTextPx: 11, smallestTapTargetPx: 18, controlsChecked: 3 },
+      { name: 'laptop', width: 1280, height: 800, horizontalOverflowPx: 0, smallestTextPx: 14, smallestTapTargetPx: 44, controlsChecked: 3 },
+    ],
+  },
+  QA_AUTOMATION_UI_QUALITY: {
+    stateKey: 'exam_form',
+    findings: [{
+      rule: 'TAP_TARGET_TOO_SMALL', severity: 'MEDIUM', stateKey: 'exam_form', breakpoint: 'mobile (390x844)',
+      detail: '"Close" is 18x18px at 390x844, below the 44x44px a fingertip needs.',
+      recommendation: 'Give it more padding, or a larger hit area than its visible box.',
+    }],
+  },
 };
 
 test('every automation event type is one the ingestion contract accepts', () => {

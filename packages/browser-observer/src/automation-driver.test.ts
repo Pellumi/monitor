@@ -316,3 +316,121 @@ test('a closed page reads as a browser crash', async () => {
     assert.equal(driver.health(), 'BROWSER_CRASHED');
   });
 });
+
+// -- how the page is actually drawn ----------------------------------------------------------------
+
+/** A page whose layout is the point: a covered button, a tiny one, an overflowing row, small text. */
+const DRAWN = `<!doctype html><html><head><title>Drawn</title><style>
+  body { margin: 0; font: 16px/1.4 system-ui; }
+  button { font: inherit; }
+  .primary { background: rgb(37, 99, 235); color: rgb(255, 255, 255); border: none; cursor: pointer; padding: 10px 16px; }
+  .ghost { background: transparent; color: rgb(37, 99, 235); border: none; cursor: pointer; padding: 10px 16px; }
+  .outlined { background: transparent; border: 2px solid rgb(37, 99, 235); color: rgb(37, 99, 235); padding: 10px 16px; }
+  .tiny { width: 18px; height: 18px; padding: 0; }
+  .wide { width: 2400px; height: 20px; background: rgb(240, 240, 240); }
+  .cover { position: fixed; inset: 0; background: rgb(0, 0, 0); opacity: 0.6; }
+  .fineprint { font-size: 9px; }
+</style></head><body>
+  <h1>Drawn</h1>
+  <button class="primary" id="primary">Save</button>
+  <button class="ghost" id="ghost">Save</button>
+  <button class="outlined" id="outlined">Cancel</button>
+  <button class="primary tiny" id="tiny" aria-label="Close"></button>
+  <div class="wide">wide row</div>
+  <p class="fineprint">Terms and conditions apply</p>
+  <div class="cover" id="cover" hidden></div>
+  <script>
+    window.__sdk = [];
+    document.getElementById('ghost').onclick = () => {};
+    window.cover = (on) => { document.getElementById('cover').hidden = !on; };
+  </script>
+</body></html>`;
+
+async function withDrawnPage<T>(run: (page: Page) => Promise<T>): Promise<T> {
+  const server = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(DRAWN); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  try {
+    await page.goto(baseUrl);
+    return await run(page);
+  } finally {
+    await context.close();
+    await new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); });
+  }
+}
+
+test('a snapshot carries how each control is drawn, and the page facts the rules are judged on', async () => {
+  await withDrawnPage(async (page) => {
+    const snapshot = await driverFor(page).snapshot();
+    const byId = (id: string) => snapshot.elements.find((element) => element.domId === id)!;
+
+    const primary = byId('primary').geometry!;
+    assert.equal(primary.emphasis, 'FILLED', 'a background of its own is what marks a primary action');
+    assert.equal(primary.color, 'rgb(255, 255, 255)');
+    assert.equal(primary.backgroundColor, 'rgb(37, 99, 235)');
+    assert.equal(primary.cursor, 'pointer');
+    assert.equal(primary.fontSizePx, 16);
+    assert.ok(primary.rect.width > 40 && primary.rect.height > 20);
+    assert.equal(primary.inViewport, true);
+    assert.equal(primary.hitTestOk, true);
+
+    assert.equal(byId('ghost').geometry!.emphasis, 'TEXT');
+    assert.equal(byId('outlined').geometry!.emphasis, 'OUTLINED');
+    // Transparent on a white page: the colour text is read against comes from the ancestor that paints.
+    assert.equal(byId('ghost').geometry!.backgroundColor, 'rgb(255, 255, 255)');
+
+    assert.ok(snapshot.page!.horizontalOverflowPx > 1000, 'a 2400px row in a 1280px window overflows');
+    assert.equal(snapshot.page!.smallestTextPx, 9, 'the fine print is the smallest thing anybody is asked to read');
+    assert.deepEqual(snapshot.page!.viewport, { width: 1280, height: 800 });
+  });
+});
+
+test('a control under an overlay is measured as covered, which is what a person would have found', async () => {
+  await withDrawnPage(async (page) => {
+    const driver = driverFor(page);
+    assert.equal((await driver.snapshot()).elements.find((element) => element.domId === 'primary')!.geometry!.hitTestOk, true);
+
+    await page.evaluate(() => (window as unknown as { cover: (on: boolean) => void }).cover(true));
+    const covered = await driver.snapshot();
+    const primary = covered.elements.find((element) => element.domId === 'primary')!;
+    assert.equal(primary.visible, true, 'the DOM still says it is there, which is exactly the blind spot');
+    assert.equal(primary.geometry!.hitTestOk, false, 'and the rendered page says nobody could click it');
+  });
+});
+
+test('a state is re-measured at each window size, and the original size is put back', async () => {
+  await withDrawnPage(async (page) => {
+    const driver = driverFor(page);
+    const samples = await driver.measureViewports([
+      { name: 'mobile', width: 390, height: 844 },
+      { name: 'laptop', width: 1280, height: 800 },
+    ]);
+
+    assert.deepEqual(samples.map((sample) => sample.breakpoint.name), ['mobile', 'laptop']);
+    assert.deepEqual(samples[0]!.page.viewport, { width: 390, height: 844 });
+    assert.ok(samples[0]!.page.horizontalOverflowPx > samples[1]!.page.horizontalOverflowPx, 'the narrower window overflows further');
+    assert.ok(samples[0]!.elements.some((element) => element.domId === 'primary'), 'each sample carries the controls as drawn at that size');
+
+    assert.deepEqual(page.viewportSize(), { width: 1280, height: 800 }, 'the run carries on at the size it was walking at');
+    assert.deepEqual(await driver.measureViewports([]), [], 'asked for no sizes, it measures nothing');
+  });
+});
+
+test('the tiny control is measured as tiny, which is what a tap-target rule needs', async () => {
+  await withDrawnPage(async (page) => {
+    const snapshot = await driverFor(page).snapshot();
+    const tiny = snapshot.elements.find((element) => element.domId === 'tiny')!.geometry!;
+    assert.ok(tiny.rect.width < 44 && tiny.rect.height < 44, `${tiny.rect.width}x${tiny.rect.height}`);
+  });
+});
+
+test('measurement can be turned off, and then nothing claims to know how the page looks', async () => {
+  await withDrawnPage(async (page) => {
+    const snapshot = await driverFor(page, { measure: false }).snapshot();
+    assert.equal(snapshot.page, undefined);
+    assert.ok(snapshot.elements.every((element) => element.geometry === undefined));
+    assert.ok(snapshot.elements.length > 0, 'the semantic read is unaffected');
+  });
+});

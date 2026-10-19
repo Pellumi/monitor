@@ -59,6 +59,7 @@ import { automationOptions, removeDataSet, removePersona, saveDataSetInput, save
 import { approveStoredProfile, clearLoginConfig, deleteProfile, getLoginConfig, getProfile, saveLoginConfig } from './automation/execution-profile-store';
 import { getPersona, getRunDataSet } from './automation/persona-store';
 import { OrphanJournal } from './automation/orphan-journal';
+import { deleteBrowserSession, deleteBrowserSessionsForPersona, pruneExpiredBrowserSessions, readBrowserSession, writeBrowserSession } from './automation/session-store';
 import { renderValidationReportPdf, type ValidationReportInput } from './validation-report';
 import { renderQualityReport, qualityReportFileBase, type QualityReportFormat } from './quality-report-document';
 import { renderCodebaseRiskReportPdf } from './codebase-risk-report';
@@ -210,6 +211,7 @@ const instrumentation = new InstrumentationController(
           return initialization.manifest?.checkpoints ? { checkpoints: initialization.manifest.checkpoints } : null;
         },
         loadAnalysis: () => readAnalysisState(applicationId)?.analysis ?? null,
+        isAnalysisCurrent: () => readCurrentFlowCodebaseAnalysis(applicationId) !== null,
       },
     );
     return controlAnchorTargets(prepared.contract);
@@ -854,7 +856,17 @@ const automatedHost = createAutomatedRunHost({
   notify: (note) => { if (ElectronNotification.isSupported()) new ElectronNotification(note).show(); },
   publish: sendAutomationStatus,
 });
-const automatedRuns = new AutomatedRunManager(automatedHost.host, { journal: orphanJournal, agentVersion: app.getVersion() });
+const automatedRuns = new AutomatedRunManager(automatedHost.host, {
+  journal: orphanJournal,
+  agentVersion: app.getVersion(),
+  // The signed-in browser session, kept between runs so a sign-in only a person can do is only done once.
+  // Encrypted at rest by the local store; never uploaded, and never part of a run's evidence.
+  sessions: {
+    read: (identity) => readBrowserSession(identity)?.storageState ?? null,
+    write: (identity, storageState) => { writeBrowserSession(identity, storageState); },
+    delete: (identity) => deleteBrowserSession(identity),
+  },
+});
 
 function automationWorkspace(applicationId: string) {
   const workspace = selectedWorkspaces.get(applicationId);
@@ -4179,6 +4191,8 @@ function registerIpc(): void {
       applicationId,
       workspace: automationWorkspace(applicationId),
       analysis: readAnalysisState(applicationId)?.analysis ?? null,
+      // The same question a Flow initialization asks: does the stored analysis describe the tree on disk now?
+      analysisCurrent: readCurrentFlowCodebaseAnalysis(applicationId) !== null,
     });
   });
   ipcMain.handle(AUTOMATION_IPC.start, async (event, input: unknown) => {
@@ -4254,12 +4268,22 @@ function registerIpc(): void {
     if (typeof profileId !== 'string') throw new Error('PROFILE_ID_REQUIRED');
     deleteProfile(applicationIdOf(input), profileId);
   });
-  ipcMain.handle(AUTOMATION_IPC.savePersona, (event, input: unknown) => { assertTrustedSender(event); return savePersonaInput(input); });
+  ipcMain.handle(AUTOMATION_IPC.savePersona, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const saved = savePersonaInput(input);
+    // Editing who a persona is, or what it signs in with, can make a kept sign-in the wrong one. Forgetting it costs
+    // one sign-in; replaying it would quietly run the Flow as somebody the person did not choose.
+    try { deleteBrowserSessionsForPersona(saved.applicationId, saved.id); } catch { /* best effort */ }
+    return saved;
+  });
   ipcMain.handle(AUTOMATION_IPC.deletePersona, (event, input: unknown) => {
     assertTrustedSender(event);
     const { personaId } = input as { personaId?: unknown };
     if (typeof personaId !== 'string') throw new Error('PERSONA_ID_REQUIRED');
-    removePersona(applicationIdOf(input), personaId);
+    const applicationId = applicationIdOf(input);
+    removePersona(applicationId, personaId);
+    // Nothing should outlive the persona it belongs to, least of all its signed-in session.
+    try { deleteBrowserSessionsForPersona(applicationId, personaId); } catch { /* best effort */ }
   });
   ipcMain.handle(AUTOMATION_IPC.saveDataSet, (event, input: unknown) => { assertTrustedSender(event); return saveDataSetInput(input); });
   ipcMain.handle(AUTOMATION_IPC.deleteDataSet, (event, input: unknown) => {
@@ -4438,6 +4462,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   void orphanJournal.sweep().then((swept) => {
     if (swept.ended.length > 0) console.warn(`[AutomatedRun] Ended ${swept.ended.length} application process(es) left behind by an earlier session.`);
   }).catch(() => undefined);
+  // A kept sign-in that is past its age would never be offered to a run again, so there is no reason for it to
+  // sit encrypted on disk waiting to be asked for.
+  try { pruneExpiredBrowserSessions(); } catch { /* nothing a launch should fail over */ }
   // Continue document imports the previous session left mid-way.
   documentImports.resumeAll();
   await initializeUpdater().catch((error) => {

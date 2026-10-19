@@ -74,7 +74,7 @@ async function start(url: string, components: string[]): Promise<BrowserObserver
     targetUrl: url,
     automation: {
       targetTerminalStateKey: 'exam_created', executionProfileId: 'profile-1',
-      limits: AutomationLimitsSchema.parse({}), renderTimingComponents: components,
+      limits: AutomationLimitsSchema.parse({}), renderTimingComponents: components, responsiveBreakpoints: [], assistedTieBreaking: false,
     },
   }, fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-render-')));
   return observer;

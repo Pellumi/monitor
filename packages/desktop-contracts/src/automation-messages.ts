@@ -135,6 +135,18 @@ const MESSAGES: Record<AutomationStopReason, (detail: string | null, target: str
     message: d ?? 'The Flow marks a step as needing a person, and nobody answered it.',
     tone: 'notice', nextStep: 'Start the run again and approve or complete the step when Tellann asks. The states it did not reach say nothing about the application.',
   }),
+  CONTROL_OBSCURED: (d) => ({
+    title: 'A control was there but nobody could have used it',
+    message: d ?? 'The control this step needs is on the page, and something is drawn on top of it or it has no size at all. A person would have been just as stuck.',
+    tone: 'finding',
+    nextStep: 'Look at what is covering it — a dialog, a sticky banner, a loading overlay that never went away — and whether that is meant to happen at this point in the Flow.',
+  }),
+  SUPPLIED_SESSION_REJECTED: (d) => ({
+    title: 'The session given for this persona was not accepted',
+    message: d ?? 'This persona signs in with a session you supply rather than by typing a password, and the application did not accept it. That usually means it has expired. Nothing here says anything about the application.',
+    tone: 'notice',
+    nextStep: 'Open the persona and supply a current session, or check the sign-in request Tellann is told to make, then start the run again.',
+  }),
   FRAMEWORK_NOT_YET_SUPPORTED: (d) => ({
     title: 'Automated Run does not support this application yet',
     message: d ?? `Automated Run does not understand this kind of application yet. We are working on it and it is coming soon. ${OTHER_MODES}`,
@@ -193,6 +205,25 @@ export function summarizeAutomationEvent(type: string, data: Record<string, unkn
         : { text: `The wait for you to finish ${what} ended.`, tone: 'notice' };
     }
     case 'QA_AUTOMATION_TRACE_RETAINED': return { text: 'Kept a diagnostic trace of the step that went wrong.', tone: 'info' };
+    case 'QA_AUTOMATION_RESPONSIVE_SAMPLE': {
+      const samples = Array.isArray(data.samples) ? data.samples as Array<Record<string, unknown>> : [];
+      const broken = samples.filter((sample) => Number(sample.horizontalOverflowPx ?? 0) > 4).map((sample) => str(sample.name)).filter(Boolean);
+      if (samples.length === 0) return null;
+      return broken.length > 0
+        ? { text: `Checked this page at ${samples.length} window sizes; it does not fit at ${broken.join(', ')}.`, tone: 'notice' }
+        : { text: `Checked this page at ${samples.length} window sizes.`, tone: 'info' };
+    }
+    case 'QA_AUTOMATION_UI_QUALITY': {
+      const findings = Array.isArray(data.findings) ? data.findings as Array<Record<string, unknown>> : [];
+      if (findings.length === 0) return null;
+      const worst = findings.find((finding) => finding.severity === 'MEDIUM') ?? findings[0]!;
+      return {
+        text: findings.length === 1 ? str(worst.detail) ?? 'Found something worth improving.' : `${findings.length} things worth improving here. ${str(worst.detail) ?? ''}`.trim(),
+        tone: 'notice',
+      };
+    }
+    case 'QA_AUTOMATION_SESSION_DISCARDED':
+      return { text: 'The saved sign-in no longer worked, so it was discarded and the run is signing in again.', tone: 'notice' };
     default: return null;
   }
 }

@@ -63,10 +63,12 @@ test('the terminal states a run could be pointed at are the ones the Flow declar
   assert.deepEqual(terminalStatesOf(lmsContract()).map((s) => s.key), ['exam_created', 'exam_error']);
 });
 
-// -- the spike ---------------------------------------------------------------
+// -- path coverage -----------------------------------------------------------
 
-test('the path-coverage spike is not part of the package surface', () => {
-  assert.equal('coveringPaths' in engine, false);
+test('path coverage is part of the package surface, because a report needs it', () => {
+  // It began as a spike for the multi-path design. A run still goes to exactly one target, but a report has to
+  // be able to say how much of a Flow that one target speaks for, which is this.
+  assert.equal('coveringPaths' in engine, true);
 });
 
 test('a branching flow is covered by one path per way it can end', () => {

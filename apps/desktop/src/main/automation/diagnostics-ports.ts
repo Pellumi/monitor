@@ -25,6 +25,11 @@ export interface DiagnosticsObserver {
   recordAutomationEvent(type: (typeof QA_AUTOMATION_EVENT_TYPES)[number], metadata: Record<string, unknown>): string | null;
   /** What the watched components rendered since the last read. Absent on an observer without render timing. */
   takeRenderTiming?(): Promise<Array<{ component: string; mounts: number; updates: number; totalMs: number; maxMs: number }>>;
+  /**
+   * Run the accessibility scan against the page as it stands. Separate from the screenshot capture, because an
+   * Automated run keeps screenshots only where something went wrong and should still scan every state.
+   */
+  scanAccessibility?(): Promise<number | null>;
 }
 
 export interface DiagnosticsOptions {
@@ -39,11 +44,15 @@ export interface DiagnosticsOptions {
   renderTiming?: Record<string, string[]> | null;
 }
 
-export type DiagnosticsPorts = Required<Pick<AutomationPorts, "captureEvidence" | "traceChunks">>;
+export type DiagnosticsPorts = Required<Pick<AutomationPorts, "captureEvidence" | "traceChunks">>
+  & Pick<AutomationPorts, "inspectPage">;
 
 export function createDiagnosticsPorts(options: DiagnosticsOptions): DiagnosticsPorts {
   const { observer, contract, code, renderTiming } = options;
   return {
+    // The first visit to a state is the moment to scan it: once per state, before the run acts, and never
+    // again on a revisit, because the same page scanned twice reports the same violations twice.
+    ...(observer.scanAccessibility ? { inspectPage: async () => { await observer.scanAccessibility!(); } } : {}),
     async captureEvidence(decision, stateKey, subject) {
       if (decision.artifacts.screenshot || decision.artifacts.fullDom) {
         await observer.captureAnomalyArtifacts();
