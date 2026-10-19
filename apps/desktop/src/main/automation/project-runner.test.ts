@@ -275,3 +275,67 @@ test('end to end: the real launcher spawns a real server, and readiness is the p
   }
   assert.equal(await defaultProbes.port(port), false, 'and it is really gone after stop');
 });
+
+// -- an application that is already running somewhere ------------------------------------------------------------
+
+/** A profile that starts nothing: a deployed staging application, named only by its address. */
+function deployedProfile(overrides: Partial<ExecutionProfile> = {}): ExecutionProfile {
+  return {
+    id: 'deployed', applicationId: APP_ID, name: 'Staging', applicationUrl: 'https://staging.example.com/',
+    processes: [], approvedHash: null, approvedAt: null, ...overrides,
+  };
+}
+
+test('a profile that starts nothing spawns no process and only waits for the address to answer', async () => {
+  const asked: string[] = [];
+  const r = rig({ probes: scriptedProbes({ http: (url) => { asked.push(url); return true; } }) });
+  const started = await r.runner.start({
+    profile: deployedProfile(), commands: [], workspaceRoot: workspace(), correlation,
+    onEvent: (event) => r.events.push(event),
+  });
+
+  assert.equal(started.ok, true);
+  assert.deepEqual(started.ok ? started.started : null, [], 'nothing was started, so nothing is reported as started');
+  assert.deepEqual(r.processes, [], 'no process was ever created');
+  assert.deepEqual(r.log, []);
+  assert.deepEqual(asked, ['https://staging.example.com/'], 'the only probe is the application URL itself');
+  assert.deepEqual(r.events, [], 'there is no process to report a phase for');
+  assert.equal(r.runner.health(), 'OK', 'with nothing supervised, nothing can have crashed');
+});
+
+test('a profile that starts nothing needs no approval, because there is nothing to approve', async () => {
+  const profile = deployedProfile();
+  assert.equal(profile.approvedHash, null);
+  const started = await rig().runner.start({ profile, commands: [], workspaceRoot: workspace(), correlation });
+  assert.equal(started.ok, true, 'an unapproved profile with no commands still runs');
+});
+
+test('an address that never answers says so, and says the application had to be running there already', async () => {
+  const r = rig({ probes: scriptedProbes({ http: () => false }) });
+  const started = await r.runner.start({ profile: deployedProfile(), commands: [], workspaceRoot: workspace(), correlation });
+  assert.equal(started.ok, false);
+  if (started.ok) return;
+  assert.equal(started.stopReason, 'APPLICATION_START_FAILED');
+  assert.match(started.detail, /did not answer/);
+  assert.match(started.detail, /starts nothing/, 'the reason says why there was nothing for Tellann to wait on');
+});
+
+test('when every process came up but the address does not answer, what each one printed is in the reason', async () => {
+  const root = workspace();
+  // The application URL is deliberately not one of the readiness conditions, so readiness can pass while it fails.
+  const { commands, profile } = twoProcessProfile(root, { applicationUrl: 'http://localhost:9999/' });
+  const r = rig({
+    probes: scriptedProbes({ port: () => true, http: (url) => url !== 'http://localhost:9999/' }),
+    onStart: (name, self) => { self.sanitizedOutput = `${name} listening
+${name}: EADDRINUSE 5173
+`; },
+  });
+  const started = await r.runner.start({ profile, commands, workspaceRoot: root, correlation });
+
+  assert.equal(started.ok, false);
+  if (started.ok) return;
+  assert.match(started.detail, /although every process started/);
+  assert.match(started.detail, /EADDRINUSE/, "the process's own output is what explains it");
+  assert.match(started.detail, /api:/, 'each process is named');
+  assert.deepEqual(r.processes.map((proc) => proc.stopped), [true, true], 'a failed start leaves nothing running');
+});

@@ -37,6 +37,9 @@ import { isProfileApproved } from "./execution-profile";
 import { ProjectRunner } from "./project-runner";
 import type { RunnerEvent } from "./project-runner";
 import { executeAutomatedRun } from "./run-executor";
+import { fetchApiSession, storageStateFromSeed, suppliedSessionValues } from "./supplied-session";
+import type { AmbiguityResolver } from "@tellann/automation-engine";
+import type { FetchLike } from "./supplied-session";
 import type { ManagedBrowser, PageDriver } from "./run-executor";
 
 /**
@@ -80,6 +83,17 @@ export interface BrowserSession {
   /** Stops evidence being recorded while a person types (their password is theirs, and is not ours to keep). */
   setCapturePaused(paused: boolean): Promise<void>;
   bringToFront(): Promise<void>;
+  /** What the browser is signed in as, for the next run to start from. Null when there is nothing worth keeping. */
+  captureStorageState(): Promise<string | null>;
+  /** Forget whatever the browser is signed in as, so a retry starts from nothing. */
+  clearStorageState(): Promise<void>;
+}
+
+/** Where a signed-in browser session is kept between runs. Injected so the manager can be tested without the disk. */
+export interface SessionKeeper {
+  read(identity: { applicationId: string; personaId: string; origin: string }): string | null;
+  write(identity: { applicationId: string; personaId: string; origin: string }, storageState: string): void;
+  delete(identity: { applicationId: string; personaId: string; origin: string }): void;
 }
 
 export type FinishOutcome =
@@ -89,7 +103,13 @@ export type FinishOutcome =
 export interface AutomatedRunHost {
   /** Creates and starts the cloud run, gets its credential and starts the relay. Cleans up after itself when it throws. */
   openRun(request: StartGuidedRunInput, contract: ContractSummary): Promise<OpenedRun>;
-  openBrowser(run: OpenedRun, request: StartGuidedRunInput, hooks: { sdkStates(): string[]; beforeAction(): void }): Promise<BrowserSession>;
+  openBrowser(
+    run: OpenedRun,
+    request: StartGuidedRunInput,
+    hooks: { sdkStates(): string[]; beforeAction(): void },
+    /** A session an earlier run kept, so the browser starts already signed in. Absent means an empty browser. */
+    options?: { storageState?: string },
+  ): Promise<BrowserSession>;
   /** Closes the browser and settles its evidence. Best effort: never throws, and is safe when the browser is already gone. */
   endBrowser(run: OpenedRun): Promise<void>;
   /** Stops the relay, uploads what is left and completes or fails the run. Throws only if the platform could not be told. */
@@ -107,6 +127,18 @@ export interface OrphanRecorder {
 export interface ManagerDeps {
   createRunner?: () => Pick<ProjectRunner, "start" | "stop" | "health">;
   journal?: OrphanRecorder;
+  /** Where a signed-in session is kept between runs. Absent means every run signs in from nothing. */
+  sessions?: SessionKeeper;
+  /** How an `API` persona's session request is made. Injected so the manager can be tested without a server. */
+  fetchSession?: FetchLike;
+  /**
+   * Breaks a tie neither the code nor the rendered page could, for the runs that ask for it.
+   *
+   * Absent by default, and absent is the whole point: with no resolver the engine stops at such a tie rather
+   * than guessing, which is the behaviour every run has had until now. Supplying one relaxes that for the two
+   * decisions `ambiguity.ts` governs and nothing else — its answer is still verified against the contract.
+   */
+  resolver?: AmbiguityResolver;
   agentVersion?: string;
   now?: () => Date;
   /** How often the platform hears that this desktop is still here. Far shorter than the reaper's patience. */
@@ -134,6 +166,8 @@ interface ActiveRun {
 
 const DEFAULT_HEARTBEAT_MS = 20_000;
 const DEFAULT_MANUAL_WAIT_MS = 10 * 60_000;
+/** How many times the wait for a person is extended, with a reminder, before the run gives up on it. */
+const MANUAL_WAIT_REMINDERS = 1;
 
 const refusal = (code: AutomatedRunRefusal["code"], title: string, message: string, tone: AutomatedRunRefusal["tone"] = "notice", alternatives: AutomatedRunRefusal["alternatives"] = []): StartAutomatedRunResult =>
   ({ ok: false, refusal: { code, title, message, tone, alternatives } });
@@ -196,6 +230,12 @@ export class AutomatedRunManager {
 
     const missingControls = describeMissingControls(unresolvedOnPath(contract, targetKey, start.environmentType) ?? []);
     if (missingControls) return refusal("CONTROLS_NOT_DERIVED", "Some steps have no control to use yet", missingControls, "problem");
+
+    // A run whose persona has to sign in, with no sign-in to use, cannot possibly reach the Flow. Said here rather
+    // than after the application has been started and a browser opened — and, above all, rather than as
+    // "the Flow's first state could not be reached", which reads as a fault in the person's application.
+    const signIn = this.signInShortfall(request, prepared);
+    if (signIn) return refusal(signIn.code, signIn.title, signIn.message, "problem");
 
     const data = checkRunDataAvailability(contract, materializeRunData(request.runData, () => now().getTime()));
     if (!data.ok) return refusal("TEST_DATA_UNAVAILABLE", "This run needs test data it does not have", data.detail, "problem");
@@ -301,8 +341,32 @@ export class AutomatedRunManager {
         outcome = this.completion(active, "CANCELLED_BY_USER");
       } else {
         this.setPhase(active, "LAUNCHING_BROWSER", "PREPARING");
-        const session = await this.host.openBrowser(opened, start, { sdkStates: () => active.signals.states(), beforeAction: () => active.signals.reset() });
+        // A session kept from an earlier run of this application, as this persona, against this address. Only for a
+        // persona that signs in at all: a guest has no session worth keeping and none worth replaying.
+        const identity = this.sessionIdentity(active);
+        const kept = identity ? this.deps.sessions?.read(identity) ?? null : null;
+        // Failing that, a session the persona supplies outright, or one the application is asked for. Either way the
+        // browser opens already signed in and no sign-in form is involved at all.
+        const supplied = kept ? null : await this.suppliedSession(active);
+        if (supplied && !supplied.ok) {
+          // There is no browser yet, and nothing to drive without a session: say exactly what the application
+          // answered and stop, rather than open a browser that would only be refused on its first page.
+          outcome = this.completion(active, "SUPPLIED_SESSION_REJECTED", supplied.detail);
+          await this.close(active, outcome).catch(() => undefined);
+          return;
+        }
+        const seed = kept ?? supplied?.storageState ?? null;
+        const session = await this.host.openBrowser(
+          opened, start,
+          { sdkStates: () => active.signals.states(), beforeAction: () => active.signals.reset() },
+          seed ? { storageState: seed } : undefined,
+        );
         active.session = session;
+        // Every value a supplied session is made of, registered before a page is opened, so none of it can be recorded.
+        const sessionValues = suppliedSessionValues(active.request.persona);
+        if (sessionValues.length > 0 || supplied?.ok) {
+          session.browser.protectAutomationValues([...sessionValues, ...(supplied?.ok && supplied.token ? [supplied.token] : [])]);
+        }
         if (active.teardown) {
           await this.host.endBrowser(opened).catch(() => undefined);
           await runner.stop().catch(() => undefined);
@@ -323,11 +387,29 @@ export class AutomatedRunManager {
           limits: automation.limits,
           code: request.code ?? null,
           renderTimingComponents: automation.renderTimingComponents,
+          responsiveBreakpoints: automation.responsiveBreakpoints,
+          // Only for a run that asked for it, and only when one has been supplied at all.
+          ...(automation.assistedTieBreaking && this.deps.resolver ? { resolver: this.deps.resolver } : {}),
           cancelled: () => active.cancelRequested,
           onPhase: (phase, detail) => this.setPhase(active, phase, phase === "AWAITING_USER" ? "AWAITING_USER" : "RUNNING", detail ?? null),
           manualAuthentication: { wait: (challenge) => this.waitForPerson(active, challenge) },
           stepHandOver: { wait: (challenge) => this.waitForPerson(active, challenge) },
           applicationHealth: () => runner.health(),
+          ...(identity && this.deps.sessions
+            ? {
+              session: {
+                seeded: kept !== null,
+                keep: async () => {
+                  const captured = await session.captureStorageState();
+                  if (captured) this.deps.sessions!.write(identity, captured);
+                },
+                discard: async () => {
+                  this.deps.sessions!.delete(identity);
+                  await session.clearStorageState();
+                },
+              },
+            }
+            : {}),
         });
         outcome = this.outcomeOf(active, result);
       }
@@ -399,6 +481,88 @@ export class AutomatedRunManager {
     return active.teardown;
   }
 
+  /**
+   * What stands between this persona and being signed in, before anything is started.
+   *
+   * Only `PASSWORD` needs a form: `MANUAL` asks a person, and `SEEDED`/`API` bring their own session. For a
+   * password persona the sign-in page has to have been confirmed by somebody and a fillable form found behind
+   * it, and `prepareContract` already worked out which of those is true. Null when there is nothing in the way.
+   */
+  private signInShortfall(
+    request: AutomatedRunRequest,
+    prepared: PreparedContract,
+  ): { code: AutomatedRunRefusal["code"]; title: string; message: string } | null {
+    const persona = request.persona;
+    if (!persona?.authenticated || persona.authMethod !== "PASSWORD") return null;
+    // A session kept from an earlier run gets this persona in without a form at all.
+    const identity = this.sessionIdentity({ request } as ActiveRun);
+    if (identity && this.deps.sessions?.read(identity)) return null;
+    if (prepared.login === "NOT_CONFIGURED") {
+      return {
+        code: "LOGIN_NOT_CONFIGURED",
+        title: "Tell Tellann where your sign-in page is",
+        message: `"${persona.name}" signs in with a saved password, and nothing has said which page your sign-in form is on. Set the sign-in page under "Where is the sign-in page?", then start the run again.`,
+      };
+    }
+    if (prepared.login === "NO_FORM_FOUND") {
+      return {
+        code: "LOGIN_FORM_NOT_FOUND",
+        title: "No sign-in form was found on that page",
+        message: `Tellann could not find a form it can fill in the code behind your sign-in page, so "${persona.name}" has no way in. Check the page address, or set this persona to sign in another way — you can sign in yourself, supply a session, or have Tellann fetch one.`,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * A session that comes from somewhere other than signing in: supplied outright by the persona, or fetched from
+   * the application. Null when this persona signs in the ordinary way, in which case nothing here applies.
+   *
+   * The fetch happens here, after the application is up and before the browser opens, because that is the only
+   * moment when both are true. It is reported as a run that could not get a session — never as a finding about
+   * the application, which did nothing wrong by refusing one.
+   */
+  private async suppliedSession(active: ActiveRun): Promise<{ ok: true; storageState: string; token?: string } | { ok: false; detail: string } | null> {
+    const persona = active.request.persona;
+    const targetUrl = active.request.start.targetUrl;
+    if (persona?.authMethod === "SEEDED") {
+      const seed = persona.sessionSeed;
+      if (!seed || (seed.cookies.length === 0 && seed.storage.length === 0)) {
+        return { ok: false, detail: `"${persona.name}" is set to use a session you supply, and none is saved for it.` };
+      }
+      return { ok: true, storageState: JSON.stringify(storageStateFromSeed(seed, targetUrl)) };
+    }
+    if (persona?.authMethod === "API") {
+      const apiLogin = persona.apiLogin;
+      if (!apiLogin) {
+        return { ok: false, detail: `"${persona.name}" is set to fetch its session from your application, and no request is saved for it.` };
+      }
+      const fetched = await fetchApiSession(apiLogin, persona, targetUrl, this.deps.fetchSession);
+      return fetched.ok
+        ? { ok: true, storageState: JSON.stringify(fetched.storageState), token: fetched.token }
+        : { ok: false, detail: fetched.detail };
+    }
+    return null;
+  }
+
+  /**
+   * What a kept session belongs to: one application, one persona, one address. A persona that never signs in has
+   * no session (there is nothing to sign in as), and nor does a run without one.
+   */
+  private sessionIdentity(active: ActiveRun): { applicationId: string; personaId: string; origin: string } | null {
+    const persona = active.request.persona;
+    if (!persona?.authenticated) return null;
+    try {
+      return {
+        applicationId: active.request.start.applicationId,
+        personaId: persona.id,
+        origin: new URL(active.request.start.targetUrl).origin,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // -- the pieces the executor is given ---------------------------------------
 
   private waitForPerson(active: ActiveRun, challenge: { kind: string; detail: string }): Promise<"DONE" | "CANCELLED" | "TIMED_OUT"> {
@@ -406,11 +570,27 @@ export class AutomatedRunManager {
     // opened: that is where the person is sent, and what they type there is not recorded.
     const inBrowser = challenge.kind !== "CONFIRM_STEP";
     const title = challenge.kind === "CONFIRM_STEP" ? "Tellann needs your approval" : challenge.kind === "MANUAL_STEP" ? "Tellann needs you to do a step" : "Tellann needs you to sign in";
+    const waitMs = this.deps.manualWaitMs ?? DEFAULT_MANUAL_WAIT_MS;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => finish("TIMED_OUT"), this.deps.manualWaitMs ?? DEFAULT_MANUAL_WAIT_MS);
+      // One reminder before giving up. Somebody who stepped away and comes back to find the run gone has lost
+      // the whole thing for the sake of a minute, and a run that waits silently gives them no way to know it is
+      // still there. So the deadline nudges once and waits again, and only then stops.
+      const timers: Array<ReturnType<typeof setTimeout>> = [];
+      let remindersLeft = MANUAL_WAIT_REMINDERS;
+      const onDeadline = () => {
+        if (remindersLeft > 0 && !active.cancelRequested && !active.browserGone) {
+          remindersLeft -= 1;
+          this.host.notify({ title, body: `Still waiting. ${challenge.detail}` });
+          this.addEvent(active, { type: "AWAITING_USER", text: `Still waiting for you: ${challenge.detail}`, tone: "notice" });
+          timers.push(setTimeout(onDeadline, waitMs));
+          return;
+        }
+        finish("TIMED_OUT");
+      };
+      timers.push(setTimeout(onDeadline, waitMs));
       const finish = (outcome: "DONE" | "CANCELLED" | "TIMED_OUT") => {
         if (!active.wait) return;
-        clearTimeout(timer);
+        for (const timer of timers) clearTimeout(timer);
         active.wait = null;
         active.status.awaitingUser = null;
         // Recording resumes only once the person is done: what they typed while it was paused was never captured.
@@ -453,6 +633,7 @@ export class AutomatedRunManager {
       snapshot: () => driver.snapshot(),
       act: (action) => driver.act(action),
       settle: (expected) => driver.settle(expected),
+      ...(driver.measureViewports ? { measureViewports: (breakpoints) => driver.measureViewports!(breakpoints) } : {}),
       health: async () => (active.browserGone ? "BROWSER_CRASHED" : (await driver.health?.()) ?? "OK"),
     };
   }
@@ -513,6 +694,7 @@ function refusalTitle(code: ContractPipelineError["code"]): string {
     case "CODE_ANALYSIS_REQUIRED": return "Analyse your code first";
     case "FLOW_MAPPING_REQUIRED": return "This Flow is not mapped to your code yet";
     case "FLOW_INVALID": return "This Flow cannot be run";
+    case "ANALYSIS_STALE": return "Analyse your code again first";
   }
 }
 

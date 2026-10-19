@@ -3,16 +3,17 @@ import type { PolicyOptions } from './policy';
 import type { EnvironmentKind, ExecutableContract, ExecutableTransition } from './types';
 
 /**
- * EXPERIMENTAL — a design spike, not a feature. Deliberately not exported from the package index.
+ * How much of a Flow is reachable at all, and what it would take to exercise the rest.
  *
  * The question it answers: if an Automated Run were pointed at *every* way a Flow can end, rather than
  * one, how many separate runs would it take, and which declared steps could never be exercised at all?
- * Knowing that is what lets the multi-path design (docs/app/automated-run-multi-path-design.md) say
- * something concrete about cost, and about how much of a Flow is even testable from its declaration.
+ * Knowing that is what lets a report say honestly how much of a Flow one run can speak for, and it is
+ * what the multi-path design (docs/app/automated-run-multi-path-design.md) needs to say anything
+ * concrete about cost.
  *
  * It is a pure function of the contract. It picks no data, runs nothing, and decides nothing about
- * what a path *means* — a failed branch is still evidence, not a verdict. Nothing in the executor
- * calls it, and a run still goes to exactly one target (`AUTOMATION_MAX_TARGETS`).
+ * what a path *means* — a failed branch is still evidence, not a verdict. A run still goes to exactly
+ * one target (`AUTOMATION_MAX_TARGETS`); this only describes the ones it did not.
  */
 
 export interface CoveringPath {

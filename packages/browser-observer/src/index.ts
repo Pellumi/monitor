@@ -392,6 +392,8 @@ type RunController = {
   trace: { started: boolean; open: string | null; files: Array<{ file: string; context: ArtifactCaptureContext }>; protectedValues: Set<string> };
   /** Whether render timing was installed for the run (opt-in, named components only). */
   renderTiming: boolean;
+  /** Whether the browser started from a session kept by an earlier run, rather than empty. */
+  sessionSeeded: boolean;
   /** Finding dedupe keys already given a screenshot. */
   capturedFindingKeys: Set<string>;
   /** Finding dedupe keys already raised this run, checked in O(1) instead of scanning `state.findings`. */
@@ -1179,8 +1181,36 @@ export function isObservationOnlyRequestAllowed(method: string): boolean {
   return ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
 }
 
+/** A short name for each rule, for a findings list that has to be readable at a glance. */
+function uiQualityTitle(rule: string): string {
+  switch (rule) {
+    case 'TEXT_TOO_SMALL': return 'Text too small to read comfortably';
+    case 'TAP_TARGET_TOO_SMALL': return 'Control too small to tap';
+    case 'LOW_CONTRAST': return 'Text does not stand out enough from its background';
+    case 'WRONG_BUTTON_WEIGHT': return 'The action with consequences is the quiet one';
+    case 'NO_LOADING_AFFORDANCE': return 'The page said nothing while it was loading';
+    case 'REDUNDANT_STEP': return 'A step that asks nothing of anybody';
+    case 'DEAD_END': return 'A state the Flow cannot be continued from';
+    case 'HORIZONTAL_OVERFLOW': return 'The page does not fit its window';
+    case 'CONTROL_UNREACHABLE_AT_SIZE': return 'A control this step needs is unreachable at this size';
+    default: return 'Something worth improving in this Flow';
+  }
+}
+
 export function browserContextViewport(headless: boolean): { width: number; height: number } | null {
   return headless ? { width: 1440, height: 900 } : null;
+}
+
+/** The object form of a stored `storageState`. A blob that will not parse is no session, not an error. */
+type StorageState = NonNullable<Exclude<NonNullable<Parameters<Browser['newContext']>[0]>['storageState'], string>>;
+
+export function parseStorageState(value: string): StorageState | undefined {
+  try {
+    const parsed = JSON.parse(value) as StorageState;
+    return parsed && Array.isArray(parsed.cookies) && Array.isArray(parsed.origins) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function isRetryableTargetConnectionError(cause: unknown): boolean {
@@ -1683,7 +1713,13 @@ export class BrowserObserver {
     await this.options.onUnexpectedTermination?.(state);
   }
 
-  async start(input: StartGuidedRunInput, artifactRoot: string): Promise<GuidedRunState> {
+  /**
+   * @param options.storageState Playwright `storageState` JSON from an earlier Automated Run of the same
+   * application, persona and origin, so a run that would otherwise have to sign in again starts already
+   * signed in. Ignored for every other mode and never for production: a human-driven run uses the operator's
+   * own browser state, and production is only ever observed.
+   */
+  async start(input: StartGuidedRunInput, artifactRoot: string, options: { storageState?: string } = {}): Promise<GuidedRunState> {
     if (this.active) throw new Error('RUN_ALREADY_ACTIVE');
     const observationOnly = input.mode === 'OBSERVATION_ONLY' || input.environmentType === 'PRODUCTION';
     assertEnvironmentActionAllowed(input.environmentType, observationOnly ? 'OBSERVE' : 'INTERACT');
@@ -1740,6 +1776,7 @@ export class BrowserObserver {
       findingArtifacts: [], capturedFindingKeys: new Set(), findingDedupeKeys: new Set(),
       trace: { started: false, open: null, files: [], protectedValues: new Set() },
       renderTiming: false,
+      sessionSeeded: false,
       backendDurations: new Map(), backendAllDurations: [], backendSeenRequests: new Set(),
       backendSlowRows: new Map(),
       frontendRuleSpend: new Map(),
@@ -1759,12 +1796,19 @@ export class BrowserObserver {
         headless,
         ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
       });
+      // A session kept from an earlier Automated Run of the same application, persona and origin. Only for
+      // an Automated run (nothing else has a persona to key one to) and never for production.
+      const seeded = state.mode === 'AUTOMATED' && input.environmentType !== 'PRODUCTION' ? options.storageState : undefined;
       context = await browser.newContext({
         viewport: browserContextViewport(headless),
         locale: 'en-US',
         colorScheme: 'light',
         recordVideo: undefined,
+        // The parsed object, never the string: Playwright reads a string `storageState` as a path on disk,
+        // so handing it the JSON itself would make it look for a file named after a session.
+        ...(seeded ? { storageState: parseStorageState(seeded) } : {}),
       });
+      controller.sessionSeeded = Boolean(seeded);
     } catch (error) {
       // Nothing was captured and nothing was opened, so leave no active run
       // behind for the caller's failure path to trip over.
@@ -3222,6 +3266,134 @@ export class BrowserObserver {
     const controller = this.active;
     if (!controller || controller.state.mode !== 'AUTOMATED') return null;
     return controller.page && !controller.page.isClosed() ? controller.page : null;
+  }
+
+  /**
+   * Run the accessibility scan against the page as it stands, without taking a screenshot.
+   *
+   * An Automated run deliberately keeps no per-state screenshots — it captures them only where something went
+   * wrong — and the scan used to live inside the function that took them, so switching the screenshots off
+   * switched the scan off with them. That left a clean Automated run with an empty accessibility section while
+   * a Guided run over the same Flow produced a full one, which was never the intent: axe reports rule names and
+   * target selectors, carries no page content, and is exactly the sort of finding an unattended run should make.
+   *
+   * Automated runs only, never production. Returns the number of violations, or null when it could not run.
+   */
+  async scanAccessibility(): Promise<number | null> {
+    const controller = this.active;
+    const { state, page } = controller ?? {};
+    if (!controller || !state || !page || page.isClosed()) return null;
+    if (state.mode !== 'AUTOMATED' || state.environmentType === 'PRODUCTION') return null;
+    if (controller.stopping || controller.paused) return null;
+    const route = normalizedRoute(sanitizeCapturedUrl(page.url())) ?? sanitizeCapturedUrl(page.url());
+    // One scan per state and route: the same page scanned on every revisit is the same violations every time.
+    const key = `a11y:${state.currentFlowStateKey ?? ''}|${route}`;
+    if (controller.capturedStateKeys.has(key)) return null;
+    controller.capturedStateKeys.add(key);
+    const violations = await this.runAccessibilityScan(controller, route, null);
+    return violations === null ? null : violations.length;
+  }
+
+  /**
+   * Raise what is wrong with the Flow as a person would meet it: text too small to read, a control too small to
+   * hit, an action drawn more quietly than the one beside it that does nothing.
+   *
+   * These go through the same path as accessibility violations rather than living only in the report, because a
+   * Flow nobody can complete on a phone is a finding about the product in exactly the way a failing axe rule is.
+   * Each one carries the measurement that produced it, so the person reading it can tell whether to agree.
+   * Capped per rule by `withinFindingBudget`, so one bad stylesheet cannot fill a report.
+   */
+  raiseUiQualityFindings(findings: Array<{
+    rule: string;
+    severity: 'LOW' | 'MEDIUM';
+    stateKey: string | null;
+    breakpoint: string | null;
+    detail: string;
+    recommendation: string | null;
+  }>): number {
+    const controller = this.active;
+    const { state, page } = controller ?? {};
+    if (!controller || !state || state.mode !== 'AUTOMATED' || state.environmentType === 'PRODUCTION') return 0;
+    let raised = 0;
+    for (const finding of findings) {
+      if (!this.withinFindingBudget(controller, `ui-quality:${finding.rule}`)) continue;
+      const responsive = finding.breakpoint !== null;
+      const where = [finding.stateKey, finding.breakpoint].filter(Boolean).join(' at ');
+      this.pushFinding(controller, {
+        id: uuid(),
+        runId: state.runId,
+        category: responsive ? 'RESPONSIVE_LAYOUT' : 'UI_QUALITY',
+        severity: finding.severity === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+        // Measured rather than inferred, and the measurement is in the description.
+        confidence: 1,
+        title: uiQualityTitle(finding.rule),
+        description: where ? `${finding.detail} (${where})` : finding.detail,
+        url: page && !page.isClosed() ? sanitizeCapturedUrl(page.url()) : null,
+        viewport: page && !page.isClosed() ? page.viewportSize() : null,
+        evidenceArtifactIds: [],
+        evidenceChecksums: [],
+        reproductionSteps: responsive
+          ? ['Open the state named above', `Resize the window to ${finding.breakpoint}`, 'Compare with the measurement given']
+          : ['Open the state named above', 'Compare with the measurement given'],
+        recommendation: finding.recommendation ?? 'Compare the measurement with the threshold it fell below.',
+        scope: 'IN_FLOW',
+        // One per rule, state and size: the same problem found again on a revisit is the same problem.
+        dedupeKey: `ui-quality:${finding.rule}:${finding.stateKey ?? 'flow'}:${finding.breakpoint ?? 'walked'}`,
+        generatorSource: 'BROWSER',
+      });
+      raised += 1;
+    }
+    return raised;
+  }
+
+  /** Whether this run's browser started from a session an earlier run kept. */
+  sessionWasSeeded(): boolean {
+    return this.active?.sessionSeeded ?? false;
+  }
+
+  /**
+   * The signed-in state of the managed browser, as JSON, for the next Automated Run of the same application,
+   * persona and origin to start from. Automated runs only, and never for production.
+   *
+   * This is a bearer of the session, so it is returned to the main process and nowhere else: the caller
+   * encrypts it into the local store (see `session-store.ts`). It is never evidence, never an artifact and
+   * never uploaded. Null when there is nothing to keep or the browser has already gone.
+   */
+  async captureStorageState(): Promise<string | null> {
+    const controller = this.active;
+    const context = controller?.context;
+    if (!controller || !context || controller.state.mode !== 'AUTOMATED') return null;
+    if (controller.state.environmentType === 'PRODUCTION') return null;
+    try {
+      return JSON.stringify(await context.storageState());
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Throw away whatever the browser is signed in as. Called when a kept session turned out not to work: the
+   * retry has to start from nothing, and leaving a rejected cookie in place is how a sign-in ends in a
+   * redirect loop instead of a login form. Clears cookies for every origin and web storage for the page's own.
+   */
+  async clearBrowserSession(): Promise<boolean> {
+    const controller = this.active;
+    const context = controller?.context;
+    if (!controller || !context || controller.state.mode !== 'AUTOMATED') return false;
+    try {
+      await context.clearCookies();
+      const page = controller.page;
+      if (page && !page.isClosed()) {
+        await page.evaluate(() => {
+          try { localStorage.clear(); } catch { /* a page may forbid it */ }
+          try { sessionStorage.clear(); } catch { /* likewise */ }
+        }).catch(() => undefined);
+      }
+      controller.sessionSeeded = false;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

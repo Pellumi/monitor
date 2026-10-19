@@ -170,8 +170,6 @@ export function validationReportHtml(input: ValidationReportInput): string {
     @page { size:A4; margin:18mm 0; }
     *{box-sizing:border-box}
     html, body{margin:0;padding:0;background:#ffffff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;height:460px;pointer-events:none;opacity:0.05;z-index:0;display:flex;align-items:center;justify-content:center}
-    .watermark svg{width:100%;height:100%;display:block}
     main{background:transparent;position:relative;z-index:1}
     .sheet{border:none;background:transparent;padding:0 16mm;box-sizing:border-box}
     .brand{display:flex;justify-content:space-between;align-items:center;margin-bottom:34px}

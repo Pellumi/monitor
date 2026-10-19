@@ -50,14 +50,17 @@ const prepared = (over: Partial<ExecutableContract> = {}): PreparedContract => (
   contract: contract(over),
   navigation: { nodes: [], edges: [] } as NavigationGraph,
   summary: { hash: "a".repeat(64), flowHash: "h".repeat(64), analysisIdentity: null, states: 3, transitions: 2, controlsDerived: 2, controlsMissing: 0, anchored: 0 },
-  login: "NOT_CONFIGURED",
+  // A sign-in page confirmed and a fillable form found behind it: what a password persona needs to have a way in.
+  login: "BUILT",
   sources: { flowVersion: "CACHE", manifest: "CACHE" },
 });
 
 // -- a fake browser page --------------------------------------------------------------------------
 
-type PageName = "captcha" | "course" | "form" | "created";
-interface Script { startAt?: PageName; failSave?: boolean; onAct?: (ref: string) => void }
+type PageName = "captcha" | "course" | "form" | "created" | "elsewhere";
+interface Script { startAt?: PageName; failSave?: boolean; onAct?: (ref: string) => void;
+  /** Clearing a stale sign-in is what lets the run reach the Flow: the stored session was redirecting it away. */
+  recoverOnClearedSession?: boolean }
 
 function fakePage(script: Script) {
   let page: PageName = script.startAt ?? "course";
@@ -66,6 +69,7 @@ function fakePage(script: Script) {
     course: { path: "/courses/7", sdk: "course_details", elements: [el("e-create", { name: "Create Exam" })] },
     form: { path: "/courses/7/exams/new", sdk: "exam_form", elements: [el("e-save", { name: "Save exam" })] },
     created: { path: "/courses/7/exams/42", sdk: "exam_created", elements: [] },
+    elsewhere: { path: "/elsewhere", elements: [] },
   };
   const view = (): SemanticSnapshot => ({
     url: `http://localhost:3000${views[page].path}`, path: views[page].path, title: null, headings: [], elements: views[page].elements,
@@ -103,6 +107,16 @@ function harness(script: Script = {}, options: { manualWaitMs?: number; phaseFai
   const journal: string[] = [];
   let appAlive = true;
   let gate: Promise<void> | null = null;
+  /** What the browser would report as its signed-in state, and what the keeper holds between runs. */
+  let capturedSession: string | null = '{"cookies":[],"origins":[]}';
+  const sessions = new Map<string, string>();
+  const sessionKey = (identity: { applicationId: string; personaId: string; origin: string }) =>
+    `${identity.applicationId}|${identity.personaId}|${identity.origin}`;
+  const keeper = {
+    read: (identity: { applicationId: string; personaId: string; origin: string }) => sessions.get(sessionKey(identity)) ?? null,
+    write: (identity: { applicationId: string; personaId: string; origin: string }, storageState: string) => { sessions.set(sessionKey(identity), storageState); },
+    delete: (identity: { applicationId: string; personaId: string; origin: string }) => { sessions.delete(sessionKey(identity)); },
+  };
 
   const opened: OpenedRun = { runId: "run-1", sessionId: "s1", traceId: "t1", organizationId: "org", relay: { endpoint: "http://127.0.0.1:1/relay", relayToken: "x".repeat(40) } };
   const session: BrowserSession = {
@@ -116,11 +130,16 @@ function harness(script: Script = {}, options: { manualWaitMs?: number; phaseFai
     driver: pageState.driver,
     async setCapturePaused(paused) { log.push(`capture-paused:${paused}`); },
     async bringToFront() { log.push("front"); },
+    async captureStorageState() { log.push("capture-session"); return capturedSession; },
+    async clearStorageState() {
+      log.push("clear-session");
+      if (script.recoverOnClearedSession) pageState.go("course");
+    },
   };
   const host: AutomatedRunHost = {
     async openRun() { log.push("openRun"); return opened; },
-    async openBrowser(_run, _request, h) {
-      log.push("openBrowser");
+    async openBrowser(_run, _request, h, openOptions) {
+      log.push(openOptions?.storageState ? "openBrowser:seeded" : "openBrowser");
       hooks = h;
       if (options.openBrowserFails) throw new Error("Chromium would not start\n    at stack");
       return session;
@@ -150,11 +169,13 @@ function harness(script: Script = {}, options: { manualWaitMs?: number; phaseFai
   const manager = new AutomatedRunManager(host, {
     createRunner: () => runner as never,
     journal: { record: async ({ pid, name }) => { journal.push(`record:${pid}:${name}`); }, forget: (pid) => { journal.push(`forget:${pid}`); } },
+    sessions: keeper,
     heartbeatMs: 15, manualWaitMs: options.manualWaitMs ?? 5_000, agentVersion: "1.2.3", now: () => new Date(NOW),
   });
   return {
     manager, log, published, phases, notes, finished, events, journal, page: pageState,
     hooks: () => hooks!, crashApp: () => { appAlive = false; },
+    sessions, setCapturedSession: (value: string | null) => { capturedSession = value; },
     holdAppStart: () => { let open!: () => void; gate = new Promise<void>((resolve) => { open = resolve; }); return open; },
   };
 }
@@ -462,4 +483,81 @@ test("a heartbeat keeps reaching the platform while a run is going", async () =>
   assert.ok(h.phases.length > before, "empty updates are still updates: they say the desktop is here");
   release();
   await h.manager.idle();
+});
+
+// -- the signed-in session, kept between runs ------------------------------------------------------
+
+/** A persona that actually signs in. The default one does not, so it has no session worth keeping. */
+const signingIn = (): TestPersona => ({ ...persona(), authenticated: true });
+
+test("a persona that signs in has its session kept, so the next run starts already signed in", async () => {
+  const h = harness();
+  await finish(h, request({ persona: signingIn() }));
+
+  assert.ok(h.log.includes("openBrowser"), "the first run has nothing to start from");
+  assert.ok(!h.log.includes("openBrowser:seeded"));
+  assert.ok(h.log.includes("capture-session"), "what it signed in as is captured once it is in");
+  assert.deepEqual([...h.sessions.values()], ['{"cookies":[],"origins":[]}']);
+  assert.deepEqual([...h.sessions.keys()], [`${APP_ID}|p|http://localhost:3000`], "one application, one persona, one address");
+});
+
+test("a kept session is handed to the browser, and refreshed by the run that used it", async () => {
+  const first = harness();
+  await finish(first, request({ persona: signingIn() }));
+
+  const second = harness();
+  for (const [key, value] of first.sessions) second.sessions.set(key, value);
+  second.setCapturedSession('{"cookies":[{"name":"sid","value":"rotated"}],"origins":[]}');
+  await finish(second, request({ persona: signingIn() }));
+
+  assert.ok(second.log.includes("openBrowser:seeded"), "the browser starts from the kept session");
+  assert.ok(!second.log.includes("clear-session"), "a session that worked is not thrown away");
+  assert.match([...second.sessions.values()][0]!, /rotated/, "and what the application rotated is kept in its place");
+});
+
+test("a persona that never signs in keeps no session: there is nothing to be signed in as", async () => {
+  const h = harness();
+  await finish(h);
+  assert.equal(h.sessions.size, 0);
+  assert.ok(!h.log.includes("capture-session"));
+  assert.ok(!h.log.includes("openBrowser:seeded"));
+});
+
+test("a kept session that no longer works is thrown away once, and the run signs in from nothing", async () => {
+  const h = harness({ startAt: "elsewhere", recoverOnClearedSession: true });
+  h.sessions.set(`${APP_ID}|p|http://localhost:3000`, '{"cookies":[{"name":"sid","value":"expired"}],"origins":[]}');
+  await finish(h, request({ persona: signingIn() }));
+
+  assert.ok(h.log.includes("openBrowser:seeded"), "it was tried");
+  assert.ok(h.log.includes("clear-session"), "and cleared out of the live browser, not just forgotten");
+  assert.equal(h.log.filter((entry) => entry === "clear-session").length, 1, "exactly once: a second failure is about the sign-in, not the session");
+  assert.equal(h.manager.status()?.outcome?.stopReason, "TERMINAL_STATE_REACHED", "the retry got in");
+  assert.ok(
+    h.events.some((event) => event.type === "QA_AUTOMATION_SESSION_DISCARDED"),
+    "the report can say the run had to sign in again, and why",
+  );
+  assert.match([...h.sessions.values()][0]!, /cookies/, "the session the retry established replaces the one that failed");
+});
+
+test("a session that cannot get in even after being cleared ends the run, rather than looping", async () => {
+  const h = harness({ startAt: "elsewhere" });
+  h.sessions.set(`${APP_ID}|p|http://localhost:3000`, '{"cookies":[],"origins":[]}');
+  await finish(h, request({ persona: signingIn() }));
+
+  assert.equal(h.log.filter((entry) => entry === "clear-session").length, 1);
+  assert.equal(h.manager.status()?.outcome?.stopReason, "INITIAL_STATE_UNREACHABLE");
+  assert.equal(h.sessions.size, 0, "nothing is kept from a run that never got in");
+});
+
+test("the wait for a person is nudged once before it is given up, not dropped silently", async () => {
+  const h = harness({ startAt: "captcha" }, { manualWaitMs: 20 });
+  await finish(h, request({ persona: signingIn() }));
+
+  const reminders = h.notes.filter((note) => note.body.startsWith("Still waiting"));
+  assert.equal(reminders.length, 1, "somebody who stepped away is told the run is still there, once");
+  assert.equal(h.manager.status()?.outcome?.stopReason, "MANUAL_AUTHENTICATION_REQUIRED", "and it does eventually stop");
+  assert.ok(
+    h.manager.status()!.events.some((event) => event.text.startsWith("Still waiting for you")),
+    "the live view says so too, for somebody watching rather than reading notifications",
+  );
 });

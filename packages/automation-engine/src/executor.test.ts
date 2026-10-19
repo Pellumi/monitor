@@ -342,3 +342,112 @@ test('a target that is not in the pinned Flow version is refused up front', asyn
   assert.equal(result.stopReason, 'TERMINAL_STATE_UNREACHABLE');
   assert.equal(app.actions.length, 0);
 });
+
+// -- how the Flow is drawn, judged as it is walked -------------------------------------------------
+
+const BREAKPOINTS = [
+  { name: 'mobile', width: 390, height: 844 },
+  { name: 'laptop', width: 1280, height: 800 },
+];
+
+const measurement = (over: Partial<import('./types').PageMeasurement> = {}): import('./types').PageMeasurement =>
+  ({ viewport: { width: 1280, height: 800 }, horizontalOverflowPx: 0, smallestTextPx: 16, busyIndicator: false, ...over });
+
+const geometry = (over: Partial<import('./types').ElementGeometry> = {}): import('./types').ElementGeometry => ({
+  rect: { x: 0, y: 0, width: 140, height: 48 }, inViewport: true, hitTestOk: true,
+  fontSizePx: 16, fontWeight: 400, color: 'rgb(255, 255, 255)', backgroundColor: 'rgb(37, 99, 235)',
+  borderWidthPx: 0, borderStyle: 'none', cursor: 'pointer', opacity: 1, emphasis: 'FILLED', ...over,
+});
+
+test('each state is swept once, on the first visit, and never per visit', async () => {
+  const app = lmsApp({
+    measure: () => measurement(),
+    viewports: (_pageKey, breakpoints) => breakpoints.map((breakpoint) => ({
+      breakpoint, page: measurement({ viewport: { width: breakpoint.width, height: breakpoint.height } }), elements: [],
+    })),
+  });
+  const result = await runAutomation(app, config({ responsiveBreakpoints: BREAKPOINTS }));
+
+  assert.equal(result.stopReason, 'TERMINAL_STATE_REACHED');
+  assert.deepEqual(app.sweeps.length, 3, 'one per state reached, not one per read of the page');
+  const samples = app.events.filter((event) => event.type === 'QA_AUTOMATION_RESPONSIVE_SAMPLE');
+  assert.equal(samples.length, 3);
+  assert.deepEqual((samples[0]!.data.samples as Array<{ name: string }>).map((sample) => sample.name), ['mobile', 'laptop']);
+});
+
+test('a page that does not fit at one size is reported against that size, and not at the others', async () => {
+  const app = lmsApp({
+    measure: () => measurement(),
+    viewports: (_pageKey, breakpoints) => breakpoints.map((breakpoint) => ({
+      breakpoint,
+      page: measurement({
+        viewport: { width: breakpoint.width, height: breakpoint.height },
+        horizontalOverflowPx: breakpoint.width < 500 ? 180 : 0,
+      }),
+      elements: [],
+    })),
+  });
+  await runAutomation(app, config({ responsiveBreakpoints: BREAKPOINTS }));
+
+  const quality = app.events.filter((event) => event.type === 'QA_AUTOMATION_UI_QUALITY');
+  const overflow = quality.flatMap((event) => event.data.findings as Array<{ rule: string; breakpoint: string | null }>)
+    .filter((finding) => finding.rule === 'HORIZONTAL_OVERFLOW');
+  assert.ok(overflow.length > 0);
+  assert.ok(overflow.every((finding) => /mobile/.test(finding.breakpoint ?? '')));
+  assert.ok(overflow.every((finding) => !/laptop/.test(finding.breakpoint ?? '')));
+});
+
+test('a control a person could not have clicked ends the run as that, not as a missing control', async () => {
+  // The markup is unchanged and the code names it correctly; something is simply drawn over it.
+  const app = lmsApp({
+    pages: {
+      details: {
+        path: '/courses/7', sdkState: 'course_details',
+        elements: [{ ...element({ ref: 'e-create', name: 'Create Exam', role: 'button' }), geometry: geometry({ hitTestOk: false }) }],
+      },
+      form: { path: '/courses/7/exams/new', sdkState: 'exam_form', elements: [] },
+      created: { path: '/courses/7/exams/42', sdkState: 'exam_created', elements: [] },
+    },
+    measure: () => measurement(),
+  });
+  const result = await runAutomation(app, config());
+
+  assert.equal(result.stopReason, 'CONTROL_OBSCURED');
+  assert.match(result.detail!, /something is drawn on top of it/);
+  assert.deepEqual(clicks(app), [], 'and nothing was clicked at and hoped for');
+});
+
+test('each action says how hard its control was to find, which is what ease of access is measured from', async () => {
+  const app = lmsApp();
+  await runAutomation(app, config());
+  const selected = app.events.find((event) => event.type === 'QA_AUTOMATION_ACTION_SELECTED')!;
+  assert.equal(typeof selected.data.candidates, 'number');
+  assert.equal(selected.data.attempt, 1);
+  assert.equal(selected.data.unusable, 0);
+
+  const verified = app.events.find((event) => event.type === 'QA_AUTOMATION_ACTION_VERIFIED')!;
+  assert.equal(typeof verified.data.settledMs, 'number', 'and how long a person would have waited for the result');
+});
+
+test('what is wrong with the shape of the Flow is said once, before anything is touched', async () => {
+  const stuck: ExecutableContract = {
+    ...lmsContract(),
+    transitions: lmsContract().transitions.filter((transition_) => transition_.id !== 't-submit'),
+  };
+  const app = lmsApp();
+  await runAutomation(app, { ...config({ contract: stuck }), targetStateKey: 'exam_created' });
+
+  const shape = app.events.filter((event) => event.type === 'QA_AUTOMATION_UI_QUALITY' && event.data.stateKey === null);
+  assert.equal(shape.length, 1, 'a fact about the declaration, not something to repeat per visit');
+  const findings = shape[0]!.data.findings as Array<{ rule: string; stateKey: string | null }>;
+  assert.ok(findings.some((finding) => finding.rule === 'DEAD_END'));
+  // Said before the run reaches anything, because it is true of the Flow whether it is run or not.
+  assert.ok(app.eventTypes.indexOf('QA_AUTOMATION_UI_QUALITY') < app.eventTypes.indexOf('QA_AUTOMATION_STATE_EVALUATED'));
+});
+
+test('with no sizes asked for, nothing is swept and nothing claims to know how the page looks', async () => {
+  const app = lmsApp({ measure: () => measurement() });
+  await runAutomation(app, config());
+  assert.deepEqual(app.sweeps, []);
+  assert.deepEqual(app.events.filter((event) => event.type === 'QA_AUTOMATION_RESPONSIVE_SAMPLE'), []);
+});

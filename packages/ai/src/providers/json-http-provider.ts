@@ -182,6 +182,24 @@ export interface FlowDraftWithMeta {
   repairedValidationError?: string;
 }
 
+/**
+ * The user message, as one string when there is only a prompt and as parts when there are images too.
+ *
+ * Kept as a plain string in the ordinary case rather than always sending parts: every provider accepts a
+ * string, and not all of them accept the parts form, so the multimodal shape is used only when it is needed.
+ */
+function messageContent(input: { prompt: string; images?: Array<{ mimeType: string; base64: string }> }):
+  string | Array<Record<string, unknown>> {
+  if (!input.images || input.images.length === 0) return input.prompt;
+  return [
+    { type: 'text', text: input.prompt },
+    ...input.images.map((image) => ({
+      type: 'image_url',
+      image_url: { url: `data:${image.mimeType};base64,${image.base64}` },
+    })),
+  ];
+}
+
 export class JsonHttpProvider implements AIProvider {
   readonly timeoutMs: number;
   private readonly enableRepair: boolean;
@@ -332,7 +350,7 @@ export class JsonHttpProvider implements AIProvider {
           },
           body: JSON.stringify({
             model: this.model,
-            messages: [{ role: 'user', content: input.prompt }],
+            messages: [{ role: 'user', content: messageContent(input) }],
             response_format: { type: 'json_object' },
             ...this.flowDraftOptions(),
           }),

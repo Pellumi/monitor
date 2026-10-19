@@ -10,9 +10,11 @@ import {
   statesByComponent,
 } from "@tellann/automation-engine";
 import type {
+  AmbiguityResolver,
   AutomationConfig,
   AutomationPorts,
   AutomationResult,
+  Breakpoint,
   CodeEvidenceSource,
   EnvironmentKind,
   ExecutableContract,
@@ -37,10 +39,19 @@ import type { DiagnosticsObserver } from "./diagnostics-ports";
 
 export interface ManagedBrowser extends DiagnosticsObserver {
   protectAutomationValues(values: string[]): void;
+  /**
+   * Raise what the engine found wrong with the Flow as a person would meet it. Absent on an observer that does
+   * not keep findings, in which case the evidence event is the only record and the report still shows it.
+   */
+  raiseUiQualityFindings?(findings: Array<{
+    rule: string; severity: "LOW" | "MEDIUM"; stateKey: string | null; breakpoint: string | null;
+    detail: string; recommendation: string | null;
+  }>): number;
 }
 
 /** What drives the page: the browser adapter's half of the engine's ports. */
-export type PageDriver = Pick<AutomationPorts, "snapshot" | "act" | "settle"> & { health?(): "OK" | "BROWSER_CRASHED" | Promise<"OK" | "BROWSER_CRASHED"> };
+export type PageDriver = Pick<AutomationPorts, "snapshot" | "act" | "settle" | "measureViewports">
+  & { health?(): "OK" | "BROWSER_CRASHED" | Promise<"OK" | "BROWSER_CRASHED"> };
 
 /**
  * How a person is asked to do the part of getting in that the run must not do (single sign-on, a code sent to a phone,
@@ -60,6 +71,21 @@ export type StepHandOverPort = ManualAuthenticationPort;
 /** A person may be asked more than once (single sign-on, then a code). Past this it is a loop, not a sign-in. */
 export const MAX_MANUAL_HAND_OVERS = 3;
 
+/**
+ * The signed-in browser session, kept between runs so a sign-in only a person can do is only done once.
+ *
+ * Absent for a persona that never signs in, and for a run with no persona at all: there is then nothing to
+ * keep and nothing to reuse. The store itself lives in `session-store.ts`; this is only what a run does with it.
+ */
+export interface BrowserSessionPort {
+  /** Whether this run's browser started from a stored session rather than empty. */
+  seeded: boolean;
+  /** Keep what the browser is signed in as now, for the next run. Best effort: losing it only costs a sign-in. */
+  keep(): Promise<void>;
+  /** The stored session did not work: forget it, and clear it out of the live browser so the retry starts clean. */
+  discard(): Promise<void>;
+}
+
 export interface AutomatedRunInput {
   browser: ManagedBrowser;
   driver: PageDriver;
@@ -77,10 +103,20 @@ export interface AutomatedRunInput {
   code?: CodeEvidenceSource | null;
   /** Opt-in: components of the Flow to time. Chosen from the contract, capped, and only installed when the run asked. */
   renderTimingComponents?: string[];
+  /** The window sizes each state is re-measured at. Empty turns the sweep off. */
+  responsiveBreakpoints?: Breakpoint[];
+  /**
+   * Breaks the two ties the engine refuses to guess at, when neither the code nor the rendered page could.
+   * Absent — which is the default — means the run stops at such a tie, exactly as it always has. Whatever it
+   * suggests is still verified against the contract before anything is done (`verifyControlProposal`).
+   */
+  resolver?: AmbiguityResolver;
   cancelled?: () => boolean;
   /** Told where the run is, for the live view and the platform. Must not throw into the run. */
   onPhase?: (phase: AutomationExecutionPhase, detail?: { kind: string; detail: string } | null) => void;
   manualAuthentication?: ManualAuthenticationPort;
+  /** The signed-in session kept between runs. Absent means every run signs in from nothing. */
+  session?: BrowserSessionPort;
   /** Who is asked about steps the Flow marks CONFIRM or MANUAL. Defaults to whoever is asked to sign in; absent means nobody, and such a step stops the run. */
   stepHandOver?: StepHandOverPort;
   /** The supervised application's own health, folded into the run's: an application that dies mid-run is APPLICATION_CRASHED. */
@@ -97,6 +133,15 @@ export async function executeAutomatedRun(input: AutomatedRunInput): Promise<Aut
   const record = (type: EventType, data: Record<string, unknown>) => {
     if (type === "QA_AUTOMATION_STOPPED") stopRecorded = true;
     input.browser.recordAutomationEvent(type, { ...data, at: now() });
+    // A problem with the Flow as a person would meet it is a finding about the product, in the same way a
+    // failing accessibility rule is — so it goes into the findings alongside them, not only into the report.
+    if (type === "QA_AUTOMATION_UI_QUALITY" && Array.isArray(data.findings)) {
+      try {
+        input.browser.raiseUiQualityFindings?.(data.findings as Parameters<NonNullable<ManagedBrowser["raiseUiQualityFindings"]>>[0]);
+      } catch {
+        // The evidence event is already recorded; losing the finding row must not disturb the run.
+      }
+    }
   };
 
   try {
@@ -157,33 +202,27 @@ async function execute(
   const initial = input.contract.states.find((state) => state.key === input.contract.initialStateKey);
   const initialRoute = initial?.routePatterns[0];
   if (initialRoute && input.navigation) {
-    phase(input, "SEEKING_INITIAL_STATE");
-    const entryPorts = { snapshot: () => input.driver.snapshot(), act: (action: Parameters<PageDriver["act"]>[0]) => input.driver.act(action), settle: (expected: string | null) => input.driver.settle(expected) };
-    let signedInByPerson = false;
-    for (let handOvers = 0; ; handOvers += 1) {
-      const entered = await seekInitialState(entryPorts, input.navigation, initialRoute, input.environment, {
-        persona: input.persona,
-        policy: input.policy,
-        applicationOrigin: input.applicationOrigin,
-        // Once a person has signed in, the session is theirs: the persona's stored credentials are not typed on top of it.
-        ...(signedInByPerson ? { sessionAuthenticated: true, manualAuthentication: false } : {}),
-      });
-      if (entered.ok) break;
-      if (entered.stopReason !== "MANUAL_AUTHENTICATION_REQUIRED" || !entered.challenge) return stop(entered.stopReason, entered.detail);
-      if (!input.manualAuthentication) return stop(entered.stopReason, entered.detail);
-      if (handOvers >= MAX_MANUAL_HAND_OVERS) {
-        return stop("MANUAL_AUTHENTICATION_REQUIRED", "The sign-in kept asking for more than a person's help could clear, so the run stopped rather than wait on it again.");
+    // A session kept from an earlier run means the browser may already be signed in, in which case the entry
+    // planner must not route through the login edge. If it turns out not to be — the session expired, or the
+    // application revoked it — that is found out here, and the one honest response is to throw it away and sign
+    // in from nothing. Exactly once: a second failure is about the sign-in, not about the session that was kept.
+    let seeded = input.session?.seeded ?? false;
+    for (let attempt = 0; ; attempt += 1) {
+      const walked = await walkToInitialState(input, initialRoute, record, seeded);
+      if (walked.ok) {
+        // Re-captured after every successful entry, not only after a sign-in: it picks up the cookies the
+        // application rotated on the way in, and its age then measures when the session last actually worked.
+        await input.session?.keep().catch(() => undefined);
+        break;
       }
-
-      const challenge = { kind: entered.challenge.kind, detail: entered.challenge.detail };
-      record("QA_AUTOMATION_MANUAL_ACTION_REQUIRED", { kind: challenge.kind, detail: challenge.detail });
-      phase(input, "AWAITING_USER", challenge);
-      const outcome = await waitForPerson(input.manualAuthentication, challenge, input.cancelled);
-      record("QA_AUTOMATION_MANUAL_ACTION_COMPLETED", { kind: challenge.kind, outcome });
-      if (outcome === "CANCELLED") return stop("CANCELLED_BY_USER", "The run was cancelled while it waited for you to sign in.");
-      if (outcome === "TIMED_OUT") return stop("MANUAL_AUTHENTICATION_REQUIRED", "Nobody finished signing in before the wait ended, so the run stopped.");
-      signedInByPerson = true;
-      phase(input, "SEEKING_INITIAL_STATE");
+      if (seeded && attempt === 0) {
+        record("QA_AUTOMATION_SESSION_DISCARDED", { stopReason: walked.stopReason, detail: walked.detail });
+        await input.session?.discard().catch(() => undefined);
+        seeded = false;
+        phase(input, "SEEKING_INITIAL_STATE");
+        continue;
+      }
+      return stop(walked.stopReason, walked.detail);
     }
   }
 
@@ -226,6 +265,10 @@ async function execute(
     cancelled: input.cancelled,
     captureEvidence: diagnostics.captureEvidence,
     traceChunks: diagnostics.traceChunks,
+    ...(diagnostics.inspectPage ? { inspectPage: diagnostics.inspectPage } : {}),
+    ...(input.resolver ? { resolver: input.resolver } : {}),
+    // Offered only when the browser can actually do it; the engine then only asks if a run named any sizes.
+    ...(input.driver.measureViewports ? { measureViewports: (breakpoints) => input.driver.measureViewports!(breakpoints) } : {}),
   };
   const config: AutomationConfig = {
     contract: input.contract,
@@ -234,9 +277,68 @@ async function execute(
     applicationOrigin: input.applicationOrigin,
     limits: input.limits,
     policy: input.policy,
+    ...(input.responsiveBreakpoints ? { responsiveBreakpoints: input.responsiveBreakpoints } : {}),
   };
   phase(input, "EXECUTING_FLOW");
   return runAutomation(ports, config);
+}
+
+type EntryOutcome = { ok: true } | { ok: false; stopReason: AutomationResult["stopReason"]; detail: string };
+
+/**
+ * The walk from wherever the browser starts to the Flow's initial state, including the sign-in and every
+ * hand-over to a person it may need along the way.
+ *
+ * Separate from `execute` because it is attempted twice in one case: once with the session an earlier run kept,
+ * and, if that session turns out to be no good, once more without it. Everything inside is therefore written to
+ * be safely repeatable — it types credentials, asks a person, and plans routes, but it keeps no state of its own
+ * between calls, so the second attempt is a genuinely fresh one.
+ *
+ * `sessionAuthenticated` says the browser is believed to be signed in already, which is what keeps the planner
+ * from routing through a login form it does not need.
+ */
+async function walkToInitialState(
+  input: AutomatedRunInput,
+  initialRoute: string,
+  record: (type: EventType, data: Record<string, unknown>) => void,
+  sessionAuthenticated: boolean,
+): Promise<EntryOutcome> {
+  phase(input, "SEEKING_INITIAL_STATE");
+  const entryPorts = {
+    snapshot: () => input.driver.snapshot(),
+    act: (action: Parameters<PageDriver["act"]>[0]) => input.driver.act(action),
+    settle: (expected: string | null) => input.driver.settle(expected),
+  };
+  let signedInByPerson = false;
+  for (let handOvers = 0; ; handOvers += 1) {
+    const entered = await seekInitialState(entryPorts, input.navigation!, initialRoute, input.environment, {
+      persona: input.persona,
+      policy: input.policy,
+      applicationOrigin: input.applicationOrigin,
+      // Already signed in — whether by a person just now, or by a session kept from an earlier run — so the
+      // persona's stored credentials are not typed on top of a session that is already somebody's.
+      ...(signedInByPerson || sessionAuthenticated ? { sessionAuthenticated: true, manualAuthentication: false } : {}),
+    });
+    if (entered.ok) return { ok: true };
+    if (entered.stopReason !== "MANUAL_AUTHENTICATION_REQUIRED" || !entered.challenge) return { ok: false, stopReason: entered.stopReason, detail: entered.detail };
+    if (!input.manualAuthentication) return { ok: false, stopReason: entered.stopReason, detail: entered.detail };
+    if (handOvers >= MAX_MANUAL_HAND_OVERS) {
+      return {
+        ok: false, stopReason: "MANUAL_AUTHENTICATION_REQUIRED",
+        detail: "The sign-in kept asking for more than a person's help could clear, so the run stopped rather than wait on it again.",
+      };
+    }
+
+    const challenge = { kind: entered.challenge.kind, detail: entered.challenge.detail };
+    record("QA_AUTOMATION_MANUAL_ACTION_REQUIRED", { kind: challenge.kind, detail: challenge.detail });
+    phase(input, "AWAITING_USER", challenge);
+    const outcome = await waitForPerson(input.manualAuthentication, challenge, input.cancelled);
+    record("QA_AUTOMATION_MANUAL_ACTION_COMPLETED", { kind: challenge.kind, outcome });
+    if (outcome === "CANCELLED") return { ok: false, stopReason: "CANCELLED_BY_USER", detail: "The run was cancelled while it waited for you to sign in." };
+    if (outcome === "TIMED_OUT") return { ok: false, stopReason: "MANUAL_AUTHENTICATION_REQUIRED", detail: "Nobody finished signing in before the wait ended, so the run stopped." };
+    signedInByPerson = true;
+    phase(input, "SEEKING_INITIAL_STATE");
+  }
 }
 
 /** Reporting where the run is never fails the run. */

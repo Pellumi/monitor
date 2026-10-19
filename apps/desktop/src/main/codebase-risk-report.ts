@@ -4,7 +4,7 @@ import type {
   CodebaseFinding,
   CodeEntity,
 } from "@tellann/desktop-contracts";
-import { escapeHtml, renderHtmlToPdf, TELLANN_LOGO_SVG } from "./validation-report";
+import { escapeHtml, renderHtmlToPdf } from "./validation-report";
 
 export type CodebaseRiskReportInput = {
   workspaceName: string;
@@ -260,8 +260,6 @@ export function codebaseRiskReportHtml(input: CodebaseRiskReportInput): string {
     @page { size:A4; margin:18mm 0; }
     *{box-sizing:border-box}
     html, body{margin:0;padding:0;background:#ffffff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;height:460px;pointer-events:none;opacity:0.05;z-index:0}
-    .watermark svg{width:100%;height:100%;display:block}
     main{position:relative;z-index:1}
     .sheet{padding:0 16mm}
     .brand{display:flex;justify-content:space-between;align-items:center;margin-bottom:34px}
@@ -291,7 +289,7 @@ export function codebaseRiskReportHtml(input: CodebaseRiskReportInput): string {
     .notice{border-left:3px solid #000;padding:10px 14px;margin:12px 0}
     tr{break-inside:avoid}
     .footer{border-top:1px solid #dcdcdc;margin-top:30px;padding-top:14px;color:#666;font-size:8pt}
-  </style></head><body><div class="watermark">${TELLANN_LOGO_SVG}</div><main><section class="sheet">
+  </style></head><body><main><section class="sheet">
     <div class="brand"><div class="logo">TELLANN</div><span class="badge">Codebase // Risk report</span></div>
     <h1>${escapeHtml(title)}</h1>
     <p class="muted">Every risk the codebase analysis detected in this snapshot: what was found, why it matters, the code it affects, how far a change could reach, and how to address it.</p>

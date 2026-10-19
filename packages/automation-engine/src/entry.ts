@@ -9,7 +9,7 @@ import { evaluateAction } from './policy';
 import type { PolicyOptions } from './policy';
 import { personaCredentialData } from './persona';
 import type { MaterializedValue } from './persona';
-import type { ActionOutcome, AutomationAction, EnvironmentKind, SemanticElement, SemanticSnapshot } from './types';
+import type { ActionOutcome, AutomationAction, EnvironmentKind, FormInput, SemanticElement, SemanticSnapshot } from './types';
 
 /**
  * The entry sequence: everything before the Flow's declared boundary. Getting from wherever the
@@ -31,7 +31,7 @@ export interface EntryPorts {
   settle(expectedStateKey: string | null): Promise<SemanticSnapshot>;
 }
 
-export type EntryStopReason = Extract<AutomationStopReason, 'INITIAL_STATE_UNREACHABLE' | 'AUTHENTICATION_FAILED' | 'AUTHORIZATION_BLOCKED' | 'MANUAL_AUTHENTICATION_REQUIRED'>;
+export type EntryStopReason = Extract<AutomationStopReason, 'INITIAL_STATE_UNREACHABLE' | 'AUTHENTICATION_FAILED' | 'AUTHORIZATION_BLOCKED' | 'MANUAL_AUTHENTICATION_REQUIRED' | 'SUPPLIED_SESSION_REJECTED'>;
 
 export type EntryResult =
   | { ok: true; snapshot: SemanticSnapshot }
@@ -65,6 +65,9 @@ export async function seekInitialState(
   const loginData = options.loginData ?? personaCredentialData(options.persona);
   let sessionAuthenticated = options.sessionAuthenticated ?? false;
   const manual = options.manualAuthentication ?? (options.persona?.authMethod === 'MANUAL');
+  // A persona whose session comes from somewhere else entirely: supplied outright, or fetched from the
+  // application before the browser opened. Either way there is no password to type into any form.
+  const suppliedSession = options.persona?.authMethod === 'SEEDED' || options.persona?.authMethod === 'API';
 
   /** A page a person has to deal with, or null. Checked wherever the run lands, before anything is typed into it. */
   const handOver = (snapshot: SemanticSnapshot | undefined): EntryResult | null => {
@@ -79,7 +82,18 @@ export async function seekInitialState(
   // for — so to an ordinary path search it looks like any other free edge. Left in, the planner
   // would happily route a "direct" plan straight through it with no credentials to fill. Login is
   // performed as its own explicit step below instead; every other plan searches around it.
-  const navGraph: NavigationGraph = { nodes: graph.nodes, edges: graph.edges.filter((edge) => !edge.login) };
+  //
+  // Unless the browser is already signed in, in which case the sign-in page is simply a page that forwards
+  // you on, and the edge stands with nothing to fill in. Without this a session that is perfectly good
+  // cannot be used at all whenever the only declared way into the authenticated part of an application is
+  // through its form — which is the commonest shape there is, and is how every session a run keeps would
+  // otherwise have been wasted.
+  const navGraph: NavigationGraph = {
+    nodes: graph.nodes,
+    edges: sessionAuthenticated
+      ? graph.edges.map((edge) => (edge.login ? { ...edge, control: null, login: undefined } : edge))
+      : graph.edges.filter((edge) => !edge.login),
+  };
 
   const snapshot = await ports.snapshot();
   if (routeMatches(initialRoute, snapshot.path)) return { ok: true, snapshot };
@@ -105,6 +119,15 @@ export async function seekInitialState(
       };
     }
     return { ok: false, stopReason: 'INITIAL_STATE_UNREACHABLE', detail: `No declared route leads from ${snapshot.path} to ${initialRoute}.` };
+  }
+
+  // The session was handed to this run rather than earned by it, and it did not get in: it was not accepted, or
+  // it has expired. There is nothing to type and no form to find, so the one useful thing to say is that.
+  if (suppliedSession) {
+    return {
+      ok: false, stopReason: 'SUPPLIED_SESSION_REJECTED',
+      detail: `The session supplied for this persona did not reach ${initialRoute}: the application is treating this browser as signed out.`,
+    };
   }
 
   if (!requiresLogin) {
@@ -142,12 +165,38 @@ export async function seekInitialState(
   // Before a single credential is typed: is this a login this run may fill in at all?
   const challenged = handOver(reachedLogin.snapshot);
   if (challenged) return challenged;
-  if (!hasPasswordField(reachedLogin.snapshot)) {
+
+  /**
+   * Plenty of sign-ins ask who you are on one page and for your password on the next. There is no password field
+   * on the first page, which on its own looks exactly like a form this run cannot fill — so before concluding
+   * that, the identifier is filled in and the page is allowed to move on. At most `MAX_IDENTIFIER_HOPS` times,
+   * and every page is re-checked for something only a person may deal with, so a form that redirects to single
+   * sign-on after the email is still handed over rather than typed into.
+   */
+  let loginPage = reachedLogin.snapshot;
+  /** Values already typed on an earlier page of a staged sign-in, so the password page is not asked for them again. */
+  const supplied = new Set<string>();
+  for (let hops = 0; !hasPasswordField(loginPage) && hops < MAX_IDENTIFIER_HOPS; hops += 1) {
+    const advanced = await advanceIdentifierStep(ports, loginPage, loginEdge, loginData, supplied);
+    // A page that did not change is a page that did not move on — the identifier was rejected, or that control
+    // was not the one. Pressing it again would only type the same thing into the same form.
+    if (!advanced || samePage(advanced.snapshot, loginPage)) break;
+    loginPage = advanced.snapshot;
+    for (const key of advanced.supplied) supplied.add(key);
+    const nextChallenge = handOver(loginPage);
+    if (nextChallenge) return nextChallenge;
+  }
+
+  if (!hasPasswordField(loginPage)) {
     const challenge: AuthChallenge = { kind: 'UNSUPPORTED_LOGIN_FORM', detail: 'This sign-in is not a plain email or username and password form (there is no password field on it), so Tellann cannot fill it in. It needs you to sign in.' };
     return { ok: false, stopReason: 'MANUAL_AUTHENTICATION_REQUIRED', detail: challenge.detail, challenge };
   }
+  // Where the password was actually typed, which is not the login page itself when the form asked in two steps.
+  const passwordPath = loginPage.path;
 
-  const resolvedLogin = resolveStep(reachedLogin.snapshot, { control: loginEdge.control, inputs: loginEdge.login ?? [], data: loginData, label: 'log in' });
+  // Only what this page still asks for. A staged sign-in already took the identifier, and its field is gone.
+  const remaining = (loginEdge.login ?? []).filter((field) => !supplied.has(field.dataKey));
+  const resolvedLogin = resolveStep(loginPage, { control: loginEdge.control, inputs: remaining, data: loginData, label: 'log in' });
   if (!resolvedLogin.ok) {
     // Missing form, field or credential is a setup problem, not a wrong-password failure.
     return { ok: false, stopReason: 'INITIAL_STATE_UNREACHABLE', detail: `Could not log in: ${resolvedLogin.detail}` };
@@ -159,9 +208,10 @@ export async function seekInitialState(
   // A prompt for a code, a CAPTCHA, or a bounce to an identity provider appears *after* the password is accepted.
   const afterChallenge = handOver(afterLogin);
   if (afterChallenge) return afterChallenge;
-  if (routeMatches(loginEdge.from, afterLogin.path)) {
-    // Submitted the form and never left the login page: the credentials were rejected.
-    return { ok: false, stopReason: 'AUTHENTICATION_FAILED', detail: `Submitting the persona's credentials did not leave ${loginEdge.from}.` };
+  // Submitted the form and never left the page it was on: the credentials were rejected. Compared against where
+  // the password was actually typed as well as the login route, because a two-step form ends up somewhere else.
+  if (routeMatches(loginEdge.from, afterLogin.path) || afterLogin.path === passwordPath) {
+    return { ok: false, stopReason: 'AUTHENTICATION_FAILED', detail: `Submitting the persona's credentials did not leave ${passwordPath}.` };
   }
   sessionAuthenticated = true;
   if (routeMatches(initialRoute, afterLogin.path)) return { ok: true, snapshot: afterLogin };
@@ -184,6 +234,72 @@ export async function seekInitialState(
   return { ok: true, snapshot: final.snapshot };
 }
 
+/**
+ * How many pages a sign-in may ask for before the password one. Two covers "email, then password" and
+ * "email, then choose an account, then password"; past that it is not a form, it is a journey, and a person
+ * is better placed to make it than a run following a heuristic.
+ */
+export const MAX_IDENTIFIER_HOPS = 2;
+
+/** Whether two reads are of the same page, as far as moving a sign-in on is concerned. */
+function samePage(a: SemanticSnapshot, b: SemanticSnapshot): boolean {
+  return a.path === b.path
+    && a.elements.length === b.elements.length
+    && a.elements.every((element, index) => element.name === b.elements[index]?.name && element.inputType === b.elements[index]?.inputType);
+}
+
+/** A control that moves a staged sign-in on. Deliberately exact: "Continue with Google" is not one of these. */
+const CONTINUE_CONTROL = /^(continue|next|sign ?in|log ?in|submit|proceed|go)$/i;
+
+const isPasswordInput = (input: FormInput) => /password/i.test(input.name) || /password/i.test(input.label ?? '');
+
+/**
+ * The one control that would move this page on, or null when it cannot be told. A page offering two plausible
+ * ones is not something to guess at: the run stops and asks, exactly as it does everywhere else.
+ */
+function continueControl(snapshot: SemanticSnapshot): SemanticElement | null {
+  const clickable = snapshot.elements.filter((element) =>
+    element.visible && element.enabled
+    && (element.role === 'button' || element.inputType === 'submit'));
+  const named = clickable.filter((element) => [element.name, element.label].some((text) => text && CONTINUE_CONTROL.test(text.trim())));
+  if (named.length === 1) return named[0]!;
+  // No name to go on, but only one thing on the page to press: that is the one.
+  return named.length === 0 && clickable.length === 1 ? clickable[0]! : null;
+}
+
+/**
+ * Fill in what this page of a staged sign-in asks for (everything the Flow declares except the password) and
+ * move it on. Returns the page that follows, or null when this is not a page that can be moved on — a missing
+ * field, a missing value, two possible controls — in which case the caller reports the form as unfillable.
+ */
+async function advanceIdentifierStep(
+  ports: EntryPorts,
+  snapshot: SemanticSnapshot,
+  loginEdge: NavigationEdge,
+  loginData: (key: string) => MaterializedValue | undefined,
+  alreadySupplied: ReadonlySet<string>,
+): Promise<{ snapshot: SemanticSnapshot; supplied: string[] } | null> {
+  const identifiers = (loginEdge.login ?? []).filter((input) => !isPasswordInput(input) && !alreadySupplied.has(input.dataKey));
+  if (identifiers.length === 0) return null;
+  const control = continueControl(snapshot);
+  if (!control) return null;
+  const resolved = resolveStep(snapshot, {
+    // The control as the page itself describes it, so the ranking picks out this element and no other.
+    control: {
+      labels: [control.name, control.label].filter((text): text is string => Boolean(text)),
+      testId: control.testId, domId: control.domId, element: control.tag, event: 'click',
+      actionAnchor: control.actionAnchor, href: null,
+    },
+    inputs: identifiers,
+    data: loginData,
+    label: 'continue signing in',
+  });
+  if (!resolved.ok) return null;
+  const performed = await performStep(ports, resolved);
+  if (!performed.ok) return null;
+  return { snapshot: await ports.settle(null), supplied: identifiers.map((field) => field.dataKey) };
+}
+
 /** A failed walk keeps the page it ended on, so a hand-over to a person (a redirect to a sign-in provider) can be told apart from a broken route. */
 type WalkResult = { ok: true; snapshot: SemanticSnapshot } | { ok: false; detail: string; snapshot?: SemanticSnapshot };
 
@@ -191,6 +307,14 @@ type WalkResult = { ok: true; snapshot: SemanticSnapshot } | { ok: false; detail
 async function walk(ports: EntryPorts, steps: NavigationEdge[], data: (key: string) => MaterializedValue | undefined): Promise<WalkResult> {
   let snapshot = await ports.snapshot();
   for (const edge of steps) {
+    // An edge with no control is somewhere the application takes you rather than somewhere you click to.
+    // Usually that has already happened by the time the run looks. When it has not, and the destination is a
+    // real address rather than a pattern, the run can simply go there — which is what a person with a valid
+    // session does, and the only way a kept session reaches a page whose only declared route is a login form.
+    if (!edge.control && !routeMatches(edge.to, snapshot.path) && !edge.to.includes('{')) {
+      const navigated = await ports.act({ kind: 'NAVIGATE', url: new URL(edge.to, snapshot.url).href });
+      if (!navigated.ok) return { ok: false, detail: `Could not open ${edge.to}: ${navigated.error ?? 'unknown error'}`, snapshot };
+    }
     if (edge.control) {
       const resolved = resolveStep(snapshot, { control: edge.control, inputs: edge.login ?? [], data, label: edge.id });
       if (resolved.ok) {

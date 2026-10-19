@@ -163,11 +163,62 @@ test('a bounce to an identity provider is a hand-over, not an unreachable state'
   assert.equal(result.ok === false && result.challenge?.kind, 'EXTERNAL_IDENTITY_PROVIDER');
 });
 
-test('a login form with no password field is not something to fill', async () => {
+test('a login form with no password field is tried once as a staged sign-in, then reported as unfillable', async () => {
+  // Indistinguishable, on this page alone, from the first step of an "email, then password" sign-in: so the
+  // identifier is filled and the form is allowed to move on. It does not, so the form is one we cannot fill.
   const site = new Site({ login: at('/login', [email, submit]) }, 'login', {});
   const result = await run(site);
   assert.equal(result.ok === false && result.challenge?.kind, 'UNSUPPORTED_LOGIN_FORM');
-  assert.deepEqual(site.actions, []);
+  assert.deepEqual(site.actions.map((a) => a.kind), ['FILL', 'CLICK'], 'one attempt, not a loop');
+  assert.deepEqual(site.actions.filter((a) => a.kind === 'FILL').map((a) => (a as { ref: string }).ref), ['em']);
+  assert.ok(!site.actions.some((a) => a.kind === 'FILL' && (a as { ref: string }).ref === 'pw'), 'the password went nowhere');
+});
+
+test('a sign-in that asks who you are first, and for your password next, is filled in across both pages', async () => {
+  const identify = at('/login', [email, element({ ref: 'next', testId: 'next', name: 'Continue' })]);
+  const secret = at('/login/password', [password, submit]);
+  const site = new Site({ login: identify, secret, dashboard, course }, 'login', { next: 'secret', go: 'dashboard', course: 'course' });
+  const result = await run(site);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(
+    site.actions.filter((a) => a.kind === 'FILL').map((a) => (a as { ref: string }).ref),
+    ['em', 'pw'],
+    'the identifier on the first page, the password on the second',
+  );
+});
+
+test('a staged sign-in that bounces to another provider after the identifier is handed over, not typed into', async () => {
+  const identify = at('/login', [email, element({ ref: 'next', testId: 'next', name: 'Continue' })]);
+  const idp = snapshot({ url: 'https://login.microsoftonline.com/common', path: '/common', elements: [password, submit] });
+  const site = new Site({ login: identify, idp }, 'login', { next: 'idp' });
+  const result = await run(site);
+
+  assert.equal(result.ok === false && result.challenge?.kind, 'EXTERNAL_IDENTITY_PROVIDER');
+  assert.ok(
+    !site.actions.some((a) => a.kind === 'FILL' && (a as { ref: string }).ref === 'pw'),
+    "the password is never typed into another organisation's page, even though the field was right there",
+  );
+});
+
+test('a staged sign-in whose second page wants a code is handed over rather than guessed at', async () => {
+  const identify = at('/login', [email, element({ ref: 'next', testId: 'next', name: 'Continue' })]);
+  const code = at('/login/code', [input('otp', { autocomplete: 'one-time-code' })], { headings: ['We sent you a code'] });
+  const site = new Site({ login: identify, code }, 'login', { next: 'code' });
+  const result = await run(site);
+  assert.equal(result.ok === false && result.challenge?.kind, 'MFA');
+});
+
+test('a staged sign-in offering two ways on is not guessed at', async () => {
+  const identify = at('/login', [
+    email,
+    element({ ref: 'next', testId: 'next', name: 'Continue' }),
+    element({ ref: 'other', testId: 'other', name: 'Next' }),
+  ]);
+  const site = new Site({ login: identify }, 'login', { next: 'login', other: 'login' });
+  const result = await run(site);
+  assert.equal(result.ok === false && result.challenge?.kind, 'UNSUPPORTED_LOGIN_FORM');
+  assert.deepEqual(site.actions, [], 'two controls that both look like the way on is not a choice to make');
 });
 
 test('wrong credentials are still an authentication failure, not a hand-over', async () => {

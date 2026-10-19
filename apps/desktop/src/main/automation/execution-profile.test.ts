@@ -90,3 +90,49 @@ test('proposals prefer dev over start, wait on the most likely URL, and are neve
 test('with no URL to wait on there is nothing to propose, rather than a guess', () => {
   assert.deepEqual(proposeExecutionProfiles({ applicationId: APP_ID, launchCommands: [cmd('dev')], suggestedApplicationUrls: [] }), []);
 });
+
+test('a project with no startable script is still offered the one answer that is true: it is already running', () => {
+  const proposals = proposeExecutionProfiles({
+    applicationId: APP_ID,
+    launchCommands: [],
+    suggestedApplicationUrls: [{ url: 'http://localhost:5173/', confidence: 0.9, source: 'vite.config.ts' }],
+  });
+  assert.equal(proposals.length, 1, 'without this there is no way in at all for an application Tellann cannot start');
+  assert.deepEqual(proposals[0]!.profile.processes, []);
+  assert.equal(proposals[0]!.profile.applicationUrl, 'http://localhost:5173/');
+  assert.match(proposals[0]!.rationale, /Starts nothing/);
+  assert.equal(ExecutionProfileSchema.safeParse(proposals[0]!.profile).success, true);
+});
+
+test('alongside a startable script, "already running" is only offered for an address somewhere else', () => {
+  const localOnly = proposeExecutionProfiles({
+    applicationId: APP_ID,
+    launchCommands: [cmd('dev')],
+    suggestedApplicationUrls: [{ url: 'http://localhost:5173/', confidence: 0.9, source: 'vite.config.ts' }],
+  });
+  assert.deepEqual(localOnly.map((p) => p.profile.processes.length), [1], 'two readings of the same local address is not a choice anyone can make');
+
+  const deployed = proposeExecutionProfiles({
+    applicationId: APP_ID,
+    launchCommands: [cmd('dev')],
+    suggestedApplicationUrls: [
+      { url: 'http://localhost:5173/', confidence: 0.9, source: 'vite.config.ts' },
+      { url: 'https://staging.example.com/', confidence: 0.5, source: '.env' },
+    ],
+  });
+  assert.deepEqual(deployed.map((p) => p.profile.processes.length), [1, 0]);
+  assert.equal(deployed[1]!.profile.applicationUrl, 'https://staging.example.com/');
+  assert.match(deployed[1]!.profile.name, /staging\.example\.com/);
+});
+
+test('a profile that starts nothing is approved by its shape, and changing its address is still a change', () => {
+  const root = workspace();
+  const deployed = profile({ processes: [], applicationUrl: 'https://staging.example.com/' });
+  assert.equal(isProfileApproved(deployed, [], root), true, 'there is no command to consent to');
+  // The hash still covers the address, so an approval recorded against one URL does not carry to another.
+  const approved = approveProfile(deployed, [], root);
+  assert.notEqual(
+    executionProfileHash({ ...approved, applicationUrl: 'https://other.example.com/' }, [], root),
+    approved.approvedHash,
+  );
+});

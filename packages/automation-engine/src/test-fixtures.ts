@@ -3,13 +3,16 @@ import type { AutomationLimits } from '@tellann/desktop-contracts';
 import type { ActionOutcome, AutomationEvent, AutomationPorts, StepHandOver } from './executor';
 import type {
   AutomationAction,
+  Breakpoint,
   ControlDescriptor,
   ExecutableContract,
   ExecutableState,
   ExecutableTransition,
   ObservedRequest,
+  PageMeasurement,
   SemanticElement,
   SemanticSnapshot,
+  ViewportSample,
 } from './types';
 
 export const ORIGIN = 'http://localhost:3000';
@@ -118,6 +121,10 @@ export interface FakeAppOptions {
   handOver?: (request: StepHandOver, app: FakeApp) => Promise<'DONE' | 'CANCELLED' | 'TIMED_OUT'> | 'DONE' | 'CANCELLED' | 'TIMED_OUT';
   /** Clock advanced by `settle`, so duration budgets are testable without sleeping. */
   clockStepMs?: number;
+  /** How each page is drawn, when the test is about that. Absent means the run measured nothing. */
+  measure?: (pageKey: string) => PageMeasurement | undefined;
+  /** What the page would look like at other window sizes. Absent means no sweep is offered at all. */
+  viewports?: (pageKey: string, breakpoints: Breakpoint[]) => ViewportSample[];
 }
 
 export class FakeApp implements AutomationPorts {
@@ -130,6 +137,9 @@ export class FakeApp implements AutomationPorts {
 
   readonly health: AutomationPorts['health'];
   readonly seekInitial: AutomationPorts['seekInitial'];
+  readonly measureViewports: AutomationPorts['measureViewports'];
+  /** Every sweep the run asked for, so a test can check it happened once per state and not per visit. */
+  readonly sweeps: string[] = [];
   readonly data: AutomationPorts['data'];
   readonly handOver: AutomationPorts['handOver'];
   /** Every step a person was asked about, in order. */
@@ -140,6 +150,12 @@ export class FakeApp implements AutomationPorts {
     this.enter(options.start);
     this.health = options.health ? async () => options.health!() : undefined;
     this.seekInitial = options.seekInitial;
+    this.measureViewports = options.viewports
+      ? async (breakpoints) => {
+          this.sweeps.push(this.page);
+          return options.viewports!(this.page, breakpoints);
+        }
+      : undefined;
     this.data = options.data ? (key: string) => options.data![key] : undefined;
     this.handOver = options.handOver
       ? async (request) => {
@@ -165,6 +181,7 @@ export class FakeApp implements AutomationPorts {
     return snapshot({
       path: page.path, ...(page.url ? { url: page.url } : {}), elements: page.elements, sdkStates: [...this.sdk],
       ...(page.title !== undefined ? { title: page.title } : {}), ...(page.headings ? { headings: page.headings } : {}), ...(page.requests ? { requests: page.requests } : {}),
+      ...(this.options.measure?.(this.page) ? { page: this.options.measure(this.page)! } : {}),
     });
   }
 

@@ -8,8 +8,8 @@ import type { BlockerInput } from './automation-setup';
 const options = (over: Partial<AutomationOptions> = {}): AutomationOptions => ({
   support: { level: 'SUPPORTED', canRun: true, title: 'Automated Run supports this application', message: 'ok', alternatives: ['GUIDED', 'ASSISTED'] },
   workspaceConnected: true, analysisReady: true,
-  profiles: [{ id: 'p1', name: 'npm run dev', applicationUrl: 'http://localhost:5173', commands: ['npm run dev'], status: 'APPROVED', approvedAt: '2026-01-01T00:00:00.000Z' }],
-  proposedProfiles: [], personas: [], dataSets: [], login: { route: null, source: null, proposals: [] },
+  profiles: [{ id: 'p1', name: 'npm run dev', applicationUrl: 'http://localhost:5173', commands: ['npm run dev'], startsNothing: false, status: 'APPROVED', approvedAt: '2026-01-01T00:00:00.000Z' }],
+  proposedProfiles: [], personas: [], dataSets: [], analysisStale: false, login: { route: null, source: null, formFound: null, proposals: [] },
   ...over,
 });
 
@@ -63,11 +63,11 @@ test('a missing analysis, an unchosen target and an unapproved profile are each 
   assert.deepEqual(automatedRunBlockers(ready({ options: options({ analysisReady: false }) })).map((b) => b.fix), ['ANALYSE_CODE']);
   assert.deepEqual(automatedRunBlockers(ready({ selection: { targetStateKey: '', profileId: 'p1', personaId: '', dataSetId: '' } })).map((b) => b.fix), ['CHOOSE_TARGET']);
   assert.deepEqual(automatedRunBlockers(ready({ selection: { targetStateKey: 'not-an-ending', profileId: 'p1', personaId: '', dataSetId: '' } })).map((b) => b.fix), ['CHOOSE_TARGET'], 'a target from another Flow does not count');
-  const unapproved = options({ profiles: [{ id: 'p1', name: 'n', applicationUrl: 'http://x', commands: ['npm run dev'], status: 'NEEDS_APPROVAL', approvedAt: null }] });
+  const unapproved = options({ profiles: [{ id: 'p1', name: 'n', applicationUrl: 'http://x', commands: ['npm run dev'], startsNothing: false, status: 'NEEDS_APPROVAL', approvedAt: null }] });
   const blocked = automatedRunBlockers(ready({ options: unapproved }));
   assert.deepEqual(blocked.map((b) => b.fix), ['APPROVE_PROFILE']);
   assert.match(blocked[0]!.message, /npm run dev/, 'the person is shown exactly what they would be approving');
-  const changed = options({ profiles: [{ id: 'p1', name: 'n', applicationUrl: 'http://x', commands: ['npm run dev --host'], status: 'CHANGED', approvedAt: null }] });
+  const changed = options({ profiles: [{ id: 'p1', name: 'n', applicationUrl: 'http://x', commands: ['npm run dev --host'], startsNothing: false, status: 'CHANGED', approvedAt: null }] });
   assert.equal(automatedRunBlockers(ready({ options: changed }))[0]!.code, 'PROFILE_CHANGED');
 });
 
@@ -113,7 +113,7 @@ test('the channel names are unique', () => {
 });
 
 test('a persona is never described to the renderer with a value in it', () => {
-  const parsed = AutomationOptionsSchema.parse(options({ personas: [{ id: 'p', applicationId: uuid(1), name: 'T', roles: [], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x', ...({ credentials: [{ field: 'password', value: 'hunter2' }] } as object) }] }));
+  const parsed = AutomationOptionsSchema.parse(options({ personas: [{ id: 'p', applicationId: uuid(1), name: 'T', roles: [], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], sessionSeed: null, apiLogin: null, updatedAt: 'x', ...({ credentials: [{ field: 'password', value: 'hunter2' }] } as object) }] }));
   assert.ok(!JSON.stringify(parsed).includes('hunter2'), 'unknown keys are stripped by the schema, so a stray value cannot ride along');
 });
 
@@ -151,7 +151,7 @@ test('the persona can stand in for the sign-in data, and a run with no persona i
 test('a single compatible saved persona is selected and supplies its sign-in data', () => {
   const selection = reconcileAutomatedResourceSelection(
     options({
-      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x' }],
+      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], sessionSeed: null, apiLogin: null, updatedAt: 'x' }],
     }),
     { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
     { actor: 'ADMIN', data: ['ADMIN_EMAIL', 'ADMIN_PASSWORD'] },
@@ -161,7 +161,7 @@ test('a single compatible saved persona is selected and supplies its sign-in dat
 });
 
 test('resource selection never guesses between multiple compatible saved choices', () => {
-  const persona = (id: string) => ({ id, applicationId: uuid(1), name: id, roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD' as const, credentialFields: ['email'], updatedAt: 'x' });
+  const persona = (id: string) => ({ id, applicationId: uuid(1), name: id, roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD' as const, credentialFields: ['email'], sessionSeed: null, apiLogin: null, updatedAt: 'x' });
   const selection = reconcileAutomatedResourceSelection(
     options({ personas: [persona('admin-1'), persona('admin-2')] }),
     { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
@@ -173,7 +173,7 @@ test('resource selection never guesses between multiple compatible saved choices
 test('a single data set covering the remaining required keys is selected', () => {
   const selection = reconcileAutomatedResourceSelection(
     options({
-      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], updatedAt: 'x' }],
+      personas: [{ id: 'admin-1', applicationId: uuid(1), name: 'Philip', roles: ['ADMIN'], authenticated: true, authMethod: 'PASSWORD', credentialFields: ['email', 'password'], sessionSeed: null, apiLogin: null, updatedAt: 'x' }],
       dataSets: [{ id: 'data-1', applicationId: uuid(1), name: 'Course data', values: [{ key: 'COURSE_TITLE', secret: false, kind: 'LITERAL', display: 'QA course', hasStoredValue: true }], updatedAt: 'x' }],
     }),
     { targetStateKey: 'exam_created', profileId: 'p1', personaId: '', dataSetId: '' },
@@ -181,4 +181,76 @@ test('a single data set covering the remaining required keys is selected', () =>
   );
   assert.equal(selection.personaId, 'admin-1');
   assert.equal(selection.dataSetId, 'data-1');
+});
+
+test('a profile that starts nothing raises no approval blocker: there is nothing to approve', () => {
+  const deployed = options({
+    profiles: [{
+      id: 'p1', name: 'Staging', applicationUrl: 'https://staging.example.com/',
+      commands: [], startsNothing: true, status: 'APPROVED', approvedAt: null,
+    }],
+  });
+  assert.deepEqual(automatedRunBlockers(ready({ options: deployed })), [], 'Start is reachable with no commands to show');
+});
+
+test('an unapproved profile that starts nothing is still not held up, because approval is about commands', () => {
+  const deployed = options({
+    profiles: [{
+      id: 'p1', name: 'Staging', applicationUrl: 'https://staging.example.com/',
+      commands: [], startsNothing: true, status: 'NEEDS_APPROVAL', approvedAt: null,
+    }],
+  });
+  assert.deepEqual(automatedRunBlockers(ready({ options: deployed })), []);
+});
+
+test('a stale analysis is said on the form, because every control a run uses comes from it', () => {
+  const stale = automatedRunBlockers(ready({ options: options({ analysisStale: true }) }));
+  assert.deepEqual(stale.map((b) => b.fix), ['ANALYSE_CODE']);
+  assert.equal(stale[0]!.code, 'ANALYSIS_STALE');
+  assert.match(stale[0]!.message, /would report not finding them as a problem with your application/);
+  // Not yet analysed at all is the other, more fundamental, problem — and only one of the two is ever said.
+  assert.deepEqual(automatedRunBlockers(ready({ options: options({ analysisReady: false, analysisStale: true }) })).map((b) => b.code), ['NO_ANALYSIS']);
+});
+
+test('a password persona with nowhere to sign in is held before Start, not after a browser opens', () => {
+  const persona = {
+    id: 'p1', applicationId: uuid(1), name: 'Philip', roles: [] as string[], authenticated: true,
+    authMethod: 'PASSWORD' as const, credentialFields: ['email', 'password'], sessionSeed: null, apiLogin: null, updatedAt: 'x',
+  };
+  const selection = { targetStateKey: 'exam_created', profileId: 'p1', personaId: 'p1', dataSetId: '' };
+
+  const noRoute = automatedRunBlockers(ready({ options: options({ personas: [persona] }), selection }));
+  assert.deepEqual(noRoute.map((b) => b.code), ['LOGIN_NOT_CONFIGURED']);
+  assert.match(noRoute[0]!.message, /Philip/);
+
+  const noForm = automatedRunBlockers(ready({
+    options: options({ personas: [persona], login: { route: '/signin', source: 'MANUAL', formFound: false, proposals: [] } }),
+    selection,
+  }));
+  assert.deepEqual(noForm.map((b) => b.code), ['LOGIN_FORM_NOT_FOUND']);
+  assert.match(noForm[0]!.message, /\/signin/);
+  assert.match(noForm[0]!.message, /supply a session/, 'and the other ways in are offered');
+
+  const found = automatedRunBlockers(ready({
+    options: options({ personas: [persona], login: { route: '/signin', source: 'MANUAL', formFound: true, proposals: [] } }),
+    selection,
+  }));
+  assert.deepEqual(found, []);
+});
+
+test('a persona that needs no form is never held up over one', () => {
+  const selection = { targetStateKey: 'exam_created', profileId: 'p1', personaId: 'p1', dataSetId: '' };
+  const base = { id: 'p1', applicationId: uuid(1), name: 'Philip', roles: [] as string[], credentialFields: [] as string[], sessionSeed: null, apiLogin: null, updatedAt: 'x' };
+  for (const authMethod of ['MANUAL', 'SEEDED', 'API'] as const) {
+    assert.deepEqual(
+      automatedRunBlockers(ready({ options: options({ personas: [{ ...base, authenticated: true, authMethod }] }), selection })),
+      [],
+      authMethod,
+    );
+  }
+  // Nor is a guest, which has nothing to sign in as at all.
+  assert.deepEqual(
+    automatedRunBlockers(ready({ options: options({ personas: [{ ...base, authenticated: false, authMethod: 'PASSWORD' }] }), selection })),
+    [],
+  );
 });

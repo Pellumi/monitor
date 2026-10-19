@@ -80,10 +80,9 @@ test('the document carries every section the report page no longer shows', () =>
   assert.ok(html.includes('Button does nothing'));
 });
 
-test('the document is the Tellann watermarked page', () => {
+test('the document is the Tellann branded page', () => {
   const html = qualityReportHtml(input());
-  assert.ok(html.includes('class="watermark"'));
-  assert.ok(html.includes('<svg'));
+  assert.ok(!html.includes('class="watermark"'));
   assert.ok(html.includes('size:A4'));
   assert.ok(html.includes('TELLANN'));
 });
@@ -540,4 +539,110 @@ test('render timing appears only when the run watched components, worst first, a
   assert.ok(html.includes('1 mounts, 3 updates') && html.includes('13.3 ms total, 5 ms worst'));
   assert.ok(!html.includes('ExamForm<script>'));
   assert.ok(!qualityReportHtml(withAutomated(automatedSection())).includes("Render time of the Flow's components"));
+});
+
+test('the automated chapter opens with the lead, and what to look at first', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    summary: {
+      headline: 'Reached 1 of 4 declared states and stopped short of exam_created.',
+      reached: 1, declared: 4, furthestStateKey: 'course_details',
+      priorities: ['No control for Create Exam is on the page.', 'Close is 18x18px at 390x844, below 44x44.'],
+    },
+  })));
+  assert.ok(html.includes('Reached 1 of 4 declared states'));
+  assert.ok(html.includes('What to look at first'));
+  assert.ok(html.includes('Close is 18x18px'));
+});
+
+test('a declared request that did not happen is shown, with the step it belongs to', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    states: [{
+      sequence: 0, stateKey: 'exam_form', scope: 'IN_FLOW', route: '/exams/new', durationMs: 400, errorCount: 0,
+      action: {
+        label: 'Save exam', verified: true, error: null,
+        effects: [
+          { method: 'POST', route: '/api/exams', expectedStatus: 201, outcome: 'NOT_OBSERVED', observedStatus: null },
+          { method: 'GET', route: '/api/me', expectedStatus: 200, outcome: 'MATCHED', observedStatus: 200 },
+        ],
+      },
+    }],
+  })));
+  assert.ok(html.includes('What the Flow says these steps cause'));
+  assert.ok(html.includes('POST /api/exams'));
+  assert.ok(html.includes('never happened'));
+  assert.ok(!html.includes('/api/me'), 'a request that happened as declared is not a row in a problems table');
+});
+
+test('how hard a step was to get at is shown only when it was harder than it should be', () => {
+  const awkward = qualityReportHtml(withAutomated(automatedSection({
+    states: [{
+      sequence: 0, stateKey: 'exam_form', scope: 'IN_FLOW', route: '/x', durationMs: 100, errorCount: 0,
+      action: { label: 'Save exam', verified: true, error: null, ease: 'NO_STABLE_IDENTITY', settledMs: 2400 },
+    }],
+  })));
+  assert.ok(awkward.includes('nothing but its visible text'));
+  assert.ok(awkward.includes('waited 2.40 s'), 'and how long a person would have waited for it');
+
+  const fine = qualityReportHtml(withAutomated(automatedSection({
+    states: [{
+      sequence: 0, stateKey: 'exam_form', scope: 'IN_FLOW', route: '/x', durationMs: 100, errorCount: 0,
+      action: { label: 'Save exam', verified: true, error: null, ease: 'EASY', settledMs: 120 },
+    }],
+  })));
+  assert.ok(!fine.includes('nothing but its visible text'));
+});
+
+test('the responsive grid shows every size, including the ones that were clear', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    responsive: [{
+      stateKey: 'exam_form',
+      samples: [
+        { name: 'mobile', width: 390, height: 844, horizontalOverflowPx: 180, smallestTextPx: 11, smallestTapTargetPx: 18, controlsChecked: 4 },
+        { name: 'laptop', width: 1280, height: 800, horizontalOverflowPx: 0, smallestTextPx: 14, smallestTapTargetPx: 44, controlsChecked: 4 },
+      ],
+    }],
+  })));
+  assert.ok(html.includes('other window sizes'));
+  assert.ok(html.includes('mobile'));
+  assert.ok(html.includes('laptop'));
+  assert.ok(html.includes('180px too wide'));
+  assert.ok(html.includes('clear'), 'a size that was fine is said to be fine, not left blank');
+});
+
+test('actions the run could not perform are shown, having previously been computed and shown nowhere', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    blockedActions: [{ reason: 'CONTROL_NOT_FOUND', transitionId: 't-create', detail: 'No control for Create Exam is on the page.', at: '2026-01-01T00:00:00.000Z' }],
+  })));
+  assert.ok(html.includes('Actions the run could not perform'));
+  assert.ok(html.includes('control not found'));
+  assert.ok(html.includes('t-create'));
+});
+
+test('what a run could not tell you is said, rather than left as a silent absence', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    limitations: ['No window sizes were checked, so nothing here says how this Flow behaves on a phone or a tablet.'],
+  })));
+  assert.ok(html.includes('What this run could not tell you'));
+  assert.ok(html.includes('No window sizes were checked'));
+});
+
+test('how a Flow could be better to use is shown with the measurement behind each point', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection({
+    uiQuality: [
+      { rule: 'TAP_TARGET_TOO_SMALL', severity: 'MEDIUM', stateKey: 'exam_form', breakpoint: 'mobile (390x844)', detail: 'Close is 18x18px, below the 44x44px a fingertip needs.', recommendation: 'Give it more padding.' },
+      { rule: 'REDUNDANT_STEP', severity: 'LOW', stateKey: null, breakpoint: null, detail: 'A page people click through.', recommendation: null },
+    ],
+  })));
+  assert.ok(html.includes('How this Flow could be better to use'));
+  assert.ok(html.includes('18x18px'));
+  assert.ok(html.includes('Give it more padding'));
+  assert.ok(html.includes('the Flow itself'), 'a finding about the declaration says so rather than naming a state');
+});
+
+test('a report from before any of this was measured still renders', () => {
+  const html = qualityReportHtml(withAutomated(automatedSection()));
+  assert.ok(html.includes('What the automated run did'));
+  for (const absent of ['What to look at first', 'other window sizes', 'What this run could not tell you', 'Actions the run could not perform']) {
+    assert.ok(!html.includes(absent), absent);
+  }
 });

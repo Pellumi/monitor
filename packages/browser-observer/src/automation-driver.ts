@@ -3,9 +3,11 @@ import type {
   ActionOutcome,
   AutomationAction,
   AutomationPorts,
+  Breakpoint,
   ObservedRequest,
   SemanticElement,
   SemanticSnapshot,
+  ViewportSample,
 } from '@tellann/automation-engine';
 import type { ElementHandle, Page, Request } from 'playwright';
 
@@ -34,6 +36,13 @@ export interface AutomationDriverOptions {
   backgroundAfterMs?: number;
   actionTimeoutMs?: number;
   maxElements?: number;
+  /**
+   * Measure how the page is actually drawn — geometry, resolved colours, what is on top of what — alongside the
+   * semantic read. On by default: the engine uses it to tell two identical-looking controls apart and to notice
+   * that the control it picked is underneath something, both of which it is otherwise blind to. One extra
+   * style-and-layout pass per snapshot; turn it off only if something needs the lightest possible read.
+   */
+  measure?: boolean;
 }
 
 const DEFAULTS = {
@@ -43,10 +52,13 @@ const DEFAULTS = {
   backgroundAfterMs: 3_000,
   actionTimeoutMs: 8_000,
   maxElements: 400,
+  measure: true,
 } as const;
 
 /** What the in-page extractor returns for one element, before refs are assigned. */
 type Extracted = Omit<SemanticElement, 'ref'> & { signature: string };
+/** The measured half of an element, as the in-page pass produces it. */
+type Measured = NonNullable<SemanticElement['geometry']>;
 
 interface ExtractionResult {
   path: string;
@@ -54,6 +66,12 @@ interface ExtractionResult {
   title: string | null;
   headings: string[];
   elements: Extracted[];
+  /** The window the page was measured in, so a sample can say which size it describes. */
+  viewport: { width: number; height: number };
+  /** How far the page overflows sideways. Anything above zero is a horizontal scrollbar a person has to use. */
+  horizontalOverflowPx: number;
+  /** The smallest readable text on the page, in CSS pixels. Null when nothing was measured. */
+  smallestTextPx: number | null;
 }
 
 const TRACKED_RESOURCES = new Set(['fetch', 'xhr', 'document']);
@@ -64,6 +82,12 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
   private readonly inflight = new Map<Request, number>();
   private errors = 0;
   private crashed = false;
+  /**
+   * Whether the page said it was busy while the run was waiting for it, from right after the last action.
+   * Asked then rather than once everything has settled, because by then any loader has gone — so a page that
+   * showed a spinner and one that showed nothing would look identical.
+   */
+  private busyWhileSettling: boolean | undefined;
   /** Signatures by ref from the last snapshot, so a stale ref can be re-found after a re-render. */
   private signatures = new Map<string, string>();
 
@@ -117,7 +141,50 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
       requests: [...this.requests.values()].map((request) => ({ ...request })),
       errorCount: this.errors,
       frameOrigins: this.frameOrigins(),
+      ...(this.options.measure ? { page: { ...pageOf(extracted), busyIndicator: this.busyWhileSettling ?? false } } : {}),
     };
+  }
+
+  /**
+   * How this page looks at other window sizes.
+   *
+   * A Flow is walked once, at one size, because walking it five times would be five runs. So each state is
+   * instead re-measured at each size the moment it is reached: the window is resized, the page is allowed to
+   * settle, it is read again, and the original size is put back before the run acts. Nothing is clicked and no
+   * state is changed, so what the run does is the same whether this happens or not — which is the only way it
+   * can be on by default.
+   *
+   * The original size is restored in a `finally`, because a run left at phone width would then drive the rest of
+   * the Flow at phone width and report findings about a size nobody asked about.
+   */
+  async measureViewports(breakpoints: Breakpoint[]): Promise<ViewportSample[]> {
+    if (breakpoints.length === 0 || this.page.isClosed()) return [];
+    const original = this.page.viewportSize();
+    const samples: ViewportSample[] = [];
+    try {
+      for (const breakpoint of breakpoints) {
+        if (this.page.isClosed()) break;
+        try {
+          await this.page.setViewportSize({ width: breakpoint.width, height: breakpoint.height });
+          // Reflow, media queries and anything that re-renders on resize. The same quiet window as a settle.
+          await this.waitForQuiet(this.options.quietMs * 4);
+          const extracted = await this.extract(true);
+          samples.push({
+            breakpoint,
+            page: pageOf(extracted),
+            elements: extracted.elements.map(({ signature, ...element }, index) => { void signature; return { ...element, ref: `b${index}` }; }),
+          });
+        } catch (error) {
+          // One size that could not be measured is one missing row, not a failed run.
+          if (!isContextDestroyed(error)) break;
+        }
+      }
+    } finally {
+      if (original && !this.page.isClosed()) await this.page.setViewportSize(original).catch(() => undefined);
+      // Put the page back the way the run found it, so the quiet window the next action waits on is honest.
+      if (!this.page.isClosed()) await this.waitForQuiet(this.options.quietMs * 4).catch(() => undefined);
+    }
+    return samples;
   }
 
   /** Host and path (never a query, which can carry tokens) of every embedded frame: how an embedded CAPTCHA is recognised. */
@@ -174,6 +241,8 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
     const deadline = Date.now() + this.options.settleTimeoutMs;
     const remaining = () => Math.max(0, deadline - Date.now());
     let sdkDeadline: number | null = null;
+    // Read first, while a loader would still be up. Everything below waits for it to go away again.
+    this.busyWhileSettling = this.options.measure ? await this.readBusyIndicator() : undefined;
 
     while (remaining() > 0) {
       try {
@@ -193,6 +262,67 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
       }
     }
     return this.snapshot();
+  }
+
+  /**
+   * A picture of one control, for the one question a picture answers better than the markup does: which of two
+   * identically described controls a person would actually press.
+   *
+   * A crop of the element and a little around it, never the page, so it carries no more of the application than
+   * the control itself. Sensitive fields are masked by the same code that masks every other screenshot, and the
+   * element is scrolled into view first — a control below the fold has no pixels to photograph. Null when it
+   * cannot be done, which the caller treats as having no picture rather than as a failure.
+   */
+  async cropElement(ref: string, padding = 8): Promise<{ mimeType: string; base64: string } | null> {
+    if (this.page.isClosed()) return null;
+    try {
+      const handle = await this.resolve(ref);
+      if (!handle) return null;
+      await handle.scrollIntoViewIfNeeded({ timeout: this.options.actionTimeoutMs }).catch(() => undefined);
+      const box = await handle.boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) return null;
+      const viewport = this.page.viewportSize();
+      const clip = {
+        x: Math.max(0, box.x - padding),
+        y: Math.max(0, box.y - padding),
+        width: Math.min(box.width + padding * 2, (viewport?.width ?? box.x + box.width) - Math.max(0, box.x - padding)),
+        height: Math.min(box.height + padding * 2, (viewport?.height ?? box.y + box.height) - Math.max(0, box.y - padding)),
+      };
+      if (clip.width <= 0 || clip.height <= 0) return null;
+      // Masked by the same locator as every other screenshot: a control can sit beside a field, and a crop that
+      // happens to include one must not carry what somebody typed into it.
+      const shot = await this.page.screenshot({
+        clip,
+        type: 'png',
+        mask: [this.page.locator('input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]')],
+        timeout: this.options.actionTimeoutMs,
+      });
+      return shot.length > 0 ? { mimeType: 'image/png', base64: shot.toString('base64') } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Whether anything on the page is currently saying it is working: the accessible ways of saying so, and the
+   * class names skeleton placeholders are conventionally given. Visible only — a hidden spinner tells nobody
+   * anything. False rather than null on failure, because "we could not tell" and "it said nothing" lead to the
+   * same place and only one of them is worth a separate code path.
+   */
+  private async readBusyIndicator(): Promise<boolean> {
+    try {
+      return await this.page.evaluate(() => {
+        const selector = '[aria-busy="true"], [role="progressbar"], [role="status"], progress, '
+          + '[class*="skeleton" i], [class*="shimmer" i], [class*="spinner" i], [class*="loading" i], [data-loading="true"]';
+        for (const node of Array.from(document.querySelectorAll(selector))) {
+          const box = node.getBoundingClientRect();
+          if (box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden') return true;
+        }
+        return false;
+      });
+    } catch {
+      return false;
+    }
   }
 
   // -- settling ---------------------------------------------------------------
@@ -223,12 +353,12 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
 
   // -- element handling -------------------------------------------------------
 
-  private async extract(): Promise<ExtractionResult> {
-    const max = this.options.maxElements;
+  private async extract(measure = this.options.measure): Promise<ExtractionResult> {
+    const input = { maxElements: this.options.maxElements, measure };
     // A navigation can destroy the context between the settle check and this call.
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.page.evaluate(extractSemantic, max);
+        return await this.page.evaluate(extractSemantic, input);
       } catch (error) {
         if (!isContextDestroyed(error) || attempt >= 3) throw error;
         await this.page.waitForLoadState('domcontentloaded').catch(() => undefined);
@@ -367,7 +497,7 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
  * Runs in the page. Fully self-contained: Playwright serializes it, so it may not reference module scope.
  * Elements are kept in a page-side list and referred to by index; nothing is written to the application's DOM.
  */
-export function extractSemantic(maxElements: number): ExtractionResult {
+export function extractSemantic({ maxElements, measure }: { maxElements: number; measure: boolean }): ExtractionResult {
   const store: Element[] = [];
   (window as unknown as { __tellannAutomationElements: Element[] }).__tellannAutomationElements = store;
 
@@ -455,6 +585,84 @@ export function extractSemantic(maxElements: number): ExtractionResult {
     return legend ? text(legend.textContent) || null : null;
   };
 
+  /**
+   * The smallest font size among the elements a person actually reads. Decorative and hidden text is skipped:
+   * a 9px legal footnote nobody is asked to act on is not the finding, and a `display: none` node is not read
+   * at all. Null when there is no text on the page to measure.
+   */
+  const smallestText = (): number | null => {
+    let smallest: number | null = null;
+    const nodes = document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,td,th,label,button,a,span,strong,em,legend');
+    for (const node of Array.from(nodes).slice(0, 600)) {
+      const content = (node as HTMLElement).innerText ?? node.textContent ?? '';
+      if (content.replace(/\s+/g, ' ').trim().length < 2) continue;
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) continue;
+      const size = Number.parseFloat(getComputedStyle(node).fontSize);
+      if (!Number.isFinite(size) || size <= 0) continue;
+      if (smallest === null || size < smallest) smallest = size;
+    }
+    return smallest;
+  };
+
+  /**
+   * How the browser actually drew the element: where it is, whether a person could reach it, and what it looks
+   * like. One read of the layout and one of the resolved style per element, with nothing mutated in between, so
+   * the whole pass costs a single style-and-layout resolution however many elements there are.
+   *
+   * `background` walks up to the nearest ancestor that paints something, because that is what text is read
+   * against — an element's own `background-color` is `rgba(0, 0, 0, 0)` far more often than not.
+   */
+  const measureOf = (el: Element): Measured | undefined => {
+    const box = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const width = innerWidth || document.documentElement.clientWidth;
+    const height = innerHeight || document.documentElement.clientHeight;
+    const number = (value: string): number | null => {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const opaque = (value: string) => {
+      const parsed = /^rgba?\(\s*[\d.]+[\s,]+[\d.]+[\s,]+[\d.]+(?:[\s,/]+([\d.]+))?\s*\)$/.exec(value.trim());
+      return parsed ? (parsed[1] === undefined ? true : Number.parseFloat(parsed[1]) > 0.01) : false;
+    };
+    let background: string | null = null;
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      const painted = getComputedStyle(node).backgroundColor;
+      if (opaque(painted)) { background = painted; break; }
+    }
+    // Nothing in the chain paints, so what is behind the text is the browser's own canvas. There is no API for
+    // its colour, and it is white for every light-scheme page — which is what the managed browser always opens
+    // with (`colorScheme: 'light'`). Assuming it is better than reporting nothing: reporting nothing would
+    // silently skip the contrast check on exactly the pages that never set a background.
+    if (!background) background = 'rgb(255, 255, 255)';
+    // Only ask the document what is on top when the centre is somewhere it could answer about.
+    const centreX = box.left + box.width / 2;
+    const centreY = box.top + box.height / 2;
+    const onScreen = box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < height && box.left < width;
+    const atCentre = onScreen && centreX >= 0 && centreY >= 0 && centreX < width && centreY < height
+      ? document.elementFromPoint(centreX, centreY)
+      : null;
+    const borderWidth = number(style.borderTopWidth);
+    const ownBackground = opaque(style.backgroundColor);
+    return {
+      rect: { x: box.left, y: box.top, width: box.width, height: box.height },
+      inViewport: onScreen,
+      // Not reachable is not the same as covered: an element whose centre is off screen is scrolled to before
+      // it is acted on, so it is reported as off screen rather than as something being on top of it.
+      hitTestOk: atCentre === null ? onScreen : atCentre === el || el.contains(atCentre) || atCentre.contains(el),
+      fontSizePx: number(style.fontSize),
+      fontWeight: number(style.fontWeight),
+      color: style.color || null,
+      backgroundColor: background,
+      borderWidthPx: borderWidth,
+      borderStyle: style.borderTopStyle || null,
+      cursor: style.cursor || null,
+      opacity: number(style.opacity),
+      emphasis: ownBackground ? 'FILLED' : borderWidth !== null && borderWidth > 0 && style.borderTopStyle !== 'none' ? 'OUTLINED' : 'TEXT',
+    };
+  };
+
   const selector = [
     'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary', '[role]', '[tabindex]', '[contenteditable=true]',
     '[data-testid]', '[data-test-id]', '[data-test]', '[data-tellann-action]',
@@ -503,6 +711,7 @@ export function extractSemantic(maxElements: number): ExtractionResult {
       popup: el.getAttribute('aria-haspopup'),
       autocomplete: el.getAttribute('autocomplete'),
       group: groupOf(el),
+      ...(measure ? { geometry: measureOf(el) } : {}),
       signature: `${signatureBase}#${occurrence}`,
     });
   }
@@ -513,6 +722,20 @@ export function extractSemantic(maxElements: number): ExtractionResult {
     title: text(document.title) || null,
     headings: Array.from(document.querySelectorAll('h1,h2,h3')).slice(0, 12).map((h) => text(h.textContent)).filter(Boolean),
     elements,
+    viewport: { width: innerWidth || document.documentElement.clientWidth, height: innerHeight || document.documentElement.clientHeight },
+    // What a person would have to scroll sideways to see. Nothing should ever need this to be more than zero.
+    horizontalOverflowPx: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    // Smallest text anywhere a person reads, which is what "too small to read" is measured against.
+    smallestTextPx: measure ? smallestText() : null,
+  };
+}
+
+/** The page-level half of an extraction, which both a snapshot and a viewport sample carry. */
+function pageOf(extracted: ExtractionResult): NonNullable<SemanticSnapshot['page']> {
+  return {
+    viewport: extracted.viewport,
+    horizontalOverflowPx: extracted.horizontalOverflowPx,
+    smallestTextPx: extracted.smallestTextPx,
   };
 }
 

@@ -23,6 +23,47 @@ export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
 // What the browser reports
 // ---------------------------------------------------------------------------
 
+/**
+ * How an element is actually rendered: where it is, whether a person could reach it, and what it looks like.
+ *
+ * This is the "screen analysis" half of recognition, and it is deliberately measurement rather than pixels. The
+ * engine stays deterministic — every decision it makes from this is a number compared with a number, reproducible
+ * from the same page — while gaining the two things the DOM alone cannot tell it:
+ *
+ *   - whether the control it picked is one a person could actually click (on screen, not covered by an overlay,
+ *     not a zero-sized box), which is a whole class of failure it previously could not see;
+ *   - what the page looks like, which is what every judgement about legibility, tap targets, contrast and the
+ *     weight of a button is made from.
+ *
+ * It never leaves the machine as itself. What travels is the findings drawn from it.
+ */
+export interface ElementGeometry {
+  /** In CSS pixels, relative to the viewport. */
+  rect: { x: number; y: number; width: number; height: number };
+  /** Whether any part of the element is inside the viewport as it stands. */
+  inViewport: boolean;
+  /**
+   * Whether the element at the centre of `rect` is this element, or inside it. False means something is on top
+   * of it — a modal, a sticky header, a cookie banner — so a click aimed here would land on that instead.
+   */
+  hitTestOk: boolean;
+  fontSizePx: number | null;
+  fontWeight: number | null;
+  /** Resolved colours, as the browser reports them (`rgb(...)` / `rgba(...)`). */
+  color: string | null;
+  /** The nearest ancestor's non-transparent background, which is what the text is actually read against. */
+  backgroundColor: string | null;
+  borderWidthPx: number | null;
+  borderStyle: string | null;
+  cursor: string | null;
+  opacity: number | null;
+  /**
+   * How much visual weight the element carries, which is what tells a primary action from a secondary one:
+   * `FILLED` has a background of its own, `OUTLINED` only a border, `TEXT` neither.
+   */
+  emphasis: 'FILLED' | 'OUTLINED' | 'TEXT' | 'UNKNOWN';
+}
+
 /** One interactive or identifying element, reduced to what recognition and ranking need. */
 export interface SemanticElement {
   /** Stable within one snapshot; how the browser adapter finds the element again. */
@@ -60,6 +101,12 @@ export interface SemanticElement {
   autocomplete?: string | null;
   /** The name of the radio group, checkbox group or fieldset the element sits in: what a Flow calls the field, as opposed to the choice. */
   group?: string | null;
+  /**
+   * How the element is rendered. Absent when the adapter was not asked to measure (and on every snapshot a test
+   * writes by hand), so nothing that reads it may require it: a decision that cannot be made without geometry
+   * falls back to the one the engine made before geometry existed.
+   */
+  geometry?: ElementGeometry;
 }
 
 export interface ObservedRequest {
@@ -68,6 +115,39 @@ export interface ObservedRequest {
   route: string;
   status: number | null;
   completed: boolean;
+}
+
+/** Facts about the page as a whole at the size it was measured at. */
+export interface PageMeasurement {
+  viewport: { width: number; height: number };
+  /** How far the page overflows sideways. Above zero is a horizontal scrollbar somebody has to use. */
+  horizontalOverflowPx: number;
+  /** The smallest text a person is actually asked to read, in CSS pixels. Null when nothing was measured. */
+  smallestTextPx: number | null;
+  /**
+   * Whether the page was saying it was busy at the moment it was read.
+   *
+   * Read right after an action rather than once everything has settled, because by the time a page is settled
+   * any loader it showed has gone — so asking afterwards would always answer "no". This is what tells a page
+   * that took a visible while and said so from one that took a visible while and looked broken.
+   */
+  busyIndicator?: boolean;
+}
+
+/** One of the window sizes a Flow is checked at. */
+export interface Breakpoint {
+  /** What to call it in a report: `mobile`, `tablet`, `laptop`. */
+  name: string;
+  width: number;
+  height: number;
+}
+
+/** How one state looked at one window size. */
+export interface ViewportSample {
+  breakpoint: Breakpoint;
+  page: PageMeasurement;
+  /** The elements as drawn at this size, so the rules can judge them without measuring again. */
+  elements: SemanticElement[];
 }
 
 /** Everything the recognizer and planner see. Deliberately not pixels. */
@@ -85,6 +165,8 @@ export interface SemanticSnapshot {
   errorCount: number;
   /** Hosts of the frames embedded in the page (never their content): how an embedded CAPTCHA or identity widget is recognised. */
   frameOrigins?: string[];
+  /** The page as drawn, at the size it was read at. Absent when the adapter was not asked to measure. */
+  page?: PageMeasurement;
 }
 
 // ---------------------------------------------------------------------------

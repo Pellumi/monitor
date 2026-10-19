@@ -1,4 +1,4 @@
-import { escapeHtml, renderHtmlToPdf, TELLANN_LOGO_SVG } from "./validation-report";
+import { escapeHtml, renderHtmlToPdf } from "./validation-report";
 
 /**
  * The comprehensive quality report a user downloads.
@@ -6,9 +6,9 @@ import { escapeHtml, renderHtmlToPdf, TELLANN_LOGO_SVG } from "./validation-repo
  * The report page in the app shows the summary and the finding titles only.
  * Everything the run produced — every finding with its evidence, the declared
  * coverage gaps, the risks outside the Flow, annotations, and the capture
- * appendix — is written here, in the same Tellann watermarked page design the
- * codebase risk report uses, so a downloaded report is recognisable as ours
- * whichever part of the product produced it.
+ * appendix — is written here, in the same page design the codebase risk
+ * report uses, so a downloaded report is recognisable as ours whichever part
+ * of the product produced it.
  *
  * The payload is the immutable report the cloud generated. It is read
  * defensively: an older schema version must still produce a readable document
@@ -767,6 +767,15 @@ const OUTCOME_KIND_TEXT: Record<string, string> = {
  * and how it ended. It keeps "the application prevented this" apart from "the run never got
  * there", and it never presents an execution failure as a missing Flow step.
  */
+/** How hard a step was to get at, in the words a report uses. `EASY` is never shown: it is the ordinary case. */
+const EASE_TEXT: Record<string, string> = {
+  NO_STABLE_IDENTITY: "the control had nothing but its visible text to identify it",
+  AMONG_LOOKALIKES: "the control was one of several that read the same",
+  HIDDEN_OR_DISABLED: "a matching control was hidden or disabled",
+  NEEDED_RETRY: "the control did not respond the first time",
+  SLOW_TRANSITION: "the step took a visible while to take effect",
+};
+
 function renderAutomated(data: ReadReport): string {
   if (!data.hasAutomated) return "";
   const automated = data.automated;
@@ -798,9 +807,15 @@ function renderAutomated(data: ReadReport): string {
         : `${text(action.label, "Action")} → ${
             action.verified === false ? "did not advance" : action.verified === true ? "advanced" : "not verified"
           }${action.error ? ` (${text(action.error)})` : ""}`;
+      // How hard the step was to get at, said only when it was harder than it should have been.
+      const ease = typeof action.ease === "string" && action.ease !== "EASY" ? EASE_TEXT[action.ease] ?? null : null;
+      const waited = typeof action.settledMs === "number" ? `waited ${millisecondText(action.settledMs)}` : null;
+      const effort = [ease, waited].filter(Boolean).join(" · ");
       return `<tr><td>${escapeHtml(text(state.stateKey))}<small>${escapeHtml(
         `${state.scope === "PRE_BOUNDARY" ? "setup, before the Flow began" : "in the Flow"} · ${text(state.route, "no route")}`,
-      )}</small></td><td>${escapeHtml(result)}</td><td>${escapeHtml(millisecondText(state.durationMs))}</td></tr>`;
+      )}</small></td><td>${escapeHtml(result)}${effort ? `<small>${escapeHtml(effort)}</small>` : ""}</td><td>${escapeHtml(
+        millisecondText(state.durationMs),
+      )}</td></tr>`;
     })
     .join("");
 
@@ -831,6 +846,65 @@ function renderAutomated(data: ReadReport): string {
     })
     .join("");
 
+  // What was computed and, until now, shown nowhere: the actions the run could not perform at all.
+  const blockedRows = records(automated.blockedActions)
+    .map((blocked) => `<tr><td>${escapeHtml(text(blocked.reason).replaceAll("_", " ").toLowerCase())}<small>${escapeHtml(
+      text(blocked.transitionId, "no step recorded"),
+    )}</small></td><td>${escapeHtml(text(blocked.detail, "No detail recorded"))}</td></tr>`)
+    .join("");
+
+  // What the Flow said a step causes, against what the page did. A declared contract the application has
+  // quietly stopped honouring is one of the most useful things here and was being thrown away.
+  const effectRows = states
+    .flatMap((state) => {
+      const action = asRecord(state.action);
+      return records(action.effects)
+        .filter((effect) => effect.outcome !== "MATCHED")
+        .map((effect) => `<tr><td>${escapeHtml(`${text(effect.method)} ${text(effect.route)}`)}<small>${escapeHtml(
+          `${text(state.stateKey)} · ${text(action.label, "step")}`,
+        )}</small></td><td>${escapeHtml(
+          effect.outcome === "NOT_OBSERVED"
+            ? "Declared for this step and never happened"
+            : `Answered ${text(effect.observedStatus, "something else")} rather than ${text(effect.expectedStatus, "what was declared")}`,
+        )}</td></tr>`);
+    })
+    .join("");
+
+  const uiQualityRows = records(automated.uiQuality)
+    .map((finding) => `<tr><td>${escapeHtml(text(finding.rule).replaceAll("_", " ").toLowerCase())}<small>${escapeHtml(
+      [text(finding.stateKey, "the Flow itself"), finding.breakpoint ? text(finding.breakpoint) : null].filter(Boolean).join(" · "),
+    )}</small></td><td>${escapeHtml(text(finding.detail))}${
+      finding.recommendation ? `<small>${escapeHtml(text(finding.recommendation))}</small>` : ""
+    }</td></tr>`)
+    .join("");
+
+  // A state-by-size grid. Every size is shown, including the ones that were fine, because "checked and clear"
+  // is the half of a responsiveness claim that is usually missing.
+  const responsive = records(automated.responsive);
+  const responsiveNames = [...new Set(responsive.flatMap((entry) => records(entry.samples).map((sample) => text(sample.name))))];
+  const responsiveRows = responsive
+    .map((entry) => {
+      const byName = new Map(records(entry.samples).map((sample) => [text(sample.name), sample]));
+      const cells = responsiveNames.map((name) => {
+        const sample = byName.get(name);
+        if (!sample) return "<td>—</td>";
+        const problems = [
+          Number(sample.horizontalOverflowPx) > 4 ? `${text(sample.horizontalOverflowPx)}px too wide` : null,
+          Number(sample.smallestTextPx) > 0 && Number(sample.smallestTextPx) < 12 ? `${text(sample.smallestTextPx)}px text` : null,
+          Number(sample.smallestTapTargetPx) > 0 && Number(sample.smallestTapTargetPx) < 44 && Number(sample.width) <= 768
+            ? `${text(sample.smallestTapTargetPx)}px control`
+            : null,
+        ].filter(Boolean);
+        return `<td>${escapeHtml(problems.length ? problems.join("; ") : "clear")}</td>`;
+      });
+      return `<tr><td>${escapeHtml(text(entry.stateKey))}</td>${cells.join("")}</tr>`;
+    })
+    .join("");
+
+  const summary = asRecord(automated.summary);
+  const priorities = Array.isArray(summary.priorities) ? summary.priorities.map((line) => text(line)).filter(Boolean) : [];
+  const limitations = Array.isArray(automated.limitations) ? automated.limitations.map((line) => text(line)).filter(Boolean) : [];
+
   const traceRows = retainedTraces
     .map((trace) => {
       const reasons = Array.isArray(trace.reasons) ? trace.reasons.map((reason) => text(reason)) : [];
@@ -841,6 +915,13 @@ function renderAutomated(data: ReadReport): string {
     .join("");
 
   return `<section class="major"><div class="section-label">Section // Automated run</div><h2>What the automated run did</h2>
+    ${
+      summary.headline
+        ? `<p class="lead">${escapeHtml(text(summary.headline))}</p>${
+            priorities.length ? `<h3>What to look at first</h3>${list(priorities)}` : ""
+          }`
+        : ""
+    }
     <p><strong>${escapeHtml(text(outcome.stopReason, "Outcome not recorded"))}</strong>. ${escapeHtml(
       OUTCOME_KIND_TEXT[kind] ?? "The run did not record why it ended.",
     )}${outcome.detail ? ` ${escapeHtml(text(outcome.detail))}` : ""}</p>
@@ -883,10 +964,36 @@ function renderAutomated(data: ReadReport): string {
         : ""
     }
     ${
+      effectRows
+        ? `<h3>What the Flow says these steps cause, and what happened</h3><p class="muted">Only the requests a person declared are checked. One that did not happen is the application no longer doing what the Flow says it does.</p><table class="facts">${effectRows}</table>`
+        : ""
+    }
+    ${
+      uiQualityRows
+        ? `<h3>How this Flow could be better to use</h3><p class="muted">Each of these is a measurement against a published threshold, so you can tell whether to agree with it.</p><table class="facts">${uiQualityRows}</table>`
+        : ""
+    }
+    ${
+      responsiveRows
+        ? `<h3>How each state behaves at other window sizes</h3><p class="muted">Each state was re-measured at these sizes the first time the run reached it. Nothing was clicked and nothing was changed.</p>`
+          + `<table class="facts"><tr><td>State</td>${responsiveNames.map((name) => `<td>${escapeHtml(name)}</td>`).join("")}</tr>${responsiveRows}</table>`
+        : ""
+    }
+    ${
+      blockedRows
+        ? `<h3>Actions the run could not perform</h3><table class="facts">${blockedRows}</table>`
+        : ""
+    }
+    ${
       reconciliation.length
         ? `<h3>What reconciliation attributes the gaps to</h3>${list(
             reconciliation.map(([reason, count]) => `${count} × ${reason.replaceAll("_", " ").toLowerCase()}`),
           )}`
+        : ""
+    }
+    ${
+      limitations.length
+        ? `<h3>What this run could not tell you</h3>${list(limitations)}`
         : ""
     }
   </section>`;
@@ -985,8 +1092,6 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     @page { size:A4; margin:18mm 0; }
     *{box-sizing:border-box}
     html, body{margin:0;padding:0;background:#ffffff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;height:460px;pointer-events:none;opacity:0.05;z-index:0}
-    .watermark svg{width:100%;height:100%;display:block}
     main{position:relative;z-index:1}
     .sheet{padding:0 16mm}
     .brand{display:flex;justify-content:space-between;align-items:center;margin-bottom:34px}
@@ -1022,7 +1127,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     .notice{border-left:3px solid #000;padding:10px 14px;margin:12px 0}
     tr{break-inside:avoid}
     .footer{border-top:1px solid #dcdcdc;margin-top:30px;padding-top:14px;color:#666;font-size:8pt}
-  </style></head><body><div class="watermark">${TELLANN_LOGO_SVG}</div><main><section class="sheet">
+  </style></head><body><main><section class="sheet">
     <div class="brand"><div class="logo">TELLANN</div><span class="badge">Quality // QA run report</span></div>
     <h1>${escapeHtml(title)}</h1>
     <p class="muted">${data.hasFlow ? "Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them." : "Everything this observational session established: what the run captured, every evidence-backed finding, annotations, artifacts, and the auditable capture record behind them."}</p>

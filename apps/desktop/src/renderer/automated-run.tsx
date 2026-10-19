@@ -222,21 +222,43 @@ const StatusChip = ({ status }: { status: "APPROVED" | "NEEDS_APPROVAL" | "CHANG
 
 function ProfileManager({ applicationId, options, reload, onCreated }: { applicationId: string; options: AutomationOptions; reload(): Promise<void>; onCreated(id: string): void }) {
   const { run, error, busy } = useAction(reload);
+  const [draft, setDraft] = useState<{ name: string; applicationUrl: string } | null>(null);
   const api = bridge()!;
+  const saveDeployed = async () => {
+    if (!draft) return;
+    let savedId: string | null = null;
+    const url = draft.applicationUrl.trim();
+    const ok = await run(async () => {
+      savedId = (await api.saveProfile({
+        applicationId,
+        name: draft.name.trim() || hostOfUrl(url),
+        // Nothing to start: the application is already answering at this address.
+        processes: [],
+        applicationUrl: url,
+      })).id;
+    });
+    if (ok) { setDraft(null); if (savedId) onCreated(savedId); }
+  };
   return (
     <Manager title="How to start the application" summary={`${options.profiles.length} saved`}>
       <p className="field-hint">
-        Tellann starts your application for you, and only with commands you have looked at and approved. Changing what a profile runs takes its approval away until you approve again.
+        Tellann can start your application for you — and only with commands you have looked at and approved. Or, if it is
+        already running, whether deployed somewhere or started by you in your own terminal, give Tellann the address and it
+        will start nothing.
       </p>
       {options.profiles.map((profile) => (
         <div className="automated-row" key={profile.id}>
           <div>
-            <strong>{profile.name}</strong> <StatusChip status={profile.status} />
-            <code className="automated-commands">{profile.commands.join("  ·  ")}</code>
-            <small>Waits for {profile.applicationUrl} to answer.</small>
+            <strong>{profile.name}</strong> {profile.startsNothing ? <span className="automated-chip">Already running</span> : <StatusChip status={profile.status} />}
+            {profile.startsNothing ? null : <code className="automated-commands">{profile.commands.join("  ·  ")}</code>}
+            <small>
+              {profile.startsNothing
+                ? `Starts nothing. Waits for ${profile.applicationUrl} to answer, then drives it there.`
+                : `Waits for ${profile.applicationUrl} to answer.`}
+            </small>
           </div>
           <div className="inline-actions">
-            {profile.status !== "APPROVED" ? (
+            {!profile.startsNothing && profile.status !== "APPROVED" ? (
               <button className="button primary" type="button" disabled={busy} onClick={() => void run(() => api.approveProfile(applicationId, profile.id))}>
                 <ShieldCheck size={14} /> Approve these commands
               </button>
@@ -259,18 +281,153 @@ function ProfileManager({ applicationId, options, reload, onCreated }: { applica
           >Use this</button>
         </div>
       ))}
+      {draft ? (
+        <div className="automated-editor">
+          <div className="form-grid">
+            <label>
+              Address your application is running at
+              <input
+                aria-label="Address your application is running at"
+                inputMode="url"
+                placeholder="https://staging.example.com or http://localhost:5173"
+                value={draft.applicationUrl}
+                onChange={(event) => setDraft({ ...draft, applicationUrl: event.target.value })}
+              />
+            </label>
+            <label>
+              Name for this profile
+              <input
+                aria-label="Name for this profile"
+                placeholder="Staging (optional)"
+                value={draft.name}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+              />
+            </label>
+            <p className="field-hint full">
+              Tellann will not start or stop anything. It checks the address answers, then runs the Flow against it. Your
+              folder is still needed, because Tellann reads your code to know which control performs each step.
+            </p>
+          </div>
+          <div className="inline-actions">
+            <button className="button primary" type="button" disabled={busy || !isLikelyUrl(draft.applicationUrl)} onClick={() => void saveDeployed()}>Save</button>
+            <button className="button" type="button" onClick={() => setDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="button" type="button" onClick={() => setDraft({ name: "", applicationUrl: "" })}>
+          My application is already running
+        </button>
+      )}
       {options.profiles.length === 0 && options.proposedProfiles.length === 0 ? (
-        <p className="field-hint">Nothing was found to suggest. Tellann looks for a dev or start script in your project and the address it serves on; connect the folder and analyse it if you have not.</p>
+        <p className="field-hint">Nothing was found to suggest. Tellann looks for a dev or start script in your project and the address it serves on; if your application is deployed instead, add its address above.</p>
       ) : null}
       {error ? <p className="automated-error" role="alert">{error}</p> : null}
     </Manager>
   );
 }
 
+/**
+ * An http(s) address without credentials in it. A local address is allowed: someone running their own dev server
+ * and wanting Tellann only to drive it is as real a case as a deployed one.
+ */
+function isLikelyUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function hostOfUrl(value: string): string {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value;
+  }
+}
+
 // -- personas ------------------------------------------------------------------------------------------------------------------
 
-type PersonaDraft = { id?: string; name: string; roles: string; how: "PASSWORD" | "MANUAL" | "GUEST"; identity: string; secret: string; identityField: string };
-const blankPersona = (): PersonaDraft => ({ name: "", roles: "", how: "PASSWORD", identity: "", secret: "", identityField: "email" });
+/** One cookie or storage entry of a supplied session. `stored` means a value is saved and need not be typed again. */
+type SeedEntry = { name: string; value: string; stored: boolean };
+type PersonaHow = "PASSWORD" | "MANUAL" | "SEEDED" | "API" | "GUEST";
+type PersonaDraft = {
+  id?: string; name: string; roles: string; how: PersonaHow;
+  identity: string; secret: string; identityField: string;
+  cookies: SeedEntry[]; storage: SeedEntry[];
+  api: { url: string; body: string; tokenPath: string; targetKind: "LOCAL_STORAGE" | "COOKIE"; targetName: string };
+};
+
+const blankSeedEntry = (): SeedEntry => ({ name: "", value: "", stored: false });
+const blankApi = () => ({ url: "/api/auth/login", body: '{"email":"{{email}}","password":"{{password}}"}', tokenPath: "token", targetKind: "LOCAL_STORAGE" as const, targetName: "auth.token" });
+const blankPersona = (): PersonaDraft => ({
+  name: "", roles: "", how: "PASSWORD", identity: "", secret: "", identityField: "email",
+  cookies: [], storage: [], api: blankApi(),
+});
+
+/** What a persona's row says about how it gets in, in the words a person would use. */
+function describePersonaSignIn(persona: PersonaView): string {
+  if (!persona.authenticated) return "Does not sign in";
+  switch (persona.authMethod) {
+    case "MANUAL":
+      return "You sign in yourself the first time; the session is kept after that";
+    case "SEEDED": {
+      const parts = [
+        persona.sessionSeed?.cookies.length ? `${persona.sessionSeed.cookies.length} cookie${persona.sessionSeed.cookies.length === 1 ? "" : "s"}` : null,
+        persona.sessionSeed?.storageKeys.length ? `${persona.sessionSeed.storageKeys.length} stored value${persona.sessionSeed.storageKeys.length === 1 ? "" : "s"}` : null,
+      ].filter(Boolean);
+      return parts.length > 0 ? `Uses a session you supplied (${parts.join(", ")})` : "Uses a session you supply — none saved yet";
+    }
+    case "API":
+      return persona.apiLogin ? `Fetches its session from ${persona.apiLogin.url}` : "Fetches its session from your application — no request saved yet";
+    default:
+      return `Signs in with a saved ${persona.credentialFields.join(" and ") || "login"}`;
+  }
+}
+
+/**
+ * A short list of named secrets — the cookies, or the storage entries, a supplied session is made of. An entry
+ * whose value is already saved shows as saved and is left blank, so editing one never means pasting them all again.
+ */
+function SeedList({ label, hint, namePlaceholder, entries, onChange }: {
+  label: string; hint: string; namePlaceholder: string;
+  entries: SeedEntry[]; onChange(entries: SeedEntry[]): void;
+}) {
+  const patch = (index: number, change: Partial<SeedEntry>) =>
+    onChange(entries.map((entry, position) => (position === index ? { ...entry, ...change } : entry)));
+  return (
+    <div className="full">
+      <strong>{label}</strong>
+      <p className="field-hint">{hint}</p>
+      {entries.map((entry, index) => (
+        <div className="automated-seed" key={index}>
+          <input
+            aria-label={`${label} name`}
+            placeholder={namePlaceholder}
+            value={entry.name}
+            onChange={(event) => patch(index, { name: event.target.value })}
+          />
+          <input
+            aria-label={`${label} value`}
+            type="password"
+            autoComplete="off"
+            placeholder={entry.stored ? "Leave blank to keep the saved value" : "Value"}
+            value={entry.value}
+            onChange={(event) => patch(index, { value: event.target.value })}
+          />
+          <button
+            className="button"
+            type="button"
+            aria-label={`Remove this ${label.toLowerCase()} entry`}
+            onClick={() => onChange(entries.filter((_, position) => position !== index))}
+          ><Trash2 size={14} /></button>
+        </div>
+      ))}
+      <button className="button" type="button" onClick={() => onChange([...entries, blankSeedEntry()])}>Add {label.toLowerCase()}</button>
+    </div>
+  );
+}
 
 function PersonaManager({ applicationId, personas, reload, onCreated }: { applicationId: string; personas: PersonaView[]; reload(): Promise<void>; onCreated(id: string): void }) {
   const { run, error, busy } = useAction(reload);
@@ -281,20 +438,44 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
     setPasswordVisible(false);
     setDraft({
       id: persona.id, name: persona.name, roles: persona.roles.join(", "), identity: "", secret: "",
-      how: !persona.authenticated ? "GUEST" : persona.authMethod === "MANUAL" ? "MANUAL" : "PASSWORD",
+      how: !persona.authenticated ? "GUEST" : persona.authMethod,
       identityField: persona.credentialFields.find((field) => field !== "password") ?? "email",
+      // Names come back; values never do. An entry that already has one shows as saved and is left blank.
+      cookies: (persona.sessionSeed?.cookies ?? []).map((name) => ({ name, value: "", stored: true })),
+      storage: (persona.sessionSeed?.storageKeys ?? []).map((name) => ({ name, value: "", stored: true })),
+      api: persona.apiLogin
+        ? { ...blankApi(), url: persona.apiLogin.url, targetKind: persona.apiLogin.target.kind, targetName: persona.apiLogin.target.name }
+        : blankApi(),
     });
   };
   const save = async () => {
     if (!draft) return;
+    const entries = (list: SeedEntry[]) => list.filter((entry) => entry.name.trim().length > 0);
     const input: PersonaInput = {
       id: draft.id, applicationId, name: draft.name,
       roles: draft.roles.split(",").map((role) => role.trim()).filter(Boolean),
       authenticated: draft.how !== "GUEST",
-      authMethod: draft.how === "MANUAL" ? "MANUAL" : "PASSWORD",
-      credentials: draft.how === "PASSWORD"
+      authMethod: draft.how === "GUEST" ? "PASSWORD" : draft.how,
+      // An API sign-in posts the credentials rather than typing them, so it needs them stored just the same.
+      credentials: draft.how === "PASSWORD" || draft.how === "API"
         ? [{ field: draft.identityField.trim() || "email", value: draft.identity }, { field: "password", value: draft.secret }]
         : [],
+      ...(draft.how === "SEEDED"
+        ? {
+          sessionSeed: {
+            cookies: entries(draft.cookies).map((entry) => ({ name: entry.name.trim(), value: entry.value })),
+            storage: entries(draft.storage).map((entry) => ({ key: entry.name.trim(), value: entry.value })),
+          },
+        }
+        : {}),
+      ...(draft.how === "API"
+        ? {
+          apiLogin: {
+            url: draft.api.url.trim(), body: draft.api.body, tokenPath: draft.api.tokenPath.trim(),
+            target: { kind: draft.api.targetKind, name: draft.api.targetName.trim() },
+          },
+        }
+        : {}),
     };
     let savedId: string | null = null;
     const ok = await run(async () => { savedId = (await api.savePersona(input)).id; });
@@ -308,7 +489,7 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
           <div>
             <strong><UserRound size={13} /> {persona.name}</strong>
             <small>
-              {!persona.authenticated ? "Does not sign in" : persona.authMethod === "MANUAL" ? "You sign in yourself when asked" : `Signs in with a saved ${persona.credentialFields.join(" and ") || "login"}`}
+              {describePersonaSignIn(persona)}
               {persona.roles.length ? ` · ${persona.roles.join(", ")}` : ""}
             </small>
           </div>
@@ -331,11 +512,13 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
                 options={[
                   { value: "PASSWORD", label: "Email or username and password" },
                   { value: "MANUAL", label: "I sign in myself (single sign-on, a one-time code, a CAPTCHA…)" },
+                  { value: "SEEDED", label: "I supply the session (cookies or a token)" },
+                  { value: "API", label: "Fetch the session from my application" },
                   { value: "GUEST", label: "It does not sign in" },
                 ]}
               />
             </label>
-            {draft.how === "PASSWORD" ? (
+            {draft.how === "PASSWORD" || draft.how === "API" ? (
               <>
                 <label>Email or username<input autoComplete="off" value={draft.identity} onChange={(event) => setDraft({ ...draft, identity: event.target.value })} placeholder={draft.id ? "Leave blank to keep the saved one" : ""} /></label>
                 <label>
@@ -356,7 +539,59 @@ function PersonaManager({ applicationId, personas, reload, onCreated }: { applic
               </>
             ) : null}
             {draft.how === "MANUAL" ? (
-              <p className="field-hint full">When the run reaches the sign-in page, Tellann brings the browser forward and waits. Nothing you type is recorded. Tellann never tries to get past a CAPTCHA.</p>
+              <p className="field-hint full">When the run reaches the sign-in page, Tellann brings the browser forward and waits. Nothing you type is recorded, and Tellann never tries to get past a CAPTCHA. The session is kept afterwards, so you are asked once rather than once per run.</p>
+            ) : null}
+            {draft.how === "SEEDED" ? (
+              <>
+                <p className="field-hint full">
+                  Give Tellann the session itself and no sign-in happens at all — which is how a Flow behind single sign-on runs with
+                  nobody present. These values are as sensitive as a password: they stay on this computer, are never shown back, and
+                  never appear in a report.
+                </p>
+                <SeedList
+                  label="Cookies"
+                  hint="The cookie your application reads to know who somebody is."
+                  namePlaceholder="Name (e.g. session)"
+                  entries={draft.cookies}
+                  onChange={(cookies) => setDraft({ ...draft, cookies })}
+                />
+                <SeedList
+                  label="Local storage"
+                  hint="A token your application reads from local storage instead."
+                  namePlaceholder="Key (e.g. auth.token)"
+                  entries={draft.storage}
+                  onChange={(storage) => setDraft({ ...draft, storage })}
+                />
+              </>
+            ) : null}
+            {draft.how === "API" ? (
+              <>
+                <p className="field-hint full">
+                  Tellann posts the credentials above to your application, reads the token out of the answer, and puts it where your
+                  application looks for it — the same thing your own test setup probably does. Nothing is typed into a page.
+                </p>
+                <label>Address<input aria-label="Sign-in request address" value={draft.api.url} onChange={(event) => setDraft({ ...draft, api: { ...draft.api, url: event.target.value } })} placeholder="/api/auth/login" /></label>
+                <label>Where the token is in the answer<input aria-label="Where the token is in the answer" value={draft.api.tokenPath} onChange={(event) => setDraft({ ...draft, api: { ...draft.api, tokenPath: event.target.value } })} placeholder="data.accessToken" /></label>
+                <label className="full">
+                  What to post
+                  <textarea
+                    aria-label="What to post"
+                    rows={3}
+                    value={draft.api.body}
+                    onChange={(event) => setDraft({ ...draft, api: { ...draft.api, body: event.target.value } })}
+                  />
+                  <span className="field-hint">{"{{email}}"} and {"{{password}}"} are replaced by the credentials above. Nothing else is sent.</span>
+                </label>
+                <label>
+                  Where your application reads it
+                  <SelectField
+                    value={draft.api.targetKind}
+                    onValueChange={(targetKind) => setDraft({ ...draft, api: { ...draft.api, targetKind: targetKind as "LOCAL_STORAGE" | "COOKIE" } })}
+                    options={[{ value: "LOCAL_STORAGE", label: "Local storage" }, { value: "COOKIE", label: "A cookie" }]}
+                  />
+                </label>
+                <label>Under what name<input aria-label="Under what name" value={draft.api.targetName} onChange={(event) => setDraft({ ...draft, api: { ...draft.api, targetName: event.target.value } })} placeholder="auth.token" /></label>
+              </>
             ) : null}
           </div>
           <div className="inline-actions">

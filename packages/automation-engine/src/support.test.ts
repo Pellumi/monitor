@@ -78,13 +78,24 @@ test('names are matched however the scan spells them', () => {
   assert.deepEqual(assess('React', 'React').frameworks, ['React'], 'duplicates collapse');
 });
 
-test('missing controls on a supported application are described as a mapping gap, not a missing framework', () => {
+test('missing controls are described as a mapping gap, not a missing framework, and say what to do about it', () => {
   assert.equal(describeMissingControls([]), null);
   const one = describeMissingControls([{ action: 'Create Exam', from: 'course_details' }])!;
   assert.match(one, /"Create Exam"/);
-  assert.match(one, /mapping to code/);
   assert.ok(!/framework/i.test(one));
-  assert.match(describeMissingControls([{ action: null, from: 'a' }, { action: 'X', from: 'b' }])!, /the step out of a.*and 1 more/);
+  // Being told no is useless without being told how. Both real ways out are named.
+  assert.match(one, /initialise the Flow again/);
+  assert.match(one, /data-tellann-action/);
+
+  // Every step is named, in the Flow's own words: "and 3 more" tells somebody there is work without saying where.
+  const several = describeMissingControls([{ action: null, from: 'a' }, { action: 'X', from: 'b' }, { action: 'Y', from: 'c' }])!;
+  assert.match(several, /the step out of a, "X" and "Y"/);
+  assert.ok(!/more/.test(several), 'three steps all fit, so nothing is hidden behind a count');
+
+  // Past a handful it becomes a list nobody reads, so the rest are counted.
+  const many = describeMissingControls(Array.from({ length: 8 }, (_, index) => ({ action: `Step ${index}`, from: 'x' })))!;
+  assert.match(many, /"Step 0"/);
+  assert.match(many, /"Step 4" \(and 3 more\)/);
 });
 
 test('the steps on the way to the target that have no derived control are found before a run starts', () => {

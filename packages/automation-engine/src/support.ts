@@ -127,10 +127,22 @@ function joinNames(names: string[]): string {
  */
 export function describeMissingControls(missing: Array<{ action: string | null; from: string }>): string | null {
   if (missing.length === 0) return null;
-  const first = missing[0]!;
-  const what = first.action ? `"${first.action}"` : `the step out of ${first.from}`;
-  return `Tellann could not work out from the code which control performs ${what}${missing.length > 1 ? ` (and ${missing.length - 1} more)` : ''}. The Flow's mapping to code for ${missing.length > 1 ? 'those steps' : 'that step'} is missing or unclear. Re-running the Flow's code mapping usually fixes this.`;
+  // Named in the Flow's own words, every one of them. "And 3 more" tells somebody there is work to do without
+  // telling them where, and the whole point of refusing before the run is that they can go and do it.
+  const named = missing.map((step) => (step.action ? `"${step.action}"` : `the step out of ${step.from}`));
+  const shown = named.slice(0, MAX_NAMED_STEPS);
+  const list = shown.length === 1
+    ? shown[0]!
+    : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]!}`;
+  const rest = named.length > shown.length ? ` (and ${named.length - shown.length} more)` : '';
+  const plural = missing.length > 1;
+  return `Tellann could not work out from the code which control performs ${list}${rest}. `
+    + `There are two ways to fix that: initialise the Flow again and map ${plural ? 'those steps' : 'that step'} to the code that handles ${plural ? 'them' : 'it'}, `
+    + `or let Tellann add a \`data-tellann-action\` marker to ${plural ? 'those controls' : 'that control'} through an instrumentation task, which it can then find whatever the label says.`;
 }
+
+/** Enough to act on, not so many that the message becomes a list nobody reads. */
+const MAX_NAMED_STEPS = 5;
 
 /**
  * The steps on the way to the target that have no control derived from the code. These are the ones a run would stop on

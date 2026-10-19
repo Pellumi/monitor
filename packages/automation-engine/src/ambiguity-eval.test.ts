@@ -31,7 +31,7 @@ const cases: LabelledControlCase[] = [
 ];
 
 const answering = (choose: (ref: string[]) => string | null): AmbiguityResolver => ({
-  id: 'fake', local: true,
+  id: 'fake', locality: 'LOCAL',
   resolve: async (situation) => {
     if (situation.kind !== 'CONTROL') return null;
     const choice = choose(situation.candidates.map((c) => c.ref));

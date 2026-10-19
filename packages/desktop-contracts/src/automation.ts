@@ -36,6 +36,12 @@ export const QA_AUTOMATION_EVENT_TYPES = [
   'QA_AUTOMATION_MANUAL_ACTION_REQUIRED',
   /** The person finished, or the wait ended; the run carries on or stops. */
   'QA_AUTOMATION_MANUAL_ACTION_COMPLETED',
+  /** A signed-in session kept from an earlier run did not work, so it was thrown away and the run signed in again. */
+  'QA_AUTOMATION_SESSION_DISCARDED',
+  /** How one state measured at one window size: overflow, smallest text, smallest control. */
+  'QA_AUTOMATION_RESPONSIVE_SAMPLE',
+  /** What is wrong with the Flow as a person would meet it, each finding carrying the measurement behind it. */
+  'QA_AUTOMATION_UI_QUALITY',
 ] as const;
 
 /** Where an Automated Run currently is. A substate carried in `QARun.automation`; the public run lifecycle is unchanged. */
@@ -67,6 +73,8 @@ export const AutomationStopReasonSchema = z.enum([
   'EXPECTED_TRANSITION_NOT_FOUND',
   /** The control was found and acted on, but the state the Flow declares did not follow. */
   'TRANSITION_DID_NOT_ADVANCE',
+  /** The control was on the page and nobody could have used it: no size, or something drawn on top of it. */
+  'CONTROL_OBSCURED',
   'STATE_RECOGNITION_AMBIGUOUS',
   'AUTHENTICATION_FAILED',
   'AUTHORIZATION_BLOCKED',
@@ -89,6 +97,8 @@ export const AutomationStopReasonSchema = z.enum([
   'FLOW_REQUIREMENTS_NOT_MET',
   /** A step the Flow marks as needing a person (to approve it, or to do it) was not answered. */
   'MANUAL_ACTION_REQUIRED',
+  /** A session supplied for the persona, or fetched for it, was not accepted by the application. */
+  'SUPPLIED_SESSION_REJECTED',
 ]);
 export type AutomationStopReason = z.infer<typeof AutomationStopReasonSchema>;
 
@@ -100,6 +110,7 @@ export const AUTOMATION_STOP_REASON_KIND: Record<AutomationStopReason, Automatio
   TERMINAL_STATE_UNREACHABLE: 'APPLICATION',
   EXPECTED_TRANSITION_NOT_FOUND: 'APPLICATION',
   TRANSITION_DID_NOT_ADVANCE: 'APPLICATION',
+  CONTROL_OBSCURED: 'APPLICATION',
   STATE_RECOGNITION_AMBIGUOUS: 'APPLICATION',
   AUTHENTICATION_FAILED: 'APPLICATION',
   AUTHORIZATION_BLOCKED: 'APPLICATION',
@@ -121,6 +132,9 @@ export const AUTOMATION_STOP_REASON_KIND: Record<AutomationStopReason, Automatio
   // Nothing about the application either: the Flow asked for a person or for something the run was not given.
   FLOW_REQUIREMENTS_NOT_MET: 'USER',
   MANUAL_ACTION_REQUIRED: 'USER',
+  // A session the person supplied, or told Tellann how to fetch, that the application refused. Nothing about the
+  // application is wrong: it declined a session, which is its job. What is wrong is the session it was given.
+  SUPPLIED_SESSION_REJECTED: 'USER',
 };
 
 export const AutomationLimitsSchema = z.object({
@@ -145,6 +159,29 @@ export type AutomationLimits = z.infer<typeof AutomationLimitsSchema>;
  */
 export const AUTOMATION_MAX_TARGETS = 1;
 
+/**
+ * One window size a Flow is checked at.
+ *
+ * A Flow is walked once, at one size, because walking it five times would be five runs. Each state is instead
+ * re-measured at each of these the moment it is first reached, with nothing clicked and nothing changed, and the
+ * original size put back before the run acts.
+ */
+export const BreakpointSchema = z.object({
+  name: z.string().min(1).max(40),
+  width: z.number().int().min(240).max(5_000),
+  height: z.number().int().min(320).max(5_000),
+});
+export type Breakpoint = z.infer<typeof BreakpointSchema>;
+
+/** The shapes people actually hold and sit at. Checked unless a run says otherwise. */
+export const DEFAULT_RESPONSIVE_BREAKPOINTS: Breakpoint[] = [
+  { name: 'mobile', width: 390, height: 844 },
+  { name: 'foldable', width: 673, height: 841 },
+  { name: 'tablet', width: 820, height: 1180 },
+  { name: 'laptop', width: 1280, height: 800 },
+  { name: 'desktop', width: 1680, height: 1050 },
+];
+
 export const AutomationConfigSchema = z.object({
   targetTerminalStateKey: z.string().min(1).max(200),
   /**
@@ -162,6 +199,22 @@ export const AutomationConfigSchema = z.object({
    * in the page at all.
    */
   renderTimingComponents: z.array(z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(80)).max(16).default([]),
+  /**
+   * The window sizes each state is re-measured at. Defaulted rather than opt-in: a Flow that cannot be completed
+   * on a phone is one of the most useful things a run can find, and nobody thinks to ask for that check before
+   * they know it is needed. An empty list turns the sweep off entirely.
+   */
+  responsiveBreakpoints: z.array(BreakpointSchema).max(8).default(DEFAULT_RESPONSIVE_BREAKPOINTS),
+  /**
+   * Let a model break a tie that neither the code nor the rendered page could.
+   *
+   * Off by default, and deliberately the only thing in a run that is not decided deterministically. It is
+   * consulted after the code-derived ranking tied *and* the rendered page failed to separate the candidates,
+   * it may only choose among the candidates already found, and its answer is accepted only if the contract
+   * independently agrees — so turning it on cannot make a run do something it would otherwise have refused,
+   * only stop less often. Every decision it influences is recorded as assisted, with where the model ran.
+   */
+  assistedTieBreaking: z.boolean().default(false),
 });
 export type AutomationConfig = z.infer<typeof AutomationConfigSchema>;
 
@@ -278,6 +331,12 @@ export const AutomatedRunRefusalSchema = z.object({
     'FRAMEWORK_NOT_YET_SUPPORTED', 'CODE_ANALYSIS_REQUIRED', 'FLOW_MAPPING_REQUIRED', 'FLOW_INVALID', 'CONTROLS_NOT_DERIVED',
     'TARGET_NOT_IN_FLOW', 'TEST_DATA_UNAVAILABLE', 'PROFILE_NOT_APPROVED', 'WORKSPACE_NOT_SELECTED', 'PERSONA_NOT_FOUND',
     'RUN_DATA_NOT_FOUND', 'PROFILE_NOT_FOUND',
+    /** The analysis describes a different state of the folder than the one on disk now. */
+    'ANALYSIS_STALE',
+    /** The persona needs to sign in and nobody has said where the sign-in page is. */
+    'LOGIN_NOT_CONFIGURED',
+    /** The sign-in page was named, and no form Tellann could fill was found in the code behind it. */
+    'LOGIN_FORM_NOT_FOUND',
   ]),
   title: z.string(),
   message: z.string(),
@@ -314,6 +373,18 @@ export type ReadyCondition = z.infer<typeof ReadyConditionSchema>;
  * than carrying its own command line: everything the launcher's allowlist, workspace scoping
  * and approval hash already enforce keeps applying to it unchanged.
  */
+/** A loopback address: the application would have to be started for anything to answer there. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0']);
+
+/** Whether an application URL points at this machine. Used to catch "start nothing, then wait for localhost". */
+export function isLoopbackApplicationUrl(applicationUrl: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(applicationUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export const ExecutionProfileProcessSchema = z.object({
   name: z.string().min(1).max(60),
   launchCommandId: z.string().min(1).max(200),
@@ -354,13 +425,22 @@ export const ExecutionProfileSchema = z.object({
 });
 export type ExecutionProfile = z.infer<typeof ExecutionProfileSchema>;
 
-/** What the renderer sends to create or change a profile. It cannot send an approval: approving is its own act. */
+/**
+ * What the renderer sends to create or change a profile. It cannot send an approval: approving is its own act.
+ *
+ * `processes` may be empty, which is the profile for an application Tellann does not start: one deployed somewhere,
+ * or one the developer runs themselves in their own terminal. Either way Tellann starts nothing and only waits for
+ * `applicationUrl` to answer. A local address is as valid as a remote one here — someone running their own dev
+ * server is the commonest case of all — and an address with nothing behind it is reported when the run begins,
+ * which is the only point at which it can honestly be known.
+ */
 export const ExecutionProfileInputSchema = z.object({
   id: z.string().min(1).max(200).optional(),
   applicationId: z.string().uuid(),
   name: z.string().trim().min(1).max(100),
-  processes: z.array(ExecutionProfileProcessSchema).min(1).max(8),
+  processes: z.array(ExecutionProfileProcessSchema).max(8),
   applicationUrl: z.string().url(),
+}).superRefine((profile, context) => {
 });
 export type ExecutionProfileInput = z.infer<typeof ExecutionProfileInputSchema>;
 
@@ -380,6 +460,59 @@ export const TestPersonaCredentialSchema = z.object({
 export type TestPersonaCredential = z.infer<typeof TestPersonaCredentialSchema>;
 
 /**
+ * A signed-in session handed to Tellann rather than earned by signing in.
+ *
+ * Some applications cannot be signed into by a run at all — single sign-on, a one-time code — and some teams
+ * would rather not have a password on the machine at all. Both are answered by giving the run the session
+ * directly: the cookies, or the token in web storage, that the application reads to know who somebody is.
+ *
+ * Only cookies and `localStorage` are expressible, because those are what a browser can be handed before it
+ * opens a page. `sessionStorage` cannot be, and a value that only exists in memory is not a session anybody
+ * could have supplied. Every value here is a bearer of the session and is treated exactly as a password is:
+ * kept in OS-protected storage, never shown back to the renderer, never uploaded, never put in a report.
+ */
+export const PersonaSessionSeedSchema = z.object({
+  cookies: z.array(z.object({
+    name: z.string().min(1).max(200),
+    value: z.string().max(8_000),
+    /** Defaults to the host of the run's target address, which is almost always what is meant. */
+    domain: z.string().max(253).optional(),
+    path: z.string().max(200).optional(),
+  })).max(20).default([]),
+  /** `localStorage` entries, written for the run's own origin before the first page loads. */
+  storage: z.array(z.object({
+    key: z.string().min(1).max(200),
+    value: z.string().max(8_000),
+  })).max(20).default([]),
+});
+export type PersonaSessionSeed = z.infer<typeof PersonaSessionSeedSchema>;
+
+/**
+ * How to ask the application itself for a session, instead of driving its sign-in form.
+ *
+ * This is the shape nearly every team's own test setup already uses: post the credentials to an endpoint, read
+ * the token out of the answer, and put it where the application looks for it. Doing it here rather than in the
+ * browser means no sign-in form has to be understood at all, and nothing is typed into a page.
+ *
+ * It is a request that changes server state, so it is classified `SERVER_MUTATION` and refused in any
+ * environment whose policy refuses those — a run never signs in by a route its own safety policy would block.
+ */
+export const PersonaApiLoginSchema = z.object({
+  /** Absolute, or a path resolved against the run's target address. */
+  url: z.string().min(1).max(500),
+  /** The JSON body to send. `{{field}}` is replaced by the persona's stored credential of that name. */
+  body: z.string().max(4_000),
+  /** Dot path to the token in the JSON answer, e.g. `data.accessToken`. */
+  tokenPath: z.string().min(1).max(200),
+  /** Where the application reads it from, and under what name. */
+  target: z.object({
+    kind: z.enum(['LOCAL_STORAGE', 'COOKIE']),
+    name: z.string().min(1).max(200),
+  }),
+});
+export type PersonaApiLogin = z.infer<typeof PersonaApiLoginSchema>;
+
+/**
  * A named identity an Automated Run can act as. Credentials never leave the desktop:
  * they are held in OS-protected storage and are typed into the application, not uploaded.
  * `authenticated: false` describes a persona that never logs in (a guest/anonymous flow) -
@@ -392,13 +525,23 @@ export const TestPersonaSchema = z.object({
   roles: z.array(z.string().min(1).max(60)).max(20),
   authenticated: z.boolean(),
   /**
-   * How the run signs this persona in. `PASSWORD` types the stored credentials into an email/username and
-   * password form. `MANUAL` is for anything else (single sign-on, MFA, magic links): the run stops at the login
-   * page and asks the person to sign in themselves in the browser it opened, then carries on from there.
-   * Nothing the person types is recorded.
+   * How the run signs this persona in.
+   *
+   *   `PASSWORD`  types the stored credentials into an email/username and password form.
+   *   `MANUAL`    the run stops at the login page and asks the person to sign in themselves in the browser it
+   *               opened, then carries on from there. Nothing they type is recorded. The session is kept, so
+   *               they are asked once rather than once per run.
+   *   `SEEDED`    the session is supplied outright (`sessionSeed`): no sign-in happens at all.
+   *   `API`       the session is fetched from the application itself (`apiLogin`) before the browser opens.
+   *
+   * The last two are what make a Flow behind single sign-on runnable with nobody present.
    */
-  authMethod: z.enum(['PASSWORD', 'MANUAL']).default('PASSWORD'),
+  authMethod: z.enum(['PASSWORD', 'MANUAL', 'SEEDED', 'API']).default('PASSWORD'),
   credentials: z.array(TestPersonaCredentialSchema).max(20),
+  /** For `SEEDED`: the session itself. Absent on a persona saved before supplied sessions existed. */
+  sessionSeed: PersonaSessionSeedSchema.nullable().optional(),
+  /** For `API`: how to ask the application for one. Absent likewise. */
+  apiLogin: PersonaApiLoginSchema.nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -475,9 +618,19 @@ export const PersonaViewSchema = z.object({
   name: z.string(),
   roles: z.array(z.string()),
   authenticated: z.boolean(),
-  authMethod: z.enum(['PASSWORD', 'MANUAL']),
+  authMethod: z.enum(['PASSWORD', 'MANUAL', 'SEEDED', 'API']),
   /** Which fields hold a stored value. The values themselves stay on this machine and are never sent back. */
   credentialFields: z.array(z.string()),
+  /** How much of a supplied session is stored, by name only: a cookie's value is as secret as a password. */
+  sessionSeed: z.object({
+    cookies: z.array(z.string()),
+    storageKeys: z.array(z.string()),
+  }).nullable().default(null),
+  /** Where a session would be fetched from, and where it would be put. Never the body, which holds credentials. */
+  apiLogin: z.object({
+    url: z.string(),
+    target: z.object({ kind: z.enum(['LOCAL_STORAGE', 'COOKIE']), name: z.string() }),
+  }).nullable().default(null),
   updatedAt: z.string(),
 });
 export type PersonaView = z.infer<typeof PersonaViewSchema>;
@@ -492,8 +645,11 @@ export const PersonaInputSchema = z.object({
   name: z.string().trim().min(1).max(100),
   roles: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
   authenticated: z.boolean(),
-  authMethod: z.enum(['PASSWORD', 'MANUAL']).default('PASSWORD'),
+  authMethod: z.enum(['PASSWORD', 'MANUAL', 'SEEDED', 'API']).default('PASSWORD'),
   credentials: z.array(TestPersonaCredentialSchema).max(20).default([]),
+  /** Absent means "keep what is stored", the same rule a blank credential follows. */
+  sessionSeed: PersonaSessionSeedSchema.nullable().optional(),
+  apiLogin: PersonaApiLoginSchema.nullable().optional(),
 });
 export type PersonaInput = z.infer<typeof PersonaInputSchema>;
 
@@ -531,8 +687,10 @@ export const ExecutionProfileViewSchema = z.object({
   id: z.string(),
   name: z.string(),
   applicationUrl: z.string(),
-  /** What approving it would let Tellann run: the commands, as they will be typed. */
+  /** What approving it would let Tellann run: the commands, as they will be typed. Empty when it runs nothing. */
   commands: z.array(z.string()),
+  /** The application is already running at `applicationUrl`; Tellann starts no process and needs no approval. */
+  startsNothing: z.boolean().default(false),
   status: z.enum(['APPROVED', 'NEEDS_APPROVAL', 'CHANGED']),
   approvedAt: z.string().nullable(),
 });
@@ -558,6 +716,12 @@ export const AutomationOptionsSchema = z.object({
   }).nullable(),
   workspaceConnected: z.boolean(),
   analysisReady: z.boolean(),
+  /**
+   * The analysis exists but describes a different state of the folder than the one on disk. Every control in a
+   * run comes from it, so a stale one would have the run looking for code that has moved — and then reporting
+   * that as though the application were at fault. Said on the form rather than discovered mid-run.
+   */
+  analysisStale: z.boolean().default(false),
   profiles: z.array(ExecutionProfileViewSchema),
   /** Suggested profiles from the scan, offered when none is saved. Nothing runs from a proposal. */
   proposedProfiles: z.array(z.object({ profile: ExecutionProfileViewSchema, rationale: z.string(), save: ExecutionProfileInputSchema })),
@@ -566,6 +730,8 @@ export const AutomationOptionsSchema = z.object({
   login: z.object({
     route: z.string().nullable(),
     source: z.enum(['CODE_PROPOSAL', 'MANUAL']).nullable(),
+    /** Whether a form Tellann could fill was found in the code behind `route`. Null when no route is set yet. */
+    formFound: z.boolean().nullable().default(null),
     proposals: z.array(LoginProposalViewSchema),
   }),
 });
@@ -619,6 +785,32 @@ export const StateRunRecordSchema = z.object({
     observedState: z.string().nullable(),
     verified: z.boolean().nullable(),
     error: z.string().nullable(),
+    /**
+     * How hard the control was to find, which is what "how easy is this to get at" is measured from. Every one
+     * of these was already known while the run was going; none of it used to be kept.
+     */
+    candidates: z.number().int().nonnegative().nullable().default(null),
+    /** Controls that matched and could not be used: present in the markup, hidden or disabled to a person. */
+    unusable: z.number().int().nonnegative().nullable().default(null),
+    /** Which attempt this was. Above one means the control was there and would not take the action first time. */
+    attempt: z.number().int().positive().nullable().default(null),
+    /** How long the run waited for the state this led to. What a person would have waited, in other words. */
+    settledMs: z.number().int().nonnegative().nullable().default(null),
+    /** Whether the page said it was working while that wait went on. */
+    busyIndicator: z.boolean().nullable().default(null),
+    /**
+     * How easy this step was to get at, from the above. `EASY` is the ordinary case; everything else names
+     * something a person would also have struggled with.
+     */
+    ease: z.enum(['EASY', 'NO_STABLE_IDENTITY', 'AMONG_LOOKALIKES', 'HIDDEN_OR_DISABLED', 'NEEDED_RETRY', 'SLOW_TRANSITION']).nullable().default(null),
+    /** What the Flow said this step causes, against what the page actually did. Empty when it declared nothing. */
+    effects: z.array(z.object({
+      method: z.string(),
+      route: z.string(),
+      expectedStatus: z.number().int().nullable(),
+      outcome: z.enum(['MATCHED', 'STATUS_MISMATCH', 'NOT_OBSERVED']),
+      observedStatus: z.number().int().nullable(),
+    })).default([]),
   }).nullable(),
   /** Runtime errors observed while the run was in this state. */
   errorCount: z.number().int().nonnegative(),
@@ -737,5 +929,53 @@ export const AutomatedRunSectionSchema = z.object({
   retainedTraces: z.array(AutomatedRetainedTraceSchema).default([]),
   /** Render cost per state, for the components the run was asked to watch. Empty unless it opted in. */
   renderTiming: z.array(RenderTimingSampleSchema).default([]),
+  /**
+   * What is wrong with the Flow as a person would meet it. A finding with no `stateKey` is about the shape of
+   * the declared Flow rather than about a page, and holds whether the run reached it or not.
+   */
+  uiQuality: z.array(z.object({
+    rule: z.string(),
+    severity: z.enum(['LOW', 'MEDIUM']),
+    stateKey: z.string().nullable(),
+    /** The window size it was found at, or null for a finding that does not depend on one. */
+    breakpoint: z.string().nullable(),
+    detail: z.string(),
+    recommendation: z.string().nullable(),
+  })).default([]),
+  /**
+   * How each state measured at each window size, whether or not anything was wrong with it. Recorded even when
+   * everything was fine, because "checked at five sizes, all clear" is worth saying.
+   */
+  responsive: z.array(z.object({
+    stateKey: z.string(),
+    samples: z.array(z.object({
+      name: z.string(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      horizontalOverflowPx: z.number().int().nonnegative(),
+      smallestTextPx: z.number().nullable(),
+      smallestTapTargetPx: z.number().nullable(),
+      controlsChecked: z.number().int().nonnegative(),
+    })),
+  })).default([]),
+  /**
+   * What the run could not measure or could not cover, said rather than left as a silent absence. Every other
+   * section of a report has one of these; this one used to be the exception.
+   */
+  limitations: z.array(z.string()).default([]),
+  /**
+   * The report's own lead: did it reach the target, what stopped it, the worst of what it found, and what to
+   * look at first. Built from the numbers below it — no part of it is written by a model.
+   */
+  summary: z.object({
+    headline: z.string(),
+    /** How far it got, as a count of declared states reached. */
+    reached: z.number().int().nonnegative(),
+    declared: z.number().int().nonnegative(),
+    /** The last state the run actually recognised, which is where somebody picking this up should look. */
+    furthestStateKey: z.string().nullable(),
+    /** Worst first, each one a sentence. Empty for a run that found nothing worth saying. */
+    priorities: z.array(z.string()),
+  }).nullable().default(null),
 });
 export type AutomatedRunSection = z.infer<typeof AutomatedRunSectionSchema>;

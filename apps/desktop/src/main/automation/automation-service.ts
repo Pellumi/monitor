@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { assessAutomationSupport } from "@tellann/automation-engine";
-import { proposeLoginForms } from "@tellann/project-intelligence";
+import { buildLoginEdge, proposeLoginForms } from "@tellann/project-intelligence";
 import {
   ExecutionProfileInputSchema,
   ExecutionProfileSchema,
@@ -11,6 +11,7 @@ import {
 } from "@tellann/desktop-contracts";
 import type {
   AutomationOptions,
+  PersonaInput,
   CodebaseAnalysis,
   ExecutionProfile,
   ExecutionProfileView,
@@ -21,7 +22,7 @@ import type {
 } from "@tellann/desktop-contracts";
 import type { LocalLaunchCommand } from "../application-launcher";
 import { getLoginConfig, getProfile, listProfiles, profileStatus, saveProfile } from "./execution-profile-store";
-import { proposeExecutionProfiles } from "./execution-profile";
+import { proposeExecutionProfiles, startsNothing } from "./execution-profile";
 import { deletePersona, deleteRunDataSet, getPersona, getRunDataSet, listPersonas, listRunDataSets, savePersona, saveRunDataSet } from "./persona-store";
 import type { KeyValueStore } from "./persona-store";
 import { localKeyValueStore } from "./persona-store";
@@ -43,7 +44,39 @@ export function personaView(persona: TestPersona): PersonaView {
     authenticated: persona.authenticated,
     authMethod: persona.authMethod,
     credentialFields: persona.credentials.filter((credential) => credential.value.length > 0).map((credential) => credential.field),
+    // Names only. A session cookie's value is exactly as sensitive as a password, so it is described, never shown.
+    sessionSeed: persona.sessionSeed
+      ? {
+        cookies: persona.sessionSeed.cookies.filter((cookie) => cookie.value.length > 0).map((cookie) => cookie.name),
+        storageKeys: persona.sessionSeed.storage.filter((entry) => entry.value.length > 0).map((entry) => entry.key),
+      }
+      : null,
+    // Where it would ask and where it would put the answer. Never the body, which carries the credentials.
+    apiLogin: persona.apiLogin ? { url: persona.apiLogin.url, target: persona.apiLogin.target } : null,
     updatedAt: persona.updatedAt,
+  };
+}
+
+/**
+ * A supplied session as it should be stored: a value left blank means "keep what is saved", the same rule a
+ * blank password follows, so editing which cookie a session uses never means pasting every value again.
+ */
+function mergeSessionSeed(
+  parsed: PersonaInput,
+  existing: TestPersona | null,
+): TestPersona["sessionSeed"] {
+  if (parsed.authMethod !== "SEEDED") return null;
+  if (parsed.sessionSeed === undefined) return existing?.sessionSeed ?? null;
+  if (parsed.sessionSeed === null) return null;
+  const cookies = new Map((existing?.sessionSeed?.cookies ?? []).map((cookie) => [cookie.name, cookie.value]));
+  const storage = new Map((existing?.sessionSeed?.storage ?? []).map((entry) => [entry.key, entry.value]));
+  return {
+    cookies: parsed.sessionSeed.cookies
+      .map((cookie) => ({ ...cookie, value: cookie.value.length > 0 ? cookie.value : cookies.get(cookie.name) ?? "" }))
+      .filter((cookie) => cookie.value.length > 0),
+    storage: parsed.sessionSeed.storage
+      .map((entry) => ({ ...entry, value: entry.value.length > 0 ? entry.value : storage.get(entry.key) ?? "" }))
+      .filter((entry) => entry.value.length > 0),
   };
 }
 
@@ -52,7 +85,9 @@ export function savePersonaInput(input: unknown, store: KeyValueStore = localKey
   const parsed = PersonaInputSchema.parse(input);
   const existing = parsed.id ? getPersona(parsed.applicationId, parsed.id, store) : null;
   const stored = new Map((existing?.credentials ?? []).map((credential) => [credential.field, credential.value]));
-  const credentials = parsed.authMethod === "MANUAL" || !parsed.authenticated
+  // Credentials are only ever typed into a form, or posted by an API sign-in. A persona that signs in by hand,
+  // or whose session is handed over outright, has nothing to type and so has no business storing a password.
+  const credentials = parsed.authMethod === "MANUAL" || parsed.authMethod === "SEEDED" || !parsed.authenticated
     ? []
     : parsed.credentials
         .map((credential) => ({ field: credential.field, value: credential.value.length > 0 ? credential.value : stored.get(credential.field) ?? "" }))
@@ -65,6 +100,9 @@ export function savePersonaInput(input: unknown, store: KeyValueStore = localKey
     authenticated: parsed.authenticated,
     authMethod: parsed.authMethod,
     credentials,
+    sessionSeed: mergeSessionSeed(parsed, existing),
+    // An API sign-in still needs its credentials, so they are kept above; only the request itself lives here.
+    apiLogin: parsed.authMethod === "API" ? parsed.apiLogin ?? existing?.apiLogin ?? null : null,
     createdAt: existing?.createdAt ?? now.toISOString(),
     updatedAt: now.toISOString(),
   });
@@ -148,6 +186,7 @@ export function profileView(profile: ExecutionProfile, commands: LocalLaunchComm
       const command = commands.find((candidate) => candidate.id === process.launchCommandId);
       return command ? `${command.executable} ${command.args.join(" ")}`.trim() : `(${process.launchCommandId} is no longer in this workspace)`;
     }),
+    startsNothing: startsNothing(profile),
     status: profileStatus(profile, commands, workspaceRoot),
     approvedAt: profile.approvedAt,
   };
@@ -174,6 +213,13 @@ export function saveProfileInput(input: unknown, commands: LocalLaunchCommand[],
   }), store);
 }
 
+/** The same way of starting the application: the same address, reached by the same commands in the same order. */
+function sameProfileShape(a: ExecutionProfile, b: ExecutionProfile): boolean {
+  return a.applicationUrl === b.applicationUrl
+    && a.processes.length === b.processes.length
+    && a.processes.every((process, index) => process.launchCommandId === b.processes[index]?.launchCommandId);
+}
+
 // -- everything the start form needs ------------------------------------------------------------------
 
 export interface OptionsInput {
@@ -186,6 +232,12 @@ export interface OptionsInput {
     frameworks: string[];
   } | null;
   analysis: CodebaseAnalysis | null;
+  /**
+   * Whether that analysis still describes the folder on disk. Decided by whoever owns the analysis cache, which
+   * is the only place that can answer it cheaply. Absent means the question was not asked, which is treated as
+   * current rather than holding up a run over something unknown.
+   */
+  analysisCurrent?: boolean;
   store?: KeyValueStore;
 }
 
@@ -202,9 +254,14 @@ export function automationOptions(input: OptionsInput): AutomationOptions {
     support: support ? { level: support.level, canRun: support.canRun, title: support.title, message: support.message, alternatives: support.alternatives } : null,
     workspaceConnected: workspace !== null,
     analysisReady,
+    analysisStale: analysisReady && input.analysisCurrent === false,
     profiles: profiles.map((profile) => profileView(profile, commands, root)),
-    proposedProfiles: workspace && profiles.length === 0
+    // Proposals stay on offer once a profile is saved: a developer who set up a local start command may
+    // later want the deployed one too, and hiding it after the first save left no way to reach it.
+    // What is filtered out is a proposal that is the same profile as one already saved.
+    proposedProfiles: workspace
       ? proposeExecutionProfiles({ applicationId: input.applicationId, launchCommands: commands, suggestedApplicationUrls: workspace.suggestedApplicationUrls })
+          .filter(({ profile }) => !profiles.some((saved) => sameProfileShape(saved, profile)))
           .map(({ profile, rationale }) => ({
             profile: profileView(profile, commands, root),
             rationale,
@@ -217,6 +274,9 @@ export function automationOptions(input: OptionsInput): AutomationOptions {
     login: {
       route: login?.loginRoute ?? null,
       source: login?.source ?? null,
+      // Whether the confirmed route actually has a fillable form behind it. The same question the run asks when
+      // it compiles its contract, asked here so the answer arrives before Start rather than after a browser opens.
+      formFound: login && analysisReady ? buildLoginEdge(input.analysis!, login.loginRoute, "/") !== null : null,
       proposals: analysisReady ? proposeLoginForms(input.analysis!).slice(0, 5) : [],
     },
   };

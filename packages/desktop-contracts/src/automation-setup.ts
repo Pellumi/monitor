@@ -81,13 +81,18 @@ export function automatedRunBlockers(input: BlockerInput): Blocker[] {
   if (!options) return [{ code: 'LOADING', title: 'Checking this application', message: 'Looking at what Automated Run needs for this application…', fix: 'NONE', tone: 'todo' }];
 
   if (!options.workspaceConnected) {
-    blockers.push({ code: 'NO_WORKSPACE', title: "Connect your application's folder", message: 'Automated Run starts your application from its folder on this computer and reads its code to know what to click.', fix: 'CONNECT_FOLDER', tone: 'todo' });
+    blockers.push({ code: 'NO_WORKSPACE', title: "Connect your application's folder", message: 'Automated Run reads your code to know which control performs each step of the Flow, so it needs the folder on this computer. It does not have to start your application: if that is already running somewhere, you can give Tellann the address instead.', fix: 'CONNECT_FOLDER', tone: 'todo' });
   } else if (options.support && !options.support.canRun) {
     // Said as what it is: a limit of ours, with the modes that do work. Never an error.
     blockers.push({ code: `SUPPORT_${options.support.level}`, title: options.support.title, message: options.support.message, fix: 'USE_ANOTHER_MODE', tone: 'notice' });
     return blockers;
   } else if (!options.analysisReady) {
     blockers.push({ code: 'NO_ANALYSIS', title: 'Analyse your code first', message: 'Automated Run works out which control performs each step from an analysis of your code, and this application has not been analysed yet.', fix: 'ANALYSE_CODE', tone: 'todo' });
+  } else if (options.analysisStale) {
+    blockers.push({
+      code: 'ANALYSIS_STALE', title: 'Analyse your code again', fix: 'ANALYSE_CODE', tone: 'todo',
+      message: 'Your code has changed since it was last analysed. Every control a run uses comes from that analysis, so Tellann would be looking for things that may have moved — and would report not finding them as a problem with your application.',
+    });
   }
   if (!input.flowReady) {
     blockers.push({ code: 'FLOW_NOT_READY', title: 'Initialise the Flow', message: 'Pick a published Flow that has been initialised for this environment. It is what tells Automated Run which steps to perform.', fix: 'INITIALISE_FLOW', tone: 'todo' });
@@ -101,9 +106,29 @@ export function automatedRunBlockers(input: BlockerInput): Blocker[] {
     blockers.push({ code: 'NO_TARGET', title: 'Choose where the run should end', message: 'Pick the ending of the Flow you want Tellann to reach.', fix: 'CHOOSE_TARGET', tone: 'todo' });
   }
 
+  // A persona that signs in with a saved password needs a form to type it into. The two ways that can be
+  // missing are said separately, because what to do about them is different. Every other way of signing in
+  // (by hand, a session supplied, a session fetched) needs no form and so is never held up here.
+  const chosen = options.personas.find((candidate) => candidate.id === selection.personaId);
+  if (chosen?.authenticated && chosen.authMethod === 'PASSWORD' && options.analysisReady) {
+    if (!options.login.route) {
+      blockers.push({
+        code: 'LOGIN_NOT_CONFIGURED', title: 'Say where your sign-in page is', fix: 'NONE', tone: 'todo',
+        message: `"${chosen.name}" signs in with a saved password, and nothing has said which page your sign-in form is on. Set it under "Where is the sign-in page?" below.`,
+      });
+    } else if (options.login.formFound === false) {
+      blockers.push({
+        code: 'LOGIN_FORM_NOT_FOUND', title: 'No sign-in form was found on that page', fix: 'NONE', tone: 'todo',
+        message: `There is no form Tellann can fill in the code behind ${options.login.route}, so "${chosen.name}" has no way in. Check the address, or set this persona to sign in another way — you can sign in yourself, supply a session, or have Tellann fetch one.`,
+      });
+    }
+  }
+
   const profile = options.profiles.find((candidate) => candidate.id === selection.profileId);
   if (!profile) {
-    blockers.push({ code: 'NO_PROFILE', title: 'Choose how to start your application', message: 'Tellann starts your application for you, and only in a way you have approved.', fix: 'CHOOSE_PROFILE', tone: 'todo' });
+    blockers.push({ code: 'NO_PROFILE', title: 'Choose how to start your application', message: 'Tellann starts your application for you, and only in a way you have approved — or, if it is already running somewhere, waits for the address you gave it.', fix: 'CHOOSE_PROFILE', tone: 'todo' });
+  } else if (profile.startsNothing) {
+    // Nothing is started, so there is nothing to approve. The address answering is checked when the run begins.
   } else if (profile.status !== 'APPROVED') {
     blockers.push({
       code: profile.status === 'CHANGED' ? 'PROFILE_CHANGED' : 'PROFILE_NOT_APPROVED',
