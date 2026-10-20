@@ -295,6 +295,21 @@ test("production is refused outright, and a second run cannot start while one is
   await h.manager.idle();
 });
 
+test("a second click is refused while the first start is still preparing", async () => {
+  const h = harness();
+  let release!: () => void;
+  const preparing = new Promise<void>((resolve) => { release = resolve; });
+  const first = h.manager.start(request({ prepare: async () => { await preparing; return prepared(); } }));
+
+  await assert.rejects(h.manager.start(request()), /RUN_ALREADY_ACTIVE/);
+  assert.equal(h.manager.busy, true, "preparing a run is already busy even before its run record exists");
+
+  release();
+  const started = await first;
+  assert.equal(started.ok, true);
+  await h.manager.idle();
+});
+
 // -- a run, start to finish ------------------------------------------------------------------------
 
 test("a run starts the application, opens the browser, reaches the target, and closes everything in order", async () => {

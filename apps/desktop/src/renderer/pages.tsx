@@ -12465,6 +12465,8 @@ export function NewRunPage() {
   const automatedInProgress = isAutomatedRunActive(automatedStatus);
   const [automatedSelection, setAutomatedSelection] = useState<AutomatedSelection>({ targetStateKey: "", profileId: "", personaId: "", dataSetId: "" });
   const [automatedRefusal, setAutomatedRefusal] = useState<AutomatedRunRefusal | null>(null);
+  const [automatedStartPending, setAutomatedStartPending] = useState(false);
+  const automatedStartPendingRef = useRef(false);
   const [flowDetail, setFlowDetail] = useState<DeclaredFlowDetail | null>(null);
   const automation = useAutomationOptions(projectId, mode === "AUTOMATED" && automatedEntitled);
   const [productionObservationApproved, setProductionObservationApproved] =
@@ -12603,6 +12605,12 @@ export function NewRunPage() {
       ]
     : [];
   const begin = async () => {
+    const isAutomatedAttempt = mode === "AUTOMATED";
+    if (isAutomatedAttempt && automatedStartPendingRef.current) return;
+    if (isAutomatedAttempt) {
+      automatedStartPendingRef.current = true;
+      setAutomatedStartPending(true);
+    }
     setRunStartFailure(null);
     try {
       const binding = flowBindingForEnvironment(selectedFlow, environmentId) as any;
@@ -12680,6 +12688,11 @@ export function NewRunPage() {
       // startRun also reports through the shell for unscoped operations. This
       // failure has a dedicated recovery dialog, so avoid showing it twice.
       clearError();
+    } finally {
+      if (isAutomatedAttempt) {
+        automatedStartPendingRef.current = false;
+        setAutomatedStartPending(false);
+      }
     }
   };
   const reviewRunSettings = useCallback(() => {
@@ -13021,6 +13034,7 @@ export function NewRunPage() {
           className="button primary"
           disabled={
             busy ||
+            automatedStartPending ||
             !targetUrl ||
             !environmentId ||
             Boolean(mode === "GUIDED" && (!selectedFlow || !expectedGraphVersionId || !selectedFlowReadiness?.ready)) ||
@@ -13031,12 +13045,13 @@ export function NewRunPage() {
               !productionObservationApproved,
             )
           }
+          aria-busy={mode === "AUTOMATED" && automatedStartPending}
           onClick={() => void begin()}
         >
-          <Play size={16} />
+          {mode === "AUTOMATED" && automatedStartPending ? <RefreshCw className="spin" size={16} /> : <Play size={16} />}
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : mode === "AUTOMATED" ? "Start automated run" : "Start read-only observation"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : mode === "AUTOMATED" ? automatedStartPending ? "Starting automated run…" : "Start automated run" : "Start read-only observation"}
         </button>
         )}
       </section>

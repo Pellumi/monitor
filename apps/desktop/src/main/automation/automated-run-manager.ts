@@ -174,13 +174,14 @@ const refusal = (code: AutomatedRunRefusal["code"], title: string, message: stri
 
 export class AutomatedRunManager {
   private active: ActiveRun | null = null;
+  private starting = false;
   private last: AutomatedRunStatus | null = null;
 
   constructor(private readonly host: AutomatedRunHost, private readonly deps: ManagerDeps = {}) {}
 
   /** Whether a run is in progress. A finished one is only remembered, for its outcome. */
   get busy(): boolean {
-    return this.active !== null;
+    return this.starting || this.active !== null;
   }
 
   ownsRun(runId: string): boolean {
@@ -196,7 +197,16 @@ export class AutomatedRunManager {
    * created: no run record, no process, no browser, and no run counted against the person's plan.
    */
   async start(request: AutomatedRunRequest): Promise<StartAutomatedRunResult> {
-    if (this.active) throw new Error("RUN_ALREADY_ACTIVE");
+    if (this.active || this.starting) throw new Error("RUN_ALREADY_ACTIVE");
+    this.starting = true;
+    try {
+      return await this.startOnce(request);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startOnce(request: AutomatedRunRequest): Promise<StartAutomatedRunResult> {
     const { start } = request;
     if (start.environmentType === "PRODUCTION") throw new Error("AUTOMATED_RUN_PRODUCTION_BLOCKED");
     if (!start.automation) throw new Error("AUTOMATION_CONFIG_REQUIRED");
