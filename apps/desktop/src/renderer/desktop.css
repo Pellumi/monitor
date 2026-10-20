@@ -2903,6 +2903,18 @@ button.statusbar-item:disabled {
 .automated-manager > summary span {
   color: var(--text-muted);
 }
+.automated-manager-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.automated-manager-summary svg {
+  flex: none;
+  transition: transform 120ms ease;
+}
+.automated-manager[open] .automated-manager-summary svg {
+  transform: rotate(180deg);
+}
 .automated-manager-body {
   display: flex;
   flex-direction: column;

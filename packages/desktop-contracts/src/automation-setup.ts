@@ -69,6 +69,86 @@ export interface BlockerInput {
   /** A validated instrumentation manifest is chosen: the application's own markers are what the run reads its position from. */
   instrumentationChosen: boolean;
   terminals: TerminalChoice[];
+  /** A sign-in form explicitly declared by the selected Flow. A declaration is authoritative, unlike a code guess. */
+  declaredLogin?: DeclaredFlowLogin | null;
+}
+
+export interface DeclaredFlowLogin {
+  route: string;
+  stateId: string;
+  transitionId: string;
+}
+
+const LOGIN_WORDS = /\b(?:log[ -]?in|sign[ -]?in|signin|auth(?:enticate|entication)?)\b/i;
+const ENTRY_ACTION = /^\s*(?:open(?:[_ -]?(?:app|application))?|launch(?:[_ -]?(?:app|application))?|start(?:[_ -]?(?:app|application))?|visit|navigate|go[_ -]?to)\s*$/i;
+const PASSWORD_FIELD = /(?:^|[^a-z])(?:password|passcode|pwd)(?:[^a-z]|$)/i;
+const IDENTITY_FIELD = /(?:^|[^a-z])(?:e-?mail|username|user name|login)(?:[^a-z]|$)/i;
+
+const record = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const declaredRoutes = (recognizer: unknown): string[] => {
+  const source = record(recognizer);
+  if (!source) return [];
+  const raw = source.routes ?? source.route;
+  const routes = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+  return routes.filter((route): route is string => typeof route === 'string' && route.startsWith('/'));
+};
+
+/**
+ * Finds a sign-in page the Flow explicitly declares at its entry, including the credential fields on the step out of it.
+ * The page may itself be initial, or it may be the direct target of a declaration such as GUEST --OPEN_APP--> LOGIN_PAGE.
+ * A later authentication-looking page is part of the journey, not the way into it.
+ */
+export function declaredFlowLogin(
+  states: readonly unknown[] | null | undefined,
+  transitions: readonly unknown[] | null | undefined,
+  confirmedRoute: string | null = null,
+): DeclaredFlowLogin | null {
+  const stateRecords = (states ?? []).map(record).filter((state): state is Record<string, unknown> => Boolean(state));
+  const transitionRecords = (transitions ?? []).map(record).filter((transition): transition is Record<string, unknown> => Boolean(transition));
+  const initialIds = new Set(stateRecords.flatMap((state) => state.role === 'INITIAL' && typeof state.id === 'string' ? [state.id] : []));
+  const entryStateIds = new Set(initialIds);
+  for (const transition of transitionRecords) {
+    const fromId = transition.fromStateId ?? transition.fromNodeId;
+    const toId = transition.toStateId ?? transition.toNodeId;
+    const action = typeof transition.action === 'string' ? transition.action : '';
+    if (typeof fromId === 'string' && initialIds.has(fromId) && typeof toId === 'string' && ENTRY_ACTION.test(action)) {
+      entryStateIds.add(toId);
+    }
+  }
+
+  for (const state of stateRecords) {
+    const stateId = typeof state.id === 'string' ? state.id : '';
+    const stateLabel = [state.stateName, state.behaviorKey, state.name]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .replace(/[_-]+/g, ' ');
+    // A saved route may supply the address while the Flow supplies the form contract. The Flow's own route wins when
+    // it has one, so a conflicting saved address is still surfaced rather than silently blessed.
+    const route = declaredRoutes(state.recognizer)[0] ?? confirmedRoute ?? undefined;
+    if (!stateId || !entryStateIds.has(stateId) || !route || !LOGIN_WORDS.test(stateLabel)) continue;
+
+    for (const transition of transitionRecords) {
+      if ((transition.fromStateId ?? transition.fromNodeId) !== stateId) continue;
+      const rawInputs = transition.expectedInput ?? transition.inputs;
+      const inputs = Array.isArray(rawInputs) ? rawInputs : [];
+      const names = inputs.map((input) => {
+        if (typeof input === 'string') return input;
+        const source = record(input);
+        return source ? [source.name, source.label, source.dataKey, source.key].filter((value): value is string => typeof value === 'string').join(' ') : '';
+      });
+      const protectedCount = inputs.filter((input) => record(input)?.role === 'PROTECTED').length;
+      // Two protected inputs are the Flow contract's explicit credential pair even when their display names are
+      // deliberately generic (for example "Account identifier" and "Secret") to avoid leaking credential semantics.
+      const hasPassword = names.some((name) => PASSWORD_FIELD.test(name)) || protectedCount >= 2;
+      const hasIdentity = names.some((name) => IDENTITY_FIELD.test(name)) || protectedCount >= 2;
+      const transitionLabel = typeof transition.action === 'string' ? transition.action.replace(/[_-]+/g, ' ') : '';
+      if (!hasPassword || !hasIdentity || (!LOGIN_WORDS.test(transitionLabel) && !LOGIN_WORDS.test(stateLabel))) continue;
+      return { route, stateId, transitionId: typeof transition.id === 'string' ? transition.id : '' };
+    }
+  }
+  return null;
 }
 
 /** Everything standing in the way of Start, most fundamental first. Empty means the run can begin. */
@@ -111,15 +191,18 @@ export function automatedRunBlockers(input: BlockerInput): Blocker[] {
   // (by hand, a session supplied, a session fetched) needs no form and so is never held up here.
   const chosen = options.personas.find((candidate) => candidate.id === selection.personaId);
   if (chosen?.authenticated && chosen.authMethod === 'PASSWORD' && options.analysisReady) {
-    if (!options.login.route) {
+    const declaredRoute = input.declaredLogin?.route ?? null;
+    const effectiveRoute = options.login.route ?? declaredRoute;
+    const flowDeclaresSavedRoute = Boolean(declaredRoute && declaredRoute === options.login.route);
+    if (!effectiveRoute) {
       blockers.push({
         code: 'LOGIN_NOT_CONFIGURED', title: 'Say where your sign-in page is', fix: 'NONE', tone: 'todo',
         message: `"${chosen.name}" signs in with a saved password, and nothing has said which page your sign-in form is on. Set it under "Where is the sign-in page?" below.`,
       });
-    } else if (options.login.formFound === false) {
+    } else if (options.login.formFound === false && !flowDeclaresSavedRoute) {
       blockers.push({
         code: 'LOGIN_FORM_NOT_FOUND', title: 'No sign-in form was found on that page', fix: 'NONE', tone: 'todo',
-        message: `There is no form Tellann can fill in the code behind ${options.login.route}, so "${chosen.name}" has no way in. Check the address, or set this persona to sign in another way — you can sign in yourself, supply a session, or have Tellann fetch one.`,
+        message: `There is no form Tellann can fill in the code behind ${effectiveRoute}, so "${chosen.name}" has no way in. Check the address, or set this persona to sign in another way — you can sign in yourself, supply a session, or have Tellann fetch one.`,
       });
     }
   }
@@ -237,7 +320,7 @@ export function flowRequirementBlockers(
   if (missing.length > 0) {
     blockers.push({
       code: 'FLOW_DATA', title: 'The Flow needs run data you have not chosen', fix: 'NONE', tone: 'todo',
-      message: `It asks for: ${missing.join(', ')}. Choose a data set that has them, or a persona that stores the sign-in. To add them, open Test data, choose Add a data set, then Paste a .env file (for example ADMIN_PASSWORD=NewPassword).`,
+      message: `It asks for: ${missing.join(', ')}. Choose a data set that has them, or a persona that stores the sign-in. If the values are visible in an open Test data draft, they are not saved yet: enter the required data-set name, then choose Save data set.`,
     });
   }
   return blockers;

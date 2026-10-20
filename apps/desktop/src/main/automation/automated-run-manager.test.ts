@@ -259,6 +259,32 @@ test("a target that is not one of the Flow's endings, an unapproved profile, mis
   }
 });
 
+test("stored persona credentials satisfy the start-time data check without a selected data set", async () => {
+  const credentials: TestPersona = {
+    ...persona(),
+    authenticated: true,
+    roles: ["ADMIN"],
+    credentials: [
+      { field: "email", value: "admin@example.test" },
+      { field: "password", value: "saved-password" },
+    ],
+  };
+  const h = harness();
+  await finish(h, request({
+    persona: credentials,
+    runData: null,
+    prepare: async () => {
+      const result = prepared();
+      result.contract.transitions[1]!.inputs = [
+        { name: "email", label: "Email", dataKey: "ADMIN_EMAIL", role: "PROTECTED" },
+        { name: "password", label: "Password", dataKey: "ADMIN_PASSWORD", role: "PROTECTED" },
+      ];
+      return result;
+    },
+  }));
+  assert.ok(h.log.includes("openRun"), "the run passes preflight and is created");
+});
+
 test("production is refused outright, and a second run cannot start while one is going", async () => {
   await assert.rejects(harness().manager.start(request({ start: startInput({ environmentType: "PRODUCTION" }) })), /AUTOMATED_RUN_PRODUCTION_BLOCKED/);
   const h = harness();
@@ -302,7 +328,11 @@ test("the platform is told where the run is, starting with which contract it was
 test("a stop the application caused is completed as incomplete, with the reason, and worded as a finding", async () => {
   const h = harness({ failSave: true });
   await finish(h);
-  assert.deepEqual(h.finished, [{ kind: "COMPLETE", stopReason: "TRANSITION_DID_NOT_ADVANCE", completionReason: "MANUAL_STOP_BEFORE_TERMINAL" }]);
+  assert.deepEqual(
+    h.finished.map(({ kind, stopReason, ...rest }) => ({ kind, stopReason, completionReason: "completionReason" in rest ? rest.completionReason : null })),
+    [{ kind: "COMPLETE", stopReason: "TRANSITION_DID_NOT_ADVANCE", completionReason: "MANUAL_STOP_BEFORE_TERMINAL" }],
+  );
+  assert.match(h.finished[0]!.kind === "COMPLETE" ? h.finished[0]!.detail ?? "" : "", /did not follow|did not move on|did not visibly advance/i, "the desktop host receives the useful failure detail");
   const outcome = h.manager.status()!.outcome!;
   assert.equal(outcome.result, "COMPLETED_INCOMPLETE");
   assert.equal(outcome.tone, "finding");
@@ -311,7 +341,9 @@ test("a stop the application caused is completed as incomplete, with the reason,
 test("a run that never got to where the Flow starts is stopped before the Flow, and says it needed the person", async () => {
   const h = harness({ startAt: "captcha" }, { manualWaitMs: 30 });
   await finish(h);
-  assert.deepEqual(h.finished, [{ kind: "COMPLETE", stopReason: "MANUAL_AUTHENTICATION_REQUIRED", completionReason: "MANUAL_STOP_BEFORE_INITIAL" }]);
+  assert.equal(h.finished[0]!.stopReason, "MANUAL_AUTHENTICATION_REQUIRED");
+  assert.equal(h.finished[0]!.kind === "COMPLETE" ? h.finished[0]!.completionReason : null, "MANUAL_STOP_BEFORE_INITIAL");
+  assert.ok(h.finished[0]!.kind === "COMPLETE" && h.finished[0]!.detail, "the explanation is preserved for the notification");
   const outcome = h.manager.status()!.outcome!;
   assert.equal(outcome.result, "COMPLETED_INCOMPLETE");
   assert.equal(outcome.tone, "notice", "a hand-over is never worded as a finding about the application");

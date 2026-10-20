@@ -151,6 +151,16 @@ test("a run that never opened a browser is completed without evidence rather tha
   assert.deepEqual(h.calls.completeRunWithoutEvidence![0]![0], { runId: "run-1", sessionId: run.sessionId, traceId: run.traceId, completionReason: "MANUAL_STOP_BEFORE_INITIAL", automationStopReason: "CANCELLED_BY_USER" });
 });
 
+test("an incomplete run notification preserves the executor's actionable explanation", async () => {
+  const h = harness();
+  const run = await h.host.openRun(start(), contractSummary);
+  const detail = "Tellann opened /login and recognised it as LOGIN_PAGE, but this Flow starts at GUEST. The run did not attempt to sign in.";
+
+  await h.host.finishRun(run, { kind: "COMPLETE", stopReason: "INITIAL_STATE_UNREACHABLE", completionReason: "MANUAL_STOP_BEFORE_INITIAL", detail });
+
+  assert.deepEqual(h.calls.notify![0]![0], { title: "Could not get to where the Flow starts", body: detail });
+});
+
 test("a run that Tellann could not carry out is failed with a plain message, not completed", async () => {
   const h = harness();
   const run = await h.host.openRun(start(), contractSummary);

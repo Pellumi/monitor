@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Eye, EyeOff, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
 import { isSecretDataKey, parseDotenv } from "@tellann/flow-layout";
 import { describeExecutionPhase } from "./automation-shared";
 import type {
@@ -13,7 +13,7 @@ import type {
   RunDataSetView,
   TerminalChoice,
 } from "@tellann/desktop-contracts";
-import type { AutomatedSelection, Blocker } from "./automation-shared";
+import type { AutomatedSelection, Blocker, DeclaredFlowLogin } from "./automation-shared";
 import { SelectField } from "./components/ui/select";
 
 /**
@@ -73,6 +73,7 @@ interface SetupProps {
   onSelection(next: AutomatedSelection): void;
   reload(): Promise<void>;
   onUseMode(mode: "GUIDED" | "ASSISTED"): void;
+  declaredLogin?: DeclaredFlowLogin | null;
 }
 
 export function AutomatedRunSetup(props: SetupProps) {
@@ -160,7 +161,7 @@ export function AutomatedRunSetup(props: SetupProps) {
           <ProfileManager applicationId={props.applicationId} options={options} reload={props.reload} onCreated={(profileId) => set({ profileId })} />
           <PersonaManager applicationId={props.applicationId} personas={options.personas} reload={props.reload} onCreated={(personaId) => set({ personaId })} />
           <DataSetManager applicationId={props.applicationId} dataSets={options.dataSets} reload={props.reload} onCreated={(dataSetId) => set({ dataSetId })} />
-          <LoginManager applicationId={props.applicationId} options={options} reload={props.reload} />
+          <LoginManager applicationId={props.applicationId} options={options} reload={props.reload} declaredLogin={props.declaredLogin} />
         </div>
       ) : (
         <p className="field-hint"><Loader2 size={12} className="spin" /> Reading what is saved for this application…</p>
@@ -171,10 +172,13 @@ export function AutomatedRunSetup(props: SetupProps) {
 
 // -- shared bits -----------------------------------------------------------------------------------------------------------
 
-function Manager({ title, summary, children }: { title: string; summary: string; children: ReactNode }) {
+function Manager({ title, summary, defaultOpen = false, children }: { title: string; summary: string; defaultOpen?: boolean; children: ReactNode }) {
   return (
-    <details className="automated-manager">
-      <summary><strong>{title}</strong><span>{summary}</span></summary>
+    <details className="automated-manager" open={defaultOpen || undefined}>
+      <summary>
+        <strong>{title}</strong>
+        <span className="automated-manager-summary">{summary}<ChevronDown size={15} aria-hidden /></span>
+      </summary>
       <div className="automated-manager-body">{children}</div>
     </details>
   );
@@ -744,7 +748,15 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
             </div>
           ) : null}
           {envNote ? <p className="field-hint" role="status">{envNote}</p> : null}
-          {!hasName ? <p className="field-hint" role="status">Enter a name for this data set before saving.</p> : null}
+          {!hasName && hasKeyedValue ? (
+            <div className="automated-notice" data-tone="problem" role="alert">
+              <AlertTriangle size={18} aria-hidden />
+              <div>
+                <strong>These credentials are not saved yet.</strong>
+                <p>Enter a name for this data set above, then choose Save data set. Tellann will select it for this run after it is saved.</p>
+              </div>
+            </div>
+          ) : !hasName ? <p className="field-hint" role="status">Enter a name for this data set before saving.</p> : null}
           {hasName && !hasKeyedValue ? <p className="field-hint" role="status">Add at least one value with a key before saving.</p> : null}
           <div className="inline-actions">
             <button className="button" type="button" onClick={() => setDraft({ ...draft, values: [...draft.values, blankValue()] })}>Add a value</button>
@@ -763,14 +775,16 @@ function DataSetManager({ applicationId, dataSets, reload, onCreated }: { applic
 
 // -- where the sign-in page is ---------------------------------------------------------------------------------------------------
 
-function LoginManager({ applicationId, options, reload }: { applicationId: string; options: AutomationOptions; reload(): Promise<void> }) {
+function LoginManager({ applicationId, options, reload, declaredLogin }: { applicationId: string; options: AutomationOptions; reload(): Promise<void>; declaredLogin?: DeclaredFlowLogin | null }) {
   const { run, error, busy } = useAction(reload);
   const [typed, setTyped] = useState("");
   const api = bridge()!;
   const { login } = options;
+  const effectiveRoute = login.route ?? declaredLogin?.route ?? null;
   return (
-    <Manager title="Sign-in page" summary={login.route ? login.route : "not set"}>
-      <p className="field-hint">If the Flow starts behind a sign-in, Tellann needs to know where that page is. It looks for one in your code and proposes it, but never assumes: you confirm it once.</p>
+    <Manager title="Where is the sign-in page?" summary={effectiveRoute ? `${effectiveRoute}${!login.route ? " · from Flow" : ""}` : "Required — enter it below"} defaultOpen={!effectiveRoute}>
+      <p className="field-hint">If the Flow starts with a sign-in, Tellann uses the page and fields declared by that Flow. Otherwise it proposes pages found in your code for you to confirm.</p>
+      {declaredLogin ? <p className="field-hint"><strong>{declaredLogin.route}</strong> is declared as the initial sign-in page by the selected Flow, including its identity and password fields.</p> : null}
       {login.route ? (
         <div className="automated-row">
           <div><strong>{login.route}</strong><small>{login.source === "CODE_PROPOSAL" ? "Found in your code and confirmed by you" : "Entered by you"}</small></div>

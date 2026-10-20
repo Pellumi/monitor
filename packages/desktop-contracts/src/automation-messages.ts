@@ -33,7 +33,9 @@ const MESSAGES: Record<AutomationStopReason, (detail: string | null, target: str
   INITIAL_STATE_UNREACHABLE: (d) => ({
     title: 'Could not get to where the Flow starts',
     message: d ?? 'Tellann could not find its way from the application\'s first page to the state this Flow begins in.',
-    tone: 'finding', nextStep: 'Check that the Flow\'s first state is reachable from the start page for this persona.',
+    tone: 'finding', nextStep: d
+      ? 'Use the reached page and Flow states named above to correct the Flow entry, then initialise it again before retrying.'
+      : 'Check that the Flow\'s first state is reachable from the start page for this persona, then initialise the Flow again.',
   }),
   TERMINAL_STATE_UNREACHABLE: (d) => ({
     title: 'No declared route leads to the target',

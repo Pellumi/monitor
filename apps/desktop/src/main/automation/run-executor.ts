@@ -3,7 +3,9 @@ import {
   checkRunDataAvailability,
   materializeRunData,
   personaCredentialData,
+  isEntryStep,
   resolveRunData,
+  routeMatches,
   runAutomation,
   seekInitialState,
   selectRenderTimingTargets,
@@ -222,7 +224,7 @@ async function execute(
         phase(input, "SEEKING_INITIAL_STATE");
         continue;
       }
-      return stop(walked.stopReason, walked.detail);
+      return stop(walked.stopReason, await explainEntryFailure(input, initial, initialRoute, walked));
     }
   }
 
@@ -284,6 +286,55 @@ async function execute(
 }
 
 type EntryOutcome = { ok: true } | { ok: false; stopReason: AutomationResult["stopReason"]; detail: string };
+
+/**
+ * Turns the otherwise accurate but unhelpful "no route" entry-planner result into the setup problem a person
+ * can actually fix. A Flow can declare a synthetic first state (for example GUEST) followed by OPEN_APP, while
+ * the managed browser opens directly on the next real page (for example /login). In that case credentials were
+ * never rejected: the run stopped before it reached the sign-in transition. Keep every other entry failure as-is.
+ */
+async function explainEntryFailure(
+  input: AutomatedRunInput,
+  initial: ExecutableContract["states"][number] | undefined,
+  initialRoute: string,
+  walked: Exclude<EntryOutcome, { ok: true }>,
+): Promise<string> {
+  if (walked.stopReason !== "INITIAL_STATE_UNREACHABLE" || !initial) return walked.detail;
+
+  let path: string;
+  let sdkStates: string[];
+  try {
+    const snapshot = await input.driver.snapshot();
+    path = snapshot.path;
+    sdkStates = snapshot.sdkStates;
+  } catch {
+    return walked.detail;
+  }
+
+  const reached = input.contract.states.filter((candidate) =>
+    candidate.key !== initial.key
+    && (candidate.routePatterns.some((pattern) => routeMatches(pattern, path))
+      || sdkStates.includes(candidate.key)
+      || candidate.sdkStateSignals.some((signal) => sdkStates.includes(signal))),
+  );
+  if (reached.length !== 1) return walked.detail;
+
+  const current = reached[0]!;
+  const entry = input.contract.transitions.find((transition) =>
+    transition.from === initial.key
+    && transition.to === current.key
+    && isEntryStep(input.contract, transition),
+  );
+  if (!entry) return walked.detail;
+
+  const currentName = current.name || current.key;
+  const initialName = initial.name || initial.key;
+  const initialLocation = initialRoute ? ` (${initialRoute})` : "";
+  const entryName = entry.action ? `“${entry.action}”` : "the application-entry step";
+  return `Tellann opened ${path} and recognised it as ${currentName}, but this Flow is configured to start at ${initialName}${initialLocation}. `
+    + `The run stopped before ${entryName}, so it did not attempt to sign in. `
+    + `Make ${currentName} the Flow's initial state, or update and initialise the Flow again so its entry path matches the page the application opens.`;
+}
 
 /**
  * The walk from wherever the browser starts to the Flow's initial state, including the sign-in and every

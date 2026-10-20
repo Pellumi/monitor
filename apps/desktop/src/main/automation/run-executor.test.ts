@@ -183,6 +183,33 @@ test("a guest persona is never sent through a login form", async () => {
   assert.ok(!log.some((entry) => entry.startsWith("fill:")), "nothing was typed into the login form");
 });
 
+test("an entry-state mismatch says that sign-in was never attempted and how to correct the Flow", async () => {
+  const { browser, log, events } = fakeBrowser();
+  const { driver } = fakeDriver({}, log);
+  const mismatched: ExecutableContract = {
+    ...contract(),
+    initialStateKey: "guest",
+    states: [
+      state("guest", { name: "GUEST", role: "INITIAL", routePatterns: ["/"] }),
+      state("login_page", { name: "LOGIN_PAGE", routePatterns: ["/login"] }),
+      state("exam_created", { role: "TERMINAL", terminalKind: "SUCCESS", routePatterns: ["/done"] }),
+    ],
+    transitions: [
+      { id: "t-open", from: "guest", to: "login_page", action: "OPEN_APP", control: null, inputs: [], actionClass: "READ", expectedApi: [], codeRefs: [], derivation: "RESOLVED" },
+    ],
+  };
+  const graph: NavigationGraph = { nodes: ["/", "/login"], edges: [] };
+
+  const result = await executeAutomatedRun(base(browser, driver, { contract: mismatched, navigation: graph, targetStateKey: "exam_created", runData: null }));
+
+  assert.equal(result.stopReason, "INITIAL_STATE_UNREACHABLE");
+  assert.match(result.detail ?? "", /opened \/login/);
+  assert.match(result.detail ?? "", /recognised it as LOGIN_PAGE/);
+  assert.match(result.detail ?? "", /did not attempt to sign in/);
+  assert.match(result.detail ?? "", /Make LOGIN_PAGE the Flow's initial state/);
+  assert.equal(events.at(-1)?.metadata.detail, result.detail, "the actionable explanation is kept with the run");
+});
+
 test("a route the persona's role may not use is reported as authorization, not as a broken application", async () => {
   const { browser, log, events } = fakeBrowser();
   const { driver } = fakeDriver({ afterLogin: "dashboard" }, log);

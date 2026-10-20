@@ -162,7 +162,7 @@ export function createAutomatedRunHost(deps: AutomatedRunHostDeps): CreatedAutom
     async finishRun(run: OpenedRun, outcome: FinishOutcome) {
       const state = ended.get(run.runId) ?? null;
       const stopReason: AutomationStopReason = outcome.stopReason;
-      const summary = describeStopReason(stopReason, null);
+      const summary = describeStopReason(stopReason, outcome.kind === "COMPLETE" ? outcome.detail ?? null : outcome.message);
       try {
         if (outcome.kind === "FAIL") {
           await deps.relay.emit("QA_RUN_FAILED", { reason: stopReason }).catch(() => undefined);

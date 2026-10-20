@@ -141,7 +141,7 @@ import {
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
-import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
+import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import { transitionDeclarationSummary } from "@tellann/flow-layout";
@@ -12574,7 +12574,13 @@ export function NewRunPage() {
   const selectedFlowReadiness = selectedFlow
     ? flowRunReadiness(selectedFlow, environmentId)
     : null;
-  const automatedTerminals = terminalChoices(flowDetail?.states ?? []);
+  // Current Flow responses retain their graph-native `nodes` / `edges` fields. Older responses also expose
+  // `states` / `transitions`; the transition alias can be an empty schema default, so prefer a populated array.
+  const automatedFlowGraph = flowDetail as (DeclaredFlowDetail & { nodes?: DeclaredFlowDetail["states"]; edges?: DeclaredFlowDetail["transitions"] }) | null;
+  const automatedFlowStates = flowDetail?.states?.length ? flowDetail.states : automatedFlowGraph?.nodes ?? [];
+  const automatedFlowTransitions = flowDetail?.transitions?.length ? flowDetail.transitions : automatedFlowGraph?.edges ?? [];
+  const automatedTerminals = terminalChoices(automatedFlowStates);
+  const automatedDeclaredLogin = declaredFlowLogin(automatedFlowStates, automatedFlowTransitions, automation.options?.login.route ?? null);
   const automatedPersona = automation.options?.personas.find((candidate) => candidate.id === automatedSelection.personaId) ?? null;
   const automatedDataSet = automation.options?.dataSets.find((candidate) => candidate.id === automatedSelection.dataSetId) ?? null;
   const automatedBlockers = mode === "AUTOMATED"
@@ -12586,6 +12592,7 @@ export function NewRunPage() {
           flowReady: Boolean(selectedFlow && selectedFlowReadiness?.ready),
           instrumentationChosen: Boolean(patchSetId),
           terminals: automatedTerminals,
+          declaredLogin: automatedDeclaredLogin,
         }),
         // What the Flow itself says a run needs (an account, an environment, data), said before Start.
         ...flowRequirementBlockers((flowDetail as { requires?: { actor?: string; environments?: string[]; data?: string[] } | null } | null)?.requires, {
@@ -12891,6 +12898,7 @@ export function NewRunPage() {
             selection={automatedSelection}
             onSelection={setAutomatedSelection}
             reload={automation.reload}
+            declaredLogin={automatedDeclaredLogin}
             onUseMode={(next) => setMode(next)}
           />
         ) : null}

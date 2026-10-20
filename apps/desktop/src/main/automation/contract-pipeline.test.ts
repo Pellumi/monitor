@@ -178,3 +178,45 @@ test("a login route with no sign-in form on it says so, instead of building a st
   assert.equal(prepared.login, "NO_FORM_FOUND");
   assert.equal(prepared.navigation.edges.some((candidate) => candidate.login), false);
 });
+
+test("an entry sign-in form declared by the Flow is authoritative when code analysis does not find the form", async () => {
+  const flow: FlowVersionDocument = {
+    states: [
+      { id: "s-guest", stateName: "Guest", behaviorKey: "guest", role: "INITIAL" },
+      { id: "s-login", stateName: "Login page", behaviorKey: "login_page", role: "NORMAL", recognizer: { routes: ["/login"] } },
+      { id: "s-course", stateName: "Course Details", behaviorKey: "course_details", role: "TERMINAL", terminalKind: "SUCCESS" },
+    ],
+    transitions: [{
+      id: "t-open", fromStateId: "s-guest", toStateId: "s-login", action: "OPEN_APP",
+    }, {
+      id: "t-login", fromStateId: "s-login", toStateId: "s-course", action: "Sign in",
+      control: { role: "button", label: "Sign in" },
+      expectedInput: [
+        { name: "Email", dataKey: "ADMIN_EMAIL", role: "PROTECTED" },
+        { name: "Password", dataKey: "ADMIN_PASSWORD", role: "PROTECTED" },
+      ],
+    }],
+  };
+  const loginManifest: InitializationManifest = { checkpoints: [
+    checkpoint("state:s-guest", null), checkpoint("state:s-login", null), checkpoint("state:s-course", "route-course"),
+    checkpoint("transition:t-open", null), checkpoint("transition:t-login", null),
+  ] };
+  const noLoginForm = analysis({ entities: analysis().entities.filter((item) => item.id !== "form-login") });
+  const prepared = await prepareContract(inputs({ loginRoute: "/login" }), deps({
+    fetchFlowVersion: async () => flow,
+    fetchManifest: async () => loginManifest,
+    loadAnalysis: () => noLoginForm,
+  }).deps);
+  assert.equal(prepared.login, "BUILT");
+  assert.equal(prepared.contract.initialStateKey, "guest");
+  const signIn = prepared.contract.transitions.find((transition) => transition.id === "t-login");
+  assert.equal(signIn?.control?.labels[0], "Sign in");
+  assert.deepEqual(signIn?.inputs.map((input) => input.dataKey), ["ADMIN_EMAIL", "ADMIN_PASSWORD"]);
+
+  const derivedWithoutSavedSetting = await prepareContract(inputs(), deps({
+    fetchFlowVersion: async () => flow,
+    fetchManifest: async () => loginManifest,
+    loadAnalysis: () => noLoginForm,
+  }).deps);
+  assert.equal(derivedWithoutSavedSetting.login, "BUILT", "the Flow declaration supplies the route without a copied local setting");
+});

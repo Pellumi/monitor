@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { buildLoginEdge, buildNavigationGraph } from "@tellann/project-intelligence";
 import { compileExecutableContract } from "@tellann/automation-engine";
 import type { CheckpointLike, CodeEntityLike, CodeRelationshipLike, ExecutableContract, NavigationGraph } from "@tellann/automation-engine";
+import { declaredFlowLogin } from "@tellann/desktop-contracts";
 import type { CodebaseAnalysis, ContractSummary } from "@tellann/desktop-contracts";
 import type { KeyValueStore } from "./persona-store";
 import { localKeyValueStore } from "./persona-store";
@@ -180,13 +181,20 @@ export async function prepareContract(input: ContractInputs, deps: ContractPipel
 
   const navigation = buildNavigationGraph(analysis);
   const initial = contract.states.find((state) => state.key === contract.initialStateKey);
+  const flowLogin = declaredFlowLogin(version.value.states, version.value.transitions, input.loginRoute);
+  const loginRoute = input.loginRoute ?? flowLogin?.route ?? null;
   let login: LoginEdgeStatus = "NOT_NEEDED";
-  if (input.loginRoute) {
+  if (loginRoute) {
     // The destination is a hint only (the entry sequence plans onward from wherever signing in actually lands).
-    const edge = buildLoginEdge(analysis, input.loginRoute, initial?.routePatterns[0] ?? "/");
+    const edge = buildLoginEdge(analysis, loginRoute, initial?.routePatterns[0] ?? "/");
     if (edge) {
       navigation.edges.push(edge);
       if (!navigation.nodes.includes(edge.from)) navigation.nodes.push(edge.from);
+      login = "BUILT";
+    } else if (flowLogin?.route === loginRoute) {
+      // The sign-in page is on the Flow's declared entry path and its outgoing step declares the credential fields.
+      // It is already executable inside the contract, so a duplicate pre-Flow edge derived from code is neither
+      // needed nor authoritative. This also lets a declaration cover frameworks whose form analysis is incomplete.
       login = "BUILT";
     } else {
       login = "NO_FORM_FOUND";

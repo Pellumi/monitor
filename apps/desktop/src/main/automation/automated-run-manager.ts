@@ -97,7 +97,7 @@ export interface SessionKeeper {
 }
 
 export type FinishOutcome =
-  | { kind: "COMPLETE"; completionReason: "TERMINAL_STATE_REACHED" | "MANUAL_STOP_BEFORE_INITIAL" | "MANUAL_STOP_BEFORE_TERMINAL"; stopReason: AutomationStopReason }
+  | { kind: "COMPLETE"; completionReason: "TERMINAL_STATE_REACHED" | "MANUAL_STOP_BEFORE_INITIAL" | "MANUAL_STOP_BEFORE_TERMINAL"; stopReason: AutomationStopReason; detail?: string }
   | { kind: "FAIL"; stopReason: AutomationStopReason; message: string };
 
 export interface AutomatedRunHost {
@@ -237,7 +237,7 @@ export class AutomatedRunManager {
     const signIn = this.signInShortfall(request, prepared);
     if (signIn) return refusal(signIn.code, signIn.title, signIn.message, "problem");
 
-    const data = checkRunDataAvailability(contract, materializeRunData(request.runData, () => now().getTime()));
+    const data = checkRunDataAvailability(contract, materializeRunData(request.runData, () => now().getTime()), request.persona);
     if (!data.ok) return refusal("TEST_DATA_UNAVAILABLE", "This run needs test data it does not have", data.detail, "problem");
 
     const opened = await this.host.openRun(start, prepared.summary);
@@ -435,6 +435,7 @@ export class AutomatedRunManager {
     return {
       kind: "COMPLETE", stopReason,
       completionReason: stopReason === "TERMINAL_STATE_REACHED" ? "TERMINAL_STATE_REACHED" : active.reachedInitial ? "MANUAL_STOP_BEFORE_TERMINAL" : "MANUAL_STOP_BEFORE_INITIAL",
+      ...(stopReason !== "TERMINAL_STATE_REACHED" && detail ? { detail } : {}),
     };
   }
 

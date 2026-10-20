@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AUTOMATION_IPC, AutomationOptionsSchema, RunDataSetInputSchema, StartGuidedRunInputSchema } from './index';
 import type { AutomationOptions } from './index';
-import { automatedRunBlockers, buildAutomatedStartInput, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from './automation-setup';
+import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from './automation-setup';
 import type { BlockerInput } from './automation-setup';
 
 const options = (over: Partial<AutomationOptions> = {}): AutomationOptions => ({
@@ -33,6 +33,33 @@ test('the endings a Flow offers come out as declared, with a success first', () 
 
 test('a run that can start has nothing standing in its way', () => {
   assert.deepEqual(automatedRunBlockers(ready()), []);
+});
+
+test('the entry sign-in page and its form are derived from the Flow declaration', () => {
+  const login = declaredFlowLogin(
+    [
+      { id: 'guest-state', stateName: 'Guest', behaviorKey: 'GUEST', role: 'INITIAL' },
+      { id: 'login-state', stateName: 'LOGIN_PAGE', behaviorKey: 'LOGIN_PAGE', role: 'NORMAL', recognizer: { routes: ['/login'] } },
+      { id: 'later-auth', stateName: 'Re-authenticate', role: 'NORMAL', recognizer: { routes: ['/confirm'] } },
+    ],
+    [
+      { id: 'open-app', fromNodeId: 'guest-state', toNodeId: 'login-state', action: 'OPEN_APP' },
+      { id: 'sign-in', fromNodeId: 'login-state', action: 'Sign in', expectedInput: [
+      { name: 'Account identifier', dataKey: 'ADMIN_ID', role: 'PROTECTED' },
+      { name: 'Secret', dataKey: 'ADMIN_SECRET', role: 'PROTECTED' },
+      ] },
+    ],
+  );
+  assert.deepEqual(login, { route: '/login', stateId: 'login-state', transitionId: 'sign-in' });
+  assert.equal(declaredFlowLogin(
+    [{ id: 'later-auth', stateName: 'Login page', role: 'NORMAL', recognizer: { routes: ['/login'] } }],
+    [{ id: 'sign-in', fromStateId: 'later-auth', action: 'Sign in', expectedInput: ['email', 'password'] }],
+  ), null, 'a later authentication page is not mistaken for the entry into the Flow');
+  assert.equal(declaredFlowLogin(
+    [{ id: 'login-state', stateName: 'Login page', role: 'INITIAL' }],
+    [{ id: 'sign-in', fromStateId: 'login-state', action: 'Sign in', expectedInput: ['email', 'password'] }],
+    '/saved-login',
+  )?.route, '/saved-login', 'a confirmed address and the Flow-declared fields can complete one another');
 });
 
 test('production is refused with the one thing that does work there, and nothing else is asked of the person', () => {
@@ -135,6 +162,7 @@ test('every shortfall against what the Flow needs is said before Start, all at o
   assert.match(blockers[0]!.message, /development, and this run is in staging/);
   assert.match(blockers[1]!.message, /"Student" does not have the ADMIN role/);
   assert.match(blockers[2]!.message, /SEED_TOKEN, ADMIN_PASSWORD/, 'a password the persona does not store is still needed');
+  assert.match(blockers[2]!.message, /not saved yet.*data-set name.*Save data set/, 'an open draft is explained instead of looking like saved data');
 });
 
 test('the persona can stand in for the sign-in data, and a run with no persona is told to choose one', () => {
@@ -230,6 +258,19 @@ test('a password persona with nowhere to sign in is held before Start, not after
   assert.deepEqual(noForm.map((b) => b.code), ['LOGIN_FORM_NOT_FOUND']);
   assert.match(noForm[0]!.message, /\/signin/);
   assert.match(noForm[0]!.message, /supply a session/, 'and the other ways in are offered');
+
+  const declaredByFlow = automatedRunBlockers(ready({
+    options: options({ personas: [persona], login: { route: '/signin', source: 'MANUAL', formFound: false, proposals: [] } }),
+    selection,
+    declaredLogin: { route: '/signin', stateId: 'login-state', transitionId: 'sign-in' },
+  }));
+  assert.deepEqual(declaredByFlow, [], 'a matching Flow declaration supplies the form contract when code analysis cannot');
+
+  const onlyDeclaredByFlow = automatedRunBlockers(ready({
+    options: options({ personas: [persona] }), selection,
+    declaredLogin: { route: '/signin', stateId: 'login-state', transitionId: 'sign-in' },
+  }));
+  assert.deepEqual(onlyDeclaredByFlow, [], 'the Flow route does not need to be copied into application settings');
 
   const found = automatedRunBlockers(ready({
     options: options({ personas: [persona], login: { route: '/signin', source: 'MANUAL', formFound: true, proposals: [] } }),
