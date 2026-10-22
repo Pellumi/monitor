@@ -309,6 +309,21 @@ const notificationOrchestrator = new NotificationOrchestrator({
 // Artifact sizes and snapshot byte totals are BigInt columns; without this one
 // of them reaching `res.json` ends the process rather than the request.
 useBigIntJson(app);
+/**
+ * A response write that lands after the client has already disconnected
+ * (slow upload, aborted request, dropped SSE connection) fails asynchronously
+ * as an `error` event on `res`, not as a throw at the `res.write`/`res.json`
+ * call site — no `try`/`catch` around that call can catch it. An EventEmitter
+ * with no `error` listener throws instead of emitting, which is what turned a
+ * single client disconnect into `Error: write EPIPE` and took the whole
+ * process down. One listener per response is the standard fix.
+ */
+app.use((req, res, next) => {
+  res.on('error', (err) => {
+    console.error(`[HTTP] response write failed for ${req.method} ${req.originalUrl}`, err);
+  });
+  next();
+});
 // 30 MB ceiling — document-flow generation posts the raw file as base64 JSON.
 app.use(express.json({ limit: '30mb' }));
 app.use(createDesktopRouter({

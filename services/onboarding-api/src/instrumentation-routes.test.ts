@@ -271,8 +271,9 @@ test('setup tasks carry a derived title, filter by title, status, framework and 
 
     // Archiving takes a task out of the working list without losing it.
     const archived = await request(baseUrl, data.user.id, `${plansPath}/${flowPlan.id}/archive`, { method: 'POST' });
-    assert.equal(archived.status, 200, await archived.text());
-    assert.ok((await archived.json() as { archivedAt: string | null }).archivedAt);
+    const archivedBody = await archived.json() as { archivedAt: string | null };
+    assert.equal(archived.status, 200, JSON.stringify(archivedBody));
+    assert.ok(archivedBody.archivedAt);
     const active = await (await request(baseUrl, data.user.id, plansPath)).json() as Array<{ id: string }>;
     assert.deepEqual(active.map((item) => item.id), [bootstrap.id]);
     const archiveView = await (await request(baseUrl, data.user.id, `${plansPath}?archived=true`)).json() as Array<{ id: string }>;

@@ -86,7 +86,7 @@ test('SDK setup enforces tenancy, environment policy, safe gateway URLs, atomic 
     assert.equal(descriptor.status, 200);
     const descriptorBody = await descriptor.json() as { gatewayEndpoint: string; targets: unknown[]; hasActiveKey: boolean };
     assert.equal(descriptorBody.gatewayEndpoint, 'http://localhost:3000');
-    assert.equal(descriptorBody.targets.length, 2);
+    assert.equal(descriptorBody.targets.length, 3);
     assert.equal(descriptorBody.hasActiveKey, false);
 
     const foreignDescriptor = await request(baseUrl, data.foreignUser.id, `/applications/${data.application.id}/sdk-setup`);
