@@ -3247,6 +3247,12 @@ function registerIpc(): void {
     const result = await cloud.submitFlowCodeScan(value.initializationId, distinctMarkers(scan.matches) as unknown as Record<string, unknown>[]);
     return { ...(result as Record<string, unknown>), filesScanned: scan.filesScanned, markersFound: scan.matches.length, truncated: scan.truncated };
   });
+  ipcMain.handle(IPC.confirmFlowDuplicateMarker, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { initializationId?: unknown; checkpointId?: unknown };
+    if (typeof value.initializationId !== 'string' || typeof value.checkpointId !== 'string') throw new Error('INVALID_FLOW_INITIALIZATION_ID');
+    return cloud.confirmFlowDuplicateMarker(value.initializationId, value.checkpointId);
+  });
   ipcMain.handle(IPC.rescanFlow, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { bindingId?: unknown; applicationId?: unknown };

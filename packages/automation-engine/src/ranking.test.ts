@@ -84,3 +84,12 @@ test('nothing on the page matches', () => {
   const result = rankControls(control({ labels: ['Create Exam'] }), [element({ ref: 'a', name: 'Logout' })]);
   assert.deepEqual([result.best, result.ambiguous, result.candidates.length], [null, false, 0]);
 });
+
+test('visual text can corroborate only an existing element of the expected role', () => {
+  const result = rankControls(control({ labels: ['Continue'], element: 'button' }), [
+    element({ ref: 'button', role: 'button', name: null, visualText: ['Continue'] }),
+    element({ ref: 'link', tag: 'a', role: 'link', name: null, visualText: ['Continue'] }),
+  ]);
+  assert.equal(result.best?.element.ref, 'button');
+  assert.equal(result.best?.method, 'VISUAL_TEXT');
+});

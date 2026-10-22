@@ -412,6 +412,24 @@ test('a saved sign-in that had to be thrown away is explained, because it change
   assert.ok(section.limitations.some((line) => line.includes('saved sign-in')));
 });
 
+test('masked screen-text analysis that corroborated an uncertain screen is noted as assisted evidence, not a finding', () => {
+  const events = [event('QA_AUTOMATION_OCR_ANALYSIS', 0, { reason: 'STATE_AMBIGUOUS', status: 'SUCCEEDED', outcome: 'ASSISTED' }), ...happyPath()];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(section.limitations.some((line) => line.includes('Masked screen-text analysis corroborated') && line.includes('assisted evidence')));
+});
+
+test('an unavailable masked screen-text analysis is noted without being presented as evidence', () => {
+  const events = [event('QA_AUTOMATION_OCR_ANALYSIS', 0, { reason: 'CONTROL_NOT_FOUND', status: 'UNAVAILABLE' }), ...happyPath()];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(section.limitations.some((line) => line.includes('Screen-text analysis was unavailable') && line.includes('deterministic result was retained')));
+});
+
+test('a successful screen-text analysis that did not change the result adds no limitation', () => {
+  const events = [event('QA_AUTOMATION_OCR_ANALYSIS', 0, { reason: 'STATE_LOW_CONFIDENCE', status: 'SUCCEEDED', outcome: 'NO_CHANGE' }), ...happyPath()];
+  const section = summarizeAutomationEvidence(run, events, declared)!;
+  assert.ok(!section.limitations.some((line) => line.toLowerCase().includes('screen-text')));
+});
+
 // -- the lead ---------------------------------------------------------------------------------------
 
 test('a run that got there says so, and has nothing to prioritise', () => {

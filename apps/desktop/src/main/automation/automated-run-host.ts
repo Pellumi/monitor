@@ -3,6 +3,7 @@ import type { BrowserObserver, GuidedRunState } from "@tellann/browser-observer"
 import { describeStopReason } from "@tellann/desktop-contracts";
 import type { AutomatedRunStatus, AutomationPhaseUpdate, AutomationStopReason, ContractSummary, QAEvidenceEvent, RunLifecycleEvent, StartGuidedRunInput } from "@tellann/desktop-contracts";
 import type { LocalRunRelay } from "@tellann/local-relay";
+import type { ScreenAnalysisReason, ScreenAnalysisResult } from "@tellann/automation-engine";
 import type { AutomatedRunHost, BrowserSession, FinishOutcome, OpenedRun } from "./automated-run-manager";
 
 /**
@@ -22,6 +23,7 @@ export interface AutomatedRunHostDeps {
     completeRunWithoutEvidence(input: { runId: string; sessionId: string; traceId: string; completionReason: string; automationStopReason: string }): Promise<unknown>;
     failRun(runId: string, reason: string): Promise<unknown>;
     reportAutomationPhase(runId: string, update: Record<string, unknown>): Promise<unknown>;
+    analyzeRunScreen?(runId: string, input: { requestId: string; reason: ScreenAnalysisReason; imageBase64: string; mimeType: 'image/png' }): Promise<ScreenAnalysisResult>;
   };
   relay: Pick<LocalRunRelay, "start" | "emit" | "stop">;
   observer: BrowserObserver;
@@ -138,6 +140,19 @@ export function createAutomatedRunHost(deps: AutomatedRunHostDeps): CreatedAutom
       return {
         browser: deps.observer,
         driver,
+        ...(deps.cloud.analyzeRunScreen ? {
+          screenAnalysis: async ({ reason }: { reason: ScreenAnalysisReason }) => {
+            if (start.environmentType === 'PRODUCTION') return null;
+            const image = await deps.observer.captureMaskedAutomationViewport();
+            if (!image) return null;
+            return deps.cloud.analyzeRunScreen!(run.runId, {
+              requestId: globalThis.crypto.randomUUID(),
+              reason,
+              imageBase64: image.base64,
+              mimeType: image.mimeType,
+            });
+          },
+        } : {}),
         // Only the observer is paused, so nothing a person types is recorded; the relay keeps forwarding the
         // application's own markers, which carry no typed values, so the run can see where the application says it is.
         setCapturePaused: async (paused) => { await deps.observer.pause(paused); },

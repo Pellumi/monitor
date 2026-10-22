@@ -1,5 +1,6 @@
 import { normalizeText, pathOnly, routeMatches } from './keys';
 import type { CandidateMethod, ControlCandidate, ControlDescriptor, SemanticElement } from './types';
+import { hasVisualText } from './screen-analysis';
 
 /**
  * Choosing the control for a transition.
@@ -20,6 +21,7 @@ const BASE_SCORE: Record<CandidateMethod, number> = {
   ROLE_NAME: 0.85,
   LABEL: 0.75,
   HREF: 0.7,
+  VISUAL_TEXT: 0.6,
   TEXT: 0.55,
   STRUCTURAL: 0.3,
 };
@@ -81,6 +83,11 @@ function bestMethod(descriptor: ControlDescriptor, element: SemanticElement): { 
 
   if (descriptor.href && element.href && hrefMatches(descriptor.href, element.href)) {
     return { method: 'HREF', score: BASE_SCORE.HREF };
+  }
+  // Pixels may recover a label omitted from the accessibility tree, but only
+  // for an existing, visible DOM element of the expected kind.
+  if (roleFits(descriptor, element) && hasVisualText(element, descriptor.labels)) {
+    return { method: 'VISUAL_TEXT', score: BASE_SCORE.VISUAL_TEXT };
   }
   // Partial text: the accessible name contains the label. Weaker, and only for names long enough to mean something.
   const contains = labels.some((wanted) => wanted.length >= 4 && (name.includes(wanted) || label.includes(wanted)));

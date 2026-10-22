@@ -107,6 +107,12 @@ export interface SemanticElement {
    * falls back to the one the engine made before geometry existed.
    */
   geometry?: ElementGeometry;
+  /**
+   * Text read from the pixels inside this existing DOM element. It is
+   * corroborating evidence only: it never creates an element or changes its
+   * ref, visibility, enabled state, role or geometry.
+   */
+  visualText?: string[];
 }
 
 export interface ObservedRequest {
@@ -167,6 +173,33 @@ export interface SemanticSnapshot {
   frameOrigins?: string[];
   /** The page as drawn, at the size it was read at. Absent when the adapter was not asked to measure. */
   page?: PageMeasurement;
+  /** OCR text from a masked viewport, retained only for this in-memory decision. */
+  visualText?: string[];
+}
+
+export type ScreenAnalysisReason =
+  | 'INITIAL_STATE_UNRECOGNIZED'
+  | 'STATE_UNRECOGNIZED'
+  | 'STATE_AMBIGUOUS'
+  | 'STATE_LOW_CONFIDENCE'
+  | 'CONTROL_NOT_FOUND'
+  | 'CONTROL_AMBIGUOUS';
+
+export interface ScreenTextDetection {
+  type: string;
+  text: string;
+  boxPixels: [number, number, number, number];
+}
+
+/** Sanitized OCR response. Raw model output and image bytes never enter the engine. */
+export interface ScreenAnalysisResult {
+  requestId: string;
+  model: string;
+  modelRevision: string;
+  image: { width: number; height: number };
+  text: string;
+  detections: ScreenTextDetection[];
+  latencyMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +371,7 @@ export type CandidateMethod =
   | 'ROLE_NAME'
   | 'LABEL'
   | 'HREF'
+  | 'VISUAL_TEXT'
   | 'TEXT'
   | 'STRUCTURAL';
 

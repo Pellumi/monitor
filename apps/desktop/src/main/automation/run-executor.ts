@@ -113,6 +113,7 @@ export interface AutomatedRunInput {
    * suggests is still verified against the contract before anything is done (`verifyControlProposal`).
    */
   resolver?: AmbiguityResolver;
+  screenAnalysis?: AutomationPorts['screenAnalysis'];
   cancelled?: () => boolean;
   /** Told where the run is, for the live view and the platform. Must not throw into the run. */
   onPhase?: (phase: AutomationExecutionPhase, detail?: { kind: string; detail: string } | null) => void;
@@ -269,6 +270,7 @@ async function execute(
     traceChunks: diagnostics.traceChunks,
     ...(diagnostics.inspectPage ? { inspectPage: diagnostics.inspectPage } : {}),
     ...(input.resolver ? { resolver: input.resolver } : {}),
+    ...(input.screenAnalysis ? { screenAnalysis: input.screenAnalysis } : {}),
     // Offered only when the browser can actually do it; the engine then only asks if a run named any sizes.
     ...(input.driver.measureViewports ? { measureViewports: (breakpoints) => input.driver.measureViewports!(breakpoints) } : {}),
   };

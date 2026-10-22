@@ -560,16 +560,24 @@ export type FlowMarkerMatch = {
  *   every one of them has to be there. A plan that emitted twelve markers and
  *   landed two is a failed apply, and reporting it as complete would hide that.
  *
- * Either way a duplicate or unrecognised marker is a defect in the instrumented
- * code rather than an absence, so it is reported with its file and line instead
- * of being quietly folded into a set.
+ * Either way a duplicate or unrecognised marker defaults to a defect in the
+ * instrumented code rather than an absence, so it is reported with its file
+ * and line instead of being quietly folded into a set — unless the checkpoint
+ * is in `confirmedDuplicateCheckpointIds`, meaning the user has already looked
+ * at the extra locations and confirmed the checkpoint genuinely fires from
+ * more than one place in their code.
  */
 export function evaluateCodeScanCoverage(
   manifest: ReturnType<typeof analyzeFlowInitialization>['manifest'],
   matches: FlowMarkerMatch[],
   scannedAt = new Date().toISOString(),
-  options: { mode?: 'MANUAL' | 'AUTOMATED' | null } = {},
+  options: { mode?: 'MANUAL' | 'AUTOMATED' | null; confirmedDuplicateCheckpointIds?: string[] } = {},
 ) {
+  // A checkpoint the user has already confirmed fires from more than one place
+  // on purpose (a shared component rendered from several routes, a page
+  // reachable two ways) keeps every one of those locations as evidence, but
+  // stops re-raising them as a DUPLICATE_MARKER defect on every re-scan.
+  const confirmedDuplicates = new Set(options.confirmedDuplicateCheckpointIds ?? []);
   const checkpoints = (manifest.checkpoints ?? []) as Array<Record<string, any>>;
   const byMarker = new Map<string, string>();
   for (const checkpoint of checkpoints) {
@@ -605,7 +613,9 @@ export function evaluateCodeScanCoverage(
     seenLocations.add(location);
     const previous = firstSeen.get(resolved);
     if (previous && previous !== `${match.file}:${match.line}`) {
-      markerProblems.push({ code: 'DUPLICATE_MARKER', checkpointId: resolved, file: match.file, line: match.line });
+      if (!confirmedDuplicates.has(resolved)) {
+        markerProblems.push({ code: 'DUPLICATE_MARKER', checkpointId: resolved, file: match.file, line: match.line });
+      }
     } else if (!previous) {
       firstSeen.set(resolved, `${match.file}:${match.line}`);
     }

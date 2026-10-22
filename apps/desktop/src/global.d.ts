@@ -229,6 +229,7 @@ declare global {
         updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
         startFlowVerification(initializationId: string): Promise<Record<string, any>>;
         verifyFlowCheckpointsInCode(applicationId: string, initializationId: string): Promise<Record<string, any>>;
+        confirmFlowDuplicateMarker(initializationId: string, checkpointId: string): Promise<Record<string, any>>;
         getFlowVerification(initializationId: string): Promise<Record<string, any>>;
         rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
         approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;

@@ -7,7 +7,7 @@ import {
   SdkSignalBuffer,
   unresolvedOnPath,
 } from "@tellann/automation-engine";
-import type { AutomationResult, CodeEvidenceSource } from "@tellann/automation-engine";
+import type { AutomationPorts, AutomationResult, CodeEvidenceSource } from "@tellann/automation-engine";
 import {
   AUTOMATED_RUN_LIVE_EVENT_LIMIT,
   AUTOMATION_STOP_REASON_KIND,
@@ -80,6 +80,7 @@ export interface OpenedRun {
 export interface BrowserSession {
   browser: ManagedBrowser;
   driver: PageDriver;
+  screenAnalysis?: AutomationPorts['screenAnalysis'];
   /** Stops evidence being recorded while a person types (their password is theirs, and is not ours to keep). */
   setCapturePaused(paused: boolean): Promise<void>;
   bringToFront(): Promise<void>;
@@ -200,14 +201,7 @@ export class AutomatedRunManager {
     if (this.active || this.starting) throw new Error("RUN_ALREADY_ACTIVE");
     this.starting = true;
     try {
-      return await this.startOnce(request);
-    } finally {
-      this.starting = false;
-    }
-  }
-
-  private async startOnce(request: AutomatedRunRequest): Promise<StartAutomatedRunResult> {
-    const { start } = request;
+      const { start } = request;
     if (start.environmentType === "PRODUCTION") throw new Error("AUTOMATED_RUN_PRODUCTION_BLOCKED");
     if (!start.automation) throw new Error("AUTOMATION_CONFIG_REQUIRED");
     if (!start.expectedGraphVersionId) throw new Error("FLOW_VERSION_REQUIRED");
@@ -265,6 +259,9 @@ export class AutomatedRunManager {
     this.active = active;
     active.done = this.drive(active).catch(() => undefined);
     return { ok: true, status: active.status };
+    } finally {
+      this.starting = false;
+    }
   }
 
   /** The person asked to stop. Takes effect at the run's next decision, or at once if it is waiting for them. */
@@ -398,6 +395,7 @@ export class AutomatedRunManager {
           code: request.code ?? null,
           renderTimingComponents: automation.renderTimingComponents,
           responsiveBreakpoints: automation.responsiveBreakpoints,
+          ...(session.screenAnalysis ? { screenAnalysis: session.screenAnalysis } : {}),
           // Only for a run that asked for it, and only when one has been supplied at all.
           ...(automation.assistedTieBreaking && this.deps.resolver ? { resolver: this.deps.resolver } : {}),
           cancelled: () => active.cancelRequested,

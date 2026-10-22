@@ -38,6 +38,7 @@ import type {
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
 import { resolveTelemetryGateway } from "./gateway-endpoint";
 import type { ArtifactCaptureContext, GuidedRunState } from "@tellann/browser-observer";
+import type { ScreenAnalysisReason, ScreenAnalysisResult } from "@tellann/automation-engine";
 import {
   clearDesktopSession,
   loadDesktopSession,
@@ -1203,6 +1204,17 @@ export class DesktopCloudClient {
     );
   }
 
+  /** Accept a checkpoint's extra code locations as legitimate, not a defect. */
+  async confirmFlowDuplicateMarker(
+    initializationId: string,
+    checkpointId: string,
+  ): Promise<Json> {
+    return this.request(
+      `/flow-initializations/${initializationId}/verification/duplicate-markers/${encodeURIComponent(checkpointId)}/confirm`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
   async flowVerification(initializationId: string): Promise<Json> {
     return this.request(
       `/flow-initializations/${initializationId}/verification`,
@@ -1277,6 +1289,16 @@ export class DesktopCloudClient {
     return this.request(`/qa-runs/${runId}/evidence-events/batch`, {
       method: "POST",
       body: JSON.stringify({ events }),
+    });
+  }
+
+  async analyzeRunScreen(
+    runId: string,
+    input: { requestId: string; reason: ScreenAnalysisReason; imageBase64: string; mimeType: "image/png" },
+  ): Promise<ScreenAnalysisResult> {
+    return this.request<ScreenAnalysisResult>(`/qa-runs/${runId}/screen-analysis`, {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   }
 

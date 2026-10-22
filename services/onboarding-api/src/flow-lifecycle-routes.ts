@@ -799,7 +799,10 @@ export function createFlowLifecycleRouter(input: {
       transition: typeof match.transition === 'string' ? match.transition : null,
       checkpointId: typeof match.checkpointId === 'string' ? match.checkpointId : null,
     }));
-    const verification = evaluateCodeScanCoverage(manifest, matches, new Date().toISOString(), { mode: initialization.mode });
+    const verification = evaluateCodeScanCoverage(manifest, matches, new Date().toISOString(), {
+      mode: initialization.mode,
+      confirmedDuplicateCheckpointIds: initialization.confirmedDuplicateCheckpointIds ?? [],
+    });
     const completed = verification.status === 'COMPLETED';
     const roadmap = initialization.manualRoadmap as any;
     if (roadmap?.steps) {
@@ -831,6 +834,65 @@ export function createFlowLifecycleRouter(input: {
       roadmap: updated.manualRoadmap,
       initialization: updated,
       missingCheckpointIds: verification.missingCheckpointIds,
+    });
+  });
+
+  /**
+   * Accept a checkpoint's extra locations as legitimate rather than a mistake.
+   *
+   * A code scan can't tell a genuine second entry point (a shared login page
+   * rendered from two routes) from an accidental copy-paste of the same
+   * tracker call, so it defaults to flagging any second location as
+   * DUPLICATE_MARKER. This lets the user say "no, that's intentional" once;
+   * from then on every location the scan finds for this checkpoint counts as
+   * evidence instead of a defect, on this and every future scan.
+   *
+   * Recomputed from the last scan's own evidence rather than fresh matches —
+   * `codeEvidence` already carries every resolved (checkpointId, file, line)
+   * the scan found, which is exactly what `evaluateCodeScanCoverage` needs to
+   * reach the same verdict it would reach on a live re-scan.
+   */
+  router.post('/flow-initializations/:initializationId/verification/duplicate-markers/:checkpointId/confirm', async (req: FlowRequest, res: Response) => {
+    const initialization = await ownedInitialization(req, res);
+    if (!initialization) return;
+    const checkpointId = String(req.params.checkpointId);
+    const manifest = initialization.manifest as any;
+    const current = initialization.verification as any;
+    if (!manifest?.checkpoints?.length || !Array.isArray(current?.codeEvidence)) {
+      return res.status(409).json({ error: 'FLOW_CODE_SCAN_NOT_READY' });
+    }
+    const knownIds = new Set(manifest.checkpoints.map((item: any) => String(item.id)));
+    if (!knownIds.has(checkpointId)) return res.status(404).json({ error: 'FLOW_CHECKPOINT_NOT_FOUND' });
+    const hasUnconfirmedDuplicate = (current.markerProblems ?? []).some(
+      (item: any) => item.code === 'DUPLICATE_MARKER' && item.checkpointId === checkpointId,
+    );
+    if (!hasUnconfirmedDuplicate) return res.status(409).json({ error: 'NO_DUPLICATE_MARKER_TO_CONFIRM' });
+
+    const confirmedDuplicateCheckpointIds = [...new Set([...(initialization.confirmedDuplicateCheckpointIds ?? []), checkpointId])];
+    const verification = evaluateCodeScanCoverage(manifest, current.codeEvidence, current.scannedAt ?? new Date().toISOString(), {
+      mode: initialization.mode, confirmedDuplicateCheckpointIds,
+    });
+    const completed = verification.status === 'COMPLETED';
+    const roadmap = initialization.manualRoadmap as any;
+    if (roadmap?.steps) {
+      roadmap.steps = roadmap.steps.map((step: any) => verification.observedCheckpointIds.includes(step.checkpointId)
+        ? { ...step, status: 'VERIFIED', verificationEvidence: verification.codeEvidence.filter((item) => item.checkpointId === step.checkpointId) }
+        : step);
+    }
+    const [updated] = await prisma.$transaction([
+      prisma.flowInitialization.update({ where: { id: initialization.id }, data: {
+        confirmedDuplicateCheckpointIds,
+        verification: verification as any, manualRoadmap: roadmap ?? undefined,
+        ...(completed ? { status: 'COMPLETED', stage: 'COMPLETED', completedAt: new Date() } : {}),
+      } }),
+      ...(completed ? [prisma.flowProjectBinding.update({ where: { id: initialization.bindingId }, data: { status: 'ACTIVE', initializedAt: new Date() } })] : []),
+    ]);
+    return res.json({
+      initializationId: updated.id,
+      completed,
+      verification: updated.verification,
+      roadmap: updated.manualRoadmap,
+      confirmedDuplicateCheckpointIds: updated.confirmedDuplicateCheckpointIds,
     });
   });
 

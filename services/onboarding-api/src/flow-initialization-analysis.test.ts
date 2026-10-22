@@ -307,6 +307,34 @@ test('a duplicate or unrecognised marker fails verification with its file and li
   assert.equal(neighbourly.status, 'COMPLETED');
 });
 
+test('a confirmed duplicate checkpoint stops being reported as a defect', () => {
+  const manifest = scanFixture();
+  const matches = [
+    { file: 'src/cart.tsx', line: 10, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/cart-copy.tsx', line: 3, flow: 'checkout', state: 'cart-viewed', transition: null },
+    { file: 'src/paid.tsx', line: 20, flow: 'checkout', state: 'paid', transition: null },
+  ];
+
+  // Unconfirmed: the second location for the initial-state checkpoint still
+  // blocks completion, exactly as an ordinary duplicate would.
+  const unconfirmed = evaluateCodeScanCoverage(manifest, matches, undefined, { mode: 'MANUAL' });
+  assert.equal(unconfirmed.status, 'INCOMPLETE');
+  assert.deepEqual(unconfirmed.markerProblems, [{ code: 'DUPLICATE_MARKER', checkpointId: 'state:s1', file: 'src/cart-copy.tsx', line: 3 }]);
+
+  // Confirmed: the same two locations are now evidence, not a problem — and the
+  // checkpoint's other, still-unconfirmed sibling would still be caught.
+  const confirmed = evaluateCodeScanCoverage(manifest, matches, undefined, {
+    mode: 'MANUAL', confirmedDuplicateCheckpointIds: ['state:s1'],
+  });
+  assert.deepEqual(confirmed.markerProblems, []);
+  assert.equal(confirmed.status, 'COMPLETED');
+  assert.deepEqual(confirmed.codeEvidence, [
+    { checkpointId: 'state:s1', file: 'src/cart.tsx', line: 10 },
+    { checkpointId: 'state:s1', file: 'src/cart-copy.tsx', line: 3 },
+    { checkpointId: 'state:s2', file: 'src/paid.tsx', line: 20 },
+  ]);
+});
+
 test('the v2 contract is enforced at the write, not discovered by the adapter later', () => {
   const snapshot = {
     name: 'Checkout',

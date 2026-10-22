@@ -59,6 +59,7 @@ import {
   type BackendEvidenceSort,
   type BackendEvidenceStatus,
 } from './qa-backend-evidence-query';
+import { parseScreenAnalysisRequest, proxyScreenAnalysis, ScreenAnalysisError } from './screen-analysis';
 
 type DesktopRequest = Request & { user?: { id: string; email: string } };
 type Middleware = (req: DesktopRequest, res: Response, next: NextFunction) => unknown;
@@ -466,6 +467,7 @@ export function createDesktopRouter(input: {
         environmentId: true,
         createdByUserId: true,
         status: true,
+        mode: true,
         boundaryStartedAt: true,
         boundaryCompletedAt: true,
         completionReason: true,
@@ -1212,6 +1214,29 @@ export function createDesktopRouter(input: {
       artifacts: run.artifacts.map(safeArtifact),
       findings: run.findings.map(safeFinding),
     });
+  });
+
+  router.post('/qa-runs/:runId/screen-analysis', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRunLite(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    if (run.mode !== QARunMode.AUTOMATED || run.environment.type === EnvironmentType.PRODUCTION) {
+      return res.status(409).json({ error: 'SCREEN_ANALYSIS_RUN_NOT_ELIGIBLE' });
+    }
+    if (!ACTIVE_QA_RUN_STATUSES.has(run.status)) {
+      return res.status(409).json({ error: 'SCREEN_ANALYSIS_RUN_NOT_ACTIVE' });
+    }
+    try {
+      const request = parseScreenAnalysisRequest(req.body);
+      const result = await proxyScreenAnalysis(request, {
+        baseUrl: process.env.TELLANN_OCR_BASE_URL,
+        modalKey: process.env.TELLANN_OCR_MODAL_KEY,
+        modalSecret: process.env.TELLANN_OCR_MODAL_SECRET,
+      });
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof ScreenAnalysisError) return res.status(error.status).json({ error: error.code });
+      return res.status(502).json({ error: 'SCREEN_ANALYSIS_UPSTREAM_UNAVAILABLE' });
+    }
   });
 
   router.post('/qa-runs/:runId/evidence-events/batch', verifyJwt, async (req: DesktopRequest, res: Response) => {

@@ -557,6 +557,31 @@ kbd {
 button:disabled {
   opacity: 0.5;
 }
+.automated-start-skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: var(--control-height);
+  border-radius: var(--radius);
+  background: rgb(var(--overlay-rgb) / 0.07);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.automated-start-skeleton-icon,
+.automated-start-skeleton-label {
+  display: block;
+  border-radius: 999px;
+  background: rgb(var(--overlay-rgb) / 0.14);
+}
+.automated-start-skeleton-icon {
+  width: 14px;
+  height: 14px;
+}
+.automated-start-skeleton-label {
+  width: 128px;
+  height: 10px;
+}
 .filter-row input,
 .form-grid input,
 .form-grid select,
@@ -2480,7 +2505,8 @@ button.statusbar-item:disabled {
   .palette,
   .splash-progress::after,
   .skeleton-line,
-  .skeleton-block {
+  .skeleton-block,
+  .automated-start-skeleton {
     animation: none;
   }
 }
@@ -2877,10 +2903,29 @@ button.statusbar-item:disabled {
   gap: 8px;
   align-items: flex-start;
 }
+.automated-blocker-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.automated-blocker-action.button {
+  flex: none;
+  min-height: 26px;
+  padding-inline: 9px;
+}
 .automated-blockers svg {
   flex: none;
   margin-top: 2px;
   color: var(--caution);
+}
+@media (max-width: 720px) {
+  .automated-blocker-content {
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 .automated-managers {
   display: flex;

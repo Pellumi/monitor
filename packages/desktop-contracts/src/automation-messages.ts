@@ -198,6 +198,12 @@ export function summarizeAutomationEvent(type: string, data: Record<string, unkn
     }
     case 'QA_AUTOMATION_ACTION_BLOCKED': return { text: str(data.detail) ?? 'A step was blocked by the safety policy.', tone: 'notice' };
     case 'QA_AUTOMATION_REPLAN': return { text: 'The page was not where expected, so the route was worked out again.', tone: 'notice' };
+    case 'QA_AUTOMATION_OCR_ANALYSIS': {
+      if (data.status !== 'SUCCEEDED') return { text: 'Screen text analysis was unavailable; the run kept its deterministic result.', tone: 'notice' };
+      return data.outcome === 'ASSISTED'
+        ? { text: 'Masked screen text corroborated the current state or control.', tone: 'info' }
+        : { text: 'Checked masked screen text, but it did not justify changing the result.', tone: 'info' };
+    }
     case 'QA_AUTOMATION_TERMINAL_STATE_REACHED': return { text: `Reached the goal (${str(data.stateKey) ?? 'target state'}).`, tone: 'success' };
     case 'QA_AUTOMATION_MANUAL_ACTION_REQUIRED': return { text: str(data.detail) ?? 'Waiting for you to sign in.', tone: 'notice' };
     case 'QA_AUTOMATION_MANUAL_ACTION_COMPLETED': {

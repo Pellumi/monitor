@@ -183,6 +183,8 @@ type DesktopContextValue = {
   updateFlowRoadmapStep(initializationId: string, stepId: string, completed: boolean): Promise<Record<string, any>>;
   startFlowVerification(initializationId: string): Promise<Record<string, any>>;
   verifyFlowCheckpointsInCode(applicationId: string, initializationId: string): Promise<Record<string, any>>;
+  /** Accept a checkpoint's extra code locations as legitimate, not a defect. */
+  confirmFlowDuplicateMarker(initializationId: string, checkpointId: string): Promise<Record<string, any>>;
   getFlowVerification(initializationId: string): Promise<Record<string, any>>;
   rescanFlow(bindingId: string, applicationId: string): Promise<Record<string, unknown>>;
   approveFlowInitialization(initializationId: string, instrumentationPlanId: string): Promise<Record<string, unknown>>;
@@ -791,6 +793,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     updateFlowRoadmapStep: (initializationId, stepId, completed) => perform(() => bridge().intent.updateFlowRoadmapStep(initializationId, stepId, completed)),
     startFlowVerification: (initializationId) => perform(() => bridge().intent.startFlowVerification(initializationId)),
     verifyFlowCheckpointsInCode: (applicationId, initializationId) => perform(() => bridge().intent.verifyFlowCheckpointsInCode(applicationId, initializationId)),
+    confirmFlowDuplicateMarker: (initializationId, checkpointId) => perform(() => bridge().intent.confirmFlowDuplicateMarker(initializationId, checkpointId)),
     getFlowVerification: (initializationId) => bridge().intent.getFlowVerification(initializationId),
     rescanFlow: (bindingId, applicationId) => perform(() => bridge().intent.rescanFlow(bindingId, applicationId)),
     approveFlowInitialization: (initializationId, instrumentationPlanId) => perform(() => bridge().intent.approveFlowInitialization(initializationId, instrumentationPlanId)),

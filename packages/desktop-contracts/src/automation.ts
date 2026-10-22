@@ -26,6 +26,8 @@ export const QA_AUTOMATION_EVENT_TYPES = [
   'QA_AUTOMATION_INITIAL_STATE_REACHED',
   'QA_AUTOMATION_TERMINAL_STATE_REACHED',
   'QA_AUTOMATION_STOPPED',
+  /** A masked viewport was analyzed to corroborate an otherwise uncertain deterministic decision. */
+  'QA_AUTOMATION_OCR_ANALYSIS',
   /** What the code says about a failed transition or unreadable state: locations and hashes, never source text. */
   'QA_AUTOMATION_CODE_EVIDENCE',
   /** A diagnostic trace of one state visit was kept because something went wrong there. */

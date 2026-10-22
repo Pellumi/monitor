@@ -11,9 +11,10 @@ import { dedupe, flowShapeFindings, rankFindings, responsiveFindings, statePageF
 import { resolveRunTargets } from './targets';
 import { evaluateAction, evaluateNavigation } from './policy';
 import type { PolicyOptions } from './policy';
-import { AMBIGUITY_MARGIN, recognizeAmong } from './recognizer';
+import { AMBIGUITY_MARGIN, recognize, recognizeAmong } from './recognizer';
 import { isEntryStep } from './support';
 import { rankControls } from './ranking';
+import { applyScreenAnalysis, screenFingerprint } from './screen-analysis';
 import type {
   ActionClass,
   ActionOutcome,
@@ -24,6 +25,8 @@ import type {
   ExecutableContract,
   ObservedRequest,
   Recognition,
+  ScreenAnalysisReason,
+  ScreenAnalysisResult,
   SemanticSnapshot,
   ViewportSample,
 } from './types';
@@ -56,6 +59,7 @@ export type AutomationEventType =
   | 'QA_AUTOMATION_INITIAL_STATE_REACHED'
   | 'QA_AUTOMATION_TERMINAL_STATE_REACHED'
   | 'QA_AUTOMATION_STOPPED'
+  | 'QA_AUTOMATION_OCR_ANALYSIS'
   | 'QA_AUTOMATION_RESPONSIVE_SAMPLE'
   | 'QA_AUTOMATION_UI_QUALITY';
 
@@ -155,6 +159,11 @@ export interface AutomationPorts {
    */
   resolver?: AmbiguityResolver;
   /**
+   * Optional masked-pixel fallback. The adapter owns capture and transport;
+   * the engine receives only sanitized OCR text and boxes.
+   */
+  screenAnalysis?(input: { reason: ScreenAnalysisReason; snapshot: SemanticSnapshot }): Promise<ScreenAnalysisResult | null>;
+  /**
    * Run data for form inputs. `undefined` means the data set has no such value, which stops the
    * run before any action that would need it. `secret` values are typed but never recorded.
    */
@@ -223,6 +232,8 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
   let unrecognised = 0;
   /** Ambiguities a resolver has already been asked about, so a retry of the same read does not ask again. */
   const resolverAsked = new Set<string>();
+  /** One paid OCR attempt per rendered screen and failure reason. */
+  const screenAnalysisAsked = new Set<string>();
   const entrySkipped = new Set<string>();
   let initialReported = false;
   // Set when the next pass is a deliberate retry of the same transition. Retries are bounded on their own;
@@ -230,6 +241,52 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
   let retrying = false;
 
   const emit = (type: AutomationEventType, data: Record<string, unknown>) => ports.emit({ type, at: ports.now(), data });
+  const analyzeScreen = async (reason: ScreenAnalysisReason, source: SemanticSnapshot) => {
+    if (!ports.screenAnalysis || config.environment === 'PRODUCTION') return null;
+    const key = `${reason}|${screenFingerprint(source)}`;
+    if (screenAnalysisAsked.has(key)) return null;
+    screenAnalysisAsked.add(key);
+    try {
+      const analysis = await ports.screenAnalysis({ reason, snapshot: source });
+      if (!analysis) {
+        emit('QA_AUTOMATION_OCR_ANALYSIS', { reason, status: 'UNAVAILABLE', outcome: 'NO_CHANGE' });
+        return null;
+      }
+      const applied = applyScreenAnalysis(source, analysis);
+      return { ...applied, analysis };
+    } catch {
+      emit('QA_AUTOMATION_OCR_ANALYSIS', { reason, status: 'UNAVAILABLE', outcome: 'NO_CHANGE' });
+      return null;
+    }
+  };
+  const stateReason = (source: SemanticSnapshot, result: ReturnType<typeof recognizeAmong>, initial: boolean): ScreenAnalysisReason | null => {
+    if (result.ambiguous) return 'STATE_AMBIGUOUS';
+    if (result.best?.confidence === 'LOW') return 'STATE_LOW_CONFIDENCE';
+    if (result.best) return null;
+    if (initial) return 'INITIAL_STATE_UNRECOGNIZED';
+    const low = contract.states.map((state) => recognize(source, state)).sort((a, b) => b.score - a.score)[0];
+    return low && low.score > 0 ? 'STATE_LOW_CONFIDENCE' : 'STATE_UNRECOGNIZED';
+  };
+  const assistState = async (source: SemanticSnapshot, result: ReturnType<typeof recognizeAmong>, initial: boolean) => {
+    const reason = stateReason(source, result, initial);
+    if (!reason) return { snapshot: source, recognition: result };
+    const assisted = await analyzeScreen(reason, source);
+    if (!assisted) return { snapshot: source, recognition: result };
+    const next = recognizeAmong(assisted.snapshot, contract.states);
+    if (next.best) next.best = { ...next.best, confidence: next.best.confidence === 'HIGH' ? 'MEDIUM' : next.best.confidence };
+    const outcome = next.best && !next.ambiguous ? 'ASSISTED' : 'NO_CHANGE';
+    emit('QA_AUTOMATION_OCR_ANALYSIS', {
+      reason, status: 'SUCCEEDED', outcome,
+      requestId: assisted.analysis.requestId,
+      model: assisted.analysis.model,
+      modelRevision: assisted.analysis.modelRevision,
+      latencyMs: assisted.analysis.latencyMs,
+      detectionCount: assisted.analysis.detections.length,
+      matchedRefs: assisted.matchedRefs,
+      recognizedStateKey: next.best?.stateKey ?? null,
+    });
+    return { snapshot: assisted.snapshot, recognition: next };
+  };
   const effects: EffectCheck[] = [];
   let currentStateKey: string | null = null;
   /** The transition being attempted, so a failure can be explained by what the code does for *that* control. */
@@ -350,6 +407,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
   await openChunk(null, 0);
   let snapshot = await ports.snapshot();
   let recognition = recognizeAmong(snapshot, contract.states);
+  ({ snapshot, recognition } = await assistState(snapshot, recognition, true));
 
   // Getting to the initial state is setup, not part of the Flow.
   if (!recognition.best) {
@@ -357,6 +415,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     if (!entered) return finish('INITIAL_STATE_UNREACHABLE', 'No Flow state was recognised at the starting point and no entry route reached one.');
     snapshot = entered;
     recognition = recognizeAmong(snapshot, contract.states);
+    ({ snapshot, recognition } = await assistState(snapshot, recognition, true));
     if (!recognition.best) return finish('INITIAL_STATE_UNREACHABLE', 'The entry route ended somewhere no Flow state was recognised.');
   }
 
@@ -372,6 +431,8 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: navigation.reason, detail: navigation.detail, url: originOf(snapshot.url) });
       return finish('UNSAFE_ACTION_BLOCKED', navigation.detail);
     }
+
+    ({ snapshot, recognition } = await assistState(snapshot, recognition, false));
 
     // Two states fit the page equally well. If a resolver is configured it may suggest one of *those two*,
     // and the suggestion stands only if the contract agrees; otherwise the read stays ambiguous.
@@ -481,9 +542,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     };
     const mode = next.mode ?? 'AUTO';
     // Counted before anything is attempted, so a step that could not be resolved still says how close it came.
-    const ranking = next.control ? rankControls(next.control, snapshot.elements) : null;
-    const candidateCount = ranking?.candidates.length ?? 0;
-    const unusableCount = ranking?.unusable.length ?? 0;
+    let ranking = next.control ? rankControls(next.control, snapshot.elements) : null;
     // Opening the application has no control: the run did that itself. Look again, once, without the starting state.
     if (mode === 'AUTO' && isEntryStep(contract, next) && !entrySkipped.has(next.id)) {
       entrySkipped.add(next.id);
@@ -494,6 +553,26 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     // A step a person performs needs no control found and nothing typed: they do it in the browser.
     let resolved = mode === 'MANUAL' ? null : resolveStep(snapshot, stepInput);
     let controlResolution: { resolver: string; locality: string; rationale: string; agreement: string[] } | null = null;
+    if (resolved && !resolved.ok && next.control
+      && (resolved.reason === 'CONTROL_AMBIGUOUS' || resolved.reason === 'CONTROL_NOT_FOUND')) {
+      const reason: ScreenAnalysisReason = resolved.reason === 'CONTROL_AMBIGUOUS' ? 'CONTROL_AMBIGUOUS' : 'CONTROL_NOT_FOUND';
+      const assisted = await analyzeScreen(reason, snapshot);
+      if (assisted) {
+        snapshot = assisted.snapshot;
+        ranking = rankControls(next.control, snapshot.elements);
+        resolved = resolveStep(snapshot, stepInput);
+        emit('QA_AUTOMATION_OCR_ANALYSIS', {
+          reason, status: 'SUCCEEDED', outcome: resolved.ok ? 'ASSISTED' : 'NO_CHANGE',
+          requestId: assisted.analysis.requestId,
+          model: assisted.analysis.model,
+          modelRevision: assisted.analysis.modelRevision,
+          latencyMs: assisted.analysis.latencyMs,
+          detectionCount: assisted.analysis.detections.length,
+          matchedRefs: assisted.matchedRefs,
+          selectedRef: resolved.ok ? resolved.controlRef : null,
+        });
+      }
+    }
     if (resolved && !resolved.ok && resolved.reason === 'CONTROL_AMBIGUOUS' && ports.resolver && next.control) {
       const tied = tiedControls(rankControls(next.control, snapshot.elements).candidates);
       const proposal = await askResolver(ports.resolver, controlSituation(next, tied));
@@ -516,6 +595,9 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
       return finish(stopReason, resolved.detail);
     }
+
+    const candidateCount = ranking?.candidates.length ?? 0;
+    const unusableCount = ranking?.unusable.length ?? 0;
 
     // Belt and braces: the planner already excluded blocked classes, but the decision to act is made here.
     // (A person doing a step themselves is not the run acting, so the run's safety policy has nothing to decide.)

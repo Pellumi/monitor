@@ -17,7 +17,7 @@ import { installQaRecorder } from './injected-recorder';
 import { installRenderTiming, RENDER_TIMING_GLOBAL } from './render-timing';
 import type { RenderTimingSnapshotEntry } from './render-timing';
 import { sanitizeTraceArchive } from './trace-sanitizer';
-import { captureMaskedViewport } from './silent-capture';
+import { captureMaskedViewport, captureMaskedViewportBuffer } from './silent-capture';
 
 export type LiveEvidenceKind =
   'CONSOLE' | 'NETWORK' | 'PAGE' | 'ACCESSIBILITY' | 'INTERACTION' | 'STORAGE' | 'PERFORMANCE' | 'FLOW'
@@ -3517,6 +3517,20 @@ export class BrowserObserver {
     const controller = this.active;
     if (!controller || controller.state.mode !== 'AUTOMATED') return;
     for (const value of values) if (value) controller.trace.protectedValues.add(value);
+  }
+
+  /**
+   * A fail-closed, in-memory viewport for OCR. Unlike evidence screenshots it
+   * has no painted-mask fallback: if every sensitive region cannot be masked
+   * after capture, no bytes leave this process.
+   */
+  async captureMaskedAutomationViewport(): Promise<{ mimeType: 'image/png'; base64: string } | null> {
+    const controller = this.active;
+    if (!controller || controller.state.mode !== 'AUTOMATED' || controller.state.environmentType === 'PRODUCTION') return null;
+    const page = controller.page;
+    if (!page || page.isClosed()) return null;
+    const masked = await captureMaskedViewportBuffer(page, [...controller.trace.protectedValues]);
+    return masked && masked.length > 0 ? { mimeType: 'image/png', base64: masked.toString('base64') } : null;
   }
 
   /**

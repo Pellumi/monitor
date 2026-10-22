@@ -52,7 +52,7 @@ export function describes(descriptor: ControlDescriptor, element: SemanticElemen
   if (descriptor.actionAnchor && element.actionAnchor === descriptor.actionAnchor) return true;
   if (descriptor.testId && element.testId === descriptor.testId) return true;
   if (descriptor.domId && element.domId === descriptor.domId) return true;
-  const shown = [element.name, element.label].map(normalizeText).filter(Boolean);
+  const shown = [element.name, element.label, ...(element.visualText ?? [])].map(normalizeText).filter(Boolean);
   return descriptor.labels.some((label) => {
     const wanted = normalizeText(label);
     return Boolean(wanted) && shown.includes(wanted);
@@ -67,10 +67,11 @@ export function describes(descriptor: ControlDescriptor, element: SemanticElemen
 function declaredTextPresent(snapshot: SemanticSnapshot, state: ExecutableState): { present: number; total: number } {
   const headings = state.headings ?? [];
   const texts = state.texts ?? [];
-  const headingSurface = [snapshot.title, ...snapshot.headings].map(normalizeText).filter(Boolean);
+  const visualSurface = snapshot.visualText ?? [];
+  const headingSurface = [snapshot.title, ...snapshot.headings, ...visualSurface].map(normalizeText).filter(Boolean);
   const textSurface = [
     ...headingSurface,
-    ...snapshot.elements.filter((element) => element.visible).flatMap((element) => [element.name, element.label]).map(normalizeText).filter(Boolean),
+    ...snapshot.elements.filter((element) => element.visible).flatMap((element) => [element.name, element.label, ...(element.visualText ?? [])]).map(normalizeText).filter(Boolean),
   ];
   const found = (wanted: string, surface: string[]) => {
     const needle = normalizeText(wanted);

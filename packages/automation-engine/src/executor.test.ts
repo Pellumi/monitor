@@ -79,6 +79,61 @@ test('a control that is not on the page stops the run without clicking anything'
   assert.equal(blocked.data.reason, 'CONTROL_NOT_FOUND');
 });
 
+test('masked screen text can recover an existing unnamed control once', async () => {
+  const contract: ExecutableContract = {
+    flowVersionId: 'v', flowHash: 'h', analysisIdentity: null, initialStateKey: 'a',
+    states: [state({ key: 'a', role: 'INITIAL', routePatterns: ['/a'] }), state({ key: 'z', role: 'TERMINAL', routePatterns: ['/z'] })],
+    transitions: [transition({ id: 'finish', from: 'a', to: 'z', control: control({ labels: ['Continue'], element: 'button' }) })],
+  };
+  const geometry = {
+    rect: { x: 100, y: 100, width: 200, height: 50 }, inViewport: true, hitTestOk: true,
+    fontSizePx: 16, fontWeight: 600, color: null, backgroundColor: null, borderWidthPx: 0,
+    borderStyle: null, cursor: 'pointer', opacity: 1, emphasis: 'FILLED' as const,
+  };
+  const app = new FakeApp({
+    start: 'a', clicks: { unnamed: 'z' },
+    pages: {
+      a: { path: '/a', sdkState: 'a', elements: [element({ ref: 'unnamed', name: null, geometry })] },
+      z: { path: '/z', sdkState: 'z', elements: [] },
+    },
+    measure: () => ({ viewport: { width: 1000, height: 500 }, horizontalOverflowPx: 0, smallestTextPx: 16 }),
+  });
+  let requests = 0;
+  Object.assign(app, { screenAnalysis: async () => {
+    requests += 1;
+    return {
+      requestId: 'ocr-1', model: 'baidu/Unlimited-OCR', modelRevision: 'rev', image: { width: 1000, height: 500 },
+      text: 'Continue', detections: [{ type: 'text', text: 'Continue', boxPixels: [100, 100, 300, 150] }], latencyMs: 5,
+    };
+  } });
+  const result = await runAutomation(app, config({ contract, targetStateKey: 'z' }));
+  assert.equal(result.stopReason, 'TERMINAL_STATE_REACHED');
+  assert.equal(requests, 1);
+  assert.deepEqual(clicks(app), ['unnamed']);
+  assert.equal(app.events.find((event) => event.type === 'QA_AUTOMATION_ACTION_SELECTED')?.data.method, 'VISUAL_TEXT');
+  const evidence = app.events.find((event) => event.type === 'QA_AUTOMATION_OCR_ANALYSIS');
+  assert.equal(evidence?.data.outcome, 'ASSISTED');
+  assert.ok(!JSON.stringify(evidence).includes('image_base64'));
+});
+
+test('healthy deterministic runs make no screen-analysis request', async () => {
+  const app = lmsApp();
+  let requests = 0;
+  Object.assign(app, { screenAnalysis: async () => { requests += 1; return null; } });
+  await runAutomation(app, config());
+  assert.equal(requests, 0);
+});
+
+test('production never invokes screen analysis', async () => {
+  const app = new FakeApp({
+    start: 'details', pages: { details: { path: '/courses/7', sdkState: 'course_details', elements: [element({ ref: 'x', name: null })] } }, clicks: {},
+  });
+  let requests = 0;
+  Object.assign(app, { screenAnalysis: async () => { requests += 1; return null; } });
+  await runAutomation(app, config({ environment: 'PRODUCTION' }));
+  assert.equal(requests, 0);
+});
+
 test('a hidden matching control is reported as such', async () => {
   const hidden = new FakeApp({
     start: 'details',

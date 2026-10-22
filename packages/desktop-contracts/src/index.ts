@@ -1111,7 +1111,12 @@ export const FlowInitializationSchema = z.object({
   mode: z.enum(['AUTOMATED', 'MANUAL']).nullable(),
   stage: z.enum(['SDK_REQUIRED', 'SCANNING', 'REVIEW_READY', 'ROADMAP_READY', 'AWAITING_APPROVAL', 'APPLYING', 'AWAITING_TELEMETRY', 'COMPLETED', 'FAILED']),
   manifestVersion: z.string(), manifest: FlowInitializationManifestSchema.nullable(), reportProvenance: z.unknown().nullable(),
-  selectedTargetAdapters: z.array(z.string()), roadmapRevision: z.number().int(), manualRoadmap: ManualRoadmapSchema.nullable(), verification: CheckpointCoverageSchema.nullable(),
+  selectedTargetAdapters: z.array(z.string()),
+  // Checkpoints the user has confirmed fire from more than one place in the
+  // code on purpose; a code scan stops reporting their extra locations as a
+  // DUPLICATE_MARKER defect once confirmed.
+  confirmedDuplicateCheckpointIds: z.array(z.string()).default([]),
+  roadmapRevision: z.number().int(), manualRoadmap: ManualRoadmapSchema.nullable(), verification: CheckpointCoverageSchema.nullable(),
   instrumentationPlanId: z.string().uuid().nullable(), patchSetId: z.string().uuid().nullable(), codeReviewReport: FlowCodeReviewReportSchema.nullable(), validation: z.unknown().nullable(),
 }).passthrough();
 
@@ -1439,6 +1444,7 @@ export const IPC = {
   updateFlowRoadmapStep: 'tellann:flow:initialization:roadmap:step',
   startFlowVerification: 'tellann:flow:initialization:verification:start',
   verifyFlowCheckpointsInCode: 'tellann:flow:initialization:verification:code-scan',
+  confirmFlowDuplicateMarker: 'tellann:flow:initialization:verification:duplicate-marker:confirm',
   getFlowVerification: 'tellann:flow:initialization:verification:get',
   rescanFlow: 'tellann:flow:rescan',
   approveFlowInitialization: 'tellann:flow:initialization:approve',

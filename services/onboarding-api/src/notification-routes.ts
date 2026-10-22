@@ -478,13 +478,21 @@ export function createNotificationRouter(input: {
     const { orgId } = req.params;
     const userId = req.user!.id;
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.write('retry: 5000\n\n');
+    let closed = false;
+
+    try {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write('retry: 5000\n\n');
+    } catch (err) {
+      console.error('[Notifications] stream open error', err);
+      closed = true;
+      return;
+    }
 
     const startCursor =
       (typeof req.headers['last-event-id'] === 'string' && req.headers['last-event-id']) ||
@@ -493,7 +501,6 @@ export function createNotificationRouter(input: {
     let cursor = new Date(startCursor);
     if (Number.isNaN(cursor.getTime())) cursor = new Date();
 
-    let closed = false;
     let wake = false;
 
     async function flush() {
@@ -542,7 +549,16 @@ export function createNotificationRouter(input: {
     }
 
     const heartbeat = setInterval(() => {
-      if (!closed) res.write(`: heartbeat ${Date.now()}\n\n`);
+      if (closed) return;
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch (err) {
+        console.error('[Notifications] stream heartbeat error', err);
+        closed = true;
+        clearInterval(poll);
+        clearInterval(heartbeat);
+        notificationHub.off('notification.created', onHubEvent);
+      }
     }, STREAM_HEARTBEAT_MS);
 
     req.on('close', () => {

@@ -390,3 +390,92 @@ test('a Flow with fifty-odd checkpoints and real excerpts is accepted, not refus
     await cleanup(data);
   }
 });
+
+test('a checkpoint found in two places can be confirmed as intentional', async () => {
+  // Manual initialization only needs the Flow's boundaries, so a marker found
+  // at a second location is what this exercises: the scan refuses to call the
+  // boundary found until the user has looked at both places and said so.
+  const data = await seed();
+  const app = express();
+  app.use(express.json({ limit: '2mb' }));
+  const verifyJwt = (req: Request & { user?: { id: string; email: string } }, res: Response, next: NextFunction) => {
+    if (String(req.headers['x-test-user'] ?? '') !== data.user.id) return res.status(401).json({ error: 'UNAUTHENTICATED' });
+    req.user = { id: data.user.id, email: data.user.email };
+    next();
+  };
+  app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership: (_q, _s, next) => next() }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const created = await request(baseUrl, data.user.id, `/flows/${data.flow.id}/initializations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        flowVersionId: data.version.id, workspaceId: data.workspace.id,
+        repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id,
+        awaitingAnalysis: true,
+      }),
+    });
+    expectStatus(created, 201);
+    const initializationId = String(created.json().initialization.id);
+    const manifest = created.json().initialization.manifest;
+    const markerFor = (id: string) => manifest.checkpoints.find((item: any) => item.id === id).marker;
+    const startMarker = markerFor(`state:${STATE_START}`);
+    const doneMarker = markerFor(`state:${STATE_DONE}`);
+
+    const manual = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mode`, {
+      method: 'POST', body: JSON.stringify({ mode: 'MANUAL' }),
+    });
+    expectStatus(manual, 200);
+
+    // The initial-state marker was pasted onto two pages.
+    const scanned = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/verification/code-scan`, {
+      method: 'POST',
+      body: JSON.stringify({ matches: [
+        { file: 'src/login.tsx', line: 4, flow: startMarker.flow, state: startMarker.state },
+        { file: 'src/admin-login.tsx', line: 6, flow: startMarker.flow, state: startMarker.state },
+        { file: 'src/paid.ts', line: 9, flow: doneMarker.flow, state: doneMarker.state },
+      ] }),
+    });
+    expectStatus(scanned, 200);
+    const blocked = scanned.json();
+    assert.equal(blocked.completed, false, 'a second location defaults to a defect, not evidence');
+    assert.deepEqual(blocked.verification.missingCheckpointIds, [], 'both boundaries were found');
+    assert.deepEqual(
+      blocked.verification.markerProblems,
+      [{ code: 'DUPLICATE_MARKER', checkpointId: `state:${STATE_START}`, file: 'src/admin-login.tsx', line: 6 }],
+    );
+
+    // Confirming a checkpoint with nothing unconfirmed is refused.
+    const nothingToConfirm = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/verification/duplicate-markers/${encodeURIComponent(`state:${STATE_DONE}`)}/confirm`, { method: 'POST' });
+    assert.equal(nothingToConfirm.status, 409);
+    assert.equal(nothingToConfirm.json().error, 'NO_DUPLICATE_MARKER_TO_CONFIRM');
+
+    // Confirming the flagged checkpoint accepts both locations as evidence.
+    const confirmedDuplicate = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/verification/duplicate-markers/${encodeURIComponent(`state:${STATE_START}`)}/confirm`, { method: 'POST' });
+    expectStatus(confirmedDuplicate, 200);
+    const resolved = confirmedDuplicate.json();
+    assert.equal(resolved.completed, true, JSON.stringify(resolved.verification));
+    assert.equal(resolved.verification.status, 'COMPLETED');
+    assert.deepEqual(resolved.verification.markerProblems, []);
+    assert.deepEqual(resolved.confirmedDuplicateCheckpointIds, [`state:${STATE_START}`]);
+
+    // A later re-scan with the same two locations stays complete, unprompted.
+    const rescanned = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/verification/code-scan`, {
+      method: 'POST',
+      body: JSON.stringify({ matches: [
+        { file: 'src/login.tsx', line: 4, flow: startMarker.flow, state: startMarker.state },
+        { file: 'src/admin-login.tsx', line: 6, flow: startMarker.flow, state: startMarker.state },
+        { file: 'src/paid.ts', line: 9, flow: doneMarker.flow, state: doneMarker.state },
+      ] }),
+    });
+    expectStatus(rescanned, 200);
+    assert.equal(rescanned.json().completed, true, 'a confirmed checkpoint does not re-raise on the next scan');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await cleanup(data);
+  }
+});

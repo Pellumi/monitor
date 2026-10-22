@@ -2585,6 +2585,11 @@ model FlowInitialization {
   mappingConfirmations   Json?
   reportProvenance       Json?
   selectedTargetAdapters String[]                 @default([])
+  // Checkpoints the user has confirmed fire from more than one place in the
+  // code on purpose (a shared component rendered from several routes, a page
+  // reachable from two entry points) — once confirmed, a code scan stops
+  // reporting that checkpoint's extra locations as a DUPLICATE_MARKER defect.
+  confirmedDuplicateCheckpointIds String[]         @default([])
   roadmapRevision        Int                      @default(1)
   manualRoadmap          Json?
   verification           Json?

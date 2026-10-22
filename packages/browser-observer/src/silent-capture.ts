@@ -163,7 +163,7 @@ export function maskPng(source: Buffer, rects: MaskRect[]): Buffer | null {
  * shadow roots. The recorder's own overlay is a closed root, so it is never
  * reported.
  */
-function readSensitiveRects(): { rects: MaskRect[]; viewportWidth: number } {
+function readSensitiveRects(protectedValues: string[]): { rects: MaskRect[]; viewportWidth: number } {
   const selector = 'input, textarea, select, [contenteditable="true"], [data-tellann-sensitive]';
   const rects: MaskRect[] = [];
   const visit = (root: ParentNode) => {
@@ -177,6 +177,28 @@ function readSensitiveRects(): { rects: MaskRect[]; viewportWidth: number } {
     }
   };
   visit(document);
+  // Values supplied by the automation can be echoed outside their original
+  // field after submission. Mask their exact rendered text ranges too.
+  const values = protectedValues.filter((value) => value.length > 0);
+  if (values.length > 0) {
+    const walker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const value = node.nodeValue ?? '';
+      for (const protectedValue of values) {
+        let from = 0;
+        for (;;) {
+          const index = value.indexOf(protectedValue, from);
+          if (index < 0) break;
+          const range = document.createRange();
+          range.setStart(node, index);
+          range.setEnd(node, index + protectedValue.length);
+          const box = range.getBoundingClientRect();
+          if (box.width > 0 && box.height > 0) rects.push({ x: box.left, y: box.top, width: box.width, height: box.height });
+          from = index + protectedValue.length;
+        }
+      }
+    }
+  }
   // `innerWidth`, not `clientWidth`: the captured image includes the scrollbar.
   return { rects, viewportWidth: innerWidth };
 }
@@ -186,7 +208,7 @@ function readSensitiveRects(): { rects: MaskRect[]; viewportWidth: number } {
  * touching the page. Returns false when it could not, in which case nothing is
  * written and the caller should use the painted-mask path instead.
  */
-export async function captureMaskedViewport(page: Page, file: string): Promise<boolean> {
+export async function captureMaskedViewportBuffer(page: Page, protectedValues: string[] = []): Promise<Buffer | null> {
   let session: Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>> | null = null;
   try {
     session = await page.context().newCDPSession(page);
@@ -194,23 +216,28 @@ export async function captureMaskedViewport(page: Page, file: string): Promise<b
     // the union of the two. The page can move in the milliseconds between the
     // reads (a scroll, an animating panel), and a field that had moved out from
     // under a single early read would otherwise be left readable.
-    const before = await page.evaluate(readSensitiveRects);
+    const before = await page.evaluate(readSensitiveRects, protectedValues);
     const shot = await session.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    const after = await page.evaluate(readSensitiveRects);
+    const after = await page.evaluate(readSensitiveRects, protectedValues);
     const png = Buffer.from(shot.data, 'base64');
-    if (png.length < 33) return false;
+    if (png.length < 33) return null;
     const imageWidth = png.readUInt32BE(16);
     const { viewportWidth } = after;
     const scale = viewportWidth > 0 ? imageWidth / viewportWidth : 1;
     const masked = maskPng(png, [...before.rects, ...after.rects].map((rect) => ({
       x: rect.x * scale, y: rect.y * scale, width: rect.width * scale, height: rect.height * scale,
     })));
-    if (!masked) return false;
-    fs.writeFileSync(file, masked);
-    return true;
+    return masked;
   } catch {
-    return false;
+    return null;
   } finally {
     await session?.detach().catch(() => undefined);
   }
+}
+
+export async function captureMaskedViewport(page: Page, file: string): Promise<boolean> {
+  const masked = await captureMaskedViewportBuffer(page);
+  if (!masked) return false;
+  fs.writeFileSync(file, masked);
+  return true;
 }

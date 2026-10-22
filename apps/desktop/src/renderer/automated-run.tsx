@@ -74,6 +74,7 @@ interface SetupProps {
   reload(): Promise<void>;
   onUseMode(mode: "GUIDED" | "ASSISTED"): void;
   declaredLogin?: DeclaredFlowLogin | null;
+  blockerActions?: Partial<Record<Blocker["fix"], { label: string; to: string }>>;
 }
 
 export function AutomatedRunSetup(props: SetupProps) {
@@ -110,7 +111,14 @@ export function AutomatedRunSetup(props: SetupProps) {
           {blockers.map((blocker) => (
             <li key={blocker.code}>
               <AlertTriangle size={14} aria-hidden />
-              <span><strong>{blocker.title}.</strong> {blocker.message}</span>
+              <div className="automated-blocker-content">
+                <span><strong>{blocker.title}.</strong> {blocker.message}</span>
+                {props.blockerActions?.[blocker.fix] ? (
+                  <Link className="button automated-blocker-action" to={props.blockerActions[blocker.fix]!.to}>
+                    {props.blockerActions[blocker.fix]!.label}
+                  </Link>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>

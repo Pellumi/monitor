@@ -1,6 +1,9 @@
 # Dependency directories
 node_modules/
 .pnpm-store/
+.venv-modal/
+__pycache__/
+*.py[cod]
 
 # Build and build cache outputs
 dist/

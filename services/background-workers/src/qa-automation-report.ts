@@ -253,6 +253,15 @@ export function summarizeAutomationEvidence(
         notes.push('A saved sign-in for this persona was no longer accepted, so the run signed in again.');
         break;
       }
+      case 'QA_AUTOMATION_OCR_ANALYSIS': {
+        const reason = text(meta.reason) ?? 'an uncertain screen';
+        if (meta.status === 'SUCCEEDED' && meta.outcome === 'ASSISTED') {
+          notes.push(`Masked screen-text analysis corroborated ${reason.toLowerCase().replace(/_/g, ' ')}; the result remained assisted evidence.`);
+        } else if (meta.status !== 'SUCCEEDED') {
+          notes.push(`Screen-text analysis was unavailable for ${reason.toLowerCase().replace(/_/g, ' ')}; the deterministic result was retained.`);
+        }
+        break;
+      }
       case 'QA_AUTOMATION_TRACE_RETAINED': {
         if (retainedTraces.length < MAX_DIAGNOSTICS) {
           retainedTraces.push({
@@ -305,7 +314,7 @@ export function summarizeAutomationEvidence(
   const declared = new Set(declaredStateKeys.map(normalizeKey)).size;
   const inFlow = states.filter((state) => state.scope === 'IN_FLOW');
   const limitations = [
-    ...notes,
+    ...new Set(notes),
     ...(responsive.length === 0 ? ['No window sizes were checked, so nothing here says how this Flow behaves on a phone or a tablet.'] : []),
     // A state with no action at all has no settle time either, so the question is whether any action has one.
     ...(states.some((state) => typeof state.action?.settledMs === 'number') ? [] : ['How the pages were drawn was not measured, so nothing here says anything about legibility, tap targets or contrast.']),

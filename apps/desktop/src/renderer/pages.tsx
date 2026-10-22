@@ -141,7 +141,7 @@ import {
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
 import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
-import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
+import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, isLoopbackApplicationUrl, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
 import { transitionDeclarationSummary } from "@tellann/flow-layout";
@@ -7504,6 +7504,8 @@ function FlowRoadmap({
   scanOutcome,
   onToggle,
   onVerify,
+  onConfirmDuplicate,
+  pendingDuplicateCheckpointId,
   onRebuild,
   onRevealEvidence,
 }: {
@@ -7517,6 +7519,10 @@ function FlowRoadmap({
   scanOutcome: FlowCodeScanOutcome | null;
   onToggle(stepId: string, completed: boolean): void;
   onVerify(): void;
+  /** Accept a checkpoint's extra code locations as intentional, not a defect. */
+  onConfirmDuplicate?: (checkpointId: string) => void;
+  /** The checkpoint whose duplicate is being confirmed right now, if any. */
+  pendingDuplicateCheckpointId?: string | null;
   onRebuild?: () => void;
   /** Opens a step's location in the editor; absent when no folder is attached. */
   onRevealEvidence?: (file: string, line?: number | null) => void;
@@ -7525,6 +7531,32 @@ function FlowRoadmap({
     () => new Map(roadmap.steps.map((step) => [step.id, step] as const)),
     [roadmap.steps],
   );
+
+  // Checkpoints the scan found in more than one place. `codeEvidence` already
+  // holds every distinct (checkpointId, file, line) the scan resolved — the
+  // first location included — so grouping it by the checkpoints that still
+  // have an unconfirmed DUPLICATE_MARKER gives every candidate location to
+  // choose between, not just the second one onward.
+  const duplicateCheckpoints = useMemo(() => {
+    const flagged = new Set<string>(
+      (verification?.markerProblems ?? [])
+        .filter((item: any) => item?.code === "DUPLICATE_MARKER")
+        .map((item: any) => String(item.checkpointId)),
+    );
+    if (!flagged.size) return [];
+    const locationsById = new Map<string, Array<{ file: string; line: number }>>();
+    for (const item of verification?.codeEvidence ?? []) {
+      const checkpointId = String(item?.checkpointId ?? "");
+      if (!flagged.has(checkpointId)) continue;
+      if (!locationsById.has(checkpointId)) locationsById.set(checkpointId, []);
+      locationsById.get(checkpointId)!.push({ file: item.file, line: item.line });
+    }
+    return [...flagged].map((checkpointId) => ({
+      checkpointId,
+      title: stepById.get(checkpointId)?.title ?? checkpointId,
+      locations: locationsById.get(checkpointId) ?? [],
+    }));
+  }, [verification?.markerProblems, verification?.codeEvidence, stepById]);
 
   // Lay states out in longest-path layers from the declared initial state;
   // transitions become the edges between them.
@@ -7907,6 +7939,60 @@ function FlowRoadmap({
         </div>
       ) : null}
 
+      {duplicateCheckpoints.length ? (
+        <div className="flow-required-markers" role="alert">
+          <div className="flow-required-head">
+            <h3>Found in more than one place</h3>
+            <Status>Needs a choice</Status>
+          </div>
+          <p className="muted">
+            Tellann found these markers in more than one file. That is fine if
+            this really does start (or finish) in each of those places — a
+            shared component rendered from a few routes, say — but it can also
+            mean the snippet was pasted somewhere it should not have been.
+            Confirm it only once you have checked every location below.
+          </p>
+          <div className="flow-required-list">
+            {duplicateCheckpoints.map((item) => (
+              <div key={item.checkpointId} className="flow-required-item">
+                <small className="muted">{quotedName(item.title)}</small>
+                <ul className="flow-candidate-list">
+                  {item.locations.map((location, index) => (
+                    <li key={`${location.file}:${location.line}:${index}`}>
+                      <code>
+                        {location.file}
+                        {location.line ? `:${location.line}` : ""}
+                      </code>
+                    </li>
+                  ))}
+                </ul>
+                <div className="card-actions">
+                  <button
+                    className="button primary"
+                    disabled={
+                      busy || pendingDuplicateCheckpointId !== null
+                    }
+                    onClick={() => onConfirmDuplicate?.(item.checkpointId)}
+                  >
+                    {pendingDuplicateCheckpointId === item.checkpointId ? (
+                      <>
+                        <RefreshCw size={14} className="spin" />
+                        Confirming…
+                      </>
+                    ) : (
+                      <>
+                        <Check size={14} />
+                        Yes, this is intentional
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* {graph ? (
         <div className="flow-graph" aria-label="Flow checkpoint graph">
           <div className="flow-graph-canvas-wrap">
@@ -8110,19 +8196,29 @@ function FlowRoadmap({
           {scanOutcome.error}
         </p>
       ) : scanOutcome && !scanOutcome.completed ? (
-        <p className="muted-callout" role="status">
-          Searched {scanOutcome.filesScanned.toLocaleString()} source file
-          {scanOutcome.filesScanned === 1 ? "" : "s"} in the attached project and
-          could not find{" "}
-          {verification?.missingCheckpointIds?.length
-            ? verification.missingCheckpointIds
-                .map((id: string) => `“${quotedName(stepById.get(id)?.title ?? id)}”`)
-                .join(" or ")
-            : "the start and finish markers"}
-          . Add the line
-          {verification?.missingCheckpointIds?.length === 1 ? "" : "s"} above,
-          save the file, then check again.
-        </p>
+        verification?.missingCheckpointIds?.length ? (
+          <p className="muted-callout" role="status">
+            Searched {scanOutcome.filesScanned.toLocaleString()} source file
+            {scanOutcome.filesScanned === 1 ? "" : "s"} in the attached project
+            and could not find{" "}
+            {verification.missingCheckpointIds
+              .map((id: string) => `“${quotedName(stepById.get(id)?.title ?? id)}”`)
+              .join(" or ")}
+            . Add the line
+            {verification.missingCheckpointIds.length === 1 ? "" : "s"} above,
+            save the file, then check again.
+          </p>
+        ) : duplicateCheckpoints.length ? (
+          // Both markers were found — the scan is blocked on the "needs a
+          // choice" card above, not on anything missing from the code.
+          <p className="muted-callout" role="status">
+            Searched {scanOutcome.filesScanned.toLocaleString()} source file
+            {scanOutcome.filesScanned === 1 ? "" : "s"} in the attached project
+            and found every required marker — but {duplicateCheckpoints.length}{" "}
+            of them in more than one place. Resolve that above before this
+            Flow can be initialized.
+          </p>
+        ) : null
       ) : null}
     </section>
   );
@@ -8646,6 +8742,7 @@ export function InstrumentationPage() {
     setFlowInitializationMode,
     updateFlowRoadmapStep,
     verifyFlowCheckpointsInCode,
+    confirmFlowDuplicateMarker,
     getFlowVerification,
     confirmFlowMapping,
     confirmFlowMappings,
@@ -8696,6 +8793,10 @@ export function InstrumentationPage() {
   const [scanOutcome, setScanOutcome] = useState<FlowCodeScanOutcome | null>(
     null,
   );
+  // The checkpoint whose "found in more than one place" is being confirmed, so
+  // only that checkpoint's button shows as busy rather than the whole card.
+  const [pendingDuplicateCheckpointId, setPendingDuplicateCheckpointId] =
+    useState<string | null>(null);
   // Until the first readiness check returns, "not connected" is unknown, not false.
   const [setupChecked, setSetupChecked] = useState(false);
 
@@ -9206,6 +9307,32 @@ export function InstrumentationPage() {
     }
   };
 
+  /**
+   * A checkpoint found in more than one place defaults to looking like a
+   * defect, because a scan can't tell a genuine second entry point (a shared
+   * component rendered from two routes) from an accidental copy-paste. This
+   * tells Tellann the user looked at the locations and it is intentional, so
+   * every location counts as evidence from now on instead of blocking setup.
+   */
+  const confirmDuplicateCheckpointMarker = async (checkpointId: string) => {
+    if (!initializationId) return;
+    setPendingDuplicateCheckpointId(checkpointId);
+    try {
+      const result = await confirmFlowDuplicateMarker(
+        initializationId,
+        checkpointId,
+      );
+      await refreshFlowInitialization();
+      if (result?.completed === true) {
+        navigate(
+          `/applications/${projectId}/qa-runs/new${flowId ? `?flowId=${encodeURIComponent(flowId)}` : ""}`,
+        );
+      }
+    } finally {
+      setPendingDuplicateCheckpointId(null);
+    }
+  };
+
   useEffect(() => {
     if (!initializationId || flowInitialization?.stage !== "AWAITING_TELEMETRY")
       return;
@@ -9558,6 +9685,10 @@ export function InstrumentationPage() {
                 void toggleRoadmapStep(stepId, completed)
               }
               onVerify={() => void verifyCheckpointsInCode()}
+              onConfirmDuplicate={(checkpointId) =>
+                void confirmDuplicateCheckpointMarker(checkpointId)
+              }
+              pendingDuplicateCheckpointId={pendingDuplicateCheckpointId}
               onRebuild={
                 initializationId &&
                 flowInitialization.verification?.status !== "COMPLETED"
@@ -12541,6 +12672,48 @@ export function NewRunPage() {
     const first = automation.options?.profiles.find((profile) => profile.status === "APPROVED") ?? automation.options?.profiles[0];
     setAutomatedSelection((current) => (current.profileId && automation.options?.profiles.some((profile) => profile.id === current.profileId) ? current : { ...current, profileId: first?.id ?? "" }));
   }, [automation.options]);
+  // Typing a deployed address into "Application URL" says nothing on its own to "How should Tellann start your
+  // application?" — that picker only ever offers profiles the workspace scan proposed or a person saved by hand.
+  // Bridge the two: once the address settles, if it isn't this machine and no saved profile already answers to
+  // it, save a "starts nothing" profile for it and select it, the same thing "My application is already running"
+  // does by hand.
+  useEffect(() => {
+    if (mode !== "AUTOMATED" || !automatedEntitled || environment?.type === "PRODUCTION") return;
+    if (!projectId || !automation.options) return;
+    let normalized: string;
+    try {
+      normalized = new URL(targetUrl.trim()).toString();
+    } catch {
+      return;
+    }
+    if (isLoopbackApplicationUrl(normalized)) return;
+    const matching = automation.options.profiles.find((profile) => {
+      try {
+        return new URL(profile.applicationUrl).toString() === normalized;
+      } catch {
+        return false;
+      }
+    });
+    if (matching) {
+      setAutomatedSelection((current) => (current.profileId === matching.id ? current : { ...current, profileId: matching.id }));
+      return;
+    }
+    const timer = setTimeout(() => {
+      void window.tellann!.automation
+        .saveProfile({
+          applicationId: projectId,
+          name: `Already running at ${new URL(normalized).host}`,
+          processes: [],
+          applicationUrl: normalized,
+        })
+        .then(async (saved) => {
+          await automation.reload();
+          setAutomatedSelection((current) => ({ ...current, profileId: saved.id }));
+        })
+        .catch(() => undefined);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [mode, automatedEntitled, environment?.type, projectId, targetUrl, automation.options, automation.reload]);
   useEffect(() => {
     const requires = (flowDetail as { requires?: { actor?: string; environments?: string[]; data?: string[] } | null } | null)?.requires;
     setAutomatedSelection((current) => reconcileAutomatedResourceSelection(automation.options, current, requires));
@@ -12604,6 +12777,20 @@ export function NewRunPage() {
         }),
       ]
     : [];
+  const selectedFlowSetupHref = flowInitializationHref(projectId, selectedFlow, environmentId);
+  const selectedFlowFallbackHref = selectedFlow
+    ? `/applications/${projectId}/intent/flows/${selectedFlow.id}`
+    : `/applications/${projectId}/intent`;
+  const automatedBlockerActions = {
+    ANALYSE_CODE: {
+      label: automation.options?.analysisReady ? "Analyse code again" : "Analyse code",
+      to: `/applications/${projectId}/workspace`,
+    },
+    INITIALISE_FLOW: {
+      label: selectedFlowSetupHref ? "Initialise Flow" : selectedFlow ? "Open and publish Flow" : "Choose a Flow",
+      to: selectedFlowSetupHref ?? selectedFlowFallbackHref,
+    },
+  };
   const begin = async () => {
     const isAutomatedAttempt = mode === "AUTOMATED";
     if (isAutomatedAttempt && automatedStartPendingRef.current) return;
@@ -12913,6 +13100,7 @@ export function NewRunPage() {
             reload={automation.reload}
             declaredLogin={automatedDeclaredLogin}
             onUseMode={(next) => setMode(next)}
+            blockerActions={automatedBlockerActions}
           />
         ) : null}
         {automatedRefusal ? (
@@ -13029,12 +13217,16 @@ export function NewRunPage() {
             <Activity size={16} />
             Continue run
           </button>
+        ) : mode === "AUTOMATED" && automatedStartPending ? (
+          <div className="automated-start-skeleton" role="status" aria-live="polite" aria-label="Starting automated run">
+            <span className="automated-start-skeleton-icon" aria-hidden />
+            <span className="automated-start-skeleton-label" aria-hidden />
+          </div>
         ) : (
         <button
           className="button primary"
           disabled={
             busy ||
-            automatedStartPending ||
             !targetUrl ||
             !environmentId ||
             Boolean(mode === "GUIDED" && (!selectedFlow || !expectedGraphVersionId || !selectedFlowReadiness?.ready)) ||
@@ -13045,13 +13237,12 @@ export function NewRunPage() {
               !productionObservationApproved,
             )
           }
-          aria-busy={mode === "AUTOMATED" && automatedStartPending}
           onClick={() => void begin()}
         >
-          {mode === "AUTOMATED" && automatedStartPending ? <RefreshCw className="spin" size={16} /> : <Play size={16} />}
+          <Play size={16} />
           {environment?.type === "PRODUCTION"
             ? "Start observation-only run"
-            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : mode === "AUTOMATED" ? automatedStartPending ? "Starting automated run…" : "Start automated run" : "Start read-only observation"}
+            : mode === "GUIDED" ? "Start guided run" : mode === "ASSISTED" ? "Start assisted run" : mode === "AUTOMATED" ? "Start automated run" : "Start read-only observation"}
         </button>
         )}
       </section>

@@ -1,4 +1,5 @@
 export * from './types';
+export * from './screen-analysis';
 export * from './keys';
 export * from './recognizer';
 export * from './ranking';
