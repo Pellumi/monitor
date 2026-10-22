@@ -1,6 +1,42 @@
 import { initTracing } from '@tellann/telemetry';
 initTracing('onboarding-api');
 
+/**
+ * `console.warn`/`console.error` write to `process.stderr`, which — unlike a
+ * TTY — is a pipe back to whatever is supervising this process (ts-node-dev,
+ * a terminal multiplexer, a log collector). If that reader hiccups while a
+ * large synchronous dump lands on it (exactly what the S3 SDK's failed-upload
+ * error object produces), the write fails with EPIPE. Node only special-cases
+ * that for `process.stdout`; an unhandled `error` on a stream throws instead
+ * of emitting, which took the whole server down on every one of these. The
+ * process keeps serving everything else either way, so a dropped log line is
+ * the right trade here.
+ */
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code !== 'EPIPE') throw err;
+  });
+}
+
+/**
+ * Backstop for the same class of error reaching us through some other stream
+ * than the two guarded above (a response write after a client disconnected,
+ * for instance). Only EPIPE/ECONNRESET are swallowed — both mean "the other
+ * side went away", never a correctness bug — so an actual defect still
+ * crashes the process exactly as it did before.
+ */
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+    console.error('[OnboardingAPI] Swallowed a disconnected-client write error', err);
+    return;
+  }
+  // Re-throwing from inside this handler isn't safe (Node docs: resuming
+  // after an unknown uncaughtException isn't either) — exit the same way
+  // Node's own default handler would, just with our own log line first.
+  console.error('[OnboardingAPI] Uncaught exception, exiting', err);
+  process.exit(1);
+});
+
 import express, { Request, Response, NextFunction } from 'express';
 import { AuditAction, EmailCategory, EnvironmentType, MemberRole, NotificationFrequency, NotificationSeverity, PrismaClient, aggregateAiUsageDaily, aiUsageDateRangeForDays, backfillAiUsageDaily, utcDayStart } from '@tellann/db';
 import { Feature, Services, isReportFormatEntitled, reportFormatsForTier, useBigIntJson } from '@tellann/shared';
