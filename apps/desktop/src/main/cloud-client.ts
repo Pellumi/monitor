@@ -95,6 +95,11 @@ function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Without this, a gateway that accepts the connection but never responds hangs
+ * the request (and every page awaiting it) forever — there is no other timeout
+ * anywhere in this path. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   const method = (init.method ?? "GET").toUpperCase();
@@ -118,6 +123,7 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
       method,
       headers,
       body: requestBody,
+      signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (cause) {
     const endpoint = new URL(url).origin;
