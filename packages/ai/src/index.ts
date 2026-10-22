@@ -26,6 +26,7 @@ export * from './prompts/flow-language.prompt';
 export * from './codebase-explanations';
 export * from './finding-resolution';
 export * from './flow-mapping';
+export * from './flow-sustainability-review';
 
 // ─────────────────────────────────────────────────────────────
 // Types

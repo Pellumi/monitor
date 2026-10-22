@@ -127,7 +127,7 @@ export interface AutomatedRunInput {
   now?: () => number;
 }
 
-type EventType = (typeof QA_AUTOMATION_EVENT_TYPES)[number];
+export type EventType = (typeof QA_AUTOMATION_EVENT_TYPES)[number];
 
 export async function executeAutomatedRun(input: AutomatedRunInput): Promise<AutomationResult> {
   const now = input.now ?? (() => Date.now());
@@ -287,7 +287,7 @@ async function execute(
   return runAutomation(ports, config);
 }
 
-type EntryOutcome = { ok: true } | { ok: false; stopReason: AutomationResult["stopReason"]; detail: string };
+export type EntryOutcome = { ok: true } | { ok: false; stopReason: AutomationResult["stopReason"]; detail: string };
 
 /**
  * Turns the otherwise accurate but unhelpful "no route" entry-planner result into the setup problem a person
@@ -350,7 +350,7 @@ async function explainEntryFailure(
  * `sessionAuthenticated` says the browser is believed to be signed in already, which is what keeps the planner
  * from routing through a login form it does not need.
  */
-async function walkToInitialState(
+export async function walkToInitialState(
   input: AutomatedRunInput,
   initialRoute: string,
   record: (type: EventType, data: Record<string, unknown>) => void,
@@ -420,7 +420,7 @@ function firstLine(error: unknown): string {
 }
 
 /** Every credential value the persona will type, for registration as protected. */
-function personaCredentialDataValues(persona: TestPersona | null): string[] {
+export function personaCredentialDataValues(persona: TestPersona | null): string[] {
   if (!persona) return [];
   const lookup = personaCredentialData(persona);
   return persona.credentials.flatMap((credential) => {

@@ -71,6 +71,7 @@ const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: false },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: false },
 ];
 
 const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
@@ -81,6 +82,7 @@ const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.STANDARD },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.STANDARD },
 ];
 
 const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
@@ -91,6 +93,7 @@ const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.STANDARD },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
 const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
@@ -101,6 +104,7 @@ const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
 /** Business and Enterprise add Automated Run: everything Team has, with the executing capability on. */

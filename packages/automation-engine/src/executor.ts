@@ -23,6 +23,7 @@ import type {
   Breakpoint,
   EnvironmentKind,
   ExecutableContract,
+  ExecutableTransition,
   ObservedRequest,
   Recognition,
   ScreenAnalysisReason,
@@ -737,6 +738,157 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     retrying = true;
     emit('QA_AUTOMATION_REPLAN', { reason: 'NO_PROGRESS', expected: next.to, observed: landed?.stateKey ?? null, attempt: tries });
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Coverage review: the live half of a pre-publish Flow Sustainability Review (criterion 5,
+// reinforcing criterion 3). Deliberately not a mode on `runAutomation` above — that loop's
+// whole shape is "stop at the first unresolved step," which is correct for a QA run (one
+// failure is the result) and wrong here (every declared transition needs its own verdict, so
+// one failure must never stop the rest from being checked).
+// ─────────────────────────────────────────────────────────────
+
+export interface CoverageReviewConfig {
+  contract: ExecutableContract;
+  environment: EnvironmentKind;
+  limits: AutomationLimits;
+  policy?: PolicyOptions;
+}
+
+export interface CoverageReviewFinding {
+  transitionId: string | null;
+  stateKey: string | null;
+  reason: 'REQUIRED_FIELD_NOT_DECLARED' | 'DATA_UNAVAILABLE' | 'FIELD_NOT_FOUND' | 'UNREACHABLE';
+  detail: string | null;
+}
+
+export interface CoverageReviewResult {
+  visitedStateKeys: string[];
+  visitedTransitionIds: string[];
+  findings: CoverageReviewFinding[];
+  elapsedMs: number;
+}
+
+/**
+ * Performs just enough of the declared Flow to resolve — never necessarily perform — every
+ * transition reachable from the initial state, against the live, running application.
+ *
+ * `resolveStep` is pure and read-only: finding the control and planning the fills it would
+ * need (exactly what catches `REQUIRED_FIELD_NOT_DECLARED`, `DATA_UNAVAILABLE` and
+ * `FIELD_NOT_FOUND`) never touches the page. That is what makes full coverage affordable in
+ * one walk: every outgoing transition of a visited state can be resolved against the same
+ * snapshot — branch and all — and only one of them, the one that carries the walk onward, is
+ * ever actually clicked. A branch the walk itself never takes (because taking it would leave
+ * this state for good) still gets its declared fields checked against the real page; it just
+ * is not performed, exactly as `AUTO` steps are never guessed at elsewhere in this engine.
+ */
+export async function runCoverageReview(ports: AutomationPorts, config: CoverageReviewConfig): Promise<CoverageReviewResult> {
+  const { contract } = config;
+  const budget = new RunBudget(config.limits, () => ports.now());
+  const findings: CoverageReviewFinding[] = [];
+  const visitedStateKeys = new Set<string>();
+  const visitedTransitionIds = new Set<string>();
+  const data = (key: string) => ports.data?.(key);
+
+  // Every transition whose `from` state has no declared route from the initial state is
+  // reported once, up front, without touching the app: nothing live will ever reach it to
+  // test it otherwise, and that is itself the finding.
+  for (const transition of contract.transitions) {
+    if (transition.from === contract.initialStateKey) continue;
+    const reachable = planFlowPath(contract, contract.initialStateKey, transition.from, config.environment, config.policy);
+    if (!reachable.ok) {
+      findings.push({
+        transitionId: transition.id, stateKey: transition.from, reason: 'UNREACHABLE',
+        detail: `No declared route from the initial state reaches ${transition.from}, so ${transition.id} was never tested against the live application.`,
+      });
+    }
+  }
+
+  let snapshot = await ports.snapshot();
+  let recognition = recognizeAmong(snapshot, contract.states);
+  // Getting to the initial state is setup, not part of the Flow — the same split `runAutomation` makes.
+  if (!recognition.best) {
+    const entered = ports.seekInitial ? await ports.seekInitial() : null;
+    if (!entered) return { visitedStateKeys: [], visitedTransitionIds: [], findings, elapsedMs: budget.elapsedMs() };
+    snapshot = entered;
+    recognition = recognizeAmong(snapshot, contract.states);
+  }
+  const queue: string[] = recognition.best ? [recognition.best.stateKey] : [];
+
+  while (queue.length > 0) {
+    if (budget.exceeded()) break;
+    const stateKey = queue.shift()!;
+    if (visitedStateKeys.has(stateKey)) continue;
+
+    if (recognition.best?.stateKey !== stateKey) {
+      const plan = planFlowPath(contract, recognition.best?.stateKey ?? contract.initialStateKey, stateKey, config.environment, config.policy);
+      if (!plan.ok) continue; // Unreachable from here right now; already on record above if it is unreachable from the start at all.
+      const walked = await walkCoverageSteps(ports, plan.transitions, data, config.environment, config.policy);
+      if (!walked.ok) continue;
+      snapshot = walked.snapshot;
+      recognition = recognizeAmong(snapshot, contract.states);
+      if (recognition.best?.stateKey !== stateKey) continue; // Landed somewhere else; this visit does not count.
+    }
+    visitedStateKeys.add(stateKey);
+
+    let advanceVia: { transition: ExecutableTransition; resolved: Extract<ReturnType<typeof resolveStep>, { ok: true }> } | null = null;
+    for (const transition of contract.transitions.filter((candidate) => candidate.from === stateKey)) {
+      visitedTransitionIds.add(transition.id);
+      if ((transition.mode ?? 'AUTO') !== 'AUTO' || !transition.control) continue; // A person's own step, or nothing to resolve against: not this check's business.
+      const resolved = resolveStep(snapshot, { control: transition.control, inputs: transition.inputs, data, label: transition.action ?? transition.id });
+      if (!resolved.ok) {
+        if (resolved.reason === 'REQUIRED_FIELD_NOT_DECLARED' || resolved.reason === 'DATA_UNAVAILABLE' || resolved.reason === 'FIELD_NOT_FOUND') {
+          findings.push({ transitionId: transition.id, stateKey, reason: resolved.reason, detail: resolved.detail });
+        }
+        continue;
+      }
+      // The first resolvable, policy-permitted transition carries the walk onward; any other
+      // resolvable sibling was still checked above, just never clicked — performing every
+      // branch would mean reaching this state more than once, which only a dedicated
+      // multi-path run supports. A resolvable transition the environment's safety policy
+      // blocks is still worth having resolved (its declared fields are now known-good), but
+      // it is never the one the walk acts on — exactly the belt-and-braces check `runAutomation` applies.
+      if (!advanceVia && evaluateAction(transition.actionClass, config.environment, config.policy).allowed) {
+        advanceVia = { transition, resolved };
+      }
+    }
+
+    if (advanceVia) {
+      const performed = await performStep(ports, advanceVia.resolved);
+      budget.recordStep();
+      if (performed.ok) {
+        snapshot = await ports.settle(advanceVia.transition.to);
+        recognition = recognizeAmong(snapshot, contract.states);
+        if (!visitedStateKeys.has(advanceVia.transition.to)) queue.push(advanceVia.transition.to);
+      }
+    }
+  }
+
+  return {
+    visitedStateKeys: [...visitedStateKeys], visitedTransitionIds: [...visitedTransitionIds],
+    findings, elapsedMs: budget.elapsedMs(),
+  };
+}
+
+/** A single, unretried attempt at a declared path, for getting the coverage walk to a state it has not visited yet. */
+async function walkCoverageSteps(
+  ports: AutomationPorts,
+  transitions: ExecutableTransition[],
+  data: (key: string) => DataValue | undefined,
+  environment: EnvironmentKind,
+  policy: PolicyOptions | undefined,
+): Promise<{ ok: true; snapshot: SemanticSnapshot } | { ok: false }> {
+  let snapshot = await ports.snapshot();
+  for (const transition of transitions) {
+    if ((transition.mode ?? 'AUTO') !== 'AUTO' || !transition.control) return { ok: false };
+    if (!evaluateAction(transition.actionClass, environment, policy).allowed) return { ok: false };
+    const resolved = resolveStep(snapshot, { control: transition.control, inputs: transition.inputs, data, label: transition.action ?? transition.id });
+    if (!resolved.ok) return { ok: false };
+    const performed = await performStep(ports, resolved);
+    if (!performed.ok) return { ok: false };
+    snapshot = await ports.settle(transition.to);
+  }
+  return { ok: true, snapshot };
 }
 
 /** Whether this is a new visit (and so the start of a new diagnostic chunk). */

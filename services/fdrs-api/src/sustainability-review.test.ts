@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { FlowNarrationResponse } from '@tellann/ai';
 import {
-  buildReviewHash, languageFindings, routeCollisionFindings, runStaticSustainabilityChecks,
+  buildReviewHash, languageFindings, narrationFindings, routeCollisionFindings, runStaticSustainabilityChecks, toNarrationInput,
 } from './sustainability-review';
 import type { SustainabilityGraphEdge, SustainabilityGraphNode } from './sustainability-review';
 
@@ -106,6 +107,67 @@ test('colliding routes with distinct declared headings are only informational', 
   assert.equal(findings.length, 1);
   assert.equal(findings[0]!.code, 'ROUTE_COLLISION_DISAMBIGUATED');
   assert.equal(findings[0]!.severity, 'INFO');
+});
+
+test('toNarrationInput resolves edge endpoints to state names, not raw node ids', () => {
+  const { nodes, edges } = loginFlow();
+  const result = toNarrationInput('Admin Course Create', nodes, edges);
+  assert.equal(result.flowName, 'Admin Course Create');
+  assert.deepEqual(result.transitions, [{ from: 'LOGIN_PAGE', to: 'DASHBOARD', action: 'SUBMIT_CREDENTIALS' }]);
+});
+
+const baseNarration: FlowNarrationResponse = {
+  narrative: 'A guest signs in and reaches the dashboard.',
+  canNarrateEndToEnd: true,
+  businessIntentSummary: 'Lets a user sign in.',
+  canDeriveBusinessIntent: true,
+  hedges: [],
+  ambiguousIdentifiers: [],
+};
+
+test('narrationFindings produces nothing when the model had no trouble', () => {
+  const { nodes, edges } = loginFlow();
+  assert.deepEqual(narrationFindings(baseNarration, nodes, edges), []);
+});
+
+test('narrationFindings reports an incomplete narration under criterion 1, with the narrative as rationale', () => {
+  const { nodes, edges } = loginFlow();
+  const findings = narrationFindings({ ...baseNarration, canNarrateEndToEnd: false }, nodes, edges);
+  const finding = findings.find((item) => item.code === 'NARRATION_INCOMPLETE');
+  assert.ok(finding);
+  assert.equal(finding!.criterion, 'INTERPRETABLE_END_TO_END');
+  assert.equal(finding!.rationale, baseNarration.narrative);
+});
+
+test('narrationFindings maps a transition hedge to the matching edge id', () => {
+  const { nodes, edges } = loginFlow();
+  const findings = narrationFindings({
+    ...baseNarration,
+    hedges: [{ fromStateKey: 'LOGIN_PAGE', toStateKey: 'DASHBOARD', reason: 'No declared field explains what moves the user on.' }],
+  }, nodes, edges);
+  const hedge = findings.find((item) => item.code === 'NARRATION_HEDGE');
+  assert.ok(hedge);
+  assert.deepEqual(hedge!.edgeIds, ['e1']);
+});
+
+test('narrationFindings reports an undecidable business intent under criterion 4', () => {
+  const { nodes, edges } = loginFlow();
+  const findings = narrationFindings({ ...baseNarration, canDeriveBusinessIntent: false, businessIntentSummary: null }, nodes, edges);
+  const finding = findings.find((item) => item.code === 'BUSINESS_INTENT_UNCLEAR');
+  assert.ok(finding);
+  assert.equal(finding!.criterion, 'BUSINESS_INTENT_DERIVABLE');
+});
+
+test('narrationFindings maps an ambiguous identifier to criterion 2, the mapping-ambiguity proxy', () => {
+  const { nodes, edges } = loginFlow();
+  const findings = narrationFindings({
+    ...baseNarration,
+    ambiguousIdentifiers: [{ stateKey: 'DASHBOARD', reason: 'Too generic to uniquely identify in real code.' }],
+  }, nodes, edges);
+  const finding = findings.find((item) => item.code === 'IDENTIFIER_LIKELY_AMBIGUOUS');
+  assert.ok(finding);
+  assert.equal(finding!.criterion, 'CODEBASE_MAPPING');
+  assert.deepEqual(finding!.nodeIds, ['n2']);
 });
 
 test('runStaticSustainabilityChecks combines both check families', () => {

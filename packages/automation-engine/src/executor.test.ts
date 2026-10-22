@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runAutomation } from './executor';
-import type { AutomationConfig } from './executor';
+import { runAutomation, runCoverageReview } from './executor';
+import type { AutomationConfig, CoverageReviewConfig } from './executor';
 import {
   FakeApp, ORIGIN, control, element, limits, lmsApp, lmsContract, snapshot, state, transition,
 } from './test-fixtures';
@@ -535,4 +535,122 @@ test('with no sizes asked for, nothing is swept and nothing claims to know how t
   await runAutomation(app, config());
   assert.deepEqual(app.sweeps, []);
   assert.deepEqual(app.events.filter((event) => event.type === 'QA_AUTOMATION_RESPONSIVE_SAMPLE'), []);
+});
+
+// ─────────────────────────────────────────────────────────────
+// runCoverageReview: the live half of a pre-publish Flow Sustainability Review.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * start -> branch, then branch has two AUTO siblings: "Save" (declares both fields the shared
+ * form requires) and "Save Alt" (forgets the password field) — the exact Admin Course Create
+ * bug class, reproduced as a branch the walk must check without being derailed by it. A third,
+ * orphan state has no declared route from start at all.
+ */
+function branchingContract(): ExecutableContract {
+  return {
+    flowVersionId: 'v1', flowHash: 'h', analysisIdentity: null, initialStateKey: 'start',
+    states: [
+      state({ key: 'start', role: 'INITIAL' }),
+      state({ key: 'branch' }),
+      state({ key: 'ok_end', role: 'TERMINAL', terminalKind: 'SUCCESS' }),
+      state({ key: 'other_end', role: 'TERMINAL', terminalKind: 'SUCCESS' }),
+      state({ key: 'orphan' }),
+    ],
+    transitions: [
+      transition({ id: 't-next', from: 'start', to: 'branch', control: control({ labels: ['Next'] }) }),
+      transition({
+        id: 't-save', from: 'branch', to: 'ok_end', control: control({ labels: ['Save'] }),
+        inputs: [{ name: 'title', label: 'Title', dataKey: 'title' }, { name: 'password', label: 'Password', dataKey: 'password' }],
+      }),
+      transition({
+        id: 't-save-missing', from: 'branch', to: 'other_end', control: control({ labels: ['Save Alt'] }),
+        inputs: [{ name: 'title', label: 'Title', dataKey: 'title' }],
+      }),
+      transition({ id: 't-orphan', from: 'orphan', to: 'ok_end', control: control({ labels: ['Orphan Save'] }) }),
+    ],
+  };
+}
+
+function branchingApp(): FakeApp {
+  return new FakeApp({
+    start: 'start',
+    pages: {
+      start: { path: '/', sdkState: 'start', elements: [element({ ref: 'e-next', name: 'Next' })] },
+      branch: {
+        path: '/branch', sdkState: 'branch',
+        elements: [
+          element({ ref: 'e-title', tag: 'input', fieldName: 'title', label: 'Title', formIndex: 0 }),
+          element({ ref: 'e-password', tag: 'input', inputType: 'password', fieldName: 'password', label: 'Password', required: true, formIndex: 0 }),
+          element({ ref: 'e-save', name: 'Save', formIndex: 0 }),
+          element({ ref: 'e-save-alt', name: 'Save Alt', formIndex: 0 }),
+        ],
+      },
+      ok_end: { path: '/ok', sdkState: 'ok_end', elements: [] },
+      other_end: { path: '/other', sdkState: 'other_end', elements: [] },
+      orphan: { path: '/orphan', sdkState: 'orphan', elements: [] },
+    },
+    clicks: { 'e-next': 'branch', 'e-save': 'ok_end', 'e-save-alt': 'other_end' },
+    data: { title: { value: 'Automated QA Course', secret: false }, password: { value: 'hunter2', secret: true } },
+  });
+}
+
+const coverageConfig = (overrides: Partial<CoverageReviewConfig> = {}): CoverageReviewConfig => ({
+  contract: branchingContract(), environment: 'STAGING', limits: limits(), ...overrides,
+});
+
+test('a required field one sibling transition forgets is caught without the walk stopping there', async () => {
+  const app = branchingApp();
+  const result = await runCoverageReview(app, coverageConfig());
+
+  const missing = result.findings.find((finding) => finding.transitionId === 't-save-missing');
+  assert.ok(missing, 'the declaration gap is reported');
+  assert.equal(missing!.reason, 'REQUIRED_FIELD_NOT_DECLARED');
+  assert.equal(missing!.stateKey, 'branch');
+
+  // The walk still reached past the branch: it did not stop at the first unresolved sibling,
+  // unlike runAutomation, which would have stopped the whole run there.
+  assert.ok(result.visitedStateKeys.includes('ok_end'));
+});
+
+test('every sibling at a branch is resolved, even though only one is ever clicked', async () => {
+  const app = branchingApp();
+  const result = await runCoverageReview(app, coverageConfig());
+  assert.ok(result.visitedTransitionIds.includes('t-save'));
+  assert.ok(result.visitedTransitionIds.includes('t-save-missing'));
+  // "Save" was clicked to carry the walk on; "Save Alt" was only ever resolved against the page, never clicked.
+  assert.deepEqual(clicks(app), ['e-next', 'e-save']);
+});
+
+test('a transition with no declared route from the initial state is reported without touching the app', async () => {
+  const app = branchingApp();
+  const result = await runCoverageReview(app, coverageConfig());
+  const unreachable = result.findings.find((finding) => finding.transitionId === 't-orphan');
+  assert.ok(unreachable);
+  assert.equal(unreachable!.reason, 'UNREACHABLE');
+  assert.ok(!result.visitedStateKeys.includes('orphan'));
+  assert.ok(!clicks(app).includes('e-orphan-save'));
+});
+
+test('a resolvable but policy-blocked transition is checked but never performed', async () => {
+  // "Save" (otherwise the one the walk would advance through) is marked an action class
+  // STAGING does not permit by default; "Save Alt" still has its own, unrelated declaration gap.
+  const contract = branchingContract();
+  const blocked: ExecutableContract = {
+    ...contract,
+    transitions: contract.transitions.map((candidate) => candidate.id === 't-save' ? { ...candidate, actionClass: 'EXTERNAL_SIDE_EFFECT' } : candidate),
+  };
+  const app = branchingApp();
+  const result = await runCoverageReview(app, coverageConfig({ contract: blocked }));
+
+  // Neither sibling could carry the walk onward — "Save" resolved fine but is policy-blocked,
+  // "Save Alt" never resolves at all — so the walk never leaves the branch.
+  assert.ok(!result.visitedStateKeys.includes('ok_end'));
+  assert.ok(!result.visitedStateKeys.includes('other_end'));
+  // Both were still checked: "Save" resolved cleanly (no finding for it), and "Save Alt"'s
+  // declaration gap was still caught even though nothing downstream of the branch was ever performed.
+  assert.ok(result.visitedTransitionIds.includes('t-save'));
+  assert.ok(result.findings.some((finding) => finding.transitionId === 't-save-missing'));
+  assert.ok(!result.findings.some((finding) => finding.transitionId === 't-save'));
+  assert.ok(!clicks(app).includes('e-save'));
 });

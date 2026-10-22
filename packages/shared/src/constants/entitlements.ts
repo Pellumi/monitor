@@ -40,6 +40,8 @@ export enum Feature {
   VISUAL_ACCESSIBILITY_ANALYSIS = 'VISUAL_ACCESSIBILITY_ANALYSIS',
   CODEBASE_INTELLIGENCE        = 'CODEBASE_INTELLIGENCE',
   AUTOMATED_QA_RUNS            = 'AUTOMATED_QA_RUNS',
+  /** The AI-judgment half of a pre-publish Flow Sustainability Review (business-intent narration, mapping-confidence rationale) and its live coverage walk. The free, deterministic checks are not gated on this. */
+  FLOW_SUSTAINABILITY_REVIEW   = 'FLOW_SUSTAINABILITY_REVIEW',
 
   // ── Reporting ───────────────────────────────────────────────
   REPORT_GENERATION       = 'REPORT_GENERATION',

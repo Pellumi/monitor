@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { lintWorkflowLanguage } from '@tellann/ai';
-import type { LanguageWorkflow } from '@tellann/ai';
+import type { FlowNarrationResponse, LanguageWorkflow } from '@tellann/ai';
 import { findRouteCollisions } from '@tellann/automation-engine';
 import type { ExecutableState } from '@tellann/automation-engine';
 
@@ -24,14 +24,15 @@ export type SustainabilityCriterion =
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
-export interface StaticSustainabilityFinding {
+export interface SustainabilityFindingDraft {
   criterion: SustainabilityCriterion;
   code: string;
   severity: FindingSeverity;
   message: string;
   nodeIds: string[];
   edgeIds: string[];
-  source: 'STATIC';
+  rationale?: string | null;
+  source: 'STATIC' | 'AI' | 'COVERAGE_WALK';
 }
 
 /** The columns this module reads off a draft's nodes and edges. A subset of the full Prisma row, so this stays testable with plain fixtures. */
@@ -112,9 +113,9 @@ function nodeIdFor(nodes: SustainabilityGraphNode[], stateKey: string | undefine
 }
 
 /** Criterion 1 (reachability/dead ends) and criterion 4's free naming pre-check, both via `lintWorkflowLanguage`. */
-export function languageFindings(nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[]): StaticSustainabilityFinding[] {
+export function languageFindings(nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[]): SustainabilityFindingDraft[] {
   const issues = lintWorkflowLanguage(toLanguageWorkflow(nodes, edges));
-  return issues.flatMap((issue): StaticSustainabilityFinding[] => {
+  return issues.flatMap((issue): SustainabilityFindingDraft[] => {
     if (INTERPRETABILITY_CODES.has(issue.code)) {
       return [{
         criterion: 'INTERPRETABLE_END_TO_END', code: issue.code,
@@ -151,9 +152,9 @@ function toExecutableStates(nodes: SustainabilityGraphNode[]): ExecutableState[]
 }
 
 /** Criterion 3: terminal/intermediate route collisions, via `findRouteCollisions`. */
-export function routeCollisionFindings(nodes: SustainabilityGraphNode[]): StaticSustainabilityFinding[] {
+export function routeCollisionFindings(nodes: SustainabilityGraphNode[]): SustainabilityFindingDraft[] {
   const states = toExecutableStates(nodes);
-  return findRouteCollisions(states).map((finding): StaticSustainabilityFinding => ({
+  return findRouteCollisions(states).map((finding): SustainabilityFindingDraft => ({
     criterion: 'ROUTE_DISAMBIGUATION', code: finding.code,
     severity: finding.severity === 'CRITICAL' ? 'CRITICAL' : 'INFO',
     message: finding.detail,
@@ -163,6 +164,90 @@ export function routeCollisionFindings(nodes: SustainabilityGraphNode[]): Static
 }
 
 /** Every free, deterministic finding this review produces. No AI call, no running app, no entitlement check. */
-export function runStaticSustainabilityChecks(nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[]): StaticSustainabilityFinding[] {
+export function runStaticSustainabilityChecks(nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[]): SustainabilityFindingDraft[] {
   return [...languageFindings(nodes, edges), ...routeCollisionFindings(nodes)];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gated half: criteria 1's narration, 2's mapping-ambiguity proxy, and 4's business-intent
+// judgment, all from one `generateFlowNarration` call (packages/ai). Entitlement-checked by
+// the caller before this is ever invoked — nothing here checks access on its own.
+// ─────────────────────────────────────────────────────────────
+
+/** The draft, reshaped into what `generateFlowNarration` (packages/ai) takes as input. */
+export function toNarrationInput(flowName: string, nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[]): {
+  flowName: string;
+  states: Array<{ key: string; name: string; role?: string; terminalKind?: string | null }>;
+  transitions: Array<{ from: string; to: string; action?: string | null }>;
+} {
+  const nameById = new Map(nodes.map((node) => [node.id, node.stateName]));
+  return {
+    flowName,
+    states: nodes.map((node) => ({ key: node.stateName, name: node.stateName, role: node.role, terminalKind: node.terminalKind ?? null })),
+    transitions: edges.map((edge) => ({
+      from: nameById.get(edge.fromNodeId) ?? edge.fromNodeId,
+      to: nameById.get(edge.toNodeId) ?? edge.toNodeId,
+      action: edge.action ?? null,
+    })),
+  };
+}
+
+function edgeIdFor(nodes: SustainabilityGraphNode[], edges: SustainabilityGraphEdge[], fromKey: string | null | undefined, toKey: string | null | undefined): string[] {
+  if (!fromKey || !toKey) return [];
+  const fromId = nodes.find((node) => node.stateName === fromKey)?.id;
+  const toId = nodes.find((node) => node.stateName === toKey)?.id;
+  if (!fromId || !toId) return [];
+  const match = edges.find((edge) => edge.fromNodeId === fromId && edge.toNodeId === toId);
+  return match ? [match.id] : [];
+}
+
+/**
+ * A model's narration turned into findings for criteria 1 (interpretability), 2 (mapping
+ * ambiguity — a proxy; see the schema doc on why the real mapping pipeline cannot run
+ * pre-publish) and 4 (business intent). One call answers all three, so this is one mapper
+ * rather than three.
+ */
+export function narrationFindings(
+  narration: FlowNarrationResponse,
+  nodes: SustainabilityGraphNode[],
+  edges: SustainabilityGraphEdge[],
+): SustainabilityFindingDraft[] {
+  const findings: SustainabilityFindingDraft[] = [];
+
+  if (!narration.canNarrateEndToEnd) {
+    findings.push({
+      criterion: 'INTERPRETABLE_END_TO_END', code: 'NARRATION_INCOMPLETE', severity: 'MEDIUM',
+      message: 'A model could not narrate this Flow from its initial state to each terminal state using only what is declared.',
+      nodeIds: [], edgeIds: [], rationale: narration.narrative, source: 'AI',
+    });
+  }
+  for (const hedge of narration.hedges) {
+    findings.push({
+      criterion: 'INTERPRETABLE_END_TO_END', code: 'NARRATION_HEDGE', severity: 'LOW',
+      message: hedge.reason,
+      nodeIds: hedge.stateKey ? nodeIdFor(nodes, hedge.stateKey) : [],
+      edgeIds: edgeIdFor(nodes, edges, hedge.fromStateKey, hedge.toStateKey),
+      source: 'AI',
+    });
+  }
+
+  if (!narration.canDeriveBusinessIntent) {
+    findings.push({
+      criterion: 'BUSINESS_INTENT_DERIVABLE', code: 'BUSINESS_INTENT_UNCLEAR', severity: 'MEDIUM',
+      message: 'A model could not state this Flow\'s business purpose from its declared names and structure alone.',
+      nodeIds: [], edgeIds: [], rationale: narration.businessIntentSummary, source: 'AI',
+    });
+  }
+
+  for (const ambiguous of narration.ambiguousIdentifiers) {
+    findings.push({
+      criterion: 'CODEBASE_MAPPING', code: 'IDENTIFIER_LIKELY_AMBIGUOUS', severity: 'LOW',
+      message: ambiguous.reason,
+      nodeIds: ambiguous.stateKey ? nodeIdFor(nodes, ambiguous.stateKey) : [],
+      edgeIds: edgeIdFor(nodes, edges, ambiguous.fromStateKey, ambiguous.toStateKey),
+      source: 'AI',
+    });
+  }
+
+  return findings;
 }

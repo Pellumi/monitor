@@ -8,7 +8,7 @@ import { Feature, Services } from '@tellann/shared';
 import { normalizeIntent, getSuggestions } from '@tellann/derivation-engine';
 import { compileFlowRuleset } from './compiler';
 import { runReconciliation } from './reconciliation';
-import { assignFlowRoles, generateAiFlowDraft, generateFlowSuggestions } from '@tellann/ai';
+import { assignFlowRoles, generateAiFlowDraft, generateFlowSuggestions, generateFlowNarration } from '@tellann/ai';
 import { mergeAcceptedWorkflows } from './accepted-workflows';
 import { flowRequiresPatch, inputsOfEdges, stateSpecPatch, transitionSpecPatch, type StateSpecPatch, type TransitionSpecPatch } from './flow-spec-data';
 import { expandSubFlows, type SubFlowSource } from './sub-flows';
@@ -18,7 +18,7 @@ import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tel
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow } from './flow-domain';
-import { buildReviewHash, runStaticSustainabilityChecks } from './sustainability-review';
+import { buildReviewHash, narrationFindings, runStaticSustainabilityChecks, toNarrationInput } from './sustainability-review';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
@@ -435,6 +435,27 @@ async function requireDocumentInferenceAccess(applicationId: string) {
   const appRecord = await getApplicationContext(applicationId);
   if (!appRecord?.organizationId) return { allowed: false, status: 404, error: 'Application not found' as const };
   const allowed = await entitlementChecker.canAccess(appRecord.organizationId, Feature.DOCUMENT_FLOW_INFERENCE);
+  return allowed
+    ? { allowed: true, appRecord }
+    : { allowed: false, status: 403, error: 'FEATURE_NOT_ENTITLED' as const, appRecord };
+}
+
+/**
+ * Gate for the AI-judgment half of a pre-publish Flow Sustainability Review (narration,
+ * business-intent synthesis, mapping-rationale lift) and the live coverage walk. Unlike
+ * `requireAiAccess`'s two keys — a flat, plan-independent experimental flag an operator
+ * toggles per org — this is tied to `Feature.FLOW_SUSTAINABILITY_REVIEW`'s plan tiering
+ * (see `PLAN_DEFINITIONS`), because the product decision was explicitly "gated by billing
+ * plan," the same as `requireDocumentInferenceAccess` above. The free, deterministic checks
+ * (reachability, route collisions, naming) are never gated by this.
+ */
+async function requireSustainabilityReviewAccess(applicationId: string) {
+  const appRecord = await getApplicationContext(applicationId);
+  if (!appRecord?.organizationId) return { allowed: false, status: 404, error: 'Application not found' as const };
+  if (!(isEnabledFlag('AI_FEATURES_ENABLED') && isEnabledFlag('AI_FLOW_SUSTAINABILITY_REVIEW_ENABLED'))) {
+    return { allowed: false, status: 403, error: 'AI_FEATURE_DISABLED' as const, appRecord };
+  }
+  const allowed = await entitlementChecker.canAccess(appRecord.organizationId, Feature.FLOW_SUSTAINABILITY_REVIEW);
   return allowed
     ? { allowed: true, appRecord }
     : { allowed: false, status: 403, error: 'FEATURE_NOT_ENTITLED' as const, appRecord };
@@ -1249,10 +1270,13 @@ app.post('/v1/applications/:appId/flows/:flowId/publish', async (req: Authentica
  * class of bug this review exists to catch — invalidates the cache). A repeated publish
  * attempt on an unchanged draft returns the same row rather than re-running checks.
  *
- * Phase A only: the free, deterministic checks (criteria 1's reachability/dead-ends, 3's
- * route collisions, 4's naming pre-check). The AI-judgment findings (criteria 2's lifted
- * mapping rationale, 4's narrative) and the live coverage walk (criterion 5) are a follow-up;
- * this endpoint always reports `entitled: false` until that lands.
+ * The free, deterministic checks (criteria 1's reachability/dead-ends, 3's route collisions,
+ * 4's naming pre-check) run for every org, every time. When `requireSustainabilityReviewAccess`
+ * allows it, one more model call (`generateFlowNarration`) adds criterion 1's narrative,
+ * criterion 2's mapping-ambiguity proxy and criterion 4's business-intent judgment — see that
+ * function's doc for why criterion 2 cannot use the real, post-publish mapping pipeline here.
+ * Criterion 5's live coverage walk is desktop-only and is attached later via the `coverage-walk`
+ * route below; this endpoint never runs it.
  */
 app.post('/v1/applications/:appId/flows/:flowId/sustainability-review', async (req: AuthenticatedRequest, res: Response) => {
   const { appId, flowId } = req.params;
@@ -1266,20 +1290,47 @@ app.post('/v1/applications/:appId/flows/:flowId/sustainability-review', async (r
   });
   if (cached) return res.json({ review: cached, locked: null });
 
-  const findings = runStaticSustainabilityChecks(flow.nodes as any, flow.edges as any);
+  const findings: ReturnType<typeof runStaticSustainabilityChecks> = runStaticSustainabilityChecks(flow.nodes as any, flow.edges as any);
+
+  const access = await requireSustainabilityReviewAccess(appId);
+  const organizationId = access.allowed ? access.appRecord?.organizationId ?? null : null;
+  let aiInvocationId: string | null = null;
+  if (organizationId) {
+    const narrationInput = toNarrationInput(flow.name, flow.nodes as any, flow.edges as any);
+    const result = await generateFlowNarration(narrationInput, {
+      timeoutMs: Math.max(15_000, Number(process.env.AI_FLOW_SUSTAINABILITY_REVIEW_TIMEOUT_MS) || 45_000),
+    });
+    if (result.narration) findings.push(...narrationFindings(result.narration, flow.nodes as any, flow.edges as any));
+    if (result.aiCalled) {
+      const invocation = await prisma.aIInvocationLog.create({ data: {
+        organizationId, applicationId: appId, feature: 'FLOW_SUSTAINABILITY_REVIEW',
+        provider: result.provider ?? 'unknown', model: result.model ?? 'unknown', promptHash: result.promptHash ?? '',
+        status: result.fallbackUsed ? 'FALLBACK_USED' : 'SUCCESS', fallbackUsed: result.fallbackUsed,
+        repaired: result.aiRepaired, latencyMs: result.latencyMs,
+      } as any });
+      aiInvocationId = invocation.id;
+    }
+  }
+
   const review = await prisma.flowSustainabilityReview.create({
     data: {
       flowId, applicationId: appId, graphVersion: flow.version, draftSeq: flow.draftSeq, reviewHash,
-      status: 'STATIC_COMPLETE', entitled: false, requiresDesktopWalk: true,
+      status: 'STATIC_COMPLETE', entitled: access.allowed, requiresDesktopWalk: true,
       requestedById: req.user?.id ?? null,
       findings: { create: findings.map((finding) => ({
         criterion: finding.criterion, code: finding.code, severity: finding.severity, message: finding.message,
         nodeIds: finding.nodeIds, edgeIds: finding.edgeIds, source: finding.source,
+        rationale: finding.rationale ?? null,
+        aiInvocationId: finding.source === 'AI' ? aiInvocationId : null,
       })) },
     },
     include: { findings: true },
   });
-  return res.status(201).json({ review, locked: null });
+  const locked = access.allowed ? null : {
+    criteria: ['INTERPRETABLE_END_TO_END', 'CODEBASE_MAPPING', 'BUSINESS_INTENT_DERIVABLE', 'DATA_ACTION_COMPLETENESS'],
+    reason: access.error ?? 'FEATURE_NOT_ENTITLED',
+  };
+  return res.status(201).json({ review, locked });
 });
 
 app.get('/v1/applications/:appId/flows/:flowId/sustainability-review/:reviewId', async (req: Request, res: Response) => {
@@ -1289,6 +1340,48 @@ app.get('/v1/applications/:appId/flows/:flowId/sustainability-review/:reviewId',
     include: { findings: true },
   });
   if (!review) return res.status(404).json({ error: 'SUSTAINABILITY_REVIEW_NOT_FOUND' });
+  return res.json({ review });
+});
+
+const COVERAGE_WALK_SEVERITY: Record<'REQUIRED_FIELD_NOT_DECLARED' | 'DATA_UNAVAILABLE' | 'FIELD_NOT_FOUND' | 'UNREACHABLE', 'CRITICAL' | 'MEDIUM'> = {
+  REQUIRED_FIELD_NOT_DECLARED: 'CRITICAL', DATA_UNAVAILABLE: 'CRITICAL', FIELD_NOT_FOUND: 'CRITICAL',
+  // Already covered, usually, by the free reachability check (criterion 1) — recorded here too
+  // because "never testable live" is itself evidence for criterion 5, just not a new alarm.
+  UNREACHABLE: 'MEDIUM',
+};
+
+/**
+ * Where the desktop app reports criterion 5's live coverage walk back — the one half of this
+ * review that needs a running application, so it can never happen inside `fdrs-api` itself
+ * (no backend service here drives a browser). Requires the same entitlement as the narration
+ * call; the desktop app is expected to have already checked before even offering to run it,
+ * but the server never trusts that on its own.
+ */
+app.patch('/v1/applications/:appId/flows/:flowId/sustainability-review/:reviewId/coverage-walk', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId, reviewId } = req.params;
+  const existing = await prisma.flowSustainabilityReview.findFirst({ where: { id: reviewId, flowId, applicationId: appId } });
+  if (!existing) return res.status(404).json({ error: 'SUSTAINABILITY_REVIEW_NOT_FOUND' });
+
+  const access = await requireSustainabilityReviewAccess(appId);
+  if (!access.allowed) return res.status(access.status ?? 403).json({ error: access.error });
+
+  const body = req.body ?? {};
+  const findings: unknown[] = Array.isArray(body.findings) ? body.findings : [];
+  const validFindings = findings.filter((finding: unknown): finding is { transitionId: string | null; stateKey: string | null; reason: keyof typeof COVERAGE_WALK_SEVERITY; detail: string | null } =>
+    !!finding && typeof finding === 'object' && typeof (finding as any).reason === 'string' && (finding as any).reason in COVERAGE_WALK_SEVERITY);
+
+  const review = await prisma.flowSustainabilityReview.update({
+    where: { id: reviewId },
+    data: {
+      coverageWalkStatus: 'COMPLETE', coverageWalkRunAt: new Date(), status: 'COMPLETE',
+      findings: { create: validFindings.map((finding) => ({
+        criterion: 'DATA_ACTION_COMPLETENESS', code: finding.reason, severity: COVERAGE_WALK_SEVERITY[finding.reason],
+        message: finding.detail ?? `${finding.reason} at ${finding.stateKey ?? 'an unreachable state'}.`,
+        nodeIds: [], edgeIds: finding.transitionId ? [finding.transitionId] : [], source: 'COVERAGE_WALK',
+      })) },
+    },
+    include: { findings: true },
+  });
   return res.json({ review });
 });
 
